@@ -25,7 +25,7 @@ Item {
     }
 
     function block(id, text, more) {
-        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0 }, more ?? {});
+        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more ?? {});
     }
 
     function pageOf(id, more) {
@@ -80,6 +80,67 @@ Item {
             compare(screen.view, "page");
         }
 
+        function sheetIds(screen) {
+            return sheetOf(screen).rows.map(row => row.id);
+        }
+
+        function test_theOpenPageOffersPublishingAndAListedOneDoesNot() {
+            const screen = makeScreen();
+            screen.pageMenu("p1", "Roadmap", "");
+            verify(!sheetIds(screen).includes("publish"));
+            sheetOf(screen).close();
+            screen.pageMenu("p1", "Roadmap", "", {});
+            verify(sheetIds(screen).includes("publish"));
+            verify(sheetIds(screen).includes("publishTailscale"));
+            verify(!sheetIds(screen).includes("unpublish"));
+            verify(!sheetIds(screen).includes("copySite"));
+        }
+
+        function test_aPublishedPageShowsItsLinkAndTheWaysOnAndBack() {
+            const site = { url: "http://192.168.1.20:3773/sites/s1/token", localOnly: false, behind: false, publishedAt: "" };
+            const screen = makeScreen({ page: root.pageOf("p1", { site: site }) });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const notice = findChild(screen, "spaceSiteNotice");
+            verify(notice !== null);
+            verify(notice.visible);
+            compare(findChild(screen, "spaceSiteLink").text, site.url);
+            verify(!findChild(screen, "spaceSiteLocalOnly").visible);
+            verify(!findChild(screen, "spaceSiteTailscale").visible);
+            mouseClick(findChild(screen, "spaceSiteCopy"));
+            mouseClick(findChild(screen, "spaceSiteRepublish"));
+            mouseClick(findChild(screen, "spaceSiteUnpublish"));
+            compare(Shell.dispatchedActions.filter(entry => entry.action.startsWith("space.page.")).map(entry => entry.action),
+                    ["space.page.copySiteLink", "space.page.publish", "space.page.unpublish"]);
+            screen.pageMenu("p1", "Roadmap", "", site);
+            verify(sheetIds(screen).includes("copySite"));
+            verify(sheetIds(screen).includes("unpublish"));
+        }
+
+        function test_theSiteNoticeSaysWhenItIsBehindOrOnlyForThisMachine() {
+            const site = { url: "http://127.0.0.1:3773/sites/s1/token", localOnly: true, behind: false, publishedAt: "" };
+            const screen = makeScreen({ page: root.pageOf("p1", { site: site }) });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const upToDate = findChild(screen, "spaceSiteStatus").text;
+            verify(findChild(screen, "spaceSiteLocalOnly").visible);
+            const tailscale = findChild(screen, "spaceSiteTailscale");
+            // The row it wraps into is laid out on the next polish.
+            waitForItemPolished(tailscale.parent);
+            mouseClick(tailscale);
+            compare(dispatched("space.page.publish"), [{ pageId: "p1", tailscale: true }]);
+            Spaces.page = root.pageOf("p1", { site: Object.assign({}, site, { behind: true }) });
+            verify(findChild(screen, "spaceSiteStatus").text !== upToDate);
+        }
+
+        function test_anUnpublishedPageShowsNoSite() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const notice = findChild(screen, "spaceSiteNotice");
+            verify(notice === null || !notice.visible);
+        }
+
         function test_backTakesOneStepAtATimeThenLeaves() {
             const screen = makeScreen();
             screen.openSpace("s1");
@@ -93,6 +154,47 @@ Item {
             verify(screen.stepBack());
             compare(screen.view, "spaces");
             verify(!screen.stepBack());
+        }
+
+        function test_theImagesAreOneStepFromThePagesAndSignedOnlyWhileOpen() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.showImages();
+            compare(screen.view, "images");
+            compare(dispatched("space.images.show")[0].shown, true);
+            verify(screen.stepBack());
+            compare(screen.view, "pages");
+            compare(dispatched("space.images.show")[1].shown, false);
+        }
+
+        function test_aPageOffersTheSpacesImagesAndTheWayToGetMore() {
+            const screen = makeScreen({ images: [{ id: "i1", name: "cat.png", prompt: "", url: "" }] });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            screen.pickImage(undefined);
+            const rows = sheetOf(screen).rows;
+            compare(rows.map(row => row.id), ["i1", "browse"]);
+            sheetOf(screen).choose("i1");
+            const inserted = dispatched("space.block.insert")[0];
+            compare(inserted.kind, "image");
+            compare(inserted.imageId, "i1");
+            compare(inserted.text, "cat.png");
+            screen.pickImage(undefined);
+            sheetOf(screen).choose("browse");
+            compare(screen.view, "images");
+        }
+
+        function test_anImageInTheTrashComesBackOrGoesForGood() {
+            const screen = makeScreen();
+            screen.imageMenu("i1");
+            sheetOf(screen).choose("trash");
+            compare(dispatched("space.image.trash")[0].imageId, "i1");
+            screen.imageTrashMenu("i1");
+            sheetOf(screen).choose("restore");
+            compare(dispatched("space.image.restore")[0].imageId, "i1");
+            screen.imageTrashMenu("i1");
+            sheetOf(screen).choose("delete");
+            compare(dispatched("space.image.delete")[0].imageId, "i1");
         }
 
         function test_aNewPageOpensWhenItArrives() {

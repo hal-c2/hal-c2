@@ -72,7 +72,7 @@ Feature: Managing environments on a client
       | Windows Subsystem for Linux                | linux      |
       | a machine that gives no hardware signal    | none, so clients draw a generic server |
 
-  @backlog @mc
+  @mc
   Scenario Outline: The MC advertises the SSH names that reach it
     Given <situation>
     When a client asks the MC for its configuration
@@ -85,7 +85,7 @@ Feature: Managing environments on a client
       | Tailscale reports a MagicDNS name and the machine has a name | the tailnet name first, then the .local name    |
       | Tailscale is not available                                   | only the machine's .local name                  |
 
-  @backlog @mc
+  @mc
   Scenario: A slow SSH name check does not stall the configuration
     Given finding the machine's SSH names takes longer than a client should wait
     When a client asks the MC for its configuration

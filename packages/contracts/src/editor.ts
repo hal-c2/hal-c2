@@ -62,6 +62,7 @@ export const EDITORS = [
     launchStyle: "direct-path",
     remoteScheme: "zed",
   },
+  { id: "sublime", label: "Sublime Text", commands: ["subl"], launchStyle: "direct-path" },
   { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
   { id: "aqua", label: "Aqua", commands: ["aqua"], launchStyle: "line-column" },

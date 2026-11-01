@@ -10,7 +10,7 @@ defmodule HalC2.WorkspaceWritePropTest do
   Each write is made by a session with or without `terminal:operate`, gated as the
   socket gates it (`HalC2.Rpc.required_scope/2`), and names the file by its full path
   or by a relative path that tries to leave the project (`../outside/a`, or through a
-  link in the project to the folder outside). A session without terminal access never
+  link in the project to the folder outside) or names the project's own folder (`.`). A session without terminal access never
   changes anything outside the project, however it names the file.
   """
 
@@ -66,7 +66,7 @@ defmodule HalC2.WorkspaceWritePropTest do
       {1, {:call, __MODULE__, :remove, [oneof(@names)]}},
       {5,
        {:call, __MODULE__, :write,
-        [oneof(@names), oneof(@texts), oneof([:full, :dotdot, :link]), boolean()]}}
+        [oneof(@names), oneof(@texts), oneof([:full, :dotdot, :link, :own_folder]), boolean()]}}
     ])
   end
 
@@ -163,6 +163,7 @@ defmodule HalC2.WorkspaceWritePropTest do
         :full -> path(name)
         :dotdot -> "../outside/#{name}"
         :link -> "out/#{name}"
+        :own_folder -> "."
       end
 
     input = %{"cwd" => root, "relativePath" => relative, "contents" => text}

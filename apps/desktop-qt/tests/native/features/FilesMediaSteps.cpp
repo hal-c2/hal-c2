@@ -41,6 +41,19 @@ QQuickItem* loadedImage(World& world) {
   return image;
 }
 
+// The panel's player or document view, once it shows.
+QQuickItem* shownMedia(World& world, const QString& objectName) {
+  showPanel(world);
+  QQuickItem* media = nullptr;
+  world.waitFor(
+      [&] {
+        media = world.brick->root()->findChild<QQuickItem*>(objectName);
+        return media && media->isVisible();
+      },
+      [&] { return QStringLiteral("%1; %2").arg(objectName, describeMedia(world)); });
+  return media;
+}
+
 // Every `assets.createUrl` for a workspace's file.
 QList<FakeMc::Rpc> signings(World& world) {
   world.sync();
@@ -56,11 +69,25 @@ const Steps steps([] {
   const QString q = kQuoted;
 
   step(QStringLiteral("the file is previewed as (an image|a video|audio|a document|a web page)"), [](World& world, const Captures& c, const Table&) {
-    if (c[0] != QLatin1String("an image")) fail(QStringLiteral("the desktop does not preview %1 yet").arg(c[0]));
     const QString path = files(world).openPath();
-    QQuickItem* image = loadedImage(world);
-    expect(image->property("source").toUrl() == files(world).mediaUrl() && fakeFiles(world.mc).downloaded.contains(path),
-           describeMedia(world));
+    if (c[0] == QLatin1String("a web page")) {
+      showPanel(world);
+      world.waitFor([&] { return files(world).rendered() && drawn(world, QStringLiteral("fileOpenPreview")); }, [&] { return describeMedia(world); });
+      return;
+    }
+    if (c[0] == QLatin1String("a document")) {
+      QQuickItem* document = shownMedia(world, QStringLiteral("documentView"));
+      world.waitFor([&] { return document->property("pageCount").toInt() > 0; }, [&] { return describeMedia(world); });
+    } else if (c[0] == QLatin1String("an image")) {
+      QQuickItem* image = loadedImage(world);
+      expect(image->property("source").toUrl() == files(world).mediaUrl(), describeMedia(world));
+    } else {
+      QQuickItem* player = shownMedia(world, QStringLiteral("mediaPlayerView"));
+      expect(player->property("source").toUrl() == files(world).mediaUrl() && player->property("video").toBool() == (c[0] == QLatin1String("a video")),
+             describeMedia(world));
+      world.waitFor([&] { return player->property("loaded").toBool(); }, [&] { return QStringLiteral("the media to load; %1").arg(describeMedia(world)); });
+    }
+    expect(fakeFiles(world.mc).downloaded.contains(path), describeMedia(world));
     expect(!drawn(world, QStringLiteral("fileLines")) && !drawn(world, QStringLiteral("fileEdit")), QStringLiteral("the file shows as text too"));
     // Never read as text.
     for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
@@ -85,6 +112,12 @@ const Steps steps([] {
                   [&] { return QStringLiteral("the %1 tab; %2").arg(panel(world)->activeTab(), describeMedia(world)); });
     QQuickItem* image = loadedImage(world);
     expect(image->property("source").toUrl() == files(world).mediaUrl() && fakeFiles(world.mc).downloaded.contains(c[0]), describeMedia(world));
+  });
+  step(QStringLiteral("the audio plays"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* player = shownMedia(world, QStringLiteral("mediaPlayerView"));
+    world.waitFor([&] { return player->property("loaded").toBool(); }, [&] { return describeMedia(world); });
+    QMetaObject::invokeMethod(player, "toggle");
+    world.waitFor([&] { return player->property("playing").toBool(); }, [&] { return describeMedia(world); });
   });
   step(QStringLiteral("the image is shown"), [](World& world, const Captures&, const Table&) {
     QQuickItem* image = loadedImage(world);

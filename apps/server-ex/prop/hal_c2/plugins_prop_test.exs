@@ -1029,7 +1029,7 @@ defmodule HalC2.PluginsPropTest do
   def crash_hard(id) do
     sup = parent(Process.whereis(plugin_module(id)))
     ref = Process.monitor(sup)
-    kill_until_down(plugin_module(id), sup, ref, 10)
+    kill_until_down(plugin_module(id), sup, ref, 500)
     {:ok, observe()}
   end
 
