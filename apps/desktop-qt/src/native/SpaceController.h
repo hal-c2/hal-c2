@@ -247,6 +247,8 @@ signals:
   void changed();
   // The command to ask an agent was run: the page takes the words.
   void agentAskRequested();
+  // The MC answered an ask: whoever holds its words lets them go only if it took it.
+  void agentAskAnswered(const QString& pageId, const QString& request, bool taken);
   // The selected Space changed: its stream is followed anew.
   void spaceSelected(const QString& id);
 

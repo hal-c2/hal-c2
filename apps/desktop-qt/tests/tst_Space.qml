@@ -333,7 +333,30 @@ Item {
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.agent.ask"), [{ pageId: "page-1", request: "@agent tidy" }]);
             compare(root.dispatched("space.block.insert"), []);
+            compare(findChild(view, "spaceComposer").text, "@agent tidy");
+            Spaces.agentAskAnswered("page-1", "@agent tidy", true);
             compare(findChild(view, "spaceComposer").text, "");
+        }
+
+        function test_an_ask_the_mc_refuses_keeps_its_words() {
+            const view = root.research({});
+            findChild(view, "spaceComposer").forceActiveFocus();
+            for (const key of "@agent tidy")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            Spaces.agentAskAnswered("page-1", "@agent tidy", false);
+            compare(findChild(view, "spaceComposer").text, "@agent tidy");
+        }
+
+        function test_words_changed_while_an_ask_is_answered_are_kept() {
+            const view = root.research({});
+            findChild(view, "spaceComposer").forceActiveFocus();
+            for (const key of "@agent tidy")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            keyClick("!");
+            Spaces.agentAskAnswered("page-1", "@agent tidy", true);
+            compare(findChild(view, "spaceComposer").text, "@agent tidy!");
         }
 
         function test_a_word_that_only_starts_like_the_mention_is_a_block() {
@@ -374,10 +397,11 @@ Item {
             compare(root.dispatched("space.agent.openThread").length, 1);
         }
 
-        function test_a_stopping_agent_cannot_be_stopped_again() {
+        function test_a_stopping_agent_can_be_stopped_again() {
             const view = root.research({ agent: { status: "stopping", request: "tidy", threadId: "t9" } });
             compare(findChild(view, "spaceAgentText").text, "Stopping the agent…");
-            verify(!findChild(view, "spaceAgentStop").visible);
+            mouseClick(findChild(view, "spaceAgentStop"));
+            compare(root.dispatched("space.agent.stop").length, 1);
             verify(findChild(view, "spaceAgentOpenThread").visible);
         }
 
@@ -386,6 +410,7 @@ Item {
                 [{ status: "completed", edited: true }, "The agent finished and changed this page."],
                 [{ status: "completed", edited: false }, "The agent finished without changing this page."],
                 [{ status: "stopped" }, "The agent was stopped."],
+                [{ status: "stopped", error: "its thread was deleted" }, "The agent stopped: its thread was deleted."],
                 [{ status: "failed", error: "out of credits" }, "The agent failed: out of credits. The page stays as it last wrote it."]
             ];
             for (const [agent, text] of says) {

@@ -88,6 +88,10 @@ Rectangle {
         function onAgentAskRequested() {
             page.startAsk();
         }
+        function onAgentAskAnswered(pageId, request, taken) {
+            if (taken && pageId === Spaces.pageId && composer.text.trim() === request)
+                composer.clear();
+        }
     }
 
     // Starts the words of an ask in the composer.
@@ -99,7 +103,7 @@ Rectangle {
 
     // Writes the composer's text as a block of the chosen kind, opens the kinds
     // when it starts with `/`, or asks an agent when it starts with `@agent`. An
-    // ask the page cannot take yet keeps its words.
+    // ask keeps its words until the MC takes it.
     function submit() {
         if (slash.visible) {
             slash.choose();
@@ -110,8 +114,6 @@ Rectangle {
             return;
         if (/^@agent(\s|$)/i.test(text)) {
             Shell.dispatch("space.agent.ask", { pageId: Spaces.pageId, request: text });
-            if (!agentStrip.active)
-                composer.clear();
             return;
         }
         page.insert(page.newKind, text, "");

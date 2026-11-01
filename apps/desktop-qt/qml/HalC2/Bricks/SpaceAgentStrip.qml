@@ -56,7 +56,7 @@ Rectangle {
                     case "failed":
                         return qsTr("The agent failed: %1. The page stays as it last wrote it.").arg(Spaces.agent.error ?? "");
                     case "stopped":
-                        return qsTr("The agent was stopped.");
+                        return Spaces.agent.error ? qsTr("The agent stopped: %1.").arg(Spaces.agent.error) : qsTr("The agent was stopped.");
                     }
                     return "";
                 }
@@ -81,7 +81,8 @@ Rectangle {
             ShellButton {
                 objectName: "spaceAgentStop"
                 implicitHeight: strip.buttonHeight
-                visible: strip.status === "running"
+                // Also while stopping: a provider can ignore the first stop.
+                visible: strip.active
                 text: qsTr("Stop")
                 iconName: "square"
                 onClicked: Shell.dispatch("space.agent.stop", { pageId: Spaces.pageId })

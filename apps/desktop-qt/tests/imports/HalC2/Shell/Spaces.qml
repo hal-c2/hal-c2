@@ -10,6 +10,7 @@ QtObject {
     property var page: ({})
     property var agent: ({})
     signal agentAskRequested
+    signal agentAskAnswered(string pageId, string request, bool taken)
     property string status: "live"
     readonly property SpaceRows spaces: SpaceRows {}
     readonly property SpaceRows pages: SpaceRows {}

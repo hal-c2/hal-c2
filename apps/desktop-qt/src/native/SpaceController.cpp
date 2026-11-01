@@ -1028,7 +1028,14 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     m_historyRefresh->stop();
     history()->close();
   } else if (action == QLatin1String("space.agent.ask")) {
-    call(QStringLiteral("page.askAgent"), {{QStringLiteral("pageId"), pageId}, {QStringLiteral("request"), field(QLatin1String("request"))}});
+    const QString request = field(QLatin1String("request"));
+    call(
+        QStringLiteral("page.askAgent"), {{QStringLiteral("pageId"), pageId}, {QStringLiteral("request"), request}},
+        [this, pageId, request](const QJsonObject&) { emit agentAskAnswered(pageId, request, true); },
+        [this, pageId, request](const QJsonObject&) {
+          emit agentAskAnswered(pageId, request, false);
+          return QString();
+        });
   } else if (action == QLatin1String("space.agent.stop")) {
     call(QStringLiteral("page.stopAgent"), {{QStringLiteral("pageId"), pageId}});
   } else if (action == QLatin1String("space.agent.dismiss")) {
