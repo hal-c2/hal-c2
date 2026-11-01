@@ -286,15 +286,16 @@ struct AgentWrites : Step<AgentWrites> {
   void show(std::ostream& os) const override { os << "the agent rewrites the file"; }
 };
 
-// The MC answers the oldest read it holds, if any, or fails it.
+// The MC answers one read it holds, if any, or fails it.
 struct AnswerRead : Step<AnswerRead> {
+  int pick = *rc::gen::inRange(0, 4);
   bool fail = *rc::gen::inRange(0, 4) == 0;
   explicit AnswerRead(const Model&) {}
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const {
     if (sut.heldReads.isEmpty()) return;
     sut.readFailed = sut.readFailed || fail;
-    sut.heldReads.takeFirst()(fail);
+    sut.heldReads.takeAt(pick % sut.heldReads.size())(fail);
   }
   void show(std::ostream& os) const override { os << (fail ? "fail a read" : "answer a read"); }
 };
