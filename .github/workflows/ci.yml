@@ -12,8 +12,9 @@ on:
   push:
     branches:
       - main
-  # Every job, proofs included, whatever changed: what no commit changes (Maude's latest
-  # release, the runner image) still gets looked at.
+  # Every job, proofs included, whatever changed: what no commit changes (the runner image,
+  # a flake in a proof) still gets looked at. Not Maude's latest release, which `mix proof`
+  # installs only if the build it restored has none.
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
@@ -104,8 +105,10 @@ jobs:
           # maude.install asks the GitHub API for releases; unauthenticated, runners hit its rate limit.
           GITHUB_TOKEN: ${{ github.token }}
 
+      # Only main's, which every branch can restore; a pull request's serves that pull
+      # request alone, and fills the repository's 10 GB with copies of main's.
       - name: Save deps, build and Maude
-        if: steps.mc.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.mc.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: |
