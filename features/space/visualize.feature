@@ -122,6 +122,10 @@ Feature: Charts on a page
         | About 3.5k signups | 5      |
         | We made $1.5M      | 1      |
         | We had 1,000k      | 1      |
+        | We have 1.000.000  | 1      |
+        | Version 2.1.0      | 2      |
+        | Version 2.1.0      | 1      |
+        | Change: -5         | 5      |
 
     Scenario Outline: A number in a list counts
       Given "Status" has the blocks "<page>"
@@ -134,6 +138,8 @@ Feature: Charts on a page
         | Jan,120 | 120    |
         | 1,2,3   | 2      |
         | 1,000   | 1000   |
+        | 10-20   | 20     |
+        | In 2026. | 2026  |
 
     Scenario: A number too large to read leaves the rest of the page readable
       Given "Status" has the blocks "Signups were 3 in May"
@@ -147,6 +153,21 @@ Feature: Charts on a page
       And text generation charts the request from the MC's threads and invents the values
       When the user asks for "/visualize weekly turns" on the page "Status"
       Then the chart holds the turns the MC counted
+
+    Scenario: Only what a person typed is a turn
+      Given this MC's threads took turns this week
+      And an agent, a schedule and the MC each sent "Work" a message
+      And a worker took turns on this MC
+      And text generation charts the request from the MC's threads and invents the values
+      When the user asks for "/visualize weekly turns" on the page "Status"
+      Then the chart holds the turns the MC counted
+
+    Scenario: A worker is not one of the threads counted
+      Given this MC's threads took turns this week
+      And a worker took turns on this MC
+      And text generation charts the request from the dataset "threads_by_project"
+      When the user asks for "/visualize it" on the page "Status"
+      Then the chart holds one thread for "shop"
 
     Scenario Outline: The MC answers from what it counts
       Given this MC's threads took turns this week

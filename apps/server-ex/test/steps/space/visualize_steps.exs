@@ -32,6 +32,33 @@ defmodule HalC2.Steps.Space.Visualize do
     Map.put(context, :turns_taken, 2)
   end
 
+  step "an agent, a schedule and the MC each sent {string} a message",
+       %{args: [title]} = context do
+    [
+      %{"senderThreadId" => "th-other"},
+      %{"scheduledTaskId" => "task-1"},
+      %{"notification" => %{"kind" => "task"}},
+      %{"delegatedCompletion" => %{"taskIds" => ["task-2"]}},
+      %{"providerWake" => true}
+    ]
+    |> Enum.reduce(context, &World.add_message(&2, title, "user", "not typed", nil, &1))
+    |> tap(fn _ -> Store.put_meta("test.flush", "1") end)
+  end
+
+  step "a worker took turns on this MC", context do
+    lineage = %{"parentThreadId" => "th-parent", "relationshipToParent" => "subagent"}
+
+    context = World.create_thread(context, "A worker", "shop")
+    worker = World.thread(context, "A worker")
+
+    context
+    |> World.put_entity("A worker", "thread", worker["id"], %{
+      "s" => Map.put(worker, "lineage", lineage)
+    })
+    |> World.add_message("A worker", "user", "its prompt")
+    |> tap(fn _ -> Store.put_meta("test.flush", "1") end)
+  end
+
   # --- what the model says -----------------------------------------------------------
 
   step "text generation charts the request from the MC's threads", context do
@@ -203,6 +230,14 @@ defmodule HalC2.Steps.Space.Visualize do
     chart = chart_block(context)["chart"]
     assert [%{"name" => ^name, "values" => values}] = chart["series"]
     assert Enum.at(values, Enum.find_index(chart["labels"], &(&1 == label))) > 0
+    context
+  end
+
+  step "the chart holds one thread for {string}", %{args: [label]} = context do
+    chart = chart_block(context)["chart"]
+    assert chart["labels"] == [label]
+    assert hd(chart["series"])["values"] == [1]
+    assert chart["source"] =~ "from its 1 thread"
     context
   end
 

@@ -266,18 +266,17 @@ defmodule HalC2.Store do
     end)
   end
 
-  @doc "The messages users sent since `since` (an ISO date), as `{stream id, day, count}`."
-  def turns_by_day(path, since) do
+  @doc "The ids of the threads with a message in a user's role since `since` (an ISO date)."
+  def threads_messaged_since(path, since) do
     with_reader(path, fn db ->
       {:ok, stmt} =
         Sqlite3.prepare(db, """
-        SELECT s.id, substr(m.created_at, 1, 10), count(*) FROM messages m
-        JOIN streams s ON s.key = m.stream
-        WHERE m.role = 'user' AND m.created_at >= ?1 GROUP BY 1, 2
+        SELECT DISTINCT s.id FROM messages m JOIN streams s ON s.key = m.stream
+        WHERE m.role = 'user' AND m.created_at >= ?1
         """)
 
       :ok = Sqlite3.bind(stmt, [since])
-      step_reduce(db, stmt, [], fn [id, day, count], acc -> [{id, day, count} | acc] end)
+      step_reduce(db, stmt, [], fn [id], acc -> [id | acc] end)
     end)
   end
 

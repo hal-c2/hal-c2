@@ -13,7 +13,7 @@ defmodule HalC2.Space.Visualize do
   """
 
   alias HalC2.Space.Chart
-  alias HalC2.{Store, TextGeneration}
+  alias HalC2.{Store, StreamState, TextGeneration}
 
   @page_bytes 8_000
   @weeks 12
@@ -28,6 +28,8 @@ defmodule HalC2.Space.Visualize do
   }
 
   @page_source "Numbers from this page"
+  @not_typed ~w(senderThreadId scheduledTaskId notification delegatedCompletion providerWake)
+
   @unanswerable "No chart was drawn: only numbers written on this page, and the turns and " <>
                   "threads on this MC, can be charted, and neither answers that."
 
@@ -113,11 +115,12 @@ defmodule HalC2.Space.Visualize do
       else: {:error, "The chart holds numbers this page does not state."}
   end
 
-  # Each number whole, as written: not the 35 in 350, the 3 in Q3, or the 3 in 3k or 3.5k.
-  # A comma before one is a list's, so 1,2,3 is three numbers. One too large for a float
-  # is not read.
+  # Each number whole, as written: not the 35 in 350, the 3 in Q3, the 3 in 3k or 3.5k, any
+  # part of 1.000.000 or 2.1.0, or the 5 in -5, which a chart cannot show. A dash after a
+  # digit is a range's, so 10-20 is two numbers, and a comma before one is a list's, so
+  # 1,2,3 is three. One too large for a float is not read.
   defp numbers(text) do
-    ~r/(?<![\w.])(?>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\w)/u
+    ~r/(?<![\w.])(?<!(?<!\d)[-−])(?>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\w|\.\d)/u
     |> Regex.scan(text)
     |> Enum.flat_map(fn [number] ->
       case number |> String.replace(",", "") |> Float.parse() do
@@ -131,7 +134,8 @@ defmodule HalC2.Space.Visualize do
   # --- what this MC counts -----------------------------------------------------------
 
   # `{labels, series name, values, source}`, or nil with nothing to count. A turn is a
-  # message a user sent; these are this MC's threads only, not a cluster peer's.
+  # message a user typed; these are this MC's threads only, not a cluster peer's, and
+  # none of the workers the sidebar leaves out.
   defp counted(id, today) do
     threads = threads()
     since = today |> Date.add(-7 * (@weeks - 1)) |> Date.beginning_of_week()
@@ -160,16 +164,30 @@ defmodule HalC2.Space.Visualize do
   defp threads do
     for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
         mc == node() and row["deletedAt"] == nil,
+        get_in(row, ["lineage", "relationshipToParent"]) != "subagent",
         into: %{},
         do: {id, row}
   end
 
-  # `{thread id, day, count}`s.
+  # `{thread id, day, 1}`s. The index says which threads to read, but not who sent a
+  # message: only its entity does, so each is read from the log, not its running stream.
   defp turns(threads, since) do
-    for {id, _day, _count} = turn <- Store.turns_by_day(Store.path(), Date.to_iso8601(since)),
+    path = Store.path()
+    since = Date.to_iso8601(since)
+
+    for id <- Store.threads_messaged_since(path, since),
         is_map_key(threads, id),
-        do: turn
+        %{"createdAt" => <<day::binary-size(10), _::binary>>} = message <-
+          path |> StreamState.load(id) |> StreamState.list("message"),
+        day >= since and typed?(message),
+        do: {id, day, 1}
   end
+
+  # What an agent, a schedule or the MC sent has the role of a user's message too.
+  defp typed?(%{"role" => "user"} = message),
+    do: not Enum.any?(@not_typed, &(message[&1] != nil))
+
+  defp typed?(_message), do: false
 
   defp started(threads, since) do
     since = Date.to_iso8601(since)
