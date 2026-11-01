@@ -28,6 +28,9 @@ Scan the QR code on your phone or paste the pairing URL into the receiving app's
 pairing field. A loopback address such as `127.0.0.1` reaches only the device opening
 the link, so Settings shows no QR code for one.
 
+An MC listening on every interface (`HAL_C2_MC_HOST=0.0.0.0`) puts this machine's network
+address in a link made in Settings, passing over bridges for local containers and VMs.
+
 When your machines are [clustered](#cluster-your-machines), **Settings →
 Connections** asks which machine the link is for. A phone reaches the whole
 cluster through the machine it paired with, and loses it when that machine
