@@ -273,7 +273,7 @@ defmodule HalC2.SpacePropTest do
 
   def precondition(s, {:call, _, :insert_chart, [name, page, _, after_id]}),
     do:
-      not is_map_key(s.blocks, name) and is_map_key(s.pages, page) and
+      name not in s.used and is_map_key(s.pages, page) and
         (not is_binary(after_id) or is_map_key(s.blocks, after_id))
 
   def precondition(s, {:call, _, :replace_chart, [name, page, _]}),
@@ -476,7 +476,14 @@ defmodule HalC2.SpacePropTest do
       true ->
         block = %{page: page, kind: "chart", checked: false, text: summary(title), chart: title}
         order = place(s.order[page], after_id, name)
-        {:ok, %{s | blocks: Map.put(s.blocks, name, block), order: %{s.order | page => order}}, 1}
+
+        {:ok,
+         %{
+           s
+           | blocks: Map.put(s.blocks, name, block),
+             order: %{s.order | page => order},
+             used: [name | s.used]
+         }, 1}
     end
   end
 
@@ -937,7 +944,7 @@ defmodule HalC2.SpacePropTest do
       seqs = Enum.map(versions, & &1.version)
       {:ok, newest} = Space.page_version(space, id(page), hd(seqs))
       state = Streams.state(stream())
-      content = &Map.take(&1, ~w(id kind text checked linkedPageId imageId order))
+      content = &Map.take(&1, ~w(id kind text checked linkedPageId imageId chart order))
 
       cond do
         seqs != seqs |> Enum.uniq() |> Enum.sort(:desc) ->

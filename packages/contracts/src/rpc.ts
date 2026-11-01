@@ -89,6 +89,8 @@ import {
 import {
   WorktreeSetupCancelInput,
   WorktreeSetupCancelResult,
+  WorktreeSetupRetryInput,
+  WorktreeSetupRetryResult,
   WorktreeSetupStreamEvent,
   WorktreeSetupSubscribeInput,
 } from "./worktreeSetup.ts";
@@ -640,6 +642,7 @@ export const WS_METHODS = {
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeWorktreeSetup: "subscribeWorktreeSetup",
   worktreeSetupCancel: "worktreeSetup.cancel",
+  worktreeSetupRetry: "worktreeSetup.retry",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
   subscribePreviewEvents: "subscribePreviewEvents",
@@ -1392,6 +1395,12 @@ const WsSubscribeWorktreeSetupRpc = Rpc.make(WS_METHODS.subscribeWorktreeSetup, 
 const WsWorktreeSetupCancelRpc = Rpc.make(WS_METHODS.worktreeSetupCancel, {
   payload: WorktreeSetupCancelInput,
   success: WorktreeSetupCancelResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsWorktreeSetupRetryRpc = Rpc.make(WS_METHODS.worktreeSetupRetry, {
+  payload: WorktreeSetupRetryInput,
+  success: WorktreeSetupRetryResult,
   error: EnvironmentAuthorizationError,
 });
 
@@ -2277,6 +2286,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeVcsStatusRpc,
   WsSubscribeWorktreeSetupRpc,
   WsWorktreeSetupCancelRpc,
+  WsWorktreeSetupRetryRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
   WsGitRunStackedActionRpc,

@@ -135,6 +135,7 @@ Feature: RPC parity with the TypeScript server
       | vcs.refreshStatus                        | vcs               | rpc                                                                       |
       | subscribeWorktreeSetup                   | worktreeSetup     | shape worktreeSetup                                                       |
       | worktreeSetup.cancel                     | worktreeSetup     | rpc                                                                       |
+      | worktreeSetup.retry                      | worktreeSetup     | rpc                                                                       |
       | git.runStackedAction                     | git               | shape gitAction                                                           |
       | git.resolvePullRequest                   | git               | rpc                                                                       |
       | git.preparePullRequestThread             | git               | rpc                                                                       |

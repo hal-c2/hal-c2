@@ -692,6 +692,8 @@ defmodule HalC2.Steps.Threads do
              &(&1["status"] in ~w(queued preparing starting running waiting))
            )
 
+    # Deleting stops the runtime without a release, so its entry outlives it briefly.
+    Mc.settle_registry(HalC2.Codex.Registry)
     assert Registry.lookup(HalC2.Codex.Registry, id) == []
     context
   end

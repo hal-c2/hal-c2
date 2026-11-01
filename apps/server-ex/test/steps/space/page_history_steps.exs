@@ -89,6 +89,29 @@ defmodule HalC2.Steps.Space.PageHistory do
     context
   end
 
+  step "the version draws a chart of {string} {int} and {string} {int}",
+       %{args: [first, a, next, b]} = context do
+    chart = Enum.find(context.reading["blocks"], &(&1["kind"] == "chart"))["chart"]
+    assert numbers(chart) == [{first, a}, {next, b}]
+    context
+  end
+
+  step "the chart on {string} is drawn again with {string} {int} and {string} {int}",
+       %{args: [title, first, a, next, b]} = context do
+    block = chart_block(context)
+    series = [%{hd(block["chart"]["series"]) | "values" => [a, b]}]
+    chart = %{block["chart"] | "labels" => [first, next], "series" => series}
+    id = page_id(context, title)
+    assert {:ok, _} = Space.put_chart(context.space, id, chart, block["id"])
+    context
+  end
+
+  step "the chart holds {string} {int} and {string} {int}",
+       %{args: [first, a, next, b]} = context do
+    assert numbers(chart_block(context)["chart"]) == [{first, a}, {next, b}]
+    context
+  end
+
   step "the version shows the image {string}", %{args: [name]} = context do
     assert image_in_version(context, name)["imageId"] == Map.fetch!(context.image_ids, name)
     context
@@ -215,6 +238,14 @@ defmodule HalC2.Steps.Space.PageHistory do
 
   defp image_in_version(context, name),
     do: Enum.find(context.reading["blocks"], &(&1["kind"] == "image" and &1["text"] == name))
+
+  defp chart_block(context) do
+    {:ok, state} = Space.state(context.space)
+    Enum.find(HalC2.StreamState.list(state, "block"), &(&1["kind"] == "chart"))
+  end
+
+  defp numbers(%{"labels" => labels, "series" => [%{"values" => values}]}),
+    do: Enum.zip(labels, values)
 
   defp texts_of(read), do: Enum.map_join(read["blocks"], ", ", & &1["text"])
 

@@ -163,8 +163,11 @@ defmodule HalC2Plugins.Planner.Sync do
             for {number, answer} <- read, reduce: {known ++ details, problems} do
               {details, problems} ->
                 case answer do
-                  {:ok, issue} -> {[issue | details], problems}
-                  {:error, error} -> {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
+                  {:ok, issue} ->
+                    {[issue | details], problems}
+
+                  {:error, error} ->
+                    {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
                 end
             end
 
@@ -888,13 +891,18 @@ defmodule HalC2Plugins.Planner.Sync do
   with, open, with no dates on the board, and the relations of `synced`, so a push
   closes it, dates it and relates it as the task has it.
   """
-  def created(synced, sent),
-    do:
-      synced
-      |> Map.merge(Map.take(sent, ~w(title notes labels)))
-      # Only the owner GitHub was actually asked to assign is one it has.
-      |> Map.put("owner", if(Plan.login?(sent["owner"]), do: sent["owner"]))
-      |> Map.merge(%{"state" => "open", "start" => nil, "due" => nil})
+  def created(synced, sent, issue) do
+    # Only the owner GitHub was actually asked to assign is one it has, on the new issue.
+    owner = if Plan.login?(sent["owner"]), do: sent["owner"]
+
+    synced
+    |> Map.merge(Map.take(sent, ~w(title notes labels)))
+    |> Map.merge(%{
+      "owner" => owner,
+      "ownerIssue" => if(owner, do: Map.take(issue, ~w(repository number)))
+    })
+    |> Map.merge(%{"state" => "open", "start" => nil, "due" => nil})
+  end
 
   defp fields(item),
     do:
@@ -1034,9 +1042,17 @@ defmodule HalC2Plugins.Planner.Sync do
     on_was = was && Map.put(was, "projectId", project_id(Map.put(new, "issue", was), projects))
     pushed = is_binary(on_was["projectId"]) && was
 
-    # The old owner comes off the issue they were synced to (`was`), the new one goes
-    # on the task's own: a relink and an owner change can land in one chained push.
-    update = update ++ owner_pushes(base, if(pushed, do: on_was), synced, new)
+    # The old owner comes off the issue a push put them on, else the one they were synced
+    # to (`was`), the new one goes on the task's own: a relink and an owner change can land
+    # in one chained push. The issue they landed on is kept apart from `was`, which the
+    # relations still to drop need when a later part of the push is refused.
+    holder = synced["ownerIssue"] || was
+
+    on_holder =
+      holder && Map.put(holder, "projectId", project_id(Map.put(new, "issue", holder), projects))
+
+    off_from = if is_binary(on_holder["projectId"]), do: on_holder
+    update = update ++ owner_pushes(base, off_from, synced, new)
     kept? = &(not moved? and Plan.same_ref?(had(synced, items, &1), ref(items, &1)))
     kept = Enum.filter(synced["after"], &(&1 in new["after"] and kept?.(&1)))
     onto = &Map.put(&1, "issue", me)
@@ -1086,7 +1102,7 @@ defmodule HalC2Plugins.Planner.Sync do
   # The task holds one of the issue's assignees, so a new owner replaces only the old
   # one: the old comes off first, then the new goes on, and GitHub has the owner it took
   # last, so a refusal in between sends only what is left.
-  defp owner_pushes(base, on_was, synced, new) do
+  defp owner_pushes(base, on_holder, synced, new) do
     old = synced["owner"]
     login = new["owner"]
     # GitHub reads a login whatever its case, so a change of case alone pushes nothing.
@@ -1096,15 +1112,22 @@ defmodule HalC2Plugins.Planner.Sync do
     # no GitHub assignee under that string, so there is nothing to take off, and
     # asking would be refused before GitHub and wedge every later push.
     off =
-      if changed? and Plan.login?(old) and not is_nil(on_was),
+      if changed? and Plan.login?(old) and not is_nil(on_holder),
         do: [
-          {"removeAssignees", Map.put(on_was, "assignees", [old]), &Map.put(&1, "owner", nil)}
+          {"removeAssignees", Map.put(on_holder, "assignees", [old]),
+           &Map.merge(&1, %{"owner" => nil, "ownerIssue" => nil})}
         ],
         else: []
 
     on =
       if changed? and Plan.login?(login),
-        do: [{"addAssignees", Map.put(base, "assignees", [login]), &Map.put(&1, "owner", login)}],
+        do: [
+          {"addAssignees", Map.put(base, "assignees", [login]),
+           &Map.merge(&1, %{
+             "owner" => login,
+             "ownerIssue" => Map.take(base, ~w(repository number))
+           })}
+        ],
         else: []
 
     off ++ on
@@ -1231,8 +1254,7 @@ defmodule HalC2Plugins.Planner.Sync do
       for {id, issue} <- to_correct do
         holder = linked(items, issue)
 
-        {id, issue,
-         holder && List.first(holders(items, ref["repository"], holder["id"])),
+        {id, issue, holder && List.first(holders(items, ref["repository"], holder["id"])),
          if(id in new["after"],
            do: &placed(&1, id, issue),
            else: &unrelate(&1, "after", id, issue)
@@ -1345,6 +1367,35 @@ defmodule HalC2Plugins.Planner.Sync do
         {issue_key(issue), %{"task" => id, "issue" => issue}}
       end
 
+    Map.put(synced, "misplaced", Map.merge(marks(synced), at))
+  end
+
+  @doc """
+  Milestone id → the marks (`misplaced/2`) of issues GitHub has in it that no push will
+  ask out: a task whose move GitHub refused no longer has its old milestone hold it, so
+  when the task leaves its issue, by a relink, an unlink or its removal, nothing in the
+  plan names the issue as in that milestone any more. A milestone that holds the task
+  asks by itself. `before` and `items` are the plan either side of a change.
+  """
+  def left(before, items) do
+    for {id, %{"issue" => %{"milestone" => number} = issue}} <- before,
+        is_integer(number),
+        not Plan.same_ref?(issue, get_in(items, [id, "issue"])),
+        {holder, %{"milestone" => %{"number" => ^number} = ref} = milestone} <- before,
+        same?(ref["repository"], issue["repository"]),
+        id not in milestone["after"],
+        reduce: %{} do
+      left ->
+        mark = %{"task" => id, "issue" => Map.take(issue, ~w(repository number))}
+        Map.update(left, holder, [mark], &(&1 ++ [mark]))
+    end
+  end
+
+  @doc "`synced` with the marks of `left/2`; nothing else when there are none."
+  def left_behind(synced, []), do: synced
+
+  def left_behind(synced, marks) do
+    at = Map.new(marks, &{issue_key(&1["issue"]), &1})
     Map.put(synced, "misplaced", Map.merge(marks(synced), at))
   end
 

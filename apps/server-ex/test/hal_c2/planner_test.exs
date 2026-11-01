@@ -979,6 +979,44 @@ defmodule HalC2.PlannerTest do
       assert took.(synced)["misplaced"] == %{}
     end
 
+    test "an issue left in a milestone that no longer holds its task goes out once the task leaves it" do
+      issue = %{"repository" => @repo, "number" => 7}
+
+      milestone = fn id, number, after_ ->
+        %{
+          "id" => id,
+          "title" => "Launch",
+          "due" => nil,
+          "after" => after_,
+          "projectId" => "p",
+          "milestone" => %{"repository" => @repo, "number" => number}
+        }
+      end
+
+      # GitHub refused moving #7 from milestone 3 to 4, so it still has it in 3.
+      before = %{
+        "ms" => milestone.("ms", 3, []),
+        "mr" => milestone.("mr", 4, ["t"]),
+        "t" => task(Map.put(issue, "milestone", 3))
+      }
+
+      items = %{"ms" => before["ms"], "mr" => milestone.("mr", 4, [])}
+      marks = [%{"task" => "t", "issue" => issue}]
+      assert Sync.left(before, items) == %{"ms" => marks}
+
+      # A task still naming the issue leaves nothing behind.
+      assert Sync.left(before, before) == %{}
+
+      synced =
+        %{"title" => "Launch", "due" => nil, "after" => [], "refs" => %{}}
+        |> Sync.left_behind(marks)
+
+      assert [{"update", %{"number" => 7, "milestone" => nil}, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+
+      assert took.(synced)["misplaced"] == %{}
+    end
+
     test "keeps a mark per issue, so a task that left two issues behind loses neither" do
       issue = fn n -> %{"repository" => @repo, "number" => n} end
       op = fn n -> {"t", {"update", issue.(n), nil}} end
@@ -1346,6 +1384,54 @@ defmodule HalC2.PlannerTest do
 
       assert {"addAssignees", %{"number" => 8, "assignees" => ["dana"]}, _} =
                Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
+    end
+
+    test "an owner a refused relink push left on the new issue comes off it, and the relations off the old" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      old_issue = %{"repository" => "acme/api", "number" => 7}
+      new_issue = %{"repository" => "acme/api", "number" => 8}
+      other = %{"repository" => "acme/api", "number" => 9}
+
+      task = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "bob",
+        "after" => [],
+        "parent" => nil,
+        "issue" => new_issue
+      }
+
+      items = %{"t" => task, "o" => %{"id" => "o", "issue" => other}}
+
+      synced =
+        Sync.synced(
+          %{task | "owner" => "alice", "issue" => old_issue, "after" => ["o"]},
+          %{},
+          items
+        )
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, task, items, projects)
+      names = Enum.map(ops, &elem(&1, 0))
+      assert names == ["removeAssignees", "addAssignees", "removeBlockedBy"]
+
+      # GitHub takes the assignees and refuses the drop.
+      left =
+        ops |> Enum.take(2) |> Enum.reduce(synced, fn {_, _, took}, acc -> took.(acc) end)
+
+      ops =
+        Sync.pushes(%{"sync" => "twoWay"}, left, %{task | "owner" => "carol"}, items, projects)
+
+      assert {"removeAssignees", %{"number" => 8, "assignees" => ["bob"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "removeAssignees"))
+
+      assert {"addAssignees", %{"number" => 8, "assignees" => ["carol"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
+
+      assert {"removeBlockedBy", %{"number" => 7}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "removeBlockedBy"))
     end
 
     test "a case-only owner change pushes no assignee ops" do

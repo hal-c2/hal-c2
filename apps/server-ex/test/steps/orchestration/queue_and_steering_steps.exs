@@ -341,6 +341,11 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
       StreamState.get(state, "turn-item")["turn-item:user:#{message_id}"] != nil
     end)
 
+    # The restart kills the runtime stuck holding the steer. Were the run still watched,
+    # that could end it before the stream stops, and recovery would skip the thread (#704).
+    HalC2.Orchestration.TurnWatch.release(context.running)
+    false = HalC2.Orchestration.TurnWatch.driven?(context.running)
+
     context |> Map.put(:thread, thread) |> Map.put(:repeat_command, command)
   end
 

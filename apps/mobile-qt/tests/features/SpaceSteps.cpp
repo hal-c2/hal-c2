@@ -2255,6 +2255,18 @@ const Steps steps([] {
     const QStringList texts = column(viewOf(world)->history()->blocks(), S("text"));
     expect(texts == listed(c[0]), S("the version reads %1").arg(show(texts)));
   });
+  step(S("the version draws a chart of %1 (\\d+) and %1 (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    SpaceRows* blocks = viewOf(world)->history()->blocks();
+    const QVariantList labels{c[0], c[2]};
+    const QVariantList values{c[1].toDouble(), c[3].toDouble()};
+    for (const QVariantMap& row : blocks->rows()) {
+      if (row.value(S("kind")) != QLatin1String("chart")) continue;
+      const QVariantMap chart = row.value(S("chart")).toMap();
+      expect(chart.value(S("labels")).toList() == labels && chart.value(S("series")).toList().value(0).toMap().value(S("values")).toList() == values, S("the version's chart reads %1").arg(show(chart.value(S("labels")).toStringList())));
+      return;
+    }
+    expect(false, S("no chart in the version"));
+  });
   step(S("the user goes back to the list of versions"), [](World& world, const Captures&, const Table&) { backTo(world, S("history")); });
   step(S("no version is being read"), [](World& world, const Captures&, const Table&) {
     expect(!viewOf(world)->history()->reading() && viewOf(world)->history()->blocks()->rowCount() == 0, S("a version is still being read"));

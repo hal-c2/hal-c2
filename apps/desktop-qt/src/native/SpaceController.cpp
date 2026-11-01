@@ -253,7 +253,7 @@ SpaceHistory::SpaceHistory(std::function<QString(const QString&)> titleOf,
       m_imageFields(std::move(imageFields)),
       m_versions(new SpaceRows({"id", "version", "at", "byAgent", "threadTitle", "restoredFromAt"}, this)),
       m_blocks(new SpaceRows({"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
-                              "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
+                              "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
                              this)) {}
 
 SpaceHistory::Next SpaceHistory::open(const QString& pageId) {
@@ -409,7 +409,8 @@ void SpaceHistory::repaint() {
                     {QStringLiteral("linkedPageId"), linked},
                     {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : m_titleOf(linked)},
                     {QStringLiteral("byAgent"), byAgent(block.value(QLatin1String("updatedBy")))},
-                    {QStringLiteral("openComments"), 0}};
+                    {QStringLiteral("openComments"), 0},
+                    {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()}};
     row.insert(m_imageFields(image ? text(block, QLatin1String("imageId")) : QString()));
     rows.append(row);
   }
