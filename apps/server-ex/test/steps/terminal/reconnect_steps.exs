@@ -51,10 +51,7 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     Map.put(context, :pages, pages)
   end
 
-  # The pages' wait for the last line ends before the prompt that follows it, and a
-  # command typed by then would print its line behind that prompt (`$ still here`).
   step "the terminal prints {string}", %{args: [text]} = context do
-    Terminal.await_prompt(context.terminal, "")
     {first, rest} = String.split_at(text, 1)
     Terminal.write(context, "default", "echo #{first}''\"#{rest}\"\n")
   end
@@ -584,9 +581,16 @@ defmodule HalC2.Steps.Terminal.Reconnect do
       )
 
   # Output on the "default" client until each page in `ids` has been told a
-  # line reading `text`; what each page was told is kept per page.
+  # line reading `text` and the prompt after it; what each page was told is kept
+  # per page. With the prompt read, no output is left to reach a page that leaves,
+  # and the next command typed prints its line at the start of one.
   defp await_pages(context, ids, text, seen \\ %{}) do
-    if Enum.all?(ids, &(Map.get(seen, &1, "") =~ line(text))) do
+    told? = fn id ->
+      output = Map.get(seen, id, "")
+      output =~ line(text) and Terminal.at_prompt?(output)
+    end
+
+    if Enum.all?(ids, told?) do
       Map.put(context, :page_output, seen)
     else
       {frame, client} = HalC2.Test.WsClient.recv(World.client(context, "default"), 5_000)
