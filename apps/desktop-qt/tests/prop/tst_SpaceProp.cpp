@@ -40,9 +40,11 @@ const QString kSpace = QStringLiteral("space-1");
 const QString kPage = QStringLiteral("page");
 const QString kBlock = QStringLiteral("block");
 const QString kComment = QStringLiteral("comment");
+const QString kSite = QStringLiteral("site");
 constexpr int kMaxPages = 5;
 constexpr int kMaxBlocks = 6;
 constexpr int kMaxComments = 4;
+constexpr int kMaxSites = 3;
 
 // Entities by "kind\nid".
 using Entities = QMap<QString, QJsonObject>;
@@ -272,6 +274,18 @@ bool untrashed(const Entities& held, const QJsonObject& page) {
   return true;
 }
 
+// What the page has published: one site at most, as the MC keeps it.
+QVariantMap siteShownOf(const Model& model) {
+  for (const QJsonObject& site : ofKind(model.held, kSite)) {
+    if (str(site, "pageId") != model.selected) continue;
+    return {{QStringLiteral("url"), str(site, "url")},
+            {QStringLiteral("localOnly"), site.value(QLatin1String("localOnly")).toBool()},
+            {QStringLiteral("behind"), site.value(QLatin1String("behind")).toBool()},
+            {QStringLiteral("publishedAt"), str(site, "publishedAt")}};
+  }
+  return {};
+}
+
 QVariantMap pageOf(const Model& model) {
   const QJsonObject page = model.held.value(keyOf(kPage, model.selected));
   if (page.isEmpty()) return {};
@@ -281,7 +295,8 @@ QVariantMap pageOf(const Model& model) {
           {QStringLiteral("parentPageId"), str(page, "parentPageId")},
           {QStringLiteral("trashed"), !untrashed(model.held, page)},
           {QStringLiteral("sourceThreadId"), thread},
-          {QStringLiteral("sourceThreadTitle"), thread.isEmpty() ? QString() : QStringLiteral("a thread")}};
+          {QStringLiteral("sourceThreadTitle"), thread.isEmpty() ? QString() : QStringLiteral("a thread")},
+          {QStringLiteral("site"), siteShownOf(model)}};
 }
 
 // What follows a change to the copy or to the user's edits: a selected page the
@@ -392,7 +407,7 @@ struct Sut {
 
   void check(const Model& model) {
     RC_ASSERT(pages.spaceId() == kSpace);
-    for (const QString& kind : {kPage, kBlock, kComment}) {
+    for (const QString& kind : {kPage, kBlock, kComment, kSite}) {
       QMap<QString, QJsonObject> got;
       for (auto it = pages.space().of(kind).cbegin(); it != pages.space().of(kind).cend(); ++it) got.insert(it.key(), *it);
       RC_ASSERT(got == ofKind(model.held, kind));
@@ -465,6 +480,7 @@ struct Write : Command {
     const QStringList pages = idsOf(model, kPage);
     const QStringList blocks = idsOf(model, kBlock);
     const QStringList comments = idsOf(model, kComment);
+    const QStringList sites = idsOf(model, kSite);
     std::vector<QString> ops;
     const auto offer = [&ops](int weight, const char* name) { ops.insert(ops.end(), weight, QString::fromLatin1(name)); };
     if (pages.size() < kMaxPages) offer(3, "page.create");
@@ -488,11 +504,17 @@ struct Write : Command {
       offer(2, "comment.resolve");
       offer(1, "comment.delete");
     }
+    if (!pages.isEmpty() && sites.size() < kMaxSites) offer(2, "site.create");
+    if (!sites.isEmpty()) {
+      offer(2, "site.behind");
+      offer(1, "site.republish");
+      offer(1, "site.delete");
+    }
     op = *rc::gen::elementOf(ops);
     const QString kind = op.section(QLatin1Char('.'), 0, 0);
     const bool creates = op.endsWith(QLatin1String(".create"));
-    id = creates ? unused(model, kind, kind == kPage ? kMaxPages : kind == kBlock ? kMaxBlocks : kMaxComments)
-                 : pick(kind == kPage ? pages : kind == kBlock ? blocks : comments);
+    id = creates ? unused(model, kind, kind == kPage ? kMaxPages : kind == kBlock ? kMaxBlocks : kind == kSite ? kMaxSites : kMaxComments)
+                 : pick(kind == kPage ? pages : kind == kBlock ? blocks : kind == kSite ? sites : comments);
     if (op == QLatin1String("page.create")) {
       value = pick({QStringLiteral("Roadmap"), QStringLiteral("Q3"), QStringLiteral("  "), QString()});
       other = pick(pages + QStringList{QString()});
@@ -516,6 +538,9 @@ struct Write : Command {
       flag = *rc::gen::arbitrary<bool>();
     } else if (op == QLatin1String("comment.create")) {
       other = pick(blocks);
+      flag = *rc::gen::arbitrary<bool>();
+    } else if (op == QLatin1String("site.create")) {
+      other = pick(pages);
       flag = *rc::gen::arbitrary<bool>();
     }
     twice = *rc::gen::weightedElement<bool>({{4, false}, {1, true}});
@@ -596,6 +621,16 @@ struct Write : Command {
                   {QStringLiteral("resolvedAt"), QJsonValue::Null}, {QStringLiteral("author"), author(flag)},
                   {QStringLiteral("createdAt"), at}});
     }
+    if (op == QLatin1String("site.create")) {
+      if (!model.mc.contains(keyOf(kPage, other))) return std::nullopt;
+      for (const QJsonObject& site : ofKind(model.mc, kSite)) {
+        if (str(site, "pageId") == other) return std::nullopt;
+      }
+      return set({{QStringLiteral("id"), id}, {QStringLiteral("pageId"), other}, {QStringLiteral("url"), QStringLiteral("http://mc/sites/") + id},
+                  {QStringLiteral("localOnly"), flag}, {QStringLiteral("behind"), false}, {QStringLiteral("publishedAt"), at}});
+    }
+    if (op == QLatin1String("site.behind")) return set({{QStringLiteral("behind"), !current.value(QLatin1String("behind")).toBool()}});
+    if (op == QLatin1String("site.republish")) return set({{QStringLiteral("behind"), false}, {QStringLiteral("publishedAt"), at}});
     // comment.resolve: resolves an open one, reopens a resolved one.
     return set({{QStringLiteral("resolvedAt"), str(current, "resolvedAt").isEmpty() ? QJsonValue(at) : QJsonValue(QJsonValue::Null)}});
   }

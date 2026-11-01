@@ -165,12 +165,16 @@ hal-c2-service pair --tailscale   # the installed MC file
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
-The mapping created for it persists across restarts. Remove its
+The mapping created for it persists across restarts, and publishing a page
+[over Tailscale](sites.md#who-can-open-the-link) creates the same one. Remove its
 default-port mapping with:
 
 ```bash
 tailscale serve --https=443 off
 ```
+
+When something else held port 443, the mapping is on the MC's own port instead:
+`tailscale serve --https=<port> off`, with the port shown in the link.
 
 If that port is already in use, choose another with
 `--tailscale-serve-port` (`pair --tailscale --tailscale-serve-port 8443`).
