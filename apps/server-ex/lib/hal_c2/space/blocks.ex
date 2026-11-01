@@ -72,14 +72,15 @@ defmodule HalC2.Space.Blocks do
     |> Pages.refused()
   end
 
-  defp text(state, %{"kind" => "image"} = spec) do
+  @doc "The text a block made from `spec` has: an image with no caption reads as its name."
+  def text(state, %{"kind" => "image"} = spec) do
     case spec["text"] do
       text when text in [nil, ""] -> Images.get(state, spec["imageId"])["name"]
       text -> text
     end
   end
 
-  defp text(_state, spec), do: spec["text"] || ""
+  def text(_state, spec), do: spec["text"] || ""
 
   # Only an image block has the key: every other block stays as it was written.
   defp with_image(block, %{"kind" => "image", "imageId" => id}), do: Map.put(block, "imageId", id)

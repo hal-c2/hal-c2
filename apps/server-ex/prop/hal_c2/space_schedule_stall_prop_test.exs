@@ -4,8 +4,9 @@ defmodule HalC2.SpaceScheduleStallPropTest do
   stream that may not answer while the scheduler reconciles it or boots. The promises
   modelled: a task is held exactly when the scheduler last read its page in the trash, a
   held task has no next run, a reconcile of one Space leaves the other's debt alone, a
-  stream that does not answer holds up only its own Space, and once the streams answer
-  one tick settles every task and shows it on its page, whatever went unanswered before.
+  stream that does not answer holds up only its own Space and is not waited on again by
+  a later change, and once the streams answer one tick settles every task and shows it on
+  its page, whatever went unanswered before.
   """
 
   use ExUnit.Case, async: false
@@ -77,6 +78,7 @@ defmodule HalC2.SpaceScheduleStallPropTest do
       {2, {:call, __MODULE__, :restart_stalled, [index]}},
       {2, {:call, __MODULE__, :tick_stalled, [index]}},
       {2, {:call, __MODULE__, :edit_stalled, [index]}},
+      {2, {:call, __MODULE__, :edit_beside_stalled, [index]}},
       {3, {:call, __MODULE__, :tick, []}}
     ])
   end
@@ -99,6 +101,7 @@ defmodule HalC2.SpaceScheduleStallPropTest do
   defp step(s, :restart_stalled, [i]), do: settled(s, i)
   defp step(s, :tick_stalled, [i]), do: settled(s, i)
   defp step(s, :edit_stalled, [_i]), do: s
+  defp step(s, :edit_beside_stalled, [_i]), do: s
   defp step(s, :tick, []), do: settled(s, nil)
 
   # Every Space whose stream answers holds its page's fate; the `stalled` one keeps its own.
@@ -156,14 +159,7 @@ defmodule HalC2.SpaceScheduleStallPropTest do
     stream = Streams.ensure(Space.stream_id(space))
     :sys.suspend(stream)
 
-    {:ok, _} =
-      ScheduledTasks.put_page_task(%{
-        "id" => "page:" <> page,
-        "title" => "Page update",
-        "page" => %{"spaceId" => space, "pageId" => page},
-        "prompt" => "Summarise #{System.unique_integer([:positive])}",
-        "schedule" => @cadence
-      })
+    {:ok, _} = ScheduledTasks.put_page_task(page_task(space, page))
 
     ref = Process.monitor(stream)
     Process.exit(stream, :kill)
@@ -171,6 +167,24 @@ defmodule HalC2.SpaceScheduleStallPropTest do
     receive do
       {:DOWN, ^ref, :process, _, :killed} -> observed()
     end
+  end
+
+  # A change in the Space beside a stopped stream that has already been waited on. The
+  # limit outlasts the call, so waiting on that stream again would raise here.
+  def edit_beside_stalled(i) do
+    {space, page} = page(i)
+    other = 1 - i
+    {other_space, other_page} = page(other)
+
+    stalled(i, fn ->
+      {:ok, _} = ScheduledTasks.put_page_task(page_task(space, page))
+      Application.put_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, 60_000)
+      {:ok, _} = ScheduledTasks.put_page_task(page_task(other_space, other_page))
+      Application.put_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, 1_000)
+      true = shown?(other)
+    end)
+
+    observed()
   end
 
   def tick do
@@ -189,6 +203,17 @@ defmodule HalC2.SpaceScheduleStallPropTest do
   end
 
   defp page(i), do: Process.get(:pages)[i]
+
+  # Each says something new, so its page has something new to show.
+  defp page_task(space, page) do
+    %{
+      "id" => "page:" <> page,
+      "title" => "Page update",
+      "page" => %{"spaceId" => space, "pageId" => page},
+      "prompt" => "Summarise #{System.unique_integer([:positive])}",
+      "schedule" => @cadence
+    }
+  end
 
   # What the Space and the scheduler hold, in the model's terms. A held task with a next
   # run, or a free one without, raises here.

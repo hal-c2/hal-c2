@@ -135,7 +135,8 @@ defmodule HalC2.Space.Sites do
   defp published(state, %{"kind" => "generated"} = block) do
     block["text"]
     |> Markdown.blocks()
-    |> Enum.flat_map(&published(state, Space.links(state, &1)))
+    |> Enum.map(&Space.links(state, &1))
+    |> Enum.flat_map(&published(state, Map.put(&1, "text", Blocks.text(state, &1))))
   end
 
   defp published(state, %{"kind" => "subpage_link"} = block) do

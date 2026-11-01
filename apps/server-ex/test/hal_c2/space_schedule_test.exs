@@ -62,6 +62,20 @@ defmodule HalC2.SpaceScheduleTest do
     assert next
   end
 
+  test "a scheduler from before page tasks settled apart still ticks once updated", ctx do
+    scheduler = Process.whereis(ScheduledTasks)
+    :sys.replace_state(scheduler, &Map.drop(&1, [:unsettled, :silent]))
+
+    # What `HalC2.Hot` does for a process whose module changed.
+    :ok = :sys.suspend(scheduler)
+    :ok = :sys.change_code(scheduler, ScheduledTasks, nil, :hot)
+    :ok = :sys.resume(scheduler)
+
+    send(ScheduledTasks, :tick)
+    assert :ok = ScheduledTasks.reconcile_pages(ctx.space)
+    assert Process.whereis(ScheduledTasks) == scheduler
+  end
+
   describe "a Space's stream that does not answer" do
     setup ctx do
       Application.put_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, 200)
@@ -93,6 +107,31 @@ defmodule HalC2.SpaceScheduleTest do
       Process.exit(ctx.stream, :kill)
       assert_receive {:DOWN, ^ref, :process, _, :killed}
 
+      send(ScheduledTasks, :tick)
+      assert [_, _] = ScheduledTasks.page_tasks()
+
+      assert {:ok, %{page: page}} = Space.page(ctx.space, ctx.page)
+      assert page["schedule"]["instruction"] == "Summarise more"
+    end
+
+    test "is waited on once, not by every change until the next tick", ctx do
+      {:ok, _} =
+        ScheduledTasks.put_page_task(%{
+          "id" => "page:" <> ctx.page,
+          "title" => "Page update",
+          "page" => %{"spaceId" => ctx.space, "pageId" => ctx.page},
+          "prompt" => "Summarise more",
+          "schedule" => ctx.cadence
+        })
+
+      # Waiting on the stopped stream again would outlast this call's five seconds.
+      Application.put_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, 60_000)
+      {:ok, _} = Schedule.set(ctx.other, ctx.other_page, "Other summary", ctx.cadence)
+      assert {:ok, %{page: other}} = Space.page(ctx.other, ctx.other_page)
+      assert other["schedule"]["instruction"] == "Other summary"
+
+      Application.put_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, 200)
+      :sys.resume(ctx.stream)
       send(ScheduledTasks, :tick)
       assert [_, _] = ScheduledTasks.page_tasks()
 

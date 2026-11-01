@@ -26,7 +26,7 @@ defmodule HalC2.ScheduledTasks do
   in the trash the task is `held`: it has no next run, and letting go of it aims the
   next run afresh, so what it missed does not run. Nothing that holds a stream's
   transaction may call this process, because it writes to those streams, and a stream
-  that does not answer in time is left for the next tick (`by_space/3`).
+  that does not answer in time is left for the next tick (`by_space/4`).
   """
 
   use GenServer
@@ -114,7 +114,8 @@ defmodule HalC2.ScheduledTasks do
       runs: %{},
       watchers: %{},
       timer: nil,
-      unsettled: MapSet.new()
+      unsettled: MapSet.new(),
+      silent: MapSet.new()
     }
 
     {:ok, state, {:continue, :pages}}
@@ -146,7 +147,7 @@ defmodule HalC2.ScheduledTasks do
         |> build(existing, now())
         |> Map.put("page", input["page"])
 
-      state = state |> put(task) |> changed()
+      state = state |> heard(task) |> put(task) |> changed()
       {:reply, {:ok, %{"task" => state.tasks[task["id"]]}}, state}
     end
   end
@@ -160,7 +161,7 @@ defmodule HalC2.ScheduledTasks do
         {:reply, error("Schedule task is already running.", id), state}
 
       true ->
-        state = start_run(state, state.tasks[id], "manual", nil)
+        state = state |> heard(state.tasks[id]) |> start_run(state.tasks[id], "manual", nil)
         {:reply, {:ok, %{"task" => state.tasks[id]}}, state}
     end
   end
@@ -222,7 +223,7 @@ defmodule HalC2.ScheduledTasks do
               end
           })
 
-        {:reply, {:ok, %{"task" => task}}, state |> put(task) |> changed()}
+        {:reply, {:ok, %{"task" => task}}, state |> heard(task) |> put(task) |> changed()}
     end
   end
 
@@ -244,7 +245,7 @@ defmodule HalC2.ScheduledTasks do
   def handle_info(:tick, state) do
     at = now()
     before = state.tasks
-    state = settle_unanswered(%{state | timer: nil})
+    state = settle_unanswered(%{state | timer: nil, silent: MapSet.new()})
 
     state =
       state.tasks
@@ -330,6 +331,11 @@ defmodule HalC2.ScheduledTasks do
         run = Map.put_new_lazy(run, :message_id, fn -> message_id(run) end)
         {pid, run}
       end)
+
+    state =
+      state
+      |> Map.put_new(:unsettled, MapSet.new())
+      |> Map.put_new(:silent, MapSet.new())
 
     {:ok, %{state | runs: runs}}
   end
@@ -813,7 +819,8 @@ defmodule HalC2.ScheduledTasks do
   end
 
   # Writes each page task that changed since it was last shown, and clears the page of
-  # one that is gone. One the Space's stream refused stays unshown, for the next tick.
+  # one that is gone. One the Space's stream refused stays unshown, for the next tick, and
+  # one in a Space that did not answer waits for it without being asked.
   defp show_pages(state) do
     current = Map.new(page_tasks(state), &{&1["id"], {&1["page"], HalC2.Space.Schedule.view(&1)}})
     shown = Map.get(state, :shown, %{})
@@ -821,10 +828,14 @@ defmodule HalC2.ScheduledTasks do
     cleared =
       for {id, {page, _}} <- shown, not is_map_key(current, id), into: %{}, do: {id, {page, nil}}
 
-    pending = for {id, entry} <- Map.merge(cleared, current), shown[id] != entry, do: {id, entry}
+    pending =
+      for {id, {page, _} = entry} <- Map.merge(cleared, current),
+          shown[id] != entry,
+          page["spaceId"] not in state.silent,
+          do: {id, entry}
 
-    answered =
-      by_space(pending, fn {_id, {page, _view}} -> page["spaceId"] end, fn entries ->
+    {answered, state} =
+      by_space(state, pending, fn {_id, {page, _view}} -> page["spaceId"] end, fn entries ->
         for {id, {page, view} = entry} <- entries,
             HalC2.Space.Schedule.show(page, view) == :ok,
             into: %{},
@@ -843,8 +854,8 @@ defmodule HalC2.ScheduledTasks do
   # Settles page tasks by what became of their pages. A page this MC cannot read just
   # now leaves its task as it is.
   defp reconcile(state, tasks) do
-    fates =
-      by_space(tasks, & &1["page"]["spaceId"], fn tasks ->
+    {fates, state} =
+      by_space(state, tasks, & &1["page"]["spaceId"], fn tasks ->
         Map.new(tasks, &{&1["id"], HalC2.Space.Schedule.fate(&1)})
       end)
 
@@ -880,22 +891,37 @@ defmodule HalC2.ScheduledTasks do
 
   # A Space's stream waits as long as it must, and every task on this MC waits on this
   # process, so reading or writing streams gets one limit. Each Space works apart, so one
-  # that does not answer costs only its own items. `fun` turns a Space's items into a map;
-  # the result merges the maps of the Spaces that answered in time.
-  defp by_space(items, space_id, fun) do
+  # that does not answer loses only its own items, and goes `silent`: `show_pages/1` does
+  # not wait on it again until a tick, a reconcile or `heard/2`. `fun` turns a Space's
+  # items into a map; the result merges the maps of the Spaces that answered in time, with
+  # the state that knows which did not.
+  defp by_space(state, items, space_id, fun) do
     timeout = Application.get_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, @pages_timeout_ms)
 
-    items
-    |> Enum.group_by(space_id)
-    |> Enum.map(fn {_space, items} -> Task.async(fn -> fun.(items) end) end)
-    |> Task.yield_many(timeout)
-    |> Enum.reduce(%{}, fn {task, result}, answered ->
+    {spaces, tasks} =
+      items
+      |> Enum.group_by(space_id)
+      |> Enum.map(fn {space, items} -> {space, Task.async(fn -> fun.(items) end)} end)
+      |> Enum.unzip()
+
+    spaces
+    |> Enum.zip(Task.yield_many(tasks, timeout))
+    |> Enum.reduce({%{}, state}, fn {space, {task, result}}, {answered, state} ->
       case result || Task.shutdown(task, :brutal_kill) do
-        {:ok, part} -> Map.merge(answered, part)
-        _ -> answered
+        {:ok, part} ->
+          {Map.merge(answered, part), %{state | silent: MapSet.delete(state.silent, space)}}
+
+        _ ->
+          {answered, %{state | silent: MapSet.put(state.silent, space)}}
       end
     end)
   end
+
+  # Whoever changes a page's task has just read the page from its stream, so it answers.
+  defp heard(state, %{"page" => %{"spaceId" => space}}),
+    do: %{state | silent: MapSet.delete(state.silent, space)}
+
+  defp heard(state, _task), do: state
 
   defp let_go(%{"held" => true} = task) do
     task

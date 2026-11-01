@@ -156,6 +156,16 @@ defmodule HalC2.Steps.Space.SelfUpdatingPages do
     World.text_writers(context, [:codex, :claude], %{"markdown" => markdown})
   end
 
+  step "text generation writes the image {string} of the Space with no caption",
+       %{args: [name]} = context do
+    image = Enum.find(Images.live(state(context)), &(&1["name"] == name))
+    System.delete_env("FAKE_TEXT_FAIL")
+
+    World.text_writers(context, [:codex, :claude], %{
+      "markdown" => "![](space-image:#{image["id"]})"
+    })
+  end
+
   step "the first block of {string} shows the image {string}",
        %{args: [title, name]} = context do
     image = Enum.find(Images.live(state(context)), &(&1["name"] == name))

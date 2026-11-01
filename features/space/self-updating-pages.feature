@@ -230,6 +230,14 @@ Feature: Pages that update themselves
       When a browser with no pairing opens the site link of the page "Status"
       Then the document has the heading "Weekly status"
 
+    Scenario: Removing the update does not put a site behind for an image with no caption
+      Given the image "chart.png" in "Research"
+      And text generation writes the image "chart.png" of the Space with no caption
+      And the update of "Status" has run
+      And the page "Status" is published as a site
+      When the user removes the update of "Status"
+      Then the page "Status" shows its site is up to date
+
     Scenario: Removing a page's update stops its runs
       Given the time for the next run of "Status" is noted
       And the user has removed the update of "Status"
