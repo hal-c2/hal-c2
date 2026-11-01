@@ -387,6 +387,18 @@ Item {
             verify(composer.activeFocus);
         }
 
+        function test_the_way_in_keeps_a_draft() {
+            const view = root.research({});
+            const composer = findChild(view, "spaceComposer");
+            composer.text = "the plan";
+            Spaces.agentAskRequested();
+            compare(composer.text, "@agent the plan");
+            compare(composer.cursorPosition, "@agent ".length);
+            Spaces.agentAskRequested();
+            compare(composer.text, "@agent the plan");
+            verify(composer.activeFocus);
+        }
+
         function test_a_working_agent_can_be_followed_and_stopped() {
             const view = root.research({ agent: { status: "running", request: "tidy this", threadId: "t9" } });
             compare(findChild(view, "spaceAgentText").text, "An agent is working on “tidy this”.");

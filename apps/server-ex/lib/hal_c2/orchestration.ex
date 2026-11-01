@@ -1893,12 +1893,11 @@ defmodule HalC2.Orchestration do
     start_next(thread_id)
 
     # A child that never starts has no turn to report; a task waiting on it ends here.
-    if result == :ok,
-      do:
-        Task.start(fn ->
-          HalC2.Orchestration.Delegation.report(thread_id, run_id, status)
-          HalC2.Space.PageAgent.report(thread_id)
-        end)
+    # Apart, so that one failing cannot lose the other's report.
+    if result == :ok do
+      Task.start(fn -> HalC2.Orchestration.Delegation.report(thread_id, run_id, status) end)
+      Task.start(fn -> HalC2.Space.PageAgent.report(thread_id) end)
+    end
 
     result
   end
@@ -2274,10 +2273,23 @@ defmodule HalC2.Orchestration do
       "provider-thread.rollback" ->
         HalC2.Orchestration.Rollback.run(args["command"])
 
+      # A page's agent keeps working for the continuation a restart promised it
+      # (`HalC2.Space.PageAgent.reconcile/1`), so it hears when that cannot happen: on a
+      # refusal, which is never retried, and on the last try of a crash.
       "provider-runtime.continue" ->
-        case dispatch(args["command"]) do
-          {:ok, _} -> :ok
-          {:error, message} -> {:error, message}
+        try do
+          dispatch(args["command"])
+        catch
+          kind, reason ->
+            unless will_retry, do: HalC2.Space.PageAgent.report(thread_id)
+            :erlang.raise(kind, reason, __STACKTRACE__)
+        else
+          {:ok, _} ->
+            :ok
+
+          {:error, message} ->
+            HalC2.Space.PageAgent.report(thread_id)
+            {:error, message}
         end
 
       "checkpoint.capture" ->

@@ -1042,9 +1042,12 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     call(QStringLiteral("page.dismissAgent"), {{QStringLiteral("pageId"), pageId}});
   } else if (action == QLatin1String("space.agent.openThread")) {
     const QString thread = agent().value(QStringLiteral("threadId")).toString();
+    const QString key = m_client->environment() + QLatin1Char(':') + thread;
     auto* navigation = NativeShell::of(this)->controller<NavigationController>();
-    if (navigation && !thread.isEmpty()) {
-      navigation->open(NavigationController::Route::thread(m_client->environment() + QLatin1Char(':') + thread));
+    if (!m_store->thread(key)) {
+      toast(QStringLiteral("info"), tr("The agent's thread is not available."));
+    } else if (navigation) {
+      navigation->open(NavigationController::Route::thread(key));
     }
   } else if (action == QLatin1String("space.history.more")) {
     askHistory(history()->more());

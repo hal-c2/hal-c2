@@ -1369,6 +1369,17 @@ const Steps steps([] {
     expect(key.endsWith(QLatin1Char(':') + thread), QStringLiteral("the link opened %1").arg(key));
     lookAtPage(world, idOfPage(world, c[0]));
   });
+  step(QStringLiteral("the agent of %1 names a thread this client does not have").arg(q), [](World& world, const Captures& c, const Table&) {
+    set(world.mc, streamOf(current(world)), QStringLiteral("pageAgent"), idOfPage(world, c[0]), {{QStringLiteral("threadId"), QStringLiteral("gone")}});
+    world.sync();
+  });
+  step(QStringLiteral("the user follows the agent of %1 to its thread").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, idOfPage(world, c[0]));
+    act(world, QStringLiteral("space.agent.openThread"), {});
+  });
+  step(QStringLiteral("the user is told the agent's thread is not available"), [](World& world, const Captures&, const Table&) {
+    expect(toldOf(world, QStringLiteral("The agent's thread is not available.")), QStringLiteral("the user is not told: %1").arg(show(toasts(world))));
+  });
   step(QStringLiteral("the agent of %1 adds the block %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString page = idOfPage(world, c[0]);
     const QJsonObject author = agent(text(askedOn(world, c[0]), QLatin1String("threadId")));

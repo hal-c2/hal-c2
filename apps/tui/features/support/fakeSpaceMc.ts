@@ -66,6 +66,8 @@ export interface FakeSpaceMc {
     status: "completed" | "failed" | "stopped",
     error?: string,
   ) => void;
+  /** The agent of a page comes to name a thread this client does not have. */
+  readonly agentThreadGone: (pageId: string) => void;
   /** The next ask is refused, as when another client asked first. */
   readonly refuseNextAsk: () => void;
   /** Stops from now on leave an agent stopping, as a provider that ignores them does. */
@@ -883,6 +885,10 @@ export function fakeSpaceMc(options: {
     agentEnds: (pageId, status, error) => {
       const { spaceId } = all("page").find((candidate) => candidate.id === pageId)!;
       endAgent(spaceId, pageId, status, error ?? null);
+    },
+    agentThreadGone: (pageId) => {
+      const { spaceId } = all("page").find((candidate) => candidate.id === pageId)!;
+      commit(`space:${spaceId}`, [["pageAgent", pageId, { s: { threadId: "gone" } }]]);
     },
     restart: () => {
       for (const [stream, set] of watchers) {

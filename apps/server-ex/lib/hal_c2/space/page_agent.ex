@@ -333,34 +333,38 @@ defmodule HalC2.Space.PageAgent do
   defp launch_thread(input), do: Orchestration.launch_thread(input)
 
   defp after_launch(space_id, %{"pageId" => page_id, "threadId" => thread_id}) do
-    case entity(Streams.state(Space.stream_id(space_id)), page_id) do
-      %{"threadId" => ^thread_id, "status" => "running"} ->
-        :ok
+    retrying(thread_id, fn ->
+      case entity(Streams.state(Space.stream_id(space_id)), page_id) do
+        %{"threadId" => ^thread_id, "status" => "running"} ->
+          :ok
 
-      %{"threadId" => ^thread_id, "status" => "stopping"} ->
-        stop_thread(thread_id)
-        settle(space_id, page_id, thread_id)
+        %{"threadId" => ^thread_id, "status" => "stopping"} ->
+          stop_thread(thread_id)
+          settle(space_id, page_id, thread_id)
 
-      _ ->
-        stop_thread(thread_id)
-    end
+        _ ->
+          stop_thread(thread_id)
+      end
+    end)
   end
 
   defp not_started(space_id, %{"pageId" => page_id, "threadId" => thread_id}, reason) do
-    Space.transact(space_id, fn state ->
-      case entity(state, page_id) do
-        %{"threadId" => ^thread_id, "status" => status} = agent when status in @active ->
-          stopping? = status == "stopping"
+    retrying(thread_id, fn ->
+      Space.transact(space_id, fn state ->
+        case entity(state, page_id) do
+          %{"threadId" => ^thread_id, "status" => status} = agent when status in @active ->
+            stopping? = status == "stopping"
 
-          change(agent, %{
-            "status" => if(stopping?, do: "stopped", else: "failed"),
-            "error" => if(stopping?, do: nil, else: reason_text(reason)),
-            "endedAt" => Entities.now()
-          })
+            change(agent, %{
+              "status" => if(stopping?, do: "stopped", else: "failed"),
+              "error" => if(stopping?, do: nil, else: reason_text(reason)),
+              "endedAt" => Entities.now()
+            })
 
-        _ ->
-          {[], :ok}
-      end
+          _ ->
+            {[], :ok}
+        end
+      end)
     end)
   end
 

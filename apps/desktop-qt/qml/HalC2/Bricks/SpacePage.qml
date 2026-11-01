@@ -94,10 +94,12 @@ Rectangle {
         }
     }
 
-    // Starts the words of an ask in the composer.
+    // Starts the words of an ask in the composer, ahead of a draft already there.
     function startAsk() {
-        composer.text = "@agent ";
-        composer.cursorPosition = composer.text.length;
+        if (!composer.text.trim().startsWith("@agent")) {
+            composer.text = "@agent " + composer.text;
+            composer.cursorPosition = "@agent ".length;
+        }
         composer.forceActiveFocus();
     }
 

@@ -8,8 +8,8 @@
 
 Feature: An agent in a page
   From an open page the user asks an agent to do something to it. The agent runs in an
-  ordinary thread, visible in the sidebar, in the project and on the model the user last
-  worked with. Its edits are the hal_c2_page_* tools' edits: they land live on every
+  ordinary thread, visible in the sidebar, in the project the user last worked in and on
+  the model a new thread there would use, or the one last used if none is set. Its edits are the hal_c2_page_* tools' edits: they land live on every
   client and page history names the thread. A page has one such agent at a time, and
   the page says what it is doing. Every edit is in the page's history, so asking needs
   no approval of its own beyond what the provider's mode requires, and anything the
@@ -27,6 +27,12 @@ Feature: An agent in a page
       When the user asks "@agent tidy this and wait" on the page "Roadmap"
       Then "Roadmap" says its agent is working on "tidy this and wait"
       And "Roadmap" links to its agent's thread
+
+    Scenario: Following an agent whose thread is gone says so
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      And the agent of "Roadmap" names a thread this client does not have
+      When the user follows the agent of "Roadmap" to its thread
+      Then the user is told the agent's thread is not available
 
     Scenario: The agent's edits land live and name its thread
       Given a second client watching the Space "Research"
@@ -200,6 +206,13 @@ Feature: An agent in a page
       When the MC restarts
       Then the agent's thread of "Roadmap" continues its work
       And "Roadmap" says its agent is working on "tidy this and wait"
+
+    Scenario: A continuation that cannot start settles the page
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      And the agent's thread of "Roadmap" continues after a restart
+      And the provider the agent's thread of "Roadmap" ran on is gone
+      When the MC restarts
+      Then "Roadmap" says its agent was stopped
 
     Scenario: What the page says outlives a restart
       Given the user asks "tidy this and wait" on the page "Roadmap"

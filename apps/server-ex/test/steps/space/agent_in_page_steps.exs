@@ -115,6 +115,20 @@ defmodule HalC2.Steps.Space.AgentInPage do
     context
   end
 
+  # The continuation asks for the provider the run was on, so it is refused.
+  step "the provider the agent's thread of {string} ran on is gone",
+       %{args: [title]} = context do
+    id = World.thread_id(context, thread(title))
+
+    Streams.transact(id, :thread, fn state ->
+      run = HalC2.Projection.Shell.latest_run(StreamState.list(state, "run"))
+      gone = Map.put(run, "modelSelection", %{"instanceId" => "gone", "model" => "gone"})
+      {[{"run", run["id"], HalC2.Patch.diff(run, gone)}], :ok}
+    end)
+
+    context
+  end
+
   step "the agent's thread of {string} continues its work", %{args: [title]} = context do
     World.await_runs(context, thread(title), ["interrupted", "running"])
     context

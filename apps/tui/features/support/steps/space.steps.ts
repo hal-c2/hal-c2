@@ -1004,6 +1004,23 @@ step("{string} links to its agent's thread", async (ctx: SpaceWorld, page: strin
   expect(mode(ctx)).toBe("compose");
 });
 
+step(
+  "the agent of {string} names a thread this client does not have",
+  async (ctx: SpaceWorld, page: string) => {
+    mc(ctx).agentThreadGone(pageId(ctx, page));
+    await settle(ctx);
+  },
+);
+
+step("the user follows the agent of {string} to its thread", async (ctx: SpaceWorld) => {
+  await press(ctx, "o");
+});
+
+step("the user is told the agent's thread is not available", async (ctx: SpaceWorld) => {
+  await settle(ctx);
+  expect(status(ctx).text).toBe("The agent's thread is not available.");
+});
+
 step("the agent of {string} adds the block {string}", (ctx: SpaceWorld, page: string, text) =>
   asAgent(ctx, AGENT_THREAD, page, "space.block.insert", {
     pageId: pageId(ctx, page),

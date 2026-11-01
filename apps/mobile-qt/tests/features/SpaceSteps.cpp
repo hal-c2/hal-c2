@@ -1554,6 +1554,16 @@ const Steps steps([] {
     set(world.mc, streamOf(current(world)), S("pageAgent"), idOfPage(world, c[0]), {{S("status"), S("stopped")}, {S("error"), S("its thread was deleted")}, {S("endedAt"), stamp(world.mc)}});
     world.sync();
   });
+  step(S("the agent of %1 names a thread this client does not have").arg(q), [](World& world, const Captures& c, const Table&) {
+    set(world.mc, streamOf(current(world)), S("pageAgent"), idOfPage(world, c[0]), {{S("threadId"), S("gone")}});
+    world.sync();
+  });
+  step(S("the user follows the agent of %1 to its thread").arg(q), [](World& world, const Captures&, const Table&) {
+    world.tap(S("spaceAgentOpenThread"));
+  });
+  step(S("the user is told the agent's thread is not available"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return toldOf(world, S("The agent's thread is not available.")); }, [&] { return S("the user to be told; toasts %1").arg(show(toasts(world))); });
+  });
   step(S("%1 says its agent stopped because %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expectAgent(world, c[0], [&](const QVariantMap& agent) { return agent.value(S("status")) == S("stopped") && agent.value(S("error")) == c[1]; }, S("stopped because %1").arg(c[1]));
   });

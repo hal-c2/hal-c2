@@ -98,6 +98,9 @@ defmodule HalC2.SpacePageAgentPropTest do
             {4, {:call, __MODULE__, :give_up_move, [elements(pages)]}},
             {4, {:call, __MODULE__, :move_away, [elements(pages)]}},
             {1, {:call, __MODULE__, :reconcile_continuing, [elements(pages)]}},
+            {2,
+             {:call, __MODULE__, :continuation_fails,
+              [elements(pages), elements([:refused, :crashed, :crashed_again_later])]}},
             {3, {:call, __MODULE__, :edit, [elements(pages)]}},
             {4, {:call, __MODULE__, :end_run, [elements(pages), elements(Map.keys(@ended))]}},
             {2, {:call, __MODULE__, :report_running, [elements(pages)]}},
@@ -120,7 +123,7 @@ defmodule HalC2.SpacePageAgentPropTest do
     do: going?(s, name) and not s.pages[name].trashed
 
   def precondition(s, {:call, _, cmd, [name | _]})
-      when cmd in [:end_run, :report_running, :lose_report],
+      when cmd in [:end_run, :report_running, :lose_report, :continuation_fails],
       do: going?(s, name)
 
   def precondition(s, {:call, _, :reconcile_continuing, [name]}), do: active?(s, name)
@@ -196,6 +199,12 @@ defmodule HalC2.SpacePageAgentPropTest do
     page = s.pages[name]
     {:ok, put(s, name, %{page | agent: %{page.agent | run: ended}}), 0}
   end
+
+  # A try that will be retried says nothing yet: the thread may still go on.
+  defp step(s, :continuation_fails, [name, :crashed_again_later]),
+    do: step(s, :lose_report, [name, "interrupted"])
+
+  defp step(s, :continuation_fails, [name, _how]), do: step(s, :end_run, [name, "interrupted"])
 
   defp step(s, :hold_message, _), do: {:ok, s, 0}
 
@@ -411,6 +420,40 @@ defmodule HalC2.SpacePageAgentPropTest do
         run = StreamState.get(state, "run")[run_id(thread)]
         {[{"run", run["id"], Patch.diff(run, %{run | "status" => ended})}], :ok}
       end)
+    end)
+  end
+
+  # The restart ended the run, and the continuation it promised does not start.
+  def continuation_fails(name, how) do
+    act(fn _space ->
+      thread = thread(name)
+
+      Streams.transact(thread, :thread, fn state ->
+        run = StreamState.get(state, "run")[run_id(thread)]
+        {[{"run", run["id"], Patch.diff(run, %{run | "status" => "interrupted"})}], :ok}
+      end)
+
+      # No clause of `dispatch/1` takes a command with no type, so it raises.
+      {command, will_retry} =
+        case how do
+          :refused -> {%{"type" => "prop.unknown"}, true}
+          :crashed -> {%{}, false}
+          :crashed_again_later -> {%{}, true}
+        end
+
+      effect = %{
+        "type" => "provider-runtime.continue",
+        "threadId" => thread,
+        "args" => %{"command" => command}
+      }
+
+      try do
+        HalC2.Orchestration.execute_effect(effect, nil, will_retry)
+      rescue
+        FunctionClauseError -> :raised
+      end
+
+      :ok
     end)
   end
 
