@@ -633,7 +633,7 @@ defmodule HalC2.Vcs do
              args,
              "vcs.createWorktree",
              "git worktree add failed",
-             [timeout: worktree_timeout(), stop_children: true] ++
+             [timeout: worktree_timeout(), stop_children: path] ++
                checkout_progress(opts[:on_progress])
            )
            |> tap(&if(fresh, do: clear_cut_short(&1, cwd, path, new_branch && branch))) do

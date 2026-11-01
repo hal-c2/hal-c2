@@ -346,6 +346,12 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
+  step "what the checkout started is no longer running", context do
+    {_, status} = System.cmd("kill", ["-0", context.hook_pid], stderr_to_stdout: true)
+    assert status != 0, "the checkout's hook #{context.hook_pid} is still running"
+    context
+  end
+
   step "the setup fails when the limit stops git", context do
     {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
     assert snapshot["phase"] == "failed", inspect(snapshot)

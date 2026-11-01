@@ -14,8 +14,9 @@ defmodule HalC2.Git do
   @doc """
   Runs `git args` in `cwd`. Options: `:env` (`[{name, value}]`), `:input` (stdin),
   `:max_bytes` (default 50 MB), `:timeout` (ms; none by default), `:on_stderr` (called
-  with each chunk of stderr as it arrives) and `:stop_children` (a git that does not
-  finish takes the programs it started with it before this returns). Fails only when
+  with each chunk of stderr as it arrives) and `:stop_children` (a key: a git that does not
+  finish takes the programs it started with it before this returns; see
+  `stop_children/1`). Fails only when
   git cannot be started, will not exit, or runs past its timeout, saying which.
   `Application.get_env(:hal_c2, :git_command)` stands in for `git`.
   """
@@ -25,7 +26,9 @@ defmodule HalC2.Git do
 
     run = fn argv -> within(opts[:timeout], fn -> stream("git", argv, cwd, opts) end) end
 
-    case if(opts[:stop_children], do: stopping_children(argv, run), else: run.(argv)) do
+    key = opts[:stop_children]
+
+    case if(key, do: stopping_children(key, argv, run), else: run.(argv)) do
       {:ok, result} -> result
       {:exit, reason} -> {:error, "git #{hd(args)} exited: #{inspect(reason)}"}
       :timeout -> {:error, "git #{hd(args)} timed out after #{opts[:timeout]} ms"}
@@ -34,21 +37,35 @@ defmodule HalC2.Git do
 
   # Exile starts a program as the leader of its own session, so its children are in the
   # group its pid names; killing the task signals only the program, and only afterwards.
-  # The program says its pid before it becomes git, as Exile's stream does not tell it.
-  defp stopping_children(argv, run) do
-    file = Path.join(System.tmp_dir!(), "hal-c2-git-#{System.pid()}-#{System.unique_integer()}")
+  # The program says its pid before it becomes git, as Exile's stream does not tell it,
+  # and says it where `stop_children/1` can find it when the caller was killed instead.
+  defp stopping_children(key, argv, run) do
+    result = run.(["sh", "-c", ~s(echo $$ > "$0"; exec "$@"), children_file(key) | argv])
 
-    result = run.(["sh", "-c", ~s(echo $$ > "$0"; exec "$@"), file | argv])
+    if match?({:ok, {:ok, _}}, result),
+      do: File.rm(children_file(key)),
+      else: stop_children(key)
 
-    if not match?({:ok, {:ok, _}}, result) do
-      with {:ok, pid} <- File.read(file), {group, _} <- Integer.parse(pid) do
-        stop_group(group)
-      end
+    result
+  end
+
+  @doc """
+  Kills what a `run/3` with `stop_children: key` still has running, git and the programs
+  it started, and returns once they are gone. Nothing when it has ended.
+  """
+  def stop_children(key) do
+    file = children_file(key)
+
+    with {:ok, pid} <- File.read(file), {group, _} <- Integer.parse(pid) do
+      stop_group(group)
     end
 
     File.rm(file)
-    result
+    :ok
   end
+
+  defp children_file(key),
+    do: Path.join(System.tmp_dir!(), "hal-c2-git-#{System.pid()}-#{:erlang.phash2(key)}")
 
   # SIGKILL cannot be held off, so this waits only for the kernel to take them down.
   defp stop_group(group, tries \\ 100) do

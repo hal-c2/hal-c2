@@ -301,9 +301,12 @@ defmodule HalC2.WorktreeSetup do
         "deleteHistory" => true
       })
 
-      # A checkout cut short leaves the worktree locked as "initializing".
+      # A checkout cut short leaves what git started still writing, and the worktree
+      # locked as "initializing". A claimed folder was free, so all of it is the setup's.
+      HalC2.Git.stop_children(path)
       HalC2.Git.run(setup.root, ["worktree", "unlock", path])
       HalC2.Vcs.remove_worktree(%{"cwd" => setup.root, "path" => path, "force" => true})
+      if setup.claimed, do: File.rm_rf(setup.claimed)
 
       Orchestration.dispatch(%{
         "type" => "thread.metadata.update",
@@ -724,13 +727,16 @@ defmodule HalC2.WorktreeSetup do
               "worktreePath" => path
             })
 
+          # A cancel removed the worktree under it, and the user knows.
           {:error, reason} ->
-            Orchestration.warn_prepared(
-              thread_id,
-              run_id,
-              "The branch was not renamed",
-              message(reason)
-            )
+            if File.dir?(path) do
+              Orchestration.warn_prepared(
+                thread_id,
+                run_id,
+                "The branch was not renamed",
+                message(reason)
+              )
+            end
         end
       else
         {:error, reason} -> Logger.warning("branch name not generated: #{message(reason)}")

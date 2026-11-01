@@ -279,7 +279,8 @@ Feature: Worktrees and setup scripts
   Scenario: Cancelling setup before the agent starts
     Given a thread's worktree setup is still checking out files
     When the user cancels the setup
-    Then the worktree is removed
+    Then what the checkout started is no longer running
+    And the worktree is removed
     And the thread no longer points at a worktree
     And the setup is reported as cancelled
 
