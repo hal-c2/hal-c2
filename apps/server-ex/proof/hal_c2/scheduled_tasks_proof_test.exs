@@ -52,6 +52,8 @@ defmodule HalC2.ScheduledTasksProofTest do
       "HalC2.ScheduledTasks handle_call :page_tasks" => @plain,
       "HalC2.ScheduledTasks.next_run/2" => "aims a run; the model counts ticks",
       "HalC2.ScheduledTasks handle_info _" => "ignores what it does not know, as stale does",
+      "HalC2.ScheduledTasks state :unsettled" =>
+        "Spaces to reconcile again on a tick; `reconcile-pages` may already come at any time",
       "HalC2.ScheduledTasks state :path" =>
         "where the tasks are saved; the model keeps them across a crash without a file"
     },

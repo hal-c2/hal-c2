@@ -2,7 +2,7 @@ defmodule HalC2.SpaceScheduleTest do
   use ExUnit.Case, async: false
 
   alias HalC2.{ScheduledTasks, Space, Streams}
-  alias HalC2.Space.Schedule
+  alias HalC2.Space.{Pages, Schedule}
 
   @moduletag :tmp_dir
 
@@ -41,5 +41,24 @@ defmodule HalC2.SpaceScheduleTest do
     assert :ok = ScheduledTasks.reconcile_pages(ctx.space)
     assert {:ok, %{page: page}} = Space.page(ctx.space, ctx.page)
     assert page["schedule"]["instruction"] == "Summarise more"
+  end
+
+  test "a restore the stream did not answer is settled on a later tick", ctx do
+    {:ok, _} = Space.trash_page(ctx.space, ctx.page)
+    assert [%{"nextRunAt" => nil}] = ScheduledTasks.page_tasks()
+
+    # The restore commits, and only then does its reconcile find the stream stopped.
+    {:ok, _} = Space.transact(ctx.space, &Pages.restore(&1, ctx.page))
+    stream = Streams.ensure(Space.stream_id(ctx.space))
+    :sys.suspend(stream)
+    on_exit(fn -> if Process.alive?(stream), do: :sys.resume(stream) end)
+
+    assert :ok = ScheduledTasks.reconcile_pages(ctx.space)
+    assert [%{"nextRunAt" => nil}] = ScheduledTasks.page_tasks()
+
+    :sys.resume(stream)
+    send(ScheduledTasks, :tick)
+    assert [%{"nextRunAt" => next}] = ScheduledTasks.page_tasks()
+    assert next
   end
 end

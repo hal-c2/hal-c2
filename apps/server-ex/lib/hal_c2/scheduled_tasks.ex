@@ -74,7 +74,8 @@ defmodule HalC2.ScheduledTasks do
 
   @doc """
   Holds, lets go of, or deletes the page tasks of a Space by what became of their pages.
-  Always `:ok`: what the Space decided stands, and a run or a restart checks it again.
+  Always `:ok`: what the Space decided stands, and a Space that did not answer is asked
+  again on the next tick.
   """
   def reconcile_pages(space_id) do
     if Process.whereis(__MODULE__),
@@ -107,7 +108,15 @@ defmodule HalC2.ScheduledTasks do
         {task["id"], task}
       end
 
-    state = %{path: path, tasks: tasks, runs: %{}, watchers: %{}, timer: nil}
+    state = %{
+      path: path,
+      tasks: tasks,
+      runs: %{},
+      watchers: %{},
+      timer: nil,
+      unsettled: MapSet.new()
+    }
+
     {:ok, state, {:continue, :pages}}
   end
 
@@ -235,7 +244,7 @@ defmodule HalC2.ScheduledTasks do
   def handle_info(:tick, state) do
     at = now()
     before = state.tasks
-    state = %{state | timer: nil}
+    state = settle_unanswered(%{state | timer: nil})
 
     state =
       state.tasks
@@ -832,14 +841,34 @@ defmodule HalC2.ScheduledTasks do
   defp reconcile(state, tasks) do
     fates = bounded(%{}, fn -> Map.new(tasks, &{&1["id"], HalC2.Space.Schedule.fate(&1)}) end)
 
-    Enum.reduce(tasks, state, fn task, state ->
-      case Map.get(fates, task["id"], :unknown) do
-        :gone -> %{stop_runs(state, task["id"]) | tasks: Map.delete(state.tasks, task["id"])}
-        :held -> put(state, Map.put(task, "held", true))
-        :live -> put(state, let_go(task))
-        :unknown -> state
-      end
-    end)
+    state =
+      Enum.reduce(tasks, state, fn task, state ->
+        case Map.get(fates, task["id"], :unknown) do
+          :gone -> %{stop_runs(state, task["id"]) | tasks: Map.delete(state.tasks, task["id"])}
+          :held -> put(state, Map.put(task, "held", true))
+          :live -> put(state, let_go(task))
+          :unknown -> state
+        end
+      end)
+
+    # A held task has no next run to look again at its page, so this has to.
+    unanswered = Enum.filter(tasks, &(Map.get(fates, &1["id"], :unknown) == :unknown))
+
+    unsettled =
+      state.unsettled
+      |> MapSet.difference(MapSet.new(tasks, & &1["page"]["spaceId"]))
+      |> MapSet.union(MapSet.new(unanswered, & &1["page"]["spaceId"]))
+
+    %{state | unsettled: unsettled}
+  end
+
+  defp settle_unanswered(state) do
+    if MapSet.size(state.unsettled) == 0 do
+      state
+    else
+      tasks = Enum.filter(page_tasks(state), &(&1["page"]["spaceId"] in state.unsettled))
+      reconcile(%{state | unsettled: MapSet.new()}, tasks)
+    end
   end
 
   # A Space's stream waits as long as it must, and every task on this MC waits on this
