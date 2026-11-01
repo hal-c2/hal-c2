@@ -590,6 +590,8 @@ defmodule HalC2.Orchestration do
         HalC2.Orchestration.Effects.drop_thread(thread_id)
         HalC2.Orchestration.Effects.enqueue(thread_id, "terminal.cleanup", %{})
         HalC2.Orchestration.Effects.enqueue(thread_id, "attachment.cleanup", %{})
+        # A page that asked this thread to work says it no longer is.
+        Task.start(fn -> HalC2.Space.PageAgent.report(thread_id) end)
       end
 
       # Archiving is a terminal detach: the thread's agent loses its tools at
@@ -1721,6 +1723,7 @@ defmodule HalC2.Orchestration do
       do:
         Task.start(fn ->
           HalC2.Orchestration.Delegation.report(thread_id, run_id, status)
+          HalC2.Space.PageAgent.report(thread_id)
         end)
 
     result

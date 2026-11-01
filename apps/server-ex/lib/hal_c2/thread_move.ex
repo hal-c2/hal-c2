@@ -531,6 +531,8 @@ defmodule HalC2.ThreadMove do
       do: HalC2.Terminal.close(%{"threadId" => id, "deleteHistory" => true})
 
     Streams.flush_shell(id)
+    # A page that asked this thread to work cannot follow it there.
+    if forwarded, do: Task.start(fn -> HalC2.Space.PageAgent.report(id) end)
   end
 
   defp letting_go_lock(id), do: {{__MODULE__, :letting_go, id}, self()}
@@ -589,6 +591,8 @@ defmodule HalC2.ThreadMove do
       end)
 
     Streams.flush_shell(id)
+    # What it ended while it was moving, it did not report on: a page was waiting to see.
+    if released, do: Task.start(fn -> HalC2.Space.PageAgent.report(id) end)
     released
   end
 

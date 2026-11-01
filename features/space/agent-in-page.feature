@@ -66,6 +66,26 @@ Feature: An agent in a page
       When the user dismisses the agent of "Roadmap"
       Then "Roadmap" says nothing about an agent
 
+    Scenario: A deleted thread ends what the page says, and the page says why
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      When the thread of the agent of "Roadmap" is deleted
+      Then "Roadmap" says its agent stopped because "its thread was deleted"
+
+  @desktop @mobile @tui
+  Rule: The user's way out of an ask
+
+    Scenario: An agent slow to stop can be stopped again
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      And the agent of "Roadmap" does not stop when asked
+      When the user stops the agent of "Roadmap"
+      Then "Roadmap" says its agent is stopping
+      And the user can stop the agent of "Roadmap" again
+
+    Scenario: A refused ask keeps the user's words
+      Given the MC refuses the next ask
+      When the user asks "tidy this" on the page "Roadmap"
+      Then the words "tidy this" are kept to ask again
+
   @mc
   Rule: What an ask is
 
@@ -143,10 +163,29 @@ Feature: An agent in a page
       When the user sends "say more" to the agent of "Roadmap"
       Then "Roadmap" says nothing about an agent
 
-    Scenario: A stale ask clears when the user stops it
+    Scenario: A thread being stopped and then deleted says it was stopped
       Given the user asks "tidy this and wait" on the page "Roadmap"
-      And the thread of the agent of "Roadmap" is deleted
-      When the user stops the agent of "Roadmap"
+      And the user stops the agent of "Roadmap"
+      When the thread of the agent of "Roadmap" is deleted
+      Then "Roadmap" says its agent was stopped
+
+    Scenario: A crash before the thread started fails on the page at the next start
+      Given the MC goes down before an agent's thread can start
+      And the user asks "tidy this" on the page "Roadmap"
+      When the MC restarts
+      Then "Roadmap" says its agent failed with "before its thread could start"
+
+    Scenario: A report lost to a crash settles the page at the next start
+      Given the page is never told how its agent's run ended
+      And the user asks "tidy this" on the page "Roadmap"
+      When the MC restarts
+      Then "Roadmap" says its agent finished without changing the page
+
+    Scenario: A message held behind a restart does not keep the page working
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      And the user sends "and later" to the agent of "Roadmap" behind its run
+      And the agent's thread of "Roadmap" does not continue after a restart
+      When the MC restarts
       Then "Roadmap" says its agent was stopped
 
     Scenario: A restart that ends the run settles the page

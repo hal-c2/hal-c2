@@ -147,6 +147,17 @@ defmodule HalC2.Steps.Space.AgentInPage do
     context
   end
 
+  step "the MC goes down before an agent's thread can start", context do
+    World.put_app_env(:page_agent_launch, fn _ -> {:ok, %{}} end)
+    context
+  end
+
+  # The run is over but nothing reported it, as when the MC goes down at that moment.
+  step "the page is never told how its agent's run ended", context do
+    World.put_app_env(:page_agent_launch, &ended_untold/1)
+    context
+  end
+
   step "no provider can start a thread", context do
     World.put_app_env(:page_agent_launch, fn _ -> {:error, "No provider can start."} end)
     context
@@ -156,6 +167,19 @@ defmodule HalC2.Steps.Space.AgentInPage do
     assert {:error, message, %{"_tag" => "SpaceError"}} = context.space_reply
     assert message =~ text
     context
+  end
+
+  step "an agent asked on {string} whose page was not told its run ended",
+       %{args: [title]} = context do
+    World.put_app_env(:page_agent_launch, &ended_untold/1)
+    id = page_id(context, title)
+    payload = %{"spaceId" => context.space, "pageId" => id, "request" => "tidy this"}
+
+    {{:ok, %{"agent" => %{"threadId" => thread_id}}}, context} =
+      World.call(context, "space.page.askAgent", payload)
+
+    World.await_row(thread_id, &is_binary(&1["title"]))
+    remember(context, title, id, thread_id)
   end
 
   # --- what the page says -------------------------------------------------------------
@@ -189,7 +213,22 @@ defmodule HalC2.Steps.Space.AgentInPage do
   end
 
   step "{string} says its agent was stopped", %{args: [title]} = context do
-    await_agent(context, title, &(&1["status"] == "stopped" and &1["endedAt"] != nil))
+    await_agent(
+      context,
+      title,
+      &(&1["status"] == "stopped" and &1["endedAt"] != nil and &1["error"] == nil)
+    )
+
+    context
+  end
+
+  step "{string} says its agent stopped because {string}", %{args: [title, reason]} = context do
+    await_agent(
+      context,
+      title,
+      &(&1["status"] == "stopped" and is_binary(&1["error"]) and &1["error"] =~ reason)
+    )
+
     context
   end
 
@@ -267,6 +306,32 @@ defmodule HalC2.Steps.Space.AgentInPage do
   defp thread(title), do: "agent of #{title}"
 
   defp launches?, do: Application.get_env(:hal_c2, :page_agent_launch) == nil
+
+  # A launch that writes the thread with its run over, in place of a provider.
+  defp ended_untold(input) do
+    thread_id = input["threadId"]
+    at = HalC2.Orchestration.Entities.now()
+
+    thread =
+      input
+      |> HalC2.Orchestration.Entities.thread(at)
+      |> Map.put("spacePage", input["spacePage"])
+
+    run = %{
+      "id" => "run-" <> thread_id,
+      "threadId" => thread_id,
+      "ordinal" => 1,
+      "status" => "completed",
+      "createdAt" => at
+    }
+
+    Streams.transact(thread_id, :thread, fn _ ->
+      {[
+         {"thread", thread_id, HalC2.Patch.diff(nil, thread)},
+         {"run", run["id"], HalC2.Patch.diff(nil, run)}
+       ], {:ok, %{}}}
+    end)
+  end
 
   # A page keeps its id in the scenario once asked, so it can be named after it is gone.
   defp remember(context, title, id, thread_id) do

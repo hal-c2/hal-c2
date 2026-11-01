@@ -11,8 +11,11 @@ defmodule HalC2.Space.PageAgent do
   The thread carries `spacePage`, naming the page back. When a run of a thread that has
   one ends (`report/1`) and the thread is quiet, the entity settles: what the run ended
   as says how it ended, unless the user already asked it to stop. Only the thread named
-  by the page's current entity settles it, so forks and earlier asks do nothing. A
-  report lost to a crash leaves the page saying `running`; stopping settles that too.
+  by the page's current entity settles it, so forks and earlier asks do nothing.
+
+  Nothing else leaves a page saying it is working. Deleting the thread and moving it off
+  this MC report too, with `error` saying why when the user did not ask for the stop. What
+  a crash lost (a launch, a report) `reconcile/1` settles at the next start.
   """
 
   require Logger
@@ -26,6 +29,7 @@ defmodule HalC2.Space.PageAgent do
   @kind "pageAgent"
   @active ~w(running stopping)
   @run_active ~w(preparing starting running waiting)
+  @never_started "the MC restarted before its thread could start"
 
   @doc "Whether an entity's agent is still at work."
   def active?(%{"status" => status}), do: status in @active
@@ -90,25 +94,59 @@ defmodule HalC2.Space.PageAgent do
   end
 
   @doc """
-  Called when a run of `thread_id` ends, or was ended by a restart. Retries like the
-  delegated task's report, so a Space stream that is briefly busy cannot lose it.
+  Called when `thread_id` may have nothing left to do for its page: a run or its background
+  work ended, or the thread was deleted, moved off this MC or kept here after all.
   """
-  def report(thread_id, attempts \\ 6, backoff \\ 2_000) do
-    with %{"spacePage" => %{"spaceId" => space_id, "pageId" => page_id}} <-
-           Streams.get(thread_id, "thread", thread_id) do
-      settle(space_id, page_id, thread_id)
+  def report(thread_id) do
+    retrying(thread_id, fn ->
+      with %{"spacePage" => %{"spaceId" => space_id, "pageId" => page_id}} <-
+             Streams.get(thread_id, "thread", thread_id) do
+        settle(space_id, page_id, thread_id)
+      end
+    end)
+  end
+
+  @doc """
+  Called once at the start of an MC, after restarted turns have settled: every page still
+  saying its agent is working is settled if its thread has nothing left to do, whatever
+  the crash lost on the way. `continued` are the threads about to go on, whose runs do not
+  exist yet.
+  """
+  def reconcile(continued \\ []) do
+    for %{"id" => space_id} <- StreamState.list(Streams.state(Space.index()), "space"),
+        %{"pageId" => page_id, "threadId" => thread_id} <- working(space_id),
+        thread_id not in continued do
+      retrying(thread_id, fn -> settle(space_id, page_id, thread_id) end)
     end
 
+    :ok
+  end
+
+  defp working(space_id) do
+    space_id
+    |> Space.stream_id()
+    |> Streams.state()
+    |> StreamState.list(@kind)
+    |> Enum.filter(&active?/1)
+  catch
+    kind, reason ->
+      Logger.warning("page agents of #{space_id} not read: #{inspect({kind, reason})}")
+      []
+  end
+
+  # Retries like the delegated task's report, so a Space stream that is briefly busy cannot
+  # lose it.
+  defp retrying(thread_id, fun, attempts \\ 6, backoff \\ 2_000) do
+    fun.()
     :ok
   catch
     _kind, reason when attempts > 0 ->
       Logger.warning("page agent report for #{thread_id} retried: #{inspect(reason)}")
       Process.sleep(backoff)
-      report(thread_id, attempts - 1, backoff * 2)
+      retrying(thread_id, fun, attempts - 1, backoff * 2)
   end
 
-  # Settles the page's entity if `thread_id` is still its agent and has nothing left to
-  # do. A thread that no longer exists has nothing left either.
+  # Settles the page's entity if `thread_id` is still its agent and has nothing left to do.
   defp settle(space_id, page_id, thread_id) do
     case ended(thread_id) do
       nil ->
@@ -134,24 +172,32 @@ defmodule HalC2.Space.PageAgent do
     end
   end
 
-  # How the thread's work ended, or nil while it is not over. A thread with no run yet
-  # is one whose launch has not got that far, or that was deleted before it did.
+  # How the thread's work ended and why it did, or nil while it is not over. A stop settles
+  # a launch still under way; nothing else gets here with a thread or run missing unless
+  # the launch died with the MC.
   defp ended(thread_id) do
     stream = Streams.state(thread_id)
     thread = StreamState.get(stream, "thread")[thread_id]
     runs = StreamState.list(stream, "run")
 
     cond do
-      thread == nil or thread["deletedAt"] != nil -> {"stopped", nil}
-      runs == [] -> {"stopped", nil}
-      not Delegation.quiet?(stream) -> nil
+      thread == nil -> {"failed", @never_started}
+      thread["deletedAt"] != nil -> {"stopped", "its thread was deleted"}
+      moved = thread["movedTo"] -> {"stopped", moved_away(moved)}
+      thread["moving"] != nil -> nil
+      runs == [] -> {"failed", @never_started}
+      not Delegation.settled?(stream) -> nil
       true -> run_end(stream, runs)
     end
   end
 
+  # Spaces stay on their MC: the agent can go on over there, but not on this page.
+  defp moved_away(%{"label" => label}),
+    do: "its thread moved to #{label}, where it can no longer edit this page"
+
   defp run_end(stream, runs) do
     case runs
-         |> Enum.reject(&(&1["status"] == "rolled_back"))
+         |> Enum.reject(&(&1["status"] in ~w(rolled_back queued)))
          |> HalC2.Projection.Shell.latest_run() do
       %{"status" => "completed"} -> {"completed", nil}
       %{"status" => "failed"} = run -> {"failed", failure(stream, run)}

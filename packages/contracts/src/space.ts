@@ -270,6 +270,7 @@ export const SpacePageAgent = Schema.Struct({
   status: SpacePageAgentStatus,
   /** Set when the agent ends: whether page history holds an edit of its thread. */
   edited: Schema.Boolean,
+  /** Why it failed, or why it stopped when the user did not stop it. */
   error: Schema.NullOr(Schema.String),
   startedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
