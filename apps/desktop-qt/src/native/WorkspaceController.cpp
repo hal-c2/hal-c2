@@ -25,6 +25,16 @@ namespace {
 const NativeControllerRegistrar<WorkspaceController> registrar(QStringLiteral("workspace"),
                                                                {QStringLiteral("workspace")});
 
+// What showing a file in its folder is called on the machine that does it.
+QString revealLabel(const QJsonObject& environment) {
+  const QJsonObject platform = environment.value(QLatin1String("platform")).toObject();
+  const QString os = platform.value(QLatin1String("os")).toString();
+  if (os == QLatin1String("darwin")) return QStringLiteral("Reveal in Finder");
+  if (os == QLatin1String("win32") || platform.value(QLatin1String("wsl")).toBool()) return QStringLiteral("Reveal in File Explorer");
+  if (os == QLatin1String("linux")) return QStringLiteral("Reveal in Files");
+  return QStringLiteral("Reveal in file manager");
+}
+
 // packages/contracts EDITORS, in the order the picker offers them.
 const QList<std::pair<QString, QString>>& editorLabels() {
   static const QList<std::pair<QString, QString>> labels{
@@ -36,6 +46,7 @@ const QList<std::pair<QString, QString>>& editorLabels() {
       {QStringLiteral("vscode-insiders"), QStringLiteral("VS Code Insiders")},
       {QStringLiteral("vscodium"), QStringLiteral("VSCodium")},
       {QStringLiteral("zed"), QStringLiteral("Zed")},
+      {QStringLiteral("sublime"), QStringLiteral("Sublime Text")},
       {QStringLiteral("antigravity"), QStringLiteral("Antigravity")},
       {QStringLiteral("idea"), QStringLiteral("IntelliJ IDEA")},
       {QStringLiteral("aqua"), QStringLiteral("Aqua")},
@@ -652,6 +663,7 @@ QVariantMap WorkspaceController::build() const {
       {QStringLiteral("canOpenPullRequest"), canOpenPullRequest},
       {QStringLiteral("editors"), editorList.toVariantList()},
       {QStringLiteral("preferredEditorId"), nullable(preferredEditor(editorList))},
+      {QStringLiteral("revealLabel"), revealLabel(m_store->environment(place.environmentId))},
       {QStringLiteral("scripts"), place.scripts.toVariantList()},
       {QStringLiteral("preferredScriptId"), known ? QVariant(lastScript) : QVariant::fromValue(nullptr)},
       {QStringLiteral("environments"), environmentChoices()},

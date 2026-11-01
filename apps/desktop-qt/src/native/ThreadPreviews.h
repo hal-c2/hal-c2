@@ -95,6 +95,8 @@ public:
   // Opens `url` in the browser, for the thread: through the connected MC's
   // forward when it is a dev server on the thread's machine, another MC's.
   Q_INVOKABLE void openAddress(const QString& url);
+  // Opens the page in a browser tab of the thread, wherever its address is.
+  void openPage(const QUrl& url);
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;

@@ -128,6 +128,13 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
   connect(&m_diff, &ThreadDiff::commentRequested, this, [this](const QVariantMap& comment) {
     m_bridge->dispatch(QStringLiteral("composer.reviewComment.add"), comment);
   });
+  connect(&m_files, &WorkspaceFiles::commentRequested, this, [this](const QVariantMap& comment) {
+    m_bridge->dispatch(QStringLiteral("composer.reviewComment.add"), comment);
+  });
+  connect(&m_files, &WorkspaceFiles::previewReady, &m_previews, &ThreadPreviews::openPage);
+  connect(&m_files, &WorkspaceFiles::previewRefused, this, [this](const QString& reason) {
+    toast(this, QStringLiteral("error"), QStringLiteral("Could not open the file in the browser"), reason);
+  });
   connect(&m_devices, &ThreadDevices::opened, this, &RightPanelController::openDevice);
   connect(&m_devices, &ThreadDevices::floated, this, &RightPanelController::floatDevice);
   connect(&m_devices, &ThreadDevices::closed, this, &RightPanelController::closeTabIn);

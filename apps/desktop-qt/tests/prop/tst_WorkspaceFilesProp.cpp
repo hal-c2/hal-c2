@@ -710,6 +710,46 @@ class WorkspaceFilesProp : public QObject {
   Q_OBJECT
 
 private slots:
+  // A table read back is the table written, whatever its cells hold.
+  void tables() {
+    QVERIFY(rc::check("a delimited file parses back to the cells it was written from", [] {
+      const auto rows = *rc::gen::container<std::vector<std::vector<std::string>>>(
+          rc::gen::nonEmpty(rc::gen::container<std::vector<std::string>>(rc::gen::container<std::string>(rc::gen::elementOf(std::string("ab ,\"\n"))))));
+      const std::vector<std::vector<std::string>> kept(rows.begin(), rows.begin() + std::min<size_t>(rows.size(), 100));
+      QString text;
+      QList<QStringList> expected;
+      for (const auto& row : kept) {
+        QStringList cells;
+        QStringList written;
+        for (const std::string& cell : std::vector<std::string>(row.begin(), row.begin() + std::min<size_t>(row.size(), 30))) {
+          cells.append(QString::fromStdString(cell));
+          written.append(u'"' + QString(cells.last()).replace(u'"', QStringLiteral("\"\"")) + u'"');
+        }
+        expected.append(cells);
+        text += written.join(u',') + u'\n';
+      }
+      const auto parsed = WorkspaceFiles::parseDelimited(text, u',');
+      RC_ASSERT(parsed.rows == expected);
+      RC_ASSERT(!parsed.truncated);
+    }));
+  }
+
+  // The edges of the last row, whatever ends the file.
+  void tableEdges() {
+    using Rows = QList<QStringList>;
+    for (const QString& ending : {QString(), QStringLiteral("\n"), QStringLiteral("\r\n")}) {
+      QCOMPARE(WorkspaceFiles::parseDelimited(QStringLiteral("name\r\nAlice\r\n\"\"") + ending, u',').rows,
+               (Rows{{QStringLiteral("name")}, {QStringLiteral("Alice")}, {QString()}}));
+    }
+    QCOMPARE(WorkspaceFiles::parseDelimited(QStringLiteral("\"\""), u',').rows, (Rows{{QString()}}));
+    QCOMPARE(WorkspaceFiles::parseDelimited(QString(), u',').rows, Rows());
+    QCOMPARE(WorkspaceFiles::parseDelimited(QStringLiteral("\ufeff"), u',').rows, Rows());
+    const QString full = QStringLiteral("x\n").repeated(99) + QStringLiteral("\"\"");
+    QCOMPARE(WorkspaceFiles::parseDelimited(full, u',').rows.size(), 100);
+    QVERIFY(!WorkspaceFiles::parseDelimited(full, u',').truncated);
+    QVERIFY(WorkspaceFiles::parseDelimited(full + QStringLiteral("\nextra"), u',').truncated);
+  }
+
   void files() {
     QVERIFY(rc::check("the Files tab shows the newest answers about the workspace on screen", [] {
       Sut sut;

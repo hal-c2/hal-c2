@@ -392,11 +392,20 @@ defmodule HalC2.Environment do
     # start an editor or a file manager here (`HalC2.Editors`).
     for {key, value} <- [
           {"machine", HalC2.Environment.Machine.kind()},
-          {"machineId", HalC2.Environment.Machine.id()}
+          {"machineId", HalC2.Environment.Machine.id()},
+          {"wsl", if(wsl?(), do: true)}
         ],
         value != nil,
         into: %{"os" => os(), "arch" => arch()},
         do: {key, value}
+  end
+
+  # A Linux kernel of Microsoft's: files are shown by Windows' file manager.
+  defp wsl? do
+    case File.read("/proc/sys/kernel/osrelease") do
+      {:ok, release} -> String.contains?(String.downcase(release), "microsoft")
+      _ -> false
+    end
   end
 
   defp os do

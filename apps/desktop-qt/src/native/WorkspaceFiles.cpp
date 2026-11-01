@@ -29,6 +29,13 @@ QList<FileTreeModel::Entry> entriesOf(const QJsonValue& result) {
   return entries;
 }
 
+// A file outside the workspace, opened by its full path. The path is the
+// thread's machine's, so a Windows one counts here too.
+bool hostPath(const QString& path) {
+  static const QRegularExpression full(QStringLiteral(R"(^(/|\\\\|[A-Za-z]:[/\\]))"));
+  return full.match(path).hasMatch();
+}
+
 }  // namespace
 
 // --- TextLinesModel ------------------------------------------------------------------
@@ -124,6 +131,7 @@ void WorkspaceFiles::setActive(bool active) {
     m_tree.reload();
   } else if (m_active && std::exchange(m_stale, false)) {
     m_tree.refresh();
+    followOpenFile();
   }
   // The preview loads again when the tab shows, so needs a URL that works.
   if (m_active && m_fileStatus == QLatin1String("ready") && mediaExpired()) reloadFile();
@@ -164,11 +172,91 @@ void WorkspaceFiles::followMutation() {
   const QString now = mutation();
   if (now == m_mutation) return;
   m_mutation = now;
+  // Only a change that names a media file reads it again: its preview is not
+  // fetched for what the agent does to other files.
+  m_mediaRewritten = m_mediaRewritten || newestChangeNames(m_openPath);
   if (m_active) {
     m_tree.refresh();
+    followOpenFile();
   } else {
     m_stale = true;
   }
+}
+
+bool WorkspaceFiles::newestChangeNames(const QString& path) const {
+  if (!m_timeline || path.isEmpty()) return false;
+  QJsonObject newest;
+  int ordinal = -1;
+  const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));
+  for (auto it = items.cbegin(); it != items.cend(); ++it) {
+    if (it->value(QLatin1String("type")).toString() != QLatin1String("file_change")) continue;
+    if (const int at = it->value(QLatin1String("ordinal")).toInt(); at > ordinal) {
+      ordinal = at;
+      newest = *it;
+    }
+  }
+  if (newest.value(QLatin1String("fileName")).toString() == path) return true;
+  for (const QJsonValue& change : newest.value(QLatin1String("changes")).toArray()) {
+    if (change.toObject().value(QLatin1String("path")).toString() == path) return true;
+  }
+  return false;
+}
+
+void WorkspaceFiles::followOpenFile() {
+  if (m_openPath.isEmpty()) return;
+  if (!mediaKind().isEmpty()) {
+    if (std::exchange(m_mediaRewritten, false)) reloadFile();
+    return;
+  }
+  // A path that could not be read may be a file now (a folder the agent replaced).
+  if (m_fileStatus != QLatin1String("ready")) {
+    if (m_fileStatus == QLatin1String("error")) reloadFile();
+    return;
+  }
+  // The user's own text stays: the file is read once it is written.
+  if (m_pending || m_saving || m_editing) {
+    m_rereadLater = true;
+    return;
+  }
+  refreshFile();
+}
+
+void WorkspaceFiles::refreshFile(int task) {
+  const int request = ++m_fileRequest;
+  const int revision = m_revision;
+  m_rereadLater = false;
+  m_client->call(this, m_environment, QStringLiteral("projects.readFile"),
+                 QJsonObject{{QStringLiteral("cwd"), m_root}, {QStringLiteral("relativePath"), m_openPath}},
+                 [this, request, revision, task](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (request != m_fileRequest) return;
+                   // Read before the user's edit, so older than what they see.
+                   if (revision != m_revision || m_pending || m_saving || m_editing) {
+                     m_rereadLater = true;
+                     rereadIfDue();
+                     return;
+                   }
+                   if (error) {
+                     m_fileStatus = QStringLiteral("error");
+                     m_fileProblem = readProblem(result, *error);
+                     setText({});
+                     emit fileChanged();
+                     return;
+                   }
+                   const QJsonObject file = result.toObject();
+                   const QString contents = file.value(QLatin1String("contents")).toString();
+                   if (contents != m_text) {
+                     // A task ticked against other text is not ticked: the user sees what is there now.
+                     setText(contents);
+                     m_truncated = file.value(QLatin1String("truncated")).toBool();
+                     emit fileChanged();
+                   } else if (task >= 0) {
+                     applyTask(task);
+                   }
+                 });
+}
+
+void WorkspaceFiles::rereadIfDue() {
+  if (m_rereadLater && !m_pending && !m_saving && !m_editing && m_fileStatus == QLatin1String("ready") && mediaKind().isEmpty()) refreshFile();
 }
 
 void WorkspaceFiles::reload() {
@@ -252,6 +340,8 @@ void WorkspaceFiles::openFile(const QString& path, int line) {
     if (std::exchange(m_editing, false)) emit renderedChanged();
   }
   m_openLine = line;
+  // A line is in the source, whatever the kind is usually read as.
+  if (std::exchange(m_lineSource, line > 0) != (line > 0)) emit renderedChanged();
   if (path == m_openPath && m_fileStatus == QLatin1String("ready") && !mediaExpired()) {
     // Already here: just go to the line.
     m_revealLine = line > 0 ? std::clamp(line, 1, std::max(1, m_lines.rowCount())) : 0;
@@ -263,6 +353,13 @@ void WorkspaceFiles::openFile(const QString& path, int line) {
   reveal(path);
 }
 
+QString WorkspaceFiles::readProblem(const QJsonValue& detail, const QString& error) {
+  const QString failure = detail.toObject().value(QLatin1String("failure")).toString();
+  if (failure == QLatin1String("binary_file")) return tr("This file contains binary data and cannot be shown as text.");
+  if (failure == QLatin1String("not_utf8")) return tr("This file is not UTF-8 text. Open it in another app to view its contents.");
+  return error.isEmpty() ? tr("Unable to read this file.") : error;
+}
+
 void WorkspaceFiles::reloadFile() {
   if (m_openPath.isEmpty()) return;
   save(true);
@@ -272,6 +369,8 @@ void WorkspaceFiles::reloadFile() {
   m_truncatedNotice.clear();
   m_truncated = false;
   m_mediaUrl.clear();
+  m_mediaRewritten = false;
+  m_rereadLater = false;
   emit fileChanged();
   if (!mediaKind().isEmpty()) return signMedia(request);
   m_client->call(this, m_environment, QStringLiteral("projects.readFile"),
@@ -280,7 +379,7 @@ void WorkspaceFiles::reloadFile() {
                    if (request != m_fileRequest) return;
                    if (error) {
                      m_fileStatus = QStringLiteral("error");
-                     m_fileProblem = error->isEmpty() ? QStringLiteral("Unable to read this file.") : *error;
+                     m_fileProblem = readProblem(result, *error);
                      setText({});
                      emit fileChanged();
                      return;
@@ -299,21 +398,48 @@ void WorkspaceFiles::reloadFile() {
                  });
 }
 
-void WorkspaceFiles::signMedia(int request) {
+QJsonObject WorkspaceFiles::fileResource() const {
   // A path in the workspace is the thread's file; a full path is served only
-  // as a media file. With no thread, the workspace folder names itself. The
-  // path is the thread's machine's, so a Windows one counts here too.
-  static const QRegularExpression full(QStringLiteral(R"(^(/|\\\\|[A-Za-z]:[/\\]))"));
-  const bool outside = full.match(m_openPath).hasMatch();
+  // as a media file. With no thread, the workspace folder names itself.
   QJsonObject resource{{QStringLiteral("path"), m_openPath}};
   if (m_thread.isEmpty()) {
     resource.insert(QStringLiteral("_tag"), QStringLiteral("draft-workspace-file"));
     resource.insert(QStringLiteral("cwd"), m_root);
   } else {
-    resource.insert(QStringLiteral("_tag"), outside ? QStringLiteral("media-file") : QStringLiteral("workspace-file"));
+    resource.insert(QStringLiteral("_tag"), hostPath(m_openPath) ? QStringLiteral("media-file") : QStringLiteral("workspace-file"));
     resource.insert(QStringLiteral("threadId"), m_thread);
   }
-  m_client->call(this, m_environment, QStringLiteral("assets.createUrl"), QJsonObject{{QStringLiteral("resource"), resource}},
+  return resource;
+}
+
+void WorkspaceFiles::commentOnLines(int first, int last, const QString& note) {
+  const QString text = note.trimmed();
+  if (text.isEmpty() || m_openPath.isEmpty() || first < 1) return;
+  const QStringList lines = m_text.split(QLatin1Char('\n'));
+  emit commentRequested({{QStringLiteral("sectionTitle"), tr("File")},
+                         {QStringLiteral("sectionId"), QStringLiteral("file:") + m_openPath},
+                         {QStringLiteral("filePath"), m_openPath},
+                         {QStringLiteral("lineStart"), first},
+                         {QStringLiteral("lineEnd"), last},
+                         {QStringLiteral("diff"), QStringList(lines.mid(first - 1, last - first + 1)).join(QLatin1Char('\n'))},
+                         {QStringLiteral("text"), text}});
+}
+
+void WorkspaceFiles::openInPreview() {
+  if (m_openPath.isEmpty()) return;
+  m_client->call(this, m_environment, QStringLiteral("assets.createUrl"), QJsonObject{{QStringLiteral("resource"), fileResource()}},
+                 [this](const QJsonValue& result, const std::optional<QString>& error) {
+                   const QString relative = result.toObject().value(QLatin1String("relativeUrl")).toString();
+                   if (error || relative.isEmpty()) {
+                     emit previewRefused(error && !error->isEmpty() ? *error : tr("The environment did not serve the file."));
+                     return;
+                   }
+                   emit previewReady(m_client->origin().resolved(QUrl(relative)));
+                 });
+}
+
+void WorkspaceFiles::signMedia(int request) {
+  m_client->call(this, m_environment, QStringLiteral("assets.createUrl"), QJsonObject{{QStringLiteral("resource"), fileResource()}},
                  [this, request](const QJsonValue& result, const std::optional<QString>& error) {
                    if (request != m_fileRequest) return;
                    const QString relative = result.toObject().value(QLatin1String("relativeUrl")).toString();
@@ -370,6 +496,10 @@ void WorkspaceFiles::closeFile() {
   const bool had = !m_openPath.isEmpty() || m_fileStatus != QLatin1String("none");
   m_openPath.clear();
   m_openLine = 0;
+  m_lineSource = false;
+  m_rereadLater = false;
+  m_mediaRewritten = false;
+  clearTrail();
   m_revealLine = 0;
   m_fileStatus = QStringLiteral("none");
   m_fileProblem.clear();
@@ -418,66 +548,99 @@ void eachTask(const QString& markdown, const std::function<void(qsizetype, bool)
   }
 }
 
-// One CSV record's cells: commas (or tabs) apart, quotes around a cell that
-// holds one, a doubled quote for a quote.
-QList<QStringList> csvRows(const QString& text, QChar separator, int limit) {
-  QList<QStringList> rows;
+}  // namespace
+
+QChar WorkspaceFiles::previewDelimiter(const QString& name, const QString& mimeType) {
+  const QString mime = mimeType.section(QLatin1Char(';'), 0, 0).trimmed().toLower();
+  if (mime == QLatin1String("text/csv")) return u',';
+  if (mime == QLatin1String("text/tab-separated-values")) return u'\t';
+  if (!mime.isEmpty() && mime != QLatin1String("text/plain") && mime != QLatin1String("application/octet-stream")) return {};
+  const QString extension = extensionOf(name);
+  if (extension == QLatin1String("csv")) return u',';
+  if (extension == QLatin1String("tsv")) return u'\t';
+  return {};
+}
+
+// Quoted delimiters, doubled quotes and multi-line cells stay in their cell;
+// the source view keeps all of the text.
+WorkspaceFiles::DelimitedPreview WorkspaceFiles::parseDelimited(const QString& text, QChar delimiter) {
+  DelimitedPreview preview;
   QStringList row;
   QString cell;
   bool quoted = false;
-  const auto endRow = [&] {
-    row.append(cell);
-    cell.clear();
-    if (row.size() > 1 || !row.first().isEmpty()) rows.append(row);
-    row.clear();
-  };
-  for (qsizetype i = 0; i < text.size() && rows.size() < limit; ++i) {
-    const QChar c = text.at(i);
-    if (quoted) {
-      if (c == u'"' && i + 1 < text.size() && text.at(i + 1) == u'"') {
-        cell += u'"';
-        ++i;
-      } else if (c == u'"') {
-        quoted = false;
-      } else {
-        cell += c;
-      }
-    } else if (c == u'"' && cell.isEmpty()) {
-      quoted = true;
-    } else if (c == separator) {
+  const auto endCell = [&] {
+    if (row.size() < tableColumnLimit) {
       row.append(cell);
-      cell.clear();
-    } else if (c == u'\n') {
-      endRow();
-    } else if (c != u'\r') {
-      cell += c;
+    } else {
+      preview.truncated = true;
+    }
+    cell.clear();
+  };
+  const auto add = [&](QChar character) {
+    if (cell.size() < tableCellLimit) {
+      cell += character;
+    } else {
+      preview.truncated = true;
+    }
+  };
+  qsizetype rowStart = !text.isEmpty() && text.at(0) == QChar(0xfeff) ? 1 : 0;
+  for (qsizetype index = rowStart; index < text.size(); ++index) {
+    const QChar character = text.at(index);
+    if (character == u'"') {
+      if (quoted && index + 1 < text.size() && text.at(index + 1) == u'"') {
+        add(u'"');
+        ++index;
+        continue;
+      }
+      if (quoted || cell.isEmpty()) {
+        quoted = !quoted;
+        continue;
+      }
+    }
+    if (!quoted && (character == delimiter || character == u'\n' || character == u'\r')) {
+      endCell();
+      if (character == delimiter) continue;
+      preview.rows.append(std::exchange(row, {}));
+      if (character == u'\r' && index + 1 < text.size() && text.at(index + 1) == u'\n') ++index;
+      rowStart = index + 1;
+      if (preview.rows.size() == tableRowLimit) {
+        preview.truncated = preview.truncated || index < text.size() - 1;
+        return preview;
+      }
+    } else {
+      add(character);
     }
   }
-  if (rows.size() < limit && (!cell.isEmpty() || !row.isEmpty())) endRow();
-  return rows;
+  // Anything after the last line ending is a row, a lone "" too.
+  if (rowStart < text.size()) {
+    endCell();
+    preview.rows.append(row);
+  }
+  preview.truncated = preview.truncated || quoted;
+  return preview;
 }
 
-QString markdownTable(const QString& text, QChar separator) {
-  const QList<QStringList> rows = csvRows(text, separator, WorkspaceFiles::csvRowLimit + 1);
-  if (rows.isEmpty()) return {};
-  int columns = 0;
-  for (const QStringList& row : rows) columns = std::max(columns, int(row.size()));
+QString WorkspaceFiles::tableMarkdown(const QString& text, QChar delimiter) {
+  const DelimitedPreview preview = parseDelimited(text, delimiter);
+  if (preview.rows.isEmpty()) return {};
+  qsizetype columns = 0;
+  for (const QStringList& row : preview.rows) columns = std::max(columns, row.size());
   const auto line = [columns](const QStringList& row) {
     QString out = QStringLiteral("|");
-    for (int column = 0; column < columns; ++column) {
+    for (qsizetype column = 0; column < columns; ++column) {
       QString cell = row.value(column);
-      cell.replace(u'\\', QStringLiteral("\\\\")).replace(u'|', QStringLiteral("\\|")).replace(u'\n', u' ');
+      cell.replace(u'\\', QStringLiteral("\\\\")).replace(u'|', QStringLiteral("\\|")).replace(QStringLiteral("\r\n"), QStringLiteral(" ")).replace(u'\n', u' ').replace(u'\r', u' ');
       out += u' ' + cell + QStringLiteral(" |");
     }
     return out + u'\n';
   };
-  QString table = line(rows.first()) + QStringLiteral("|") + QStringLiteral(" --- |").repeated(columns) + u'\n';
-  for (qsizetype row = 1; row < rows.size() && row <= WorkspaceFiles::csvRowLimit; ++row) table += line(rows.at(row));
-  if (rows.size() > WorkspaceFiles::csvRowLimit) table += QStringLiteral("\nShowing the first %1 rows.\n").arg(WorkspaceFiles::csvRowLimit);
+  QString table = line(preview.rows.first()) + QStringLiteral("|") + QStringLiteral(" --- |").repeated(columns) + u'\n';
+  for (qsizetype row = 1; row < preview.rows.size(); ++row) table += line(preview.rows.at(row));
+  if (preview.truncated) {
+    table += u'\n' + tr("Table limited to the first %1 rows and %2 columns; the source shows the rest.").arg(tableRowLimit).arg(tableColumnLimit) + u'\n';
+  }
   return table;
 }
-
-}  // namespace
 
 void WorkspaceFiles::setText(const QString& text) {
   m_saveDelay.stop();
@@ -517,12 +680,16 @@ QString WorkspaceFiles::mediaKindOf(const QString& path) {
 
 bool WorkspaceFiles::rendered() const {
   const QString kind = renderKind();
-  return !kind.isEmpty() && !m_editing && !m_sourceKinds.contains(kind);
+  return !kind.isEmpty() && !m_editing && !m_lineSource && !m_sourceKinds.contains(kind);
 }
 
 void WorkspaceFiles::setRendered(bool rendered) {
   const QString kind = renderKind();
-  if (kind.isEmpty() || rendered == !m_sourceKinds.contains(kind)) return;
+  const bool leftLine = std::exchange(m_lineSource, false);
+  if (kind.isEmpty() || rendered == !m_sourceKinds.contains(kind)) {
+    if (leftLine) emit renderedChanged();
+    return;
+  }
   if (rendered) {
     m_sourceKinds.removeAll(kind);
     if (std::exchange(m_editing, false)) save();
@@ -541,7 +708,7 @@ void WorkspaceFiles::setSourceKinds(const QStringList& kinds) {
 
 QString WorkspaceFiles::renderedText() const {
   const QString kind = renderKind();
-  if (kind == QLatin1String("csv")) return markdownTable(m_text, extensionOf(m_openPath) == QLatin1String("tsv") ? u'\t' : u',');
+  if (kind == QLatin1String("csv")) return tableMarkdown(m_text, previewDelimiter(m_openPath));
   if (kind != QLatin1String("markdown")) return m_text;
   // Each task's box becomes a link the rendered view answers with toggleTask.
   QString out = m_text;
@@ -554,11 +721,6 @@ QString WorkspaceFiles::renderedText() const {
 }
 
 namespace {
-
-// A file outside the workspace, opened by its full path.
-bool hostPath(const QString& path) {
-  return path.startsWith(QLatin1Char('/')) || path.contains(QLatin1String(":\\"));
-}
 
 QString hostWriteRefusal() {
   return WorkspaceFiles::tr("Saving a file outside the project needs terminal access, which this device was not paired with.");
@@ -578,6 +740,10 @@ QString WorkspaceFiles::readOnlyReason() const {
   return {};
 }
 
+bool WorkspaceFiles::outsideProject() const {
+  return hostPath(m_openPath);
+}
+
 bool WorkspaceFiles::hostWritesRefused() const {
   return !m_hostWritesRefusedOn.isEmpty() && m_hostWritesRefusedOn == m_environment && hostPath(m_openPath);
 }
@@ -588,6 +754,7 @@ void WorkspaceFiles::setEditing(bool editing) {
   m_editing = editing;
   if (!m_editing) save();
   emit renderedChanged();
+  rereadIfDue();
 }
 
 void WorkspaceFiles::edit(const QString& contents) {
@@ -603,6 +770,16 @@ void WorkspaceFiles::edit(const QString& contents) {
 
 void WorkspaceFiles::toggleTask(int index) {
   if (!editable() || renderKind() != QLatin1String("markdown")) return;
+  // The file may have changed underneath what the user is looking at, unless
+  // what they see is their own edit not written yet.
+  if (m_pending || m_saving) {
+    applyTask(index);
+  } else {
+    refreshFile(index);
+  }
+}
+
+void WorkspaceFiles::applyTask(int index) {
   int seen = 0;
   qsizetype offset = -1;
   bool checked = false;
@@ -680,6 +857,7 @@ void WorkspaceFiles::save(bool closing) {
                      m_saveDelay.start();
                    }
                    emit saveChanged();
+                   rereadIfDue();
                  });
   emit saveChanged();
 }
@@ -699,7 +877,7 @@ void WorkspaceFiles::setWrap(bool wrap) {
 
 void WorkspaceFiles::reveal(const QString& path) {
   // A file outside the workspace (opened by its full path) is not in the tree.
-  if (path.isEmpty() || path.startsWith(QLatin1Char('/'))) return;
+  if (path.isEmpty() || hostPath(path)) return;
   // Revealing is about the user's tree, not a search's.
   if (!m_query.isEmpty()) setQuery({});
   m_revealing = path;
@@ -721,4 +899,54 @@ void WorkspaceFiles::walkReveal() {
     if (!m_tree.loaded(folder)) return;
   }
   m_tree.select(std::exchange(m_revealing, QString()));
+}
+
+// --- The path trail ------------------------------------------------------------------
+
+void WorkspaceFiles::clearTrail() {
+  ++m_trailRequest;
+  if (m_trailFolder.isEmpty() && m_trailStatus.isEmpty()) return;
+  m_trailFolder.clear();
+  m_trailStatus.clear();
+  m_trailProblem.clear();
+  m_trailEntries.clear();
+  emit trailChanged();
+}
+
+void WorkspaceFiles::listTrail(const QString& folder) {
+  const int request = ++m_trailRequest;
+  m_trailFolder = folder;
+  m_trailStatus = QStringLiteral("loading");
+  m_trailProblem.clear();
+  m_trailEntries.clear();
+  emit trailChanged();
+  m_client->call(this, m_environment, QStringLiteral("projects.listEntries"),
+                 QJsonObject{{QStringLiteral("cwd"), m_root}, {QStringLiteral("directoryPath"), folder}},
+                 [this, request](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (request != m_trailRequest) return;
+                   if (error) {
+                     const bool gone = result.toObject().value(QLatin1String("failure")) == QLatin1String("directory_not_found");
+                     m_trailStatus = gone ? QStringLiteral("gone") : QStringLiteral("error");
+                     m_trailProblem = gone ? tr("This folder is no longer available.") : error->isEmpty() ? tr("Unable to load folder.") : *error;
+                     emit trailChanged();
+                     return;
+                   }
+                   QList<FileTreeModel::Entry> entries = entriesOf(result);
+                   std::stable_sort(entries.begin(), entries.end(), [](const FileTreeModel::Entry& a, const FileTreeModel::Entry& b) {
+                     if (a.directory != b.directory) return a.directory;
+                     return a.path.section(QLatin1Char('/'), -1).compare(b.path.section(QLatin1Char('/'), -1), Qt::CaseInsensitive) < 0;
+                   });
+                   for (const FileTreeModel::Entry& entry : std::as_const(entries)) {
+                     m_trailEntries.append(QVariantMap{{QStringLiteral("path"), entry.path},
+                                                       {QStringLiteral("name"), entry.path.section(QLatin1Char('/'), -1)},
+                                                       {QStringLiteral("directory"), entry.directory}});
+                   }
+                   m_trailStatus = QStringLiteral("ready");
+                   if (m_trailEntries.isEmpty()) {
+                     m_trailProblem = result.toObject().value(QLatin1String("truncated")).toBool()
+                                          ? tr("No entries from this folder are available in the partial workspace index.")
+                                          : tr("This folder is empty.");
+                   }
+                   emit trailChanged();
+                 });
 }

@@ -9,12 +9,16 @@
 // What the user is promised: a write only ever carries the text of the file it
 // writes; once an environment refused a write by full path, its files outside
 // the workspace open read-only and nothing more is sent to it by full path;
-// every other edit is still written once its writes are answered.
+// every other edit is still written once its writes are answered; and the agent
+// rewriting the open file never takes back an edit: a read from before a save
+// is not shown after it, however late it is answered.
 
 #include "Prop.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
+
+#include <functional>
 
 #include "FakeMc.h"
 #include "McClient.h"
@@ -53,6 +57,11 @@ struct Sut {
   // Each environment's disk, by path: every file starts as "<environment>:<path>".
   QHash<QString, QString> disk;
   QList<Write> held;
+  // Reads the viewer makes on its own of an open file, answered with what the disk held when asked.
+  bool holdReads = false;
+  QList<std::function<void()>> heldReads;
+  // The last edit typed into the open file; the viewer must keep showing it.
+  QString typed;
   // Every write sent, as "<environment> <path>", and the environments that refused one by full path.
   QStringList sent;
   QSet<QString> refused;
@@ -69,7 +78,12 @@ struct Sut {
     mc.onRpc(QStringLiteral("projects.listEntries"), [this](const FakeMc::Rpc& rpc) { mc.reply(rpc, QJsonObject{{QStringLiteral("entries"), QJsonArray()}}); });
     mc.onRpc(QStringLiteral("projects.readFile"), [this](const FakeMc::Rpc& rpc) {
       const QString path = rpc.payload.value(QLatin1String("relativePath")).toString();
-      mc.reply(rpc, QJsonObject{{QStringLiteral("relativePath"), path}, {QStringLiteral("contents"), disk.value(key(rpc.environment, path))}});
+      const QJsonObject answer{{QStringLiteral("relativePath"), path}, {QStringLiteral("contents"), disk.value(key(rpc.environment, path))}};
+      if (holdReads) {
+        heldReads.append([this, rpc, answer] { mc.reply(rpc, answer); });
+      } else {
+        mc.reply(rpc, answer);
+      }
     });
     mc.onRpc(QStringLiteral("projects.writeFile"), [this](const FakeMc::Rpc& rpc) {
       const QString path = rpc.payload.value(QLatin1String("relativePath")).toString();
@@ -85,6 +99,15 @@ struct Sut {
     files->setSaveDelay(0);
   }
   ~Sut() { files.reset(); }
+
+  // The user's own open is answered at once: only reads that follow the agent wait.
+  void opening(const std::function<void()>& open) {
+    holdReads = false;
+    typed.clear();
+    open();
+    RC_ASSERT(sync());
+    holdReads = true;
+  }
 
   static QString key(const QString& environment, const QString& path) { return environment + QLatin1Char(' ') + path; }
 
@@ -123,6 +146,7 @@ void check(const Model& expected, Sut& sut) {
     if (outside(path)) RC_ASSERT(sut.disk.value(Sut::key(QStringLiteral("env-b"), path)) == QStringLiteral("env-b:") + path);
   }
   if (expected.openPath.isEmpty()) return;
+  RC_ASSERT(files.text().contains(sut.typed));
   RC_ASSERT(files.fileStatus() == QStringLiteral("ready"));
   const bool readOnly = outside(expected.openPath) && sut.refused.contains(expected.environment);
   RC_ASSERT(files.editable() == !readOnly);
@@ -151,7 +175,7 @@ struct SetTarget : Step<SetTarget> {
   }
   void act(const Model& before, Sut& sut) const {
     if (environment != before.environment) sut.edited = false;
-    sut.files->setTarget(environment, kRoot);
+    sut.opening([&] { sut.files->setTarget(environment, kRoot); });
   }
   void show(std::ostream& os) const override { os << "workspace of " << environment.toStdString(); }
 };
@@ -163,7 +187,7 @@ struct Open : Step<Open> {
   void apply(Model& model) const override { model.openPath = path; }
   void act(const Model& before, Sut& sut) const {
     if (path != before.openPath) sut.edited = false;
-    sut.files->openFile(path);
+    sut.opening([&] { sut.files->openFile(path); });
   }
   void show(std::ostream& os) const override { os << "open " << path.toStdString(); }
 };
@@ -181,8 +205,31 @@ struct Edit : Step<Edit> {
     // Read-only takes no edit.
     if (!editable) RC_ASSERT(sut.files->text() == text && !sut.files->editing());
     sut.edited = sut.edited || editable;
+    if (editable) sut.typed = QStringLiteral(" +%1").arg(before.edits);
   }
   void show(std::ostream& os) const override { os << "edit"; }
+};
+
+// The agent rewrites the open project file: it adds to the end of what is on disk.
+struct AgentWrites : Step<AgentWrites> {
+  explicit AgentWrites(const Model& model) { RC_PRE(model.openPath == kPaths.first()); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.openPath == kPaths.first()); }
+  void apply(Model&) const override {}
+  void act(const Model& before, Sut& sut) const {
+    sut.disk[Sut::key(before.environment, before.openPath)] += QStringLiteral(" agent");
+    sut.files->followOpenFile();
+  }
+  void show(std::ostream& os) const override { os << "the agent rewrites the file"; }
+};
+
+// The MC answers the oldest read it holds, if any.
+struct AnswerRead : Step<AnswerRead> {
+  explicit AnswerRead(const Model&) {}
+  void apply(Model&) const override {}
+  void act(const Model&, Sut& sut) const {
+    if (!sut.heldReads.isEmpty()) sut.heldReads.takeFirst()();
+  }
+  void show(std::ostream& os) const override { os << "answer a read"; }
 };
 
 // The MC answers one write it holds, if any.
@@ -202,11 +249,14 @@ struct Settle : Step<Settle> {
   explicit Settle(const Model&) {}
   void apply(Model&) const override {}
   void act(const Model& before, Sut& sut) const {
-    for (int round = 0; round < 10 && !sut.held.isEmpty(); ++round) {
+    sut.files->setEditing(false);
+    RC_ASSERT(sut.sync());
+    for (int round = 0; round < 10 && !(sut.held.isEmpty() && sut.heldReads.isEmpty()); ++round) {
       while (!sut.held.isEmpty()) sut.answer(0);
+      while (!sut.heldReads.isEmpty()) sut.heldReads.takeFirst()();
       RC_ASSERT(sut.sync());
     }
-    RC_ASSERT(sut.held.isEmpty());
+    RC_ASSERT(sut.held.isEmpty() && sut.heldReads.isEmpty());
     if (before.openPath.isEmpty() || sut.files->fileStatus() != QLatin1String("ready")) return;
     const bool refused = outside(before.openPath) && sut.refused.contains(before.environment);
     if (refused) {
@@ -224,6 +274,7 @@ struct Close : Step<Close> {
   void apply(Model& model) const override { model.openPath.clear(); }
   void act(const Model&, Sut& sut) const {
     sut.edited = false;
+    sut.typed.clear();
     sut.files->closeFile();
   }
   void show(std::ostream& os) const override { os << "close the file"; }
@@ -239,7 +290,7 @@ private slots:
     QVERIFY(rc::check("edits are written to their own file, never by full path where that was refused", [] {
       Sut sut;
       RC_ASSERT(sut.client.isReady());
-      rc::state::check(Model(), sut, rc::state::gen::execOneOfWithArgs<SetTarget, Open, Open, Edit, Edit, Answer, Answer, Settle, Close>());
+      rc::state::check(Model(), sut, rc::state::gen::execOneOfWithArgs<SetTarget, Open, Open, Edit, Edit, Answer, Answer, AgentWrites, AnswerRead, Settle, Close>());
     }));
   }
 };

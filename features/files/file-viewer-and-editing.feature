@@ -147,7 +147,7 @@ Feature: Viewing and editing files
       Then the user is told the preview is limited to the first 1 MB of the file
 
     # Legacy: packages/shared/src/filePreview.ts (decodeFilePreviewText)
-    @backlog @desktop
+    @desktop
     Scenario Outline: A file that is not text says why it is not shown
       Given "<path>" in "shop" <content>
       When the user opens "<path>"
@@ -221,7 +221,7 @@ Feature: Viewing and editing files
         | public/index.html |
 
     # Legacy: packages/shared/src/delimitedPreview.ts (parseDelimitedPreview limits)
-    @backlog @desktop
+    @desktop
     Scenario: A large table shows only its first rows and columns
       Given "data/orders.csv" has more than 100 rows and more than 30 columns
       When the user opens "data/orders.csv" rendered
@@ -229,7 +229,7 @@ Feature: Viewing and editing files
       And the user is told the table is limited and that the source shows the rest
 
     # Legacy: packages/shared/src/delimitedPreview.ts (parseDelimitedPreview quoting, byte order mark)
-    @backlog @desktop
+    @desktop
     Scenario: A table keeps quoted commas, doubled quotes and multi-line cells in one cell
       Given "data/orders.csv" has a cell reading "Smith, Jane" and a cell holding two lines
       When the user opens "data/orders.csv" rendered
@@ -237,7 +237,7 @@ Feature: Viewing and editing files
       And a leading byte order mark is not shown as text
 
     # Legacy: packages/shared/src/delimitedPreview.ts (a final quoted empty record with no line ending)
-    @backlog @desktop
+    @desktop
     Scenario: A table keeps a final quoted empty row that has no line ending
       Given "data/orders.csv" ends with a row whose only cell is an empty quoted value and no line ending
       When the user opens "data/orders.csv" rendered
@@ -257,16 +257,13 @@ Feature: Viewing and editing files
         | data/a.csv    | text/plain                | the file is shown as a comma table       |
         | data/a.txt    | text/plain                | the file is not shown as a table         |
 
-    # The three scenarios below are layout: the native steps drive models and cannot see
-    # columns, so they stay @backlog-desktop until a step can. The QML tests
-    # (apps/desktop-qt/tests/tst_RightPanel.qml) cover them meanwhile.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: An open file sits beside the file tree
       When the user opens "src/app.ts"
       Then the file viewer takes the height of the Files tab
       And the file tree is a column beside it
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The file tree can be hidden while a file is open
       Given the user opened "src/app.ts"
       When the user hides the file explorer
@@ -279,7 +276,7 @@ Feature: Viewing and editing files
       When the user opens "src/app.ts"
       Then the file tree stays hidden while the file is open
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A narrow Files tab keeps the file's buttons in the file
       Given the Files tab is as narrow as a phone
       When the user opens "docs/guide.md"
@@ -326,32 +323,32 @@ Feature: Viewing and editing files
       And the user closes the file
       Then no file is open and the tree is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: An open file follows the agent's changes
       Given the user is reading "src/app.ts" with no edits of their own
       When the agent changes "src/app.ts"
       Then the viewer shows the new contents
       And an image the agent rewrites is shown as it is now, not from a cached copy
 
-    @backlog @desktop
+    @desktop
     Scenario: Media and documents are not read again when the workspace changes
       Given the user is previewing "assets/logo.png"
       When the agent changes another file
       Then "assets/logo.png" is not fetched again
 
-    @backlog @desktop
+    @desktop
     Scenario: A path that becomes a file is noticed while it is open
       Given the user opened "build" and it is a folder
       When the agent replaces the folder "build" with a file
       Then the viewer shows the file's contents
 
-    @backlog @desktop
+    @desktop
     Scenario: Opening a file at a line shows its source even when the rendered view is preferred
       Given the user prefers the rendered Markdown view
       When the user opens "docs/guide.md" at line 12
       Then the Markdown source is shown with line 12 in view
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A line selection in a file is let go of without a comment
       Given the user selected lines 10 to 12 of "src/cart.ts" and left the comment form closed
       When the user <action>
@@ -362,13 +359,13 @@ Feature: Viewing and editing files
         | clicks outside the file                        |
         | presses Escape while the file's text is focused |
 
-    @backlog @desktop
+    @desktop
     Scenario: A comment in progress is not dropped by a click outside the file
       Given the user is writing a comment on lines 10 to 12 of "src/cart.ts"
       When the user clicks outside the file
       Then the comment form and its text are still there
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The file tree beside a file is shown only for project files
       Given the user chose to <preference> the file tree
       When the user opens <file>
@@ -381,14 +378,14 @@ Feature: Viewing and editing files
         | show       | a file outside the project on the host  | hidden  |
         | show       | an attachment                           | hidden  |
 
-    @backlog @desktop
+    @desktop
     Scenario: A folder in the path trail lists what is in it
       Given the user is looking at "src/lib/cart.ts"
       When the user opens the folder "lib" in the path trail
       Then the files and folders of "lib" are listed, folders first
       And the folder that is open is marked
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A folder in the path trail explains why it lists nothing
       Given <state>
       When the user opens the folder "lib" in the path trail
@@ -400,7 +397,7 @@ Feature: Viewing and editing files
         | "lib" was deleted after the file was opened    | This folder is no longer available.                                     |
         | the project index is partial and has nothing in "lib" | No entries from this folder are available in the partial workspace index. |
 
-    @backlog @desktop
+    @desktop
     Scenario: A folder in the path trail that fails to load can be retried
       Given listing "lib" fails once
       When the user opens the folder "lib" in the path trail
@@ -408,7 +405,7 @@ Feature: Viewing and editing files
       When the user retries
       Then the files of "lib" are listed
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A web page or document can be opened in the preview browser
       Given the environment can serve "<file>" to the preview
       When the user opens "<file>" in the preview browser
@@ -419,13 +416,13 @@ Feature: Viewing and editing files
         | public/index.html |
         | docs/manual.pdf   |
 
-    @backlog @desktop
+    @desktop
     Scenario: A file that cannot be opened in the preview browser says so
       Given the environment cannot serve "public/index.html" to the preview
       When the user opens "public/index.html" in the preview browser
       Then the user is told the file could not be opened in the browser with the reason
 
-    @backlog @desktop
+    @desktop
     Scenario: The preferred editor gives way when it is no longer available
       Given the user's preferred editor is "Zed" and it is no longer installed
       And the environment has the editors "VS Code" and "Sublime Text"
@@ -433,7 +430,7 @@ Feature: Viewing and editing files
       Then "VS Code" opens "src/app.ts"
       And "VS Code" is the preferred editor from then on
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Revealing a file is named after the host's file manager
       Given the environment's host is <host>
       When the user opens the menu of "src/app.ts"
@@ -649,14 +646,14 @@ Feature: Viewing and editing files
       Then the user is told the file could not be saved
       And the edit is still in the editor
 
-    @backlog @desktop
+    @desktop
     Scenario: A save that failed is tried again when the file is closed
       Given writing "src/app.ts" failed after an edit
       And writing "src/app.ts" works again
       When the user closes the file
       Then the edit is written to "src/app.ts"
 
-    @backlog @desktop
+    @desktop
     Scenario: An edit made while a save is under way is saved too
       Given a save of "src/app.ts" is being written
       When the user makes another edit
@@ -664,14 +661,14 @@ Feature: Viewing and editing files
       And the file is not shown as saved until the last edit is written
 
     # Legacy: packages/client-runtime/src/state/projectCommands.ts (optimisticFile), apps/web/src/components/files/projectFilesQueryState.ts
-    @backlog @desktop
+    @desktop
     Scenario: A saved edit stays on screen while the file is read again
       Given the user saved an edit to "src/app.ts" while an older read of it was still under way
       When the older read finishes
       Then the viewer keeps showing the saved edit
       And it shows the file as the environment has it once the new read arrives
 
-    @backlog @desktop
+    @desktop
     Scenario: Ticking a task in a document that changed underneath leaves the file alone
       Given "TODO.md" has the unticked task "Ship cart"
       And the user is looking at the rendered view

@@ -101,7 +101,9 @@ defmodule HalC2.Workspace do
          # By what the path resolves to: a link named like an image reads no other file.
          :ok <- if(base64? and not chat_image?(real(path)), do: :binary, else: :ok),
          # An image too large to attach comes back without its bytes.
-         {:ok, contents} <- read_head(path, if(base64? and size > max, do: 0, else: max), error) do
+         {:ok, head} <- read_head(path, if(base64? and size > max, do: 0, else: max), error) do
+      contents = if(base64? or size <= max, do: head, else: whole_characters(head))
+
       cond do
         base64? ->
           {:ok, result(shown, Base.encode64(contents), size, size > max)}
@@ -109,14 +111,26 @@ defmodule HalC2.Workspace do
         text?(contents) ->
           {:ok, result(shown, contents, size, size > max)}
 
-        true ->
+        String.contains?(contents, <<0>>) ->
           error.("binary_file", "'#{relative}' is not a text file.")
+
+        true ->
+          error.("not_utf8", "'#{relative}' is not a text file.")
       end
     else
       :binary -> error.("binary_file", "'#{relative}' is binary and cannot be read as text.")
       {:ok, %File.Stat{}} -> error.("path_not_file", "'#{relative}' is not a file.")
       {:error, _} = failure -> failure
     end
+  end
+
+  # The read limit can fall inside a character, which does not make the file
+  # any less text.
+  defp whole_characters(head) do
+    Enum.find_value(0..3, head, fn cut ->
+      kept = binary_part(head, 0, max(byte_size(head) - cut, 0))
+      if String.valid?(kept), do: kept
+    end)
   end
 
   defp read_target(root, relative, error) do
@@ -397,8 +411,19 @@ defmodule HalC2.Workspace do
          "truncated" => false
        }}
     else
-      {:error, reason} when is_atom(reason) -> error.("Could not list '#{directory}': #{reason}")
-      {:error, _} = failure -> failure
+      {:error, :enoent} ->
+        entries_error(
+          "ProjectListEntriesError",
+          root,
+          "directory_not_found",
+          "'#{directory}' does not exist."
+        )
+
+      {:error, reason} when is_atom(reason) ->
+        error.("Could not list '#{directory}': #{reason}")
+
+      {:error, _} = failure ->
+        failure
     end
   end
 

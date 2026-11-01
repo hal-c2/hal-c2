@@ -8,6 +8,7 @@
 #include <QString>
 #include <QTimer>
 #include <QUrl>
+#include <QVariantList>
 
 #include <functional>
 #include <optional>
@@ -16,6 +17,7 @@
 #include "FileTreeModel.h"
 
 class McClient;
+class QJsonValue;
 class TimelineModel;
 
 // A file's text as one row per line, so a ListView only lays out the lines on
@@ -119,6 +121,14 @@ class WorkspaceFiles : public QObject {
   // An edit is not written yet.
   Q_PROPERTY(bool unsaved READ unsaved NOTIFY saveChanged)
   Q_PROPERTY(QString saveProblem READ saveProblem NOTIFY saveChanged)
+  // The open file is on its machine outside the workspace, so not in the tree.
+  Q_PROPERTY(bool outsideProject READ outsideProject NOTIFY fileChanged)
+  // The folder the path trail lists: loading, ready, gone or error, what it
+  // holds (path, name, directory; folders first) and why it lists nothing.
+  Q_PROPERTY(QString trailFolder READ trailFolder NOTIFY trailChanged)
+  Q_PROPERTY(QString trailStatus READ trailStatus NOTIFY trailChanged)
+  Q_PROPERTY(QVariantList trailEntries READ trailEntries NOTIFY trailChanged)
+  Q_PROPERTY(QString trailProblem READ trailProblem NOTIFY trailChanged)
 
 public:
   // How long typing pauses before the search goes out.
@@ -126,8 +136,20 @@ public:
   static constexpr int searchLimit = 200;
   // How long after the last edit it is written.
   static constexpr int saveDelayMs = 500;
-  // The rows of a CSV file its table shows.
-  static constexpr int csvRowLimit = 500;
+  // What a table shows of a CSV or TSV file; its source has the rest.
+  static constexpr int tableRowLimit = 100;
+  static constexpr int tableColumnLimit = 30;
+  static constexpr int tableCellLimit = 2000;
+
+  struct DelimitedPreview {
+    QList<QStringList> rows;
+    bool truncated = false;
+  };
+  // The delimiter a file's table has, by its type and else its name: null for no table.
+  static QChar previewDelimiter(const QString& name, const QString& mimeType = {});
+  static DelimitedPreview parseDelimited(const QString& text, QChar delimiter);
+  // The table as Markdown, saying so when it is limited; empty with no rows.
+  static QString tableMarkdown(const QString& text, QChar delimiter);
 
   explicit WorkspaceFiles(McClient* client, QObject* parent = nullptr);
 
@@ -147,6 +169,9 @@ public:
   void setTarget(const QString& environmentId, const QString& root, const QString& threadId = {});
   // Only a shown tab loads anything.
   void setActive(bool active);
+  // The workspace changed under the open file: shows it as it is now, once the
+  // user's own edit is out of the way, without a loading state.
+  void followOpenFile();
 
   // The thread whose agent changes the workspace: the tree lists its loaded
   // folders again once a command or file change settles or a checkpoint
@@ -188,6 +213,11 @@ public:
   void setEditing(bool editing);
   bool unsaved() const { return m_pending; }
   QString saveProblem() const { return m_saveProblem; }
+  bool outsideProject() const;
+  QString trailFolder() const { return m_trailFolder; }
+  QString trailStatus() const { return m_trailStatus; }
+  QVariantList trailEntries() const { return m_trailEntries; }
+  QString trailProblem() const { return m_trailProblem; }
   // How long an edit waits to be written (saveDelayMs unless a test says).
   void setSaveDelay(int ms) { m_saveDelay.setInterval(ms); }
   // How long typing pauses before a search goes out (searchDelayMs unless a test says).
@@ -215,6 +245,12 @@ public:
   Q_INVOKABLE void edit(const QString& contents);
   // Ticks or unticks the open Markdown file's nth task (from 0).
   Q_INVOKABLE void toggleTask(int index);
+  // Lists a folder for the path trail, or again after it failed.
+  Q_INVOKABLE void listTrail(const QString& folder);
+  // Asks for the open file's address and hands it to the thread's browser.
+  Q_INVOKABLE void openInPreview();
+  // Sends a note on lines of the open file to the prompt.
+  Q_INVOKABLE void commentOnLines(int first, int last, const QString& note);
 
 signals:
   void targetChanged();
@@ -226,6 +262,10 @@ signals:
   void textChanged();
   void renderedChanged();
   void saveChanged();
+  void trailChanged();
+  void commentRequested(const QVariantMap& comment);
+  void previewReady(const QUrl& url);
+  void previewRefused(const QString& reason);
   // The user chose source or rendered for a kind.
   void sourceKindsChanged();
   // The MC would not write `path`.
@@ -247,6 +287,18 @@ private:
   // What the agent last did to the workspace, or empty.
   QString mutation() const;
   void followMutation();
+  // The newest file change the agent made names `path`.
+  bool newestChangeNames(const QString& path) const;
+  // The agent changed the workspace: the open file shows what is there now.
+  // Reads the open file while it stays on screen; `task`, when not -1, is
+  // ticked if the file is still what the user is looking at.
+  void refreshFile(int task = -1);
+  void rereadIfDue();
+  void applyTask(int index);
+  void clearTrail();
+  // What assets.createUrl serves the open file as.
+  QJsonObject fileResource() const;
+  static QString readProblem(const QJsonValue& detail, const QString& error);
 
   McClient* m_client;
   FileTreeModel m_tree;
@@ -266,6 +318,17 @@ private:
   QString m_searchProblem;
   QString m_openPath;
   int m_openLine = 0;
+  // Opened at a line, so shown as source until the user asks otherwise; not a preference.
+  bool m_lineSource = false;
+  // A read was skipped or dropped for the user's edit: read again once it is written.
+  bool m_rereadLater = false;
+  // The open media file was rewritten while nothing could show it.
+  bool m_mediaRewritten = false;
+  QString m_trailFolder;
+  QString m_trailStatus;
+  QString m_trailProblem;
+  QVariantList m_trailEntries;
+  int m_trailRequest = 0;
   int m_fileRequest = 0;
   QString m_fileStatus = QStringLiteral("none");
   QString m_fileProblem;

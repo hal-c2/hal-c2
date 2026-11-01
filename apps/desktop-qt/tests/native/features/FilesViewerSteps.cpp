@@ -33,15 +33,33 @@ struct Viewer {
   QString described;
   // How many times the MC had been asked to open an editor before the step under test.
   qsizetype editorCallsBefore = 0;
+  // What the path trail's folder is to be when it is opened: empty, gone or partial.
+  QString trailState;
+  // What a file went through after an older read was let go.
+  QStringList seen;
+  QString rewritten;
+  bool savedEarly = false;
+  qsizetype signingsBefore = 0;
 };
 
 Viewer& viewer(World& world) {
   return world.mc.part<Viewer>();
 }
 
+void answerWrite(FakeMc& mc, const FakeMc::Rpc& rpc);
+
 const FakeMc::Extension extension([](FakeMc& mc) {
   // As apps/server-ex lib/hal_c2/workspace.ex write_file: the file's new contents.
   mc.onRpc(QStringLiteral("projects.writeFile"), [&mc](const FakeMc::Rpc& rpc) {
+    if (mc.holding(QStringLiteral("write"))) {
+      mc.defer([&mc, rpc] { answerWrite(mc, rpc); });
+    } else {
+      answerWrite(mc, rpc);
+    }
+  });
+});
+
+void answerWrite(FakeMc& mc, const FakeMc::Rpc& rpc) {
     const QString path = rpc.payload.value(QLatin1String("relativePath")).toString();
     if (mc.part<Viewer>().unwritable.contains(path)) {
       mc.refuse(rpc, QStringLiteral("Could not write %1.").arg(path));
@@ -66,8 +84,7 @@ const FakeMc::Extension extension([](FakeMc& mc) {
       return;
     }
     mc.reply(rpc, QJsonObject{{QStringLiteral("relativePath"), path}});
-  });
-});
+}
 
 QList<QJsonObject> writes(World& world) {
   QList<QJsonObject> calls;
@@ -513,6 +530,479 @@ const Steps steps([] {
                world.brick->item(QStringLiteral("fileEditor"))->property("text").toString().contains(typed) &&
                !fakeFiles(world.mc).files.value(viewer(world).edited).contains(typed),
            describeViewer(world));
+  });
+});
+
+qsizetype signings(World& world) {
+  qsizetype count = 0;
+  for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) count += rpc.method == QLatin1String("assets.createUrl");
+  return count;
+}
+
+void agentChanged(World& world, const QString& path) {
+  stream::startRun(world);
+  stream::addItem(world, QStringLiteral("file_change"), {{QStringLiteral("changes"), QJsonArray{QJsonObject{{QStringLiteral("path"), path}}}}});
+}
+
+QRectF placeOf(World& world, const QString& objectName) {
+  showPanel(world);
+  world.sync();
+  QQuickItem* item = world.brick->item(objectName);
+  expect(item != nullptr, objectName + QStringLiteral(" is not drawn"));
+  return QRectF(item->mapToScene(QPointF(0, 0)), item->size());
+}
+
+// The folder of the open file's path named `name`.
+QString trailFolderNamed(World& world, const QString& name) {
+  QString folder;
+  for (const QString& part : files(world).openPath().split(QLatin1Char('/'))) {
+    folder += (folder.isEmpty() ? QString() : QStringLiteral("/")) + part;
+    if (part == name) return folder;
+  }
+  fail(QStringLiteral("\"%1\" is not on the path \"%2\"").arg(name, files(world).openPath()));
+}
+
+const Steps backlogSteps([] {
+  const QString q = kQuoted;
+
+  // Files that are not text.
+  step(QStringLiteral("%1 in %1 (contains null bytes|is written in a non-UTF-8 text encoding)").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeFiles& fake = fakeFiles(world.mc);
+    fake.files.insert(c[0], QString());
+    fake.unreadable.insert(c[0], c[2] == QLatin1String("contains null bytes") ? QStringLiteral("binary_file") : QStringLiteral("not_utf8"));
+    showPanel(world);
+  });
+  step(QStringLiteral("the file is not shown as text"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return files(world).fileStatus() == QLatin1String("error"); }, [&] { return describeViewer(world); });
+    expect(!shown(world, QStringLiteral("fileLines")) && shown(world, QStringLiteral("fileMessage")), describeViewer(world));
+  });
+
+  // Tables.
+  step(QStringLiteral("the user opens %1 rendered").arg(q), [](World& world, const Captures& c, const Table&) {
+    view(world, c[0]);
+    world.waitFor([&] { return files(world).rendered() && shown(world, QStringLiteral("fileRendered")); }, [&] { return describeViewer(world); });
+  });
+  step(QStringLiteral("%1 has more than 100 rows and more than 30 columns").arg(q), [](World& world, const Captures& c, const Table&) {
+    QString contents;
+    for (int row = 0; row < 120; ++row) {
+      QStringList cells;
+      for (int column = 0; column < 35; ++column) cells.append(QStringLiteral("r%1c%2").arg(row).arg(column));
+      contents += cells.join(u',') + u'\n';
+    }
+    fakeFiles(world.mc).files.insert(c[0], contents);
+  });
+  step(QStringLiteral("the first 100 rows and 30 columns are shown"), [](World& world, const Captures&, const Table&) {
+    const QString table = files(world).renderedText();
+    expect(table.contains(QStringLiteral("r99c29")) && !table.contains(QStringLiteral("r100c0")) && !table.contains(QStringLiteral("r0c30")), table.left(400));
+  });
+  step(QStringLiteral("the user is told the table is limited and that the source shows the rest"), [](World& world, const Captures&, const Table&) {
+    expect(files(world).renderedText().endsWith(QStringLiteral("Table limited to the first 100 rows and 30 columns; the source shows the rest.\n")), files(world).renderedText().right(200));
+  });
+  step(QStringLiteral("%1 has a cell reading %1 and a cell holding two lines").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeFiles(world.mc).files.insert(c[0], QStringLiteral("﻿name,note\n\"%1\",\"first\nsecond\"\n\"say \"\"hi\"\"\",x\n").arg(c[1]));
+  });
+  step(QStringLiteral("each of those is shown as a single cell"), [](World& world, const Captures&, const Table&) {
+    const QString table = files(world).renderedText();
+    expect(table.contains(QStringLiteral("| Smith, Jane | first second |\n")) && table.contains(QStringLiteral("| say \"hi\" | x |\n")), table);
+  });
+  step(QStringLiteral("a leading byte order mark is not shown as text"), [](World& world, const Captures&, const Table&) {
+    expect(files(world).renderedText().startsWith(QStringLiteral("| name | note |\n")), files(world).renderedText());
+  });
+  step(QStringLiteral("%1 ends with a row whose only cell is an empty quoted value and no line ending").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeFiles(world.mc).files.insert(c[0], QStringLiteral("name\nAlice\n\"\""));
+  });
+  step(QStringLiteral("that empty row is shown after the last data row"), [](World& world, const Captures&, const Table&) {
+    expect(files(world).renderedText() == QStringLiteral("| name |\n| --- |\n| Alice |\n|  |\n"), files(world).renderedText());
+  });
+
+  // Following the agent.
+  step(QStringLiteral("the user is reading %1 with no edits of their own").arg(q), [](World& world, const Captures& c, const Table&) { view(world, c[0]); });
+  step(QStringLiteral("the agent changes %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeFiles(world.mc).files.insert(c[0], QStringLiteral("export const changed = true;\n"));
+    agentChanged(world, c[0]);
+  });
+  step(QStringLiteral("the viewer shows the new contents"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return files(world).text() == QLatin1String("export const changed = true;\n"); }, [&] { return describeViewer(world); });
+    expect(files(world).fileStatus() == QLatin1String("ready"), describeViewer(world));
+  });
+  step(QStringLiteral("an image the agent rewrites is shown as it is now, not from a cached copy"), [](World& world, const Captures&, const Table&) {
+    const QString image = QStringLiteral("assets/logo.png");
+    fakeFiles(world.mc).files.insert(image, QStringLiteral("png"));
+    openFile(world, image);
+    world.waitFor([&] { return !files(world).mediaUrl().isEmpty(); }, [&] { return describeViewer(world); });
+    const QUrl before = files(world).mediaUrl();
+    agentChanged(world, image);
+    world.waitFor([&] { return !files(world).mediaUrl().isEmpty() && files(world).mediaUrl() != before; }, [&] { return describeViewer(world); });
+  });
+  step(QStringLiteral("the user is previewing %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeFiles(world.mc).files.insert(c[0], QStringLiteral("png"));
+    showPanel(world);
+    openFile(world, c[0]);
+    world.waitFor([&] { return !files(world).mediaUrl().isEmpty(); }, [&] { return describeViewer(world); });
+    viewer(world).signingsBefore = signings(world);
+  });
+  step(QStringLiteral("the agent changes another file"), [](World& world, const Captures&, const Table&) {
+    agentChanged(world, QStringLiteral("src/other.ts"));
+    world.sync();
+  });
+  step(QStringLiteral("%1 is not fetched again").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(files(world).openPath() == c[0] && signings(world) == viewer(world).signingsBefore && files(world).fileStatus() == QLatin1String("ready"),
+           QStringLiteral("%1 signings since; %2").arg(signings(world) - viewer(world).signingsBefore).arg(describeViewer(world)));
+  });
+  step(QStringLiteral("the user opened %1").arg(q), [](World& world, const Captures& c, const Table&) { view(world, c[0]); });
+  step(QStringLiteral("the user opened %1 and it is a folder").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeFiles(world.mc).files.insert(c[0] + QStringLiteral("/out.txt"), QStringLiteral("out\n"));
+    showPanel(world);
+    openFile(world, c[0]);
+    world.waitFor([&] { return files(world).fileStatus() == QLatin1String("error"); }, [&] { return describeViewer(world); });
+  });
+  step(QStringLiteral("the agent replaces the folder %1 with a file").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeFiles& fake = fakeFiles(world.mc);
+    fake.files.remove(c[0] + QStringLiteral("/out.txt"));
+    fake.files.insert(c[0], QStringLiteral("built\n"));
+    agentChanged(world, c[0]);
+  });
+  step(QStringLiteral("the viewer shows the file's contents"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return files(world).fileStatus() == QLatin1String("ready") && files(world).text() == QLatin1String("built\n"); }, [&] { return describeViewer(world); });
+  });
+
+  // Opening at a line.
+  step(QStringLiteral("the user prefers the rendered Markdown view"), [](World& world, const Captures&, const Table&) {
+    QString lines;
+    for (int line = 1; line <= 300; ++line) lines += QStringLiteral("line %1\n").arg(line);
+    fakeFiles(world.mc).files.insert(QStringLiteral("docs/guide.md"), lines);
+    showPanel(world);
+  });
+  step(QStringLiteral("the Markdown source is shown with line (\\d+) in view"), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !files(world).rendered() && shown(world, QStringLiteral("fileLines")); }, [&] { return describeViewer(world); });
+    expect(files(world).revealLine() == c[0].toInt(), QStringLiteral("line %1 is revealed").arg(files(world).revealLine()));
+    world.sync();
+    QQuickItem* lines = world.brick->item(QStringLiteral("fileLines"));
+    QQuickItem* line = nullptr;
+    QMetaObject::invokeMethod(lines, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, line), Q_ARG(int, c[0].toInt() - 1));
+    expect(line != nullptr, QStringLiteral("the line is not drawn"));
+    // Not a preference: the next open file is rendered as before.
+    expect(!world.native().controller<SettingsController>()->deviceValue(QStringLiteral("fileSourceKinds")).toStringList().contains(QStringLiteral("markdown")),
+           QStringLiteral("the device now prefers the source"));
+  });
+
+  // Selecting lines.
+  step(QStringLiteral("the user (selected lines|is writing a comment on lines) (\\d+) to (\\d+) of %1(?: and left the comment form closed)?").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         QString lines;
+         for (int line = 1; line <= 40; ++line) lines += QStringLiteral("line %1\n").arg(line);
+         fakeFiles(world.mc).files.insert(c[3], lines);
+         view(world, c[3]);
+         QQuickItem* list = world.brick->item(QStringLiteral("fileLines"));
+         const auto gutter = [&](int line) {
+           QQuickItem* row = nullptr;
+           QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, row), Q_ARG(int, line - 1));
+           expect(row != nullptr, QStringLiteral("line %1 is not drawn").arg(line));
+           return row->mapToScene(QPointF(4, 4)).toPoint();
+         };
+         world.sync();
+         QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, gutter(c[1].toInt()));
+         QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::ShiftModifier, gutter(c[2].toInt()));
+         world.sync();
+         expect(list->property("selectionFirst").toInt() == c[1].toInt() && list->property("selectionLast").toInt() == c[2].toInt(),
+                QStringLiteral("lines %1 to %2 are selected").arg(list->property("selectionFirst").toInt()).arg(list->property("selectionLast").toInt()));
+         if (c[0] == QLatin1String("is writing a comment on lines")) {
+           world.brick->click(QStringLiteral("fileLineComment"));
+           world.sync();
+           for (const QChar character : QStringLiteral("why")) QTest::keyClick(&world.brick->window(), character.toLatin1());
+           expect(world.brick->item(QStringLiteral("fileCommentText"))->property("text") == QLatin1String("why"), QStringLiteral("the comment did not take the keys"));
+         }
+       });
+  step(QStringLiteral("the user clicks outside the file"), [](World& world, const Captures&, const Table&) {
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, placeOf(world, QStringLiteral("filesExplorer")).center().toPoint());
+    world.sync();
+  });
+  step(QStringLiteral("the user presses Escape while the file's text is focused"), [](World& world, const Captures&, const Table&) {
+    expect(world.brick->item(QStringLiteral("fileLines"))->hasActiveFocus(), QStringLiteral("the file's text does not have the keyboard"));
+    QTest::keyClick(&world.brick->window(), Qt::Key_Escape);
+    world.sync();
+  });
+  step(QStringLiteral("the lines are no longer selected"), [](World& world, const Captures&, const Table&) {
+    expect(world.brick->item(QStringLiteral("fileLines"))->property("selectionStart").toInt() == 0, QStringLiteral("the lines are still selected"));
+  });
+  step(QStringLiteral("the comment form and its text are still there"), [](World& world, const Captures&, const Table&) {
+    expect(shown(world, QStringLiteral("fileCommentForm")) && world.brick->item(QStringLiteral("fileCommentText"))->property("text") == QLatin1String("why") &&
+               world.brick->item(QStringLiteral("fileLines"))->property("selectionStart").toInt() > 0,
+           QStringLiteral("the comment is gone"));
+  });
+
+  // The tree beside a file, and the layout.
+  step(QStringLiteral("the user chose to (show|hide) the file tree"), [](World& world, const Captures& c, const Table&) {
+    showPanel(world);
+    world.brick->root()->setProperty("explorerOpen", c[0] == QLatin1String("show"));
+  });
+  step(QStringLiteral("the user opens a file outside the project on the host"), [](World& world, const Captures&, const Table&) {
+    const QString path = QStringLiteral("/home/sam/notes.txt");
+    fakeFiles(world.mc).outside.insert(path, QStringLiteral("notes\n"));
+    openFile(world, path);
+    world.waitFor([&] { return files(world).fileStatus() == QLatin1String("ready"); }, [&] { return describeViewer(world); });
+  });
+  step(QStringLiteral("the user opens an attachment"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.attach"),
+                            QVariantMap{{QStringLiteral("files"), QVariantList{QVariantMap{{QStringLiteral("name"), QStringLiteral("notes.md")},
+                                                                                           {QStringLiteral("mimeType"), QStringLiteral("text/markdown")},
+                                                                                           {QStringLiteral("base64"), QStringLiteral("IyBOb3Rlcwo=")}}}}});
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nItem {\n  Composer { width: parent.width; anchors.bottom: parent.bottom }\n  AttachmentViewer {}\n}\n",
+                                          QSize(900, 700));
+    world.sync();
+    world.brick->click(QStringLiteral("attachmentOpen:notes.md"));
+    world.waitFor([&] { return world.state(QStringLiteral("attachmentViewer")).toMap().value(QStringLiteral("name")) == QLatin1String("notes.md"); }, QStringLiteral("the attachment to open"));
+  });
+  step(QStringLiteral("the file tree is (shown|hidden)"), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(shown(world, QStringLiteral("filesExplorer")) == (c[0] == QLatin1String("shown")), QStringLiteral("the tree is otherwise; %1").arg(describeViewer(world)));
+  });
+  step(QStringLiteral("the file viewer takes the height of the Files tab"), [](World& world, const Captures&, const Table&) {
+    showPanel(world);
+    world.sync();
+    expect(qFuzzyCompare(placeOf(world, QStringLiteral("fileViewer")).height(), world.brick->root()->height()), QStringLiteral("the viewer is shorter than the tab"));
+  });
+  step(QStringLiteral("the file tree is a column beside (?:it|the file)"), [](World& world, const Captures&, const Table&) {
+    showPanel(world);
+    world.sync();
+    const QRectF file = placeOf(world, QStringLiteral("fileViewer"));
+    const QRectF tree = placeOf(world, QStringLiteral("filesExplorer"));
+    expect(shown(world, QStringLiteral("filesExplorer")) && tree.left() >= file.right() && tree.width() > 0 && qFuzzyCompare(tree.height(), file.height()),
+           QStringLiteral("the tree is not beside the file"));
+  });
+  step(QStringLiteral("the user (hides|shows) the file explorer"), [](World& world, const Captures&, const Table&) {
+    showPanel(world);
+    world.brick->click(QStringLiteral("fileExplorerToggle"));
+    world.sync();
+  });
+  step(QStringLiteral("the file viewer takes the whole Files tab"), [](World& world, const Captures&, const Table&) {
+    showPanel(world);
+    expect(!shown(world, QStringLiteral("filesExplorer")) && qFuzzyCompare(placeOf(world, QStringLiteral("fileViewer")).width(), world.brick->root()->width()),
+           QStringLiteral("the viewer is narrower than the tab"));
+  });
+  step(QStringLiteral("the file tree takes the whole Files tab"), [](World& world, const Captures&, const Table&) {
+    showPanel(world);
+    world.sync();
+    expect(!shown(world, QStringLiteral("fileViewer")) && qFuzzyCompare(placeOf(world, QStringLiteral("filesExplorer")).width(), world.brick->root()->width()),
+           QStringLiteral("the tree is narrower than the tab"));
+  });
+  step(QStringLiteral("the file tree stays hidden while the file is open"), [](World& world, const Captures&, const Table&) {
+    showPanel(world);
+    world.sync();
+    expect(!shown(world, QStringLiteral("filesExplorer")), QStringLiteral("the tree came back"));
+  });
+  step(QStringLiteral("the Files tab is as narrow as a phone"), [](World& world, const Captures&, const Table&) {
+    showPanel(world);
+    world.brick->window().resize(300, 700);
+    world.brick->root()->setWidth(300);
+    world.sync();
+  });
+  step(QStringLiteral("every button above the file is inside the file's column"), [](World& world, const Captures&, const Table&) {
+    showPanel(world);
+    world.sync();
+    const QRectF file = placeOf(world, QStringLiteral("fileViewer"));
+    for (const QString& button : {QStringLiteral("fileRender"), QStringLiteral("fileEdit"), QStringLiteral("fileCopy"), QStringLiteral("fileClose")}) {
+      const QRectF place = placeOf(world, button);
+      expect(place.right() <= file.right() + 0.5, QStringLiteral("%1 ends at %2, the file at %3").arg(button).arg(place.right()).arg(file.right()));
+    }
+  });
+  step(QStringLiteral("the file tree gives way before the buttons do"), [](World& world, const Captures&, const Table&) {
+    expect(!shown(world, QStringLiteral("filesExplorer")), QStringLiteral("the tree still takes room"));
+  });
+  step(QStringLiteral("a tab too narrow to leave the tree room for ten characters of a name at the user's font size shows the file alone"), [](World& world, const Captures&, const Table&) {
+    QObject* root = world.brick->root();
+    expect(root->property("explorerShare").toReal() < root->property("explorerMinimum").toReal() && !shown(world, QStringLiteral("filesExplorer")) && shown(world, QStringLiteral("fileViewer")),
+           QStringLiteral("the tree has %1 of %2").arg(root->property("explorerShare").toReal()).arg(root->property("explorerMinimum").toReal()));
+  });
+
+  // The path trail.
+  step(QStringLiteral("%1 is empty").arg(q), [](World& world, const Captures&, const Table&) { viewer(world).trailState = QStringLiteral("empty"); });
+  step(QStringLiteral("%1 was deleted after the file was opened").arg(q), [](World& world, const Captures&, const Table&) { viewer(world).trailState = QStringLiteral("gone"); });
+  step(QStringLiteral("the project index is partial and has nothing in %1").arg(q), [](World& world, const Captures&, const Table&) { viewer(world).trailState = QStringLiteral("partial"); });
+  step(QStringLiteral("the user opens the folder %1 in the path trail").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeFiles& fake = fakeFiles(world.mc);
+    fake.files.insert(QStringLiteral("src/lib/util/round.ts"), QStringLiteral("round\n"));
+    fake.files.insert(QStringLiteral("src/lib/tax.ts"), QStringLiteral("tax\n"));
+    const bool failing = fake.failOnce.remove(c[0]);
+    if (files(world).openPath().isEmpty()) view(world, QStringLiteral("src/lib/cart.ts"));
+    const QString folder = trailFolderNamed(world, c[0]);
+    if (failing) fake.failOnce.insert(folder);
+    const QString state = viewer(world).trailState;
+    if (state == QLatin1String("empty")) fake.emptyFolders.insert(folder);
+    if (state == QLatin1String("gone")) fake.goneFolders.insert(folder);
+    if (state == QLatin1String("partial")) fake.partialFolders.insert(folder);
+    world.brick->click(QStringLiteral("filePathPart-") + folder);
+    world.waitFor([&] { return files(world).trailFolder() == folder && files(world).trailStatus() != QLatin1String("loading"); }, QStringLiteral("the folder to be listed"));
+    world.sync();
+  });
+  step(QStringLiteral("the files and folders of %1 are listed, folders first").arg(q), [](World& world, const Captures&, const Table&) {
+    QStringList names;
+    for (const QVariant& entry : files(world).trailEntries()) names.append(entry.toMap().value(QStringLiteral("name")).toString());
+    expect(names == QStringList{QStringLiteral("util"), QStringLiteral("cart.ts"), QStringLiteral("tax.ts")}, names.join(u", "));
+    expect(menuEntry(world, QStringLiteral("filePathSiblings"), QStringLiteral("filePathSibling-src/lib/util")) != nullptr, QStringLiteral("the menu does not draw the folder"));
+  });
+  step(QStringLiteral("the folder that is open is marked"), [](World& world, const Captures&, const Table&) {
+    expect(world.brick->item(QStringLiteral("filePathPart-src/lib"))->property("checked").toBool(), QStringLiteral("the trail does not mark the folder"));
+    expect(menuEntry(world, QStringLiteral("filePathSiblings"), QStringLiteral("filePathSibling-src/lib/cart.ts"))->property("current").toBool(), QStringLiteral("the list does not mark the open file"));
+  });
+  step(QStringLiteral("the files of %1 are listed").arg(q), [](World& world, const Captures&, const Table&) {
+    expect(files(world).trailStatus() == QLatin1String("ready") && !files(world).trailEntries().isEmpty(), files(world).trailStatus());
+    world.waitFor([&] { return menuEntry(world, QStringLiteral("filePathSiblings"), QStringLiteral("filePathSibling-src/lib/cart.ts")) != nullptr; }, QStringLiteral("the menu to list the folder"));
+  });
+
+  // The preview browser.
+  step(QStringLiteral("the environment can serve %1 to the preview").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeFiles(world.mc).files.insert(c[0], QStringLiteral("<html></html>\n"));
+  });
+  step(QStringLiteral("the environment cannot serve %1 to the preview").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeFiles& fake = fakeFiles(world.mc);
+    fake.files.insert(c[0], QStringLiteral("<html></html>\n"));
+    fake.unsignable = QStringLiteral("The file is too large to serve.");
+  });
+  step(QStringLiteral("the user opens %1 in the preview browser").arg(q), [](World& world, const Captures& c, const Table&) {
+    showPanel(world);
+    // A document's preview is itself an address: asked for once it may be served.
+    const QString refusal = std::exchange(fakeFiles(world.mc).unsignable, QString());
+    openFile(world, c[0]);
+    fakeFiles(world.mc).unsignable = refusal;
+    world.waitFor([&] { return files(world).openPath() == c[0] && files(world).fileStatus() != QLatin1String("loading"); }, [&] { return describeViewer(world); });
+    world.brick->click(QStringLiteral("fileOpenPreview"));
+  });
+  step(QStringLiteral("%1 is shown in the preview browser").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto opened = [&] {
+      for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+        if (rpc.method == QLatin1String("preview.open") && rpc.payload.value(QLatin1String("url")).toString().endsWith(c[0].section(QLatin1Char('/'), -1))) return true;
+      }
+      return false;
+    };
+    world.waitFor(opened, QStringLiteral("a browser tab on the file"));
+  });
+  step(QStringLiteral("the user is told the file could not be opened in the browser with the reason"), [](World& world, const Captures&, const Table&) {
+    const auto told = [&] {
+      for (const QVariant& toast : at(world.state(QStringLiteral("toasts")), QStringLiteral("items")).toList()) {
+        if (at(toast, QStringLiteral("title")) == QLatin1String("Could not open the file in the browser") && at(toast, QStringLiteral("description")) == QLatin1String("The file is too large to serve.")) return true;
+      }
+      return false;
+    };
+    world.waitFor(told, [&] { return show(world.state(QStringLiteral("toasts"))); });
+  });
+
+  // The preferred editor and the reveal label.
+  step(QStringLiteral("the user's preferred editor is %1 and it is no longer installed").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.native().controller<SettingsController>()->writeDevice(QStringLiteral("lastEditor"), editorId(c[0]));
+  });
+  step(QStringLiteral("the user opens %1 in the preferred editor").arg(q), [](World& world, const Captures& c, const Table&) {
+    view(world, c[0]);
+    viewer(world).editorCallsBefore = editorCalls(world).size();
+    world.brick->click(QStringLiteral("fileOpenInEditor"));
+    world.waitFor([&] { return editorCalls(world).size() > viewer(world).editorCallsBefore; }, QStringLiteral("the editor to be asked"));
+  });
+  step(QStringLiteral("%1 is the preferred editor from then on").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(at(world.state(QStringLiteral("workspace")), QStringLiteral("preferredEditorId")) == editorId(c[0]), show(world.state(QStringLiteral("workspace"))));
+  });
+  step(QStringLiteral("the environment's host is (macOS|Windows|Linux where reveal runs through Windows \\(WSL\\)|Linux)"), [](World& world, const Captures& c, const Table&) {
+    QJsonObject platform{{QStringLiteral("machineId"), kThisMachine}};
+    platform.insert(QStringLiteral("os"), c[0] == QLatin1String("macOS") ? QStringLiteral("darwin") : c[0] == QLatin1String("Windows") ? QStringLiteral("win32") : QStringLiteral("linux"));
+    if (c[0].contains(QLatin1String("WSL"))) platform.insert(QStringLiteral("wsl"), true);
+    world.mc.platform = platform;
+    world.mc.announceEnvironment();
+    setConfig(world, {{QStringLiteral("availableEditors"), QJsonArray{QStringLiteral("vscode"), QStringLiteral("file-manager")}}});
+  });
+  step(QStringLiteral("the user opens the menu of %1").arg(q), [](World& world, const Captures&, const Table&) { showPanel(world); world.sync(); });
+  step(QStringLiteral("the reveal action reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return menuEntry(world, QStringLiteral("fileEntryMenu"), QStringLiteral("fileEntryReveal"))->property("text") == c[0]; },
+                  [&] { return menuEntry(world, QStringLiteral("fileEntryMenu"), QStringLiteral("fileEntryReveal"))->property("text").toString(); });
+  });
+
+  // Saves.
+  step(QStringLiteral("writing %1 failed after an edit").arg(q), [](World& world, const Captures& c, const Table&) {
+    viewer(world).unwritable.insert(c[0]);
+    files(world).setSaveDelay(0);
+    startEditing(world, c[0]);
+    typeChange(world);
+    world.waitFor([&] { return !files(world).saveProblem().isEmpty(); }, [&] { return describeViewer(world); });
+  });
+  step(QStringLiteral("writing %1 works again").arg(q), [](World& world, const Captures& c, const Table&) { viewer(world).unwritable.remove(c[0]); });
+  step(QStringLiteral("the edit is written to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return fakeFiles(world.mc).files.value(c[0]).contains(viewer(world).typed); }, QStringLiteral("the edit to be written"));
+  });
+  step(QStringLiteral("a save of %1 is being written").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.hold(QStringLiteral("write"));
+    files(world).setSaveDelay(0);
+    startEditing(world, c[0]);
+    typeChange(world);
+    world.waitFor([&] { return !writes(world).isEmpty(); }, QStringLiteral("the save to start"));
+  });
+  step(QStringLiteral("the user makes another edit"), [](World& world, const Captures&, const Table&) {
+    QTest::keyClick(&world.brick->window(), 'z');
+    world.sync();
+    expect(files(world).text().contains(u'z'), describeViewer(world));
+  });
+  step(QStringLiteral("the file ends up with both edits"), [](World& world, const Captures&, const Table&) {
+    const QString path = viewer(world).edited;
+    const auto both = [&] {
+      const QString written = fakeFiles(world.mc).files.value(path);
+      return written.contains(viewer(world).typed.trimmed()) && written.contains(u'z');
+    };
+    world.mc.answerHeld();
+    world.waitFor([&] {
+      viewer(world).savedEarly = viewer(world).savedEarly || (!both() && !files(world).unsaved());
+      return both();
+    }, [&] { return fakeFiles(world.mc).files.value(path); });
+  });
+  step(QStringLiteral("the file is not shown as saved until the last edit is written"), [](World& world, const Captures&, const Table&) {
+    expect(!viewer(world).savedEarly, QStringLiteral("the file was shown as saved early"));
+    world.waitFor([&] { return !files(world).unsaved(); }, [&] { return describeViewer(world); });
+  });
+  step(QStringLiteral("the user saved an edit to %1 while an older read of it was still under way").arg(q), [](World& world, const Captures& c, const Table&) {
+    view(world, c[0]);
+    files(world).setSaveDelay(0);
+    world.mc.hold(QStringLiteral("read"));
+    viewer(world).rewritten = QStringLiteral("what the older read saw\n");
+    fakeFiles(world.mc).files.insert(c[0], viewer(world).rewritten);
+    agentChanged(world, c[0]);
+    world.sync();
+    viewer(world).edited = c[0];
+    world.brick->click(QStringLiteral("fileEdit"));
+    world.waitFor([&] { return files(world).editing() && shown(world, QStringLiteral("fileEditor")); }, [&] { return describeViewer(world); });
+    typeChange(world);
+    world.brick->click(QStringLiteral("fileEdit"));
+    world.waitFor([&] { return fakeFiles(world.mc).files.value(c[0]).contains(viewer(world).typed) && !files(world).unsaved(); }, [&] { return describeViewer(world); });
+  });
+  step(QStringLiteral("the older read finishes"), [](World& world, const Captures&, const Table&) {
+    QObject::connect(&files(world), &WorkspaceFiles::textChanged, &files(world), [&world] { viewer(world).seen.append(files(world).text()); });
+    // The environment has moved on again: the new read has something of its own to show.
+    fakeFiles(world.mc).files[viewer(world).edited] += QStringLiteral("as the environment has it\n");
+    world.mc.answerHeld();
+  });
+  step(QStringLiteral("the viewer keeps showing the saved edit"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(!viewer(world).seen.contains(viewer(world).rewritten) && files(world).text().contains(viewer(world).typed), describeViewer(world));
+  });
+  step(QStringLiteral("it shows the file as the environment has it once the new read arrives"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return files(world).text() == fakeFiles(world.mc).files.value(viewer(world).edited); }, [&] { return files(world).text(); });
+    expect(!viewer(world).seen.contains(viewer(world).rewritten), QStringLiteral("the older read was shown"));
+  });
+  step(QStringLiteral("the user is looking at the rendered view"), [](World& world, const Captures&, const Table&) {
+    viewer(world).edited = QStringLiteral("TODO.md");
+    view(world, viewer(world).edited);
+    world.waitFor([&] { return files(world).rendered() && shown(world, QStringLiteral("fileRenderedMarkdown")); }, [&] { return describeViewer(world); });
+    world.sync();
+  });
+  step(QStringLiteral("the agent has since rewritten %1 so the task moved").arg(q), [](World& world, const Captures& c, const Table&) {
+    viewer(world).rewritten = QStringLiteral("# To do\n\n- [ ] Something first\n- [x] Draft the plan\n- [ ] Ship cart\n");
+    fakeFiles(world.mc).files.insert(c[0], viewer(world).rewritten);
+  });
+  step(QStringLiteral("the user ticks %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (spaceTick(world, c[0], true)) return;
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, taskBox(world, c[0]));
+    world.waitFor([&] { return files(world).text() == viewer(world).rewritten; }, [&] { return describeViewer(world); });
+  });
+  step(QStringLiteral("%1 is not changed").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(writes(world).isEmpty() && fakeFiles(world.mc).files.value(c[0]) == viewer(world).rewritten, QStringLiteral("%1 was written").arg(c[0]));
   });
 });
 
