@@ -34,6 +34,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("mobile/spaces.feature"),
     QStringLiteral("space/pages.feature"),
     QStringLiteral("space/page-history.feature"),
+    QStringLiteral("space/sites.feature"),
     QStringLiteral("space/images.feature"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
     QStringLiteral("threads/sidebar-list.feature:*plugin*"),

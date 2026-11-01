@@ -347,6 +347,9 @@ import {
   SpacePageExportMarkdownResult,
   SpacePageHistoryInput,
   SpacePageHistoryResult,
+  SpacePagePublishInput,
+  SpacePagePublishResult,
+  SpacePageUnpublishResult,
   SpacePageImportMarkdownInput,
   SpacePageMoveInput,
   SpacePageRef,
@@ -527,6 +530,8 @@ export const WS_METHODS = {
   spacePageTrash: "space.page.trash",
   spacePageRestore: "space.page.restore",
   spacePageDelete: "space.page.delete",
+  spacePagePublish: "space.page.publish",
+  spacePageUnpublish: "space.page.unpublish",
   spacePageExportMarkdown: "space.page.exportMarkdown",
   spacePageImportMarkdown: "space.page.importMarkdown",
   spacePageCreateFromThread: "space.page.createFromThread",
@@ -1833,6 +1838,18 @@ const WsSpacePageDeleteRpc = Rpc.make(WS_METHODS.spacePageDelete, {
   error: SpaceRpcError,
 });
 
+const WsSpacePagePublishRpc = Rpc.make(WS_METHODS.spacePagePublish, {
+  payload: SpacePagePublishInput,
+  success: SpacePagePublishResult,
+  error: SpaceError,
+});
+
+const WsSpacePageUnpublishRpc = Rpc.make(WS_METHODS.spacePageUnpublish, {
+  payload: SpacePageRef,
+  success: SpacePageUnpublishResult,
+  error: SpaceError,
+});
+
 const WsSpacePageExportMarkdownRpc = Rpc.make(WS_METHODS.spacePageExportMarkdown, {
   payload: SpacePageRef,
   success: SpacePageExportMarkdownResult,
@@ -2042,6 +2059,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageTrashRpc,
   WsSpacePageRestoreRpc,
   WsSpacePageDeleteRpc,
+  WsSpacePagePublishRpc,
+  WsSpacePageUnpublishRpc,
   WsSpacePageExportMarkdownRpc,
   WsSpacePageImportMarkdownRpc,
   WsSpacePageCreateFromThreadRpc,
