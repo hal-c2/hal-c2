@@ -213,8 +213,6 @@ defmodule HalC2.Steps.Preview.Forward do
 
   # --- helpers -------------------------------------------------------------------------------
 
-  # Opens the tab on the thread's MC, then asks this MC for its dev server, as
-  # the desktop does before it opens the system browser.
   # The second MC's web port is on 127.0.0.1, so the OS can give the dev server
   # the same number on 127.0.0.2, which a real machine could not, and the MC
   # rightly refuses to forward it. Such a dev server is put away for another.
@@ -229,6 +227,8 @@ defmodule HalC2.Steps.Preview.Forward do
     end
   end
 
+  # Opens the tab on the thread's MC, then asks this MC for its dev server, as
+  # the desktop does before it opens the system browser.
   defp open_and_forward(context, environment, url) do
     url = local_url(context, url)
     input = %{"threadId" => @thread, "url" => url}
