@@ -4306,6 +4306,9 @@ defmodule HalC2.Test.Mc.Terminal do
     end
   end
 
+  @doc "Whether `output` ends at the shell's prompt; true when its prompt is not known."
+  def at_prompt?(output), do: not prompt_known?() or prompt_tail(output) =~ @prompt
+
   @doc "Waits until an OS process has ended (a shell ignores SIGTERM, so up to a second)."
   def await_exit(os_pid) do
     {_, status} =

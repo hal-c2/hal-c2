@@ -60,6 +60,55 @@ class TimelineRepaintRegression : public QObject {
   Q_OBJECT
 
 private slots:
+  // A turn with no checkpoint was numbered by counting every run below it, so
+  // one a queued message sat under read a number too high.
+  void aTurnIsNumberedByTheRunsThatStarted() {
+    const auto earlier = [](const QString& id, int ordinal, const QJsonObject& fields) {
+      QJsonObject entity{{QStringLiteral("id"), id}, {QStringLiteral("ordinal"), ordinal}};
+      for (auto it = fields.constBegin(); it != fields.constEnd(); ++it) entity.insert(it.key(), *it);
+      return row(QStringLiteral("run"), entity);
+    };
+    const QJsonObject completed{{QStringLiteral("status"), QStringLiteral("completed")}};
+    const QJsonObject queued{{QStringLiteral("status"), QStringLiteral("queued")}};
+    const QJsonObject held{{QStringLiteral("status"), QStringLiteral("queued")}, {QStringLiteral("queueHeld"), true}};
+    const QJsonObject cancelledQueued{{QStringLiteral("status"), QStringLiteral("cancelled")}};
+    const QJsonObject cancelledHeld{{QStringLiteral("status"), QStringLiteral("cancelled")}, {QStringLiteral("queueHeld"), true}};
+    const QJsonObject cancelledAfterStart{{QStringLiteral("status"), QStringLiteral("cancelled")}, {QStringLiteral("startedAt"), kAt}};
+    const QJsonObject failedPreparing{{QStringLiteral("status"), QStringLiteral("failed")}};
+    const QJsonObject failedAfterStart{{QStringLiteral("status"), QStringLiteral("failed")}, {QStringLiteral("startedAt"), kAt}};
+    const QJsonObject stoppedPreparing{{QStringLiteral("status"), QStringLiteral("interrupted")}};
+    const QJsonObject rolledBack{{QStringLiteral("status"), QStringLiteral("rolled_back")}};
+
+    const QList<std::pair<QJsonObject, int>> cases{{completed, 3},        {queued, 2},           {held, 2},
+                                                   {cancelledQueued, 2},  {cancelledHeld, 2},    {cancelledAfterStart, 3},
+                                                   {failedPreparing, 2},  {failedAfterStart, 3}, {stoppedPreparing, 2},
+                                                   {rolledBack, 2}};
+    for (const auto& [other, turn] : cases) {
+      TimelineModel model(QStringLiteral("thread"));
+      snapshot(model,
+               {earlier(QStringLiteral("run-0"), 1, completed), earlier(QStringLiteral("run-other"), 2, other), row(QStringLiteral("run"), [] {
+                  QJsonObject shown = run(QStringLiteral("completed"));
+                  shown.insert(QStringLiteral("ordinal"), 3);
+                  return shown;
+                }()),
+                row(QStringLiteral("turn-item"), item(QStringLiteral("ask"), QStringLiteral("user_message"), 4, {{QStringLiteral("text"), QStringLiteral("ask")}}))},
+               4);
+      QCOMPARE(model.rewindPointOf(QStringLiteral("ask")).value(QStringLiteral("turn")).toInt(), turn);
+    }
+
+    // A run recovery queued again still shows its message, and keeps its place.
+    TimelineModel requeued(QStringLiteral("thread"));
+    snapshot(requeued,
+             {earlier(QStringLiteral("run-0"), 1, completed), row(QStringLiteral("run"), [] {
+                QJsonObject shown = run(QStringLiteral("queued"));
+                shown.insert(QStringLiteral("ordinal"), 2);
+                return shown;
+              }()),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("ask"), QStringLiteral("user_message"), 3, {{QStringLiteral("text"), QStringLiteral("ask")}}))},
+             3);
+    QCOMPARE(requeued.rewindPointOf(QStringLiteral("ask")).value(QStringLiteral("turn")).toInt(), 2);
+  }
+
   // A new copy of the same thread (the MC's log changed, so the client could
   // not catch up) redrew every row although none read differently.
   void anUnchangedCopyRedrawsNoRow() {

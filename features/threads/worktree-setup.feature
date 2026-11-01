@@ -137,6 +137,18 @@ Feature: Preparing a new thread's worktree
       | failed                                        | Worktree setup failed               |
       | was cancelled                                 | Worktree setup cancelled            |
 
+  @desktop @mobile @backlog-mobile
+  Scenario: The user retries a setup that failed
+    Given the setup of "Cart totals" failed
+    When the user chooses to retry the setup
+    Then the MC is asked to run the setup again
+
+  @desktop @mobile @backlog-mobile
+  Scenario: A setup that failed once the agent was starting cannot be retried
+    Given the setup of "Cart totals" failed as its agent started
+    When the user looks at "Cart totals"
+    Then the conversation offers no retry
+
   # Legacy: packages/client-runtime/src/worktreeSetup.ts (resolveVisibleWorktreeSetup)
   @backlog @desktop @mobile
   Scenario: A setup that went cleanly leaves the conversation once the agent is replying

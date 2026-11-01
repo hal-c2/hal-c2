@@ -97,4 +97,31 @@ describe("makeV3Session", () => {
       });
     }),
   );
+
+  it.effect("tells why the MC refused a terminal", () =>
+    Effect.gen(function* () {
+      const { socket } = socketAnswering(() =>
+        Promise.reject(
+          new ClusterRpcError("refused", {
+            _tag: "TerminalProviderEnvironmentError",
+            providerInstanceId: "codex",
+            cause: "settings.json cannot be read",
+            reason: "settings.json cannot be read",
+          }),
+        ),
+      );
+      const session = yield* makeV3Session({ socket, environmentId: ENVIRONMENT });
+
+      const error = yield* Effect.flip(
+        session.client[WS_METHODS.terminalOpen]({
+          threadId: "thread-1",
+          terminalId: "term-1",
+          cwd: "/work/app",
+          providerInstanceId: "codex",
+        } as never),
+      );
+
+      expect(error.message).toContain("settings.json cannot be read");
+    }),
+  );
 });

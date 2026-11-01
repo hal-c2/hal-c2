@@ -573,7 +573,7 @@ defmodule HalC2.WorktreeSetupTest do
 
     :sys.replace_state(WorktreeSetup, fn state ->
       snapshot = %{"phase" => "running", "sequence" => 3, "stages" => []}
-      put_in(state.setups["t"], %{snapshot: snapshot, cancellable: true})
+      put_in(state.setups["t"], %{snapshot: snapshot, cancellable: true, superseded: false})
     end)
 
     assert %{"phase" => "running"} = WorktreeSetup.subscribe("t", self())
@@ -581,6 +581,196 @@ defmodule HalC2.WorktreeSetupTest do
     assert_receive {:hal_c2_worktree_setup, "t", %{"phase" => "done"}}
     assert_receive {:hal_c2_worktree_setup, "t", nil}, 1_000
     assert WorktreeSetup.subscribe("t", self()) == nil
+  end
+
+  test "a real shell runs a multi-line script given as its argument" do
+    for shell <- ~w(/bin/sh /bin/bash /bin/zsh), File.exists?(shell) do
+      line = HalC2.WorktreeSetup.wrap_script("echo one\r\n# two\necho three", shell, "END_")
+      refute line =~ "\r"
+      {out, _} = System.cmd(shell, ["-c", line])
+      assert out =~ "one\nthree\n"
+      assert out =~ "END_0\n"
+    end
+  end
+
+  defp blocking_setup(repo, command) do
+    project(repo, [
+      %{
+        "id" => "setup",
+        "name" => "Setup",
+        "command" => command,
+        "icon" => "configure",
+        "runOnWorktreeCreate" => true,
+        "async" => false
+      }
+    ])
+  end
+
+  test "a retry that fails again can be retried, and keeps no expiry", %{repo: repo} do
+    blocking_setup(repo, ~S(test -e "$HAL_C2_PROJECT_ROOT/.pass"))
+    Application.put_env(:hal_c2, :worktree_setup_retention, 50)
+    on_exit(fn -> Application.delete_env(:hal_c2, :worktree_setup_retention) end)
+
+    thread_id = launch("list the files")
+    %{"worktreePath" => path} = await_phase(thread_id, "failed")
+
+    assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    assert %{"worktreePath" => ^path} = await_phase(thread_id, "failed")
+    refute Map.has_key?(:sys.get_state(HalC2.WorktreeSetup).setups[thread_id], :expiry)
+
+    File.write!(Path.join(repo, ".pass"), "")
+    assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    assert %{"worktreePath" => ^path} = await_phase(thread_id, "done")
+  end
+
+  test "a retry runs the script as it is saved now", %{repo: repo} do
+    script = %{
+      "id" => "setup",
+      "name" => "Setup",
+      "icon" => "configure",
+      "runOnWorktreeCreate" => true,
+      "async" => false
+    }
+
+    project(repo, [Map.put(script, "command", "exit 3")])
+    thread_id = launch("list the files")
+    await_phase(thread_id, "failed")
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.update",
+        "projectId" => "p1",
+        "scripts" => [Map.put(script, "command", "echo fixed > corrected.txt")]
+      })
+
+    assert_receive {:hal_c2_shell,
+                    {:rows, _,
+                     [
+                       {"p1",
+                        {"project",
+                         %{"scripts" => [%{"command" => "echo fixed > corrected.txt"}]}}}
+                     ]}},
+                   1_000
+
+    assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    %{"worktreePath" => path} = await_phase(thread_id, "done")
+    assert File.read!(Path.join(path, "corrected.txt")) == "fixed\n"
+  end
+
+  test "a retry for a script since removed runs none", %{repo: repo} do
+    blocking_setup(repo, "exit 3")
+    thread_id = launch("list the files")
+    await_phase(thread_id, "failed")
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.update",
+        "projectId" => "p1",
+        "scripts" => []
+      })
+
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", {"project", %{"scripts" => []}}}]}}, 1_000
+
+    assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    assert %{"setupScript" => nil} = await_phase(thread_id, "done")
+  end
+
+  test "a retry can be cancelled, which removes the worktree", %{repo: repo} do
+    blocking_setup(repo, ~S(test -e "$HAL_C2_PROJECT_ROOT/.pass" && sleep 30))
+    thread_id = launch("list the files")
+    %{"worktreePath" => path} = await_phase(thread_id, "failed")
+
+    File.write!(Path.join(repo, ".pass"), "")
+    assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    assert {:ok, %{"cancelled" => true}} = HalC2.WorktreeSetup.cancel(%{"threadId" => thread_id})
+    await_phase(thread_id, "cancelled")
+
+    refute File.exists?(path)
+    assert [%{"status" => "cancelled"}] = StreamState.list(current(thread_id), "run")
+  end
+
+  test "retrying a failed checkout makes the worktree", %{repo: repo} do
+    project(repo, [])
+    thread_id = launch("list the files", %{"baseRef" => "later"})
+    assert %{"worktreePath" => nil} = await_phase(thread_id, "failed")
+
+    {_, 0} = System.cmd("git", ~w(branch later), cd: repo)
+    assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    assert %{"worktreePath" => path} = await_phase(thread_id, "done")
+    assert File.dir?(path)
+  end
+
+  test "deleting a thread forgets its failed setup", %{repo: repo} do
+    blocking_setup(repo, "exit 3")
+    thread_id = launch("list the files")
+    await_phase(thread_id, "failed")
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "thread.delete",
+        "commandId" => "delete",
+        "threadId" => thread_id
+      })
+
+    assert_receive {:hal_c2_worktree_setup, ^thread_id, nil}, 5_000
+  end
+
+  test "a hot reload keeps a setup running through it working, not retryable" do
+    setup = %{snapshot: %{"phase" => "running"}}
+
+    {:ok, %{setups: %{"t" => %{superseded: true}}}} =
+      HalC2.WorktreeSetup.code_change(nil, %{setups: %{"t" => setup}, watchers: %{}}, nil)
+  end
+
+  test "a setup whose thread was deleted while it ran is not kept for a retry", %{repo: repo} do
+    blocking_setup(
+      repo,
+      ~S(until test -e "$HAL_C2_PROJECT_ROOT/.fail"; do sleep 0.05; done; exit 3)
+    )
+
+    Application.put_env(:hal_c2, :worktree_setup_retention, 3_600_000)
+    on_exit(fn -> Application.delete_env(:hal_c2, :worktree_setup_retention) end)
+    thread_id = launch("list the files")
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "thread.delete",
+        "commandId" => "delete",
+        "threadId" => thread_id
+      })
+
+    assert %{superseded: true} = :sys.get_state(HalC2.WorktreeSetup).setups[thread_id]
+    File.write!(Path.join(repo, ".fail"), "")
+    await_phase(thread_id, "failed")
+
+    assert %{expiry: _} = :sys.get_state(HalC2.WorktreeSetup).setups[thread_id]
+    assert {:ok, %{"retried" => false}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+  end
+
+  test "a retry after a follow-up is refused and leaves the worktree alone", %{repo: repo} do
+    project(repo, [
+      %{
+        "id" => "setup",
+        "name" => "Setup",
+        "command" => "exit 3",
+        "icon" => "configure",
+        "runOnWorktreeCreate" => true,
+        "async" => false
+      }
+    ])
+
+    thread_id = launch("list the files")
+    %{"worktreePath" => path} = await_phase(thread_id, "failed")
+
+    # The second run alone is enough to refuse, however the setup came to be still tracked.
+    {:ok, _} =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        run = hd(StreamState.list(state, "run"))
+        {[{"run", "later", %{"s" => %{run | "id" => "later"}}}], {:ok, nil}}
+      end)
+
+    assert {:ok, %{"retried" => false}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    assert File.dir?(path)
   end
 
   # An interactive zsh runs `#` as a command unless told otherwise before it reads the line.
