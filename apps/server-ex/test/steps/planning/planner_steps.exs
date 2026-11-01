@@ -2272,10 +2272,47 @@ defmodule HalC2.Steps.Planning.Planner do
     |> Map.merge(%{gh_gate: gate, gh_names: names})
   end
 
+  # As above, but GitHub holds `second` too: the scenario hears when it reaches GitHub
+  # and answers it after. Each name is noted when GitHub is asked for it or, for `first`,
+  # when GitHub answers.
+  step "GitHub takes renaming \#{int} to {string} late and to {string} late",
+       %{args: [number, first, second]} = context do
+    gate = Path.join(context.mc.home, "gh-gate")
+    started = Path.join(context.mc.home, "gh-started")
+    chained = Path.join(context.mc.home, "gh-gate-chained")
+    for fifo <- [gate, started, chained], do: {_, 0} = System.cmd("mkfifo", [fifo])
+    names = Path.join(context.mc.home, "gh-names")
+
+    rename = fn title, run ->
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [JSON.encode!(%{"title" => title})],
+        "run" => run,
+        "stdout" => %{"number" => number}
+      }
+    end
+
+    context
+    |> World.cli_rules([
+      rename.(first, "cat '#{gate}' > /dev/null; echo '#{first}' >> '#{names}'"),
+      rename.(
+        second,
+        "echo '#{second}' >> '#{names}'; echo > '#{started}'; cat '#{chained}' > /dev/null"
+      )
+    ])
+    |> Map.merge(%{gh_gate: gate, gh_started: started, gh_chained: chained, gh_names: names})
+  end
+
   step "GitHub names \#{int} {string} last", %{args: [_number, title]} = context do
     assert context.gh_names |> File.read!() |> String.split("\n", trim: true) |> List.last() ==
              title
 
+    context
+  end
+
+  step "GitHub is asked to name \#{int} {string} and then {string}, once each",
+       %{args: [_number, first, second]} = context do
+    assert context.gh_names |> File.read!() |> String.split("\n", trim: true) == [first, second]
     context
   end
 
@@ -2908,6 +2945,37 @@ defmodule HalC2.Steps.Planning.Planner do
 
     # The real runner's own leg, held at GitHub, is no longer the flight's.
     for task <- [moving, back], do: assert({:ok, {{:ok, _}, _}} = answer_until(gate, task))
+    assert_settled(context, id)
+    context
+  end
+
+  # The report of the first rename lands and chains the second, which GitHub holds; the
+  # report comes again, as from a runner that lost the reply. While GitHub holds the
+  # chained rename the task must still be waiting on it: the flight and what the plugin
+  # keeps of the task are as they were, with the baseline a push that took whole clears.
+  step "the user renames \#{int}'s task to {string}, then to {string}, and the first answer is reported to the planner again while GitHub holds the second",
+       %{args: [number, first, second]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, first)
+    context = update_task(context, number, %{"title" => second})
+    {:ok, projects} = HalC2.Plugins.Host.projects(@id)
+    answer_late(context)
+    # The chained rename at GitHub is the receipt that the first answer was taken.
+    {:ok, _} = File.read(context.gh_started, [:raw])
+    {id, flight} = answered_flight() || flunk("no answered push is in flight")
+    before = :sys.get_state(HalC2Plugins.Planner).items[id]
+    assert before["synced"], "#{second} is taken as synced before GitHub answers it"
+
+    assert {:push, leg, _ops, _synced} = reply = report_again(projects, id, flight)
+    assert reply == flight.answered_reply
+    assert leg == flight.leg
+
+    state = :sys.get_state(HalC2Plugins.Planner)
+    assert state.pushing[id] == flight, "the report sent again was taken again"
+    assert state.items[id] == before, "the report sent again changed the task"
+
+    File.write!(context.gh_chained, "answer", [:raw])
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
     assert_settled(context, id)
     context
   end

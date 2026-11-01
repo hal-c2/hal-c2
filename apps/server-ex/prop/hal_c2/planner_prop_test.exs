@@ -2744,8 +2744,9 @@ defmodule HalC2.PlannerPropTest do
   def resend_report(slot, saved) do
     id = item_id(slot)
     {:ok, projects} = HalC2.Plugins.Host.projects(@id)
+    %{pushing: pushing, items: items} = :sys.get_state(@server)
 
-    case :sys.get_state(@server).pushing[id] do
+    case pushing[id] do
       %{answered: {error, extra}, answered_leg: leg, token: token} = flight
       when leg != nil ->
         reply = report_again(projects, id, token, leg, error, extra)
@@ -2762,6 +2763,9 @@ defmodule HalC2.PlannerPropTest do
 
           :sys.get_state(@server).pushing[id] != flight ->
             problem("a resent report of #{slot} was taken again")
+
+          :sys.get_state(@server).items[id] != items[id] ->
+            problem("a resent report of #{slot} changed the task, its baseline included")
 
           true ->
             :ok
