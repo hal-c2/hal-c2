@@ -1767,6 +1767,9 @@ const Steps steps([] {
   step(QStringLiteral("the user goes back to the list of versions"), [](World& world, const Captures&, const Table&) {
     act(world, QStringLiteral("space.history.back"), {});
   });
+  step(QStringLiteral("the history is closed"), [](World& world, const Captures&, const Table&) {
+    expectShown(world, [&] { return !viewOf(world)->history()->shown(); }, QStringLiteral("the history to close"));
+  });
   step(QStringLiteral("no version is being read"), [](World& world, const Captures&, const Table&) {
     expect(!viewOf(world)->history()->reading() && viewOf(world)->history()->blocks()->rowCount() == 0, QStringLiteral("a version is still being read"));
   });
