@@ -93,6 +93,8 @@ struct Sut {
   QSet<QString> clicked;
   // A read failed, which leaves the file without its text until it is read again.
   bool readFailed = false;
+  // The agent changed the file while it loaded, so a failed read is read again.
+  bool changedWhileLoading = false;
   int agentWrites = 0;
 
   Sut() {
@@ -126,8 +128,8 @@ struct Sut {
   ~Sut() { files.reset(); }
 
   // The user's own open is answered at once: only reads that follow the agent wait.
-  void opening(const std::function<void()>& open) {
-    holdReads = false;
+  void opening(const std::function<void()>& open, bool hold = false) {
+    holdReads = hold;
     typed.clear();
     open();
     RC_ASSERT(sync());
@@ -216,20 +218,24 @@ struct SetTarget : Step<SetTarget> {
   void act(const Model& before, Sut& sut) const {
     if (environment != before.environment) sut.edited = false;
     sut.opening([&] { sut.files->setTarget(environment, kRoot); });
+    sut.changedWhileLoading = false;
   }
   void show(std::ostream& os) const override { os << "workspace of " << environment.toStdString(); }
 };
 
 struct Open : Step<Open> {
   QString path = *oneOf(kPaths);
+  // The MC holds this read, for AnswerRead to answer.
+  bool slow = *rc::gen::arbitrary<bool>();
   explicit Open(const Model& model) { RC_PRE(!model.environment.isEmpty()); }
   void checkPreconditions(const Model& model) const override { RC_PRE(!model.environment.isEmpty()); }
   void apply(Model& model) const override { model.openPath = path; }
   void act(const Model& before, Sut& sut) const {
     if (path != before.openPath) sut.edited = false;
-    sut.opening([&] { sut.files->openFile(path); });
-    // Answered at once, and older replies are dropped: a failure cannot carry over.
+    sut.opening([&] { sut.files->openFile(path); }, slow);
+    // Older replies are dropped: a failure cannot carry over.
     sut.readFailed = false;
+    sut.changedWhileLoading = false;
   }
   void show(std::ostream& os) const override { os << "open " << path.toStdString(); }
 };
@@ -285,6 +291,9 @@ struct AgentWrites : Step<AgentWrites> {
   void act(const Model& before, Sut& sut) const {
     QString& text = sut.disk[Sut::key(before.environment, before.openPath)];
     text = adding(text, QStringLiteral(" agent%1").arg(++sut.agentWrites));
+    // An unreadable file is read again, and a load under way is read after it.
+    sut.readFailed = false;
+    sut.changedWhileLoading = sut.files->fileStatus() == QLatin1String("loading");
     sut.files->followOpenFile();
   }
   void show(std::ostream& os) const override { os << "the agent rewrites the file"; }
@@ -298,8 +307,11 @@ struct AnswerRead : Step<AnswerRead> {
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const {
     if (sut.heldReads.isEmpty()) return;
-    sut.readFailed = sut.readFailed || fail;
-    sut.heldReads.takeAt(pick % sut.heldReads.size())(fail);
+    const int at = pick % sut.heldReads.size();
+    const bool latest = at == sut.heldReads.size() - 1;
+    sut.readFailed = sut.readFailed || (fail && !(latest && sut.changedWhileLoading));
+    if (latest) sut.changedWhileLoading = false;
+    sut.heldReads.takeAt(at)(fail);
   }
   void show(std::ostream& os) const override { os << (fail ? "fail a read" : "answer a read"); }
 };

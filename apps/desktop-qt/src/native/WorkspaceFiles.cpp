@@ -404,6 +404,8 @@ void WorkspaceFiles::readOpenFile() {
                  [this, request](const QJsonValue& result, const std::optional<QString>& error) {
                    if (request != m_fileRequest) return;
                    if (error) {
+                     // The file changed since this read began: it may be readable now.
+                     if (m_rereadLater) return reloadFile();
                      m_fileStatus = QStringLiteral("error");
                      m_fileProblem = readProblem(result, *error);
                      setText({});

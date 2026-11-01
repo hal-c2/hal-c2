@@ -437,6 +437,24 @@ private slots:
     answer(QStringLiteral("after"));
     QVERIFY(QTest::qWaitFor([&] { return files.text() == QLatin1String("after"); }));
   }
+
+  // The agent creates the file while it loads: the read from before finds nothing.
+  void aChangeWhileLoadingOutlivesAFailedRead() {
+    Held held;
+    QVERIFY(held.ready());
+    WorkspaceFiles files(&held.client);
+    files.setTarget(QStringLiteral("env-a"), QStringLiteral("/w"));
+    const auto reads = [&] { return held.callsOf(QStringLiteral("projects.readFile")); };
+    files.openFile(QStringLiteral("a.txt"));
+    QVERIFY(QTest::qWaitFor([&] { return reads().size() == 1; }));
+    files.followOpenFile();
+    held.mc.refuse(reads().last(), QStringLiteral("Not found."));
+    QVERIFY(QTest::qWaitFor([&] { return reads().size() == 2; }));
+    QCOMPARE(files.fileStatus(), QStringLiteral("loading"));
+    held.mc.refuse(reads().last(), QStringLiteral("Not found."));
+    QVERIFY(QTest::qWaitFor([&] { return files.fileStatus() == QLatin1String("error"); }));
+    QCOMPARE(reads().size(), 2);
+  }
 };
 
 QTEST_GUILESS_MAIN(WorkspaceFilesRegression)
