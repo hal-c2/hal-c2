@@ -50,8 +50,9 @@ defmodule HalC2.Terminal do
   @doc """
   `terminal.attach`: sends `subscriber` the terminal's events from now on and
   returns its snapshot. A terminal that does not exist yet is opened when the
-  input has a `cwd`. Events the attach itself produces arrive as
-  `{:hal_c2_terminal_attach, key, event}` (see the moduledoc).
+  input has a `cwd`, its shell running the input's `command` if it has one, after
+  the shell's startup and with no output missed. Events the attach itself produces
+  arrive as `{:hal_c2_terminal_attach, key, event}` (see the moduledoc).
   """
   def attach(%{"threadId" => thread_id, "terminalId" => terminal_id} = input, subscriber) do
     case {lookup(thread_id, terminal_id), input["cwd"]} do
@@ -551,7 +552,8 @@ defmodule HalC2.Terminal do
       else:
         start_shell(
           %{state | cols: input["cols"] || state.cols, rows: input["rows"] || state.rows},
-          "started"
+          "started",
+          input["command"]
         )
   end
 
@@ -572,7 +574,7 @@ defmodule HalC2.Terminal do
     end
   end
 
-  defp start_shell(state, event) do
+  defp start_shell(state, event, command \\ nil) do
     state = stop_shell(state)
 
     options = [
@@ -597,7 +599,9 @@ defmodule HalC2.Terminal do
         failed(state, "No shell found (tried #{Enum.map_join(shells(), ", ", &hd/1)})")
 
       shell ->
-        case :exec.run(shell, options) do
+        argv = if command, do: shell ++ ["-ic", command], else: shell
+
+        case :exec.run(argv, options) do
           {:ok, exec_pid, os_pid} ->
             # `:exec.run_link` would drop the DOWN message. Linked, the shell is killed
             # with the terminal even when `terminate/2` never runs (a killed terminal).

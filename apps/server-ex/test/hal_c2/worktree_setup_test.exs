@@ -13,6 +13,14 @@ defmodule HalC2.WorktreeSetupTest do
     {_, 0} = git.(~w(init -q -b main))
     {_, 0} = git.(~w(-c user.email=t@t -c user.name=t commit -q --allow-empty -m init))
 
+    # The machine's own shell startup is not this test's: it may take longer than a wait here.
+    shell = System.get_env("SHELL")
+    System.put_env("SHELL", "/bin/sh")
+
+    on_exit(fn ->
+      if shell, do: System.put_env("SHELL", shell), else: System.delete_env("SHELL")
+    end)
+
     Application.put_env(:hal_c2, :home, Path.join(dir, "home"))
     Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
     on_exit(fn -> Application.delete_env(:hal_c2, :codex_command) end)
@@ -581,6 +589,42 @@ defmodule HalC2.WorktreeSetupTest do
     assert_receive {:hal_c2_worktree_setup, "t", %{"phase" => "done"}}
     assert_receive {:hal_c2_worktree_setup, "t", nil}, 1_000
     assert WorktreeSetup.subscribe("t", self()) == nil
+  end
+
+  test "a real shell runs a multi-line script given as its argument" do
+    for shell <- ~w(/bin/sh /bin/bash /bin/zsh), File.exists?(shell) do
+      line = HalC2.WorktreeSetup.wrap_script("echo one\r\n# two\necho three", shell, "END_")
+      refute line =~ "\r"
+      {out, _} = System.cmd(shell, ["-c", line])
+      assert out =~ "one\nthree\n"
+      assert out =~ "END_0\n"
+    end
+  end
+
+  test "a retry after a follow-up is refused and leaves the worktree alone", %{repo: repo} do
+    project(repo, [
+      %{
+        "id" => "setup",
+        "name" => "Setup",
+        "command" => "exit 3",
+        "icon" => "configure",
+        "runOnWorktreeCreate" => true,
+        "async" => false
+      }
+    ])
+
+    thread_id = launch("list the files")
+    %{"worktreePath" => path} = await_phase(thread_id, "failed")
+
+    # The second run alone is enough to refuse, however the setup came to be still tracked.
+    {:ok, _} =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        run = hd(StreamState.list(state, "run"))
+        {[{"run", "later", %{"s" => %{run | "id" => "later"}}}], {:ok, nil}}
+      end)
+
+    assert {:ok, %{"retried" => false}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    assert File.dir?(path)
   end
 
   # An interactive zsh runs `#` as a command unless told otherwise before it reads the line.

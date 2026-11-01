@@ -1210,6 +1210,8 @@ defmodule HalC2.Orchestration do
   # recorded and run as an effect (`HalC2.Orchestration.Effects`), so a stop
   # that arrives before it can cancel it and a restart knows it was in flight.
   defp begin_turn(thread_id, turn) do
+    HalC2.WorktreeSetup.superseded(thread_id)
+
     HalC2.Orchestration.Effects.run_now(
       thread_id,
       "provider-turn.start",
@@ -1898,6 +1900,37 @@ defmodule HalC2.Orchestration do
         end)
 
     result
+  end
+
+  @doc """
+  Puts a run whose workspace could not be prepared back to waiting for it
+  (`HalC2.WorktreeSetup.retry/1`). Only while it is the thread's one run: a later
+  message means the thread went on without it, in the worktree a retry works in.
+  """
+  def retry_prepared(thread_id, run_id) do
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      case StreamState.get(state, "run") do
+        %{^run_id => %{"status" => "failed"} = run} = runs when map_size(runs) == 1 ->
+          waiting =
+            upsert(state, "run", run_id, fn _ ->
+              Map.merge(run, %{"status" => "preparing", "completedAt" => nil})
+            end)
+
+          item =
+            preparation(state, run_id, %{
+              "status" => "running",
+              "title" => @preparing_workspace,
+              "output" => nil,
+              "exitCode" => nil,
+              "completedAt" => nil
+            })
+
+          {Enum.reject([waiting, item], &is_nil/1), :ok}
+
+        _ ->
+          {[], {:error, "Run #{run_id} cannot be retried."}}
+      end
+    end)
   end
 
   defp not_preparing(run_id), do: "Run #{run_id} is not awaiting workspace preparation."

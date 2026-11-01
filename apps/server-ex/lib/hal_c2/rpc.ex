@@ -198,6 +198,7 @@ defmodule HalC2.Rpc do
   def handle("attachments.delete", input), do: HalC2.Attachments.delete(input)
   def handle("assets.createUrl", input), do: HalC2.Attachments.create_url(input)
   def handle("worktreeSetup.cancel", input), do: HalC2.WorktreeSetup.cancel(input)
+  def handle("worktreeSetup.retry", input), do: HalC2.WorktreeSetup.retry(input)
   def handle("assets.persistChatAttachments", input), do: HalC2.Attachments.persist(input)
   def handle("projects.listEntries", input), do: HalC2.Workspace.list_entries(input)
   def handle("projects.readFile", input), do: HalC2.Workspace.read_file(input)

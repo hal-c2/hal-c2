@@ -2,7 +2,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
   @moduledoc """
   How `HalC2.WorktreeSetup` keeps each thread's setup, against a model: progress counts
   only while it runs, its end is kept with one expiry, and only that expiry's own message
-  removes it. Setups are put in the server's state directly, since a real one has a
+  removes it; a failure the agent's stage never reached has no expiry, and goes only when
+  the thread's agent starts a turn without it. Setups are put in the server's state directly, since a real one has a
   worker racing the commands; retention is long enough that only a sent `:expire` acts.
 
   Beside it, two pure properties: how output is cut into lines does not depend on how it
@@ -90,6 +91,7 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
       {2, {:call, __MODULE__, :seed, [oneof(@threads)]}},
       {4, {:call, __MODULE__, :progress, [oneof(@threads)]}},
       {2, {:call, __MODULE__, :finish, [oneof(@threads), oneof(~w(done failed cancelled))]}},
+      {2, {:call, __MODULE__, :superseded, [oneof(@threads)]}},
       {2, {:call, __MODULE__, :expire_own, [oneof(@threads)]}},
       {2, {:call, __MODULE__, :expire_stale, [oneof(@threads)]}},
       {2, {:call, __MODULE__, :cleaned_up, [oneof(@threads), oneof(~w(own stale))]}},
@@ -156,15 +158,22 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
 
   def next_state(state, _result, {:call, _, :expire_own, [thread]}) do
     case state[thread] do
-      %{phase: "running"} -> state
+      %{phase: phase} when phase in ~w(running failed) -> state
       _ -> Map.delete(state, thread)
+    end
+  end
+
+  def next_state(state, _result, {:call, _, :superseded, [thread]}) do
+    case state[thread] do
+      %{phase: "failed"} -> Map.delete(state, thread)
+      _ -> state
     end
   end
 
   def next_state(state, _result, _call), do: state
 
-  # After every step the server holds what the model does, and an ended setup alone has
-  # an expiry.
+  # After every step the server holds what the model does, and an ended setup that cannot
+  # be retried alone has an expiry.
   def postcondition(state, {:call, _, :cleaned_up, _} = call, result),
     do: result == :answered and same_as_model?(state, call)
 
@@ -184,7 +193,7 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
        }}
     end) == model and
       Enum.all?(setups, fn {_, setup} ->
-        Map.has_key?(setup, :expiry) == (setup.snapshot["phase"] != "running")
+        Map.has_key?(setup, :expiry) == setup.snapshot["phase"] not in ~w(running failed)
       end)
   end
 
@@ -198,7 +207,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
       "error" => nil,
       "endedAt" => nil,
       "stages" => [
-        %{"id" => "checkout", "status" => "running", "detail" => nil, "endedAt" => nil}
+        %{"id" => "checkout", "status" => "running", "detail" => nil, "endedAt" => nil},
+        %{"id" => "agent", "status" => "pending", "detail" => nil, "endedAt" => nil}
       ]
     }
 
@@ -224,6 +234,11 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
 
   def finish(thread, phase) do
     GenServer.call(WorktreeSetup, {:update, thread, &WorktreeSetup.finish(&1, phase, nil)})
+  end
+
+  def superseded(thread) do
+    WorktreeSetup.superseded(thread)
+    :sys.get_state(WorktreeSetup)
   end
 
   # The caller of a cancel is answered whichever run its cleanup was for.

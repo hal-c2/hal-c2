@@ -233,6 +233,49 @@ Feature: Worktrees and setup scripts
     Then the setup fails with "Setup script exited with no exit code."
     And the agent does not start
 
+  # The script is the shell's argument, as a line typed into a starting shell can be
+  # read by whatever its startup runs.
+  @mc
+  Scenario: A shell startup that reads its input does not swallow the setup script
+    Given a blocking setup script that writes a file
+    And the shell's startup reads whatever is waiting on its input
+    When the thread's worktree is prepared
+    Then the setup finishes and the script wrote its file
+
+  @mc
+  Scenario: A setup script that never begins fails the setup
+    Given a blocking setup script that writes a file
+    And the shell's startup never finishes
+    When the thread's worktree is prepared
+    Then the setup fails with a message starting "The setup script did not start within"
+    And the setup script stage says it did not start
+    And the agent does not start
+    And the setup can no longer begin behind the failure
+
+  @mc
+  Scenario: A setup script that has begun may take as long as it needs
+    Given a setup script that must finish before the agent starts
+    And a setup script has 3 seconds to begin
+    When the thread's worktree is prepared
+    And the script is still running after those 3 seconds
+    Then the setup is still running
+
+  @mc
+  Scenario: Retrying a failed setup runs its script again in the same worktree
+    Given a blocking setup script that fails until a file exists
+    And the thread's setup failed on that script
+    When the file exists and the user retries the setup
+    Then the setup finishes in the same worktree
+    And the agent starts on the first message
+
+  @mc
+  Scenario: A thread that went on without its setup cannot retry it
+    Given a blocking setup script that fails until a file exists
+    And the thread's setup failed on that script
+    When the user sends another message in that thread
+    Then the setup is no longer tracked
+    And retrying the setup is refused
+
   # Legacy: apps/server/src/project/ProjectSetupScriptRunner.ts (runForThread env: COLORTERM, NO_COLOR, FORCE_COLOR)
   # Other terminals advertise truecolour (terminal/sessions.feature). The MC already sets
   # NO_COLOR for the setup terminal (worktree_setup.ex) but still gives it COLORTERM "truecolor".

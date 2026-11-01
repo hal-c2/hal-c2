@@ -723,6 +723,131 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
+  # --- a script that cannot depend on the shell's startup --------------------------------
+
+  step "a blocking setup script that writes a file", context do
+    put_setup(context, nil, "echo ran > setup-ran.txt", false)
+  end
+
+  # `sh -i` reads `$ENV` as it starts. The terminal gives what it holds a moment to arrive.
+  step "the shell's startup reads whatever is waiting on its input", context do
+    shell_startup(context, "stty -icanon min 0 time 3; cat > /dev/null; stty icanon\n")
+  end
+
+  step "the shell's startup never finishes", context do
+    World.put_app_env(:worktree_setup_start_timeout, 500)
+    shell_startup(context, "read _\n")
+  end
+
+  step "the thread's worktree is prepared", context do
+    launch(context, "list the files")
+  end
+
+  step "the setup finishes and the script wrote its file", context do
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done"
+    assert File.read!(Path.join(snapshot["worktreePath"], "setup-ran.txt")) == "ran\n"
+    context
+  end
+
+  step "the setup script stage says it did not start", context do
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    stage = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+    assert %{"status" => "failed", "detail" => "did not start"} = stage
+    Map.put(context, :settled, snapshot)
+  end
+
+  step "the setup can no longer begin behind the failure", context do
+    refute "setup" in HalC2.Terminal.running(context.setup_thread)
+    context
+  end
+
+  step "a setup script has {int} seconds to begin", %{args: [seconds]} = context do
+    World.put_app_env(:worktree_setup_start_timeout, seconds * 1_000)
+    Map.put(context, :start_seconds, seconds)
+  end
+
+  step "the script is still running after those {int} seconds", %{args: [seconds]} = context do
+    {_, context} = World.await_setup(context, &(tail(&1) == ["started"]))
+    # This one wait is the behaviour: the time to begin has to go by.
+    Process.sleep(seconds * 1_000 + 200)
+    context
+  end
+
+  step "the setup is still running", context do
+    assert %{"phase" => "running"} = HalC2.WorktreeSetup.subscribe(context.setup_thread, self())
+    type(context, "\r")
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done"
+    context
+  end
+
+  # --- retrying --------------------------------------------------------------------------
+
+  step "a blocking setup script that fails until a file exists", context do
+    put_setup(context, nil, ~S(test -e "$HAL_C2_PROJECT_ROOT/.setup-may-pass"), false)
+  end
+
+  step "the thread's setup failed on that script", context do
+    context = launch(context, "list the files")
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "failed"
+    Map.put(context, :settled, snapshot)
+  end
+
+  step "the file exists and the user retries the setup", context do
+    File.write!(Path.join(World.project(context).root, ".setup-may-pass"), "")
+
+    {reply, context} =
+      World.call(context, "worktreeSetup.retry", %{"threadId" => context.setup_thread})
+
+    assert {:ok, %{"retried" => true}} = reply
+    context
+  end
+
+  step "the setup finishes in the same worktree", context do
+    {snapshot, context} =
+      World.await_setup(context, &(&1["phase"] == "done"))
+
+    assert snapshot["worktreePath"] == context.settled["worktreePath"]
+    assert World.setup_stage(snapshot, "setup-script") == "done"
+    assert World.setup_stage(snapshot, "agent") == "done"
+    Map.put(context, :settled, snapshot)
+  end
+
+  step "the agent starts on the first message", context do
+    assert %{"status" => "completed"} = await_run(context.setup_thread, "completed")
+    context
+  end
+
+  step "the user sends another message in that thread", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "follow-up",
+        "threadId" => context.setup_thread,
+        "messageId" => "follow-up",
+        "text" => "go on without it",
+        "attachments" => []
+      })
+
+    context
+  end
+
+  step "the setup is no longer tracked", context do
+    thread_id = context.setup_thread
+    assert_receive {:hal_c2_worktree_setup, ^thread_id, nil}, 15_000
+    context
+  end
+
+  step "retrying the setup is refused", context do
+    {reply, context} =
+      World.call(context, "worktreeSetup.retry", %{"threadId" => context.setup_thread})
+
+    assert {:ok, %{"retried" => false}} = reply
+    context
+  end
+
   step "the script's terminal asks tools for plain output without colour", context do
     {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
     assert snapshot["phase"] == "done"
@@ -1380,6 +1505,15 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     after
       0 -> :ok
     end
+  end
+
+  defp shell_startup(context, script) do
+    path = Path.join(System.tmp_dir!(), "hal-c2-startup-#{System.unique_integer([:positive])}")
+    File.write!(path, script)
+    ExUnit.Callbacks.on_exit(fn -> File.rm(path) end)
+    World.put_env("SHELL", "/bin/sh")
+    World.put_env("ENV", path)
+    context
   end
 
   defp type(context, data) do
