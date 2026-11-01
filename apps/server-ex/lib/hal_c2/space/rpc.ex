@@ -99,6 +99,35 @@ defmodule HalC2.Space.Rpc do
   defp call("comment.reopen", %{"spaceId" => s, "commentId" => c}),
     do: comment(Space.reopen_comment(s, c))
 
+  defp call("deck.create", %{"spaceId" => s, "title" => title}),
+    do: deck(Space.create_deck(s, title))
+
+  defp call("deck.createFromPage", %{"spaceId" => s, "pageId" => p}),
+    do: deck(Space.create_deck_from_page(s, p))
+
+  defp call("deck.rename", %{"spaceId" => s, "deckId" => d, "title" => title}),
+    do: deck(Space.rename_deck(s, d, title))
+
+  defp call("deck.trash", %{"spaceId" => s, "deckId" => d}), do: deck(Space.trash_deck(s, d))
+  defp call("deck.restore", %{"spaceId" => s, "deckId" => d}), do: deck(Space.restore_deck(s, d))
+
+  defp call("deck.delete", %{"spaceId" => s, "deckId" => d}),
+    do: with({:ok, id} <- Space.delete_deck(s, d), do: {:ok, %{"deckId" => id}})
+
+  defp call("slide.insert", %{"spaceId" => s, "deckId" => d} = i) do
+    spec = Map.take(i, ~w(title body))
+    slide(Space.insert_slide(s, d, spec, Map.get(i, "afterSlideId", :last)))
+  end
+
+  defp call("slide.update", %{"spaceId" => s, "slideId" => id} = i),
+    do: slide(Space.update_slide(s, id, Map.take(i, ~w(title body))))
+
+  defp call("slide.move", %{"spaceId" => s, "slideId" => id} = i),
+    do: slide(Space.move_slide(s, id, Map.get(i, "afterSlideId", :last)))
+
+  defp call("slide.delete", %{"spaceId" => s, "slideId" => id}),
+    do: with({:ok, id} <- Space.delete_slide(s, id), do: {:ok, %{"slideId" => id}})
+
   defp call("image.add", %{"spaceId" => s, "attachmentId" => a, "name" => name}),
     do: image(Space.add_image(s, a, name))
 
@@ -124,8 +153,10 @@ defmodule HalC2.Space.Rpc do
 
   @methods ~w(list create rename delete page.create page.rename page.move page.trash
     page.restore page.delete page.publish page.unpublish page.exportMarkdown page.importMarkdown
-    page.createFromThread page.history page.version page.restoreVersion block.insert block.update
-    block.setChecked block.move block.delete comment.add comment.resolve comment.reopen image.add
+    page.createFromThread page.history page.version page.restoreVersion
+    block.insert block.update block.setChecked block.move block.delete comment.add
+    comment.resolve comment.reopen deck.create deck.createFromPage deck.rename deck.trash
+    deck.restore deck.delete slide.insert slide.update slide.move slide.delete image.add
     image.generate image.trash image.restore image.delete image.providers)
 
   @doc "The methods after `space.`."
@@ -145,6 +176,8 @@ defmodule HalC2.Space.Rpc do
   defp page(result), do: with({:ok, page} <- result, do: {:ok, %{"page" => page}})
   defp block(result), do: with({:ok, block} <- result, do: {:ok, %{"block" => block}})
   defp comment(result), do: with({:ok, comment} <- result, do: {:ok, %{"comment" => comment}})
+  defp deck(result), do: with({:ok, deck} <- result, do: {:ok, %{"deck" => deck}})
+  defp slide(result), do: with({:ok, slide} <- result, do: {:ok, %{"slide" => slide}})
   defp image(result), do: with({:ok, image} <- result, do: {:ok, %{"image" => image}})
 
   @reasons %{

@@ -176,7 +176,7 @@ defmodule HalC2.Web.Router do
   end
 
   get "/api/auth/session" do
-    auth = HalC2.Environment.server_config()["auth"]
+    auth = HalC2.Environment.auth()
 
     case request_session(conn) do
       {:ok, session} ->

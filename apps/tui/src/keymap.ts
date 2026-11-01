@@ -144,7 +144,8 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       },
       {
         keys: "e",
-        description: "Files: edit in $EDITOR · Spaces: rename a Space or page, edit a block",
+        description:
+          "Files: edit in $EDITOR · Spaces: rename a Space, page or deck, edit a block or slide",
         chords: ["e"],
       },
       {
@@ -153,11 +154,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["c"],
       },
       { keys: "a", description: "Spaces: new page inside the selected page", chords: ["a"] },
-      { keys: "m", description: "Spaces: move a page or block", chords: ["m"] },
+      { keys: "m", description: "Spaces: move a page, block or slide", chords: ["m"] },
       {
         keys: "d · D",
         description:
-          "Spaces: delete a Space or block, trash a page · delete a trashed page for good",
+          "Spaces: delete a Space, block or slide, trash a page or deck · delete a trashed one for good",
         chords: ["d", "shift+d"],
       },
       {
@@ -169,8 +170,13 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
       { keys: "h", description: "Spaces: a page's history", chords: ["h"] },
       {
+        keys: "s · S",
+        description: "Spaces: new deck / make a deck from the page",
+        chords: ["s", "shift+s"],
+      },
+      {
         keys: "p · P",
-        description: "Spaces: publish a page as a site · publish it over Tailscale",
+        description: "Spaces: present a deck or publish a page · publish it over Tailscale",
         chords: ["p", "shift+p"],
       },
       {
@@ -383,7 +389,8 @@ export const KEYMAP_LAYERS = {
     pageup: "space.pageUp",
     pagedown: "space.pageDown",
     "return, right": "space.activate",
-    "left, backspace, escape": "space.back",
+    "left, backspace": "space.back",
+    escape: "space.leave",
     n: "space.new",
     a: "space.newInside",
     e: "space.edit",
@@ -396,12 +403,14 @@ export const KEYMAP_LAYERS = {
     c: "space.comment",
     l: "space.link",
     y: "space.export",
-    p: "space.publish",
+    p: "space.presentOrPublish",
     "shift+p": "space.publishTailscale",
     "shift+y": "space.copySiteLink",
     u: "space.unpublish",
     i: "space.import",
     t: "space.fromThread",
+    s: "space.newDeck",
+    "shift+s": "space.deckFromPage",
     v: "space.images",
     "ctrl+k": "palette.open",
     "ctrl+p": "space.close",
