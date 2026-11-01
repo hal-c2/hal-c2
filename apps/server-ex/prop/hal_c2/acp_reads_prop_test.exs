@@ -3,11 +3,12 @@ defmodule HalC2.AcpReadsPropTest do
   How `HalC2.Acp` reads an agent's models, against a model of which read stands. One
   ACP instance is read by reloads (`reload/1`, as Refresh does), boot reads
   (`load/0`), and the read a listing (`entry/1`) starts when nothing is known or
-  being read, and forgotten by settings changes. Each read's agent is held until the
-  case releases it with the models it answers. Whatever order they finish in, the
-  instance shows what the most recently asked-for read that no settings change
-  overtook answered; a listing starts no read while one is under way; and a reload
-  returns with its own answer in place (#459).
+  being read, and forgotten by `forget/1` directly or by settings changes. Each read's
+  agent is held until the case releases it with the answer it gives, models or a
+  failure. A read publishes, version and failure included, iff it is still the most
+  recently asked for and no forget landed since it was asked for, whatever order they
+  finish in; a read that does not publish leaves no trace (#419). A listing starts no
+  read while one is under way, and a reload returns with its own answer in place (#459).
   """
 
   use ExUnit.Case, async: false
@@ -36,7 +37,8 @@ defmodule HalC2.AcpReadsPropTest do
   end
 
   # Every probe of the instance's agent connects to the case, says the case's token and
-  # where it runs, and waits for the label it then answers as its only model.
+  # where it runs, and waits for the label it then answers as its version and only
+  # model, or fails its session with when the case adds "fail".
   defp start_case do
     dir = HalC2.Prop.scratch_home("acp-reads")
     HalC2.Prop.start_services([HalC2.Settings])
@@ -67,7 +69,7 @@ defmodule HalC2.AcpReadsPropTest do
 
   # Held agents are let go so their reads end before the next case.
   defp end_case do
-    for n <- Map.keys(Process.get(:reads)), do: release(n)
+    for n <- Map.keys(Process.get(:reads)), do: release(n, :answer)
     close_strays()
     HalC2.Acp.forget(@instance)
     {acceptor, listen} = Process.get(:acceptor)
@@ -111,26 +113,32 @@ defmodule HalC2.AcpReadsPropTest do
     request = json.loads(sys.stdin.readline())
     case = socket.create_connection(("127.0.0.1", #{port}))
     case.sendall(("#{token} " + os.getcwd() + "\\n").encode())
-    label = case.makefile().readline().strip()
+    label, *fail = case.makefile().readline().split()
     def answer(request, result):
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
-    answer(request, {"protocolVersion": 1, "agentInfo": {"version": "1.0.0"}, "agentCapabilities": {}})
+    answer(request, {"protocolVersion": 1, "agentInfo": {"version": label}, "agentCapabilities": {}})
     model = {"id": "model", "currentValue": label, "options": [{"value": label, "name": label}]}
     if #{if name == :b, do: "True", else: "False"}:
         session = {"sessionId": "s", "models": {"currentModelId": label, "availableModels": [{"modelId": label, "name": label}]}}
     else:
         session = {"sessionId": "s", "configOptions": [model]}
-    answer(json.loads(sys.stdin.readline()), session)
+    request = json.loads(sys.stdin.readline())
+    if fail:
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "error": {"code": -32603, "message": label}}), flush=True)
+    else:
+        answer(request, session)
     sys.stdin.read()
     """
   end
 
   # --- model ------------------------------------------------------------------
 
-  # reads: the reads under way, oldest first, `current` while no later read or settings
-  # change superseded them. shown: the read whose answer the instance shows. loading:
-  # whether a read is under way that a listing must not duplicate.
-  def initial_state, do: %{reads: [], next: 0, shown: nil, loading: false, agent: :a}
+  # reads: the reads under way, oldest first, `current` while no later read or forget
+  # superseded them. models, version, failure: the read whose answer the instance shows
+  # for each, which a failed read leaves apart. loading: whether a read was asked for
+  # since the last forget, which a listing must not duplicate.
+  def initial_state,
+    do: %{reads: [], next: 0, models: nil, version: nil, failure: nil, loading: false, agent: :a}
 
   def command(state) do
     starts =
@@ -145,13 +153,22 @@ defmodule HalC2.AcpReadsPropTest do
     releases =
       if state.reads == [],
         do: [],
-        else: [{5, {:call, __MODULE__, :release, [oneof(Enum.map(state.reads, & &1.n))]}}]
+        else: [
+          {5,
+           {:call, __MODULE__, :release,
+            [oneof(Enum.map(state.reads, & &1.n)), frequency([{3, :answer}, {1, :fail}])]}}
+        ]
 
     other = if state.agent == :a, do: :b, else: :a
-    frequency(starts ++ releases ++ [{1, {:call, __MODULE__, :configure, [other]}}])
+
+    frequency(
+      starts ++
+        releases ++
+        [{2, {:call, __MODULE__, :forget, []}}, {1, {:call, __MODULE__, :configure, [other]}}]
+    )
   end
 
-  defp starts_read?(state), do: state.shown == nil and not state.loading
+  defp starts_read?(state), do: state.models == nil and state.failure == nil and not state.loading
 
   def precondition(state, {:call, _, cmd, [n]}) when cmd in [:reload, :boot],
     do: n == state.next and length(state.reads) < @max_reads
@@ -159,44 +176,63 @@ defmodule HalC2.AcpReadsPropTest do
   def precondition(state, {:call, _, :list, [n, starts]}),
     do: n == state.next and starts == starts_read?(state)
 
-  def precondition(state, {:call, _, :release, [n]}), do: Enum.any?(state.reads, &(&1.n == n))
+  def precondition(state, {:call, _, :release, [n, _]}),
+    do: Enum.any?(state.reads, &(&1.n == n))
+
   def precondition(state, {:call, _, :configure, [agent]}), do: agent != state.agent
+  def precondition(_state, {:call, _, :forget, []}), do: true
 
   def next_state(state, _result, {:call, _, :reload, [n]}),
-    do: %{start(state, n) | shown: nil}
+    do: state |> forgotten() |> start(n)
 
   def next_state(state, _result, {:call, _, :boot, [n]}), do: start(state, n)
 
   def next_state(state, _result, {:call, _, :list, [n, true]}), do: start(state, n)
   def next_state(state, _result, {:call, _, :list, [_n, false]}), do: state
 
-  def next_state(state, _result, {:call, _, :release, [n]}) do
-    {[read], rest} = Enum.split_with(state.reads, &(&1.n == n))
-    state = %{state | reads: rest}
-    if read.current, do: %{state | shown: n}, else: state
-  end
+  def next_state(state, _result, {:call, _, :release, [n, outcome]}),
+    do: released(state, n, outcome)
+
+  def next_state(state, _result, {:call, _, :forget, []}), do: forgotten(state)
 
   def next_state(state, _result, {:call, _, :configure, [agent]}),
-    do: %{supersede(state) | shown: nil, loading: false, agent: agent}
+    do: %{forgotten(state) | agent: agent}
 
   defp start(state, n) do
     state = supersede(state)
     %{state | reads: state.reads ++ [%{n: n, current: true}], next: n + 1, loading: true}
   end
 
+  defp released(state, n, outcome) do
+    {[read], rest} = Enum.split_with(state.reads, &(&1.n == n))
+    state = %{state | reads: rest}
+
+    case {read.current, outcome} do
+      {false, _} -> state
+      {true, :answer} -> %{state | models: n, version: n, failure: nil}
+      {true, :fail} -> %{state | version: n, failure: n}
+    end
+  end
+
+  defp forgotten(state),
+    do: %{supersede(state) | models: nil, version: nil, failure: nil, loading: false}
+
   defp supersede(state), do: %{state | reads: Enum.map(state.reads, &%{&1 | current: false})}
 
-  def postcondition(state, {:call, _, :list, _}, result), do: result == shown(state.shown)
+  def postcondition(state, {:call, _, :list, _}, result), do: result == shown(state)
 
-  def postcondition(state, {:call, _, :release, [n]}, result) do
-    read = Enum.find(state.reads, &(&1.n == n))
-    result == if(read.current, do: shown(n), else: shown(state.shown))
-  end
+  def postcondition(state, {:call, _, :release, [n, outcome]}, result),
+    do: result == shown(released(state, n, outcome))
 
   def postcondition(_state, _call, result), do: result == :ok
 
-  defp shown(nil), do: []
-  defp shown(n), do: [label(n)]
+  defp shown(state) do
+    %{
+      models: if(state.models, do: [label(state.models)], else: []),
+      version: state.version && label(state.version),
+      failure: state.failure && label(state.failure)
+    }
+  end
 
   defp label(n), do: "r#{n}"
 
@@ -209,7 +245,7 @@ defmodule HalC2.AcpReadsPropTest do
   def list(n, starts) do
     drain_strays()
     before = generation()
-    %{"models" => models} = HalC2.Acp.entry(@instance)
+    entry = HalC2.Acp.entry(@instance)
 
     # A read's generation is taken when it is asked for, before its task runs, so a
     # duplicate is seen here whether or not its agent's probe has arrived yet (it
@@ -218,22 +254,35 @@ defmodule HalC2.AcpReadsPropTest do
       do: raise("a listing started a read while one was under way or models were known")
 
     if starts, do: :ok = started(n, nil)
-    Enum.map(models, & &1["slug"])
+
+    %{
+      models: slugs(entry["models"]),
+      version: entry["version"],
+      failure: if(entry["status"] == "error", do: entry["message"])
+    }
   end
 
-  defp generation, do: :persistent_term.get({HalC2.Acp, @instance, :generation}, nil)
+  defp generation, do: stored(:generation)
+  defp stored(key), do: :persistent_term.get({HalC2.Acp, @instance, key}, nil)
 
-  # Lets read `n`'s agent answer and returns, once the read is done, what the
+  # Lets read `n`'s agent give its answer and returns, once the read is done, what the
   # instance shows.
-  def release(n) do
+  def release(n, outcome) do
     {{socket, dir, task}, reads} = Map.pop(Process.get(:reads), n)
     Process.put(:reads, reads)
-    :ok = :gen_tcp.send(socket, label(n) <> "\n")
+    :ok = :gen_tcp.send(socket, label(n) <> if(outcome == :fail, do: " fail\n", else: "\n"))
 
     if task, do: :ok = Task.await(task, 30_000), else: read_done(dir)
     :gen_tcp.close(socket)
-    :persistent_term.get({HalC2.Acp, @instance, :models}, nil) |> Kernel.||([]) |> slugs()
+
+    %{
+      models: slugs(stored(:models) || []),
+      version: stored(:version),
+      failure: stored(:error)
+    }
   end
+
+  def forget, do: HalC2.Acp.forget(@instance)
 
   def configure(agent) do
     {_, version} = HalC2.Settings.get()
