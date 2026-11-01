@@ -98,10 +98,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libfontconfig1-dev libasound2-dev
 
+      # A cache here is 1 to 2 GB and a new Cargo.lock makes a new set of them,
+      # against the repo's 10 GB: only main saves, and the rest restore from it.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop-ljos
           shared-key: clippy
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - run: cargo clippy -q -p hal_c2_shell -p hal_c2_mc --lib --tests --bins -- -D warnings
 
@@ -118,6 +121,7 @@ jobs:
         with:
           workspaces: apps/desktop-ljos
           shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Compiles desktop-qt's bricks and the shell's own QML against the
       # shell's native types; fails when a file does not compile.
@@ -143,6 +147,7 @@ jobs:
         with:
           workspaces: apps/desktop-ljos
           shared-key: test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # The features suite is opt-in in Cargo.toml (`test = false`), so this
       # runs everything else. All of it, so one run shows every failure.
@@ -183,6 +188,7 @@ jobs:
         with:
           workspaces: apps/desktop-ljos
           shared-key: test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Each scenario runs a shell of its own against a fake MC on loopback;
       # none needs the real MC.
