@@ -3,8 +3,9 @@ defmodule HalC2.SpaceScheduleStallPropTest do
   Page tasks in two Spaces against a model of each page and its task, with a Space's
   stream that may not answer while the scheduler reconciles it or boots. The promises
   modelled: a task is held exactly when the scheduler last read its page in the trash, a
-  held task has no next run, a reconcile of one Space leaves the other's debt alone, and
-  once the streams answer one tick settles every task, whatever went unanswered before.
+  held task has no next run, a reconcile of one Space leaves the other's debt alone, a
+  stream that does not answer holds up only its own Space, and once the streams answer
+  one tick settles every task, whatever went unanswered before.
   """
 
   use ExUnit.Case, async: false
@@ -38,7 +39,7 @@ defmodule HalC2.SpaceScheduleStallPropTest do
   defp setup do
     home = HalC2.Prop.scratch_home("space-schedule-stall")
     # Long enough that a stream that answers is not taken for one that does not.
-    Application.put_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, 500)
+    Application.put_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, 1_000)
 
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -74,6 +75,7 @@ defmodule HalC2.SpaceScheduleStallPropTest do
       {4, let(i <- index, do: {:call, __MODULE__, :flip, [i, s[i].trashed, boolean()]})},
       {2, {:call, __MODULE__, :reconcile, [index]}},
       {2, {:call, __MODULE__, :restart_stalled, [index]}},
+      {2, {:call, __MODULE__, :tick_stalled, [index]}},
       {3, {:call, __MODULE__, :tick, []}}
     ])
   end
@@ -92,8 +94,17 @@ defmodule HalC2.SpaceScheduleStallPropTest do
   end
 
   defp step(s, :reconcile, [i]), do: Map.put(s, i, %{s[i] | held: s[i].trashed})
-  defp step(s, :restart_stalled, [_i]), do: s
-  defp step(s, :tick, []), do: Map.new(s, fn {i, page} -> {i, %{page | held: page.trashed}} end)
+  defp step(s, :restart_stalled, [i]), do: settled(s, i)
+  defp step(s, :tick_stalled, [i]), do: settled(s, i)
+  defp step(s, :tick, []), do: settled(s, nil)
+
+  # Every Space whose stream answers holds its page's fate; the `stalled` one keeps its own.
+  defp settled(s, stalled) do
+    Map.new(s, fn
+      {^stalled, page} -> {stalled, page}
+      {i, page} -> {i, %{page | held: page.trashed}}
+    end)
+  end
 
   # --- commands -----------------------------------------------------------------
 
@@ -120,7 +131,16 @@ defmodule HalC2.SpaceScheduleStallPropTest do
     stalled(i, fn ->
       HalC2.Prop.restart_service(ScheduledTasks)
       # Past the boot's reconcile, before the stream answers again.
-      :sys.get_state(ScheduledTasks, 5_000)
+      :sys.get_state(ScheduledTasks, 10_000)
+    end)
+
+    observed()
+  end
+
+  def tick_stalled(i) do
+    stalled(i, fn ->
+      send(ScheduledTasks, :tick)
+      :sys.get_state(ScheduledTasks, 10_000)
     end)
 
     observed()

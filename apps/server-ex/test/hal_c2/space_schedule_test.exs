@@ -61,4 +61,44 @@ defmodule HalC2.SpaceScheduleTest do
     assert [%{"nextRunAt" => next}] = ScheduledTasks.page_tasks()
     assert next
   end
+
+  describe "a Space's stream that does not answer" do
+    setup ctx do
+      {:ok, other} = Space.create("Other")
+      {:ok, page} = Space.create_page(other["id"], "Status")
+      {:ok, _} = Schedule.set(other["id"], page["id"], "Summarise", ctx.cadence)
+
+      stream = Streams.ensure(Space.stream_id(ctx.space))
+      :sys.suspend(stream)
+      on_exit(fn -> if Process.alive?(stream), do: :sys.resume(stream) end)
+
+      %{other: other["id"], other_page: page["id"]}
+    end
+
+    test "does not keep another Space's task from settling at boot", ctx do
+      stop_supervised!(ScheduledTasks)
+      {:ok, _} = Space.transact(ctx.other, &Pages.trash(&1, ctx.other_page))
+      start_supervised!(ScheduledTasks)
+
+      tasks = Map.new(ScheduledTasks.page_tasks(), &{&1["page"]["pageId"], &1})
+      assert tasks[ctx.other_page]["held"] == true
+      assert tasks[ctx.page]["nextRunAt"]
+    end
+
+    test "does not keep another Space's page from showing a change", ctx do
+      for {space, page} <- [{ctx.space, ctx.page}, {ctx.other, ctx.other_page}] do
+        {:ok, _} =
+          ScheduledTasks.put_page_task(%{
+            "id" => "page:" <> page,
+            "title" => "Page update",
+            "page" => %{"spaceId" => space, "pageId" => page},
+            "prompt" => "Summarise more",
+            "schedule" => ctx.cadence
+          })
+      end
+
+      assert {:ok, %{page: page}} = Space.page(ctx.other, ctx.other_page)
+      assert page["schedule"]["instruction"] == "Summarise more"
+    end
+  end
 end

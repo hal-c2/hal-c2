@@ -26,7 +26,7 @@ defmodule HalC2.ScheduledTasks do
   in the trash the task is `held`: it has no next run, and letting go of it aims the
   next run afresh, so what it missed does not run. Nothing that holds a stream's
   transaction may call this process, because it writes to those streams, and a stream
-  that does not answer in time is left for the next change (`bounded/2`).
+  that does not answer in time is left for the next change (`by_space/3`).
   """
 
   use GenServer
@@ -819,18 +819,20 @@ defmodule HalC2.ScheduledTasks do
     cleared =
       for {id, {page, _}} <- shown, not is_map_key(current, id), into: %{}, do: {id, {page, nil}}
 
-    kept =
-      bounded(shown, fn ->
-        for {id, entry} <- Map.merge(cleared, current), shown[id] != entry, reduce: shown do
-          shown ->
-            {page, view} = entry
+    pending = for {id, entry} <- Map.merge(cleared, current), shown[id] != entry, do: {id, entry}
 
-            case HalC2.Space.Schedule.show(page, view) do
-              :ok when view == nil -> Map.delete(shown, id)
-              :ok -> Map.put(shown, id, entry)
-              :error -> shown
-            end
-        end
+    answered =
+      by_space(pending, fn {_id, {page, _view}} -> page["spaceId"] end, fn entries ->
+        for {id, {page, view} = entry} <- entries,
+            HalC2.Space.Schedule.show(page, view) == :ok,
+            into: %{},
+            do: {id, entry}
+      end)
+
+    kept =
+      Enum.reduce(answered, shown, fn
+        {id, {_page, nil}}, shown -> Map.delete(shown, id)
+        {id, entry}, shown -> Map.put(shown, id, entry)
       end)
 
     Map.put(state, :shown, kept)
@@ -839,7 +841,10 @@ defmodule HalC2.ScheduledTasks do
   # Settles page tasks by what became of their pages. A page this MC cannot read just
   # now leaves its task as it is.
   defp reconcile(state, tasks) do
-    fates = bounded(%{}, fn -> Map.new(tasks, &{&1["id"], HalC2.Space.Schedule.fate(&1)}) end)
+    fates =
+      by_space(tasks, & &1["page"]["spaceId"], fn tasks ->
+        Map.new(tasks, &{&1["id"], HalC2.Space.Schedule.fate(&1)})
+      end)
 
     state =
       Enum.reduce(tasks, state, fn task, state ->
@@ -872,16 +877,22 @@ defmodule HalC2.ScheduledTasks do
   end
 
   # A Space's stream waits as long as it must, and every task on this MC waits on this
-  # process, so reading or writing streams gets a limit: past it, `fallback`.
-  defp bounded(fallback, fun) do
-    task = Task.async(fun)
-
+  # process, so reading or writing streams gets one limit. Each Space works apart, so one
+  # that does not answer costs only its own items. `fun` turns a Space's items into a map;
+  # the result merges the maps of the Spaces that answered in time.
+  defp by_space(items, space_id, fun) do
     timeout = Application.get_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, @pages_timeout_ms)
 
-    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} -> result
-      _ -> fallback
-    end
+    items
+    |> Enum.group_by(space_id)
+    |> Enum.map(fn {_space, items} -> Task.async(fn -> fun.(items) end) end)
+    |> Task.yield_many(timeout)
+    |> Enum.reduce(%{}, fn {task, result}, answered ->
+      case result || Task.shutdown(task, :brutal_kill) do
+        {:ok, part} -> Map.merge(answered, part)
+        _ -> answered
+      end
+    end)
   end
 
   defp let_go(%{"held" => true} = task) do
