@@ -979,6 +979,44 @@ defmodule HalC2.PlannerTest do
       assert took.(synced)["misplaced"] == %{}
     end
 
+    test "an issue left in a milestone that no longer holds its task goes out once the task leaves it" do
+      issue = %{"repository" => @repo, "number" => 7}
+
+      milestone = fn id, number, after_ ->
+        %{
+          "id" => id,
+          "title" => "Launch",
+          "due" => nil,
+          "after" => after_,
+          "projectId" => "p",
+          "milestone" => %{"repository" => @repo, "number" => number}
+        }
+      end
+
+      # GitHub refused moving #7 from milestone 3 to 4, so it still has it in 3.
+      before = %{
+        "ms" => milestone.("ms", 3, []),
+        "mr" => milestone.("mr", 4, ["t"]),
+        "t" => task(Map.put(issue, "milestone", 3))
+      }
+
+      items = %{"ms" => before["ms"], "mr" => milestone.("mr", 4, [])}
+      marks = [%{"task" => "t", "issue" => issue}]
+      assert Sync.left(before, items) == %{"ms" => marks}
+
+      # A task still naming the issue leaves nothing behind.
+      assert Sync.left(before, before) == %{}
+
+      synced =
+        %{"title" => "Launch", "due" => nil, "after" => [], "refs" => %{}}
+        |> Sync.left_behind(marks)
+
+      assert [{"update", %{"number" => 7, "milestone" => nil}, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+
+      assert took.(synced)["misplaced"] == %{}
+    end
+
     test "keeps a mark per issue, so a task that left two issues behind loses neither" do
       issue = fn n -> %{"repository" => @repo, "number" => n} end
       op = fn n -> {"t", {"update", issue.(n), nil}} end

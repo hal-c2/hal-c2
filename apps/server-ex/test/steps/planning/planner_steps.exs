@@ -2722,6 +2722,43 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "GitHub refuses moving \#{int} to {string}", %{args: [number, title]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [~s("milestone":#{context.milestones[title]})],
+        "run" => "exit 1"
+      }
+    ])
+  end
+
+  step "GitHub refuses moving \#{int} out of its milestone", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [~s("milestone":null)],
+        "run" => "exit 1"
+      }
+    ])
+  end
+
+  # GitHub takes moving #`number` out of any milestone once the scenario answers it.
+  step "GitHub takes moving \#{int} out of its milestone late", %{args: [number]} = context do
+    gate = Path.join(context.mc.home, "gh-gate-#{number}-out")
+    {_, 0} = System.cmd("mkfifo", [gate])
+
+    context
+    |> World.cli_rules([
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [~s("milestone":null)],
+        "run" => "cat '#{gate}' > /dev/null",
+        "stdout" => %{"number" => number}
+      }
+    ])
+    |> Map.put(:gh_gate_out, gate)
+  end
+
   # GitHub takes moving #`number` to the milestone `title` once the scenario answers it,
   # through a gate of the move's own.
   step "GitHub takes moving \#{int} to {string} late", %{args: [number, title]} = context do
@@ -2738,6 +2775,87 @@ defmodule HalC2.Steps.Planning.Planner do
       }
     ])
     |> Map.merge(%{gh_gate: gate, gh_gates: Map.put(context[:gh_gates] || %{}, title, gate)})
+  end
+
+  step "while GitHub holds moving {string} from {string} to {string}, the user removes {string} and the push is stopped",
+       %{args: [title, from, to, removed]} = context do
+    {moving, context} = remove_during_move(context, title, from, to, removed)
+    %{pushing: pushing} = :sys.get_state(HalC2Plugins.Planner)
+    runner = pushing[item(plan!(context), to)["id"]].runner
+    ref = Process.monitor(runner)
+    Process.exit(runner, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, :killed}, 5_000
+    {_, context} = await_topic(context, "plan", &(item(&1, to)["syncError"] != nil))
+
+    let_go(context.gh_gates[to])
+    Task.shutdown(moving, :brutal_kill)
+    context
+  end
+
+  step "while GitHub holds moving {string} from {string} to {string}, the user removes {string} and GitHub takes the move",
+       %{args: [title, from, to, removed]} = context do
+    {moving, context} = remove_during_move(context, title, from, to, removed)
+    {:ok, projects} = HalC2.Plugins.Host.projects(@id)
+    answer_late(context, to)
+
+    # The taking lands on the plan in the decision that chains the next push.
+    {_, context} =
+      await_topic(context, "plan", fn plan ->
+        get_in(item(plan, title) || %{}, ["issue", "milestone"]) == context.milestones[to]
+      end)
+
+    Map.merge(context, %{push_projects: projects, push_moving: moving})
+  end
+
+  step "{string} is restarted and that answer is reported to the planner again",
+       %{args: [plugin]} = context do
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => plugin})
+    {id, flight} = answered_flight() || flunk("no answered push is in flight")
+
+    reply =
+      as_lost_runner(flight.runner, fn -> report_again(context.push_projects, id, flight) end)
+
+    let_go(context.gh_gate_out)
+    Task.shutdown(context.push_moving, :brutal_kill)
+    Map.put(context, :reported_again, reply)
+  end
+
+  step "the answer reported again moves \#{int} out of its milestone",
+       %{args: [number]} = context do
+    assert {:push, _leg, ops, _synced} = context.reported_again
+
+    assert Enum.any?(ops, &match?({"update", %{"number" => ^number, "milestone" => nil}, _}, &1)),
+           inspect(ops)
+
+    context
+  end
+
+  # Ends the wait on `gate` of a gh no one will answer again: one on it goes, and one that
+  # gets there later finds no gate, so neither outlives the scenario.
+  defp let_go(gate) do
+    release(gate, "answer")
+    File.rm!(gate)
+  end
+
+  # Moves `title` in a client of its own, held at GitHub, and removes `removed` meanwhile;
+  # returns the move's call.
+  defp remove_during_move(context, title, from, to, removed) do
+    %{mc: mc} = context
+    input = move_input(context, title, from, to)
+    call = %{"id" => @id, "method" => "moveToMilestone", "input" => input}
+    moving = Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+
+    {_, context} =
+      await_topic(context, "plan", fn plan ->
+        (item(plan, title) || %{})["id"] in (item(plan, to) || %{"after" => []})["after"]
+      end)
+
+    %{pushing: pushing} = :sys.get_state(HalC2Plugins.Planner)
+    assert Map.has_key?(pushing, item(plan!(context), to)["id"])
+
+    {reply, context} = plugin(context, "removeItem", %{"id" => item!(context, removed)["id"]})
+    assert {:ok, _} = reply
+    {moving, context}
   end
 
   # Moves `title` from one milestone to another and back while GitHub holds the
@@ -3116,6 +3234,16 @@ defmodule HalC2.Steps.Planning.Planner do
           do: patch["milestone"]
 
     assert moves == [nil]
+    context
+  end
+
+  step "GitHub is asked last to move \#{int} out of its milestone", %{args: [number]} = context do
+    moves =
+      for patch <- GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}"),
+          Map.has_key?(patch, "milestone"),
+          do: patch["milestone"]
+
+    assert List.last(moves, :none) == nil, inspect(moves)
     context
   end
 
