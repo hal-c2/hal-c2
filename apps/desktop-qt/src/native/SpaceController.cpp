@@ -8,6 +8,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <limits>
 
 #include "CommandRegistry.h"
 #include "KeybindingController.h"
@@ -247,7 +248,16 @@ SpacePages::SpacePages(QObject* parent)
                              this)),
       m_comments(new SpaceRows({"id", "blockId", "blockText", "body", "resolved", "byAgent", "createdAt"}, this)),
       m_images(new SpaceRows({"id", "name", "prompt", "mimeType", "width", "height", "generatedBy", "url"}, this)),
-      m_imageTrash(new SpaceRows({"id", "name", "prompt", "mimeType", "width", "height", "generatedBy", "url"}, this)) {}
+      m_imageTrash(new SpaceRows({"id", "name", "prompt", "mimeType", "width", "height", "generatedBy", "url"}, this)) {
+  m_addressRefresh = new QTimer(this);
+  m_addressRefresh->setObjectName(QStringLiteral("spaceAddressRefresh"));
+  m_addressRefresh->setSingleShot(true);
+  connect(m_addressRefresh, &QTimer::timeout, this, &SpacePages::rebuild);
+  m_rebuildSoon = new QTimer(this);
+  m_rebuildSoon->setSingleShot(true);
+  m_rebuildSoon->setInterval(0);
+  connect(m_rebuildSoon, &QTimer::timeout, this, &SpacePages::rebuild);
+}
 
 QString SpacePages::spaceName() const {
   return text(m_index.entity(QStringLiteral("space"), m_spaceId), QLatin1String("name"));
@@ -321,8 +331,8 @@ void SpacePages::setImagesShown(bool shown) {
 
 void SpacePages::setImageAddress(const QString& imageId, const QString& url, qint64 expiresAt) {
   if (!m_signing.remove(imageId)) return;
-  m_addresses.insert(imageId, {url, qMax(expiresAt, QDateTime::currentMSecsSinceEpoch() + kAddressAtLeastMs)});
-  rebuild();
+  m_addresses.insert(imageId, {url, qMax(expiresAt, m_now() + kAddressAtLeastMs)});
+  m_rebuildSoon->start();
 }
 
 void SpacePages::imageAddressFailed(const QString& imageId) {
@@ -334,7 +344,7 @@ QStringList SpacePages::imagesToSign(const QSet<QString>& wanted) {
   for (const QString& id : wanted) {
     const auto address = m_addresses.constFind(id);
     if (m_signing.contains(id)) continue;
-    if (address != m_addresses.cend() && address->expiresAt - kAddressMarginMs > QDateTime::currentMSecsSinceEpoch()) continue;
+    if (address != m_addresses.cend() && address->expiresAt - kAddressMarginMs > m_now()) continue;
     m_signing.insert(id);
     needed.append(id);
   }
@@ -427,6 +437,7 @@ bool SpacePages::reselect() {
 }
 
 void SpacePages::rebuild() {
+  m_rebuildSoon->stop();
   // selectSpace rebuilt it already.
   if (reselect()) return;
   reconcile();
@@ -578,7 +589,21 @@ void SpacePages::rebuild() {
   }
   m_comments->setRows(comments);
   emit changed();
-  if (const QStringList needed = imagesToSign(wanted); !needed.isEmpty()) emit imagesNeeded(needed);
+  const QStringList needed = imagesToSign(wanted);
+  armAddressRefresh(wanted);
+  if (!needed.isEmpty()) emit imagesNeeded(needed);
+}
+
+void SpacePages::armAddressRefresh(const QSet<QString>& wanted) {
+  std::optional<qint64> due;
+  for (const QString& id : wanted) {
+    const auto address = m_addresses.constFind(id);
+    if (address == m_addresses.cend() || m_signing.contains(id)) continue;
+    due = qMin(due.value_or(address->expiresAt), address->expiresAt);
+  }
+  if (!due) return m_addressRefresh->stop();
+  const qint64 delay = *due - kAddressMarginMs - m_now();
+  m_addressRefresh->start(int(std::clamp<qint64>(delay, 0, std::numeric_limits<int>::max())));
 }
 
 // --- SpaceController ------------------------------------------------------------------

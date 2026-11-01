@@ -1,12 +1,14 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QDateTime>
 #include <QHash>
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QTimer>
 #include <QVariantMap>
 
 #include <functional>
@@ -167,6 +169,8 @@ public:
   void setImageAddress(const QString& imageId, const QString& url, qint64 expiresAt);
   // It could not be signed: asked for again the next time the rows change.
   void imageAddressFailed(const QString& imageId);
+  // What "now" is for an address's end, for a test to move.
+  void setClock(std::function<qint64()> now) { m_now = std::move(now); }
 
   // Titles for what a page names: a page's own, or "Untitled".
   QString titleOf(const QString& pageId) const;
@@ -199,6 +203,7 @@ private:
   bool live(const QJsonObject& page) const;
   // The images whose address should now be asked for, marked as asked.
   QStringList imagesToSign(const QSet<QString>& wanted);
+  void armAddressRefresh(const QSet<QString>& wanted);
 
   SpaceStream m_index;
   SpaceStream m_space;
@@ -217,6 +222,12 @@ private:
   bool m_imagesShown = false;
   QHash<QString, Address> m_addresses;
   QSet<QString> m_signing;
+  std::function<qint64()> m_now = &QDateTime::currentMSecsSinceEpoch;
+  // Fires when the first address on screen is due to be signed anew, as nothing
+  // else may change in the Space while it lasts.
+  QTimer* m_addressRefresh;
+  // One rebuild for all the addresses answered in one turn of the event loop.
+  QTimer* m_rebuildSoon;
   SpaceRows* m_spaces;
   SpaceRows* m_pages;
   SpaceRows* m_trash;

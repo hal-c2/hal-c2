@@ -1005,6 +1005,8 @@ struct ImagesModel {
   bool browser = false;
   QSet<QString> inFlight;
   QMap<QString, QString> addresses;
+  // The addresses whose end has come; shown until a new one arrives.
+  QSet<QString> lapsed;
   // What the last step asked to have signed, sorted.
   QStringList asked;
   int seq = 1;
@@ -1012,15 +1014,28 @@ struct ImagesModel {
 
 QString addressFor(const QString& id) { return QStringLiteral("http://mc/assets/space/%1?signature=x").arg(id); }
 
-// Whatever rebuilds the rows asks for each image on screen with no address yet.
-void askForImages(ImagesModel& model) {
+QSet<QString> onScreen(const ImagesModel& model) {
   QSet<QString> wanted;
   for (const auto& [page, image] : model.blocks) {
     if (page == model.open && model.order.contains(image) && !model.binned.contains(image)) wanted.insert(image);
   }
   if (model.browser) wanted.unite(QSet<QString>(model.order.cbegin(), model.order.cend()));
+  return wanted;
+}
+
+// Whether an image on screen has an address whose end the client must watch for.
+bool refreshDue(const ImagesModel& model) {
+  const QSet<QString> wanted = onScreen(model);
+  return std::any_of(wanted.cbegin(), wanted.cend(), [&model](const QString& id) {
+    return model.addresses.contains(id) && !model.lapsed.contains(id) && !model.inFlight.contains(id);
+  });
+}
+
+// Whatever rebuilds the rows asks for each image on screen with no good address.
+void askForImages(ImagesModel& model) {
+  const QSet<QString> wanted = onScreen(model);
   for (const QString& id : wanted) {
-    if (model.inFlight.contains(id) || model.addresses.contains(id)) continue;
+    if (model.inFlight.contains(id) || (model.addresses.contains(id) && !model.lapsed.contains(id))) continue;
     model.inFlight.insert(id);
     model.asked.append(id);
   }
@@ -1030,8 +1045,12 @@ void askForImages(ImagesModel& model) {
 struct ImagesSut {
   SpacePages pages;
   QStringList asked;
+  int changes = 0;
+  qint64 now = 1'800'000'000'000;
 
   ImagesSut() {
+    pages.setClock([this] { return now; });
+    QObject::connect(&pages, &SpacePages::changed, &pages, [this] { ++changes; });
     QObject::connect(&pages, &SpacePages::imagesNeeded, &pages, [this](const QStringList& ids) { asked.append(ids); });
     QJsonArray spaces;
     for (const QString& id : {kSpace, QStringLiteral("space-2")}) {
@@ -1099,7 +1118,12 @@ struct ImagesSut {
     }
     RC_ASSERT(listed(pages.images()) == kept);
     RC_ASSERT(listed(pages.imageTrash()) == binned);
+    RC_ASSERT(refreshTimer()->isActive() == refreshDue(model));
   }
+
+  QTimer* refreshTimer() { return pages.findChild<QTimer*>(QStringLiteral("spaceAddressRefresh")); }
+
+  void answer(const QString& image) { pages.setImageAddress(image, addressFor(image), now + 3'600'000); }
 };
 
 using ImageCommand = rc::state::Command<ImagesModel, ImagesSut>;
@@ -1172,6 +1196,7 @@ struct DeleteImage : ImageCommand {
     model.order.removeAll(image);
     model.binned.remove(image);
     model.addresses.remove(image);
+    model.lapsed.remove(image);
     askForImages(model);
   }
   void act(const ImagesModel& next, ImagesSut& sut) const { sut.event(next.seq, QStringLiteral("image"), image, {{QStringLiteral("d"), true}}); }
@@ -1245,18 +1270,69 @@ struct AnswerAddress : ImageCommand {
     model.asked.clear();
     model.inFlight.remove(image);
     if (!ok) return;
+    model.lapsed.remove(image);
     if (model.order.contains(image)) model.addresses.insert(image, addressFor(image));
     askForImages(model);
   }
   void act(const ImagesModel&, ImagesSut& sut) const {
     if (ok) {
-      sut.pages.setImageAddress(image, addressFor(image), 4102444800000);
+      sut.answer(image);
+      QCoreApplication::processEvents();
     } else {
       sut.pages.imageAddressFailed(image);
     }
   }
   void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
   void show(std::ostream& os) const override { os << "AnswerAddress(" << image.toStdString() << (ok ? " ok" : " refused") << ")"; }
+};
+
+// The MC answers everything on its way in one turn of the event loop: the rows
+// are rebuilt once, however many there are.
+struct AnswerAllAtOnce : ImageCommand {
+  explicit AnswerAllAtOnce(const ImagesModel& model) { RC_PRE(model.inFlight.size() >= 2); }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(model.inFlight.size() >= 2); }
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    for (const QString& image : std::as_const(model.inFlight)) {
+      model.lapsed.remove(image);
+      if (model.order.contains(image)) model.addresses.insert(image, addressFor(image));
+    }
+    model.inFlight.clear();
+    askForImages(model);
+  }
+  void run(const ImagesModel& model, ImagesSut& sut) const override {
+    ImagesModel next = model;
+    apply(next);
+    sut.asked.clear();
+    sut.changes = 0;
+    for (const QString& image : model.inFlight) sut.answer(image);
+    QCoreApplication::processEvents();
+    RC_ASSERT(sut.changes == 1);
+    sut.check(next);
+  }
+  void show(std::ostream& os) const override { os << "AnswerAllAtOnce"; }
+};
+
+// An hour or two pass with nothing changing in the Space. What is on screen is
+// signed anew by the client's own timer; what is not waits until it is shown.
+struct AddressesLapse : ImageCommand {
+  explicit AddressesLapse(const ImagesModel& model) { RC_PRE(!model.addresses.isEmpty()); }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(!model.addresses.isEmpty()); }
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    const bool fires = refreshDue(model);
+    for (auto it = model.addresses.cbegin(); it != model.addresses.cend(); ++it) model.lapsed.insert(it.key());
+    if (fires) askForImages(model);
+  }
+  void act(const ImagesModel&, ImagesSut& sut) const {
+    sut.now += 2 * 3'600'000;
+    if (sut.refreshTimer()->isActive()) {
+      sut.refreshTimer()->start(0);
+      QCoreApplication::processEvents();
+    }
+  }
+  void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
+  void show(std::ostream& os) const override { os << "AddressesLapse"; }
 };
 
 // The user goes to another Space and comes back: what was on its way answers
@@ -1266,6 +1342,7 @@ struct LeaveAndReturn : ImageCommand {
     model.asked.clear();
     model.inFlight.clear();
     model.addresses.clear();
+    model.lapsed.clear();
     model.open = QStringLiteral("page-1");
     askForImages(model);
   }
@@ -1318,7 +1395,7 @@ private slots:
       ImagesModel model;
       ImagesSut sut;
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<AddImage, AddImage, BinImage, DeleteImage, PlaceImage, PlaceImage, OpenPage, ToggleBrowser, AnswerAddress, AnswerAddress, LeaveAndReturn>());
+                       rc::state::gen::execOneOfWithArgs<AddImage, AddImage, BinImage, DeleteImage, PlaceImage, PlaceImage, OpenPage, ToggleBrowser, AnswerAddress, AnswerAddress, AnswerAllAtOnce, AddressesLapse, LeaveAndReturn>());
     }));
   }
 };
