@@ -246,6 +246,170 @@ defmodule HalC2.CodeReviewTest do
     assert reviewed == context.shas[2]
   end
 
+  test "a new run stops the agent it replaces, and tells it why its report is refused",
+       context do
+    save_settings(%{"reviewNewPushes" => true})
+    old = start_review()
+    # The review failed while the agent goes on, as across a restart of the plugin.
+    event = %{"type" => "turn.finished", "threadId" => old["threadId"], "status" => "failed"}
+    :ok = apply(@server, :handle_event, [event, %{}])
+    settle()
+    assert %{"status" => "failed"} = review()
+    assert [%{"status" => "running"}] = active_runs(old["threadId"])
+
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+
+    assert %{"status" => "running", "threadId" => new, "reviewedSha" => sha} = review()
+    assert new != old["threadId"]
+    assert [] = active_runs(old["threadId"])
+    refute File.exists?(old["checkout"])
+
+    assert Enum.any?(HalC2.Plugins.tools(old["threadId"]), &(&1["name"] == "code_review_report"))
+
+    assert {:error, "plugin_failed", message} =
+             HalC2.Plugins.call_tool(
+               "code_review_report",
+               %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+               old["threadId"]
+             )
+
+    assert message =~ "replaced by a newer run for #{String.slice(sha, 0, 7)}"
+    assert %{"status" => "running", "threadId" => ^new, "verdict" => nil} = review()
+    refute Map.has_key?(review(), "replaced")
+  end
+
+  test "discarding a failed review stops the agent still working in its checkout", _context do
+    review = start_review()
+    event = %{"type" => "turn.finished", "threadId" => review["threadId"], "status" => "failed"}
+    :ok = apply(@server, :handle_event, [event, %{}])
+    settle()
+
+    {:ok, _} = call("discard", %{"key" => @key})
+
+    assert [] = active_runs(review["threadId"])
+    refute File.exists?(review["checkout"])
+
+    assert HalC2.Plugins.tools(review["threadId"])
+           |> Enum.all?(&(&1["name"] != "code_review_report"))
+  end
+
+  test "a thread whose review is published is told so when it reports again", _context do
+    review = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    {:ok, _} = call("publish", %{"key" => @key})
+    settle()
+
+    assert {:error, "plugin_failed", message} =
+             HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+
+    assert message =~ "already published"
+  end
+
+  test "stopping an idle thread cancels the task it left working, so nothing wakes it",
+       context do
+    review = start_review()
+    thread_id = review["threadId"]
+
+    {:ok, %{"taskId" => task_id, "childThreadId" => child}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => thread_id}, "codex", %{"task" => "wait"})
+
+    {:ok, %{"taskId" => nested_id, "childThreadId" => nested}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => child}, "codex", %{"task" => "wait"})
+
+    File.write!(Path.join(context.dir, "gate/answer"), "")
+    await_idle(thread_id)
+    event = %{"type" => "turn.finished", "threadId" => thread_id, "status" => "failed"}
+    :ok = apply(@server, :handle_event, [event, %{}])
+    settle()
+
+    {:ok, _} = call("discard", %{"key" => @key})
+
+    assert {:ok, %{"status" => "cancelled"}} =
+             HalC2.Orchestration.Delegation.task_status(thread_id, task_id)
+
+    assert {:ok, %{"status" => "cancelled"}} =
+             HalC2.Orchestration.Delegation.task_status(child, nested_id)
+
+    for stopped <- [thread_id, child, nested] do
+      assert active_runs(stopped) == []
+      assert sessions_stopped?(stopped)
+    end
+
+    runs = HalC2.StreamState.list(HalC2.Streams.state(thread_id), "run")
+    assert [%{"status" => status}] = runs
+    assert status not in ~w(queued preparing starting running waiting)
+    refute File.exists?(review["checkout"])
+  end
+
+  test "stopping a thread cancels its queue, so no run starts in the removed checkout",
+       _context do
+    review = start_review()
+    thread_id = review["threadId"]
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "queued-message",
+        "text" => "and another thing",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "queue_after_active"}
+      })
+
+    assert :ok = HalC2.Orchestration.stop_plugin_thread(thread_id, @id)
+
+    runs = HalC2.StreamState.list(HalC2.Streams.state(thread_id), "run")
+    assert length(runs) == 2
+    assert Enum.count(runs, &(&1["status"] == "cancelled")) == 1
+    assert active_runs(thread_id) == []
+    assert sessions_stopped?(thread_id)
+  end
+
+  test "a stop walks through a task that already ended to the task below it", _context do
+    review = start_review()
+    thread_id = review["threadId"]
+
+    {:ok, %{"taskId" => task_id, "childThreadId" => child}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => thread_id}, "codex", %{"task" => "wait"})
+
+    {:ok, %{"taskId" => nested_id, "childThreadId" => nested}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => child}, "codex", %{"task" => "wait"})
+
+    {:ok, _} = HalC2.Orchestration.Delegation.cancel(thread_id, task_id)
+
+    assert :ok = HalC2.Orchestration.stop_plugin_thread(thread_id, @id)
+
+    assert {:ok, %{"status" => "cancelled"}} =
+             HalC2.Orchestration.Delegation.task_status(child, nested_id)
+
+    assert active_runs(nested) == []
+    assert sessions_stopped?(nested)
+  end
+
+  test "a stop outlasts the deadline of its caller on an agent slow to go", context do
+    System.put_env("FAKE_CODEX_IGNORE_INTERRUPT", "1")
+    on_exit(fn -> System.delete_env("FAKE_CODEX_IGNORE_INTERRUPT") end)
+    review = start_review()
+
+    assert :busy = HalC2.Orchestration.stop_plugin_thread(review["threadId"], @id, 100)
+    assert [_] = active_runs(review["threadId"])
+
+    # The agent goes in its own time, after the caller stopped waiting, and is released.
+    File.write!(Path.join(context.dir, "gate/answer"), "")
+    await_sessions_stopped(review["threadId"])
+    assert active_runs(review["threadId"]) == []
+  end
+
+  test "only the plugin that started a thread can stop it", _context do
+    review = start_review()
+
+    assert {:error, _} = HalC2.Orchestration.stop_plugin_thread(review["threadId"], "other")
+    assert [_] = active_runs(review["threadId"])
+  end
+
   test "a push to a followed pull request is seen after its repository stops being watched",
        context do
     review = start_review()
@@ -700,6 +864,44 @@ defmodule HalC2.CodeReviewTest do
   end
 
   def hold(_thread_id, _server, _test, _stage, _stream_id), do: :ok
+
+  defp active_runs(thread_id) do
+    HalC2.Streams.state(thread_id)
+    |> HalC2.StreamState.list("run")
+    |> Enum.filter(&(&1["status"] in ~w(preparing starting running waiting)))
+  end
+
+  defp sessions_stopped?(thread_id) do
+    HalC2.Streams.state(thread_id)
+    |> HalC2.StreamState.list("provider-session")
+    |> Enum.all?(&(&1["status"] == "stopped"))
+  end
+
+  defp await_sessions_stopped(thread_id) do
+    :ok = HalC2.Streams.watch(thread_id, self())
+    await_stopped(thread_id)
+    HalC2.Streams.Server.unsubscribe(thread_id, self())
+  end
+
+  defp await_stopped(thread_id) do
+    unless sessions_stopped?(thread_id) do
+      assert_receive {:hal_c2_stream, ^thread_id, _}, 15_000
+      await_stopped(thread_id)
+    end
+  end
+
+  defp await_idle(thread_id) do
+    :ok = HalC2.Streams.watch(thread_id, self())
+    await_no_runs(thread_id)
+    HalC2.Streams.Server.unsubscribe(thread_id, self())
+  end
+
+  defp await_no_runs(thread_id) do
+    if active_runs(thread_id) != [] do
+      assert_receive {:hal_c2_stream, ^thread_id, _}, 15_000
+      await_no_runs(thread_id)
+    end
+  end
 
   defp thread(thread_id) do
     HalC2.StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id]
