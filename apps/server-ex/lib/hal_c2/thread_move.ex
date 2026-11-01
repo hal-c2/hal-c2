@@ -527,6 +527,8 @@ defmodule HalC2.ThreadMove do
           else: {[], false}
       end)
 
+    if forwarded, do: HalC2.WorktreeSetup.superseded(id)
+
     if forwarded and Process.whereis(HalC2.Terminal.Registry),
       do: HalC2.Terminal.close(%{"threadId" => id, "deleteHistory" => true})
 
@@ -560,7 +562,6 @@ defmodule HalC2.ThreadMove do
         |> Map.merge(%{"movedTo" => moved, "worktreePath" => nil, "updatedAt" => at})
       end)
 
-    HalC2.WorktreeSetup.superseded(id)
     {Enum.reject([forward | others], &is_nil/1), true}
   end
 

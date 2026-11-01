@@ -1344,6 +1344,7 @@ const WsWorktreeSetupCancelRpc = Rpc.make(WS_METHODS.worktreeSetupCancel, {
 const WsWorktreeSetupRetryRpc = Rpc.make(WS_METHODS.worktreeSetupRetry, {
   payload: WorktreeSetupRetryInput,
   success: WorktreeSetupRetryResult,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {

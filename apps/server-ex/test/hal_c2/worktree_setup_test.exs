@@ -657,6 +657,24 @@ defmodule HalC2.WorktreeSetupTest do
     assert File.read!(Path.join(path, "corrected.txt")) == "fixed\n"
   end
 
+  test "a retry for a script since removed runs none", %{repo: repo} do
+    blocking_setup(repo, "exit 3")
+    thread_id = launch("list the files")
+    await_phase(thread_id, "failed")
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.update",
+        "projectId" => "p1",
+        "scripts" => []
+      })
+
+    assert_receive {:hal_c2_shell, {:rows, _, [{"p1", {"project", %{"scripts" => []}}}]}}, 1_000
+
+    assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    assert %{"setupScript" => nil} = await_phase(thread_id, "done")
+  end
+
   test "a retry can be cancelled, which removes the worktree", %{repo: repo} do
     blocking_setup(repo, ~S(test -e "$HAL_C2_PROJECT_ROOT/.pass" && sleep 30))
     thread_id = launch("list the files")

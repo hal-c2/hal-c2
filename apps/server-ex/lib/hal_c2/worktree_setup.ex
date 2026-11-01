@@ -429,7 +429,14 @@ defmodule HalC2.WorktreeSetup do
     stages =
       Enum.map(snapshot["stages"], &if(&1["id"] in kept, do: &1, else: stage(&1["id"])))
 
-    %{snapshot | "phase" => "running", "endedAt" => nil, "error" => nil, "stages" => stages}
+    %{
+      snapshot
+      | "phase" => "running",
+        "endedAt" => nil,
+        "error" => nil,
+        "setupScript" => nil,
+        "stages" => stages
+    }
     |> Map.update!("sequence", &(&1 + 1))
   end
 

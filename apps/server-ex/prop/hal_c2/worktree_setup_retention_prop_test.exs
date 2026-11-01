@@ -238,6 +238,7 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
       "sequence" => 0,
       "error" => nil,
       "endedAt" => nil,
+      "setupScript" => nil,
       "stages" => [
         %{"id" => "checkout", "status" => "running", "detail" => nil, "endedAt" => nil},
         %{"id" => "agent", "status" => "pending", "detail" => nil, "endedAt" => nil}
