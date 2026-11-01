@@ -1,4 +1,4 @@
-// Pages in a Space (features/space/pages.feature): the MC's `space.*` calls,
+// Pages in a Space (features/space/pages.feature, visualize.feature): the MC's `space.*` calls,
 // faked here as the MC answers them (lib/hal_c2/space.ex and space/*.ex),
 // its `spaces` and `space:<id>` streams (served as every `stream` is, by
 // TimelineSteps.cpp), and what SpaceController shows of them.
@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 
+#include "Brick.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "Space.h"
@@ -55,6 +56,10 @@ struct FakeSpaces {
   // The folder the last summary was written in, and the thread it was of.
   QString cwd;
   QString summarised;
+  // The chart text generation draws next; none when the request cannot be answered.
+  QJsonObject chart;
+  // The page the last chart was asked for on.
+  QString asked;
   // How the client's last `space.*` was answered.
   QString lastMethod;
   Answer last;
@@ -522,6 +527,96 @@ void seed(FakeMc& mc) {
   if (all(mc, kIndex, QStringLiteral("space")).isEmpty()) makeSpace(mc, QStringLiteral("Personal"));
 }
 
+QList<QJsonObject> slidesOf(FakeMc& mc, const QString& stream, const QString& deckId) {
+  QList<QJsonObject> slides;
+  for (const QJsonObject& slide : all(mc, stream, QStringLiteral("slide"))) {
+    if (text(slide, QLatin1String("deckId")) == deckId) slides.append(slide);
+  }
+  return sortedBy(slides, QLatin1String("order"));
+}
+
+// Why the deck takes no edit, if it does not.
+std::optional<Answer> deckRefusal(FakeMc& mc, const QString& stream, const QString& deckId) {
+  const QJsonObject deck = one(mc, stream, QStringLiteral("deck"), deckId);
+  if (deck.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no deck %1 in this Space.").arg(deckId));
+  if (trashed(deck)) return refused(QStringLiteral("trashed"), QStringLiteral("The deck \"%1\" is in the trash.").arg(text(deck, QLatin1String("title"))));
+  return std::nullopt;
+}
+
+// The order key of a slide placed after `after` (absent: last, null: first) in
+// the deck, without the slide `moving`.
+std::optional<QString> placeSlide(FakeMc& mc, const QString& stream, const QString& deckId, const QJsonValue& after, const QString& moving = {}) {
+  QList<QJsonObject> slides = slidesOf(mc, stream, deckId);
+  slides.removeIf([&](const QJsonObject& slide) { return text(slide, QLatin1String("id")) == moving; });
+  const auto order = [&](qsizetype i) { return text(slides.at(i), QLatin1String("order")); };
+  if (after.isUndefined()) return between(slides.isEmpty() ? QString() : order(slides.size() - 1), std::nullopt);
+  if (after.isNull()) return between(QString(), slides.isEmpty() ? std::nullopt : std::optional(order(0)));
+  for (qsizetype i = 0; i < slides.size(); ++i) {
+    if (text(slides.at(i), QLatin1String("id")) != after.toString()) continue;
+    return between(order(i), i + 1 < slides.size() ? std::optional(order(i + 1)) : std::nullopt);
+  }
+  return std::nullopt;
+}
+
+QJsonObject makeSlide(FakeMc& mc, const QString& stream, const QString& deckId, const QString& title, const QString& body, const QString& order) {
+  const QString id = newId(mc, QStringLiteral("slide"));
+  const QString at = stamp(mc);
+  const QJsonObject slide{{QStringLiteral("id"), id},           {QStringLiteral("deckId"), deckId},
+                          {QStringLiteral("title"), title},     {QStringLiteral("body"), body},
+                          {QStringLiteral("order"), order},     {QStringLiteral("createdAt"), at},
+                          {QStringLiteral("updatedAt"), at}};
+  set(mc, stream, QStringLiteral("slide"), id, slide);
+  return slide;
+}
+
+// A deck with a slide for each {title, body}.
+Answer makeDeck(FakeMc& mc, const QString& space, const QString& title, const QList<std::pair<QString, QString>>& specs) {
+  const QString id = newId(mc, QStringLiteral("deck"));
+  const QString at = stamp(mc);
+  const QJsonObject deck{{QStringLiteral("id"), id},
+                         {QStringLiteral("spaceId"), space},
+                         {QStringLiteral("title"), title},
+                         {QStringLiteral("trashedAt"), QJsonValue::Null},
+                         {QStringLiteral("createdAt"), at},
+                         {QStringLiteral("updatedAt"), at}};
+  set(mc, streamOf(space), QStringLiteral("deck"), id, deck);
+  for (const auto& [slideTitle, body] : specs) {
+    makeSlide(mc, streamOf(space), id, slideTitle, body, *placeSlide(mc, streamOf(space), id, QJsonValue(QJsonValue::Undefined)));
+  }
+  return {{{QStringLiteral("deck"), deck}}};
+}
+
+// One line of a slide's body, for a block of the page it is made from.
+QString slideLine(FakeMc& mc, const QString& space, const QJsonObject& block) {
+  const QString kind = text(block, QLatin1String("kind"));
+  const QString said = text(block, QLatin1String("text"));
+  if (kind == QLatin1String("checklist")) return (block.value(QLatin1String("checked")).toBool() ? QStringLiteral("- [x] ") : QStringLiteral("- [ ] ")) + said;
+  if (kind == QLatin1String("callout")) return QStringLiteral("> ") + said;
+  if (kind == QLatin1String("subpage_link")) {
+    const QJsonObject linked = one(mc, streamOf(space), QStringLiteral("page"), text(block, QLatin1String("linkedPageId")));
+    if (!linked.isEmpty()) return text(linked, QLatin1String("title"));
+  }
+  return said;
+}
+
+Answer deckFromPage(FakeMc& mc, const QString& space, const QString& pageId) {
+  if (const auto why = writable(mc, space, pageId)) return *why;
+  const QString title = text(one(mc, streamOf(space), QStringLiteral("page"), pageId), QLatin1String("title"));
+  QList<std::pair<QString, QStringList>> sections;
+  for (const QJsonObject& block : blocksOf(mc, space, pageId)) {
+    if (text(block, QLatin1String("kind")) == QLatin1String("heading")) {
+      sections.append({text(block, QLatin1String("text")), {}});
+      continue;
+    }
+    if (sections.isEmpty()) sections.append({title, {}});
+    sections.last().second.append(slideLine(mc, space, block));
+  }
+  if (sections.isEmpty()) sections.append({title, {}});
+  QList<std::pair<QString, QString>> specs;
+  for (const auto& [slideTitle, lines] : sections) specs.append({slideTitle, lines.join(QLatin1Char('\n'))});
+  return makeDeck(mc, space, title, specs);
+}
+
 // What a site shows of the page: its title and its blocks' text.
 QJsonArray siteSnapshot(FakeMc& mc, const QString& space, const QJsonObject& page) {
   QJsonArray shown{text(page, QLatin1String("title"))};
@@ -614,8 +709,9 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
     return {{{QStringLiteral("space"), spaceOf(mc, space)}}};
   }
   if (method == QLatin1String("delete")) {
-    if (!all(mc, stream, QStringLiteral("page")).isEmpty() || !all(mc, stream, QStringLiteral("image")).isEmpty()) {
-      return refused(QStringLiteral("notEmpty"), QStringLiteral("A Space with pages or images cannot be deleted; delete them first."));
+    if (!all(mc, stream, QStringLiteral("page")).isEmpty() || !all(mc, stream, QStringLiteral("deck")).isEmpty() ||
+        !all(mc, stream, QStringLiteral("image")).isEmpty()) {
+      return refused(QStringLiteral("notEmpty"), QStringLiteral("A Space with pages, decks or images cannot be deleted; delete them first."));
     }
     remove(mc, kIndex, QStringLiteral("space"), space);
     return {{{QStringLiteral("spaceId"), space}}};
@@ -703,6 +799,27 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
   if (method == QLatin1String("block.insert")) {
     return insertBlock(mc, space, pageId, in, in.contains(QLatin1String("afterBlockId")) ? in.value(QLatin1String("afterBlockId")) : QJsonValue::Undefined, kUser);
   }
+  if (method == QLatin1String("block.visualize")) {
+    if (const auto why = writable(mc, space, pageId)) return *why;
+    const QString tag = QStringLiteral("SpaceChartError");
+    const QJsonObject chart = fake(mc).chart;
+    if (fake(mc).generation == QLatin1String("unavailable")) return refused(QStringLiteral("unavailable"), QStringLiteral("No chart was drawn: no text generation provider is set up."), tag);
+    if (fake(mc).generation == QLatin1String("failed")) return refused(QStringLiteral("failed"), QStringLiteral("No chart was drawn: the provider stopped answering."), tag);
+    if (chart.isEmpty()) return refused(QStringLiteral("unanswerable"), QStringLiteral("No chart was drawn: the page and this MC's threads cannot answer that."), tag);
+    const QString summary = QStringLiteral("%1 (a chart; %2)").arg(text(chart, QLatin1String("title")), text(chart, QLatin1String("source")));
+    const QJsonObject fields{{QStringLiteral("kind"), QStringLiteral("chart")}, {QStringLiteral("text"), summary}, {QStringLiteral("chart"), chart}};
+    QString id = blockId;
+    if (id.isEmpty()) {
+      const QJsonValue after = in.contains(QLatin1String("afterBlockId")) ? in.value(QLatin1String("afterBlockId")) : QJsonValue::Undefined;
+      const Answer made = insertBlock(mc, space, pageId, {{QStringLiteral("kind"), QStringLiteral("paragraph")}, {QStringLiteral("text"), summary}}, after, kUser);
+      if (!made.error.isEmpty()) return made;
+      id = text(made.result.value(QLatin1String("block")).toObject(), QLatin1String("id"));
+    } else if (text(one(mc, stream, QStringLiteral("block"), id), QLatin1String("kind")) != QLatin1String("chart")) {
+      return refused(QStringLiteral("invalid"), QStringLiteral("Only a chart can be asked for again."));
+    }
+    set(mc, stream, QStringLiteral("block"), id, fields);
+    return {{{QStringLiteral("block"), one(mc, stream, QStringLiteral("block"), id)}}};
+  }
   if (method.startsWith(QLatin1String("block."))) {
     const QJsonObject block = one(mc, stream, QStringLiteral("block"), blockId);
     if (block.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no block %1.").arg(blockId));
@@ -764,6 +881,73 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
     const QString at = stamp(mc);
     set(mc, stream, QStringLiteral("comment"), id, {{QStringLiteral("resolvedAt"), resolve ? QJsonValue(at) : QJsonValue(QJsonValue::Null)}, {QStringLiteral("updatedAt"), at}});
     return {{{QStringLiteral("comment"), one(mc, stream, QStringLiteral("comment"), id)}}};
+  }
+  if (method.startsWith(QLatin1String("deck."))) {
+    const QString deckId = text(in, QLatin1String("deckId"));
+    const QJsonObject deck = one(mc, stream, QStringLiteral("deck"), deckId);
+    const QString title = text(deck, QLatin1String("title"));
+    const QString at = stamp(mc);
+    const auto updated = [&](const QJsonObject& fields) {
+      QJsonObject change = fields;
+      change.insert(QStringLiteral("updatedAt"), at);
+      set(mc, stream, QStringLiteral("deck"), deckId, change);
+      return Answer{{{QStringLiteral("deck"), one(mc, stream, QStringLiteral("deck"), deckId)}}};
+    };
+    if (method == QLatin1String("deck.create")) {
+      if (blank(in.value(QLatin1String("title")))) return refused(QStringLiteral("invalid"), QStringLiteral("A deck needs a title."));
+      return makeDeck(mc, space, text(in, QLatin1String("title")).trimmed(), {{QString(), QString()}});
+    }
+    if (method == QLatin1String("deck.createFromPage")) return deckFromPage(mc, space, pageId);
+    if (method == QLatin1String("deck.rename")) {
+      if (const auto why = deckRefusal(mc, stream, deckId)) return *why;
+      if (blank(in.value(QLatin1String("title")))) return refused(QStringLiteral("invalid"), QStringLiteral("A deck needs a title."));
+      return updated({{QStringLiteral("title"), text(in, QLatin1String("title")).trimmed()}});
+    }
+    if (method == QLatin1String("deck.trash")) {
+      if (const auto why = deckRefusal(mc, stream, deckId)) return *why;
+      return updated({{QStringLiteral("trashedAt"), at}});
+    }
+    if (deck.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no deck %1 in this Space.").arg(deckId));
+    if (method == QLatin1String("deck.restore")) {
+      if (!trashed(deck)) return refused(QStringLiteral("invalid"), QStringLiteral("The deck \"%1\" is not in the trash.").arg(title));
+      return updated({{QStringLiteral("trashedAt"), QJsonValue::Null}});
+    }
+    if (method == QLatin1String("deck.delete")) {
+      if (!trashed(deck)) return refused(QStringLiteral("invalid"), QStringLiteral("Only a deck in the trash can be deleted; move \"%1\" there first.").arg(title));
+      for (const QJsonObject& slide : slidesOf(mc, stream, deckId)) remove(mc, stream, QStringLiteral("slide"), text(slide, QLatin1String("id")));
+      remove(mc, stream, QStringLiteral("deck"), deckId);
+      return {{{QStringLiteral("deckId"), deckId}}};
+    }
+  }
+  if (method == QLatin1String("slide.insert")) {
+    const QString deckId = text(in, QLatin1String("deckId"));
+    if (const auto why = deckRefusal(mc, stream, deckId)) return *why;
+    const auto order = placeSlide(mc, stream, deckId, in.contains(QLatin1String("afterSlideId")) ? in.value(QLatin1String("afterSlideId")) : QJsonValue(QJsonValue::Undefined));
+    if (!order) return refused(QStringLiteral("notFound"), QStringLiteral("There is no slide %1 in this deck.").arg(text(in, QLatin1String("afterSlideId"))));
+    return {{{QStringLiteral("slide"), makeSlide(mc, stream, deckId, text(in, QLatin1String("title")), text(in, QLatin1String("body")), *order)}}};
+  }
+  if (method.startsWith(QLatin1String("slide."))) {
+    const QString slideId = text(in, QLatin1String("slideId"));
+    const QJsonObject slide = one(mc, stream, QStringLiteral("slide"), slideId);
+    if (slide.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no slide %1 in this Space.").arg(slideId));
+    const QString deckId = text(slide, QLatin1String("deckId"));
+    if (const auto why = deckRefusal(mc, stream, deckId)) return *why;
+    if (method == QLatin1String("slide.delete")) {
+      remove(mc, stream, QStringLiteral("slide"), slideId);
+      return {{{QStringLiteral("slideId"), slideId}}};
+    }
+    QJsonObject change{{QStringLiteral("updatedAt"), stamp(mc)}};
+    if (method == QLatin1String("slide.update")) {
+      for (const QLatin1String field : {QLatin1String("title"), QLatin1String("body")}) {
+        if (in.contains(field)) change.insert(field, in.value(field));
+      }
+    } else if (method == QLatin1String("slide.move")) {
+      const auto order = placeSlide(mc, stream, deckId, in.contains(QLatin1String("afterSlideId")) ? in.value(QLatin1String("afterSlideId")) : QJsonValue(QJsonValue::Undefined), slideId);
+      if (!order) return refused(QStringLiteral("notFound"), QStringLiteral("There is no slide %1 in this deck.").arg(text(in, QLatin1String("afterSlideId"))));
+      change.insert(QStringLiteral("order"), *order);
+    }
+    set(mc, stream, QStringLiteral("slide"), slideId, change);
+    return {{{QStringLiteral("slide"), one(mc, stream, QStringLiteral("slide"), slideId)}}};
   }
   return refused(QStringLiteral("invalid"), QStringLiteral("space.%1 is missing a required field.").arg(method));
 }
@@ -933,8 +1117,11 @@ void lookAtPage(World& world, const QString& id) {
   look(world, current(world));
   world.waitFor([&] { return viewOf(world)->space().of(QStringLiteral("page")).contains(id); },
                 [&] { return QStringLiteral("the Space's copy to hold the page; %1").arg(describe(world)); });
-  if (viewOf(world)->pageId() != id) world.bridge().dispatch(QStringLiteral("space.selectPage"), QVariantMap{{QStringLiteral("pageId"), id}});
-  world.waitFor([&] { return viewOf(world)->pageId() == id; }, [&] { return QStringLiteral("the page to open; %1").arg(describe(world)); });
+  if (viewOf(world)->pageId() != id || !viewOf(world)->deckId().isEmpty()) {
+    world.bridge().dispatch(QStringLiteral("space.selectPage"), QVariantMap{{QStringLiteral("pageId"), id}});
+  }
+  world.waitFor([&] { return viewOf(world)->pageId() == id && viewOf(world)->deckId().isEmpty(); },
+                [&] { return QStringLiteral("the page to open; %1").arg(describe(world)); });
 }
 
 // The user does `action` on the Space view, and it has the MC's answer.
@@ -994,6 +1181,54 @@ std::optional<QVariantMap> rowOf(const SpaceRows* rows, const QString& id) {
 }
 
 // Another client of the MC following the Spaces, and the Space `id` when set.
+const QString kFromThisPage = QStringLiteral("Numbers from this page");
+
+// A chart with one series, as the MC stores it.
+QJsonObject chartOf(const QString& type, const QString& title, const QString& source, const QList<std::pair<QString, int>>& points) {
+  QJsonArray labels;
+  QJsonArray values;
+  for (const auto& [label, value] : points) {
+    labels.append(label);
+    values.append(value);
+  }
+  return {{QStringLiteral("type"), type},
+          {QStringLiteral("title"), title},
+          {QStringLiteral("labels"), labels},
+          {QStringLiteral("series"), QJsonArray{QJsonObject{{QStringLiteral("name"), title}, {QStringLiteral("values"), values}}}},
+          {QStringLiteral("request"), QStringLiteral("signups")},
+          {QStringLiteral("source"), source}};
+}
+
+void givenChart(World& world, const QString& page, const QString& first, int a, const QString& next, int b) {
+  FakeSpaces& spaces = fake(world.mc);
+  spaces.asked = givenPage(world, page);
+  spaces.chart = chartOf(QStringLiteral("bar"), QStringLiteral("Signups"), kFromThisPage, {{first, a}, {next, b}});
+  given(world, QStringLiteral("block.visualize"), {{QStringLiteral("pageId"), spaces.asked}, {QStringLiteral("request"), QStringLiteral("/visualize signups")}});
+  spaces.chart = {};
+}
+
+// The same page with a chart missing a number, which the MC would refuse.
+void givenUnmatchedChart(World& world, const QString& page) {
+  FakeSpaces& spaces = fake(world.mc);
+  spaces.asked = givenPage(world, page);
+  spaces.chart = chartOf(QStringLiteral("bar"), QStringLiteral("Signups"), kFromThisPage, {{QStringLiteral("May"), 3}, {QStringLiteral("June"), 5}});
+  spaces.chart[QStringLiteral("series")] = QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("Signups")}, {QStringLiteral("values"), QJsonArray{3}}}};
+  given(world, QStringLiteral("block.visualize"), {{QStringLiteral("pageId"), spaces.asked}, {QStringLiteral("request"), QStringLiteral("/visualize signups")}});
+  spaces.chart = {};
+}
+
+// The chart row the open page shows, or none.
+QVariantMap shownChart(World& world) {
+  for (const QVariantMap& row : viewOf(world)->blocks()->rows()) {
+    if (row.value(QStringLiteral("kind")) == QLatin1String("chart")) return row;
+  }
+  return {};
+}
+
+bool drawing(World& world) {
+  return world.state(QStringLiteral("space")).toMap().value(QStringLiteral("drawing")).toBool();
+}
+
 void watch(World& world, const QString& id = {}) {
   FakeSpaces& spaces = fake(world.mc);
   seed(world.mc);
@@ -1081,6 +1316,59 @@ SpacePages& second(World& world) {
   return *pages;
 }
 
+// The deck `title` of the scenario's Space, or "" when there is none.
+QString findDeck(World& world, const QString& title) {
+  for (const QJsonObject& deck : all(world.mc, streamOf(current(world)), QStringLiteral("deck"))) {
+    if (text(deck, QLatin1String("title")) == title) return text(deck, QLatin1String("id"));
+  }
+  return {};
+}
+
+QString idOfDeck(World& world, const QString& title) {
+  const QString id = findDeck(world, title);
+  expect(!id.isEmpty(), QStringLiteral("the Space has no deck %1").arg(title));
+  return id;
+}
+
+QString givenDeck(World& world, const QString& title) {
+  if (const QString id = findDeck(world, title); !id.isEmpty()) return id;
+  return text(given(world, QStringLiteral("deck.create"), {{QStringLiteral("title"), title}}).value(QLatin1String("deck")).toObject(), QLatin1String("id"));
+}
+
+QJsonObject slideTitled(World& world, const QString& title) {
+  for (const QJsonObject& slide : all(world.mc, streamOf(current(world)), QStringLiteral("slide"))) {
+    if (text(slide, QLatin1String("title")) == title) return slide;
+  }
+  fail(QStringLiteral("the Space has no slide %1").arg(title));
+}
+
+QString idOfSlide(World& world, const QString& title) {
+  return text(slideTitled(world, title), QLatin1String("id"));
+}
+
+// The deck `id` of the scenario's Space, open.
+void lookAtDeck(World& world, const QString& id) {
+  look(world, current(world));
+  world.waitFor([&] { return viewOf(world)->space().of(QStringLiteral("deck")).contains(id); },
+                [&] { return QStringLiteral("the Space's copy to hold the deck; %1").arg(describe(world)); });
+  world.bridge().dispatch(QStringLiteral("space.selectDeck"), QVariantMap{{QStringLiteral("deckId"), id}});
+  world.waitFor([&] { return viewOf(world)->deckId() == id; }, [&] { return QStringLiteral("the deck to open; %1").arg(describe(world)); });
+}
+
+void actOnDeck(World& world, const QString& title, const QString& action, QVariantMap payload) {
+  const QString id = idOfDeck(world, title);
+  lookAtDeck(world, id);
+  payload.insert(QStringLiteral("deckId"), id);
+  act(world, action, payload);
+}
+
+void actOnSlide(World& world, const QString& title, const QString& action, QVariantMap payload) {
+  const QJsonObject slide = slideTitled(world, title);
+  lookAtDeck(world, text(slide, QLatin1String("deckId")));
+  payload.insert(QStringLiteral("slideId"), text(slide, QLatin1String("id")));
+  act(world, action, payload);
+}
+
 // Waits for what the open page `title` shows of its site to be `wanted`.
 void expectSite(World& world, const QString& title, const std::function<bool(const QVariantMap&)>& shown, const QString& wanted) {
   lookAtPage(world, idOfPage(world, title));
@@ -1142,7 +1430,7 @@ const Steps steps([] {
     look(world, idOfSpace(world, c[0]));
     act(world, QStringLiteral("space.delete"), {{QStringLiteral("spaceId"), idOfSpace(world, c[0])}});
   });
-  step(QStringLiteral("(?:the (?:Space|page) request is refused|the user is told only a checklist item can be ticked)"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("(?:the (?:Space|page|deck) request is refused|the user is told only a checklist item can be ticked)"), [](World& world, const Captures&, const Table&) {
     const FakeSpaces& spaces = fake(world.mc);
     expect(!spaces.last.error.isEmpty(), QStringLiteral("the MC answered %1 with %2").arg(spaces.lastMethod, show(spaces.last.result.toVariantMap())));
     const QString said = world.state(QStringLiteral("space")).toMap().value(QStringLiteral("error")).toString();
@@ -1230,7 +1518,8 @@ const Steps steps([] {
   });
   step(QStringLiteral("the trash of %1 holds %1").arg(q), [](World& world, const Captures& c, const Table&) {
     look(world, idOfSpace(world, c[0]));
-    expectShown(world, [&] { return column(viewOf(world)->trash(), QStringLiteral("title")) == listed(c[1]); }, QStringLiteral("the trash to hold %1").arg(c[1]));
+    expectShown(world, [&] { return column(viewOf(world)->trash(), QStringLiteral("title")) + column(viewOf(world)->deckTrash(), QStringLiteral("title")) == listed(c[1]); },
+                QStringLiteral("the trash to hold %1").arg(c[1]));
   });
   step(QStringLiteral("the user restores the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
     actOnPage(world, idOfPage(world, c[0]), QStringLiteral("space.page.restore"), {});
@@ -1490,6 +1779,112 @@ const Steps steps([] {
     expectShown(world, [&] { return blockTable(world) == wanted; }, QStringLiteral("the blocks %1").arg(show(tableOf(wanted))));
   });
 
+  // Charts on a page (space/visualize.feature).
+  step(QStringLiteral("this MC's threads took turns this week"), [](World&, const Captures&, const Table&) {});
+  step(QStringLiteral("text generation charts the request from the MC's threads"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).chart = chartOf(QStringLiteral("bar"), QStringLiteral("Weekly turns"), QStringLiteral("Counted by this MC from its 2 threads, 12 weeks to 2026-11-01"),
+                                   {{QStringLiteral("10-26"), 4}, {QStringLiteral("11-02"), 7}});
+  });
+  step(QStringLiteral("text generation answers with a (bar|line) chart of %1 (\\d+)(?: and %1 (\\d+))?").arg(q), [](World& world, const Captures& c, const Table&) {
+    QList<std::pair<QString, int>> points{{c[1], c[2].toInt()}};
+    if (!c.value(3).isEmpty()) points.append({c[3], c[4].toInt()});
+    fake(world.mc).chart = chartOf(c[0], QStringLiteral("Signups"), kFromThisPage, points);
+  });
+  step(QStringLiteral("text generation says the request cannot be answered"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).chart = {};
+  });
+  step(QStringLiteral("the page %1 has a chart of %1 (\\d+) and %1 (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenChart(world, c[0], c[1], c[2].toInt(), c[3], c[4].toInt());
+  });
+  step(QStringLiteral("the page %1 has a chart with 2 labels and 1 number").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenUnmatchedChart(world, c[0]);
+  });
+  step(QStringLiteral("the page %1 has the blocks %1 and a chart of %1 (\\d+) and %1 (\\d+) and the blocks %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], QStringLiteral("paragraph"), c[1]);
+    givenChart(world, c[0], c[2], c[3].toInt(), c[4], c[5].toInt());
+    givenBlock(world, c[0], QStringLiteral("paragraph"), c[6]);
+  });
+  step(QStringLiteral("%1 also says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], QStringLiteral("paragraph"), c[1]);
+  });
+  step(QStringLiteral("the user asks for %1 on the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world.mc).asked = idOfPage(world, c[1]);
+    actOnPage(world, fake(world.mc).asked, QStringLiteral("space.block.visualize"), {{QStringLiteral("request"), c[0]}});
+  });
+  step(QStringLiteral("the user asks again for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    actOnPage(world, fake(world.mc).asked, QStringLiteral("space.block.visualize"),
+              {{QStringLiteral("request"), c[0]}, {QStringLiteral("blockId"), shownChart(world).value(QStringLiteral("id"))}});
+  });
+  step(QStringLiteral("the page shows a (bar|line) chart titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    expectShown(world, [&] {
+      const QVariantMap chart = shownChart(world).value(QStringLiteral("chart")).toMap();
+      return chart.value(QStringLiteral("type")) == c[0] && chart.value(QStringLiteral("title")) == c[1];
+    }, QStringLiteral("a %1 chart titled %2").arg(c[0], c[1]));
+    expect(!drawing(world), QStringLiteral("the page still says a chart is being drawn"));
+  });
+  step(QStringLiteral("the chart says its numbers came from (this MC's threads|this page)"), [](World& world, const Captures& c, const Table&) {
+    const QString source = shownChart(world).value(QStringLiteral("chart")).toMap().value(QStringLiteral("source")).toString();
+    const QString start = c[0] == QLatin1String("this page") ? kFromThisPage : QStringLiteral("Counted by this MC");
+    expect(source.startsWith(start), QStringLiteral("the chart says its numbers came from \"%1\"").arg(source));
+  });
+  step(QStringLiteral("the second client sees a chart titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    second(world).selectPage(fake(world.mc).asked);
+    QStringList titles;
+    for (const QVariantMap& row : second(world).blocks()->rows()) titles.append(row.value(QStringLiteral("chart")).toMap().value(QStringLiteral("title")).toString());
+    expect(titles.contains(c[0]), QStringLiteral("the second client shows the charts %1").arg(show(titles)));
+  });
+  // The toggle is the brick's; tst_Space.qml presses it. What it reads is the row asserted below.
+  step(QStringLiteral("the user asks to see the numbers behind the chart"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    expectShown(world, [&] { return !shownChart(world).isEmpty(); }, QStringLiteral("a chart on the page"));
+  });
+  step(QStringLiteral("the chart's numbers are not shown"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    expectShown(world, [&] { return !shownChart(world).isEmpty(); }, QStringLiteral("a chart on the page"));
+    // Drawn by the brick from what the page holds, as the page draws it.
+    Brick brick(world, "import QtQuick\nimport HalC2.Bricks\nSpaceChart { width: 480 }\n", QSize(480, 320));
+    brick.item(QStringLiteral("spaceChart"))->setProperty("chart", shownChart(world).value(QStringLiteral("chart")));
+    expect(brick.item(QStringLiteral("spaceChartUnmatched"))->isVisible(), QStringLiteral("the chart does not say its numbers do not match"));
+    expect(!brick.item(QStringLiteral("spaceChartNumbers"))->isVisible(), QStringLiteral("the chart offers its numbers"));
+  });
+  step(QStringLiteral("the numbers read %1 (\\d+)(?: and %1 (\\d+))?").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    QVariantList labels{c[0]};
+    QVariantList values{c[1].toDouble()};
+    if (!c.value(2).isEmpty()) {
+      labels.append(c[2]);
+      values.append(c[3].toDouble());
+    }
+    expectShown(world, [&] {
+      const QVariantMap chart = shownChart(world).value(QStringLiteral("chart")).toMap();
+      const QVariantList series = chart.value(QStringLiteral("series")).toList();
+      return chart.value(QStringLiteral("labels")).toList() == labels && series.size() == 1 && series.first().toMap().value(QStringLiteral("values")).toList() == values;
+    }, QStringLiteral("the numbers to read %1").arg(c.join(QLatin1Char(' '))));
+  });
+  step(QStringLiteral("the page shows one chart, between %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, [&] {
+      const QStringList kinds = column(viewOf(world)->blocks(), QStringLiteral("kind"));
+      const QStringList texts = column(viewOf(world)->blocks(), QStringLiteral("text"));
+      const qsizetype at = kinds.indexOf(QStringLiteral("chart"));
+      return kinds.count(QStringLiteral("chart")) == 1 && at > 0 && at + 1 < texts.size() && texts.at(at - 1) == c[0] && texts.at(at + 1) == c[1];
+    }, QStringLiteral("one chart between %1 and %2").arg(c[0], c[1]));
+  });
+  step(QStringLiteral("the user deletes the chart"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    act(world, QStringLiteral("space.block.delete"), {{QStringLiteral("blockId"), shownChart(world).value(QStringLiteral("id"))}});
+  });
+  step(QStringLiteral("the page shows no chart"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    expectShown(world, [&] { return shownChart(world).isEmpty(); }, QStringLiteral("no chart on the page"));
+  });
+  step(QStringLiteral("the user is told no chart was drawn"), [](World& world, const Captures&, const Table&) {
+    const QString start = QStringLiteral("No chart was drawn");
+    world.waitFor([&] { return toldOf(world, start); }, [&] { return QStringLiteral("the user to be told \"%1\"; toasts %2").arg(start, show(toasts(world))); });
+    expect(!drawing(world), QStringLiteral("the page still says a chart is being drawn"));
+  });
+
   // A page from a thread.
   step(QStringLiteral("the thread %1 talked about a release plan").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world.mc).talked.insert(threadNamed(world, c[0]));
@@ -1545,6 +1940,142 @@ const Steps steps([] {
     expect(!world.state(QStringLiteral("space")).toMap().value(QStringLiteral("busy")).toBool(), QStringLiteral("the Space view still says it is writing"));
   });
 
+  // Decks and their slides (features/space/slides.feature).
+  step(QStringLiteral("the user makes the deck %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, current(world));
+    act(world, QStringLiteral("space.deck.create"), {{QStringLiteral("title"), c[0]}});
+  });
+  step(QStringLiteral("the user makes a deck from the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnPage(world, idOfPage(world, c[0]), QStringLiteral("space.deck.createFromPage"), {});
+  });
+  step(QStringLiteral("the deck %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenDeck(world, c[0]);
+  });
+  step(QStringLiteral("the deck %1 with the slides %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString deck = givenDeck(world, c[0]);
+    for (const QJsonObject& slide : slidesOf(world.mc, streamOf(current(world)), deck)) {
+      given(world, QStringLiteral("slide.delete"), {{QStringLiteral("slideId"), text(slide, QLatin1String("id"))}});
+    }
+    for (const QString& title : listed(c[1])) given(world, QStringLiteral("slide.insert"), {{QStringLiteral("deckId"), deck}, {QStringLiteral("title"), title}});
+  });
+  step(QStringLiteral("the deck %1 is in the trash").arg(q), [](World& world, const Captures& c, const Table&) {
+    given(world, QStringLiteral("deck.trash"), {{QStringLiteral("deckId"), givenDeck(world, c[0])}});
+  });
+  step(QStringLiteral("the decks of %1 are %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, idOfSpace(world, c[0]));
+    expectShown(world, [&] { return column(viewOf(world)->decks(), QStringLiteral("title")) == listed(c[1]); }, QStringLiteral("the decks to be %1").arg(c[1]));
+  });
+  step(QStringLiteral("the deck %1 has the slides:").arg(q), [](World& world, const Captures& c, const Table& table) {
+    lookAtDeck(world, idOfDeck(world, c[0]));
+    Table wanted;
+    for (const QStringList& row : table.mid(1)) wanted.append({row.value(0), row.value(1)});
+    const auto shown = [&] {
+      Table rows;
+      for (const QVariantMap& slide : viewOf(world)->slides()->rows()) {
+        rows.append({slide.value(QStringLiteral("title")).toString(), slide.value(QStringLiteral("body")).toString().replace(QLatin1Char('\n'), QStringLiteral(" / "))});
+      }
+      return rows;
+    };
+    world.waitFor([&] { return shown() == wanted; }, [&] { return QStringLiteral("the slides %1, shown %2").arg(show(tableOf(wanted)), show(tableOf(shown()))); });
+  });
+  step(QStringLiteral("the slides of %1 are( still)? %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return world.native().client()->isReady(); }, QStringLiteral("the shell to reconnect"));
+    lookAtDeck(world, idOfDeck(world, c[0]));
+    expectShown(world, [&] { return column(viewOf(world)->slides(), QStringLiteral("title")) == listed(c[2]); },
+                QStringLiteral("the slides to be %1, shown %2").arg(c[2], show(column(viewOf(world)->slides(), QStringLiteral("title")))));
+  });
+  step(QStringLiteral("the user renames the deck %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnDeck(world, c[0], QStringLiteral("space.deck.rename"), {{QStringLiteral("title"), c[1]}});
+  });
+  step(QStringLiteral("the title %1 written for the deck %1 lands once the Space %1 is on show").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString deck = idOfDeck(world, c[1]);
+    const QString space = current(world);
+    givenSpace(world, c[2]);
+    look(world, idOfSpace(world, c[2]));
+    act(world, QStringLiteral("space.deck.rename"), {{QStringLiteral("spaceId"), space}, {QStringLiteral("deckId"), deck}, {QStringLiteral("title"), c[0]}});
+  });
+  step(QStringLiteral("the user moves the deck %1 to the trash").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnDeck(world, c[0], QStringLiteral("space.deck.trash"), {});
+  });
+  step(QStringLiteral("the user restores the deck %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnDeck(world, c[0], QStringLiteral("space.deck.restore"), {});
+  });
+  step(QStringLiteral("the user deletes the deck %1 for good").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnDeck(world, c[0], QStringLiteral("space.deck.delete"), {});
+  });
+  step(QStringLiteral("no slides remain in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, idOfSpace(world, c[0]));
+    expectShown(world, [&] { return viewOf(world)->space().of(QStringLiteral("slide")).isEmpty(); }, QStringLiteral("no slides to remain"));
+  });
+  step(QStringLiteral("the user adds the slide %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnDeck(world, c[1], QStringLiteral("space.slide.insert"), {{QStringLiteral("title"), c[0]}, {QStringLiteral("body"), QString()}});
+  });
+  step(QStringLiteral("the user adds the slide %1 after %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnDeck(world, c[2], QStringLiteral("space.slide.insert"), {{QStringLiteral("title"), c[0]}, {QStringLiteral("body"), QString()}, {QStringLiteral("afterSlideId"), idOfSlide(world, c[1])}});
+  });
+  step(QStringLiteral("the user changes the slide %1 to %1 reading %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnSlide(world, c[0], QStringLiteral("space.slide.update"), {{QStringLiteral("title"), c[1]}, {QStringLiteral("body"), c[2]}});
+  });
+  step(QStringLiteral("the user moves the slide %1 before %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject before = slideTitled(world, c[1]);
+    QString after;
+    for (const QJsonObject& slide : slidesOf(world.mc, streamOf(current(world)), text(before, QLatin1String("deckId")))) {
+      if (text(slide, QLatin1String("id")) == text(before, QLatin1String("id"))) break;
+      after = text(slide, QLatin1String("id"));
+    }
+    actOnSlide(world, c[0], QStringLiteral("space.slide.move"), {{QStringLiteral("afterSlideId"), after}});
+  });
+  step(QStringLiteral("the user deletes the slide %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnSlide(world, c[0], QStringLiteral("space.slide.delete"), {});
+  });
+  step(QStringLiteral("the second client sees the deck %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QStringList titles = column(second(world).decks(), QStringLiteral("title"));
+    expect(titles.contains(c[0]), QStringLiteral("the second client shows the decks %1").arg(show(titles)));
+  });
+  step(QStringLiteral("the second client sees the slide %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString deck = text(slideTitled(world, c[0]), QLatin1String("deckId"));
+    second(world).selectDeck(deck);
+    const QStringList titles = column(second(world).slides(), QStringLiteral("title"));
+    expect(titles.contains(c[0]), QStringLiteral("the second client shows the slides %1").arg(show(titles)));
+  });
+
+  // Presenting.
+  step(QStringLiteral("the user presents the deck %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, current(world));
+    const QString id = idOfDeck(world, c[0]);
+    world.waitFor([&] { return viewOf(world)->space().of(QStringLiteral("deck")).contains(id); }, QStringLiteral("the Space's copy to hold the deck"));
+    act(world, QStringLiteral("space.deck.present"), {{QStringLiteral("deckId"), id}});
+  });
+  step(QStringLiteral("the presenter shows %1, slide (\\d+) of (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    SpaceController* view = viewOf(world);
+    world.waitFor([&] {
+      return view->presenting() && view->slide().value(QStringLiteral("title")) == c[0] && view->slideNumber() == c[1].toInt() && view->slideCount() == c[2].toInt();
+    }, [&] { return QStringLiteral("the presenter to show %1, %2 of %3; it shows %4, %5 of %6").arg(c[0], c[1], c[2], show(view->slide())).arg(view->slideNumber()).arg(view->slideCount()); });
+  });
+  step(QStringLiteral("the user steps (forward|back)"), [](World& world, const Captures& c, const Table&) {
+    act(world, QStringLiteral("space.deck.step"), {{QStringLiteral("by"), c[0] == QLatin1String("back") ? -1 : 1}});
+  });
+  step(QStringLiteral("the user leaves the presenter"), [](World& world, const Captures&, const Table&) {
+    act(world, QStringLiteral("space.deck.leave"), {});
+  });
+  step(QStringLiteral("nothing is being presented"), [](World& world, const Captures&, const Table&) {
+    expectShown(world, [&] { return !viewOf(world)->presenting(); }, QStringLiteral("the presenter to be closed"));
+  });
+  step(QStringLiteral("the user is told the deck has no slides"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return toldOf(world, QStringLiteral("This deck has no slides")); }, [&] { return QStringLiteral("the user to be told; toasts %1").arg(show(toasts(world))); });
+  });
+  step(QStringLiteral("another client changes the slide %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    given(world, QStringLiteral("slide.update"), {{QStringLiteral("slideId"), idOfSlide(world, c[0])}, {QStringLiteral("title"), c[1]}});
+  });
+  step(QStringLiteral("another client moves the slide %1 after %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    given(world, QStringLiteral("slide.move"), {{QStringLiteral("slideId"), idOfSlide(world, c[0])}, {QStringLiteral("afterSlideId"), idOfSlide(world, c[1])}});
+  });
+  step(QStringLiteral("another client deletes the slide %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    given(world, QStringLiteral("slide.delete"), {{QStringLiteral("slideId"), idOfSlide(world, c[0])}});
+  });
+  step(QStringLiteral("another client moves the deck %1 to the trash").arg(q), [](World& world, const Captures& c, const Table&) {
+    given(world, QStringLiteral("deck.trash"), {{QStringLiteral("deckId"), idOfDeck(world, c[0])}});
+  });
   // Images.
   step(QStringLiteral("the user adds the image %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     signImages(world);

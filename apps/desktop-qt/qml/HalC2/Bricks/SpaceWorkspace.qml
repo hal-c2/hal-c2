@@ -6,9 +6,9 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The Space view (route kind `space`; SpaceController publishes `space`): the
-// Space's pages beside the open one, or beside its images, and its comments
-// beside that when the user asks for them. Everything shown is the MC's; with
-// nothing to show it says why.
+// Space's pages and decks beside the open one, or beside its images, and a page's
+// comments beside that when the user asks for them. Everything shown is the MC's;
+// with nothing to show it says why.
 Rectangle {
     id: workspace
 
@@ -50,6 +50,13 @@ Rectangle {
     readonly property string pageId: Spaces.pageId
     onPageIdChanged: comments.blockId = ""
 
+    // A deck just opened, made in the sidebar say, is what the user wants to see.
+    readonly property string deckId: Spaces.deckId
+    onDeckIdChanged: {
+        if (deckId !== "")
+            imagesShown = false;
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
@@ -76,18 +83,23 @@ Rectangle {
 
             SpacePage {
                 anchors.fill: parent
-                visible: Spaces.pageId !== "" && !workspace.imagesShown
+                visible: Spaces.pageId !== "" && Spaces.deckId === "" && !workspace.imagesShown
                 onImagesRequested: workspace.imagesShown = true
                 onSaveRequested: saveDialog.open()
                 onSubpageRequested: (parentPageId, link) => sidebar.newPage(parentPageId, link)
                 onCommentRequested: blockId => workspace.showComments(blockId)
             }
 
+            SpaceDeck {
+                anchors.fill: parent
+                visible: Spaces.deckId !== "" && !workspace.imagesShown
+            }
+
             ColumnLayout {
                 objectName: "spaceEmpty"
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 48, 420)
-                visible: Spaces.pageId === "" && !workspace.imagesShown
+                visible: Spaces.pageId === "" && Spaces.deckId === "" && !workspace.imagesShown
                 spacing: 12
 
                 ShellIcon {
@@ -159,10 +171,14 @@ Rectangle {
 
             Layout.preferredWidth: 300
             Layout.fillHeight: true
-            visible: workspace.commentsShown && Spaces.pageId !== "" && !workspace.imagesShown
+            visible: workspace.commentsShown && Spaces.pageId !== "" && Spaces.deckId === "" && !workspace.imagesShown
             readOnly: Spaces.page.trashed === true
             onCloseRequested: workspace.commentsShown = false
         }
+    }
+
+    SpacePresenter {
+        anchors.fill: parent
     }
 
     FileDialog {

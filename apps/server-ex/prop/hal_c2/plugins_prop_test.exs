@@ -998,9 +998,26 @@ defmodule HalC2.PluginsPropTest do
       {:DOWN, ^ref, _, _, _} -> :ok
     end
 
-    :sys.get_state(sup)
+    await_restart(plugin_module(id), sup)
     {:ok, Map.put(observe(), :worker_settings, running_settings(id))}
   end
+
+  # A killed worker's `:DOWN` can reach the test before its exit reaches the supervisor,
+  # so a supervisor that answers may not have heard of the kill yet: ask until it restarted.
+  # The worker's name appears before its start returns and is announced to the host, so a
+  # last answer says the restart is over. The deadline only keeps a wrong host from hanging
+  # the run.
+  defp await_restart(module, sup, deadline \\ deadline()) do
+    if past?(deadline), do: raise("the plugin's supervisor never restarted its worker")
+    :sys.get_state(sup, 60_000)
+
+    if Process.whereis(module),
+      do: :sys.get_state(sup, 60_000),
+      else: await_restart(module, sup, deadline)
+  end
+
+  defp deadline, do: System.monotonic_time(:millisecond) + 60_000
+  defp past?(deadline), do: System.monotonic_time(:millisecond) > deadline
 
   # A worker announced in the form a host from before an update in place took, queued
   # across the update, crashes.
@@ -1022,16 +1039,16 @@ defmodule HalC2.PluginsPropTest do
   def crash_hard(id) do
     sup = parent(Process.whereis(plugin_module(id)))
     ref = Process.monitor(sup)
-    kill_until_down(plugin_module(id), sup, ref, 500)
+    kill_until_down(plugin_module(id), sup, ref, deadline())
     {:ok, observe()}
   end
 
-  # With no worker registered the supervisor is restarting it or already giving up, and
-  # the wait gives it time: a pass that doesn't wait spends every try before either lands.
+  # With no worker to kill, the supervisor has yet to hear of the last kill
+  # (`await_restart/3`), and it either restarts the worker or gives up. The deadline only
+  # keeps a wrong host from hanging the run.
+  defp kill_until_down(module, sup, sup_ref, deadline) do
+    if past?(deadline), do: raise("the plugin's supervisor never gave up")
 
-  defp kill_until_down(_module, _sup, _ref, 0), do: raise("the plugin's supervisor never gave up")
-
-  defp kill_until_down(module, sup, sup_ref, left) do
     if worker = Process.whereis(module) do
       ref = Process.monitor(worker)
       Process.exit(worker, :kill)
@@ -1039,18 +1056,18 @@ defmodule HalC2.PluginsPropTest do
       receive do
         {:DOWN, ^ref, _, _, _} -> :ok
       end
+    end
 
-      try do
-        :sys.get_state(sup)
-      catch
-        :exit, _ -> :ok
-      end
+    try do
+      :sys.get_state(sup)
+    catch
+      :exit, _ -> :ok
     end
 
     receive do
       {:DOWN, ^sup_ref, _, _, _} -> :ok
     after
-      10 -> kill_until_down(module, sup, sup_ref, left - 1)
+      0 -> kill_until_down(module, sup, sup_ref, deadline)
     end
   end
 

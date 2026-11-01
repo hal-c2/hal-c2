@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 
+import type { AskSpec } from "./askState.ts";
 import type { PickRequest } from "./composerState.ts";
 import {
   createSpaceController,
@@ -71,7 +72,7 @@ function setup(origin?: string) {
   const calls: Array<{ method: string; payload: unknown }> = [];
   const statuses: string[] = [];
   const menus: PickRequest[] = [];
-  const asks: Array<(answer: string) => void> = [];
+  const asks: AskSpec[] = [];
   const uploads = { fails: false, sent: 0 };
   let state: TuiSpaceState | null = null;
   const controller = createSpaceController({
@@ -104,7 +105,7 @@ function setup(origin?: string) {
       state = next;
     },
     status: (text) => statuses.push(text),
-    ask: (spec) => asks.push(spec.onSubmit),
+    ask: (spec) => asks.push(spec),
     menu: (spec) => menus.push(spec),
     threads: () => [{ id: "t1", title: "Work" }],
     ...(origin ? { origin } : {}),
@@ -204,7 +205,122 @@ describe("the Space's stream", () => {
   });
 });
 
+const deck = (id: string, title: string, fields: Record<string, unknown> = {}) =>
+  [
+    "deck",
+    id,
+    { id, spaceId: "s1", title, trashedAt: null, createdAt: at, updatedAt: at, ...fields },
+  ] as const;
+const slide = (id: string, title: string, order: string, body = "") =>
+  ["slide", id, { id, deckId: "d1", title, body, order, createdAt: at, updatedAt: at }] as const;
+
+describe("the presenter", () => {
+  const presenting = (rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>) => {
+    const t = inResearch([deck("d1", "Pitch"), ...rows]);
+    t.select("deck:d1");
+    t.controller.dispatch("space.present", {});
+    return t;
+  };
+
+  test("a slide longer than the pane scrolls, and the next slide starts at its top", () => {
+    const body = Array.from({ length: 60 }, (_, line) => `line ${line}`).join("\n");
+    const t = presenting([slide("a", "Intro", "a", body), slide("b", "Plan", "b")]);
+    expect(t.view().rows[0]!.text).toBe("Intro");
+    t.controller.dispatch("space.pageDown", {});
+    expect(t.view().title).toBe("present · Pitch · 1 / 2");
+    expect(t.view().rows[0]!.text).not.toBe("Intro");
+    t.controller.dispatch("space.next", {});
+    expect(t.view().title).toBe("present · Pitch · 2 / 2");
+    expect(t.view().rows[0]!.text).toBe("Plan");
+  });
+
+  test("keys that would edit do nothing while a slide is on show", () => {
+    const t = presenting([slide("a", "Intro", "a")]);
+    const before = t.calls.length;
+    for (const action of ["space.delete", "space.new", "space.edit", "space.restore"]) {
+      expect(t.controller.dispatch(action, {})).toBe(true);
+    }
+    expect(t.calls.length).toBe(before);
+    expect(t.view().view).toBe("present");
+  });
+
+  test("Spaces close from the presenter", () => {
+    const t = presenting([slide("a", "Intro", "a")]);
+    t.controller.dispatch("space.close", {});
+    expect(t.view().open).toBe(false);
+  });
+
+  test("a deck deleted for good stops the presenter and leaves the deck", () => {
+    const t = presenting([slide("a", "Intro", "a")]);
+    t.send("space:s1", events([11, "deck", "d1", { d: true }], [12, "slide", "a", { d: true }]));
+    expect(t.view().view).toBe("pages");
+  });
+});
+
+describe("editing a slide on one line", () => {
+  /** Opens the slide's body field, its title left alone, and gives what the field shows. */
+  const bodyField = (body: string) => {
+    const t = inResearch([deck("d1", "Pitch"), slide("a", "Intro", "a", body)]);
+    t.select("deck:d1");
+    t.controller.dispatch("space.activate", {});
+    t.select("slide:a");
+    t.controller.dispatch("space.edit", {});
+    t.asks.at(-1)!.onSubmit("Intro");
+    const field = t.asks.at(-1)!;
+    expect(field.label).toContain("slide body");
+    const sent = () => t.calls.filter((call) => call.method === "space.slide.update");
+    return { value: field.value!, submit: field.onSubmit, sent };
+  };
+
+  // Each is ambiguous to a field that writes a line break as " / ".
+  const bodies = [
+    "Either / or",
+    "ends with /\nthen more",
+    "first\n/ starts with",
+    "/ /",
+    "C:\\new\\table",
+    "two\n\nparagraphs",
+    "trailing line\n",
+    "\\",
+    "\\\n",
+  ];
+
+  test.each(bodies)("%j comes back as written after an edit", (body) => {
+    const field = bodyField(body);
+    expect(field.value).not.toContain("\n");
+    field.submit(`${field.value}!`);
+    expect(field.sent()).toEqual([
+      {
+        method: "space.slide.update",
+        payload: { spaceId: "s1", slideId: "a", body: `${body}!` },
+      },
+    ]);
+  });
+
+  test.each([...bodies, "  outer spaces  "])("%j left as it was sends nothing", (body) => {
+    const field = bodyField(body);
+    field.submit(field.value.trim());
+    expect(field.sent()).toEqual([]);
+  });
+
+  test("\\n typed in the field starts a new line, and any other backslash stays", () => {
+    const field = bodyField("");
+    field.submit("Up\\nDown \\o/");
+    expect(field.sent().at(-1)?.payload).toMatchObject({ body: "Up\nDown \\o/" });
+  });
+});
+
 describe("replies that come after the user moved on", () => {
+  test("a new deck does not open once the user left the Space", async () => {
+    const t = inResearch([page("p1", "Roadmap")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.deckFromPage", {});
+    t.controller.dispatch("space.back", {});
+    t.reply("space.deck.createFromPage", { deck: deck("d1", "Roadmap")[2] });
+    await t.controller.settled();
+    expect(t.view().view).toBe("spaces");
+  });
+
   test("a page written from a thread does not open once the user left the Space", async () => {
     const t = inResearch([]);
     t.controller.dispatch("space.fromThread", {});
@@ -225,6 +341,118 @@ describe("replies that come after the user moved on", () => {
     t.reply("space.page.createFromThread", { page: page("p5", "Release plan")[2] });
     await t.controller.settled();
     expect(t.view().title).toBe("page · Release plan");
+  });
+});
+
+describe("a chart on a page", () => {
+  const chart = (labels: number, series: number) => ({
+    type: "bar",
+    title: "Signups",
+    source: "Numbers from this page",
+    request: "signups by month",
+    labels: Array.from({ length: labels }, (_, index) => `m${index}`),
+    series: Array.from({ length: series }, (_, index) => ({
+      name: `s${index}`,
+      values: Array.from({ length: labels }, () => 1),
+    })),
+  });
+  const chartBlock = (id: string, labels = 2, series = 1) => {
+    const [kind, key, fields] = block(id, "p1", "Signups (a chart; Numbers from this page)", "b");
+    return [kind, key, { ...fields, kind: "chart", chart: chart(labels, series) }] as const;
+  };
+  const onPage = (...rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>) => {
+    const t = inResearch([page("p1", "Status"), ...rows]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+
+  test("draws its title, its numbers and where they came from", () => {
+    const t = onPage(chartBlock("c1"));
+    const rows = t.view().rows.filter((row) => row.blockKind === "chart");
+    expect(rows.map((row) => row.key)).toEqual(Array(4).fill("block:c1"));
+    expect(rows[0]!.text).toContain("Signups");
+    expect(rows[1]!.text).toEndWith(" 1");
+    expect(rows.at(-1)!.text.trim()).toBe("Numbers from this page");
+    expect(rows.filter((row) => row.first)).toHaveLength(1);
+  });
+
+  test("shows its own words when the description cannot be read", () => {
+    const [kind, key, fields] = chartBlock("c1");
+    const t = onPage([kind, key, { ...fields, chart: "not a chart" }]);
+    expect(t.texts("block")).toEqual(["Signups (a chart; Numbers from this page)"]);
+  });
+
+  test("shows its own words when its numbers do not match its labels", () => {
+    const [kind, key, fields] = chartBlock("c1");
+    const chart = { ...fields.chart, series: [{ name: "Signups", values: [3] }] };
+    const t = onPage([kind, key, { ...fields, chart }]);
+    expect(t.texts("block")).toEqual(["Signups (a chart; Numbers from this page)"]);
+  });
+
+  test("asks again from the words it was asked for in, and replaces itself", async () => {
+    const t = onPage(chartBlock("c1"));
+    t.select("block:c1");
+    t.controller.dispatch("space.activate", {});
+    const asked = t.asks.at(-1)!;
+    expect(asked.value).toBe("signups by month");
+    asked.onSubmit("signups by week");
+    expect(t.statuses.at(-1)).toBe("Drawing a chart…");
+    expect(t.calls.at(-1)).toEqual({
+      method: "space.block.visualize",
+      payload: { spaceId: "s1", pageId: "p1", request: "signups by week", blockId: "c1" },
+    });
+    t.reply("space.block.visualize", { block: chartBlock("c1")[2] });
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toBe("Drew “Signups”.");
+  });
+
+  test("a new chart goes after the selected block", () => {
+    const t = onPage(block("b1", "p1", "Before", "a"));
+    t.select("block:b1");
+    t.controller.dispatch("space.visualize", {});
+    expect(t.asks.at(-1)!.value).toBeUndefined();
+    t.asks.at(-1)!.onSubmit("signups");
+    expect(t.calls.at(-1)!.payload).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      request: "signups",
+      afterBlockId: "b1",
+    });
+  });
+
+  test("a chart from the add menu is a new one, even with a chart selected", () => {
+    const t = onPage(chartBlock("c1"));
+    t.select("block:c1");
+    t.controller.dispatch("space.new", {});
+    t.menus.at(-1)!.onChoose("chart");
+    expect(t.asks.at(-1)!.value).toBeUndefined();
+    t.asks.at(-1)!.onSubmit("signups");
+    expect(t.calls.at(-1)!.payload).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      request: "signups",
+      afterBlockId: "c1",
+    });
+  });
+
+  test("off a page there is nothing to chart on", () => {
+    const t = inResearch([page("p1", "Status")]);
+    t.controller.dispatch("space.visualize", {});
+    expect(t.asks).toEqual([]);
+    expect(t.statuses.at(-1)).toBe("Open a page to ask for a chart.");
+  });
+
+  test("scrolls through itself when it is taller than the pane, then moves on", () => {
+    const t = onPage(chartBlock("c1", 24, 4), block("b1", "p1", "After", "c"));
+    t.select("block:c1");
+    const top = () => t.view().rows[0]!.text;
+    const before = top();
+    t.controller.dispatch("space.next", {});
+    expect(top()).not.toBe(before);
+    expect(t.view().rows.some((row) => row.selected && row.key === "block:c1")).toBe(true);
+    for (let step = 0; step < 100; step += 1) t.controller.dispatch("space.next", {});
+    expect(t.view().rows.some((row) => row.selected && row.key === "block:b1")).toBe(true);
   });
 });
 
@@ -317,7 +545,7 @@ describe("images", () => {
     t.controller.dispatch("space.images", {});
     t.controller.dispatch("space.import", {});
     t.uploads.fails = true;
-    t.asks.at(-1)!("/home/me/cat.png");
+    t.asks.at(-1)!.onSubmit("/home/me/cat.png");
     await Bun.sleep(0);
     t.reply("attachments.createUploadUrl", { attachmentId: "a1", relativeUrl: "/up/a1" });
     await t.controller.settled();

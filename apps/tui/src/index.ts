@@ -201,6 +201,7 @@ async function main(): Promise<void> {
     onQuit: handleExit,
     log: appendLog,
     startupWarnings: configWarnings,
+    keymapOverrides: userConfig.keymap,
     promptCursorToEnd: (text) => {
       if (shellRoot) movePromptCursorToEnd(shellRoot, text);
     },

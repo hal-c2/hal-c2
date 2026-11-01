@@ -1136,7 +1136,7 @@ defmodule HalC2Plugins.Planner do
   def handle_call({:link, id, fields}, caller, state), do: link(state, id, fields, caller)
 
   # A task linked to the issue just made of `sent`, of which GitHub has only what making
-  # it wrote (`Sync.created/2`), so the push sends the rest.
+  # it wrote (`Sync.created/3`), so the push sends the rest.
   def handle_call({:created, id, issue, sent}, caller, state),
     do: link(state, id, %{"issue" => issue}, caller, %{id => sent})
 
@@ -1829,7 +1829,7 @@ defmodule HalC2Plugins.Planner do
   # removed no longer hears from the push on the way to the one before. The tasks tied
   # to a task given an issue, linked to another or unlinked push too, moving their
   # relations to the issue it has now. A task of `created` pushes what its new issue was
-  # not made with (`Sync.created/2`). A milestone an issue stays in with no task left to
+  # not made with (`Sync.created/3`). A milestone an issue stays in with no task left to
   # ask it out (`Sync.left/2`) pushes too, for that issue to go.
   defp pushes(state, before, items, from, created \\ %{}) do
     gone =
@@ -1880,7 +1880,9 @@ defmodule HalC2Plugins.Planner do
 
         true ->
           synced = Sync.synced(old, new, before) |> Sync.left_behind(Map.get(left, id, []))
-          synced = if sent = created[id], do: Sync.created(synced, sent), else: synced
+
+          synced =
+            if sent = created[id], do: Sync.created(synced, sent, new["issue"]), else: synced
 
           case next_push(state, id, new, synced) do
             {nil, state} ->

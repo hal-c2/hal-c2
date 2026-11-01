@@ -1386,6 +1386,54 @@ defmodule HalC2.PlannerTest do
                Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
     end
 
+    test "an owner a refused relink push left on the new issue comes off it, and the relations off the old" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      old_issue = %{"repository" => "acme/api", "number" => 7}
+      new_issue = %{"repository" => "acme/api", "number" => 8}
+      other = %{"repository" => "acme/api", "number" => 9}
+
+      task = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "bob",
+        "after" => [],
+        "parent" => nil,
+        "issue" => new_issue
+      }
+
+      items = %{"t" => task, "o" => %{"id" => "o", "issue" => other}}
+
+      synced =
+        Sync.synced(
+          %{task | "owner" => "alice", "issue" => old_issue, "after" => ["o"]},
+          %{},
+          items
+        )
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, task, items, projects)
+      names = Enum.map(ops, &elem(&1, 0))
+      assert names == ["removeAssignees", "addAssignees", "removeBlockedBy"]
+
+      # GitHub takes the assignees and refuses the drop.
+      left =
+        ops |> Enum.take(2) |> Enum.reduce(synced, fn {_, _, took}, acc -> took.(acc) end)
+
+      ops =
+        Sync.pushes(%{"sync" => "twoWay"}, left, %{task | "owner" => "carol"}, items, projects)
+
+      assert {"removeAssignees", %{"number" => 8, "assignees" => ["bob"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "removeAssignees"))
+
+      assert {"addAssignees", %{"number" => 8, "assignees" => ["carol"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
+
+      assert {"removeBlockedBy", %{"number" => 7}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "removeBlockedBy"))
+    end
+
     test "a case-only owner change pushes no assignee ops" do
       projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
       issue = %{"repository" => "acme/api", "number" => 7}

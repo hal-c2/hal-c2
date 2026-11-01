@@ -59,6 +59,10 @@ export interface FakeSpaceMc {
   readonly pageNamed: (title: string) => Entity;
   readonly blockNamed: (text: string) => Entity;
   readonly commentNamed: (body: string) => Entity;
+  readonly deckNamed: (title: string) => Entity;
+  readonly slideNamed: (title: string) => Entity;
+  readonly slides: () => Entity[];
+  readonly decksOf: (spaceId: string) => Entity[];
   readonly imageNamed: (name: string) => Entity;
   readonly imagesOf: (spaceId: string) => Entity[];
   /** An image already in the Space, as if uploaded earlier. */
@@ -69,6 +73,8 @@ export interface FakeSpaceMc {
   readonly commentsOf: (pageId: string) => Entity[];
   /** What text generation does when a page is made from a thread. */
   generation: FakeGeneration;
+  /** The chart the next `space.block.visualize` draws; null when it cannot be answered. */
+  chart: Entity | null;
   /** What image generation does. */
   imageGeneration: FakeImageGeneration;
   /** Where each summary was written: the folder of the thread the request named. */
@@ -230,6 +236,8 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
         ["page", new Map()],
         ["block", new Map()],
         ["comment", new Map()],
+        ["deck", new Map()],
+        ["slide", new Map()],
         ["site", new Map()],
         ["image", new Map()],
       ]);
@@ -340,9 +348,96 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     return [...children, ...children.flatMap((child) => descendants(spaceId, child))];
   };
 
+  const deck = (spaceId: string, id: unknown): Entity =>
+    table(spaceId, "deck").get(String(id)) ??
+    refuse("not_found", `There is no deck ${String(id)} in this Space.`);
+  const liveDeck = (spaceId: string, id: unknown): Entity => {
+    const found = deck(spaceId, id);
+    if (found.trashedAt !== null) refuse("trashed", `The deck "${found.title}" is in the trash.`);
+    return found;
+  };
+  const slidesOf = (spaceId: string, deckId: string) =>
+    [...table(spaceId, "slide").values()]
+      .filter((slide) => slide.deckId === deckId)
+      .sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0));
+  /** A slide of a deck that is not in the trash. */
+  const liveSlide = (spaceId: string, id: unknown): Entity => {
+    const found =
+      table(spaceId, "slide").get(String(id)) ??
+      refuse("not_found", `There is no slide ${String(id)} in this Space.`);
+    liveDeck(spaceId, found.deckId);
+    return found;
+  };
+  /** HalC2.Space.Decks' sections: a slide for each heading, what comes before under the title. */
+  const sections = (spaceId: string, entry: Entity) => {
+    const line = (block: Entity): string => {
+      if (block.kind === "checklist") return `${block.checked ? "- [x] " : "- [ ] "}${block.text}`;
+      if (block.kind === "callout") return `> ${block.text}`;
+      if (block.kind === "subpage_link") {
+        return table(spaceId, "page").get(block.linkedPageId)?.title ?? block.text;
+      }
+      return block.text;
+    };
+    const blocks = blocksOf(spaceId, entry.id);
+    const first = blocks.findIndex((block) => block.kind === "heading");
+    const lead = first < 0 ? blocks : blocks.slice(0, first);
+    const out: Array<{ title: string; lines: string[] }> =
+      lead.length > 0 || first < 0 ? [{ title: entry.title, lines: lead.map(line) }] : [];
+    for (const block of first < 0 ? [] : blocks.slice(first)) {
+      if (block.kind === "heading") out.push({ title: block.text, lines: [] });
+      else out.at(-1)!.lines.push(line(block));
+    }
+    return out.map((section) => ({ title: section.title, body: section.lines.join("\n") }));
+  };
+  /** A new deck and its slides, in one transaction. */
+  const newDeck = (spaceId: string, title: string, specs: Entity[]) => {
+    const at = now();
+    const entry = {
+      id: nextId("deck"),
+      spaceId,
+      title,
+      trashedAt: null,
+      createdAt: at,
+      updatedAt: at,
+    };
+    let previous: string | null = null;
+    const changes: Change[] = [["deck", entry.id, { s: entry }]];
+    for (const spec of specs) {
+      const order = orderBetween(previous, null);
+      previous = order;
+      const slide = {
+        id: nextId("slide"),
+        deckId: entry.id,
+        ...spec,
+        order,
+        createdAt: at,
+        updatedAt: at,
+      };
+      changes.push(["slide", slide.id, { s: slide }]);
+    }
+    commit(`space:${spaceId}`, changes);
+    return { deck: entry };
+  };
+
   const name = (value: unknown, what: string) => {
     const text = typeof value === "string" ? value.trim() : "";
     return text === "" ? refuse("invalid", what) : text;
+  };
+
+  /** Where a slide goes: after `after`, first for null, last when undefined. */
+  const slideOrderAt = (
+    spaceId: string,
+    deckId: string,
+    after: unknown,
+    moving?: string,
+  ): string => {
+    const slides = slidesOf(spaceId, deckId).filter((entry) => entry.id !== moving);
+    if (after === undefined) return orderBetween(slides.at(-1)?.order ?? null, null);
+    if (after === null) return orderBetween(null, slides[0]?.order ?? null);
+    if (after === moving) refuse("invalid", "A slide cannot go after itself.");
+    const index = slides.findIndex((entry) => entry.id === after);
+    if (index < 0) refuse("not_found", `There is no slide ${String(after)} in this deck.`);
+    return orderBetween(slides[index]!.order, slides[index + 1]?.order ?? null);
   };
 
   /** Where a block goes: after `after`, first for null, last when undefined. */
@@ -482,7 +577,11 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     },
     "space.delete": (input) => {
       space(input.spaceId);
-      if (pages(input.spaceId).length > 0 || table(input.spaceId, "image").size > 0) {
+      if (
+        pages(input.spaceId).length > 0 ||
+        table(input.spaceId, "deck").size > 0 ||
+        table(input.spaceId, "image").size > 0
+      ) {
         refuse("not_empty", "Empty the Space, trash included, before deleting it.");
       }
       commit("spaces", [["space", input.spaceId, { d: true }]]);
@@ -639,6 +738,35 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
       commit(`space:${input.spaceId}`, [["block", added.id, { s: added }]]);
       return { block: added };
     },
+    // HalC2.Space.Visualize's refusals, and the chart stored whole, in place or as a new block.
+    "space.block.visualize": (input, by) => {
+      const target = livePage(input.spaceId, input.pageId);
+      const words = String(input.request).replace(/^\/visualize\s*/, "");
+      const refuseChart = (reason: string, why: string): never => {
+        throw new FakeSpaceRefusal("SpaceChartError", reason, `No chart was drawn: ${why}`);
+      };
+      const generation = mc.generation;
+      if (generation.kind !== "available") refuseChart(generation.kind, generation.message);
+      const drawn = mc.chart ?? refuseChart("unanswerable", "neither answers that.");
+      const chart = { ...drawn, request: words };
+      const fields = { text: `${drawn.title} (a chart; ${drawn.source})`, chart };
+      if (input.blockId !== undefined) {
+        const found = liveBlock(input.spaceId, input.blockId);
+        if (found.kind !== "chart") refuse("invalid", "Only a chart can be asked for again.");
+        commit(`space:${input.spaceId}`, [
+          ["block", found.id, { s: { ...fields, updatedBy: by, updatedAt: now() } }],
+        ]);
+        return { block: table(input.spaceId, "block").get(found.id) };
+      }
+      const order = orderAt(input.spaceId, target.id, input.afterBlockId);
+      const added = {
+        ...newBlock(input.spaceId, target.id, { kind: "paragraph", text: "" }, order, by),
+        kind: "chart",
+        ...fields,
+      };
+      commit(`space:${input.spaceId}`, [["block", added.id, { s: added }]]);
+      return { block: added };
+    },
     "space.block.update": (input, by) => {
       const found = liveBlock(input.spaceId, input.blockId);
       if (typeof input.text !== "string") refuse("invalid", "A block's text is a string.");
@@ -697,6 +825,86 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
       };
       commit(`space:${input.spaceId}`, [["comment", entry.id, { s: entry }]]);
       return { comment: entry };
+    },
+    "space.deck.create": (input) => {
+      space(input.spaceId);
+      const title = name(input.title, "A deck needs a title.");
+      return newDeck(input.spaceId, title, [{ title: "", body: "" }]);
+    },
+    "space.deck.createFromPage": (input) => {
+      const from = livePage(input.spaceId, input.pageId);
+      return newDeck(input.spaceId, from.title, sections(input.spaceId, from));
+    },
+    "space.deck.rename": (input) => {
+      const found = liveDeck(input.spaceId, input.deckId);
+      const patch = { title: name(input.title, "A deck needs a title."), updatedAt: now() };
+      commit(`space:${input.spaceId}`, [["deck", found.id, { s: patch }]]);
+      return { deck: table(input.spaceId, "deck").get(found.id) };
+    },
+    "space.deck.trash": (input) => {
+      const found = liveDeck(input.spaceId, input.deckId);
+      commit(`space:${input.spaceId}`, [["deck", found.id, { s: { trashedAt: now() } }]]);
+      return { deck: table(input.spaceId, "deck").get(found.id) };
+    },
+    "space.deck.restore": (input) => {
+      const found = deck(input.spaceId, input.deckId);
+      if (found.trashedAt === null) {
+        refuse("invalid", `The deck "${found.title}" is not in the trash.`);
+      }
+      commit(`space:${input.spaceId}`, [["deck", found.id, { s: { trashedAt: null } }]]);
+      return { deck: table(input.spaceId, "deck").get(found.id) };
+    },
+    "space.deck.delete": (input) => {
+      const found = deck(input.spaceId, input.deckId);
+      if (found.trashedAt === null) {
+        refuse(
+          "invalid",
+          `Only a deck in the trash can be deleted; move "${found.title}" there first.`,
+        );
+      }
+      commit(`space:${input.spaceId}`, [
+        ["deck", found.id, { d: true }],
+        ...slidesOf(input.spaceId, found.id).map(
+          (slide) => ["slide", slide.id, { d: true }] as Change,
+        ),
+      ]);
+      return { deckId: found.id };
+    },
+    "space.slide.insert": (input) => {
+      const target = liveDeck(input.spaceId, input.deckId);
+      const at = now();
+      const slide = {
+        id: nextId("slide"),
+        deckId: target.id,
+        title: input.title ?? "",
+        body: input.body ?? "",
+        order: slideOrderAt(input.spaceId, target.id, input.afterSlideId),
+        createdAt: at,
+        updatedAt: at,
+      };
+      commit(`space:${input.spaceId}`, [["slide", slide.id, { s: slide }]]);
+      return { slide };
+    },
+    "space.slide.update": (input) => {
+      const found = liveSlide(input.spaceId, input.slideId);
+      const patch = {
+        ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.body === undefined ? {} : { body: input.body }),
+        updatedAt: now(),
+      };
+      commit(`space:${input.spaceId}`, [["slide", found.id, { s: patch }]]);
+      return { slide: table(input.spaceId, "slide").get(found.id) };
+    },
+    "space.slide.move": (input) => {
+      const found = liveSlide(input.spaceId, input.slideId);
+      const order = slideOrderAt(input.spaceId, found.deckId, input.afterSlideId, found.id);
+      commit(`space:${input.spaceId}`, [["slide", found.id, { s: { order, updatedAt: now() } }]]);
+      return { slide: table(input.spaceId, "slide").get(found.id) };
+    },
+    "space.slide.delete": (input) => {
+      const found = liveSlide(input.spaceId, input.slideId);
+      commit(`space:${input.spaceId}`, [["slide", found.id, { d: true }]]);
+      return { slideId: found.id };
     },
     "attachments.createUploadUrl": (input) => {
       const attachmentId = nextId("attachment");
@@ -861,6 +1069,10 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     pageNamed: (title) => named("page", "title", title),
     blockNamed: (text) => named("block", "text", text),
     commentNamed: (body) => named("comment", "body", body),
+    deckNamed: (title) => named("deck", "title", title),
+    slideNamed: (title) => named("slide", "title", title),
+    slides: () => all("slide"),
+    decksOf: (spaceId) => [...table(spaceId, "deck").values()],
     imageNamed: (value) => named("image", "name", value),
     imagesOf: (spaceId) => [...table(spaceId, "image").values()],
     seedImage: (spaceId, value) =>
@@ -873,6 +1085,7 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     },
     commentsOf: (pageId) => all("comment").filter((entry) => entry.pageId === pageId),
     generation: { kind: "unavailable", message: "No text generation provider is set up." },
+    chart: null,
     imageGeneration: { kind: "unavailable", message: "No image generation provider is set up." },
     summaries: [],
     refusals: [],

@@ -98,8 +98,11 @@ HomePage 1.0 HomePage.qml
 UsagePage 1.0 UsagePage.qml
 SpaceWorkspace 1.0 SpaceWorkspace.qml
 SpaceSidebar 1.0 SpaceSidebar.qml
+SpaceDeck 1.0 SpaceDeck.qml
 SpacePage 1.0 SpacePage.qml
+SpacePresenter 1.0 SpacePresenter.qml
 SpaceBlock 1.0 SpaceBlock.qml
+SpaceChart 1.0 SpaceChart.qml
 SpaceSlashMenu 1.0 SpaceSlashMenu.qml
 SpaceBlockImage 1.0 SpaceBlockImage.qml
 SpaceImages 1.0 SpaceImages.qml

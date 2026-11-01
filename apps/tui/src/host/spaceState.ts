@@ -1,10 +1,13 @@
-// Spaces and their pages (^X p, palette → Spaces), host side. The pane takes the
-// conversation's place like the file browser, at one of four levels: the Spaces,
-// one Space's page tree with its trash, one page's blocks with their comments, and
-// the Space's images with theirs, listed by name and prompt: a terminal draws none.
+// Spaces and their pages and decks (^X p, palette → Spaces), host side. The pane takes
+// the conversation's place like the file browser, at one of six levels: the Spaces,
+// one Space's page tree with its decks and trash, one page's blocks with their comments,
+// one deck's slides, one slide being presented, and the Space's images with theirs,
+// listed by name and prompt: a terminal draws none.
 // Everything shown comes from the MC's streams (`spaces`, `space:<id>`), so an edit
 // from another client or an agent shows as it lands; the keys only send `space.*`
-// RPCs. The SpaceView brick paints `space` and dispatches `space.*`.
+// RPCs. The SpaceView brick paints `space` and dispatches `space.*`. A chart block
+// draws as text (`spaceChart.ts`) and is asked for in words; an entry taller than the
+// pane, as a chart can be, scrolls through itself before the selection moves on.
 import * as NodePath from "node:path";
 
 import {
@@ -15,11 +18,13 @@ import {
   type SpaceBlock,
   type SpaceBlockKind,
   type SpaceComment,
+  type SpaceDeck,
   type SpaceId,
   type SpaceImage,
   type SpaceImageProvidersResult,
   type SpacePage,
   type SpaceSite,
+  type SpaceSlide,
   spaceStreamId,
   WS_METHODS,
 } from "@hal-c2/contracts";
@@ -39,22 +44,29 @@ import type { AskSpec } from "./askState.ts";
 import type { PickRequest } from "./composerState.ts";
 import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
+import { chartData, chartLines } from "./spaceChart.ts";
 import { chunk, styled, type StyledText } from "./styledText.ts";
 
 /** Rows the pane's border and header take. */
 export const SPACE_CHROME_ROWS = 3;
 
-export type TuiSpaceView = "spaces" | "pages" | "page" | "images";
+export type TuiSpaceView = "spaces" | "pages" | "page" | "deck" | "present" | "images";
 
 export interface TuiSpaceRow {
-  /** `space:<id>`, `page:<id>`, `trash:<id>`, `block:<id>`, `comment:<id>`, `image:<id>`, `imageTrash:<id>`; a wrapped block repeats its key. */
+  /**
+   * `space:<id>`, `page:<id>`, `trash:<id>`, `deck:<id>`, `decktrash:<id>`, `block:<id>`,
+   * `comment:<id>`, `slide:<id>`, `image:<id>`, `imageTrash:<id>`; a wrapped block or a
+   * slide's body repeats its key.
+   */
   readonly key: string;
   readonly kind:
     | "space"
     | "page"
+    | "deck"
     | "trashed"
     | "block"
     | "comment"
+    | "slide"
     | "image"
     | "trashedImage"
     | "label";
@@ -75,7 +87,10 @@ export interface TuiSpaceRow {
 export interface TuiSpaceState {
   readonly open: boolean;
   readonly view: TuiSpaceView;
-  /** The header: `spaces`, `space · Research`, `page · Roadmap`, in accent; then the keys, dimmed. */
+  /**
+   * The header: `spaces`, `space · Research`, `page · Roadmap`, `deck · Pitch`,
+   * `present · Pitch · 2 / 3`, in accent; then the keys, dimmed.
+   */
   readonly title: string;
   readonly hint: string;
   readonly status: "loading" | "ready" | "error";
@@ -138,10 +153,21 @@ const CLOSED: TuiSpaceState = {
 const HINTS: Record<TuiSpaceView, string> = {
   spaces: "  ⏎ open · n new · e rename · d delete · esc close",
   pages:
-    "  ⏎ open · n new · a subpage · e rename · m move · d trash · r restore · D delete · i import · t from thread · v images · esc back",
-  page: "  ⏎ edit · n add · c comment · x tick/resolve · m move · d delete · l link · y copy · p publish · v images · esc back",
+    "  ⏎ open · n new · s new deck · S deck from page · a subpage · e rename · m move · d trash · r restore · D delete · p present a deck, publish a page · i import · t from thread · v images · esc back",
+  page: "  ⏎ edit · n add · g chart · c comment · x tick/resolve · m move · d delete · l link · y copy · S deck · p publish · v images · esc back",
+  deck: "  ⏎ edit · n add · m move · d delete · p present · r restore · v images · esc back",
+  present: "  → next · ← back · pgup/pgdn scroll · esc leave",
   images: "  n generate · i add a file · d trash · r restore · D delete · esc back",
 };
+
+const UNTITLED = "(untitled)";
+
+/** A slide's body for the one-line field: a line break is `\n`, a backslash `\\`, all else as written. */
+const bodyToField = (body: string) => body.replaceAll("\\", "\\\\").replaceAll("\n", "\\n");
+
+/** What `bodyToField` wrote, or typed: a backslash before anything else stays a backslash. */
+const bodyFromField = (text: string) =>
+  text.replace(/\\([\\n])/g, (_, escaped) => (escaped === "n" ? "\n" : "\\"));
 
 export const SITE_BEHIND_HINT = "Edited since it was published · p publishes again";
 export const SITE_LOCAL_ONLY_HINT =
@@ -153,6 +179,7 @@ const BLOCK_KINDS: ReadonlyArray<{ readonly kind: SpaceBlockKind; readonly label
   { kind: "checklist", label: "Checklist item" },
   { kind: "callout", label: "Callout" },
   { kind: "subpage_link", label: "Link to a subpage" },
+  { kind: "chart", label: "Chart" },
   { kind: "image", label: "Image" },
 ];
 
@@ -211,7 +238,7 @@ export function imageTypeOf(bytes: Uint8Array): string | null {
   return null;
 }
 
-const byOrder = (a: SpaceBlock, b: SpaceBlock) =>
+const byOrder = (a: { readonly order: string }, b: { readonly order: string }) =>
   a.order < b.order ? -1 : a.order > b.order ? 1 : 0;
 
 export function createSpaceController(options: SpaceControllerOptions): SpaceController {
@@ -227,17 +254,30 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   let spaceError: string | null = null;
   let unsubscribeSpace: (() => void) | null = null;
   let pageId: string | null = null;
+  let deckId: string | null = null;
+  // The slide on show, by id so a move elsewhere keeps it; its index for when it goes.
+  let shownSlideId: string | null = null;
+  let shownIndex = 0;
   // The level the images were opened from, where Esc goes back to.
-  let imagesFrom: "pages" | "page" = "pages";
+  let imagesFrom: "pages" | "page" | "deck" = "pages";
   // The selected entry per level, by row key, so the selection stays put as rows come and go.
   const selected: Record<TuiSpaceView, string | null> = {
     spaces: null,
     pages: null,
     page: null,
+    deck: null,
+    present: null,
     images: null,
   };
   // The last selected index per level: where the selection lands when its row goes away.
-  const selectedIndex: Record<TuiSpaceView, number> = { spaces: 0, pages: 0, page: 0, images: 0 };
+  const selectedIndex: Record<TuiSpaceView, number> = {
+    spaces: 0,
+    pages: 0,
+    page: 0,
+    deck: 0,
+    present: 0,
+    images: 0,
+  };
   let top = 0;
   // Bumped whenever the open Space or page changes (or the pane closes): a reply
   // that would navigate only does so while its generation is current.
@@ -271,6 +311,13 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     (entitiesOf(space, "comment") as unknown as SpaceComment[]).filter(
       (comment) => comment.pageId === id,
     );
+
+  const decks = (): SpaceDeck[] => entitiesOf(space, "deck") as unknown as SpaceDeck[];
+  const deckById = (id: string | null) => decks().find((deck) => deck.id === id);
+  const slidesOf = (id: string | null): SpaceSlide[] =>
+    (entitiesOf(space, "slide") as unknown as SpaceSlide[])
+      .filter((slide) => slide.deckId === id)
+      .toSorted(byOrder);
 
   /** Neither the page nor a page above it is in the trash. */
   const isLive = (page: SpacePage): boolean => {
@@ -355,6 +402,66 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     first: true,
   });
 
+  /** Its title, its plot with the numbers, and where the numbers came from. */
+  const chartRows = (
+    block: SpaceBlock,
+    chart: NonNullable<ReturnType<typeof chartData>>,
+  ): TuiSpaceRow[] => {
+    const key = `block:${block.id}`;
+    const active = selected.page === key;
+    const bg = active ? { bg: palette.selectedBg } : {};
+    const room = width() - 2;
+    const row = (lead: string, line: StyledText, text: string, first = false): TuiSpaceRow => ({
+      key,
+      kind: "block",
+      text: `${lead}${text}`,
+      line,
+      selected: active,
+      blockKind: block.kind,
+      first,
+    });
+    const agent = agentOf(block);
+    const sources = wrapWords(chart.source === "" ? " " : chart.source, room);
+    return [
+      ...wrapWords(chart.title === "" ? " " : chart.title, room).map((text, index) => {
+        const lead = index === 0 ? marker(active) : "  ";
+        return row(
+          lead,
+          styled(
+            chunk(lead, { fg: palette.dim, ...bg }),
+            chunk(text, { fg: palette.text, bold: true, ...bg }),
+          ),
+          text,
+          index === 0,
+        );
+      }),
+      ...chartLines(chart, room).map(({ words, bar, number, header }) =>
+        row(
+          "  ",
+          styled(
+            chunk("  ", bg),
+            chunk(words, { fg: header ? palette.dim : palette.text, ...bg }),
+            bar !== "" && chunk(bar, { fg: palette.accent, ...bg }),
+            number !== "" && chunk(number, { fg: palette.text, ...bg }),
+          ),
+          `${words}${bar}${number}`,
+        ),
+      ),
+      ...sources.map((text, index) => {
+        const by = index === sources.length - 1 && agent ? `  · ${agent}` : "";
+        return row(
+          "  ",
+          styled(
+            chunk("  ", bg),
+            chunk(text, { fg: palette.dim, ...bg }),
+            by !== "" && chunk(by, { fg: palette.faint, ...bg }),
+          ),
+          `${text}${by}`,
+        );
+      }),
+    ];
+  };
+
   /** A placed image in words. Its caption names it once the image is gone from the stream. */
   const imagePlaceholder = (block: SpaceBlock): string => {
     const image = imageById(block.imageId);
@@ -369,6 +476,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     image.prompt ? `${image.name}  · ${image.prompt}` : image.name;
 
   const blockRows = (block: SpaceBlock): TuiSpaceRow[] => {
+    // A chart this client cannot read shows what it says of itself, as any block does.
+    const chart = block.kind === "chart" ? chartData(block.chart) : null;
+    if (chart) return chartRows(block, chart);
     const key = `block:${block.id}`;
     const active = selected.page === key;
     const linked = block.kind === "subpage_link" ? pageById(block.linkedPageId) : undefined;
@@ -446,6 +556,62 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     };
   };
 
+  /** A slide in its deck: its number and title, then its body. */
+  const slideRows = (slide: SpaceSlide, index: number): TuiSpaceRow[] => {
+    const key = `slide:${slide.id}`;
+    const active = selected.deck === key;
+    const bg = active ? { bg: palette.selectedBg } : {};
+    const head = clip(`${marker(active)}${index + 1}. ${slide.title || UNTITLED}`, width());
+    const lead = "     ";
+    const room = width() - lead.length;
+    const body =
+      slide.body === ""
+        ? []
+        : slide.body.split("\n").flatMap((line) => wrapWords(line === "" ? " " : line, room));
+    return [
+      {
+        key,
+        kind: "slide",
+        text: head,
+        line: styled(
+          chunk(head, { fg: slide.title === "" ? palette.dim : palette.text, bold: true, ...bg }),
+        ),
+        selected: active,
+        first: true,
+      },
+      ...body.map((line): TuiSpaceRow => ({
+        key,
+        kind: "slide",
+        text: `${lead}${line}`,
+        line: styled(chunk(`${lead}${line}`, { fg: palette.dim, ...bg })),
+        selected: active,
+        first: false,
+      })),
+    ];
+  };
+
+  /** The slide on show as text: its title, then its body. Nothing here is selected. */
+  const presenterRows = (): TuiSpaceRow[] => {
+    const slide = slidesOf(deckId)[shownIndex];
+    if (!slide) return [];
+    const row = (text: string, style: Parameters<typeof chunk>[1]): TuiSpaceRow => ({
+      key: `label:${text}`,
+      kind: "label",
+      text,
+      line: styled(chunk(text, style)),
+      selected: false,
+      first: true,
+    });
+    const lines = slide.body === "" ? [] : slide.body.split("\n");
+    return [
+      row(slide.title || UNTITLED, { fg: palette.accent, bold: true }),
+      row(" ", { fg: palette.text }),
+      ...lines
+        .flatMap((line) => wrapWords(line === "" ? " " : line, width()))
+        .map((line) => row(line, { fg: palette.text })),
+    ];
+  };
+
   /** What the open page says about its site: the link, and what the reader would miss. */
   const siteRows = (id: string): TuiSpaceRow[] => {
     const site = siteOf(id);
@@ -466,15 +632,26 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       const rows = liveTree().map(({ page, depth }) =>
         entryRow(`page:${page.id}`, "page", `${"  ".repeat(depth)}${page.title}`, { depth }),
       );
+      const liveDecks = decks().filter((deck) => deck.trashedAt === null);
+      if (liveDecks.length > 0) {
+        rows.push(label("Decks"));
+        for (const deck of liveDecks) rows.push(entryRow(`deck:${deck.id}`, "deck", deck.title));
+      }
       const bin = trashed();
-      if (bin.length > 0) {
+      const deckBin = decks().filter((deck) => deck.trashedAt !== null);
+      if (bin.length > 0 || deckBin.length > 0) {
         rows.push(label("Trash"));
         for (const page of bin) {
           rows.push(entryRow(`trash:${page.id}`, "trashed", page.title, {}, palette.dim));
         }
+        for (const deck of deckBin) {
+          rows.push(entryRow(`decktrash:${deck.id}`, "trashed", deck.title, {}, palette.dim));
+        }
       }
       return rows;
     }
+    if (view === "deck") return slidesOf(deckId).flatMap(slideRows);
+    if (view === "present") return presenterRows();
     if (view === "images") {
       const rows = liveImages().map((image) =>
         entryRow(`image:${image.id}`, "image", imageText(image)),
@@ -538,6 +715,14 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (view === "spaces") return "spaces";
     const name = currentSpace()?.name ?? "";
     if (view === "pages") return `space · ${name}`;
+    if (view === "deck" || view === "present") {
+      const deck = deckById(deckId);
+      if (view === "present") {
+        const position = `${shownIndex + 1} / ${slidesOf(deckId).length}`;
+        return `present · ${deck?.title ?? ""} · ${position}`;
+      }
+      return `deck · ${deck?.title ?? ""}${deck?.trashedAt ? " · in the trash" : ""}`;
+    }
     if (view === "images") return `images · ${name}`;
     const page = pageById(pageId);
     const from = page?.sourceThreadId ? ` · from ${threadTitle(page.sourceThreadId)}` : "";
@@ -569,16 +754,20 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         view === "spaces"
           ? "No Spaces yet · n makes one"
           : view === "pages"
-            ? "No pages yet · n makes one · i imports Markdown · t writes one from a thread"
-            : view === "images"
-              ? "No images yet · n generates one · i adds one from a file"
-              : "An empty page · n adds a block";
+            ? "No pages yet · n makes one · s makes a deck · i imports Markdown · t writes one from a thread"
+            : view === "deck"
+              ? "This deck has no slides · n adds one"
+              : view === "images"
+                ? "No images yet · n generates one · i adds one from a file"
+                : "An empty page · n adds a block";
     }
     // Window the rows around the selection.
     const room = Math.max(1, options.height() - SPACE_CHROME_ROWS - (message === "" ? 0 : 1));
     const first = rows.findIndex((row) => row.selected);
     const last = rows.findLastIndex((row) => row.selected);
-    if (first >= 0) {
+    if (first >= 0 && last - first + 1 > room) {
+      top = Math.max(first, Math.min(top, last - room + 1));
+    } else if (first >= 0) {
       if (first < top) top = first;
       if (last >= top + room) top = Math.max(0, Math.min(first, last - room + 1));
     }
@@ -668,7 +857,27 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       view = "pages";
       top = 0;
     }
+    if ((view === "deck" || view === "present") && space.ready && !deckById(deckId)) {
+      deckId = null;
+      generation += 1;
+      view = "pages";
+      top = 0;
+    }
+    if (view === "present") followShownSlide();
     publish();
+  };
+
+  /** Stays on the slide on show, or the one at its place if it went; a deck that went stops it. */
+  const followShownSlide = () => {
+    const slides = slidesOf(deckId);
+    if (slides.length === 0 || deckById(deckId)?.trashedAt) {
+      view = "deck";
+      top = 0;
+      return;
+    }
+    const at = slides.findIndex((slide) => slide.id === shownSlideId);
+    shownIndex = at >= 0 ? at : Math.min(shownIndex, slides.length - 1);
+    shownSlideId = slides[shownIndex]!.id;
   };
 
   // --- navigation ---
@@ -702,8 +911,67 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     publish();
   };
 
+  /** Opens a deck; `key` is its row in the list (a trashed deck's is `decktrash:<id>`). */
+  const openDeck = (id: string, key = `deck:${id}`) => {
+    generation += 1;
+    if (deckId !== id) {
+      selected.deck = null;
+      selectedIndex.deck = 0;
+    }
+    deckId = id;
+    selected.pages = key;
+    view = "deck";
+    top = 0;
+    publish();
+  };
+
+  /** Shows a deck's first slide, or says why it cannot. */
+  const present = () => {
+    const entry = selectedEntry();
+    const id =
+      view === "deck"
+        ? deckId
+        : entry?.kind === "deck" || entry?.kind === "decktrash"
+          ? entry.id
+          : null;
+    if (id === null) {
+      options.status("Select a deck to present it.", "info");
+      return;
+    }
+    const slides = slidesOf(id);
+    if (deckById(id)?.trashedAt) {
+      options.status("Restore this deck from the trash to present it.", "info");
+    } else if (slides.length === 0) {
+      options.status("This deck has no slides to present.", "info");
+    } else {
+      if (view !== "deck") openDeck(id);
+      shownSlideId = slides[0]!.id;
+      shownIndex = 0;
+      view = "present";
+      top = 0;
+      publish();
+    }
+  };
+
+  /** One slide on or back; stops at either end. */
+  const stepSlide = (by: number) => {
+    const slides = slidesOf(deckId);
+    const next = Math.max(0, Math.min(slides.length - 1, shownIndex + by));
+    if (next === shownIndex) return;
+    shownIndex = next;
+    shownSlideId = slides[next]!.id;
+    top = 0;
+    publish();
+  };
+
+  const leavePresenter = () => {
+    view = "deck";
+    top = 0;
+    publish();
+  };
+
   const showImages = () => {
-    if (view === "images") return;
+    if (view === "images" || view === "present") return;
     if (view === "spaces") {
       options.status("Open a Space to see its images.", "info");
       return;
@@ -719,6 +987,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     stopSpace();
     spaceId = null;
     pageId = null;
+    deckId = null;
     view = "spaces";
     top = 0;
   };
@@ -751,10 +1020,15 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   /** Esc and ←: up a level; closes from the Spaces. */
   const back = () => {
     if (view === "images") {
-      view = imagesFrom === "page" && pageById(pageId) ? "page" : "pages";
+      view =
+        imagesFrom === "page" && pageById(pageId)
+          ? "page"
+          : imagesFrom === "deck" && deckById(deckId)
+            ? "deck"
+            : "pages";
       top = 0;
       publish();
-    } else if (view === "page") {
+    } else if (view === "page" || view === "deck") {
       generation += 1;
       view = "pages";
       top = 0;
@@ -768,8 +1042,21 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   const move = (delta: number) => {
-    const keys = entryKeys(allRows());
+    const rows = allRows();
+    const keys = entryKeys(rows);
     if (keys.length === 0) return;
+    // The rest of an entry taller than the pane comes before the next entry.
+    const first = rows.findIndex((row) => row.selected);
+    const last = rows.findLastIndex((row) => row.selected);
+    const room = Math.max(1, options.height() - SPACE_CHROME_ROWS);
+    if (first >= 0 && last - first + 1 > room) {
+      const within = Math.max(first, Math.min(last - room + 1, top + delta));
+      if (within !== top) {
+        top = within;
+        publish();
+        return;
+      }
+    }
     const index = keys.indexOf(selected[view] ?? "");
     const next = Math.max(0, Math.min(keys.length - 1, (index < 0 ? 0 : index) + delta));
     selected[view] = keys[next] ?? null;
@@ -794,6 +1081,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (!entry) return;
     if (entry.kind === "space") openSpace(entry.id);
     else if (entry.kind === "page") openPage(entry.id);
+    else if (entry.kind === "deck") openDeck(entry.id);
+    else if (entry.kind === "decktrash") {
+      openDeck(entry.id, `decktrash:${entry.id}`);
+      options.status("This deck is in the trash: r restores it.", "info");
+    } else if (entry.kind === "slide") edit();
     else if (entry.kind === "trash") {
       // To read it: the MC refuses edits to a page in the trash, and r restores it from here.
       openPage(entry.id, `trash:${entry.id}`);
@@ -821,8 +1113,104 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         },
       });
     } else if (view === "pages") newPage(null);
+    else if (view === "deck") addSlide();
     else if (view === "images") askGenerateImage();
     else addBlock();
+  };
+
+  const newDeck = () => {
+    const id = spaceId;
+    if (view !== "pages" || id === null) {
+      options.status("Open a Space to make a deck in it.", "info");
+      return;
+    }
+    const asked = generation;
+    options.ask({
+      label: "new deck",
+      placeholder: "title",
+      onSubmit: (title) => {
+        void send<{ deck: SpaceDeck }>(WS_METHODS.spaceDeckCreate, { spaceId: id, title }).then(
+          (result) => {
+            if (result && asked === generation && spaceId === id) openDeck(result.deck.id);
+          },
+        );
+      },
+    });
+  };
+
+  /** A deck copied from the open page or the one selected; the MC refuses one in the trash. */
+  const deckFromPage = () => {
+    const id = spaceId;
+    const page = pageInView();
+    if (id === null || page === null) {
+      options.status("Open or select a page to make a deck from it.", "info");
+      return;
+    }
+    const asked = generation;
+    void send<{ deck: SpaceDeck }>(WS_METHODS.spaceDeckCreateFromPage, {
+      spaceId: id,
+      pageId: page,
+    }).then((result) => {
+      if (result && asked === generation && spaceId === id) openDeck(result.deck.id);
+    });
+  };
+
+  /** A new slide after the selected one, or last with none selected. */
+  const addSlide = () => {
+    const id = spaceId;
+    const deck = deckId;
+    if (id === null || deck === null) return;
+    const entry = selectedEntry();
+    const after = entry?.kind === "slide" ? entry.id : null;
+    const asked = generation;
+    options.ask({
+      label: "new slide",
+      placeholder: "title",
+      onSubmit: (title) => {
+        void send<{ slide: SpaceSlide }>(WS_METHODS.spaceSlideInsert, {
+          spaceId: id,
+          deckId: deck,
+          title,
+          body: "",
+          ...(after === null ? {} : { afterSlideId: after }),
+        }).then((result) => {
+          if (result && asked === generation && deckId === deck) {
+            selected.deck = `slide:${result.slide.id}`;
+            publish();
+          }
+        });
+      },
+    });
+  };
+
+  /** Its title, then its body on one line; Esc at the body keeps the new title. */
+  const editSlide = (id: string) => {
+    const slide = slidesOf(deckId).find((candidate) => candidate.id === id);
+    if (!slide) return;
+    const body = bodyToField(slide.body);
+    options.ask({
+      label: "slide title",
+      value: slide.title,
+      onSubmit: (title) => {
+        if (title !== slide.title) {
+          void send(WS_METHODS.spaceSlideUpdate, { spaceId, slideId: id, title });
+        }
+        options.ask({
+          label: "slide body, \\n for a new line",
+          value: body,
+          onSubmit: (text) => {
+            // The answer comes trimmed: a body left as it was is not an edit.
+            if (text !== body.trim()) {
+              void send(WS_METHODS.spaceSlideUpdate, {
+                spaceId,
+                slideId: id,
+                body: bodyFromField(text),
+              });
+            }
+          },
+        });
+      },
+    });
   };
 
   const newPage = (parentPageId: string | null) => {
@@ -898,6 +1286,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           link();
           return;
         }
+        if (kind === "chart") {
+          visualize(false);
+          return;
+        }
         if (kind === "image") {
           placeImage();
           return;
@@ -907,6 +1299,50 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           label: name,
           placeholder: "text",
           onSubmit: (text) => insertBlock({ kind, text }),
+        });
+      },
+    });
+  };
+
+  /**
+   * Asks the MC for a chart in the user's words. On a chart it asks again, starting from
+   * the words that chart was asked for in, and replaces it; elsewhere a new chart goes
+   * where a new block would, as it always does from the add menu (`again` false). The MC
+   * draws it or says why not, and the stream shows it.
+   */
+  const visualize = (again = true) => {
+    const id = spaceId;
+    const page = pageId;
+    if (view !== "page" || id === null || page === null) {
+      options.status("Open a page to ask for a chart.", "info");
+      return;
+    }
+    const entry = selectedEntry();
+    const replacing =
+      again && entry?.kind === "block"
+        ? blocksOf(page).find((block) => block.id === entry.id && block.kind === "chart")
+        : undefined;
+    const asked = generation;
+    options.ask({
+      label: replacing ? "ask again" : "chart",
+      placeholder: "what should it show?",
+      ...(replacing ? { value: chartData(replacing.chart)?.request ?? "" } : {}),
+      onSubmit: (request) => {
+        const after = replacing ? null : anchorBlock();
+        options.status("Drawing a chart…", "info");
+        void send<{ block: SpaceBlock }>(WS_METHODS.spaceBlockVisualize, {
+          spaceId: id,
+          pageId: page,
+          request,
+          ...(replacing ? { blockId: replacing.id } : {}),
+          ...(after === null ? {} : { afterBlockId: after }),
+        }).then((result) => {
+          if (!result) return;
+          options.status(`Drew “${chartData(result.block.chart)?.title ?? "a chart"}”.`, "info");
+          if (asked === generation && pageId === page) {
+            selected.page = `block:${result.block.id}`;
+            publish();
+          }
         });
       },
     });
@@ -970,11 +1406,25 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           void send(WS_METHODS.spacePageRename, { spaceId: id, pageId: entry.id, title });
         },
       });
+    } else if (entry.kind === "deck" || entry.kind === "decktrash") {
+      options.ask({
+        label: "rename deck",
+        value: deckById(entry.id)?.title ?? "",
+        onSubmit: (title) => {
+          void send(WS_METHODS.spaceDeckRename, { spaceId, deckId: entry.id, title });
+        },
+      });
+    } else if (entry.kind === "slide") {
+      editSlide(entry.id);
     } else if (entry.kind === "block") {
       const id = spaceId;
       const block = blocksOf(pageId ?? "").find((candidate) => candidate.id === entry.id);
       if (block?.kind === "subpage_link") {
         options.status("A link shows its page's title: rename the page instead.", "info");
+        return;
+      }
+      if (block?.kind === "chart") {
+        visualize();
         return;
       }
       options.ask({
@@ -997,8 +1447,14 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       void send(WS_METHODS.spacePageTrash, { spaceId: id, pageId: entry.id }).then((result) => {
         if (result) options.status("Moved to the trash: r restores it.", "info");
       });
-    } else if (entry.kind === "trash") {
+    } else if (entry.kind === "deck") {
+      void send(WS_METHODS.spaceDeckTrash, { spaceId: id, deckId: entry.id }).then((result) => {
+        if (result) options.status("Moved to the trash: r restores it.", "info");
+      });
+    } else if (entry.kind === "trash" || entry.kind === "decktrash") {
       deleteForGood();
+    } else if (entry.kind === "slide") {
+      void send(WS_METHODS.spaceSlideDelete, { spaceId: id, slideId: entry.id });
     } else if (entry.kind === "block") {
       void send(WS_METHODS.spaceBlockDelete, { spaceId: id, blockId: entry.id });
     } else if (entry.kind === "comment") {
@@ -1019,6 +1475,21 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   const deleteForGood = () => {
     const entry = selectedEntry();
     const id = spaceId;
+    if (view === "pages" && (entry?.kind === "deck" || entry?.kind === "decktrash")) {
+      options.menu({
+        title: `Delete “${deckById(entry.id)?.title ?? "this deck"}” for good, with its slides?`,
+        options: [
+          { label: entry.kind === "decktrash" ? "Keep it in the trash" : "Keep it", value: "keep" },
+          { label: "Delete for good", value: "delete" },
+        ],
+        onChoose: (value) => {
+          if (value === "delete") {
+            void send(WS_METHODS.spaceDeckDelete, { spaceId: id, deckId: entry.id });
+          }
+        },
+      });
+      return;
+    }
     if (view === "images") {
       if (entry) deleteImageForGood(entry);
       return;
@@ -1068,6 +1539,12 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       } else options.status("Only an image in the trash can be restored.", "info");
     } else if (entry?.kind === "trash") {
       void send(WS_METHODS.spacePageRestore, { spaceId, pageId: entry.id });
+    } else if (entry?.kind === "decktrash") {
+      void send(WS_METHODS.spaceDeckRestore, { spaceId, deckId: entry.id });
+    } else if (view === "deck") {
+      if (deckById(deckId)?.trashedAt) {
+        void send(WS_METHODS.spaceDeckRestore, { spaceId, deckId });
+      } else options.status("Only a deck in the trash can be restored.", "info");
     } else if (view === "page" && pageId !== null && !isLive(pageById(pageId)!)) {
       void send(WS_METHODS.spacePageRestore, { spaceId, pageId });
     } else options.status("Only a page in the trash can be restored.", "info");
@@ -1156,6 +1633,28 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           void send(WS_METHODS.spaceBlockMove, { spaceId, blockId: block.id, afterBlockId });
         },
       });
+    } else if (entry.kind === "slide") {
+      const slides = slidesOf(deckId);
+      const slide = slides.find((candidate) => candidate.id === entry.id);
+      if (!slide) return;
+      const others = slides.filter((candidate) => candidate.id !== slide.id);
+      options.menu({
+        title: `Move “${slide.title || UNTITLED}”`,
+        options: [
+          ...others.map((target) => ({
+            label: `Before “${target.title || UNTITLED}”`,
+            value: target.id,
+          })),
+          { label: "To the end", value: "" },
+        ],
+        onChoose: (before) => {
+          // Before a slide is after the one ahead of it, first when there is none.
+          const index = others.findIndex((target) => target.id === before);
+          const afterSlideId =
+            before === "" ? (others.at(-1)?.id ?? null) : index > 0 ? others[index - 1]!.id : null;
+          void send(WS_METHODS.spaceSlideMove, { spaceId, slideId: slide.id, afterSlideId });
+        },
+      });
     }
   };
 
@@ -1223,6 +1722,16 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     void send(WS_METHODS.spacePageUnpublish, { spaceId, pageId: page }).then((result) => {
       if (result) options.status("Unpublished: the link no longer opens.", "info");
     });
+  };
+
+  /** `p`: presents the deck in view or selected, and publishes a page. */
+  const presentOrPublish = () => {
+    const kind = selectedEntry()?.kind;
+    if (view === "page" || (view === "pages" && kind !== "deck" && kind !== "decktrash")) {
+      publishSite(false);
+    } else {
+      present();
+    }
   };
 
   /** The palette's way to what p, P, Y and u do on the page in view. */
@@ -1455,6 +1964,24 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   const page = (delta: number) =>
     move(delta * Math.max(1, options.height() - SPACE_CHROME_ROWS - 1));
 
+  /** A slide longer than the pane scrolls; `publish` keeps it in range. */
+  const scrollSlide = (delta: number) => {
+    top = Math.max(0, top + delta * Math.max(1, options.height() - SPACE_CHROME_ROWS));
+    publish();
+  };
+
+  // The keys while a slide is on show. Those not here do nothing until the user leaves.
+  const presenterActions: Record<string, () => void> = {
+    "space.next": () => stepSlide(1),
+    "space.activate": () => stepSlide(1),
+    "space.tick": () => stepSlide(1),
+    "space.previous": () => stepSlide(-1),
+    "space.back": () => stepSlide(-1),
+    "space.pageUp": () => scrollSlide(-1),
+    "space.pageDown": () => scrollSlide(1),
+    "space.leave": leavePresenter,
+  };
+
   /** The actions that need the pane open on a level. */
   const inView = (fn: () => void) => () => {
     if (open) fn();
@@ -1481,6 +2008,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.pageDown": inView(() => page(1)),
     "space.activate": inView(activate),
     "space.back": inView(back),
+    "space.leave": inView(back),
     "space.new": inView(newEntry),
     "space.newInside": inView(newSubpage),
     "space.edit": inView(edit),
@@ -1498,6 +2026,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.unpublish": inView(unpublishSite),
     "space.import": inView(importMarkdown),
     "space.fromThread": inView(fromThread),
+    "space.visualize": inView(visualize),
+    "space.newDeck": inView(newDeck),
+    "space.deckFromPage": inView(deckFromPage),
+    "space.present": inView(present),
+    "space.presentOrPublish": inView(presentOrPublish),
     "space.images": inView(showImages),
     "space.select": (payload) => {
       if (!open) return false;
@@ -1513,7 +2046,14 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   options.publish(CLOSED);
 
   return {
-    dispatch: (action, payload) => actions[action]?.(payload) ?? false,
+    dispatch: (action, payload) => {
+      if (open && view === "present" && !["space.close", "space.toggle"].includes(action)) {
+        const run = presenterActions[action];
+        if (run) run();
+        if (run || action in actions) return true;
+      }
+      return actions[action]?.(payload) ?? false;
+    },
     close,
     isOpen: () => open,
     mode: () => "space",
@@ -1543,8 +2083,27 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Import a Markdown file as a page", action: "space.import" },
           { title: "Write a page from a thread", action: "space.fromThread" },
           { title: "Copy page as Markdown", action: "space.export" },
+          { title: "New deck", action: "space.newDeck" },
+          { title: "Make a deck from the selected page", action: "space.deckFromPage" },
+          { title: "Present the selected deck", action: "space.present" },
           ...siteCommands(),
           { title: "Images in this Space", action: "space.images" },
+        );
+      } else if (view === "deck") {
+        entries.push(
+          { title: "Add a slide", action: "space.new" },
+          { title: "Edit slide", action: "space.edit" },
+          { title: "Move slide", action: "space.move" },
+          { title: "Delete slide", action: "space.delete" },
+          { title: "Present deck", action: "space.present" },
+          { title: "Restore deck from the trash", action: "space.restore" },
+          { title: "Images in this Space", action: "space.images" },
+        );
+      } else if (view === "present") {
+        entries.push(
+          { title: "Next slide", action: "space.next" },
+          { title: "Previous slide", action: "space.previous" },
+          { title: "Leave the presenter", action: "space.leave" },
         );
       } else if (view === "images") {
         entries.push(
@@ -1557,6 +2116,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       } else {
         entries.push(
           { title: "Add a block", action: "space.new" },
+          {
+            title: "Ask for a chart, or ask again for the selected one",
+            action: "space.visualize",
+          },
           { title: "Edit block", action: "space.edit" },
           { title: "Move block", action: "space.move" },
           { title: "Delete block", action: "space.delete" },
@@ -1564,6 +2127,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Comment on the block", action: "space.comment" },
           { title: "Link a subpage", action: "space.link" },
           { title: "Copy page as Markdown", action: "space.export" },
+          { title: "Make a deck from this page", action: "space.deckFromPage" },
           { title: "Restore page from the trash", action: "space.restore" },
           ...siteCommands(),
           { title: "Images in this Space", action: "space.images" },

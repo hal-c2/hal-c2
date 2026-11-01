@@ -1,13 +1,14 @@
 defmodule HalC2.Space do
   @moduledoc """
-  Spaces: Pages that people and agents write together (`features/space/`).
+  Spaces: Pages that people and agents write together, and slide decks
+  (`features/space/`).
 
   The `spaces` stream indexes the Spaces, one `space` entity each, and each Space's
-  own `space:<id>` stream holds its `page`, `block`, `comment`, `image` and `site` entities.
-  Every change is a `HalC2.Streams.transact/3` on one of them, so the event log is the
-  only record and clients follow both streams through the stream shape. The decisions
-  live in `HalC2.Space.Pages`, `HalC2.Space.Blocks`, `HalC2.Space.Images` and
-  `HalC2.Space.Sites`.
+  own `space:<id>` stream holds its `page`, `block`, `comment`, `image`, `site`, `deck` and
+  `slide` entities. Every change is a `HalC2.Streams.transact/3` on one of them, so the
+  event log is the only record and clients follow both streams through the stream shape.
+  The decisions live in `HalC2.Space.Pages`, `HalC2.Space.Blocks`, `HalC2.Space.Images`,
+  `HalC2.Space.Sites` and `HalC2.Space.Decks`.
 
   An image's bytes are the one thing not in the log: they are a file
   (`HalC2.Space.ImageFile`), written before the entity that names it and removed after
@@ -20,7 +21,19 @@ defmodule HalC2.Space do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState, Streams}
-  alias HalC2.Space.{Blocks, ImageFile, ImageGeneration, Images, Markdown, Pages, Sites}
+
+  alias HalC2.Space.{
+    Blocks,
+    Chart,
+    Decks,
+    ImageFile,
+    ImageGeneration,
+    Images,
+    Markdown,
+    Pages,
+    Sites,
+    Visualize
+  }
 
   @index "spaces"
 
@@ -94,11 +107,11 @@ defmodule HalC2.Space do
     end
   end
 
-  @doc "Deletes a Space with no pages or images, in the trash or out of it."
+  @doc "Deletes a Space with no pages, decks or images, in the trash or out of it."
   def delete(id) do
-    # Decided in the Space's stream, so no page can be made in it meanwhile.
+    # Decided in the Space's stream, so nothing can be made in it meanwhile.
     Streams.transact(stream_id(id), :space, fn state ->
-      if StreamState.get(state, "page") == %{} and StreamState.get(state, "image") == %{} do
+      if Enum.all?(~w(page deck image), &(StreamState.get(state, &1) == %{})) do
         reply =
           Streams.transact(@index, :space, fn index ->
             if StreamState.get(index, "space")[id],
@@ -186,11 +199,55 @@ defmodule HalC2.Space do
 
   def delete_block(space_id, id), do: transact(space_id, &Blocks.delete(&1, id))
 
+  @doc """
+  Draws a chart that answers `request` on a page (`HalC2.Space.Visualize`): a new block
+  placed by `after_id`, or, with `block_id`, in place of that chart. The model is asked
+  outside the stream, so nothing waits on it; when it cannot answer, the page is as it was.
+  """
+  def visualize(space_id, page_id, request, block_id \\ nil, after_id \\ :last, author \\ @user) do
+    with {:ok, request} <- chart_request(request),
+         {:ok, state} <- state(space_id),
+         {:ok, page} <- Blocks.chart_place(state, page_id, block_id),
+         {:ok, chart} <- Visualize.answer(request, page, Blocks.of_page(state, page_id)) do
+      put_chart(space_id, page_id, chart, block_id, after_id, author)
+    end
+  end
+
+  @doc "Writes a chart as `visualize/6` does, deciding again: the page may have changed."
+  def put_chart(space_id, page_id, chart, block_id, after_id \\ :last, author \\ @user) do
+    transact(space_id, &Blocks.put_chart(&1, page_id, chart, block_id, after_id, author))
+  end
+
+  defp chart_request(request) do
+    with {:error, message} <- Chart.request(request), do: {:error, :invalid, message}
+  end
+
   def add_comment(space_id, page_id, block_id, body, author \\ @user),
     do: transact(space_id, &Blocks.comment(&1, page_id, block_id, body, author))
 
   def resolve_comment(space_id, id), do: transact(space_id, &Blocks.resolve(&1, id))
   def reopen_comment(space_id, id), do: transact(space_id, &Blocks.reopen(&1, id))
+
+  def create_deck(space_id, title), do: transact(space_id, &Decks.create(&1, space_id, title))
+
+  def create_deck_from_page(space_id, page_id),
+    do: transact(space_id, &Decks.create_from_page(&1, space_id, page_id))
+
+  def rename_deck(space_id, id, title), do: transact(space_id, &Decks.rename(&1, id, title))
+  def trash_deck(space_id, id), do: transact(space_id, &Decks.trash(&1, id))
+  def restore_deck(space_id, id), do: transact(space_id, &Decks.restore(&1, id))
+  def delete_deck(space_id, id), do: transact(space_id, &Decks.delete(&1, id))
+
+  def insert_slide(space_id, deck_id, spec, after_id \\ :last),
+    do: transact(space_id, &Decks.insert_slide(&1, deck_id, spec, after_id))
+
+  def update_slide(space_id, id, fields),
+    do: transact(space_id, &Decks.update_slide(&1, id, fields))
+
+  def move_slide(space_id, id, after_id),
+    do: transact(space_id, &Decks.move_slide(&1, id, after_id))
+
+  def delete_slide(space_id, id), do: transact(space_id, &Decks.delete_slide(&1, id))
 
   @doc "A page with its blocks and comments, trashed or not."
   def page(space_id, page_id) do

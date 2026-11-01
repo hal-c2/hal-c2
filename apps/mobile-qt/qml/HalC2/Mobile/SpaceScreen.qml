@@ -8,7 +8,7 @@ import HalC2.Shell
 import HalC2.Bricks
 
 // The Spaces in the phone layout, one step at a time: the list of Spaces, a
-// Space's pages or images, a page, its comments. Everything shown is SpaceController's
+// Space's pages and decks or images, a page, its comments, a deck. Everything shown is SpaceController's
 // (`Spaces`) and everything done is its actions; which step shows is the only
 // thing kept here, because the controller always has a page selected, opened
 // by the user or not.
@@ -19,18 +19,22 @@ Item {
     // A page the user asked for here is on its way (new or imported): it opens
     // when the controller selects it.
     property bool pageExpected: false
+    // The same for a deck the user asked for here.
+    property bool deckExpected: false
     // A page written from a thread, opened when it arrives and no other.
     property string awaitedPageId: ""
     property string openedSpaceId: ""
     property string openedPageId: ""
+    property string openedDeckId: ""
     // The step this screen was on before a layout change made it again.
     property var resumeStep: null
-    readonly property var step: ({ view: view, spaceId: openedSpaceId, pageId: openedPageId })
+    readonly property var step: ({ view: view, spaceId: openedSpaceId, pageId: openedPageId, deckId: openedDeckId })
     // What the controller already holds when the screen loads is no arrival:
     // the bindings report it as a change while the screen is being made.
     property bool settled: false
     readonly property string spaceId: Spaces.spaceId
     readonly property string pageId: Spaces.pageId
+    readonly property string deckId: Spaces.deckId
     readonly property string error: (Shell.state.space ?? {}).error ?? ""
     // Signing an address for every image lasts only as long as they are on screen.
     readonly property bool browsingImages: view === "images" && visible
@@ -46,9 +50,11 @@ Item {
     // One step back within the screen; false at its first step.
     function stepBack() {
         forceActiveFocus();
-        if (view === "comments")
+        if (Spaces.presenting)
+            Shell.dispatch("space.deck.leave", {});
+        else if (view === "comments")
             view = "page";
-        else if (view === "page")
+        else if (view === "page" || view === "deck")
             view = "pages";
         else if (view === "images")
             view = "pages";
@@ -62,6 +68,7 @@ Item {
     function openSpace(id) {
         if (id !== spaceId) {
             pageExpected = false;
+            deckExpected = false;
             awaitDropped();
         }
         openedSpaceId = id;
@@ -156,6 +163,7 @@ Item {
             { id: "into", label: qsTr("Move into…"), icon: "folder" },
             { id: "top", label: qsTr("Move to the top"), icon: "arrow-up", enabled: parentPageId !== "" },
             { id: "copy", label: qsTr("Copy as Markdown"), icon: "copy" },
+            { id: "deck", label: qsTr("Make a deck"), icon: "play" },
             { id: "trash", label: qsTr("Move to trash"), icon: "trash", destructive: true }
         ]), choice => {
             if (choice === "publish") {
@@ -176,6 +184,9 @@ Item {
                 Shell.dispatch("space.page.move", { pageId: id, parentPageId: "" });
             } else if (choice === "copy") {
                 Shell.dispatch("space.page.copyMarkdown", { pageId: id });
+            } else if (choice === "deck") {
+                deckExpected = true;
+                Shell.dispatch("space.deck.createFromPage", { pageId: id });
             } else {
                 Shell.dispatch("space.page.trash", { pageId: id });
                 view = "pages";
@@ -217,10 +228,13 @@ Item {
             { id: "checklist", label: qsTr("Checklist"), icon: "square-check" },
             { id: "callout", label: qsTr("Callout"), icon: "info" },
             { id: "subpage_link", label: qsTr("Subpage link"), icon: "link" },
+            { id: "chart", label: qsTr("Chart"), icon: "chart-no-axes-column" },
             { id: "image", label: qsTr("Image"), icon: "image" }
         ], kind => {
             if (kind === "subpage_link")
                 pickLink(afterBlockId);
+            else if (kind === "chart")
+                askChart({ afterBlockId: afterBlockId });
             else if (kind === "image")
                 pickImage(afterBlockId);
             else
@@ -259,6 +273,19 @@ Item {
         });
     }
 
+    // A chart for the page: `where` holds the block it goes after, or the chart
+    // it replaces with the words that chart was asked for in.
+    function askChart(where, request) {
+        text.ask({ title: where.blockId === undefined ? qsTr("New chart") : qsTr("Ask again"), placeholder: qsTr("What should it show?"), text: request ?? "", action: qsTr("Draw") }, asked => {
+            const payload = { pageId: Spaces.pageId, request: asked };
+            if (where.blockId !== undefined)
+                payload.blockId = where.blockId;
+            else if (where.afterBlockId !== undefined)
+                payload.afterBlockId = where.afterBlockId;
+            Shell.dispatch("space.block.visualize", payload);
+        });
+    }
+
     function insert(block, afterBlockId) {
         const payload = Object.assign({ pageId: Spaces.pageId, checked: false }, block);
         if (afterBlockId !== undefined)
@@ -266,16 +293,20 @@ Item {
         Shell.dispatch("space.block.insert", payload);
     }
 
-    function blockMenu(row, id, said) {
+    // `chartRequest` is what a chart was asked for with; other blocks have none.
+    function blockMenu(row, id, said, chartRequest) {
         const blockAt = at => Spaces.blocks.get(at).id;
-        sheet.ask([
+        const again = chartRequest === undefined ? [] : [{ id: "again", label: qsTr("Ask again"), icon: "refresh-cw" }];
+        sheet.ask(again.concat([
             { id: "up", label: qsTr("Move up"), icon: "arrow-up", enabled: row > 0 },
             { id: "down", label: qsTr("Move down"), icon: "arrow-down", enabled: row < Spaces.blocks.count - 1 },
             { id: "below", label: qsTr("Add a block below"), icon: "plus" },
             { id: "comment", label: qsTr("Comment"), icon: "message-square-plus" },
             { id: "delete", label: qsTr("Delete"), icon: "trash", destructive: true }
-        ], choice => {
-            if (choice === "up")
+        ]), choice => {
+            if (choice === "again")
+                askChart({ blockId: id }, chartRequest);
+            else if (choice === "up")
                 Shell.dispatch("space.block.move", { blockId: id, afterBlockId: row > 1 ? blockAt(row - 2) : "" });
             else if (choice === "down")
                 Shell.dispatch("space.block.move", { blockId: id, afterBlockId: blockAt(row + 1) });
@@ -285,6 +316,80 @@ Item {
                 askComment(id);
             else
                 Shell.dispatch("space.block.delete", { blockId: id });
+        });
+    }
+
+    function openDeck(id) {
+        forceActiveFocus();
+        openedSpaceId = Spaces.spaceId;
+        openedDeckId = id;
+        Shell.dispatch("space.selectDeck", { deckId: id });
+        view = "deck";
+    }
+
+    function askNewDeck() {
+        text.ask({ title: qsTr("New deck"), placeholder: qsTr("Title"), action: qsTr("Create") }, title => {
+            deckExpected = true;
+            Shell.dispatch("space.deck.create", { title: title });
+        });
+    }
+
+    function present(id) {
+        forceActiveFocus();
+        Shell.dispatch("space.deck.present", { deckId: id });
+    }
+
+    function deckMenu(id, title) {
+        sheet.ask([
+            { id: "present", label: qsTr("Present"), icon: "play" },
+            { id: "rename", label: qsTr("Rename"), icon: "pencil" },
+            { id: "trash", label: qsTr("Move to trash"), icon: "trash", destructive: true }
+        ], choice => {
+            if (choice === "present") {
+                present(id);
+            } else if (choice === "rename") {
+                const space = Spaces.spaceId;
+                text.ask({ title: qsTr("Rename deck"), placeholder: qsTr("Title"), text: title, action: qsTr("Rename") }, renamed => Shell.dispatch("space.deck.rename", { spaceId: space, deckId: id, title: renamed }));
+            } else {
+                Shell.dispatch("space.deck.trash", { deckId: id });
+                view = "pages";
+            }
+        });
+    }
+
+    function deckTrashMenu(id) {
+        sheet.ask([
+            { id: "restore", label: qsTr("Restore"), icon: "archive-restore" },
+            { id: "delete", label: qsTr("Delete for good"), icon: "trash", destructive: true }
+        ], choice => Shell.dispatch(choice === "restore" ? "space.deck.restore" : "space.deck.delete", { deckId: id }));
+    }
+
+    // `afterSlideId` is where the new slide goes (undefined: last).
+    function askNewSlide(afterSlideId) {
+        text.ask({ title: qsTr("New slide"), placeholder: qsTr("Title"), action: qsTr("Add") }, title => {
+            const payload = { deckId: Spaces.deckId, title: title, body: "" };
+            if (afterSlideId !== undefined)
+                payload.afterSlideId = afterSlideId;
+            Shell.dispatch("space.slide.insert", payload);
+        });
+    }
+
+    function slideMenu(row, id) {
+        const slideAt = at => Spaces.slides.get(at).id;
+        sheet.ask([
+            { id: "up", label: qsTr("Move up"), icon: "arrow-up", enabled: row > 0 },
+            { id: "down", label: qsTr("Move down"), icon: "arrow-down", enabled: row < Spaces.slides.count - 1 },
+            { id: "below", label: qsTr("Add a slide below"), icon: "plus" },
+            { id: "delete", label: qsTr("Delete"), icon: "trash", destructive: true }
+        ], choice => {
+            if (choice === "up")
+                Shell.dispatch("space.slide.move", { slideId: id, afterSlideId: row > 1 ? slideAt(row - 2) : "" });
+            else if (choice === "down")
+                Shell.dispatch("space.slide.move", { slideId: id, afterSlideId: slideAt(row + 1) });
+            else if (choice === "below")
+                askNewSlide(id);
+            else
+                Shell.dispatch("space.slide.delete", { slideId: id });
         });
     }
 
@@ -306,7 +411,9 @@ Item {
             return;
         openedSpaceId = resumeStep.spaceId;
         openedPageId = resumeStep.pageId;
-        view = resumeStep.view === "pages" || resumeStep.view === "images" || resumeStep.pageId === pageId ? resumeStep.view : "pages";
+        openedDeckId = resumeStep.deckId ?? "";
+        const selected = resumeStep.view === "deck" ? resumeStep.deckId === deckId : resumeStep.pageId === pageId;
+        view = resumeStep.view === "pages" || resumeStep.view === "images" || selected ? resumeStep.view : "pages";
     }
 
     function openArrived() {
@@ -328,8 +435,21 @@ Item {
             view = "pages";
         }
     }
+    onDeckIdChanged: {
+        if (!settled)
+            return;
+        if (deckId !== "" && deckExpected) {
+            deckExpected = false;
+            openedSpaceId = spaceId;
+            openedDeckId = deckId;
+            view = "deck";
+        } else if (view === "deck" && deckId !== openedDeckId) {
+            // The deck went (another client deleted it): back to what is left.
+            view = "pages";
+        }
+    }
     onSpaceIdChanged: {
-        if (settled && !pageExpected && awaitedPageId === "" && view !== "spaces" && spaceId !== openedSpaceId)
+        if (settled && !pageExpected && !deckExpected && awaitedPageId === "" && view !== "spaces" && spaceId !== openedSpaceId)
             view = "spaces";
     }
     onStepChanged: {
@@ -337,8 +457,10 @@ Item {
             stepMoved(step);
     }
     onErrorChanged: {
-        if (error !== "")
+        if (error !== "") {
             pageExpected = false;
+            deckExpected = false;
+        }
     }
     onBrowsingImagesChanged: Shell.dispatch("space.images.show", { shown: browsingImages })
     Component.onDestruction: {
@@ -434,6 +556,12 @@ Item {
         screen: screen
     }
 
+    SpaceDeckView {
+        anchors.fill: parent
+        visible: screen.view === "deck"
+        screen: screen
+    }
+
     SpaceCommentsView {
         id: comments
 
@@ -448,6 +576,10 @@ Item {
 
     SpaceTextDialog {
         id: text
+    }
+
+    SpacePresenter {
+        anchors.fill: parent
     }
 
     SpaceImageDialog {

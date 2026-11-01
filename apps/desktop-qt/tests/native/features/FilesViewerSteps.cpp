@@ -4,15 +4,20 @@
 // PanelSteps.cpp has opening, wrapping and retrying. The MC's
 // `projects.writeFile` is faked here.
 
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QPointer>
 #include <QQuickItem>
 #include <QTest>
+#include <QTimer>
 
 #include "CommandRegistry.h"
 #include "FilesViewer.h"
 #include "FilesWorkspace.h"
 #include "KeybindingController.h"
+#include "NativeShell.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
 #include "Space.h"
@@ -40,6 +45,8 @@ struct Viewer {
   QString rewritten;
   bool savedEarly = false;
   qsizetype signingsBefore = 0;
+  // The window closed with writes waiting.
+  QPointer<NativeWindow> closedWindow;
 };
 
 Viewer& viewer(World& world) {
@@ -939,6 +946,33 @@ const Steps backlogSteps([] {
     QTest::keyClick(&world.brick->window(), 'z');
     world.sync();
     expect(files(world).text().contains(u'z'), describeViewer(world));
+  });
+  step(QStringLiteral("the user closes this window, leaving another"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("window.new"), QVariantMap{});
+    expect(world.native().windows().size() == 2, QStringLiteral("no second window opened"));
+    NativeWindow* closed = world.native().main();
+    viewer(world).closedWindow = closed;
+    world.closeWindow(closed);
+    expect(world.native().windows().size() == 1, QStringLiteral("the window did not close"));
+    expect(!viewer(world).closedWindow.isNull(), QStringLiteral("the window went before its writes were answered"));
+    // What it saves while it waits goes with it.
+    QFile saved(QDir(world.homeDir()).filePath(QStringLiteral("state/shell-panel.json")));
+    expect(saved.open(QIODevice::WriteOnly), saved.errorString());
+  });
+  step(QStringLiteral("the closed window is gone, with what it kept on this device"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return viewer(world).closedWindow.isNull(); }, QStringLiteral("the closed window to go"));
+    expect(!QFile::exists(QDir(world.homeDir()).filePath(QStringLiteral("state/shell-panel.json"))), QStringLiteral("the closed window's panels stayed"));
+  });
+  step(QStringLiteral("the user quits the app and the MC does not answer"), [](World& world, const Captures&, const Table&) {
+    world.native().finishWrites(20);
+  });
+  step(QStringLiteral("the app stops waiting with the write unanswered"), [](World& world, const Captures&, const Table&) {
+    expect(files(world).writing(), QStringLiteral("the write was answered"));
+  });
+  step(QStringLiteral("the user quits the app"), [](World& world, const Captures&, const Table&) {
+    // The MC answers while quitting waits for it.
+    QTimer::singleShot(0, &world.native(), [&world] { world.mc.answerHeld(); });
+    world.native().finishWrites(NativeShell::quitWriteWaitMs);
   });
   step(QStringLiteral("the file ends up with both edits"), [](World& world, const Captures&, const Table&) {
     const QString path = viewer(world).edited;

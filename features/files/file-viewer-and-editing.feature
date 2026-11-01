@@ -271,6 +271,15 @@ Feature: Viewing and editing files
       And the file tree gives way before the buttons do
       And a tab too narrow to leave the tree room for ten characters of a name at the user's font size shows the file alone
 
+    @desktop @backlog-desktop
+    Scenario: A font too large for the Files tab keeps the way out of the file
+      Given the user's interface font is so large the buttons above the file do not fit the Files tab
+      When the user opens "docs/guide.md"
+      Then the file explorer toggle and the close button stay on screen
+      And the Rendered, Edit and Wrap buttons are in a menu above the file
+      When the interface font is small enough again
+      Then those buttons are back above the file
+
     @desktop
     Scenario: The rendered or source choice is remembered on this device
       Given the user chose to see Markdown source
@@ -653,6 +662,33 @@ Feature: Viewing and editing files
       When the user makes another edit
       Then the file ends up with both edits
       And the file is not shown as saved until the last edit is written
+
+    @desktop
+    Scenario Outline: Edits waiting to be written are saved when the app goes away
+      Given a save of "src/app.ts" is being written
+      And the user makes another edit
+      When the user <goes>
+      Then the file ends up with both edits
+
+      Examples:
+        | goes                                |
+        | closes this window, leaving another |
+        | quits the app                       |
+
+    @desktop
+    Scenario: A closed window goes once its edits are written
+      Given a save of "src/app.ts" is being written
+      And the user makes another edit
+      When the user closes this window, leaving another
+      Then the file ends up with both edits
+      And the closed window is gone, with what it kept on this device
+
+    @desktop
+    Scenario: Quitting does not wait for ever for an MC that does not answer
+      Given a save of "src/app.ts" is being written
+      And the user makes another edit
+      When the user quits the app and the MC does not answer
+      Then the app stops waiting with the write unanswered
 
     # Legacy: packages/client-runtime/src/state/projectCommands.ts (optimisticFile), apps/web/src/components/files/projectFilesQueryState.ts
     @desktop
