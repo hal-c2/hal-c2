@@ -371,6 +371,21 @@ defmodule HalC2.PlannerPropTest do
       {:look, []}
     ]
 
+    assert_scripted(calls)
+  end
+
+  test "a stored owner appearing while a push is held is no owner change for it to settle" do
+    assert_scripted([
+      {:add, ["a", nil, :task]},
+      {:link, ["a", nil]},
+      {:set_owner, ["a", "alice"]},
+      {:rename, ["a", :ok, 1, false]},
+      {:legacy_owner, ["a"]},
+      {:answer, [1]}
+    ])
+  end
+
+  defp assert_scripted(calls) do
     cmds =
       for {{f, args}, n} <- Enum.with_index(calls, 1),
           do: {:set, {:var, n}, {:call, __MODULE__, f, args}}
@@ -1139,7 +1154,8 @@ defmodule HalC2.PlannerPropTest do
     holder = b.owner_issue || b.issue
 
     cond do
-      old == owner or same_login?(old, owner) ->
+      # A stored owner is no change a client made: GitHub is taken to have it.
+      old == owner or same_login?(old, owner) or owner == @stored_owner ->
         true
 
       login?(owner) and here?(n) and not listed?.(n, owner) ->
