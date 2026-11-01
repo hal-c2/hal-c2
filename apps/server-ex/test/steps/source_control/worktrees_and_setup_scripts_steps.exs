@@ -296,6 +296,34 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
+  step "git hangs on {string} once its new worktree is made", context do
+    git = Path.join(Mc.tmp_dir(context.mc, "git"), "git-hangs")
+
+    File.write!(
+      git,
+      "#!/bin/sh\ncase \"$*\" in *\"worktree add\"*) git \"$@\"; exec sleep 120;; esac\nexec git \"$@\"\n"
+    )
+
+    File.chmod!(git, 0o755)
+    World.put_app_env(:git_command, git)
+    World.put_app_env(:worktree_timeout, 300)
+    context
+  end
+
+  step "the setup fails when the limit stops git", context do
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "failed", inspect(snapshot)
+    context
+  end
+
+  step "neither the worktree nor its new branch is left in {string}",
+       %{args: [title]} = context do
+    root = World.project(context, title).root
+    assert [_root_only] = String.split(World.git!(root, ~w(worktree list)), "\n")
+    refute World.git!(root, ~w(branch --list)) =~ "hal-c2"
+    context
+  end
+
   step "the user removes the worktree", context do
     remove_worktree(context, false)
   end
@@ -507,6 +535,11 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   step "{string} has a setup script that is a few lines long with a here-document",
        %{args: [title]} = context do
     ending_script(context, title, "cat <<EOF\nhello from here\nEOF\n(exit 7)", 7)
+  end
+
+  step "{string} has a setup script that has a syntax error on its last line",
+       %{args: [title]} = context do
+    ending_script(context, title, "echo a\nif true; then echo b; fi; fi", 2)
   end
 
   step "the setup script stage ends with the script's own exit status", context do

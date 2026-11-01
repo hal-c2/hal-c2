@@ -522,4 +522,32 @@ defmodule HalC2.WorktreeSetupTest do
       assert out =~ "END_4\n"
     end
   end
+
+  test "a script's syntax error is its exit status, and the end still comes" do
+    for shell <- ~w(/bin/sh /bin/bash /bin/zsh), File.exists?(shell) do
+      line =
+        HalC2.WorktreeSetup.wrap_script("echo a\nif true; then echo b; fi; fi", shell, "END_")
+
+      {out, _} =
+        System.cmd(shell, ["-c", String.replace(line, "\r", "\n")], stderr_to_stdout: true)
+
+      assert out =~ "END_start\n"
+      assert [_, status] = Regex.run(~r/END_(\d+)\n/, out)
+      assert status != "0"
+    end
+  end
+
+  test "a script's quotes and exit stay its own" do
+    for shell <- ~w(/bin/sh /bin/bash /bin/zsh), File.exists?(shell) do
+      line = HalC2.WorktreeSetup.wrap_script(~S(echo 'it'"'"'s' "a\\b"; exit 6), shell, "END_")
+      {out, _} = System.cmd(shell, ["-c", String.replace(line, "\r", "\n")])
+      assert out =~ "it's"
+      assert out =~ "END_6\n"
+    end
+  end
+
+  test "fish runs the script in a new fish, its quotes kept" do
+    line = HalC2.WorktreeSetup.wrap_script(~S(echo 'a\b'; exit 6), "/usr/bin/fish", "END_")
+    assert line =~ ~S(/usr/bin/fish -c 'echo \'a\\b\'; exit 6'; printf)
+  end
 end

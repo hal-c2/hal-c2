@@ -623,6 +623,8 @@ defmodule HalC2.Vcs do
         do: ["worktree", "add", "-b", input["newRefName"], path, ref],
         else: ["worktree", "add", path, ref]
 
+    fresh = not File.exists?(path)
+
     with :ok <-
            run(
              cwd,
@@ -630,7 +632,8 @@ defmodule HalC2.Vcs do
              "vcs.createWorktree",
              "git worktree add failed",
              [timeout: worktree_timeout()] ++ checkout_progress(opts[:on_progress])
-           ) do
+           )
+           |> tap(&if(fresh, do: clear_cut_short(&1, cwd, path, input["newRefName"]))) do
       if input["newRefName"], do: remember_base(cwd, input["newRefName"], ref)
 
       # `git worktree add` leaves submodules empty; filling them is best effort.
@@ -640,6 +643,20 @@ defmodule HalC2.Vcs do
       {:ok, %{"worktree" => %{"path" => path, "refName" => branch}}}
     end
   end
+
+  # Git stopped before it could say anything, by the time limit, has not cleaned up after
+  # itself as a git that fails does: what it left is the locked worktree and the new
+  # branch, in a path that was free. A failure with an exit code changed nothing.
+  defp clear_cut_short({:error, error}, cwd, path, branch)
+       when not is_map_key(error, "exitCode") do
+    Git.run(cwd, ["worktree", "unlock", path])
+    Git.run(cwd, ["worktree", "remove", "--force", path], timeout: worktree_timeout())
+    File.rm_rf(path)
+    Git.run(cwd, ["worktree", "prune"])
+    if branch, do: Git.run(cwd, ["branch", "-D", branch])
+  end
+
+  defp clear_cut_short(_result, _cwd, _path, _branch), do: :ok
 
   @doc "How long `git worktree add` and `git worktree remove` may run, in ms."
   def worktree_timeout, do: Application.get_env(:hal_c2, :worktree_timeout, @worktree_timeout)

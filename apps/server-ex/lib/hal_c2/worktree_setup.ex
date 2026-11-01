@@ -544,8 +544,11 @@ defmodule HalC2.WorktreeSetup do
   @doc """
   What is typed into the terminal to run `command`: it prints `sentinel` and `start` on a
   line of its own as it begins, so the shell's prompt and echo before that are not its
-  output, and `sentinel` with its exit status as it ends. A group of its own, so a script
-  may end in a comment, hold a here-document or `exit` without taking the rest with it.
+  output, and `sentinel` with its exit status as it ends. The script is one quoted word,
+  so a syntax error in it is its exit status and not the wrapper's, and it may end in a
+  comment or hold a here-document. It runs in a child, so it may `exit`: a subshell that
+  keeps the functions the user's shell startup defined, or for fish, which has none, a
+  new fish.
   """
   def wrap_script(command, shell, sentinel) do
     body = command |> String.trim_trailing() |> String.replace(~r/\r?\n/, "\r")
@@ -553,15 +556,23 @@ defmodule HalC2.WorktreeSetup do
 
     case Path.basename(shell || "") do
       "fish" ->
-        "begin\r#{start}\r#{body}\rend; printf '\\n#{sentinel}%s\\n' $status"
+        # In fish's single quotes a backslash escapes a quote or a backslash.
+        quoted = body |> String.replace("\\", "\\\\") |> String.replace("'", "\\'")
+
+        "#{start}; #{shell} -c '#{quoted}'; printf '\\n#{sentinel}%s\\n' $status"
 
       # An interactive zsh takes `#` for a command unless told, before it reads the line.
       "zsh" ->
-        "setopt interactive_comments\r( #{start}\r#{body}\r); printf '\\n#{sentinel}%s\\n' \"$?\""
+        "setopt interactive_comments\r" <> subshell(start, body, sentinel)
 
       _ ->
-        "( #{start}\r#{body}\r); printf '\\n#{sentinel}%s\\n' \"$?\""
+        subshell(start, body, sentinel)
     end
+  end
+
+  defp subshell(start, body, sentinel) do
+    quoted = String.replace(body, "'", "'\\''")
+    "( #{start}; eval '#{quoted}' ); printf '\\n#{sentinel}%s\\n' \"$?\""
   end
 
   @doc """

@@ -380,6 +380,15 @@ const Steps steps([] {
     const QJsonObject strategy = launch(world).value(QLatin1String("workspaceStrategy")).toObject();
     expect(strategy.value(QLatin1String("type")) == QLatin1String("worktree") && !strategy.value(QLatin1String("startFromOrigin")).toBool(), QStringLiteral("the launch works in %1").arg(show(strategy.toVariantMap())));
   });
+  step(QStringLiteral("the project's default workspace is a new worktree"), [](World& world, const Captures&, const Table&) {
+    saveElsewhere(world.mc, QStringLiteral("defaultThreadEnvMode"), QStringLiteral("worktree"));
+    world.sync();
+  });
+  step(QStringLiteral("the user opens a new thread in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.startNewThread(QVariantMap{{QStringLiteral("projectKey"), world.projectKey(c[0])}});
+    world.waitFor([&] { return workspace(world).value(QStringLiteral("envMode")) == QLatin1String("worktree"); },
+                  [&] { return QStringLiteral("the draft in a new worktree; the header shows %1").arg(show(workspace(world))); });
+  });
   step(QStringLiteral("the setting stays (off|on)"), [](World& world, const Captures& c, const Table&) {
     world.sync();
     const bool on = c[0] == QLatin1String("on");

@@ -12,7 +12,7 @@ an existing worktree, use **New thread in this worktree** from the branch toolba
 
 The base picker of a new worktree has **Start from origin**, which starts it from
 the latest matching branch on origin instead of your local branch. It applies to
-that thread only and starts as **Start new worktrees from origin** says in Settings.
+that thread only and starts as **Start from origin** is set in Settings.
 When you send to several models, each one starts in its own worktree.
 
 When you change a new thread's project, HAL-C2 stays in the current environment

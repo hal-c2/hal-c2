@@ -121,6 +121,13 @@ Feature: Worktrees and setup scripts
     Then the "Check out files" stage reports the share of files checked out as it grows
     And the stage ends at its full share when the checkout finishes
 
+  @mc
+  Scenario: A checkout stopped by the time limit leaves nothing behind
+    Given git hangs on "shop" once its new worktree is made
+    When the user sends the first message of a thread in a new worktree
+    Then the setup fails when the limit stops git
+    And neither the worktree nor its new branch is left in "shop"
+
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (WORKTREE_ADD_TIMEOUT_MS, WORKTREE_REMOVE_TIMEOUT_MS)
   @mc
   Scenario Outline: Creating and removing a worktree is given minutes, not seconds
@@ -207,6 +214,7 @@ Feature: Worktrees and setup scripts
       | reads from its input until it is closed         |
       | prints a line that looks like a completion mark |
       | is a few lines long with a here-document        |
+      | has a syntax error on its last line             |
 
   # Legacy: apps/server/src/project/ProjectSetupScriptRunner.ts (observeTerminalCompletion), ThreadLaunchService.ts
   @mc
@@ -458,3 +466,10 @@ Feature: Worktrees and setup scripts
     When the user turns off "Start from origin" in a new thread's base picker
     Then that thread's worktree starts from the local branch
     And the setting stays on
+
+  @desktop
+  Scenario: A project that starts in a new worktree starts it as the setting says
+    Given "Start new worktrees from origin" is on in the settings
+    And the project's default workspace is a new worktree
+    When the user opens a new thread in "shop"
+    Then that thread's worktree starts from origin

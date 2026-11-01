@@ -13,6 +13,7 @@
 #include "McClient.h"
 #include "ProjectScripts.h"
 #include "ComposerController.h"
+#include "ProjectActionsController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -930,8 +931,8 @@ void WorkspaceController::setEnvMode(const QString& mode) {
   if (!m_place->draftId.isEmpty()) {
     // Choosing a new worktree starts with the setting's word on origin; the
     // base picker's switch changes it for this thread alone.
-    const auto* settings = NativeShell::of(this)->controller<SettingsController>();
-    const bool fromOrigin = settings && settings->setting(QStringLiteral("newWorktreesStartFromOrigin")).toBool();
+    const auto* actions = NativeShell::of(this)->controller<ProjectActionsController>();
+    const bool fromOrigin = actions && actions->startsWorktreesFromOrigin(m_place->environmentId);
     updateCheckout([mode, fromOrigin](Checkout& checkout) {
       const bool wasNew = checkout.envMode == QLatin1String("worktree") && !checkout.worktreePath;
       checkout.envMode = mode;
