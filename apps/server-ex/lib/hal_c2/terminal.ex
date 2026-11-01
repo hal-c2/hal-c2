@@ -267,6 +267,7 @@ defmodule HalC2.Terminal do
       "_tag" => "TerminalProviderEnvironmentError",
       "providerInstanceId" => id,
       "cause" => "settings.json cannot be read",
+      "reason" => "settings.json cannot be read",
       "message" =>
         "Could not prepare the terminal environment for provider instance: #{id}: " <>
           "settings.json cannot be read"
