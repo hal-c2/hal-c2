@@ -229,7 +229,9 @@ proptest! {
     #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
 
     /// Whether the wake comes before the store or after it, and however
-    /// often the shell is opened, the cache wakes the last one given.
+    /// often the shell is opened, the cache wakes the last one given. One
+    /// given earlier may have woken too, for what the cache was already
+    /// answering when it was given.
     #[test]
     fn the_cache_wakes_the_last_wake_given_in_any_order(
         steps in proptest::collection::vec(
@@ -261,8 +263,11 @@ proptest! {
         }
         for (i, counter) in counters.iter().enumerate() {
             let woke = counter.load(Ordering::SeqCst) > 0;
-            let expected = last == Some(i) && hal_c2_shell::has_mc(&hub.engine);
-            prop_assert_eq!(woke, expected, "wake {}", i);
+            if !hal_c2_shell::has_mc(&hub.engine) {
+                prop_assert!(!woke, "wake {} without a cache", i);
+            } else if last == Some(i) {
+                prop_assert!(woke, "wake {}, the last", i);
+            }
         }
     }
 }

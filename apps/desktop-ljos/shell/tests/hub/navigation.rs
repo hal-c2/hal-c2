@@ -8,6 +8,7 @@ use std::path::Path;
 use hal_c2_shell::Launch;
 use hal_c2_shell::commands::Commands;
 use hal_c2_shell::controllers::navigation::{self, Navigation, Route};
+use hal_c2_shell::controllers::threads;
 use hal_c2_shell::json::Json;
 use hal_c2_shell::store;
 use serde_json::json;
@@ -299,6 +300,8 @@ fn only_a_thread_the_cache_lists_shows_before_the_mc_answers() {
     }
     // The MC has not answered: the cache's rows are what there is.
     let hub = Hub::with(with_cache());
+    threads::drain(&hub.engine);
+    hub.advance(0);
     assert_eq!(route(&hub)["threadKey"], "env-1:t1");
     assert_eq!(route(&hub)["title"], "One");
 
@@ -308,6 +311,8 @@ fn only_a_thread_the_cache_lists_shows_before_the_mc_answers() {
     )
     .unwrap();
     let hub = Hub::with(with_cache());
+    threads::drain(&hub.engine);
+    hub.advance(0);
     assert_eq!(route(&hub), Json::Null, "the cache does not list it");
 }
 

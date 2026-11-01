@@ -236,7 +236,8 @@ fn a_row_whose_entry_turns_into_a_divider_goes_quietly() {
     let hub = Hub::new();
     let said = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
     let sink = said.clone();
-    hub.engine.set_log_handler(move |entry| sink.borrow_mut().push(entry.message.clone()));
+    hub.engine
+        .set_log_handler(move |entry| sink.borrow_mut().push(entry.message.clone()));
     let dir = tempfile::tempdir().expect("a directory for the probe");
     std::fs::write(dir.path().join("ReusedRowProbe.qml"), REUSED).expect("the probe");
     let mut dirs = Roots::checkout().dirs().expect("the roots are there");
@@ -247,9 +248,14 @@ fn a_row_whose_entry_turns_into_a_divider_goes_quietly() {
     let compiled = ljos::dev::compile_quiet(&paths, Some(&snapshot)).expect("the bricks compile");
     let (root, _window) = hub.show(compiled.source, "ReusedRowProbe");
     hub.advance(0);
-    hub.engine.write_by_name(root, "divided", Value::Bool(true)).expect("the entry changes");
+    hub.engine
+        .write_by_name(root, "divided", Value::Bool(true))
+        .expect("the entry changes");
     hub.advance(0);
     let said = said.borrow();
     let undefined: Vec<&String> = said.iter().filter(|m| m.contains("of undefined")).collect();
-    assert!(undefined.is_empty(), "the row read the divider's item: {undefined:?}");
+    assert!(
+        undefined.is_empty(),
+        "the row read the divider's item: {undefined:?}"
+    );
 }
