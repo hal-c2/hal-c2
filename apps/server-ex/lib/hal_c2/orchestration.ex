@@ -2358,10 +2358,13 @@ defmodule HalC2.Orchestration do
   # (`steer/4`), in the transaction that decided it, marked pending until the provider
   # answers. A repeat of its message id then finds it, so the provider is asked once,
   # and the message sits in the transcript ahead of whatever the provider answers it
-  # with. The repeat cannot say it was sent yet: the provider may still refuse it
-  # (`steer_in_flight?/2`). An MC that stops between the two leaves the message in the
-  # turn `HalC2.Orchestration.Recovery` ends as interrupted, though the provider never
-  # read it. Its session ended with the MC, and that loss is accepted.
+  # with. The repeat cannot say it was sent yet: the provider may still refuse it, and
+  # a refusal can drop the message even after its turn ended (`unsteer/4`). An MC that
+  # stops between the two leaves the message in the turn
+  # `HalC2.Orchestration.Recovery` ends as interrupted, clearing the mark, though the
+  # provider never read it. Its session ended with the MC, and that loss is accepted.
+  # A send that dies while the MC stays up leaves the mark until the MC restarts: its
+  # repeats keep hearing "try again" for a message that stays in the turn.
   defp reserve_steer(state, run, command) do
     at = Entities.now()
     message_id = command["messageId"] || Entities.new_id("message")
@@ -2435,14 +2438,6 @@ defmodule HalC2.Orchestration do
 
     {List.wrap(taken), :ok}
   end
-
-  # A reserved steer the provider has not answered, while a refusal would still take it
-  # out of the turn and tell its sender so. A turn that ended meanwhile sends a refused
-  # message like any other, and one an MC restart cut off has no send left to answer.
-  defp steer_in_flight?(state, %{"steer" => "pending", "runId" => run_id}),
-    do: (StreamState.get(state, "run")[run_id] || %{})["status"] in @active_statuses
-
-  defp steer_in_flight?(_state, _message), do: false
 
   # The runtime's `steer/3`. The message is already in the turn (`reserve_steer/3`,
   # `promote/5`), and only a refusal takes it back out: a runtime that stops, raises,
@@ -3291,7 +3286,7 @@ defmodule HalC2.Orchestration do
       sent =
           is_binary(command["messageId"]) &&
             StreamState.get(state, "message")[command["messageId"]] ->
-        if steer_in_flight?(state, sent),
+        if sent["steer"] == "pending",
           do: {[], {:error, %{"message" => "This message is still being sent. Try again."}}},
           else: {[], {:ok, :sent}}
 

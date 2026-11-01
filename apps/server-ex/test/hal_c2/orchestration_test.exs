@@ -1873,11 +1873,13 @@ defmodule HalC2.OrchestrationTest do
       :ok = await_turn_item(thread_id, "turn-item:user:m2")
       assert {:error, %{"message" => still}} = steer.()
       assert still =~ "still being sent"
+      assert HalC2.Store.meta(HalC2.Store.path(), "command-receipt:command-m2") == nil
 
       File.rm!(hold)
       assert {:error, refused} = Task.await(first)
       assert refused =~ "did not take the message"
       refute StreamState.get(current(thread_id), "message")["m2"]
+      assert {:error, ^refused} = steer.()
 
       File.rm!(reject)
       assert {:ok, _} = send_message(thread_id, "m2", "say again", %{"deliveryIntent" => "steer"})
@@ -1885,7 +1887,41 @@ defmodule HalC2.OrchestrationTest do
       refute Map.has_key?(StreamState.get(state, "message")["m2"], "steer")
     end
 
-    # #384: boot recovery ends the turn, so no send is left to answer for the steer.
+    # #384: a refusal can still drop the message once its turn ended, so the repeat has
+    # no more reason to call it sent than while the turn ran.
+    test "a repeat of a steer whose turn ended mid-ask is still being sent", %{tmp_dir: dir} do
+      hold = Path.join(dir, "hold-steer")
+
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_HOLD_STEER=#{hold}",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch("wait for it")
+      [%{"id" => run_id}] = await_run(thread_id, "running") |> StreamState.list("run")
+      command = %{"dispatchMode" => %{"type" => "start_immediately"}, "deliveryIntent" => "steer"}
+      File.touch!(hold)
+      first = Task.async(fn -> send_message(thread_id, "m2", "hold this", command) end)
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+
+      :ok =
+        HalC2.Streams.transact(thread_id, :thread, fn state ->
+          ended = Orchestration.upsert(state, "run", run_id, &Map.put(&1, "status", "completed"))
+          {[ended], :ok}
+        end)
+
+      assert {:error, %{"message" => still}} = send_message(thread_id, "m2", "hold this", command)
+      assert still =~ "still being sent"
+
+      File.rm!(hold)
+      assert {:ok, _} = Task.await(first)
+      assert {:ok, _} = send_message(thread_id, "m2", "hold this", command)
+    end
+
+    # #384: boot recovery clears the mark, since no send is left to answer for the steer.
     test "a steer an MC restart cut off reads as sent", %{tmp_dir: dir} do
       hold = Path.join(dir, "hold-steer")
 
@@ -1913,7 +1949,8 @@ defmodule HalC2.OrchestrationTest do
 
       File.rm!(hold)
       assert thread_id in HalC2.Orchestration.Recovery.run()
-      _ = await_statuses(thread_id, ["interrupted"])
+      state = await_statuses(thread_id, ["interrupted"])
+      refute Map.has_key?(StreamState.get(state, "message")["m2"], "steer")
 
       assert {:ok, _} = send_message(thread_id, "m2", "hold this", command)
     end
