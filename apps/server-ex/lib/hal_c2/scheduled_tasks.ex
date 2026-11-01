@@ -876,7 +876,9 @@ defmodule HalC2.ScheduledTasks do
   defp bounded(fallback, fun) do
     task = Task.async(fun)
 
-    case Task.yield(task, @pages_timeout_ms) || Task.shutdown(task, :brutal_kill) do
+    timeout = Application.get_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, @pages_timeout_ms)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} -> result
       _ -> fallback
     end
