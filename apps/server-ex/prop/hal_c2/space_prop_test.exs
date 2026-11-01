@@ -635,7 +635,8 @@ defmodule HalC2.SpacePropTest do
     kept =
       StreamState.get(state, "image") |> Map.keys() |> Enum.map(&ImageFile.path/1) |> Enum.sort()
 
-    {snapshot, ordered and files == kept and links_hold?(Map.new(sites, &{&1["pageId"], &1["id"]}))}
+    {snapshot,
+     ordered and files == kept and links_hold?(Map.new(sites, &{&1["pageId"], &1["id"]}))}
   end
 
   # Every standing site opens at the link it has had since it was published, and a link

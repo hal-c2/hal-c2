@@ -283,13 +283,13 @@ Feature: A page published as a site
       When the user publishes the page "Roadmap" over Tailscale
       Then the site link of the page "Roadmap" starts with "https://mc.tail1234.ts.net/sites/"
 
-  @mc
-  Scenario: An image on a published page shows as its caption
-    Given the image "cat.png" in "Research"
-    And the user places the image "cat.png" on "Roadmap"
-    When the user publishes the page "Roadmap" as a site
-    And a browser opens the site link of the page "Roadmap"
-    Then the browser reads "cat.png"
+    @mc
+    Scenario: An image on a published page shows as its caption
+      Given the image "cat.png" in "Research"
+      And the user places the image "cat.png" on "Roadmap"
+      When the user publishes the page "Roadmap" as a site
+      And a browser with no pairing opens the site link of the page "Roadmap"
+      Then the browser reads "cat.png"
 
   # Out of scope for the first version of sites.
   @backlog @mc @shared

@@ -31,6 +31,9 @@ from. When your MC only listens on this machine, the page says so: only this mac
 link. Choose **Publish over Tailscale** to get a link others on your tailnet can open, or see
 [Remote access](remote-access.md) to put the MC on your network.
 
+If the address in a link stops working, because the machine's address changed or you took it off
+the tailnet, publishing again won't fix it. Unpublish and publish, which makes a new link.
+
 Publishing over Tailscale puts the whole MC on your tailnet, not just this page, and it stays there
 after you unpublish and across restarts. Pairing still protects everything but the link. To take the
 MC off the tailnet, see [Tailscale HTTPS](remote-access.md#tailscale-https).
