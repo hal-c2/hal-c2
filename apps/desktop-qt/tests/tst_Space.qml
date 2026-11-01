@@ -92,6 +92,39 @@ Item {
             compare(root.dispatched("space.slide.update")[0], { slideId: "s1", title: "First" });
         }
 
+        function test_a_title_being_written_goes_to_its_own_deck() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            title.text = "Keynote";
+            Spaces.deck = { id: "deck-2", title: "Other", trashed: false };
+            compare(root.dispatched("space.deck.rename"), [{ deckId: "deck-1", title: "Keynote" }]);
+            compare(title.text, "Other");
+            title.focus = false;
+            compare(root.dispatched("space.deck.rename").length, 1);
+        }
+
+        function test_picking_another_deck_renames_nothing_when_nothing_was_written() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            Spaces.deck = { id: "deck-2", title: "Other", trashed: false };
+            compare(title.text, "Other");
+            Spaces.deck = {};
+            title.focus = false;
+            compare(root.dispatched("space.deck.rename"), []);
+        }
+
+        function test_leaving_the_title_keeps_a_rename_from_another_client() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            Spaces.deck = { id: "deck-1", title: "Theirs", trashed: false };
+            title.focus = false;
+            compare(root.dispatched("space.deck.rename"), []);
+            compare(title.text, "Theirs");
+        }
+
         function test_a_slide_goes_below_the_one_the_user_added_from() {
             const view = pitch({});
             mouseClick(findChild(view, "spaceSlideAdd:0"));

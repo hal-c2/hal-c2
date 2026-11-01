@@ -25,9 +25,17 @@ Rectangle {
         Shell.dispatch("space.slide.insert", payload);
     }
 
+    // The title field keeps focus when another deck is picked: what was being
+    // written goes to its own deck, and the field moves on to the new one.
     onCurrentChanged: {
-        if (!titleField.activeFocus)
-            titleField.text = current.title ?? "";
+        const id = current.id ?? "";
+        if (id !== titleField.deckId) {
+            titleField.commit();
+            titleField.deckId = id;
+            titleField.show(current.title);
+        } else if (!titleField.activeFocus) {
+            titleField.show(current.title);
+        }
     }
 
     color: Theme.palette.color("canvas", "#09090b")
@@ -62,6 +70,10 @@ Rectangle {
             TextInput {
                 id: titleField
 
+                property string deckId: ""
+                // The title last taken from the deck: text that differs is the user's edit.
+                property string shown: ""
+
                 objectName: "spaceDeckTitle"
                 Layout.fillWidth: true
                 readOnly: deck.trashed
@@ -73,12 +85,19 @@ Rectangle {
                 font.weight: Font.Bold
                 clip: true
 
+                function show(title) {
+                    shown = title ?? "";
+                    text = shown;
+                }
+
                 function commit() {
                     const title = text.trim();
-                    if (title.length > 0 && title !== deck.current.title)
-                        Shell.dispatch("space.deck.rename", { deckId: Spaces.deckId, title: title });
-                    else
-                        text = deck.current.title ?? "";
+                    if (deckId !== "" && title.length > 0 && title !== shown) {
+                        shown = title;
+                        Shell.dispatch("space.deck.rename", { deckId: deckId, title: title });
+                    } else {
+                        show(deck.current.title);
+                    }
                 }
 
                 onAccepted: focus = false
@@ -87,7 +106,7 @@ Rectangle {
                         commit();
                 }
                 Keys.onEscapePressed: {
-                    text = deck.current.title ?? "";
+                    show(deck.current.title);
                     focus = false;
                 }
             }
