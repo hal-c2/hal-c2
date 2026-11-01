@@ -1,10 +1,14 @@
 #include "SpaceController.h"
 
+#include <QDateTime>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
+#include <QMimeDatabase>
 #include <QUrl>
 
 #include <algorithm>
+#include <limits>
 
 #include "CommandRegistry.h"
 #include "KeybindingController.h"
@@ -22,6 +26,17 @@ const NativeControllerRegistrar<SpaceController> registrar(QStringLiteral("space
                                                            "Spaces");
 
 const QString kRoute = QStringLiteral("space");
+
+// The MC's limit on an image (HalC2.Attachments.max_image_bytes), and the types
+// it takes: said before the upload, which the MC would refuse.
+const qint64 kMaxImageBytes = 10 * 1024 * 1024;
+const QStringList kImageTypes{QStringLiteral("image/png"), QStringLiteral("image/jpeg"), QStringLiteral("image/gif"),
+                              QStringLiteral("image/webp")};
+// An address this close to its end is signed anew. However wrong this machine's
+// clock is against the MC's, one is taken as good for a while, or every change
+// to the rows would sign it again.
+const qint64 kAddressMarginMs = 60'000;
+const qint64 kAddressAtLeastMs = 5 * 60'000;
 
 // HalC2.Patch: `s` sets, `u` unsets, `a` appends to strings, `d` deletes
 // (alone) or replaces (with `s`/`a`). nullopt when the entity is gone.
@@ -229,9 +244,21 @@ SpacePages::SpacePages(QObject* parent)
       m_spaces(new SpaceRows({"id", "name"}, this)),
       m_pages(new SpaceRows({"id", "title", "depth", "parentPageId", "hasChildren", "fromThread"}, this)),
       m_trash(new SpaceRows({"id", "title", "trashedAt"}, this)),
-      m_blocks(new SpaceRows(
-          {"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments"}, this)),
-      m_comments(new SpaceRows({"id", "blockId", "blockText", "body", "resolved", "byAgent", "createdAt"}, this)) {}
+      m_blocks(new SpaceRows({"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
+                              "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
+                             this)),
+      m_comments(new SpaceRows({"id", "blockId", "blockText", "body", "resolved", "byAgent", "createdAt"}, this)),
+      m_images(new SpaceRows({"id", "name", "prompt", "mimeType", "width", "height", "generatedBy", "url"}, this)),
+      m_imageTrash(new SpaceRows({"id", "name", "prompt", "mimeType", "width", "height", "generatedBy", "url"}, this)) {
+  m_addressRefresh = new QTimer(this);
+  m_addressRefresh->setObjectName(QStringLiteral("spaceAddressRefresh"));
+  m_addressRefresh->setSingleShot(true);
+  connect(m_addressRefresh, &QTimer::timeout, this, &SpacePages::rebuild);
+  m_rebuildSoon = new QTimer(this);
+  m_rebuildSoon->setSingleShot(true);
+  m_rebuildSoon->setInterval(0);
+  connect(m_rebuildSoon, &QTimer::timeout, this, &SpacePages::rebuild);
+}
 
 QString SpacePages::spaceName() const {
   return text(m_index.entity(QStringLiteral("space"), m_spaceId), QLatin1String("name"));
@@ -299,6 +326,8 @@ void SpacePages::selectSpace(const QString& id) {
   if (id != m_awaitedSpace) m_awaitedPage.clear();
   m_space.clear();
   m_pending.clear();
+  m_addresses.clear();
+  m_signing.clear();
   rebuild();
   emit spaceSelected(id);
 }
@@ -307,6 +336,33 @@ void SpacePages::selectPage(const QString& id) {
   if (id == m_pageId || !m_space.of(QStringLiteral("page")).contains(id)) return;
   m_pageId = id;
   rebuild();
+}
+
+void SpacePages::setImagesShown(bool shown) {
+  if (std::exchange(m_imagesShown, shown) != shown) rebuild();
+}
+
+void SpacePages::setImageAddress(const QString& imageId, const QString& url, qint64 expiresAt) {
+  if (!m_signing.remove(imageId)) return;
+  m_addresses.insert(imageId, {url, qMax(expiresAt, m_now() + kAddressAtLeastMs)});
+  m_rebuildSoon->start();
+}
+
+void SpacePages::imageAddressFailed(const QString& imageId) {
+  m_signing.remove(imageId);
+}
+
+QStringList SpacePages::imagesToSign(const QSet<QString>& wanted) {
+  QStringList needed;
+  for (const QString& id : wanted) {
+    const auto address = m_addresses.constFind(id);
+    if (m_signing.contains(id)) continue;
+    if (address != m_addresses.cend() && address->expiresAt - kAddressMarginMs > m_now()) continue;
+    m_signing.insert(id);
+    needed.append(id);
+  }
+  needed.sort();
+  return needed;
 }
 
 void SpacePages::awaitSpace(const QString& id) {
@@ -394,6 +450,7 @@ bool SpacePages::reselect() {
 }
 
 void SpacePages::rebuild() {
+  m_rebuildSoon->stop();
   // selectSpace rebuilt it already.
   if (reselect()) return;
   reconcile();
@@ -464,9 +521,22 @@ void SpacePages::rebuild() {
   for (const QJsonObject& block : m_space.of(QStringLiteral("block"))) {
     if (text(block, QLatin1String("pageId")) == m_pageId) pageBlocks.append(block);
   }
+  const QHash<QString, QJsonObject>& images = m_space.of(QStringLiteral("image"));
+  for (auto it = m_addresses.begin(); it != m_addresses.end();) {
+    it = images.contains(it.key()) ? std::next(it) : m_addresses.erase(it);
+  }
+  QSet<QString> wanted;
   QList<QVariantMap> blocks;
   for (const QJsonObject& block : sorted(pageBlocks, QLatin1String("order"))) {
     const QString id = text(block, QLatin1String("id"));
+    const QString imageId = text(block, QLatin1String("kind")) == QLatin1String("image") ? text(block, QLatin1String("imageId")) : QString();
+    const auto image = images.constFind(imageId);
+    const bool found = image != images.cend();
+    const QString imageState = imageId.isEmpty() ? QString()
+                               : !found          ? QStringLiteral("deleted")
+                               : trashed(*image) ? QStringLiteral("trashed")
+                                                 : QStringLiteral("shown");
+    if (imageState == QLatin1String("shown")) wanted.insert(imageId);
     const QString linked = text(block, QLatin1String("linkedPageId"));
     const auto shown = [&](const QString& field, const QVariant& value) {
       const auto it = m_pending.constFind(id + QLatin1Char('\n') + field);
@@ -480,9 +550,35 @@ void SpacePages::rebuild() {
                    {QStringLiteral("linkedPageId"), linked},
                    {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : titleOf(linked)},
                    {QStringLiteral("byAgent"), byAgent(block.value(QLatin1String("createdBy")))},
-                   {QStringLiteral("openComments"), open.value(id)}});
+                   {QStringLiteral("openComments"), open.value(id)},
+                   {QStringLiteral("imageId"), imageId},
+                   {QStringLiteral("imageState"), imageState},
+                   {QStringLiteral("imageUrl"), imageState == QLatin1String("shown") ? m_addresses.value(imageId).url : QString()},
+                   {QStringLiteral("imageWidth"), found ? image->value(QLatin1String("width")).toInt() : 0},
+                   {QStringLiteral("imageHeight"), found ? image->value(QLatin1String("height")).toInt() : 0}});
   }
   m_blocks->setRows(blocks);
+
+  QList<QVariantMap> kept;
+  QList<QVariantMap> binned;
+  QList<QJsonObject> newest = sorted(images.values(), QLatin1String("createdAt"));
+  std::reverse(newest.begin(), newest.end());
+  for (const QJsonObject& image : newest) {
+    const QString id = text(image, QLatin1String("id"));
+    if (m_imagesShown) wanted.insert(id);
+    (trashed(image) ? binned : kept)
+        .append({{QStringLiteral("id"), id},
+                 {QStringLiteral("name"), text(image, QLatin1String("name"))},
+                 {QStringLiteral("prompt"), text(image, QLatin1String("prompt"))},
+                 {QStringLiteral("mimeType"), text(image, QLatin1String("mimeType"))},
+                 {QStringLiteral("width"), image.value(QLatin1String("width")).toInt()},
+                 {QStringLiteral("height"), image.value(QLatin1String("height")).toInt()},
+                 {QStringLiteral("generatedBy"),
+                  image.value(QLatin1String("generatedBy")).toObject().value(QLatin1String("instanceId")).toString()},
+                 {QStringLiteral("url"), m_addresses.value(id).url}});
+  }
+  m_images->setRows(kept);
+  m_imageTrash->setRows(binned);
 
   // Open ones first, each in the order it was made.
   std::stable_sort(pageComments.begin(), pageComments.end(), [](const QJsonObject& a, const QJsonObject& b) {
@@ -506,6 +602,21 @@ void SpacePages::rebuild() {
   }
   m_comments->setRows(comments);
   emit changed();
+  const QStringList needed = imagesToSign(wanted);
+  armAddressRefresh(wanted);
+  if (!needed.isEmpty()) emit imagesNeeded(needed);
+}
+
+void SpacePages::armAddressRefresh(const QSet<QString>& wanted) {
+  std::optional<qint64> due;
+  for (const QString& id : wanted) {
+    const auto address = m_addresses.constFind(id);
+    if (address == m_addresses.cend() || m_signing.contains(id)) continue;
+    due = qMin(due.value_or(address->expiresAt), address->expiresAt);
+  }
+  if (!due) return m_addressRefresh->stop();
+  const qint64 delay = *due - kAddressMarginMs - m_now();
+  m_addressRefresh->start(int(std::clamp<qint64>(delay, 0, std::numeric_limits<int>::max())));
 }
 
 // --- SpaceController ------------------------------------------------------------------
@@ -519,6 +630,7 @@ SpaceController::SpaceController(ShellBridge* bridge, McClient* client, ShellSto
   connect(this, &SpacePages::spaceSelected, this, [this] {
     if (m_open) followSpace();
   });
+  connect(this, &SpacePages::imagesNeeded, this, &SpaceController::signImages);
 }
 
 void SpaceController::activate() {
@@ -638,7 +750,10 @@ void SpaceController::toast(const QString& type, const QString& title, const QSt
 void SpaceController::publish() {
   m_bridge->publish(QStringLiteral("space"), QVariantMap{{QStringLiteral("error"), m_error},
                                                           {QStringLiteral("busy"), m_writing > 0},
-                                                          {QStringLiteral("written"), m_written}});
+                                                          {QStringLiteral("written"), m_written},
+                                                          {QStringLiteral("addingImage"), m_addingImages > 0},
+                                                          {QStringLiteral("generatingImage"), m_generatingImages > 0},
+                                                          {QStringLiteral("imageProviders"), m_imageProviders}});
 }
 
 void SpaceController::exportPage(const QString& pageId, std::function<void(const QString&)> done) {
@@ -700,6 +815,97 @@ void SpaceController::pageFromThread(const QString& threadKey) {
     if (spaces.isEmpty()) return;
     write(spaces.first().toObject().value(QLatin1String("id")).toString());
   });
+}
+
+// The signed address needs no token, and the MC's origin is whichever way this
+// client reaches it, so an Image loads it over LAN and Tailscale alike.
+void SpaceController::signImages(const QStringList& imageIds) {
+  const QString space = spaceId();
+  for (const QString& id : imageIds) {
+    m_client->call(this, m_client->environment(), QStringLiteral("assets.createUrl"),
+                   QJsonObject{{QStringLiteral("resource"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("space-image")},
+                                                                        {QStringLiteral("spaceId"), space},
+                                                                        {QStringLiteral("imageId"), id},
+                                                                        {QStringLiteral("disposition"), QStringLiteral("inline")}}}},
+                   [this, id](const QJsonValue& result, const std::optional<QString>& error) {
+                     if (error) return imageAddressFailed(id);
+                     const QJsonObject signed_ = result.toObject();
+                     setImageAddress(id, m_client->origin().resolved(QUrl(signed_.value(QLatin1String("relativeUrl")).toString())).toString(),
+                                     qint64(signed_.value(QLatin1String("expiresAt")).toDouble()));
+                   });
+  }
+}
+
+// Reads the file, says what the MC would refuse without sending it, uploads it
+// and has the MC take the upload as an image of the Space selected when asked.
+void SpaceController::addImageFile(const QString& url) {
+  const QUrl parsed(url);
+  // A phone's picker hands out a content URI, which QFile opens as it is.
+  const QString path = parsed.isLocalFile() ? parsed.toLocalFile() : url;
+  QFile file(path);
+  if (path.isEmpty() || !file.open(QIODevice::ReadOnly)) return refuse(tr("Could not read %1.").arg(path));
+  const QString name = QFileInfo(path).fileName();
+  if (file.size() > kMaxImageBytes) return refuse(tr("%1 is larger than the 10 MB an image may be.").arg(name));
+  const QByteArray bytes = file.readAll();
+  const QString mimeType = QMimeDatabase().mimeTypeForData(bytes).name();
+  if (!kImageTypes.contains(mimeType)) return refuse(tr("%1 is not a PNG, JPEG, GIF or WebP image.").arg(name));
+
+  m_error.clear();
+  ++m_addingImages;
+  publish();
+  const QString space = spaceId();
+  const auto failed = [this](const QString& why) {
+    --m_addingImages;
+    refuse(why);
+  };
+  m_client->call(
+      this, m_client->environment(), QStringLiteral("attachments.createUploadUrl"),
+      QJsonObject{{QStringLiteral("name"), name}, {QStringLiteral("mimeType"), mimeType}, {QStringLiteral("sizeBytes"), bytes.size()}},
+      [this, bytes, mimeType, name, space, failed](const QJsonValue& result, const std::optional<QString>& error) {
+        if (error) return failed(*error);
+        const QJsonObject upload = result.toObject();
+        const QString attachmentId = upload.value(QLatin1String("attachmentId")).toString();
+        m_client->upload(this, upload.value(QLatin1String("relativeUrl")).toString(), bytes, mimeType,
+                         [this, attachmentId, name, space, failed](const QJsonValue&, const std::optional<QString>& error) {
+                           if (error) return failed(*error);
+                           // The answer ends the work whichever way it goes.
+                           --m_addingImages;
+                           publish();
+                           call(QStringLiteral("image.add"),
+                                {{QStringLiteral("spaceId"), space}, {QStringLiteral("attachmentId"), attachmentId}, {QStringLiteral("name"), name}});
+                         });
+      });
+}
+
+void SpaceController::generateImage(const QString& prompt, const QJsonObject& selection) {
+  QJsonObject generate{{QStringLiteral("prompt"), prompt}};
+  if (!selection.isEmpty()) generate.insert(QStringLiteral("modelSelection"), selection);
+  ++m_generatingImages;
+  publish();
+  toast(QStringLiteral("loading"), tr("Generating an image…"));
+  call(
+      QStringLiteral("image.generate"), generate,
+      [this](const QJsonObject&) {
+        --m_generatingImages;
+        publish();
+        toast(QStringLiteral("success"), tr("Image generated"));
+      },
+      [this](const QJsonObject& detail) {
+        --m_generatingImages;
+        publish();
+        if (detail.value(QLatin1String("_tag")).toString() != QLatin1String("SpaceImageGenerationError")) return QString();
+        const QString reason = detail.value(QLatin1String("reason")).toString();
+        const QString why = detail.value(QLatin1String("message")).toString();
+        if (reason == QLatin1String("failed")) {
+          return why.isEmpty() ? tr("Image generation failed, so no image was made.")
+                               : tr("Image generation failed, so no image was made: %1").arg(why);
+        }
+        if (reason == QLatin1String("unavailable")) {
+          return tr("Image generation is unavailable, so no image was made. Set up Codex or Grok in Settings, "
+                    "then try again.");
+        }
+        return why;
+      });
 }
 
 bool SpaceController::handle(const QString& action, const QVariant& payload) {
@@ -820,7 +1026,7 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
   } else if (action == kPageFromThread) {
     pageFromThread(field(QLatin1String("threadKey")));
   } else if (action == QLatin1String("space.block.insert")) {
-    QJsonObject insert = orNull(pick({"spaceId", "kind", "text", "checked", "linkedPageId"}),
+    QJsonObject insert = orNull(pick({"spaceId", "kind", "text", "checked", "linkedPageId", "imageId"}),
                                 QLatin1String("afterBlockId"));
     insert.insert(QStringLiteral("pageId"), pageId);
     call(QStringLiteral("block.insert"), insert);
@@ -850,6 +1056,20 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     call(QStringLiteral("comment.resolve"), pick({"spaceId", "commentId"}));
   } else if (action == QLatin1String("space.comment.reopen")) {
     call(QStringLiteral("comment.reopen"), pick({"spaceId", "commentId"}));
+  } else if (action == QLatin1String("space.images.show")) {
+    setImagesShown(input.value(QLatin1String("shown")).toBool());
+  } else if (action == QLatin1String("space.image.providers")) {
+    call(QStringLiteral("image.providers"), {}, [this](const QJsonObject& result) {
+      m_imageProviders = result.toVariantMap();
+      publish();
+    });
+  } else if (action == QLatin1String("space.image.addFile")) {
+    addImageFile(field(QLatin1String("url")));
+  } else if (action == QLatin1String("space.image.generate")) {
+    generateImage(field(QLatin1String("prompt")), input.value(QLatin1String("modelSelection")).toObject());
+  } else if (action == QLatin1String("space.image.trash") || action == QLatin1String("space.image.restore") ||
+             action == QLatin1String("space.image.delete")) {
+    call(action.mid(6), pick({"spaceId", "imageId"}));
   } else {
     return false;
   }

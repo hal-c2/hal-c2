@@ -38,4 +38,4 @@ MC off the tailnet, see [Tailscale HTTPS](remote-access.md#tailscale-https).
 ## What a site shows
 
 Text, headings, checklists and callouts, as a plain page. Links to other pages show as plain text,
-and images aren't included.
+and an image shows as its caption, not the picture.

@@ -119,7 +119,8 @@ defmodule HalC2.Space.Sites do
   end
 
   # What a site shows of the page: never its comments or authors, and of a link to
-  # another page only that page's title, unless it is out of reach in the trash.
+  # another page only that page's title, unless it is out of reach in the trash. An image
+  # is its caption: the picture's file is not published (`features/space/sites.feature`).
   defp snapshot(state, page) do
     blocks =
       state

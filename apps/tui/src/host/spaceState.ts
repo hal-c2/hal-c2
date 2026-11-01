@@ -1,10 +1,14 @@
 // Spaces and their pages (^X p, palette → Spaces), host side. The pane takes the
-// conversation's place like the file browser, at one of three levels: the Spaces,
-// one Space's page tree with its trash, and one page's blocks with their comments.
+// conversation's place like the file browser, at one of four levels: the Spaces,
+// one Space's page tree with its trash, one page's blocks with their comments, and
+// the Space's images with theirs, listed by name and prompt: a terminal draws none.
 // Everything shown comes from the MC's streams (`spaces`, `space:<id>`), so an edit
 // from another client or an agent shows as it lands; the keys only send `space.*`
 // RPCs. The SpaceView brick paints `space` and dispatches `space.*`.
+import * as NodePath from "node:path";
+
 import {
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   SPACES_STREAM_ID,
   type Space,
   type SpaceAuthor,
@@ -12,6 +16,8 @@ import {
   type SpaceBlockKind,
   type SpaceComment,
   type SpaceId,
+  type SpaceImage,
+  type SpaceImageProvidersResult,
   type SpacePage,
   type SpaceSite,
   spaceStreamId,
@@ -38,12 +44,20 @@ import { chunk, styled, type StyledText } from "./styledText.ts";
 /** Rows the pane's border and header take. */
 export const SPACE_CHROME_ROWS = 3;
 
-export type TuiSpaceView = "spaces" | "pages" | "page";
+export type TuiSpaceView = "spaces" | "pages" | "page" | "images";
 
 export interface TuiSpaceRow {
-  /** `space:<id>`, `page:<id>`, `trash:<id>`, `block:<id>`, `comment:<id>`; a wrapped block repeats its key. */
+  /** `space:<id>`, `page:<id>`, `trash:<id>`, `block:<id>`, `comment:<id>`, `image:<id>`, `imageTrash:<id>`; a wrapped block repeats its key. */
   readonly key: string;
-  readonly kind: "space" | "page" | "trashed" | "block" | "comment" | "label";
+  readonly kind:
+    | "space"
+    | "page"
+    | "trashed"
+    | "block"
+    | "comment"
+    | "image"
+    | "trashedImage"
+    | "label";
   /** The row as drawn, plain (steps read it). */
   readonly text: string;
   readonly line: StyledText;
@@ -72,7 +86,7 @@ export interface TuiSpaceState {
 }
 
 export interface SpaceControllerOptions {
-  readonly client: Pick<TuiClient, "mcCall" | "subscribeMcStream">;
+  readonly client: Pick<TuiClient, "mcCall" | "subscribeMcStream" | "uploadToMc">;
   readonly height: () => number;
   readonly width: () => number;
   readonly palette?: Palette;
@@ -89,6 +103,8 @@ export interface SpaceControllerOptions {
   readonly origin?: string;
   /** Read a Markdown file on this machine to import it. */
   readonly readLocalText?: (path: string) => Promise<string>;
+  /** Read an image file on this machine to add it; rejects saying why when over `maxBytes`. */
+  readonly readLocalBytes?: (path: string, maxBytes: number) => Promise<Uint8Array>;
   /** The threads a page can be made from, and whose names show on agents' edits. */
   readonly threads: () => ReadonlyArray<{ readonly id: string; readonly title: string }>;
   /** The selected thread, offered first when making a page from a thread. */
@@ -122,8 +138,9 @@ const CLOSED: TuiSpaceState = {
 const HINTS: Record<TuiSpaceView, string> = {
   spaces: "  ⏎ open · n new · e rename · d delete · esc close",
   pages:
-    "  ⏎ open · n new · a subpage · e rename · m move · d trash · r restore · D delete · i import · t from thread · esc back",
-  page: "  ⏎ edit · n add · c comment · x tick/resolve · m move · d delete · l link · y copy · p publish · esc back",
+    "  ⏎ open · n new · a subpage · e rename · m move · d trash · r restore · D delete · i import · t from thread · v images · esc back",
+  page: "  ⏎ edit · n add · c comment · x tick/resolve · m move · d delete · l link · y copy · p publish · v images · esc back",
+  images: "  n generate · i add a file · d trash · r restore · D delete · esc back",
 };
 
 export const SITE_BEHIND_HINT = "Edited since it was published · p publishes again";
@@ -136,6 +153,7 @@ const BLOCK_KINDS: ReadonlyArray<{ readonly kind: SpaceBlockKind; readonly label
   { kind: "checklist", label: "Checklist item" },
   { kind: "callout", label: "Callout" },
   { kind: "subpage_link", label: "Link to a subpage" },
+  { kind: "image", label: "Image" },
 ];
 
 /** The contract error a refused RPC carries, wherever the client put it. */
@@ -171,7 +189,26 @@ export function refusalText(error: unknown): string {
       ? `Text generation is unavailable, so no page was made: ${message}`
       : `Text generation failed, so no page was made: ${message}`;
   }
+  if (tag === "SpaceImageGenerationError") {
+    if (reason === "unavailable") {
+      return `Image generation is unavailable, so no image was made: ${message}`;
+    }
+    if (reason === "failed") return `Image generation failed, so no image was made: ${message}`;
+  }
   return message;
+}
+
+/**
+ * What kind of image these bytes start like, null when none the MC keeps. The MC
+ * decides for good; this saves sending a file only for it to be refused.
+ */
+export function imageTypeOf(bytes: Uint8Array): string | null {
+  const ascii = (from: number, to: number) => String.fromCharCode(...bytes.subarray(from, to));
+  if (bytes[0] === 0x89 && ascii(1, 4) === "PNG") return "image/png";
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (ascii(0, 4) === "GIF8") return "image/gif";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "image/webp";
+  return null;
 }
 
 const byOrder = (a: SpaceBlock, b: SpaceBlock) =>
@@ -190,10 +227,17 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   let spaceError: string | null = null;
   let unsubscribeSpace: (() => void) | null = null;
   let pageId: string | null = null;
+  // The level the images were opened from, where Esc goes back to.
+  let imagesFrom: "pages" | "page" = "pages";
   // The selected entry per level, by row key, so the selection stays put as rows come and go.
-  const selected: Record<TuiSpaceView, string | null> = { spaces: null, pages: null, page: null };
+  const selected: Record<TuiSpaceView, string | null> = {
+    spaces: null,
+    pages: null,
+    page: null,
+    images: null,
+  };
   // The last selected index per level: where the selection lands when its row goes away.
-  const selectedIndex: Record<TuiSpaceView, number> = { spaces: 0, pages: 0, page: 0 };
+  const selectedIndex: Record<TuiSpaceView, number> = { spaces: 0, pages: 0, page: 0, images: 0 };
   let top = 0;
   // Bumped whenever the open Space or page changes (or the pane closes): a reply
   // that would navigate only does so while its generation is current.
@@ -261,6 +305,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   const trashed = (): SpacePage[] => pages().filter((page) => page.trashedAt !== null);
 
+  const images = (): SpaceImage[] => entitiesOf(space, "image") as unknown as SpaceImage[];
+  const imageById = (id: string | undefined) => images().find((image) => image.id === id);
+  const liveImages = () => images().filter((image) => image.trashedAt === null);
+  const trashedImages = () => images().filter((image) => image.trashedAt !== null);
+
   const threadTitle = (threadId: string) =>
     options.threads().find((thread) => thread.id === threadId)?.title ?? "an agent";
 
@@ -306,6 +355,19 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     first: true,
   });
 
+  /** A placed image in words. Its caption names it once the image is gone from the stream. */
+  const imagePlaceholder = (block: SpaceBlock): string => {
+    const image = imageById(block.imageId);
+    if (!image) return `[image: ${block.text} was deleted]`;
+    if (image.trashedAt !== null) return `[image: ${image.name} is in the trash]`;
+    const caption = block.text === image.name ? "" : ` ${block.text}`;
+    return `[image: ${image.name}]${caption}`;
+  };
+
+  /** A listed image: its name, and what it was generated from. */
+  const imageText = (image: SpaceImage) =>
+    image.prompt ? `${image.name}  · ${image.prompt}` : image.name;
+
   const blockRows = (block: SpaceBlock): TuiSpaceRow[] => {
     const key = `block:${block.id}`;
     const active = selected.page === key;
@@ -323,7 +385,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const body =
       block.kind === "subpage_link"
         ? (linked?.title ?? (block.text || "(a deleted page)"))
-        : block.text;
+        : block.kind === "image"
+          ? imagePlaceholder(block)
+          : block.text;
     const agent = agentOf(block);
     const room = width() - 2 - Bun.stringWidth(prefix);
     const lines = wrapWords(body === "" ? " " : body, room);
@@ -332,7 +396,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         ? palette.accent
         : block.kind === "callout"
           ? palette.warning
-          : block.kind === "checklist" && block.checked
+          : (block.kind === "checklist" && block.checked) || block.kind === "image"
             ? palette.dim
             : palette.text;
     const bg = active ? { bg: palette.selectedBg } : {};
@@ -411,6 +475,21 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       }
       return rows;
     }
+    if (view === "images") {
+      const rows = liveImages().map((image) =>
+        entryRow(`image:${image.id}`, "image", imageText(image)),
+      );
+      const bin = trashedImages();
+      if (bin.length > 0) {
+        rows.push(label("Trash"));
+        for (const image of bin) {
+          rows.push(
+            entryRow(`imageTrash:${image.id}`, "trashedImage", imageText(image), {}, palette.dim),
+          );
+        }
+      }
+      return rows;
+    }
     const id = pageId;
     if (id === null) return [];
     const comments = commentsOf(id);
@@ -459,6 +538,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (view === "spaces") return "spaces";
     const name = currentSpace()?.name ?? "";
     if (view === "pages") return `space · ${name}`;
+    if (view === "images") return `images · ${name}`;
     const page = pageById(pageId);
     const from = page?.sourceThreadId ? ` · from ${threadTitle(page.sourceThreadId)}` : "";
     const bin = page && !isLive(page) ? " · in the trash" : "";
@@ -490,7 +570,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           ? "No Spaces yet · n makes one"
           : view === "pages"
             ? "No pages yet · n makes one · i imports Markdown · t writes one from a thread"
-            : "An empty page · n adds a block";
+            : view === "images"
+              ? "No images yet · n generates one · i adds one from a file"
+              : "An empty page · n adds a block";
     }
     // Window the rows around the selection.
     const room = Math.max(1, options.height() - SPACE_CHROME_ROWS - (message === "" ? 0 : 1));
@@ -597,6 +679,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       spaceId = id;
       selected.pages = null;
       selectedIndex.pages = 0;
+      selected.images = null;
+      selectedIndex.images = 0;
       followSpace(id);
     }
     view = then;
@@ -614,6 +698,18 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     pageId = id;
     selected.pages = key;
     view = "page";
+    top = 0;
+    publish();
+  };
+
+  const showImages = () => {
+    if (view === "images") return;
+    if (view === "spaces") {
+      options.status("Open a Space to see its images.", "info");
+      return;
+    }
+    imagesFrom = view;
+    view = "images";
     top = 0;
     publish();
   };
@@ -654,7 +750,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   /** Esc and ←: up a level; closes from the Spaces. */
   const back = () => {
-    if (view === "page") {
+    if (view === "images") {
+      view = imagesFrom === "page" && pageById(pageId) ? "page" : "pages";
+      top = 0;
+      publish();
+    } else if (view === "page") {
       generation += 1;
       view = "pages";
       top = 0;
@@ -705,6 +805,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         if (linked && isLive(linked)) openPage(linked.id);
         else options.status("The linked page is in the trash or gone.", "info");
       } else edit();
+    } else if (entry.kind === "image" || entry.kind === "imageTrash") {
+      options.status("A terminal cannot draw an image; the desktop and the phone show it.", "info");
     }
   };
 
@@ -719,6 +821,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         },
       });
     } else if (view === "pages") newPage(null);
+    else if (view === "images") askGenerateImage();
     else addBlock();
   };
 
@@ -795,6 +898,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           link();
           return;
         }
+        if (kind === "image") {
+          placeImage();
+          return;
+        }
         const name = BLOCK_KINDS.find((entry) => entry.kind === kind)!.label.toLowerCase();
         options.ask({
           label: name,
@@ -819,6 +926,26 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       title: "Link a subpage",
       options: children.map((page) => ({ label: page.title, value: page.id })),
       onChoose: (linkedPageId) => insertBlock({ kind: "subpage_link", linkedPageId }),
+    });
+  };
+
+  /** Every image: the MC refuses one in the trash, and says why. */
+  const placeImage = () => {
+    if (images().length === 0) {
+      options.status("This Space has no images yet: v shows them, to add one.", "info");
+      return;
+    }
+    options.menu({
+      title: "Place an image",
+      searchable: true,
+      options: [
+        ...liveImages().map((image) => ({ label: image.name, value: image.id })),
+        ...trashedImages().map((image) => ({
+          label: `${image.name} (in the trash)`,
+          value: image.id,
+        })),
+      ],
+      onChoose: (imageId) => insertBlock({ kind: "image", imageId }),
     });
   };
 
@@ -876,6 +1003,12 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       void send(WS_METHODS.spaceBlockDelete, { spaceId: id, blockId: entry.id });
     } else if (entry.kind === "comment") {
       options.status("Comments are resolved, not deleted: x resolves or reopens.", "info");
+    } else if (entry.kind === "image") {
+      void send(WS_METHODS.spaceImageTrash, { spaceId: id, imageId: entry.id }).then((result) => {
+        if (result) options.status("Moved to the trash: r restores it.", "info");
+      });
+    } else if (entry.kind === "imageTrash") {
+      deleteForGood();
     }
   };
 
@@ -886,6 +1019,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   const deleteForGood = () => {
     const entry = selectedEntry();
     const id = spaceId;
+    if (view === "images") {
+      if (entry) deleteImageForGood(entry);
+      return;
+    }
     if (view !== "pages" || (entry?.kind !== "page" && entry?.kind !== "trash")) {
       options.status("Select a page in the trash to delete it for good.", "info");
       return;
@@ -905,9 +1042,31 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     });
   };
 
+  /** Once confirmed. Only an image in the trash can go; the MC says so for one that is not. */
+  const deleteImageForGood = (entry: { readonly kind: string; readonly id: string }) => {
+    const id = spaceId;
+    const name = imageById(entry.id)?.name ?? "this image";
+    options.menu({
+      title: `Delete “${name}” for good? Pages showing it will say it was deleted.`,
+      options: [
+        { label: entry.kind === "imageTrash" ? "Keep it in the trash" : "Keep it", value: "keep" },
+        { label: "Delete for good", value: "delete" },
+      ],
+      onChoose: (value) => {
+        if (value === "delete") {
+          void send(WS_METHODS.spaceImageDelete, { spaceId: id, imageId: entry.id });
+        }
+      },
+    });
+  };
+
   const restore = () => {
     const entry = selectedEntry();
-    if (entry?.kind === "trash") {
+    if (view === "images") {
+      if (entry?.kind === "imageTrash") {
+        void send(WS_METHODS.spaceImageRestore, { spaceId, imageId: entry.id });
+      } else options.status("Only an image in the trash can be restored.", "info");
+    } else if (entry?.kind === "trash") {
       void send(WS_METHODS.spacePageRestore, { spaceId, pageId: entry.id });
     } else if (view === "page" && pageId !== null && !isLive(pageById(pageId)!)) {
       void send(WS_METHODS.spacePageRestore, { spaceId, pageId });
@@ -980,7 +1139,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       const name = (target: SpaceBlock) =>
         target.kind === "subpage_link"
           ? (pageById(target.linkedPageId)?.title ?? "a link")
-          : target.text;
+          : target.kind === "image"
+            ? imagePlaceholder(target)
+            : target.text;
       options.menu({
         title: `Move “${name(block)}”`,
         options: [
@@ -1079,8 +1240,142 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     ];
   };
 
+  const addImageFile = () => {
+    const id = spaceId;
+    const read = options.readLocalBytes;
+    if (id === null) return;
+    if (!read) {
+      options.status("Images cannot be read on this device.", "error");
+      return;
+    }
+    const asked = generation;
+    options.ask({
+      label: "add image file",
+      placeholder: "path on this machine",
+      onSubmit: (path) => {
+        void track(uploadImage(id, path, read, asked));
+      },
+    });
+  };
+
+  const uploadImage = async (
+    id: string,
+    path: string,
+    read: NonNullable<SpaceControllerOptions["readLocalBytes"]>,
+    asked: number,
+  ) => {
+    const name = NodePath.basename(path);
+    let bytes: Uint8Array;
+    try {
+      bytes = await read(path, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
+    } catch (error) {
+      options.status(
+        `Could not read ${path}: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+      return;
+    }
+    const mimeType = imageTypeOf(bytes);
+    if (mimeType === null) {
+      options.status(`${name} is not a PNG, JPEG, GIF or WebP image.`, "error");
+      return;
+    }
+    options.status(`Adding “${name}”…`, "info");
+    let attachmentId: string;
+    try {
+      const upload = await call<{ attachmentId: string; relativeUrl: string }>(
+        WS_METHODS.attachmentsCreateUploadUrl,
+        { name, mimeType, sizeBytes: bytes.length },
+      );
+      await client.uploadToMc(upload.relativeUrl, bytes, mimeType);
+      attachmentId = upload.attachmentId;
+    } catch (error) {
+      options.status(refusalText(error), "error");
+      return;
+    }
+    const result = await send<{ image: SpaceImage }>(WS_METHODS.spaceImageAdd, {
+      spaceId: id,
+      attachmentId,
+      name,
+    });
+    if (!result) return;
+    options.status(`Added “${result.image.name}”.`, "info");
+    selectNewImage(result.image, asked, id);
+  };
+
+  const selectNewImage = (image: SpaceImage, asked: number, id: string) => {
+    if (asked === generation && spaceId === id && view === "images") {
+      selected.images = `image:${image.id}`;
+      publish();
+    }
+  };
+
+  const askGenerateImage = () => {
+    const id = spaceId;
+    if (id === null) return;
+    options.ask({
+      label: "generate an image",
+      placeholder: "what should it show?",
+      onSubmit: (prompt) => {
+        void chooseImageProvider(id, prompt);
+      },
+    });
+  };
+
+  /**
+   * With a choice, asks which provider draws it, naming the ones that cannot; the
+   * model is that provider's default. Without one the MC picks, or says why it cannot.
+   */
+  const chooseImageProvider = async (id: string, prompt: string) => {
+    const offer = await send<SpaceImageProvidersResult>(WS_METHODS.spaceImageProviders, {});
+    if (!offer) return;
+    if (offer.providers.filter((provider) => provider.status === "ready").length < 2) {
+      generateImage(id, prompt);
+      return;
+    }
+    const chosen = offer.selection;
+    options.menu({
+      title: "Who should draw it?",
+      index: Math.max(
+        0,
+        offer.providers.findIndex((provider) => provider.instanceId === chosen?.instanceId),
+      ),
+      options: offer.providers.map((provider) => ({
+        label: provider.instanceId,
+        value: provider.instanceId,
+        disabled: provider.status !== "ready",
+        description:
+          provider.status === "ready"
+            ? ""
+            : provider.status === "unsupported"
+              ? "not supported here"
+              : (provider.message ?? "unavailable"),
+      })),
+      onChoose: (instanceId) =>
+        generateImage(id, prompt, instanceId === chosen?.instanceId ? chosen : { instanceId }),
+    });
+  };
+
+  const generateImage = (id: string, prompt: string, modelSelection?: object) => {
+    const asked = generation;
+    options.status("Generating an image…", "info");
+    void send<{ image: SpaceImage }>(WS_METHODS.spaceImageGenerate, {
+      spaceId: id,
+      prompt,
+      ...(modelSelection ? { modelSelection } : {}),
+    }).then((result) => {
+      if (!result) return;
+      options.status(`Generated “${result.image.name}”.`, "info");
+      selectNewImage(result.image, asked, id);
+    });
+  };
+
   const importMarkdown = () => {
     const id = spaceId;
+    if (view === "images") {
+      addImageFile();
+      return;
+    }
     if (view !== "pages" || id === null) return;
     const read = options.readLocalText;
     if (!read) {
@@ -1203,6 +1498,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.unpublish": inView(unpublishSite),
     "space.import": inView(importMarkdown),
     "space.fromThread": inView(fromThread),
+    "space.images": inView(showImages),
     "space.select": (payload) => {
       if (!open) return false;
       selectKey(
@@ -1248,6 +1544,15 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Write a page from a thread", action: "space.fromThread" },
           { title: "Copy page as Markdown", action: "space.export" },
           ...siteCommands(),
+          { title: "Images in this Space", action: "space.images" },
+        );
+      } else if (view === "images") {
+        entries.push(
+          { title: "Generate an image", action: "space.new" },
+          { title: "Add an image from a file", action: "space.import" },
+          { title: "Move image to the trash", action: "space.delete" },
+          { title: "Restore image from the trash", action: "space.restore" },
+          { title: "Delete image for good", action: "space.deleteForGood" },
         );
       } else {
         entries.push(
@@ -1261,6 +1566,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Copy page as Markdown", action: "space.export" },
           { title: "Restore page from the trash", action: "space.restore" },
           ...siteCommands(),
+          { title: "Images in this Space", action: "space.images" },
         );
       }
       return entries;
