@@ -21,12 +21,14 @@ qt_add_qml_module(hal_c2_mobile
     SettingsScreen.qml
     SpaceBlockRow.qml
     SpaceCommentsView.qml
+    SpaceDeckView.qml
     SpaceListRow.qml
     SpacePageView.qml
     SpaceImagesView.qml
     SpacePagesView.qml
     SpaceScreen.qml
     SpaceSheet.qml
+    SpaceSlideRow.qml
     SpaceTextDialog.qml
     ThreadScreen.qml
   RESOURCES

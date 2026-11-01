@@ -4,21 +4,23 @@ import {
   IsoDateTime,
   SpaceBlockId,
   SpaceCommentId,
+  SpaceDeckId,
   SpaceId,
   SpaceImageId,
   SpacePageId,
+  SpaceSlideId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ScheduledTaskRunStatus, ScheduledTaskUpsertSchedule } from "./scheduledTask.ts";
 
 /**
- * Spaces hold Pages that people and agents write together. Clients read them
- * from streams, the same subscribe/resume path as projects and threads:
+ * Spaces hold Pages that people and agents write together, and slide decks. Clients
+ * read them from streams, the same subscribe/resume path as projects and threads:
  * `SPACES_STREAM_ID` holds one `space` entity per Space, and `spaceStreamId(id)`
- * holds that Space's `page`, `block`, `comment`, `image` and `site` entities. The RPCs
- * below change them. An image's bytes are never on a stream: fetch them on demand from the
- * address `assets.createUrl` signs for a `space-image`.
+ * holds that Space's `page`, `block`, `comment`, `image`, `site`, `deck` and `slide` entities.
+ * The RPCs below change them. An image's bytes are never on a stream: fetch them on
+ * demand from the address `assets.createUrl` signs for a `space-image`.
  */
 export const SPACES_STREAM_ID = "spaces";
 
@@ -130,6 +132,31 @@ export const SpaceComment = Schema.Struct({
 });
 export type SpaceComment = typeof SpaceComment.Type;
 
+export const SpaceDeck = Schema.Struct({
+  id: SpaceDeckId,
+  spaceId: SpaceId,
+  title: TrimmedNonEmptyString,
+  /** Set while the deck is in the trash. */
+  trashedAt: Schema.NullOr(IsoDateTime),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type SpaceDeck = typeof SpaceDeck.Type;
+
+export const SpaceSlide = Schema.Struct({
+  id: SpaceSlideId,
+  deckId: SpaceDeckId,
+  /** May be blank: a new slide starts that way. */
+  title: Schema.String,
+  /** Plain text, its lines apart by line breaks. */
+  body: Schema.String,
+  /** Sorts the deck's slides as `SpaceBlock.order` sorts a page's blocks. */
+  order: Schema.String,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type SpaceSlide = typeof SpaceSlide.Type;
+
 /** A provider and model, as chosen for anything else in HAL-C2. */
 const SpaceImageSelection = Schema.Struct({
   instanceId: TrimmedNonEmptyString,
@@ -174,7 +201,7 @@ export type SpaceCreateInput = typeof SpaceCreateInput.Type;
 export const SpaceRenameInput = Schema.Struct({ spaceId: SpaceId, name: TrimmedNonEmptyString });
 export type SpaceRenameInput = typeof SpaceRenameInput.Type;
 
-/** Deletes a Space that has no pages or images, in the trash or out of it. */
+/** Deletes a Space that has no pages, decks or images, in the trash or out of it. */
 export const SpaceDeleteInput = Schema.Struct({ spaceId: SpaceId });
 export type SpaceDeleteInput = typeof SpaceDeleteInput.Type;
 
@@ -390,6 +417,88 @@ export type SpaceCommentRef = typeof SpaceCommentRef.Type;
 
 export const SpaceCommentResult = Schema.Struct({ comment: SpaceComment });
 export type SpaceCommentResult = typeof SpaceCommentResult.Type;
+
+// Decks
+
+/** A new deck with one blank slide. */
+export const SpaceDeckCreateInput = Schema.Struct({
+  spaceId: SpaceId,
+  title: TrimmedNonEmptyString,
+});
+export type SpaceDeckCreateInput = typeof SpaceDeckCreateInput.Type;
+
+/**
+ * A new deck copied from a live page, named after it: one slide per heading and what
+ * follows it, with anything before the first heading on a slide under the page's title.
+ * Later edits of the page do not reach the deck.
+ */
+export const SpaceDeckCreateFromPageInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+});
+export type SpaceDeckCreateFromPageInput = typeof SpaceDeckCreateFromPageInput.Type;
+
+export const SpaceDeckRenameInput = Schema.Struct({
+  spaceId: SpaceId,
+  deckId: SpaceDeckId,
+  title: TrimmedNonEmptyString,
+});
+export type SpaceDeckRenameInput = typeof SpaceDeckRenameInput.Type;
+
+/**
+ * Names one deck for `space.deck.trash`, `space.deck.restore` and `space.deck.delete`.
+ * Only a deck in the trash can be deleted; its slides go with it.
+ */
+export const SpaceDeckRef = Schema.Struct({ spaceId: SpaceId, deckId: SpaceDeckId });
+export type SpaceDeckRef = typeof SpaceDeckRef.Type;
+
+export const SpaceDeckResult = Schema.Struct({ deck: SpaceDeck });
+export type SpaceDeckResult = typeof SpaceDeckResult.Type;
+
+export const SpaceDeckDeleteResult = Schema.Struct({ deckId: SpaceDeckId });
+export type SpaceDeckDeleteResult = typeof SpaceDeckDeleteResult.Type;
+
+// Slides
+
+/**
+ * Where a slide goes in its deck: after `afterSlideId`, first with null, or last when
+ * it is left out.
+ */
+const AfterSlideId = Schema.optional(Schema.NullOr(SpaceSlideId));
+
+export const SpaceSlideInsertInput = Schema.Struct({
+  spaceId: SpaceId,
+  deckId: SpaceDeckId,
+  title: Schema.optional(Schema.String),
+  body: Schema.optional(Schema.String),
+  afterSlideId: AfterSlideId,
+});
+export type SpaceSlideInsertInput = typeof SpaceSlideInsertInput.Type;
+
+/** Changes what is given of a slide's title and body. */
+export const SpaceSlideUpdateInput = Schema.Struct({
+  spaceId: SpaceId,
+  slideId: SpaceSlideId,
+  title: Schema.optional(Schema.String),
+  body: Schema.optional(Schema.String),
+});
+export type SpaceSlideUpdateInput = typeof SpaceSlideUpdateInput.Type;
+
+export const SpaceSlideMoveInput = Schema.Struct({
+  spaceId: SpaceId,
+  slideId: SpaceSlideId,
+  afterSlideId: AfterSlideId,
+});
+export type SpaceSlideMoveInput = typeof SpaceSlideMoveInput.Type;
+
+export const SpaceSlideDeleteInput = Schema.Struct({ spaceId: SpaceId, slideId: SpaceSlideId });
+export type SpaceSlideDeleteInput = typeof SpaceSlideDeleteInput.Type;
+
+export const SpaceSlideResult = Schema.Struct({ slide: SpaceSlide });
+export type SpaceSlideResult = typeof SpaceSlideResult.Type;
+
+export const SpaceSlideDeleteResult = Schema.Struct({ slideId: SpaceSlideId });
+export type SpaceSlideDeleteResult = typeof SpaceSlideDeleteResult.Type;
 
 // Images
 
