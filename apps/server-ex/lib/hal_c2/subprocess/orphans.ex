@@ -268,13 +268,16 @@ defmodule HalC2.Subprocess.Orphans do
         parse_stat(stat)
 
       {:error, reason} ->
-        cond do
-          not File.dir?("/proc/self") -> ps_process_result(pid)
-          reason == :enoent -> :gone
-          true -> :unknown
-        end
+        if File.dir?("/proc/self"), do: unreadable_stat(reason), else: ps_process_result(pid)
     end
   end
+
+  @doc false
+  # What a failed read of a stat proves. A process reaped between the read's open and
+  # its read answers `:esrch` where one already gone answers `:enoent`: gone both ways.
+  # Anything else says nothing about the process.
+  def unreadable_stat(reason) when reason in [:enoent, :esrch], do: :gone
+  def unreadable_stat(_reason), do: :unknown
 
   @doc false
   # Fields 3, 5 and 22, the state, the group and the start time in ticks since
