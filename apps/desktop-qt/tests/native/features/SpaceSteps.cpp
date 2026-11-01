@@ -1099,8 +1099,6 @@ QString linkOf(World& world, const QString& title) {
 
 bool spaceTick(World& world, const QString& said, bool checked) {
   if (fake(world.mc).current.isEmpty()) return false;
-  const QJsonObject block = findBlock(world, said);
-  if (text(block, QLatin1String("kind")) != QLatin1String("checklist")) return false;
   actOnBlock(world, said, QStringLiteral("space.block.setChecked"), {{QStringLiteral("checked"), checked}});
   return true;
 }
@@ -1306,9 +1304,6 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user changes the block %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     actOnBlock(world, c[0], QStringLiteral("space.block.update"), {{QStringLiteral("text"), c[1]}});
-  });
-  step(QStringLiteral("the user ticks %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    actOnBlock(world, c[0], QStringLiteral("space.block.setChecked"), {{QStringLiteral("checked"), true}});
   });
   step(QStringLiteral("%1 is (not )?ticked").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString id = text(blockSaying(world, c[0]), QLatin1String("id"));

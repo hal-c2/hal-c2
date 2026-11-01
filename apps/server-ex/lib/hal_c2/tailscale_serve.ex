@@ -62,7 +62,8 @@ defmodule HalC2.TailscaleServe do
   def base_url(name, @default_port), do: "https://#{name}"
   def base_url(name, port), do: "https://#{name}:#{port}"
 
-  defp magic_dns_name do
+  @doc "This machine's MagicDNS name, `{:ok, name}` or `{:error, message}`."
+  def magic_dns_name do
     case run(["status", "--json"]) do
       {:ok, %{"Self" => %{"DNSName" => dns}}} when is_binary(dns) and dns not in ["", "."] ->
         {:ok, String.trim_trailing(dns, ".")}

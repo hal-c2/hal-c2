@@ -86,6 +86,9 @@ qt_add_qml_module(hal_c2_bricks
     FilesPanel.qml
     FileEntryMenu.qml
     AttachmentViewer.qml
+    DocumentView.qml
+    MediaPlayerView.qml
+    ImageViewer.qml
     FilePathTrail.qml
     ProjectActionEditor.qml
     ProjectIcon.qml

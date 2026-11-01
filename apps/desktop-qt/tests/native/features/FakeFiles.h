@@ -13,7 +13,8 @@
 // apps/server-ex lib/hal_c2/workspace.ex answers projects.listEntries,
 // searchEntries, searchContents and readFile. Also the environment's folders
 // for filesystem.browse (browser.ex): folder paths under `home`. While the
-// MC holds "search", file searches wait for answerHeld(). A file's address
+// MC holds "search", file searches wait for answerHeld(); while it holds
+// "read", a read answers later with what the file held when it was asked. A file's address
 // (signFile) serves its bytes: a small PNG for an image.
 struct FakeFiles {
   QMap<QString, QString> files;
@@ -25,6 +26,14 @@ struct FakeFiles {
   QSet<QString> failOnce;
   bool cannotList = false;
   QSet<QString> readFailsOnce;
+  // Files the MC will not read as text, with the `failure` it says why by.
+  QHash<QString, QString> unreadable;
+  // Folders that list nothing, that are gone, and that list nothing from a partial index.
+  QSet<QString> emptyFolders;
+  QSet<QString> goneFolders;
+  QSet<QString> partialFolders;
+  // Files the MC refuses an address for, saying this.
+  QString unsignable;
   // Files whose next download from their signed address fails.
   QSet<QString> loadFailsOnce;
   // The file each signed address serves, by its token; the paths downloaded.
