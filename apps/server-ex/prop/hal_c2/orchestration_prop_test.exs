@@ -11,7 +11,8 @@ defmodule HalC2.OrchestrationPropTest do
   promoted one, also after the thread was archived while Codex was asked); resume a held queue; interrupt a turn, or the run of a message as a
   client that read it as active does (#403, #474);
   crash a provider runtime mid-turn; release a thread's provider session as
-  IdleSessions does; and restart the MC mid-turn (boot recovery). A message can also
+  IdleSessions does; stop a thread as the plugin that started it does, after which no
+  message queued at the stop ever starts; and restart the MC mid-turn (boot recovery). A message can also
   stop its turn on a usage limit, which holds the queue behind it; the user can then
   choose to resume at the reset, and the limit recovery sweep at the reset resumes the
   held queue, or sends "Continue where you left off." when nothing was held.
@@ -43,6 +44,7 @@ defmodule HalC2.OrchestrationPropTest do
 
   @moduletag timeout: :infinity
 
+  @plugin "prop-plugin"
   @threads ~w(t1 t2)
   @instances ~w(codex codex-work)
   @fake_codex Path.expand("../../test/support/fake_codex.py", __DIR__)
@@ -172,6 +174,7 @@ defmodule HalC2.OrchestrationPropTest do
       {1, {:call, __MODULE__, :unarchive, [tid]}},
       {1, {:call, __MODULE__, :delete, [tid]}},
       {3, {:call, __MODULE__, :interrupt, [tid]}},
+      {2, {:call, __MODULE__, :stop, [tid]}},
       {1, {:call, __MODULE__, :resume, [tid]}},
       {1, {:call, __MODULE__, :release, [tid]}}
     ]
@@ -359,6 +362,17 @@ defmodule HalC2.OrchestrationPropTest do
     case refusal(state, tid, :interrupt) do
       nil -> update(state, tid, &(&1 |> end_running(:interrupted) |> start_next()))
       _ -> state
+    end
+  end
+
+  # A plugin's stop ends the turn and starts nothing: what was queued is cancelled.
+  def next_state(state, _result, {:call, _, :stop, [tid]}) do
+    case state.threads[tid] do
+      %{status: status} when status != :deleted ->
+        update(state, tid, &(&1 |> cancel_queue() |> end_running(:interrupted)))
+
+      _ ->
+        state
     end
   end
 
@@ -611,6 +625,9 @@ defmodule HalC2.OrchestrationPropTest do
   defp expected_reply(state, fun, [tid])
        when fun in [:archive, :unarchive, :delete, :interrupt],
        do: refusal(state, tid, fun) || :ok
+
+  defp expected_reply(state, :stop, [tid]),
+    do: if(state.threads[tid], do: :ok, else: {:error, "unknown thread #{tid}"})
 
   defp expected_reply(state, :edit, [tid, msg, _]),
     do: refusal(state, tid, :queue) || agents_own(state, tid, msg) || :ok
@@ -881,20 +898,29 @@ defmodule HalC2.OrchestrationPropTest do
 
   # --- commands ---------------------------------------------------------------------
 
+  # Every thread is a plugin's, so that it can be stopped; a client creating one that
+  # exists gets the same answer whoever started it.
   def create(tid) do
-    reply(
-      Orchestration.dispatch(%{
-        "type" => "thread.create",
-        "threadId" => tid,
-        "projectId" => "project-1",
-        "title" => "Thread #{tid}",
-        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
-        "runtimeMode" => "full-access",
-        "interactionMode" => "default",
+    fields = %{
+      "threadId" => tid,
+      "projectId" => "project-1",
+      "title" => "Thread #{tid}",
+      "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+      "runtimeMode" => "full-access",
+      "interactionMode" => "default"
+    }
+
+    if StreamState.get(current(tid), "thread")[tid] do
+      reply(Orchestration.dispatch(Map.put(fields, "type", "thread.create")), [])
+    else
+      fields
+      |> Map.put("workspaceStrategy", %{
+        "type" => "existing_worktree",
         "worktreePath" => Process.get(:work)
-      }),
-      []
-    )
+      })
+      |> Orchestration.launch_thread(plugin: %{"id" => @plugin})
+      |> reply([])
+    end
   end
 
   def send(tid, msg, mode, instance) do
@@ -1037,6 +1063,27 @@ defmodule HalC2.OrchestrationPropTest do
   def interrupt(tid) do
     ending = active_runs(tid)
     reply(Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => tid}), ending)
+  end
+
+  # What was queued when the stop began never starts: a run that did carries an attempt,
+  # or ended as something other than cancelled, whatever a later command makes of it.
+  def stop(tid) do
+    ending = active_runs(tid)
+    queued = for run <- runs(current(tid)), run["status"] == "queued", do: run["id"]
+
+    result =
+      case Orchestration.stop_plugin_thread(tid, @plugin) do
+        :ok -> {:ok, %{}}
+        :busy -> {:error, :busy}
+        error -> error
+      end
+
+    for run <- runs(current(tid)),
+        run["id"] in queued,
+        run["status"] != "cancelled" or run["startedAt"] != nil,
+        do: raise("a run queued at the stop of #{tid} started: #{inspect(run)}")
+
+    reply(result, ending)
   end
 
   def interrupt_run(tid, msg) do

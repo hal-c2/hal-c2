@@ -634,15 +634,16 @@ for line in sys.stdin:
     elif method == "turn/interrupt":
         if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
             interrupted_turns.add(params["turnId"])
-        completed = {"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}}
-        # FAKE_CODEX_END_BEFORE_INTERRUPT_REPLY ends the turn well before it answers the stop.
-        end_first = os.environ.get("FAKE_CODEX_END_BEFORE_INTERRUPT_REPLY")
-        if end_first:
-            send(completed)
-            time.sleep(0.3)
+        # While the file FAKE_CODEX_HOLD_INTERRUPT names exists, a stop waits, bounded as a
+        # held steer is.
+        hold_deadline = time.time() + 120
+        while os.path.exists(os.environ.get("FAKE_CODEX_HOLD_INTERRUPT", "/nonexistent")):
+            if time.time() > hold_deadline:
+                sys.exit("fake Codex: interrupt held past 120s (stuck hold-interrupt gate)")
+            time.sleep(0.01)
         send({"id": mid, "result": {}})
         # FAKE_CODEX_IGNORE_INTERRUPT acknowledges the stop and never ends the turn.
-        if not end_first and not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
-            send(completed)
+        if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
+            send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})
     else:
         send({"id": mid, "error": {"code": -32601, "message": method}})

@@ -368,10 +368,14 @@ defmodule HalC2.CodeReviewTest do
     assert sessions_stopped?(thread_id)
   end
 
-  test "a stop cancels the queue before the end of the interrupted run can start it",
-       _context do
-    System.put_env("FAKE_CODEX_END_BEFORE_INTERRUPT_REPLY", "1")
-    on_exit(fn -> System.delete_env("FAKE_CODEX_END_BEFORE_INTERRUPT_REPLY") end)
+  # The turn's end starts what is queued, off the runtime's process, so a queue cancelled
+  # only after the interrupt races it (the agent's answer to the stop is held here, so
+  # with that order the queue is still there to see).
+  test "a stop cancels the queue before it asks the agent to stop", context do
+    hold = Path.join(context.dir, "hold-interrupt")
+    File.write!(hold, "")
+    System.put_env("FAKE_CODEX_HOLD_INTERRUPT", hold)
+    on_exit(fn -> System.delete_env("FAKE_CODEX_HOLD_INTERRUPT") end)
     review = start_review()
     thread_id = review["threadId"]
 
@@ -385,10 +389,20 @@ defmodule HalC2.CodeReviewTest do
         "dispatchMode" => %{"type" => "queue_after_active"}
       })
 
-    assert :ok = HalC2.Orchestration.stop_plugin_thread(thread_id, @id)
+    :ok = HalC2.Streams.watch(thread_id, self())
+    stop = Task.async(fn -> HalC2.Orchestration.stop_plugin_thread(thread_id, @id) end)
+    state = await_interrupt_requested(thread_id)
+    File.rm!(hold)
+    assert :ok = Task.await(stop, 15_000)
 
-    runs = HalC2.Streams.state(thread_id) |> HalC2.StreamState.list("run")
-    assert Enum.find(runs, &(&1["userMessageId"] == "queued-message"))["status"] == "cancelled"
+    queued = fn state ->
+      state
+      |> HalC2.StreamState.list("run")
+      |> Enum.find(&(&1["userMessageId"] == "queued-message"))
+    end
+
+    assert queued.(state)["status"] == "cancelled"
+    assert queued.(HalC2.Streams.state(thread_id))["status"] == "cancelled"
   end
 
   test "a stop walks through a task that already ended to the task below it", _context do
@@ -954,6 +968,21 @@ defmodule HalC2.CodeReviewTest do
       )
 
     {:ok, _} = HalC2.Plugins.handle("saveSettings", %{"id" => @id, "settings" => settings})
+  end
+
+  defp await_interrupt_requested(thread_id) do
+    state = HalC2.Streams.state(thread_id)
+    items = Map.keys(HalC2.StreamState.get(state, "turn-item"))
+
+    if Enum.any?(items, &String.ends_with?(&1, ":signal:interrupt-request")) do
+      state
+    else
+      receive do
+        {:hal_c2_stream, ^thread_id, _} -> await_interrupt_requested(thread_id)
+      after
+        5_000 -> flunk("the thread was never asked to stop")
+      end
+    end
   end
 
   defp start_review do
