@@ -269,6 +269,20 @@ Feature: A page published as a site
       When the user publishes the page "Roadmap" as a site
       Then the site link of the page "Roadmap" starts with "http://192.168.1.20:3773/sites/"
 
+    @mc
+    Scenario: Publishing again from the network keeps a link on the tailnet
+      Given Tailscale names the MC's machine "mc.tail1234.ts.net"
+      And the user publishes the page "Roadmap" over Tailscale
+      When a client that reached the MC at "http://192.168.1.20:3773" publishes the page "Roadmap"
+      Then the site link of the page "Roadmap" starts with "https://mc.tail1234.ts.net/sites/"
+
+    @mc
+    Scenario: Publishing over Tailscale moves a link others could already open
+      Given Tailscale names the MC's machine "mc.tail1234.ts.net"
+      And a client that reached the MC at "http://192.168.1.20:3773" publishes the page "Roadmap"
+      When the user publishes the page "Roadmap" over Tailscale
+      Then the site link of the page "Roadmap" starts with "https://mc.tail1234.ts.net/sites/"
+
   # Out of scope for the first version of sites.
   @backlog @mc @shared
   Scenario: A published page reads from a database

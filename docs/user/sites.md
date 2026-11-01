@@ -26,10 +26,14 @@ Anyone who has the link and can reach your MC's address. The link is the only pr
 it as you would a password. It opens this one page and nothing else on the MC, and comments are
 never included.
 
-The link uses the address you reached the MC at. When your MC only listens on this machine, the
-page says so: only this machine can open that link. Choose **Publish over Tailscale** to get a link
-others on your tailnet can open, or see [Remote access](remote-access.md) to put the MC on your
-network.
+The link uses the address you reached the MC at, and publishing again keeps it wherever you publish
+from. When your MC only listens on this machine, the page says so: only this machine can open that
+link. Choose **Publish over Tailscale** to get a link others on your tailnet can open, or see
+[Remote access](remote-access.md) to put the MC on your network.
+
+Publishing over Tailscale puts the whole MC on your tailnet, not just this page, and it stays there
+after you unpublish and across restarts. Pairing still protects everything but the link. To take the
+MC off the tailnet, see [Tailscale HTTPS](remote-access.md#tailscale-https).
 
 ## What a site shows
 

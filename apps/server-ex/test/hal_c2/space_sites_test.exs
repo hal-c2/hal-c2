@@ -24,9 +24,9 @@ defmodule HalC2.SpaceSitesTest do
     state = state_with([{"page", "p", @page}])
     at = "2026-11-01T00:00:00.000Z"
 
-    {[{"site", token, patch}], {:ok, site}} = Sites.publish(state, "p", @reached, at)
+    {[{"site", token, patch}], {:ok, site}} = Sites.publish(state, "p", @reached, at: at)
     state = StreamState.apply_event(state, %{seq: 2, kind: "site", entity: token, patch: patch})
 
-    assert {[], {:ok, ^site}} = Sites.publish(state, "p", @reached, at)
+    assert {[], {:ok, ^site}} = Sites.publish(state, "p", @reached, at: at)
   end
 end

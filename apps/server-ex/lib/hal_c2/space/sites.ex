@@ -19,17 +19,18 @@ defmodule HalC2.Space.Sites do
 
   @doc """
   Publishes the live page `page_id` at `reached` (`HalC2.Web.address/1`), or brings its
-  site up to date: the link stays. An address only this machine can open never replaces
-  one others can.
+  site up to date: the link stays, whichever address it was asked from this time. It only
+  moves when it is a link only this machine can open, or with `move: true`, as the user
+  asked for that address. `at:` says when, for tests.
   """
-  def publish(state, page_id, reached, at \\ Entities.now()) do
+  def publish(state, page_id, reached, opts \\ []) do
     case Pages.fetch_live(state, page_id) do
       {:ok, page} ->
         site = of_page(state, page_id)
         token = if site, do: site["id"], else: token()
 
         where =
-          if site && !site["localOnly"] && reached["localOnly"],
+          if site && !site["localOnly"] && !opts[:move],
             do: %{"url" => site["url"], "localOnly" => false},
             else: %{
               "url" => "#{reached["address"]}/sites/#{page["spaceId"]}/#{token}",
@@ -41,7 +42,7 @@ defmodule HalC2.Space.Sites do
             "id" => token,
             "spaceId" => page["spaceId"],
             "pageId" => page_id,
-            "publishedAt" => at,
+            "publishedAt" => opts[:at] || Entities.now(),
             "behind" => false,
             "snapshot" => snapshot(state, page)
           })
@@ -76,12 +77,32 @@ defmodule HalC2.Space.Sites do
   end
 
   @doc """
-  What pages changing means for their sites, given the state after the change: the site
-  of a page gone or in the trash comes down for good, and the others are behind exactly
-  when publishing now would change them.
+  What `changes` taking `before` to `state` mean for sites: the site of a page gone or in
+  the trash comes down for good, and the others are behind exactly when publishing now
+  would change them.
   """
-  def follow(state) do
-    for site <- StreamState.list(state, "site"), change = followed(state, site), do: change
+  def follow(before, state, changes) do
+    concerned = concerned(before, state, changes)
+
+    for site <- StreamState.list(state, "site"),
+        concerned == :all or site["pageId"] in concerned,
+        change = followed(state, site),
+        do: change
+  end
+
+  # A block only shows on its own page, and blocks are what is edited most. A page can
+  # reach any site: trashing a parent takes its children's sites down, and a link shows
+  # the title of the page it links to.
+  defp concerned(before, state, changes) do
+    if Enum.any?(changes, fn {kind, _, _} -> kind == "page" end) do
+      :all
+    else
+      for {"block", id, _} <- changes,
+          block <- [StreamState.get(before, "block")[id], StreamState.get(state, "block")[id]],
+          block,
+          into: MapSet.new(),
+          do: block["pageId"]
+    end
   end
 
   defp followed(state, site) do

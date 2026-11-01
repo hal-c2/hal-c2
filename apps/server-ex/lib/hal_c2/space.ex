@@ -143,7 +143,7 @@ defmodule HalC2.Space do
   # Whatever a command does to pages, their sites follow in the same step.
   defp and_sites({changes, reply}, state) do
     if Sites.affected?(state, changes),
-      do: {changes ++ Sites.follow(with_changes(state, changes)), reply},
+      do: {changes ++ Sites.follow(state, with_changes(state, changes), changes), reply},
       else: {changes, reply}
   end
 
@@ -210,7 +210,7 @@ defmodule HalC2.Space do
     # Refused first: reaching for the address can publish the MC over Tailscale.
     with {:ok, _} <- transact(space_id, &{[], Pages.fetch_live(&1, page_id)}),
          {:ok, reached} <- reached(where) do
-      transact(space_id, &Sites.publish(&1, page_id, reached))
+      transact(space_id, &Sites.publish(&1, page_id, reached, move: where["tailscale"] == true))
     end
   end
 
