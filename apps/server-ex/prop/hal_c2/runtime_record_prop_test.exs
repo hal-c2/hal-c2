@@ -83,10 +83,14 @@ defmodule HalC2.RuntimeRecordPropTest do
 
   defp place({kind, dir}, base) do
     cond do
-      dir == "relative" or String.starts_with?(dir, Path.join(base, ".t3")) -> :installed
+      dir == "relative" or legacy?(dir, base) -> :installed
       kind == :root -> :root
       kind == :mc -> :mc
     end
+  end
+
+  defp legacy?(dir, base) do
+    Enum.any?(HalC2.Paths.legacy_names(), &String.starts_with?(dir, Path.join(base, &1)))
   end
 
   defp outcome(nil, _own, _installed), do: :none
@@ -103,8 +107,8 @@ defmodule HalC2.RuntimeRecordPropTest do
       :dir,
       {:root, :relative},
       {:mc, :relative},
-      {:root, :legacy},
-      {:mc, :legacy_inside}
+      {:root, {:legacy, oneof(HalC2.Paths.legacy_names())}},
+      {:mc, {:legacy_inside, oneof(HalC2.Paths.legacy_names())}}
     ])
   end
 
@@ -117,8 +121,8 @@ defmodule HalC2.RuntimeRecordPropTest do
   # Homes are generated without the case's scratch path, so a counterexample stays readable.
   defp resolve(:dir, base), do: Path.join(base, "dir")
   defp resolve({kind, :relative}, _base), do: {kind, "relative"}
-  defp resolve({:root, :legacy}, base), do: {:root, Path.join(base, ".t3")}
-  defp resolve({:mc, :legacy_inside}, base), do: {:mc, Path.join([base, ".t3", "inside"])}
+  defp resolve({:root, {:legacy, name}}, base), do: {:root, Path.join(base, name)}
+  defp resolve({:mc, {:legacy_inside, name}}, base), do: {:mc, Path.join([base, name, "inside"])}
   defp resolve({kind, place}, base), do: {kind, Path.join(base, Atom.to_string(place))}
   defp resolve(home, _base), do: home
 
