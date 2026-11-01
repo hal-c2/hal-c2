@@ -681,7 +681,9 @@ defmodule HalC2.Claude.ThreadRuntime do
     {:noreply, %{state | session: nil, wake: wake}}
   end
 
-  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
+  def handle_info(:flush, state),
+    do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
+
   def handle_info(_other, state), do: {:noreply, state}
 
   # What an approval reads: the tool and what it would act on — its command or

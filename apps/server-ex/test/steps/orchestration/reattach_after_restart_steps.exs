@@ -355,6 +355,109 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
     context
   end
 
+  defp runtime(context, thread) do
+    id = World.thread_id(context, thread)
+
+    Enum.find_value(
+      [
+        HalC2.Codex.Registry,
+        HalC2.Claude.Registry,
+        HalC2.Acp.Registry
+      ],
+      fn registry ->
+        case Process.whereis(registry) && Registry.lookup(registry, id) do
+          [{pid, _}] -> pid
+          _ -> nil
+        end
+      end
+    )
+  end
+
+  step ~r/^thread "(?<thread>[^"]+)" has a turn on "codex" that streamed a paragraph and paused$/,
+       %{args: [thread]} = context do
+    context = context |> durable() |> World.fake_providers()
+    World.put_os_env("FAKE_CODEX_GATE", HalC2.Test.Mc.tmp_dir(context.mc, "gate"))
+    context = World.launch_on(context, thread, "codex", "stream paragraphs")
+    run = World.await_running(context, thread)
+    context = context |> Map.put(:thread, thread) |> Map.put(:running, run["id"])
+    await_checkpoint(context, thread)
+    context = Map.put(context, :program, program(context, thread))
+
+    World.await_state(context, thread, fn state ->
+      match?(%{"text" => "One.\n\n"}, state.entities["message"]["message:codex:msg-stream"])
+    end)
+
+    # Past the flush and the save after it.
+    Process.sleep(600)
+    context
+  end
+
+  step "{string} shows that paragraph once", %{args: [thread]} = context do
+    Process.sleep(1_000)
+    message = World.state(context, thread).entities["message"]["message:codex:msg-stream"]
+    assert message["text"] == "One.\n\n"
+    context
+  end
+
+  step "a stop of {string} is out and {string} will not answer it",
+       %{args: [thread, provider]} = context do
+    Application.put_env(:hal_c2, :codex_interrupt_deadline_ms, 200)
+    Application.put_env(:hal_c2, :claude_interrupt_timeout_ms, 200)
+    Application.put_env(:hal_c2, :antigravity_cancel_timeout_ms, 200)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for key <-
+            ~w(codex_interrupt_deadline_ms claude_interrupt_timeout_ms antigravity_cancel_timeout_ms)a,
+          do: Application.delete_env(:hal_c2, key)
+    end)
+
+    # The state a stop leaves; the fake is not told, so nothing answers.
+    :sys.replace_state(runtime(context, thread), fn state ->
+      case provider do
+        "codex" -> %{state | interrupting: state.turn.native_turn_id, stopped: true}
+        _ -> %{state | interrupted: true}
+      end
+    end)
+
+    context
+  end
+
+  step ~r/^the run of "(?<thread>[^"]+)" ends as (?<status>\w+)$/,
+       %{args: [thread, status]} = context do
+    await_status(context, thread, status)
+    context
+  end
+
+  step "a second Antigravity thread starts", context do
+    Process.sleep(1_000)
+    temp = :sys.get_state(runtime(context, context.thread)).temp_dir
+    assert is_binary(temp)
+    File.mkdir_p!(temp)
+
+    context =
+      World.launch_on(context, "t2", "antigravity", @wait, %{"model" => "antigravity-default"})
+
+    World.await_running(context, "t2")
+    Map.put(context, :temp_dir, temp)
+  end
+
+  step "the runtime directory of {string} is still there", %{args: [_thread]} = context do
+    assert File.dir?(context.temp_dir)
+    context
+  end
+
+  step "the user signs out of Antigravity", context do
+    Process.sleep(1_000)
+    assert runtime(context, context.thread) in HalC2.Acp.Antigravity.sessions("antigravity")
+    HalC2.Acp.Antigravity.stop_sessions("antigravity")
+    context
+  end
+
+  step "the provider process of {string} has stopped", %{args: [_thread]} = context do
+    await_dead(context.program)
+    context
+  end
+
   step "that provider process has been killed", context do
     await_dead(context.program)
     context

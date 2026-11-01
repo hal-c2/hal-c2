@@ -740,7 +740,9 @@ defmodule HalC2.Codex.ThreadRuntime do
     {:noreply, end_background(state, "failed")}
   end
 
-  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
+  def handle_info(:flush, state),
+    do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
+
   def handle_info(_other, state), do: {:noreply, state}
 
   # The app-server, and the terminals it runs, stop with this process: released when

@@ -173,6 +173,73 @@ defmodule HalC2.SubprocessDurableTest do
     assert File.exists?(snapshot)
   end
 
+  test "a program that ignores SIGTERM still ends when no MC comes back", %{home: home} do
+    Application.put_env(:hal_c2, :durable_look_seconds, 1)
+    on_exit(fn -> Application.delete_env(:hal_c2, :durable_look_seconds) end)
+
+    {:ok, program} =
+      Durable.launch("t1", ["sh", "-c", "trap '' TERM; while :; do sleep 1; done"], [])
+
+    # After the shim's own first touch. No helper touches it: long stale, as an MC gone
+    # for good leaves it.
+    Process.sleep(500)
+    long_ago = :calendar.system_time_to_universal_time(System.os_time(:second) - 3600, :second)
+    File.touch!(Path.join(program.dir, "alive"), long_ago)
+    assert home != nil
+    assert await_gone(program.pid, 200)
+  end
+
+  defp await_gone(_pid, 0), do: false
+
+  defp await_gone(pid, tries) do
+    if HalC2.Subprocess.Orphans.gone?(pid) do
+      true
+    else
+      Process.sleep(100)
+      await_gone(pid, tries - 1)
+    end
+  end
+
+  test "text a later flush writes is saved again, and a stop saves the latest", %{home: home} do
+    dir = Path.join(home, "flushed")
+    File.mkdir_p!(dir)
+    snapshot = Path.join(dir, "snapshot")
+    flush = fn state -> %{state | buffer: %{}} end
+    keep = & &1
+    state = %{thread_id: "t1", buffer: %{"a" => "A\n\nB"}}
+    point = %{dir: dir, offset: 1, channel: %{}, wrote: true}
+
+    state = Durable.checkpoint(point, __MODULE__, state, keep)
+    assert %{state: %{buffer: %{"a" => _}}} = :erlang.binary_to_term(File.read!(snapshot))
+
+    # The flush timer writes what the save still holds.
+    written = %{state | buffer: %{"a" => "B"}}
+    assert Durable.flushed(state, written) == written
+    assert_receive :durable_save, 1_000
+    Durable.save_due(written, keep)
+    assert %{state: %{buffer: %{"a" => "B"}}} = :erlang.binary_to_term(File.read!(snapshot))
+
+    HalC2.Orchestration.Recovery.leaving(true)
+    Durable.leaving(%{written | buffer: %{"a" => "BC"}}, flush)
+    HalC2.Orchestration.Recovery.leaving(false)
+    assert %{state: %{buffer: buffer}} = :erlang.binary_to_term(File.read!(snapshot))
+    assert buffer == %{}
+  end
+
+  test "a line just written reaches the program across a stop with the MC" do
+    {:ok, sub} = Subprocess.start(@echo, durable: "t1")
+    dir = sub.durable.dir
+    Subprocess.write_line(sub, "in flight")
+    HalC2.Orchestration.Recovery.leaving(true)
+    :detached = Subprocess.stop(sub)
+    HalC2.Orchestration.Recovery.leaving(false)
+    flush_messages()
+
+    {:ok, sub} = Subprocess.adopt(dir, 0)
+    assert {["got in flight"], _} = lines(sub, 1)
+    Subprocess.stop(sub)
+  end
+
   defp flush_messages do
     receive do
       _ -> flush_messages()

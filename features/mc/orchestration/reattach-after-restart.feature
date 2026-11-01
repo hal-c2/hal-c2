@@ -198,24 +198,28 @@ Feature: Reattaching to provider programs after a restart
       And the MC restarts
       Then the run of "t1" is interrupted
 
-  Rule: Still to come
+  Rule: What a restart must not repeat or forget
 
-    @backlog
     Scenario: Text streamed before a pause is not written again after a restart
-      Given thread "t1" has a turn on "codex" that streamed "Half." and paused
+      Given thread "t1" has a turn on "codex" that streamed a paragraph and paused
       When the MC dies
       And the MC restarts
-      Then "t1" shows "Half." once
+      Then "t1" shows that paragraph once
 
-    @backlog
-    Scenario: A stop that was out when the MC went still settles
-      Given thread "t1" has a running turn on "codex" that never answers a stop
-      When the user stops "t1"
-      And the MC dies
+    # The stop went out before the MC left, and the program never answers it.
+    Scenario Outline: A stop that was out when the MC went still settles
+      Given thread "t1" has a running turn on "<provider>"
+      And a stop of "t1" is out and "<provider>" will not answer it
+      When the MC dies
       And the MC restarts
-      Then the run of "t1" is interrupted
+      Then the run of "t1" ends as <ending>
 
-    @backlog
+      Examples:
+        | provider    | ending      |
+        | codex       | interrupted |
+        | claudeAgent | interrupted |
+        | antigravity | failed      |
+
     Scenario: A second Antigravity thread leaves an adopted program's files alone
       Given thread "t1" has a running turn on "antigravity"
       When the MC dies
@@ -223,15 +227,15 @@ Feature: Reattaching to provider programs after a restart
       And a second Antigravity thread starts
       Then the runtime directory of "t1" is still there
 
-    @backlog
     Scenario: A sign-out reaches an adopted Antigravity program
       Given thread "t1" has a running turn on "antigravity"
       When the MC dies
       And the MC restarts
       And the user signs out of Antigravity
-      Then the provider process of "t1" stops
+      Then the provider process of "t1" has stopped
 
-    # A provider that writes while no MC reads waits on a full pipe, so nothing is dropped.
+  Rule: Still to come
+
     @backlog
     Scenario Outline: What a provider wrote while the MC was down reaches the thread once, in order
       Given thread "t1" has a running turn on "<provider>"

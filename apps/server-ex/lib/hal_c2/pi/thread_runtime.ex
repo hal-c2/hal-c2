@@ -390,7 +390,8 @@ defmodule HalC2.Pi.ThreadRuntime do
     {:noreply, %{state | conn: nil, compact: nil}}
   end
 
-  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
+  def handle_info(:flush, state),
+    do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
 
   def handle_info({:steer_timeout, from}, state), do: {:noreply, steer_timeout(state, from)}
 

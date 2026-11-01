@@ -44,6 +44,7 @@ defmodule HalC2.Subprocess.Durable do
   @save_ms 100
   @pending {__MODULE__, :pending}
   @timer {__MODULE__, :timer}
+  @last {__MODULE__, :last}
   # Bumped when the snapshot's outer shape changes; an older one is not adopted.
   @format 1
   @runtimes [
@@ -58,7 +59,8 @@ defmodule HalC2.Subprocess.Durable do
   # ignored and it could not undo that: whatever the program runs would inherit it. The
   # shim leads the program's process group (`detach/3`), so the watcher signals both.
   # It needs two stale looks in a row: a machine waking from sleep can run the watcher
-  # before the helper has touched `alive`.
+  # before the helper has touched `alive`. It is in the group it signals, so it ignores
+  # TERM to live to send the KILL, and only KILL stops it.
   @shim ~S"""
   exec </dev/null >/dev/null 2>&1
   dir=$1; wait_minutes=$2; err=$3; shift 3
@@ -67,8 +69,9 @@ defmodule HalC2.Subprocess.Durable do
   trap : TERM INT HUP
   shim=$$
   (
+    trap '' TERM
     stale=0
-    while sleep 30; do
+    while sleep "$HAL_C2_DURABLE_LOOK"; do
       if [ -z "$(find "$dir/alive" -mmin -"$wait_minutes" 2>/dev/null)" ]; then
         stale=$((stale + 1))
       else
@@ -85,7 +88,7 @@ defmodule HalC2.Subprocess.Durable do
   watch=$!
   "$@" <&3 >>"$dir/out" 2>>"$err" 3<&-
   status=$?
-  kill "$watch" 2>/dev/null
+  kill -KILL "$watch" 2>/dev/null
   printf '%s' "$status" >"$dir/status.tmp"
   mv "$dir/status.tmp" "$dir/status"
   printf '\n\001hal-c2-exit %s\n' "$status" >>"$dir/out"
@@ -184,8 +187,12 @@ defmodule HalC2.Subprocess.Durable do
     err = if opts[:stderr_prefix], do: Path.join(dir, "err"), else: "/dev/null"
 
     args = ["-c", @shim, "shim", dir, "#{@wait_minutes}", err | cmd]
+    look = Application.get_env(:hal_c2, :durable_look_seconds, 30)
 
-    env = for {key, value} <- opts[:env] || [], do: {to_charlist(key), to_charlist(value)}
+    env =
+      for {key, value} <- [{"HAL_C2_DURABLE_LOOK", "#{look}"} | Enum.to_list(opts[:env] || [])],
+          do: {to_charlist(key), to_charlist(value)}
+
     cd = if opts[:cd], do: [cd: to_charlist(opts[:cd])], else: []
     settings = [:binary, :exit_status, :hide, {:args, args}, {:env, env}] ++ cd
     {runner, ref} = spawn_monitor(fn -> exit({:spawned, open(settings)}) end)
@@ -216,10 +223,12 @@ defmodule HalC2.Subprocess.Durable do
   was just sent to the program is saved at once, or a reply to it could not be told
   apart after a restart. Output is saved at most every #{@save_ms} ms: a stale save only
   replays more output, and a long turn's state is too big to write for every batch.
-  Saving runs `flush` first, so the state saved holds no text the log already has.
+  Saving runs `flush` first, and a later flush that writes saves again (`flushed/2`), so
+  the state saved holds no text the log has for longer than that interval.
   """
   def checkpoint(checkpoint, runtime, state, flush) do
     Process.put(@pending, {checkpoint, runtime})
+    Process.put(@last, {checkpoint, runtime})
 
     cond do
       checkpoint[:wrote] ->
@@ -240,16 +249,38 @@ defmodule HalC2.Subprocess.Durable do
     save_pending(state, flush)
   end
 
+  @doc """
+  A runtime's flush timer ran, from state `before` to `state`: text it wrote is in the
+  log but still in the last save, so another save is due. Returns `state`.
+  """
+  def flushed(before, state) do
+    with true <- before.buffer != state.buffer,
+         {_checkpoint, _runtime} = last <- Process.get(@last) do
+      Process.put(@pending, last)
+
+      unless Process.get(@timer),
+        do: Process.put(@timer, Process.send_after(self(), :durable_save, @save_ms))
+    end
+
+    state
+  end
+
   @doc "A runtime is stopping: with the MC, what it has is saved as it stands."
   def leaving(state, flush) do
-    if HalC2.Orchestration.Recovery.stopping?(), do: save_pending(state, flush), else: state
+    if HalC2.Orchestration.Recovery.stopping?() do
+      if last = Process.get(@last), do: Process.put(@pending, last)
+      save_pending(state, flush)
+    else
+      state
+    end
   catch
     _, _ -> state
   end
 
   defp save_pending(state, flush) do
     case Process.delete(@pending) do
-      {checkpoint, runtime} ->
+      {checkpoint, runtime} = pending ->
+        Process.put(@last, pending)
         state = flush.(state)
         save(checkpoint, runtime, state)
         state

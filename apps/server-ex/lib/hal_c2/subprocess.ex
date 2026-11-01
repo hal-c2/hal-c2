@@ -318,11 +318,30 @@ defmodule HalC2.Subprocess do
     Proc.await_exit(proc, timeout)
   end
 
-  # The port process going closes the helper's stdin, which ends it. Not through Exile's
-  # own stop: that exits `:kill_timeout`, at its linked owner, when the helper is gone.
+  # Stdin closed first, so what was written still reaches the program: the helper ends
+  # once it has passed that on, and its output ending ends the reader. Then the port
+  # process goes, not through Exile's own stop, which exits `:kill_timeout` at its linked
+  # owner when the helper is gone.
   defp detach(%__MODULE__{proc: proc, reader: reader}) do
     Process.unlink(reader)
-    Process.exit(reader, :kill)
+    drained = Process.monitor(reader)
+
+    try do
+      Proc.close_stdin(proc)
+    catch
+      :exit, _ -> :ok
+    end
+
+    send(reader, :ack)
+
+    receive do
+      {:DOWN, ^drained, :process, _, _} -> :ok
+    after
+      500 ->
+        Process.demonitor(drained, [:flush])
+        Process.exit(reader, :kill)
+    end
+
     ref = Process.monitor(proc.pid)
     Process.unlink(proc.pid)
     Process.exit(proc.pid, :kill)

@@ -394,7 +394,9 @@ defmodule HalC2.Muse.ThreadRuntime do
     {:noreply, %{state | conn: nil, host: nil, session: nil, model: nil}}
   end
 
-  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
+  def handle_info(:flush, state),
+    do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
+
   def handle_info(_other, state), do: {:noreply, state}
 
   # Anything Muse says about this run's turn means it has started it.

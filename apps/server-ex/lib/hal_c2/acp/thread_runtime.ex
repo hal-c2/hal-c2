@@ -774,7 +774,8 @@ defmodule HalC2.Acp.ThreadRuntime do
     {:noreply, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
   end
 
-  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
+  def handle_info(:flush, state),
+    do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
 
   # Antigravity never confirmed a stopped turn: stop its process and say so.
   def handle_info({:antigravity_cancel_timeout, run}, state) do
