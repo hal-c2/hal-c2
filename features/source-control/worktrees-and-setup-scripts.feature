@@ -253,6 +253,14 @@ Feature: Worktrees and setup scripts
     And the setup can no longer begin behind the failure
 
   @mc
+  Scenario: A background setup script that never begins does not stop the agent
+    Given a background setup script that writes a file
+    And the shell's startup never finishes
+    When the thread's worktree is prepared
+    Then the setup script stage says it did not start
+    And the agent starts on the first message
+
+  @mc
   Scenario: A setup script that has begun may take as long as it needs
     Given a setup script that must finish before the agent starts
     And a setup script has 3 seconds to begin
@@ -266,6 +274,7 @@ Feature: Worktrees and setup scripts
     And the thread's setup failed on that script
     When the file exists and the user retries the setup
     Then the setup finishes in the same worktree
+    And the conversation no longer shows the failure
     And the agent starts on the first message
 
   @mc

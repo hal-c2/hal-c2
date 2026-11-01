@@ -3,7 +3,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
   How `HalC2.WorktreeSetup` keeps each thread's setup, against a model: progress counts
   only while it runs, its end is kept with one expiry, and only that expiry's own message
   removes it; a failure the agent's stage never reached has no expiry, and goes only when
-  the thread's agent starts a turn without it. Setups are put in the server's state directly, since a real one has a
+  the thread goes on without it, or a retry, once its worker has ended, runs it again.
+  Setups are put in the server's state directly, since a real one has a
   worker racing the commands; retention is long enough that only a sent `:expire` acts.
 
   Beside it, two pure properties: how output is cut into lines does not depend on how it
@@ -83,7 +84,7 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
   # --- model ------------------------------------------------------------------------
 
   # thread => %{phase: "running" | ended phase, sequence: n, branch: what a cancel deletes,
-  # renaming: the name it may have taken already}
+  # renaming: the name it may have taken already, worker: whether a retry's worker is live}
   def initial_state, do: %{}
 
   def command(_state) do
@@ -92,6 +93,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
       {4, {:call, __MODULE__, :progress, [oneof(@threads)]}},
       {2, {:call, __MODULE__, :finish, [oneof(@threads), oneof(~w(done failed cancelled))]}},
       {2, {:call, __MODULE__, :superseded, [oneof(@threads)]}},
+      {3, {:call, __MODULE__, :retry, [oneof(@threads)]}},
+      {2, {:call, __MODULE__, :worker_ended, [oneof(@threads)]}},
       {2, {:call, __MODULE__, :expire_own, [oneof(@threads)]}},
       {2, {:call, __MODULE__, :expire_stale, [oneof(@threads)]}},
       {2, {:call, __MODULE__, :cleaned_up, [oneof(@threads), oneof(~w(own stale))]}},
@@ -106,7 +109,35 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
 
   def next_state(state, _result, {:call, _, :seed, [thread]}),
     do:
-      Map.put(state, thread, %{phase: "running", sequence: 0, branch: "temporary", renaming: nil})
+      Map.put(state, thread, %{
+        phase: "running",
+        sequence: 0,
+        branch: "temporary",
+        renaming: nil,
+        worker: false
+      })
+
+  def next_state(state, _result, {:call, _, :retry, [thread]}) do
+    case state[thread] do
+      %{phase: "failed", worker: false} = setup ->
+        Map.put(state, thread, %{
+          setup
+          | phase: "running",
+            sequence: setup.sequence + 1,
+            worker: true
+        })
+
+      _ ->
+        state
+    end
+  end
+
+  def next_state(state, _result, {:call, _, :worker_ended, [thread]}) do
+    case state[thread] do
+      %{worker: true} = setup -> Map.put(state, thread, %{setup | worker: false})
+      _ -> state
+    end
+  end
 
   # A cancel's cleanup ending counts for its own run only, and only while that runs.
   def next_state(state, _result, {:call, _, :cleaned_up, [thread, "own"]}) do
@@ -189,7 +220,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
          phase: setup.snapshot["phase"],
          sequence: setup.snapshot["sequence"],
          branch: setup.new_branch,
-         renaming: setup.renaming
+         renaming: setup.renaming,
+         worker: setup.worker != nil
        }}
     end) == model and
       Enum.all?(setups, fn {_, setup} ->
@@ -217,6 +249,7 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
         snapshot: snapshot,
         cancellable: true,
         run_id: "run",
+        worker: nil,
         new_branch: "temporary",
         renaming: nil
       }
@@ -238,6 +271,32 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
 
   def superseded(thread) do
     WorktreeSetup.superseded(thread)
+    :sys.get_state(WorktreeSetup)
+  end
+
+  # What `handle_call({:retry, ...})` does to the setup, past the run and the worker it
+  # starts; `worker_ended` is that worker's exit.
+  def retry(thread) do
+    worker = spawn(fn -> :ok end)
+
+    :sys.replace_state(WorktreeSetup, fn state ->
+      case state.setups[thread] do
+        nil ->
+          state
+
+        setup ->
+          if WorktreeSetup.can_retry?(setup),
+            do: put_in(state.setups[thread], WorktreeSetup.retried(setup, worker)),
+            else: state
+      end
+    end)
+  end
+
+  def worker_ended(thread) do
+    with %{worker: worker} when is_pid(worker) <- :sys.get_state(WorktreeSetup).setups[thread] do
+      send(WorktreeSetup, {:EXIT, worker, :normal})
+    end
+
     :sys.get_state(WorktreeSetup)
   end
 

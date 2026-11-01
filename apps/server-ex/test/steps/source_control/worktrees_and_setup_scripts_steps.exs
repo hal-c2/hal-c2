@@ -729,6 +729,10 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     put_setup(context, nil, "echo ran > setup-ran.txt", false)
   end
 
+  step "a background setup script that writes a file", context do
+    put_setup(context, nil, "echo ran > setup-ran.txt", true)
+  end
+
   # `sh -i` reads `$ENV` as it starts. The terminal gives what it holds a moment to arrive.
   step "the shell's startup reads whatever is waiting on its input", context do
     shell_startup(context, "stty -icanon min 0 time 3; cat > /dev/null; stty icanon\n")
@@ -751,8 +755,9 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   step "the setup script stage says it did not start", context do
-    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
-    stage = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+    script = fn snapshot -> Enum.find(snapshot["stages"], &(&1["id"] == "setup-script")) end
+    {snapshot, context} = World.await_setup(context, &(script.(&1)["status"] == "failed"))
+    stage = script.(snapshot)
     assert %{"status" => "failed", "detail" => "did not start"} = stage
     Map.put(context, :settled, snapshot)
   end
@@ -813,6 +818,13 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     assert World.setup_stage(snapshot, "setup-script") == "done"
     assert World.setup_stage(snapshot, "agent") == "done"
     Map.put(context, :settled, snapshot)
+  end
+
+  step "the conversation no longer shows the failure", context do
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.setup_thread))
+    ids = state |> HalC2.StreamState.get("turn-item") |> Map.keys()
+    refute Enum.any?(ids, &String.starts_with?(&1, "turn-item:workspace-preparation-failure:"))
+    context
   end
 
   step "the agent starts on the first message", context do

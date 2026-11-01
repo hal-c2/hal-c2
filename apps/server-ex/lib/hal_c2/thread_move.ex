@@ -560,6 +560,7 @@ defmodule HalC2.ThreadMove do
         |> Map.merge(%{"movedTo" => moved, "worktreePath" => nil, "updatedAt" => at})
       end)
 
+    HalC2.WorktreeSetup.superseded(id)
     {Enum.reject([forward | others], &is_nil/1), true}
   end
 

@@ -80,7 +80,7 @@ defmodule HalC2.WorktreeSetup do
   def retry(%{"threadId" => thread_id}),
     do: {:ok, %{"retried" => GenServer.call(__MODULE__, {:retry, thread_id})}}
 
-  @doc "The thread's agent is starting a turn, so a failed setup is no longer worth a retry."
+  @doc "The thread went on without its failed setup: a new turn, or it was deleted or moved."
   def superseded(thread_id), do: GenServer.cast(__MODULE__, {:superseded, thread_id})
 
   # --- server ----------------------------------------------------------------------
@@ -171,15 +171,14 @@ defmodule HalC2.WorktreeSetup do
   end
 
   def handle_call({:retry, thread_id}, _from, state) do
-    with %{snapshot: snapshot, worker: nil, run_id: run_id, launch: launch} = setup <-
+    with %{snapshot: snapshot, run_id: run_id, launch: launch} = setup <-
            state.setups[thread_id],
-         true <- retryable?(snapshot),
+         true <- can_retry?(setup),
          :ok <- Orchestration.retry_prepared(thread_id, run_id) do
       server = self()
       path = snapshot["worktreePath"]
       worker = spawn_link(fn -> rerun(server, thread_id, run_id, launch, path) end)
-      setup = %{setup | snapshot: again(snapshot), worker: worker, cancellable: true}
-      state = put_in(state.setups[thread_id], setup)
+      state = put_in(state.setups[thread_id], retried(setup, worker))
       broadcast(state, thread_id)
       {:reply, true, state}
     else
@@ -285,14 +284,11 @@ defmodule HalC2.WorktreeSetup do
               state
 
             {:shutdown, {:failed, message}} ->
-              Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message))
-              update(state, thread_id, &finish(&1, "failed", message))
+              failed(state, thread_id, setup, message)
 
             other ->
               Logger.warning("worktree setup for #{thread_id} crashed: #{inspect(other)}")
-              message = "Worktree setup failed."
-              Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message))
-              update(state, thread_id, &finish(&1, "failed", message))
+              failed(state, thread_id, setup, "Worktree setup failed.")
           end
 
         {:noreply, state}
@@ -362,6 +358,18 @@ defmodule HalC2.WorktreeSetup do
     state
   end
 
+  # A delegated child's caller hears of this failure at once and may hand the task to
+  # another agent, so its first message is not run later: the agent's stage ends here.
+  defp failed(state, thread_id, setup, message) do
+    delegated = Orchestration.delegated?(thread_id)
+    Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message))
+
+    update(state, thread_id, fn snapshot ->
+      ended = finish(snapshot, "failed", message)
+      if delegated, do: set_stage(ended, "agent", "skipped", %{}), else: ended
+    end)
+  end
+
   # How a preparation failure is recorded on the run.
   defp failure(message),
     do: %{
@@ -405,6 +413,14 @@ defmodule HalC2.WorktreeSetup do
     do: Enum.any?(stages, &(&1["id"] == "agent" and &1["status"] == "pending"))
 
   defp retryable?(_snapshot), do: false
+
+  @doc "Whether `setup` may run again: it failed before its agent, and its worker has ended."
+  def can_retry?(%{worker: nil, snapshot: snapshot}), do: retryable?(snapshot)
+  def can_retry?(_setup), do: false
+
+  @doc "`setup` as a retry leaves it, with `worker` running it."
+  def retried(setup, worker),
+    do: %{setup | snapshot: again(setup.snapshot), worker: worker, cancellable: true}
 
   # `snapshot` as a retry starts it: what the worktree's being there settled stays.
   defp again(snapshot) do
