@@ -1624,6 +1624,16 @@ Feature: Planner
       When the user renames #7's task to "Rate limiting", then "planner" is stopped while GitHub answers and started again
       Then #7's task is named "Rate limiting" and marked as synced
 
+    # The report of a rename lands and its reply is lost, so it comes again while GitHub
+    # holds the rename it chained: the chained rename goes once, and the task waits for it.
+    @mc
+    Scenario: An answered rename reported again sends the rename it chained once
+      Given "planner" syncs "acme/api" both ways
+      And GitHub takes renaming #7 to "Rate limiting" late and to "Rate limits" late
+      When the user renames #7's task to "Rate limiting", then to "Rate limits", and the first answer is reported to the planner again while GitHub holds the second
+      Then GitHub is asked to name #7 "Rate limiting" and then "Rate limits", once each
+      And #7's task is named "Rate limits" and marked as synced
+
     # A report that landed while its reply was lost is answered with the push it
     # was answered with, not taken again: the move it carries is not applied twice
     # and the chained move back still goes.
