@@ -11,9 +11,10 @@ defmodule HalC2.SpaceSchedulePropTest do
   crashes changes no block and no `writtenAt`; a page in the trash has no next run,
   refuses changes and runs, does not run when due, and on restore aims its next run
   afresh instead of running what it missed; a paused page never runs when due but can be
-  run by hand; removing the update leaves what it wrote as an ordinary block; the page's
-  `schedule` field shows the task after every command, including across restarts of the
-  scheduler; and a page's task never appears among the listed tasks.
+  run by hand; removing the update leaves what it wrote as an ordinary block; a site shows
+  a run's text as that ordinary block, so removing the update does not put it behind; the
+  page's `schedule` field shows the task after every command, including across restarts
+  of the scheduler; and a page's task never appears among the listed tasks.
   """
 
   use ExUnit.Case, async: false
@@ -21,7 +22,7 @@ defmodule HalC2.SpaceSchedulePropTest do
   use PropCheck.StateM
 
   alias HalC2.{ScheduledTasks, Space}
-  alias HalC2.Space.{Blocks, Pages, Schedule}
+  alias HalC2.Space.{Blocks, Pages, Schedule, Sites}
 
   @moduletag timeout: :infinity
   @moduletag capture_log: true
@@ -104,7 +105,7 @@ defmodule HalC2.SpaceSchedulePropTest do
   # blocks: the page in order, each {:hand, name, text}, {:kept, text} (written by an
   # update since removed), or :generated, whose text is generated. task: nil or
   # %{prompt, every, enabled, next (ms or nil), status}. writes counts the writes so
-  # far, which name the fake's text.
+  # far, which name the fake's text. site: nil or what `published/1` said at publishing.
   def initial_state do
     %{
       now: DateTime.to_unix(@start, :millisecond),
@@ -113,7 +114,8 @@ defmodule HalC2.SpaceSchedulePropTest do
       generated: nil,
       written: false,
       task: nil,
-      writes: 0
+      writes: 0,
+      site: nil
     }
   end
 
@@ -133,7 +135,8 @@ defmodule HalC2.SpaceSchedulePropTest do
         {2, {:call, __MODULE__, :add_block, [elements(~w(h1 h2 h3))]}},
         {2, {:call, __MODULE__, :edit_generated, []}},
         {1, {:call, __MODULE__, :delete_generated, []}},
-        {1, {:call, __MODULE__, :move_generated_first, []}}
+        {1, {:call, __MODULE__, :move_generated_first, []}},
+        {2, {:call, __MODULE__, :publish, []}}
       ] ++ if(hand == [], do: [], else: [{2, {:call, __MODULE__, :edit_block, [elements(hand)]}}])
     )
   end
@@ -232,7 +235,7 @@ defmodule HalC2.SpaceSchedulePropTest do
   defp step(s, :restart_after, [delta]), do: {:ok, due(%{s | now: s.now + delta})}
 
   defp step(s, :trash, []) do
-    {:ok, %{s | trashed: true, task: s.task && %{s.task | next: nil}}}
+    {:ok, %{s | trashed: true, task: s.task && %{s.task | next: nil}, site: nil}}
   end
 
   # What it missed does not run: its next run is aimed from now.
@@ -269,6 +272,10 @@ defmodule HalC2.SpaceSchedulePropTest do
     if s.trashed,
       do: {:error, s},
       else: {:ok, %{s | blocks: [:generated | s.blocks -- [:generated]]}}
+  end
+
+  defp step(s, :publish, []) do
+    if s.trashed, do: {:error, s}, else: {:ok, %{s | site: published(s)}}
   end
 
   defp due(%{task: %{enabled: true, next: next}, trashed: false, now: now} = s)
@@ -309,7 +316,18 @@ defmodule HalC2.SpaceSchedulePropTest do
         {s.task.prompt, s.task.every, s.task.enabled, s.task.next && iso(s.task.next),
          s.task.status}
 
-    {s.trashed, s.written, task, blocks}
+    site = s.site && {s.site, s.site != published(s)}
+
+    {s.trashed, s.written, task, blocks, site}
+  end
+
+  # What publishing now would show.
+  defp published(s) do
+    Enum.map(s.blocks, fn
+      {:hand, _name, text} -> {"paragraph", text}
+      {:kept, text} -> {"paragraph", text}
+      :generated -> {"paragraph", s.generated}
+    end)
   end
 
   defp iso(ms), do: ms |> DateTime.from_unix!(:millisecond) |> DateTime.to_iso8601()
@@ -374,6 +392,10 @@ defmodule HalC2.SpaceSchedulePropTest do
   def delete_generated, do: act(fn -> Space.delete_block(space(), generated_id()) end)
   def move_generated_first, do: act(fn -> Space.move_block(space(), generated_id(), nil) end)
 
+  def publish do
+    act(fn -> Space.publish_page(space(), page(), %{"baseUrl" => "http://mc.test:1"}) end)
+  end
+
   # Runs one command, waits for any run it started, and reads the page back.
   defp act(fun) do
     flush()
@@ -399,7 +421,13 @@ defmodule HalC2.SpaceSchedulePropTest do
            shown["nextRunAt"], shown["lastRunStatus"]}
       end
 
-    {page["trashedAt"] != nil, page["writtenAt"] != nil, task, blocks}
+    site =
+      case Sites.of_page(state, page()) do
+        nil -> nil
+        site -> {for(b <- site["snapshot"]["blocks"], do: {b["kind"], b["text"]}), site["behind"]}
+      end
+
+    {page["trashedAt"] != nil, page["writtenAt"] != nil, task, blocks, site}
   end
 
   defp blocks do

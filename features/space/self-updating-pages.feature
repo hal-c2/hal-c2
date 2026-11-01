@@ -6,6 +6,7 @@
 #     space.page.schedule.runNow, space.page.schedule.remove)
 #   apps/server-ex/lib/hal_c2/space/schedule.ex
 #   apps/server-ex/lib/hal_c2/scheduled_tasks.ex
+#   apps/server-ex/lib/hal_c2/space/sites.ex (a run's Markdown on a published page)
 
 Feature: Pages that update themselves
   A page can carry an instruction and a cadence. Each run writes its result into one
@@ -221,6 +222,13 @@ Feature: Pages that update themselves
       And the update of "Status" has run
       When the user removes the update of "Status"
       Then the first block of "Status" shows the image "chart.png"
+
+    Scenario: A site shows what a run wrote as ordinary blocks
+      Given text generation writes "## Weekly status"
+      And the update of "Status" has run
+      And the page "Status" is published as a site
+      When a browser with no pairing opens the site link of the page "Status"
+      Then the document has the heading "Weekly status"
 
     Scenario: Removing a page's update stops its runs
       Given the time for the next run of "Status" is noted
