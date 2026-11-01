@@ -247,12 +247,15 @@ QList<QVariantMap> commentRowsOf(const Model& model) {
     if (aResolved != bResolved) return !aResolved;
     return madeBefore(a, b);
   });
+  QSet<QString> onPage;
+  for (const QVariantMap& row : blocksOf(model)) onPage.insert(row.value(QStringLiteral("id")).toString());
   QList<QVariantMap> rows;
   for (const QJsonObject& comment : comments) {
     const QString block = str(comment, "blockId");
     rows.append({{QStringLiteral("id"), str(comment, "id")},
                  {QStringLiteral("blockId"), block},
                  {QStringLiteral("blockText"), str(model.held.value(keyOf(kBlock, block)), "text")},
+                 {QStringLiteral("blockGone"), !block.isEmpty() && !onPage.contains(block)},
                  {QStringLiteral("body"), str(comment, "body")},
                  {QStringLiteral("resolved"), !str(comment, "resolvedAt").isEmpty()},
                  {QStringLiteral("byAgent"), byAgent(comment, "author")},

@@ -57,15 +57,10 @@ ColumnLayout {
             required property var model
             required property string blockId
             required property string blockText
+            required property bool blockGone
             required property string body
             required property bool resolved
             required property bool byAgent
-
-            // A restore can take a block away from under its comments.
-            readonly property bool blockGone: {
-                Spaces.blocks.count;
-                return blockId !== "" && Spaces.blocks.indexOf(blockId) < 0;
-            }
 
             objectName: "spaceCommentRow:" + body
             width: ListView.view.width
@@ -73,6 +68,7 @@ ColumnLayout {
             opacity: resolved ? 0.6 : 1
 
             Label {
+                objectName: "spaceCommentBlock:" + comment.body
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16

@@ -122,14 +122,10 @@ Rectangle {
                 required property var model
                 required property string blockId
                 required property string blockText
+                required property bool blockGone
                 required property string body
                 required property bool resolved
                 required property bool byAgent
-                // A restore can take a block away from under its comments.
-                readonly property bool blockGone: {
-                    Spaces.blocks.count;
-                    return blockId !== "" && Spaces.blocks.indexOf(blockId) < 0;
-                }
 
                 objectName: "spaceCommentRow:" + body
                 width: ListView.view.width
@@ -149,6 +145,7 @@ Rectangle {
                     spacing: 4
 
                     Text {
+                        objectName: "spaceCommentBlock:" + comment.body
                         Layout.fillWidth: true
                         text: comment.blockGone ? qsTr("On a block no longer on this page") : "“" + comment.blockText + "”"
                         elide: Text.ElideRight
