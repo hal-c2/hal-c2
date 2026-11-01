@@ -6,10 +6,10 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The Space view (route kind `space`; SpaceController publishes `space`): the
-// Space's pages beside the open one, or beside its images, and its comments or
-// its history beside that when the user asks for them; a version being read
-// takes the page's place. Everything shown is the MC's; with nothing to show it
-// says why.
+// Space's pages and decks beside the open one, or beside its images, and a page's
+// comments or its history beside that when the user asks for them; a version being
+// read takes the page's place. Everything shown is the MC's; with nothing to show
+// it says why.
 Rectangle {
     id: workspace
 
@@ -53,6 +53,13 @@ Rectangle {
     readonly property string pageId: Spaces.pageId
     onPageIdChanged: comments.blockId = ""
 
+    // A deck just opened, made in the sidebar say, is what the user wants to see.
+    readonly property string deckId: Spaces.deckId
+    onDeckIdChanged: {
+        if (deckId !== "")
+            imagesShown = false;
+    }
+
     // One column beside the page at a time.
     Connections {
         target: Spaces.history
@@ -88,7 +95,7 @@ Rectangle {
 
             SpacePage {
                 anchors.fill: parent
-                visible: Spaces.pageId !== "" && !Spaces.history.reading && !workspace.imagesShown
+                visible: Spaces.pageId !== "" && Spaces.deckId === "" && !Spaces.history.reading && !workspace.imagesShown
                 onImagesRequested: workspace.imagesShown = true
                 onSaveRequested: saveDialog.open()
                 onSubpageRequested: (parentPageId, link) => sidebar.newPage(parentPageId, link)
@@ -100,11 +107,16 @@ Rectangle {
                 visible: Spaces.history.reading && !workspace.imagesShown
             }
 
+            SpaceDeck {
+                anchors.fill: parent
+                visible: Spaces.deckId !== "" && !workspace.imagesShown
+            }
+
             ColumnLayout {
                 objectName: "spaceEmpty"
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 48, 420)
-                visible: Spaces.pageId === "" && !workspace.imagesShown
+                visible: Spaces.pageId === "" && Spaces.deckId === "" && !workspace.imagesShown
                 spacing: 12
 
                 ShellIcon {
@@ -176,7 +188,7 @@ Rectangle {
 
             Layout.preferredWidth: 300
             Layout.fillHeight: true
-            visible: workspace.commentsShown && Spaces.pageId !== "" && !workspace.imagesShown
+            visible: workspace.commentsShown && Spaces.pageId !== "" && Spaces.deckId === "" && !workspace.imagesShown
             readOnly: Spaces.page.trashed === true
             onCloseRequested: workspace.commentsShown = false
         }
@@ -188,6 +200,10 @@ Rectangle {
             Layout.fillHeight: true
             visible: Spaces.history.shown && !workspace.imagesShown
         }
+    }
+
+    SpacePresenter {
+        anchors.fill: parent
     }
 
     FileDialog {

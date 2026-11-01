@@ -177,8 +177,9 @@ private:
 };
 
 // What the Space view shows of the MC's Space streams: the Spaces, the
-// selected Space's page tree and trash, and the selected page's blocks and
-// comments. Everything comes from the streams; the one thing it adds is an
+// selected Space's page tree, decks and trash, the selected page's blocks and
+// comments, and the selected deck's slides. A selected deck is shown instead of
+// the selected page, and it alone can be presented. Everything comes from the streams; the one thing it adds is an
 // edit the user made (a block's text, a tick) shown until the MC has answered
 // it and the stream has moved past what it was, after which the stream's
 // value is what shows.
@@ -195,6 +196,9 @@ private:
 //   comments {id, blockId, blockText, blockGone, body, resolved, byAgent,
 //            createdAt}: the page's comments, open ones first; blockGone when
 //            the block it is on has left the page, as a restore can do
+//   decks     {id, title}: decks out of the trash, in the order they were made
+//   deckTrash {id, title, trashedAt}: trashed decks, the latest first
+//   slides    {id, title, body}: the selected deck's slides by their `order`
 //   images, imageTrash {id, name, prompt, mimeType, width, height, generatedBy,
 //            url}: the Space's images and those in its trash, the latest first
 //
@@ -210,6 +214,9 @@ class SpacePages : public QObject {
   Q_PROPERTY(SpaceRows* blocks READ blocks CONSTANT)
   Q_PROPERTY(SpaceRows* comments READ comments CONSTANT)
   Q_PROPERTY(SpaceHistory* history READ history CONSTANT)
+  Q_PROPERTY(SpaceRows* decks READ decks CONSTANT)
+  Q_PROPERTY(SpaceRows* deckTrash READ deckTrash CONSTANT)
+  Q_PROPERTY(SpaceRows* slides READ slides CONSTANT)
   Q_PROPERTY(SpaceRows* images READ images CONSTANT)
   Q_PROPERTY(SpaceRows* imageTrash READ imageTrash CONSTANT)
   Q_PROPERTY(QString spaceId READ spaceId NOTIFY changed)
@@ -222,6 +229,15 @@ class SpacePages : public QObject {
   // What the open page says about the agent asked to work on it: {status (running, stopping,
   // completed, failed, stopped), request, threadId, threadTitle, edited, error}, or empty.
   Q_PROPERTY(QVariantMap agent READ agent NOTIFY changed)
+  Q_PROPERTY(QString deckId READ deckId NOTIFY changed)
+  // {id, title, trashed}, or empty.
+  Q_PROPERTY(QVariantMap deck READ deck NOTIFY changed)
+  // The presenter over the selected deck: the slide it shows ({id, title, body},
+  // or empty), which that is counting from 1, and how many there are.
+  Q_PROPERTY(bool presenting READ presenting NOTIFY changed)
+  Q_PROPERTY(QVariantMap slide READ slide NOTIFY changed)
+  Q_PROPERTY(int slideNumber READ slideNumber NOTIFY changed)
+  Q_PROPERTY(int slideCount READ slideCount NOTIFY changed)
   // loading, live or unreachable: the selected Space's stream (the index's
   // before a Space is selected).
   Q_PROPERTY(QString status READ status NOTIFY changed)
@@ -235,6 +251,9 @@ public:
   SpaceRows* blocks() const { return m_blocks; }
   SpaceRows* comments() const { return m_comments; }
   SpaceHistory* history() const { return m_history; }
+  SpaceRows* decks() const { return m_decks; }
+  SpaceRows* deckTrash() const { return m_deckTrash; }
+  SpaceRows* slides() const { return m_slides; }
   SpaceRows* images() const { return m_images; }
   SpaceRows* imageTrash() const { return m_imageTrash; }
   QString spaceId() const { return m_spaceId; }
@@ -242,6 +261,12 @@ public:
   QString pageId() const { return m_pageId; }
   QVariantMap page() const;
   QVariantMap agent() const;
+  QString deckId() const { return m_deckId; }
+  QVariantMap deck() const;
+  bool presenting() const { return m_presenting; }
+  QVariantMap slide() const { return m_presenting ? m_slides->get(m_slideIndex) : QVariantMap(); }
+  int slideNumber() const { return m_presenting ? m_slideIndex + 1 : 0; }
+  int slideCount() const { return m_presenting ? m_slides->rowCount() : 0; }
   QVariantMap siteOf(const QString& pageId) const;
   QString status() const;
 
@@ -256,9 +281,21 @@ public:
   // of it; one the streams do not hold is not selected.
   void selectSpace(const QString& id);
   void selectPage(const QString& id);
+  // Shows the deck `id` in place of the page; one the stream does not hold is
+  // not selected.
+  void selectDeck(const QString& id);
   // As select, for one the MC just made: selected once its stream holds it.
   void awaitSpace(const QString& id);
   void awaitPage(const QString& id);
+  void awaitDeck(const QString& id);
+
+  // Opens the presenter on the first slide of the deck `id`, selecting it; false
+  // when that deck is not there to present or has no slides. It goes on showing the
+  // same slide wherever that moves to, and closes with the deck or its last slide.
+  bool present(const QString& id);
+  // Moves `by` slides, stopping at either end.
+  void step(int by);
+  void leave();
 
   // The user's edit of a block's `field` (text or checked) to `value`, shown
   // until the MC answers it and the stream holds what it wrote, or anything later.
@@ -311,6 +348,8 @@ private:
   // another Space, which rebuilt the rows.
   bool reselect();
   bool live(const QJsonObject& page) const;
+  // Keeps the presenter on a slide of the deck as it stands.
+  void followPresenter();
   // The images whose address should now be asked for, marked as asked.
   // {imageId, imageState, imageUrl, imageWidth, imageHeight} of a block showing an
   // image; imageState is shown, trashed or deleted, and all are empty for no image.
@@ -325,6 +364,11 @@ private:
   QString m_pageId;
   QString m_awaitedSpace;
   QString m_awaitedPage;
+  QString m_deckId;
+  QString m_awaitedDeck;
+  bool m_presenting = false;
+  QString m_slideId;
+  int m_slideIndex = 0;
   QHash<QString, Pending> m_pending;
   int m_tokens = 0;
   std::function<QString(const QString&)> m_threadTitle;
@@ -346,6 +390,9 @@ private:
   SpaceRows* m_trash;
   SpaceRows* m_blocks;
   SpaceRows* m_comments;
+  SpaceRows* m_decks;
+  SpaceRows* m_deckTrash;
+  SpaceRows* m_slides;
   SpaceRows* m_images;
   SpaceRows* m_imageTrash;
   SpaceHistory* m_history;
@@ -380,9 +427,18 @@ private:
 // `space.history.more`, `space.history.read {version}`, `space.history.back`,
 // `space.history.restore {version}`, `space.agent.ask {pageId, request}`, `space.agent.stop
 // {pageId}`, `space.agent.dismiss {pageId}`, `space.agent.openThread` (the open page's agent),
-// `space.images.show {shown}`, `space.image.providers`, `space.image.addFile {url}`,
-// `space.image.generate {prompt, modelSelection}`, `space.image.trash {imageId}`,
-// `space.image.restore {imageId}`, `space.image.delete {imageId}`.
+// `space.selectDeck {deckId}`,
+// `space.deck.create {title}`, `space.deck.createFromPage {pageId}`,
+// `space.deck.rename {deckId, title}`, `space.deck.trash {deckId}`,
+// `space.deck.restore {deckId}`, `space.deck.delete {deckId}`,
+// `space.slide.insert {deckId, title, body, afterSlideId}` (afterSlideId: "" first,
+// absent last), `space.slide.update {slideId, title, body}`,
+// `space.slide.move {slideId, afterSlideId}`, `space.slide.delete {slideId}`,
+// `space.deck.present {deckId}`, `space.deck.step {by}`, `space.deck.leave`,
+// `space.images.show {shown}`, `space.image.providers`,
+// `space.image.addFile {url}`, `space.image.generate {prompt, modelSelection}`,
+// `space.image.trash {imageId}`, `space.image.restore {imageId}`,
+// `space.image.delete {imageId}`.
 class SpaceController : public SpacePages, public NativeController {
   Q_OBJECT
 
@@ -391,6 +447,8 @@ public:
   static inline const QString kPageFromThread = QStringLiteral("space.pageFromThread");
   static inline const QString kHistory = QStringLiteral("space.history.open");
   static inline const QString kAskAgent = QStringLiteral("space.agent.focus");
+  static inline const QString kDeckFromPage = QStringLiteral("space.deck.fromOpenPage");
+  static inline const QString kPresentDeck = QStringLiteral("space.deck.presentOpen");
 
   SpaceController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
@@ -415,9 +473,11 @@ private:
   void pageFromThread(const QString& threadKey);
   void openHistory(const QString& pageId);
   // The history follows the open page, and asks again a moment after the page is
-  // written (at most once in `kHistoryRefreshMs`, however fast it is written).
+  // written (at most once in `kHistoryRefreshMs`, however fast it is written). A
+  // deck opening closes it, since the page and what is beside it give way.
   void followHistory();
   void askHistory(const SpaceHistory::Next& request);
+  void presentDeck(const QString& id);
   void signImages(const QStringList& imageIds);
   void addImageFile(const QString& url);
   void generateImage(const QString& prompt, const QJsonObject& selection);

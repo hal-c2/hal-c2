@@ -3,8 +3,10 @@ defmodule HalC2.SpacePropTest do
   A state machine over the pages, blocks and comments of one Space (`HalC2.Space`):
   pages made, moved, trashed, restored and deleted for good; blocks inserted, moved,
   ticked, edited and deleted; comments added, resolved and reopened; versions of a page
-  remembered and restored; images added, placed, trashed, restored and deleted for good;
-  and the Space's streams restarting, which reads everything back from the event log.
+  remembered and restored; decks made blank or from a page, trashed, restored and deleted;
+  slides added, edited, moved and deleted; images added, placed, trashed, restored and
+  deleted for good; and the Space's streams restarting, which reads everything back from
+  the event log.
 
   After each command the test reads the Space's stream back and checks it against
   the model:
@@ -24,6 +26,9 @@ defmodule HalC2.SpacePropTest do
     the newest of them reads as the page does now;
   - deleting a page for good is its deleter's edit of a page that linked to it, whoever
     wrote the link;
+  - a deck made from a page has a slide per section of the page as it was, and no later
+    change of the page reaches it; a deck in the trash takes no edits, and its slides go
+    with it when it is deleted for good;
   - a published page's site comes down when the page is deleted or hidden in the trash
     and stays down when it is restored; its snapshot changes only on publishing, and it
     is behind exactly when publishing again would change it;
@@ -39,7 +44,7 @@ defmodule HalC2.SpacePropTest do
   use PropCheck.StateM
 
   alias HalC2.{Space, StreamState, Streams}
-  alias HalC2.Space.{Blocks, ImageFile}
+  alias HalC2.Space.{Blocks, Decks, ImageFile}
 
   @moduletag timeout: :infinity
   @moduletag capture_log: true
@@ -48,6 +53,8 @@ defmodule HalC2.SpacePropTest do
   @blocks ~w(b1 b2 b3 b4 b5 b6 b7 b8)
   @comments ~w(c1 c2 c3)
   @saves ~w(s1 s2)
+  @decks ~w(d1 d2 d3)
+  @slides ~w(s1 s2 s3 s4)
   @images ~w(i1 i2 i3)
 
   property "a Space's pages, blocks and comments follow the model",
@@ -110,6 +117,8 @@ defmodule HalC2.SpacePropTest do
   # blocks: name => %{page, kind, checked, text}; comments: name => %{page, block, resolved};
   # used: every block name so far, since a restore brings a deleted block back under its
   # own; saves: name => %{page, order, blocks}, the page as it stood when remembered;
+  # decks: name => %{title, trashed}; deck_order: deck => its slide names in order;
+  # slides: name => %{deck, title, body}. A slide a deck is made with is "<deck>.<n>".
   # sites: page => %{shown, behind}, `shown` being what `view/2` said when it published.
   # images: name => %{trashed}.
   def initial_state do
@@ -120,6 +129,9 @@ defmodule HalC2.SpacePropTest do
       comments: %{},
       used: [],
       saves: %{},
+      decks: %{},
+      deck_order: %{},
+      slides: %{},
       sites: %{},
       images: %{}
     }
@@ -129,6 +141,8 @@ defmodule HalC2.SpacePropTest do
     pages = Map.keys(s.pages)
     blocks = Map.keys(s.blocks)
     comments = Map.keys(s.comments)
+    decks = Map.keys(s.decks)
+    slides = Map.keys(s.slides)
     images = Map.keys(s.images)
 
     frequency(
@@ -172,6 +186,34 @@ defmodule HalC2.SpacePropTest do
           do: [],
           else: [{3, {:call, __MODULE__, :restore_version, [elements(Map.keys(s.saves))]}}]
         ) ++
+        [{2, {:call, __MODULE__, :create_deck, [elements(@decks)]}}] ++
+        if(pages == [],
+          do: [],
+          else: [
+            {2, {:call, __MODULE__, :create_deck_from_page, [elements(@decks), elements(pages)]}}
+          ]
+        ) ++
+        if(decks == [],
+          do: [],
+          else: [
+            {2, {:call, __MODULE__, :trash_deck, [elements(decks)]}},
+            {2, {:call, __MODULE__, :restore_deck, [elements(decks)]}},
+            {1, {:call, __MODULE__, :delete_deck, [elements(decks)]}},
+            {3,
+             {:call, __MODULE__, :insert_slide,
+              [elements(@slides), elements(decks), after_slide(slides)]}}
+          ]
+        ) ++
+        if(slides == [],
+          do: [],
+          else: [
+            {3, {:call, __MODULE__, :move_slide, [elements(slides), after_slide(slides)]}},
+            {2,
+             {:call, __MODULE__, :update_slide,
+              [elements(slides), oneof([nil, "x", ""]), oneof([nil, "y", ""])]}},
+            {1, {:call, __MODULE__, :delete_slide, [elements(slides)]}}
+          ]
+        ) ++
         [{2, {:call, __MODULE__, :add_image, [elements(@images)]}}] ++
         if(images == [],
           do: [],
@@ -204,9 +246,11 @@ defmodule HalC2.SpacePropTest do
     end
   end
 
-  defp kind, do: elements(~w(paragraph checklist))
+  defp kind, do: elements(~w(paragraph checklist heading callout))
   defp after_block([]), do: oneof([:last, nil])
   defp after_block(blocks), do: oneof([:last, nil, elements(blocks)])
+  defp after_slide([]), do: oneof([:last, nil])
+  defp after_slide(slides), do: oneof([:last, nil, elements(slides)])
 
   def precondition(s, {:call, _, :create_page, [name, parent]}),
     do: not Map.has_key?(s.pages, name) and (parent == nil or Map.has_key?(s.pages, parent))
@@ -243,6 +287,28 @@ defmodule HalC2.SpacePropTest do
 
   def precondition(s, {:call, _, :read_history, [page]}), do: Map.has_key?(s.pages, page)
   def precondition(s, {:call, _, :restore_version, [save]}), do: Map.has_key?(s.saves, save)
+
+  def precondition(s, {:call, _, :create_deck, [name]}), do: not Map.has_key?(s.decks, name)
+
+  def precondition(s, {:call, _, :create_deck_from_page, [name, page]}),
+    do: not Map.has_key?(s.decks, name) and Map.has_key?(s.pages, page)
+
+  def precondition(s, {:call, _, cmd, [name]})
+      when cmd in [:trash_deck, :restore_deck, :delete_deck],
+      do: Map.has_key?(s.decks, name)
+
+  def precondition(s, {:call, _, :insert_slide, [name, deck, after_id]}),
+    do:
+      not Map.has_key?(s.slides, name) and Map.has_key?(s.decks, deck) and
+        (after_id in [:last, nil] or Map.has_key?(s.slides, after_id))
+
+  def precondition(s, {:call, _, :move_slide, [name, after_id]}),
+    do:
+      Map.has_key?(s.slides, name) and
+        (after_id in [:last, nil] or Map.has_key?(s.slides, after_id))
+
+  def precondition(s, {:call, _, cmd, [name | _]}) when cmd in [:update_slide, :delete_slide],
+    do: Map.has_key?(s.slides, name)
 
   def precondition(s, {:call, _, :add_image, [name]}), do: not Map.has_key?(s.images, name)
 
@@ -500,6 +566,112 @@ defmodule HalC2.SpacePropTest do
     end
   end
 
+  defp step(s, :create_deck, [name]), do: made(s, name, name, [{"", ""}])
+
+  defp step(s, :create_deck_from_page, [name, page]) do
+    if live?(s, page),
+      do: made(s, name, "Page #{page}", sections(s, page)),
+      else: {:trashed, s, 0}
+  end
+
+  defp step(s, :trash_deck, [name]) do
+    if s.decks[name].trashed,
+      do: {:trashed, s, 0},
+      else: {:ok, put_in(s.decks[name].trashed, true), 1}
+  end
+
+  defp step(s, :restore_deck, [name]) do
+    if s.decks[name].trashed,
+      do: {:ok, put_in(s.decks[name].trashed, false), 1},
+      else: {:invalid, s, 0}
+  end
+
+  defp step(s, :delete_deck, [name]) do
+    if s.decks[name].trashed do
+      slides = s.deck_order[name]
+
+      next = %{
+        s
+        | decks: Map.delete(s.decks, name),
+          deck_order: Map.delete(s.deck_order, name),
+          slides: Map.drop(s.slides, slides)
+      }
+
+      {:ok, next, 1 + length(slides)}
+    else
+      {:invalid, s, 0}
+    end
+  end
+
+  defp step(s, :insert_slide, [name, deck, after_id]) do
+    cond do
+      s.decks[deck].trashed ->
+        {:trashed, s, 0}
+
+      is_binary(after_id) and s.slides[after_id].deck != deck ->
+        {:not_found, s, 0}
+
+      true ->
+        order = place(s.deck_order[deck], after_id, name)
+        slide = %{deck: deck, title: name, body: ""}
+
+        {:ok,
+         %{
+           s
+           | slides: Map.put(s.slides, name, slide),
+             deck_order: %{s.deck_order | deck => order}
+         }, 1}
+    end
+  end
+
+  defp step(s, :move_slide, [name, after_id]) do
+    deck = s.slides[name].deck
+
+    cond do
+      s.decks[deck].trashed ->
+        {:trashed, s, 0}
+
+      after_id == name ->
+        {:invalid, s, 0}
+
+      is_binary(after_id) and s.slides[after_id].deck != deck ->
+        {:not_found, s, 0}
+
+      true ->
+        order = place(List.delete(s.deck_order[deck], name), after_id, name)
+        # A slide moved to where it is gets a new key between the same neighbours.
+        writes = if order == s.deck_order[deck], do: [0, 1], else: 1
+        {:ok, put_in(s.deck_order[deck], order), writes}
+    end
+  end
+
+  defp step(s, :update_slide, [name, title, body]) do
+    slide = s.slides[name]
+    next = %{slide | title: title || slide.title, body: body || slide.body}
+
+    cond do
+      s.decks[slide.deck].trashed -> {:trashed, s, 0}
+      next == slide -> {:ok, s, 0}
+      true -> {:ok, put_in(s.slides[name], next), 1}
+    end
+  end
+
+  defp step(s, :delete_slide, [name]) do
+    deck = s.slides[name].deck
+
+    if s.decks[deck].trashed do
+      {:trashed, s, 0}
+    else
+      next = %{
+        s
+        | slides: Map.delete(s.slides, name),
+          deck_order: %{s.deck_order | deck => List.delete(s.deck_order[deck], name)}
+      }
+
+      {:ok, next, 1}
+    end
+  end
+
   defp step(s, :publish_page, [name]) do
     cond do
       not live?(s, name) ->
@@ -565,6 +737,50 @@ defmodule HalC2.SpacePropTest do
 
   defp step(s, :restart, []), do: {:ok, s, 0}
 
+  # A deck `name` with a slide for each `{title, body}`, named "<deck>.<n>".
+  defp made(s, name, title, specs) do
+    named = Enum.with_index(specs, fn spec, n -> {"#{name}.#{n}", spec} end)
+
+    slides =
+      Map.new(named, fn {slide, {title, body}} ->
+        {slide, %{deck: name, title: title, body: body}}
+      end)
+
+    next = %{
+      s
+      | decks: Map.put(s.decks, name, %{title: title, trashed: false}),
+        deck_order: Map.put(s.deck_order, name, Enum.map(named, &elem(&1, 0))),
+        slides: Map.merge(s.slides, slides)
+    }
+
+    {:ok, next, 1 + length(specs)}
+  end
+
+  # The sections of a page: a slide per heading, what is before the first under its title.
+  defp sections(s, page) do
+    blocks = Enum.map(s.order[page], &s.blocks[&1])
+    {lead, rest} = Enum.split_while(blocks, &(&1.kind != "heading"))
+    title = "Page #{page}"
+    start = if lead != [] or rest == [], do: [{title, lines(lead)}], else: []
+
+    start ++
+      (rest
+       |> Enum.reduce([], fn
+         %{kind: "heading", text: text}, acc -> [{text, []} | acc]
+         block, [{text, under} | acc] -> [{text, under ++ [block]} | acc]
+       end)
+       |> Enum.reverse()
+       |> Enum.map(fn {text, under} -> {text, lines(under)} end))
+  end
+
+  defp lines(blocks), do: Enum.map_join(blocks, "\n", &line/1)
+
+  defp line(%{kind: "checklist", checked: true, text: text}), do: "- [x] " <> text
+  defp line(%{kind: "checklist", text: text}), do: "- [ ] " <> text
+  defp line(%{kind: "callout", text: text}), do: "> " <> text
+  defp line(%{kind: "image", text: text}), do: "[image: " <> text <> "]"
+  defp line(%{text: text}), do: text
+
   defp live?(s, name) do
     page = s.pages[name]
     not page.trashed and (page.parent == nil or live?(s, page.parent))
@@ -583,7 +799,19 @@ defmodule HalC2.SpacePropTest do
     before ++ [after_id, name | rest]
   end
 
-  defp snapshot(s), do: Map.take(s, [:pages, :order, :blocks, :comments, :sites, :images])
+  defp snapshot(s) do
+    Map.take(s, [
+      :pages,
+      :order,
+      :blocks,
+      :comments,
+      :decks,
+      :deck_order,
+      :slides,
+      :sites,
+      :images
+    ])
+  end
 
   # --- the system under test ------------------------------------------------------
 
@@ -656,6 +884,27 @@ defmodule HalC2.SpacePropTest do
     end)
   end
 
+  def create_deck(name), do: act_deck(name, &Space.create_deck(&1, name))
+
+  def create_deck_from_page(name, page),
+    do: act_deck(name, &Space.create_deck_from_page(&1, id(page)))
+
+  def trash_deck(name), do: act(&Space.trash_deck(&1, id(name)))
+  def restore_deck(name), do: act(&Space.restore_deck(&1, id(name)))
+  def delete_deck(name), do: act(&Space.delete_deck(&1, id(name)))
+
+  def insert_slide(name, deck, after_id),
+    do: act(name, &Space.insert_slide(&1, id(deck), %{"title" => name}, id(after_id)))
+
+  def move_slide(name, after_id), do: act(&Space.move_slide(&1, id(name), id(after_id)))
+
+  def update_slide(name, title, body) do
+    fields = %{"title" => title, "body" => body} |> Map.reject(fn {_, text} -> text == nil end)
+    act(&Space.update_slide(&1, id(name), fields))
+  end
+
+  def delete_slide(name), do: act(&Space.delete_slide(&1, id(name)))
+
   def add_image(name) do
     upload = "pending-#{HalC2.Environment.uuid4()}"
     file = Path.join(HalC2.Attachments.dir(), upload <> ".png")
@@ -686,6 +935,21 @@ defmodule HalC2.SpacePropTest do
     act(fn _ ->
       HalC2.Prop.restart_service(HalC2.Streams)
       {:ok, nil}
+    end)
+  end
+
+  # Names a new deck and the slides it was made with before reading the Space back.
+  defp act_deck(name, fun) do
+    act(fn space ->
+      with {:ok, %{"id" => id}} = reply <- fun.(space) do
+        slides = Decks.slides(Streams.state(stream()), id)
+
+        made =
+          slides |> Enum.with_index(fn slide, n -> {"#{name}.#{n}", slide["id"]} end) |> Map.new()
+
+        Process.put(:names, Process.get(:names) |> Map.merge(made) |> Map.put(name, id))
+        reply
+      end
     end)
   end
 
@@ -723,6 +987,9 @@ defmodule HalC2.SpacePropTest do
         {name.(page["id"]), Blocks.of_page(state, page["id"])}
       end)
 
+    decks = StreamState.list(state, "deck")
+    deck_order = Map.new(decks, &{name.(&1["id"]), Decks.slides(state, &1["id"])})
+
     snapshot = %{
       pages:
         Map.new(pages, fn page ->
@@ -752,6 +1019,17 @@ defmodule HalC2.SpacePropTest do
              resolved: comment["resolvedAt"] != nil
            }}
         end),
+      decks:
+        Map.new(decks, fn deck ->
+          {name.(deck["id"]), %{title: deck["title"], trashed: deck["trashedAt"] != nil}}
+        end),
+      deck_order:
+        Map.new(deck_order, fn {deck, slides} -> {deck, Enum.map(slides, &name.(&1["id"]))} end),
+      slides:
+        Map.new(StreamState.list(state, "slide"), fn slide ->
+          {name.(slide["id"]),
+           %{deck: name.(slide["deckId"]), title: slide["title"], body: slide["body"]}}
+        end),
       sites:
         Map.new(sites, fn site ->
           {name.(site["pageId"]),
@@ -767,8 +1045,8 @@ defmodule HalC2.SpacePropTest do
     }
 
     ordered =
-      Enum.all?(order, fn {_, blocks} ->
-        keys = Enum.map(blocks, & &1["order"])
+      Enum.all?(Map.values(order) ++ Map.values(deck_order), fn entities ->
+        keys = Enum.map(entities, & &1["order"])
         keys == Enum.uniq(Enum.sort(keys))
       end)
 

@@ -77,6 +77,7 @@ DiffPanel 1.0 DiffPanel.qml
 FilesPanel 1.0 FilesPanel.qml
 FileEntryMenu 1.0 FileEntryMenu.qml
 AttachmentViewer 1.0 AttachmentViewer.qml
+ImageViewer 1.0 ImageViewer.qml
 FilePathTrail 1.0 FilePathTrail.qml
 ProjectActionEditor 1.0 ProjectActionEditor.qml
 ProjectIcon 1.0 ProjectIcon.qml
@@ -97,8 +98,10 @@ HomePage 1.0 HomePage.qml
 UsagePage 1.0 UsagePage.qml
 SpaceWorkspace 1.0 SpaceWorkspace.qml
 SpaceSidebar 1.0 SpaceSidebar.qml
+SpaceDeck 1.0 SpaceDeck.qml
 SpacePage 1.0 SpacePage.qml
 SpaceAgentStrip 1.0 SpaceAgentStrip.qml
+SpacePresenter 1.0 SpacePresenter.qml
 SpaceBlock 1.0 SpaceBlock.qml
 SpaceSlashMenu 1.0 SpaceSlashMenu.qml
 SpaceBlockImage 1.0 SpaceBlockImage.qml

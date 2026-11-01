@@ -1,10 +1,11 @@
 defmodule HalC2.Orchestration.Recovery do
   @moduledoc """
-  Settles turns an MC was running when it stopped. Provider processes stop with
-  the MC, and `HalC2.Subprocess.Orphans` kills, before this runs, any that an MC
-  which died left behind, so at boot every run still active on this MC's threads is ended as
-  interrupted, with its items, prompts, and provider thread; otherwise the thread
-  would stay "running" and refuse its next message.
+  Settles turns an MC was running when it stopped. A provider program that outlived
+  the MC and checkpointed the run its thread is on (`HalC2.Subprocess.Durable`) goes
+  on: `continue/0` connects its runtime to it and the thread is not touched. Any
+  other is killed, here or by `HalC2.Subprocess.Orphans`, so every run still active on
+  the rest of this MC's threads is ended as interrupted, with its items, prompts, and
+  provider thread; otherwise the thread would stay "running" and refuse its next message.
 
   A run the MC accepted but never handed to its provider goes back to the
   front of the queue instead, and `continue/0` starts it once, the way an effect
@@ -26,6 +27,7 @@ defmodule HalC2.Orchestration.Recovery do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState}
+  alias HalC2.Subprocess.Durable
 
   @active_runs ~w(preparing queued starting running waiting)
   @active ~w(pending preparing queued starting running waiting active)
@@ -42,9 +44,14 @@ defmodule HalC2.Orchestration.Recovery do
   that could go on are kept for `continue/0`.
   """
   def run do
+    leaving(false)
+    survivors = reattachable()
+    :persistent_term.put({__MODULE__, :survivors}, survivors)
+
     threads =
       for {{mc, thread_id}, {"thread", row}} <- HalC2.Shell.rows(),
           mc == node(),
+          not is_map_key(survivors, thread_id),
           # `status` is the latest run's, so a cancelled queued run can hide a running
           # one behind it; `activityRunStatus` is the latest active run's.
           row["status"] in @active_runs or row["activityRunStatus"] != nil or
@@ -83,6 +90,71 @@ defmodule HalC2.Orchestration.Recovery do
 
     if settled != [], do: Logger.info("settled interrupted turns in #{length(settled)} threads")
     Enum.map(settled, &elem(&1, 0))
+  end
+
+  # The programs that can go on: alive, and last saved on the very run the thread is on.
+  # A checkpoint from before its run started, or one that ran on after it ended,
+  # would drive the wrong turn, so that program is killed and the turn settled.
+  defp reattachable do
+    Durable.survivors()
+    |> Enum.filter(fn {thread_id, survivor} ->
+      keep = Durable.attachable?(survivor.dir) and current?(thread_id, survivor.snapshot)
+      unless keep, do: Durable.kill_dir(survivor.dir)
+      keep
+    end)
+    |> Map.new()
+  end
+
+  defp current?(thread_id, snapshot) do
+    runs = HalC2.Streams.state(thread_id) |> StreamState.list("run")
+
+    running =
+      runs
+      |> Enum.filter(&(&1["status"] in ~w(preparing starting running waiting)))
+      |> Enum.map(& &1["id"])
+
+    saved =
+      case snapshot.state[:turn] do
+        %{ids: %{run: run}} -> [run]
+        _ -> []
+      end
+
+    # A queued run with nothing ahead of it: the MC went before moving it on. Settling holds
+    # it where the user can see, which a program left to go on would not do.
+    waiting? =
+      running == [] and Enum.any?(runs, &(&1["status"] == "queued" and &1["queueHeld"] != true))
+
+    running == saved and not waiting?
+  end
+
+  @doc false
+  # Connects before the MC takes requests; `continue/0` acts on what failed.
+  def start_reattach do
+    :persistent_term.put({__MODULE__, :failed}, reattach())
+    :ignore
+  end
+
+  # Connects each survivor's runtime. One that cannot be connected to is killed and
+  # settled as if it had not survived; returns what those settled to.
+  defp reattach do
+    survivors = :persistent_term.get({__MODULE__, :survivors}, %{})
+    :persistent_term.erase({__MODULE__, :survivors})
+
+    for {thread_id, survivor} <- survivors,
+        result = adopt(thread_id, survivor),
+        result != :ok do
+      Logger.warning("could not reattach to the program of #{thread_id}: #{inspect(result)}")
+      Durable.kill_dir(survivor.dir)
+      {_count, what} = settle(thread_id)
+      HalC2.Streams.flush_shell(thread_id)
+      {thread_id, what}
+    end
+  end
+
+  defp adopt(thread_id, survivor) do
+    survivor.snapshot.runtime.adopt(thread_id, survivor)
+  catch
+    kind, reason -> {kind, reason}
   end
 
   @doc """
@@ -128,7 +200,14 @@ defmodule HalC2.Orchestration.Recovery do
   background work it ran marked as it is, so the next boot ends it here and can ask
   the thread to continue; ended by the runtime it would look like work the user stopped.
   """
-  def stopping?, do: match?({:stopping, _}, :init.get_status())
+  def stopping?,
+    do:
+      match?({:stopping, _}, :init.get_status()) or
+        :persistent_term.get({__MODULE__, :leaving}, false)
+
+  @doc false
+  # For tests of a stop in one VM, where `:init` is not stopping.
+  def leaving(leaving?), do: :persistent_term.put({__MODULE__, :leaving}, leaving?)
 
   # Accepted, but the provider never got the turn: no attempt reached it.
   defp unstarted?(state, run) do
@@ -145,12 +224,25 @@ defmodule HalC2.Orchestration.Recovery do
   ends the tasks of interrupted children.
   """
   def continue do
-    runs = :persistent_term.get({__MODULE__, :continuable}, [])
+    failed = :persistent_term.get({__MODULE__, :failed}, []) ++ reattach()
+    :persistent_term.erase({__MODULE__, :failed})
+
+    runs =
+      :persistent_term.get({__MODULE__, :continuable}, []) ++
+        for {thread_id, %{} = run} <- failed, do: {thread_id, run}
+
     :persistent_term.erase({__MODULE__, :continuable})
-    requeued = :persistent_term.get({__MODULE__, :requeued}, [])
+
+    requeued =
+      :persistent_term.get({__MODULE__, :requeued}, []) ++
+        for {thread_id, :requeued} <- failed, do: thread_id
+
     :persistent_term.erase({__MODULE__, :requeued})
 
-    background = :persistent_term.get({__MODULE__, :background}, [])
+    background =
+      :persistent_term.get({__MODULE__, :background}, []) ++
+        for {thread_id, {:background, run, commands}} <- failed, do: {thread_id, run, commands}
+
     :persistent_term.erase({__MODULE__, :background})
 
     continued =

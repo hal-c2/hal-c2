@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QPointer>
+#include <QSemaphore>
 #include <QSet>
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -382,10 +383,17 @@ void LocalCache::open(const QString& dir) {
   thread->setObjectName(QStringLiteral("hal-c2-cache"));
   auto* worker = new Worker(this);
   worker->moveToThread(thread);
-  thread->start();
   bool opened = false;
+  QSemaphore done;
   const QString path = QDir(dir).filePath(QStringLiteral("client-cache.sqlite"));
-  QMetaObject::invokeMethod(worker, [worker, path, &opened] { opened = worker->open(path); }, Qt::BlockingQueuedConnection);
+  // On the thread as it starts, before its event loop: startup then depends on
+  // no queued call to a thread still coming up, a suspected cause of #720.
+  connect(thread, &QThread::started, worker, [worker, path, &opened, &done] {
+    opened = worker->open(path);
+    done.release();
+  }, Qt::DirectConnection);
+  thread->start();
+  done.acquire();
   if (opened) {
     m_thread = thread;
     m_worker = worker;

@@ -595,6 +595,102 @@ defmodule HalC2.ProviderUsageLimitsTest do
              Limits.consume_reset_credit(%{"instanceId" => "nope"})
   end
 
+  @tag :capture_log
+  test "a second Codex instance redeems on its own account, with its own attempt", %{dir: dir} do
+    log = Path.join(dir, "consumed-work")
+    put_codex_work(%{"environment" => [%{"name" => "FAKE_CODEX_CONSUME_LOG", "value" => log}]})
+    start()
+    :ok = Limits.refresh(["codex-work"])
+    assert %{"availableCount" => 2} = Limits.get("codex-work")["resetCredits"]
+
+    flag = Path.join(dir, "fail-once")
+    File.write!(flag, "")
+    System.put_env("FAKE_CODEX_CONSUME_FAIL", flag)
+
+    assert {:error, %{"instanceId" => "codex-work"}} =
+             Limits.consume_reset_credit(%{"instanceId" => "codex-work"})
+
+    # The built-in instance's redemption is not that pending attempt.
+    assert {:ok, _} = Limits.consume_reset_credit(%{"instanceId" => "codex"})
+
+    assert [built_in] = dir |> Path.join("consumed") |> File.read!() |> String.split()
+    assert [failed] = log |> File.read!() |> String.split()
+    assert built_in != failed
+
+    File.rm!(Path.join(dir, "consumed.reset"))
+    :ok = Limits.refresh(["codex"])
+
+    assert {:ok, %{"outcome" => "reset"}} =
+             Limits.consume_reset_credit(%{"instanceId" => "codex-work"})
+
+    assert [^failed, ^failed] = log |> File.read!() |> String.split()
+
+    # The confirming probe read that instance's account, and only that one's changed.
+    assert %{"availableCount" => 1} = Limits.get("codex-work")["resetCredits"]
+    assert [%{"id" => "primary", "usedPercent" => 0} | _] = Limits.get("codex-work")["windows"]
+    assert %{"availableCount" => 2} = Limits.get("codex")["resetCredits"]
+    assert [%{"id" => "primary", "usedPercent" => 42} | _] = Limits.get("codex")["windows"]
+  end
+
+  test "a Codex instance that is off redeems nothing", %{dir: dir} do
+    log = Path.join(dir, "consumed-work")
+
+    put_codex_work(%{
+      "enabled" => false,
+      "environment" => [%{"name" => "FAKE_CODEX_CONSUME_LOG", "value" => log}]
+    })
+
+    start()
+
+    assert {:error, %{"detail" => "Provider instance not found."}} =
+             Limits.consume_reset_credit(%{"instanceId" => "codex-work"})
+
+    refute File.exists?(log)
+  end
+
+  @tag :capture_log
+  test "removing a Codex instance forgets its pending redemption", %{dir: dir} do
+    log = Path.join(dir, "consumed-work")
+    entry = %{"environment" => [%{"name" => "FAKE_CODEX_CONSUME_LOG", "value" => log}]}
+    put_codex_work(entry)
+    start()
+
+    flag = Path.join(dir, "fail-once")
+    File.write!(flag, "")
+    System.put_env("FAKE_CODEX_CONSUME_FAIL", flag)
+    assert {:error, _} = Limits.consume_reset_credit(%{"instanceId" => "codex-work"})
+
+    {:ok, _} = HalC2.Settings.update(&Map.put(&1, "providerInstances", %{}))
+    :ok = Limits.refresh([])
+    put_codex_work(entry)
+    :ok = Limits.refresh([])
+
+    assert {:ok, _} = Limits.consume_reset_credit(%{"instanceId" => "codex-work"})
+    assert [first, second] = log |> File.read!() |> String.split()
+    assert first != second
+  end
+
+  test "a hot upgrade keeps the built-in instance's pending redemption" do
+    assert {:ok, %{redeem_keys: %{"codex" => "k"}} = upgraded} =
+             Limits.code_change(0, %{redeem_key: "k", claude_names: %{}, providers: %{}}, nil)
+
+    refute Map.has_key?(upgraded, :redeem_key)
+
+    assert {:ok, %{redeem_keys: %{}}} =
+             Limits.code_change(0, %{redeem_key: nil, claude_names: %{}, providers: %{}}, nil)
+  end
+
+  defp put_codex_work(fields) do
+    {:ok, _} =
+      HalC2.Settings.update(
+        &put_in(
+          &1,
+          [Access.key("providerInstances", %{}), "codex-work"],
+          Map.put(fields, "driver", "codex")
+        )
+      )
+  end
+
   test "shaping without a probe" do
     # Free and Go plans have one monthly allowance.
     assert [%{"id" => "primary", "kind" => "monthly", "label" => "Monthly"}] =

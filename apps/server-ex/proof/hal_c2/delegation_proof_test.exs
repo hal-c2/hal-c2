@@ -59,6 +59,10 @@ defmodule HalC2.DelegationProofTest do
         "reads whether the child has a run or owed work; changes nothing",
       "HalC2.Orchestration.Delegation.hand_over_pull_requests/1" =>
         "moves a quiet child's pull request links to its caller; touches no task, run or delivery, so no part of how the task ends, and may be retried",
+      "HalC2.Orchestration.Recovery.leaving/1" =>
+        "stands in for :init stopping in a test; stopping?/0 is abstracted",
+      "HalC2.Orchestration.Recovery.start_reattach/0" =>
+        "connects to programs that outlive the MC, which here stop with it; Durable's own tests hold it",
       "HalC2.Orchestration.Recovery.start_link/0" => "starts the process that runs boot",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
         "tells the MC is shutting down; the model has crash"

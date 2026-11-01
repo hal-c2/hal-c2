@@ -11,12 +11,21 @@ QtObject {
     property var agent: ({})
     signal agentAskRequested
     signal agentAskAnswered(string pageId, string request, bool taken)
+    property string deckId: ""
+    property var deck: ({})
+    property bool presenting: false
+    property var slide: ({})
+    property int slideNumber: 0
+    property int slideCount: 0
     property string status: "live"
     readonly property SpaceRows spaces: SpaceRows {}
     readonly property SpaceRows pages: SpaceRows {}
     readonly property SpaceRows trash: SpaceRows {}
     readonly property SpaceRows blocks: SpaceRows {}
     readonly property SpaceRows comments: SpaceRows {}
+    readonly property SpaceRows decks: SpaceRows {}
+    readonly property SpaceRows deckTrash: SpaceRows {}
+    readonly property SpaceRows slides: SpaceRows {}
     readonly property SpaceRows images: SpaceRows {}
     readonly property SpaceRows imageTrash: SpaceRows {}
     // As SpaceHistory; load() takes `history` with its fields and rows.
@@ -49,6 +58,9 @@ QtObject {
         fill(trash, state.trash);
         fill(blocks, state.blocks);
         fill(comments, state.comments);
+        fill(decks, state.decks);
+        fill(deckTrash, state.deckTrash);
+        fill(slides, state.slides);
         fill(images, state.images);
         fill(imageTrash, state.imageTrash);
         const history = state.history ?? {};
@@ -64,6 +76,12 @@ QtObject {
         this.history.changed();
         page = state.page ?? {};
         pageId = page.id ?? "";
+        deck = state.deck ?? {};
+        deckId = deck.id ?? "";
+        slide = state.slide ?? {};
+        slideNumber = state.slideNumber ?? 0;
+        slideCount = state.slideCount ?? 0;
+        presenting = state.presenting ?? false;
     }
 
     function reset() {
