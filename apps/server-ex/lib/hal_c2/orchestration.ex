@@ -2493,15 +2493,18 @@ defmodule HalC2.Orchestration do
   end
 
   # A steer is recorded in the running turn before the provider is asked to take it
-  # (`steer/4`), in the transaction that decided it. A repeat of its message id then
-  # finds it sent, so the provider is asked once, and the message sits in the
-  # transcript ahead of whatever the provider answers it with. The repeat answers for
-  # what the first send has done so far: if the provider then refuses the first, the
-  # repeat has already heard it was sent, and the sender learns otherwise from the
-  # first send's error and the message leaving the turn. An MC that stops between the
-  # two leaves the message in the turn `HalC2.Orchestration.Recovery` ends as
-  # interrupted, though the provider never read it. Its session ended with the MC, and
-  # that loss is accepted.
+  # (`steer/4`), in the transaction that decided it, marked pending until the provider
+  # answers. A repeat of its message id then finds it, so the provider is asked once,
+  # and the message sits in the transcript ahead of whatever the provider answers it
+  # with. The repeat cannot say it was sent yet: the provider may still refuse it, and
+  # a refusal can drop the message even after its turn ended (`unsteer/4`). An MC that
+  # stops between the two leaves the message in the turn
+  # `HalC2.Orchestration.Recovery` ends as interrupted, clearing the mark, though the
+  # provider never read it. Its session ended with the MC, and that loss is accepted.
+  # A send that dies while the MC stays up leaves the mark: its repeats keep hearing
+  # "try again" for a message that stays in the turn. A restart clears it only while
+  # the run is still active; once the run has ended, recovery skips the thread and the
+  # mark stays (#704).
   defp reserve_steer(state, run, command) do
     at = Entities.now()
     message_id = command["messageId"] || Entities.new_id("message")
@@ -2512,7 +2515,8 @@ defmodule HalC2.Orchestration do
       |> Map.merge(%{
         "attachments" => command["attachments"] || [],
         "createdBy" => command["createdBy"] || "user",
-        "creationSource" => command["creationSource"] || "web"
+        "creationSource" => command["creationSource"] || "web",
+        "steer" => "pending"
       })
       |> with_message_fields(command)
 
@@ -2541,6 +2545,7 @@ defmodule HalC2.Orchestration do
 
     case ask_steer(instance, thread_id, run["id"], steer_input(command)) do
       :ok ->
+        :ok = HalC2.Streams.transact(thread_id, :thread, &steer_taken(&1, message_id))
         {:ok, %{"sequence" => sequence(thread_id)}}
 
       {:error, reason} ->
@@ -2562,6 +2567,16 @@ defmodule HalC2.Orchestration do
             refused
         end
     end
+  end
+
+  defp steer_taken(state, message_id) do
+    taken =
+      upsert(state, "message", message_id, fn
+        nil -> nil
+        message -> Map.delete(message, "steer")
+      end)
+
+    {List.wrap(taken), :ok}
   end
 
   # The runtime's `steer/3`. The message is already in the turn (`reserve_steer/3`,
@@ -3405,10 +3420,15 @@ defmodule HalC2.Orchestration do
 
       # A client retrying a send after a reconnect repeats its message id, possibly
       # while the first send is still in flight. A message the thread already has
-      # (started, queued, prepared or steered) was sent: nothing more to decide.
-      is_binary(command["messageId"]) and
-          StreamState.get(state, "message")[command["messageId"]] != nil ->
-        {[], {:ok, :sent}}
+      # (started, queued, prepared or steered) was sent: nothing more to decide. A steer
+      # the provider can still refuse has not been sent yet. That answer holds only for
+      # now, so it is a map, which `dispatch_once/1` keeps no receipt of.
+      sent =
+          is_binary(command["messageId"]) &&
+            StreamState.get(state, "message")[command["messageId"]] ->
+        if sent["steer"] == "pending",
+          do: {[], {:error, %{"message" => "This message is still being sent. Try again."}}},
+          else: {[], {:ok, :sent}}
 
       thread["deletedAt"] != nil ->
         {[], {:error, "Thread #{thread_id} is deleted."}}
