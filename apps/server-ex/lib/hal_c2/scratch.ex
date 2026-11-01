@@ -75,10 +75,10 @@ defmodule HalC2.Scratch do
 
   @doc "Days a thread may sit idle before its folder goes, or nil to keep folders of idle threads."
   def idle_days(settings) do
-    case Map.fetch(settings["storageCleanup"] || %{}, "threadTempAfterDays") do
-      :error -> @default_idle_days
-      {:ok, days} when is_integer(days) and days > 0 -> days
-      {:ok, _off} -> nil
+    case settings["storageCleanup"] do
+      %{"threadTempAfterDays" => days} when is_integer(days) and days > 0 -> days
+      %{"threadTempAfterDays" => _off} -> nil
+      _ -> @default_idle_days
     end
   end
 
@@ -118,8 +118,13 @@ defmodule HalC2.Scratch do
   # The chosen place while it can be used. `get/0` reads a table, so a launch can afford it.
   defp root do
     # The MC keeps the document as written, so a hand-edited one may hold anything here.
-    chosen = get_in(HalC2.Settings.settings(), ["storageCleanup", "temporaryFilesFolder"])
-    wanted = Paths.scratch_dir(if is_binary(chosen) and chosen != "", do: chosen)
+    chosen =
+      case HalC2.Settings.settings()["storageCleanup"] do
+        %{"temporaryFilesFolder" => folder} when is_binary(folder) and folder != "" -> folder
+        _ -> nil
+      end
+
+    wanted = Paths.scratch_dir(chosen)
 
     try do
       Paths.mkdir_private!(wanted)

@@ -42,6 +42,15 @@ defmodule HalC2.ScratchTest do
     refute File.exists?(file)
   end
 
+  test "a hand-edited storageCleanup that is no object reads as unset" do
+    start_supervised!(HalC2.Settings)
+    {:ok, _} = HalC2.Settings.update(&Map.put(&1, "storageCleanup", 5))
+
+    assert [{"TMPDIR", _} | _] = Scratch.thread_env("t")
+    assert Scratch.idle_days(HalC2.Settings.settings()) == 7
+    assert HalC2.Settings.validate(%{"storageCleanup" => 5}) == :ok
+  end
+
   test "a hand-edited folder that is no path reads as unset" do
     start_supervised!(HalC2.Settings)
 

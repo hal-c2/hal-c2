@@ -224,8 +224,8 @@ defmodule HalC2.Settings do
   # Only a folder being chosen is tried: a disk that is away now must not refuse every
   # other change to settings. `HalC2.Scratch` falls back for as long as it stays away.
   defp validate_temporary_files_folder(settings) do
-    folder = get_in(settings, ["storageCleanup", "temporaryFilesFolder"])
-    held = get_in(settings(), ["storageCleanup", "temporaryFilesFolder"])
+    folder = temporary_files_folder(settings)
+    held = temporary_files_folder(settings())
 
     cond do
       folder in [nil, "", held] -> :ok
@@ -234,6 +234,11 @@ defmodule HalC2.Settings do
       true -> make_folder(folder)
     end
   end
+
+  defp temporary_files_folder(%{"storageCleanup" => %{"temporaryFilesFolder" => folder}}),
+    do: folder
+
+  defp temporary_files_folder(_settings), do: nil
 
   defp relative_folder(folder), do: temporary_files_error(folder, ": it must be an absolute path")
 
