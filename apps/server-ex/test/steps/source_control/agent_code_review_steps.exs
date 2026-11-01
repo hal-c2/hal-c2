@@ -983,6 +983,49 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> Map.put(:replaced_checkout, context.review["checkout"])
   end
 
+  step "the review's agent delegated a task and its turn ended", context do
+    {:ok, %{"taskId" => task}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => context.thread}, "codex", %{
+        "task" => "wait"
+      })
+
+    context = end_turns(context)
+
+    World.await_stream(context.thread, fn state ->
+      not Enum.any?(
+        HalC2.StreamState.list(state, "run"),
+        &(&1["status"] in ~w(preparing starting running waiting))
+      )
+    end)
+
+    event = %{"type" => "turn.finished", "threadId" => context.thread, "status" => "failed"}
+    :ok = apply(HalC2Plugins.CodeReview, :handle_event, [event, %{}])
+    {_, context} = await_review(context, 12, &(&1["status"] == "failed"))
+
+    context
+    |> Map.put(:delegated_task, task)
+    |> Map.put(:replaced_thread, context.thread)
+    |> Map.put(:replaced_checkout, context.review["checkout"])
+  end
+
+  step "the delegated task is cancelled", context do
+    assert {:ok, %{"status" => "cancelled"}} =
+             HalC2.Orchestration.Delegation.task_status(
+               context.replaced_thread,
+               context.delegated_task
+             )
+
+    context
+  end
+
+  step "the replaced thread is not woken", context do
+    assert [%{"status" => status}] =
+             HalC2.StreamState.list(HalC2.Streams.state(context.replaced_thread), "run")
+
+    refute status in ~w(queued preparing starting running waiting)
+    context
+  end
+
   step "the replaced thread has no running turn", context do
     runs = HalC2.StreamState.list(HalC2.Streams.state(context.replaced_thread), "run")
     assert runs != []

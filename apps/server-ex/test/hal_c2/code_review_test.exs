@@ -307,6 +307,41 @@ defmodule HalC2.CodeReviewTest do
     assert message =~ "already published"
   end
 
+  test "stopping an idle thread cancels the task it left working, so nothing wakes it",
+       context do
+    review = start_review()
+    thread_id = review["threadId"]
+
+    {:ok, %{"taskId" => task_id, "childThreadId" => child}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => thread_id}, "codex", %{"task" => "wait"})
+
+    File.write!(Path.join(context.dir, "gate/answer"), "")
+    await_idle(thread_id)
+    event = %{"type" => "turn.finished", "threadId" => thread_id, "status" => "failed"}
+    :ok = apply(@server, :handle_event, [event, %{}])
+    settle()
+
+    {:ok, _} = call("discard", %{"key" => @key})
+
+    assert {:ok, %{"status" => "cancelled"}} =
+             HalC2.Orchestration.Delegation.task_status(thread_id, task_id)
+
+    await_idle(child)
+    runs = HalC2.StreamState.list(HalC2.Streams.state(thread_id), "run")
+    assert [%{"status" => status}] = runs
+    assert status not in ~w(queued preparing starting running waiting)
+    refute File.exists?(review["checkout"])
+  end
+
+  test "a stop gives up at its deadline on an agent that ignores it", _context do
+    System.put_env("FAKE_CODEX_IGNORE_INTERRUPT", "1")
+    on_exit(fn -> System.delete_env("FAKE_CODEX_IGNORE_INTERRUPT") end)
+    review = start_review()
+
+    assert :busy = HalC2.Orchestration.stop_plugin_thread(review["threadId"], @id, 100)
+    assert [_] = active_runs(review["threadId"])
+  end
+
   test "only the plugin that started a thread can stop it", _context do
     review = start_review()
 
@@ -773,6 +808,19 @@ defmodule HalC2.CodeReviewTest do
     HalC2.Streams.state(thread_id)
     |> HalC2.StreamState.list("run")
     |> Enum.filter(&(&1["status"] in ~w(preparing starting running waiting)))
+  end
+
+  defp await_idle(thread_id) do
+    :ok = HalC2.Streams.watch(thread_id, self())
+    await_no_runs(thread_id)
+    HalC2.Streams.Server.unsubscribe(thread_id, self())
+  end
+
+  defp await_no_runs(thread_id) do
+    if active_runs(thread_id) != [] do
+      assert_receive {:hal_c2_stream, ^thread_id, _}, 15_000
+      await_no_runs(thread_id)
+    end
   end
 
   defp thread(thread_id) do

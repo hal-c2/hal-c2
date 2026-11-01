@@ -683,31 +683,55 @@ defmodule HalC2.Orchestration.Delegation do
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
 
-    if cohorts != [] do
-      HalC2.Streams.transact(thread_id, :thread, fn fresh ->
-        {for task <- StreamState.list(fresh, "subagent"),
-             task["origin"] == "app_owned" and task["runId"] in cohorts and
-               get_in(task, ["completionDelivery", "state"]) in ["pending", "delivered"] do
-           Orchestration.upsert(fresh, "subagent", task["id"], fn entity ->
-             Map.merge(entity, %{
-               "completionDelivery" => %{"state" => "disposed", "observedByRunId" => nil},
-               "updatedAt" => Entities.now()
-             })
-           end)
-         end
-         |> Enum.filter(&is_tuple/1), :ok}
-      end)
+    dispose_wakes(thread_id, cohorts)
+  end
 
-      for run <- runs,
-          run["status"] == "queued",
-          get_in(messages, [run["userMessageId"], "delegatedCompletion", "parentRunId"]) in cohorts do
-        _ =
-          Orchestration.dispatch(%{
-            "type" => "queued-run.cancel",
-            "threadId" => thread_id,
-            "runId" => run["id"]
-          })
-      end
+  @doc """
+  Stops everything delegated from `thread_id`, whichever run started it: its unfinished
+  tasks are cancelled and nothing of them wakes the thread again. A task's result, if
+  any, stays readable from its status.
+  """
+  def stop_tasks(thread_id) do
+    state = stream(thread_id)
+
+    for task <- StreamState.list(state, "subagent"),
+        task["origin"] == "app_owned",
+        task["status"] not in @terminal do
+      cancel(thread_id, task["id"])
+    end
+
+    dispose_wakes(thread_id, state |> StreamState.list("run") |> Enum.map(& &1["id"]))
+  end
+
+  defp dispose_wakes(_thread_id, []), do: :ok
+
+  defp dispose_wakes(thread_id, cohorts) do
+    HalC2.Streams.transact(thread_id, :thread, fn fresh ->
+      {for task <- StreamState.list(fresh, "subagent"),
+           task["origin"] == "app_owned" and task["runId"] in cohorts and
+             get_in(task, ["completionDelivery", "state"]) in ["pending", "delivered"] do
+         Orchestration.upsert(fresh, "subagent", task["id"], fn entity ->
+           Map.merge(entity, %{
+             "completionDelivery" => %{"state" => "disposed", "observedByRunId" => nil},
+             "updatedAt" => Entities.now()
+           })
+         end)
+       end
+       |> Enum.filter(&is_tuple/1), :ok}
+    end)
+
+    state = stream(thread_id)
+    messages = StreamState.get(state, "message")
+
+    for run <- StreamState.list(state, "run"),
+        run["status"] == "queued",
+        get_in(messages, [run["userMessageId"], "delegatedCompletion", "parentRunId"]) in cohorts do
+      _ =
+        Orchestration.dispatch(%{
+          "type" => "queued-run.cancel",
+          "threadId" => thread_id,
+          "runId" => run["id"]
+        })
     end
 
     :ok

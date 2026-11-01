@@ -1304,11 +1304,12 @@ defmodule HalC2.Orchestration do
   end
 
   @doc """
-  Stops a thread the plugin started: interrupts whatever it is running and releases
-  its session, so nothing of its agent is left working in its workspace, background
-  work between turns included. The thread stays, and a later message resumes it.
-  Answers once that is done, `:busy` if it is not within `timeout` ms, or `{:error,
-  message}` for a thread that is not the plugin's to stop.
+  Stops a thread the plugin started: cancels its delegated tasks, interrupts whatever
+  it is running and releases its session, so nothing of its agent is left working in
+  its workspace or coming back to it. The thread stays, and a later message resumes it.
+  Answers once that is done, `:busy` if it is not within `timeout` ms (the stop goes on
+  without the caller), or `{:error, message}` for a thread that is not the plugin's to
+  stop.
   """
   def stop_plugin_thread(thread_id, plugin_id, timeout \\ 15_000) do
     read = fn state ->
@@ -1330,23 +1331,36 @@ defmodule HalC2.Orchestration do
     end
 
     case HalC2.Streams.transact(thread_id, :thread, read) do
-      :stop ->
+      :stop -> await_stop(thread_id, timeout)
+      answer -> answer
+    end
+  end
+
+  # Interrupting and releasing each wait on a runtime without a bound of their own, so
+  # they run apart from the caller, who stops waiting at the deadline.
+  defp await_stop(thread_id, timeout) do
+    {stopper, ref} =
+      spawn_monitor(fn ->
         :ok = HalC2.Streams.watch(thread_id, self())
+        deadline = System.monotonic_time(:millisecond) + timeout
+        exit({:shutdown, {:stopped, stop_runs(thread_id, nil, deadline)}})
+      end)
 
-        try do
-          stop_runs(thread_id, nil, System.monotonic_time(:millisecond) + timeout)
-        after
-          HalC2.Streams.Server.unsubscribe(thread_id, self())
-        end
-
-      answer ->
-        answer
+    receive do
+      {:DOWN, ^ref, :process, ^stopper, {:shutdown, {:stopped, answer}}} -> answer
+      {:DOWN, ^ref, :process, ^stopper, _} -> :busy
+    after
+      timeout ->
+        Process.demonitor(ref, [:flush])
+        :busy
     end
   end
 
   # A run promoted from the queue meanwhile is interrupted too; a runtime still closing
-  # its turn after the run ended answers `:busy`, and is asked again.
+  # its turn after the run ended answers `:busy`, and is asked again. Tasks are stopped
+  # on every pass: the turn being stopped can still delegate, or a task's wake be queued.
   defp stop_runs(thread_id, asked, deadline) do
+    HalC2.Orchestration.Delegation.stop_tasks(thread_id)
     runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
     active = Enum.find_value(runs, &(&1["status"] in @active_statuses && &1["id"]))
 
