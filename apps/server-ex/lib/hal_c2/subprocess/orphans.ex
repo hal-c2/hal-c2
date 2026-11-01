@@ -36,10 +36,14 @@ defmodule HalC2.Subprocess.Orphans do
   (hal-c2/hal-c2#702). Nor does anything reach what a program left behind when it
   exited under a live MC, which removes the record at that exit.
 
-  Nor is the last identity read atomic with the signal: a pid reused in the moment
-  between that read and the external `kill` running would be signalled instead;
-  closing that needs a pidfd (`pidfd_open` + `pidfd_send_signal`), which no helper
-  here provides. Nor is a program recorded before it runs: its pid is only known
+  On Linux the signal goes through a pidfd (native/pid-kill, hal-c2/hal-c2#411): the
+  helper opens one on the pid, then compares the start time just read here, so a pid
+  reused at any point on the way is not signalled. Its group kill is as exact from
+  Linux 6.9, and before that only checks the program is still there right before it.
+  With no helper (a checkout that has not built it, a code-only upgrade from a version
+  without one) or no pidfds in the kernel, and on macOS, the external `kill` runs
+  instead, and a pid reused in the moment between the last read and that `kill` would
+  be signalled. Nor is a program recorded before it runs: its pid is only known
   once it is spawned, so it executes — argv and all — between the spawn and its
   record landing, and a VM that dies in that moment leaves an orphan no boot can
   find. Closing that would take spawning it held until tracked; the fail-closed
@@ -520,9 +524,54 @@ defmodule HalC2.Subprocess.Orphans do
     ["-KILL", "--" | targets]
   end
 
+  @pid_kill "hal-c2-pid-kill"
+  # Its exit status when the kernel has no pidfds.
+  @no_pidfds 4
+  # Built by `vp run build:pid-kill` in a checkout; a release bundles it in priv/bin.
+  @pid_kill_checkout Path.expand("../../../../../native/pid-kill/target", __DIR__)
+
+  # The helper binary: the configured one (`false` for none), the release's, or the
+  # checkout's. Never PATH's: it decides what gets killed.
+  defp pid_kill_helper do
+    case Application.get_env(:hal_c2, :pid_kill_helper) do
+      false ->
+        nil
+
+      configured ->
+        [
+          configured,
+          Application.app_dir(:hal_c2, "priv/bin/#{@pid_kill}"),
+          Path.join([@pid_kill_checkout, "release", @pid_kill]),
+          Path.join([@pid_kill_checkout, "debug", @pid_kill])
+        ]
+        |> Enum.find(&(is_binary(&1) and File.regular?(&1)))
+    end
+  end
+
+  # SIGKILLs the process `pid` that started at `started`, and the group it leads with
+  # `leader?`: `{output, status}`, non-zero when any of it was not delivered.
+  defp send_kill(pid, started, leader?) do
+    helper = pid_kill_helper()
+
+    case helper && pid_kill(helper, pid, started, leader?) do
+      {_out, status} = result when status != @no_pidfds -> result
+      _ -> System.cmd("kill", kill_args(pid, leader?), stderr_to_stdout: true)
+    end
+  end
+
+  # A start time here is `<boot>:<ticks>`, the boot having been compared with this one's.
+  defp pid_kill(helper, pid, started, leader?) do
+    ticks = started |> String.split(":") |> List.last()
+    args = if(leader?, do: ["--group"], else: []) ++ ["#{pid}", ticks]
+    System.cmd(helper, args, stderr_to_stdout: true)
+  rescue
+    # There at the check, but it cannot run (not executable, built for another machine).
+    ErlangError -> nil
+  end
+
   # A program that survives keeps its record, so the next boot tries again.
   defp kill(path, pid, started, leader?) do
-    case System.cmd("kill", kill_args(pid, leader?), stderr_to_stdout: true) do
+    case send_kill(pid, started, leader?) do
       {_, 0} ->
         # Exit 0 proves the signal was delivered, not that the program died:
         # one in uninterruptible sleep takes SIGKILL only when it wakes. The
@@ -632,7 +681,7 @@ defmodule HalC2.Subprocess.Orphans do
 
       true ->
         # Read again right before the signal, with the group the program leads now.
-        # Not atomic with the external `kill` (see the moduledoc's pidfd limit).
+        # The signal itself holds to this start time where it can (see the moduledoc).
         # Unreadable is not gone: the record stays for the next boot, as an
         # unreadable record does; dropping it would spare the orphan forever.
         case process_result(pid) do
@@ -692,15 +741,15 @@ defmodule HalC2.Subprocess.Orphans do
         sweep(path, group, entry, tries - 1, outcome)
 
       {pids, _unreadable?} ->
-        System.cmd("kill", ["-KILL", "--" | Enum.map(pids, &to_string/1)], stderr_to_stdout: true)
+        for {pid, started} <- pids, do: send_kill(pid, started, false)
 
         Process.sleep(10)
         sweep(path, group, entry, tries - 1, :killed)
     end
   end
 
-  # `{running processes in group that carry entry, never this MC itself; whether a marked
-  # process could not be placed}`. No listing of `/proc` proves nothing, so it counts
+  # `{{pid, start time} of the running processes in group that carry entry, never this
+  # MC itself; whether a marked process could not be placed}`. No listing of `/proc` proves nothing, so it counts
   # as unreadable.
   defp members(group, entry) do
     case File.ls("/proc") do
@@ -709,10 +758,18 @@ defmodule HalC2.Subprocess.Orphans do
 
         for name <- names, name != me, name =~ ~r/^\d+$/, reduce: {[], false} do
           {pids, unreadable?} ->
-            case member(process_result(name), group, fn -> marked?(name, entry) end) do
-              :member -> {[String.to_integer(name) | pids], unreadable?}
-              :unreadable -> {pids, true}
-              :stranger -> {pids, unreadable?}
+            process = process_result(name)
+
+            case member(process, group, fn -> marked?(name, entry) end) do
+              :member ->
+                {:ok, {_state, started, _group}} = process
+                {[{String.to_integer(name), started} | pids], unreadable?}
+
+              :unreadable ->
+                {pids, true}
+
+              :stranger ->
+                {pids, unreadable?}
             end
         end
 
