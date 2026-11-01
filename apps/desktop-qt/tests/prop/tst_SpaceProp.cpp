@@ -243,6 +243,7 @@ QList<QVariantMap> blocksOf(const Model& model) {
                  {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : titleOf(model.held, linked)},
                  {QStringLiteral("byAgent"), byAgent(block, "createdBy")},
                  {QStringLiteral("openComments"), open},
+                 {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()},
                  {QStringLiteral("imageId"), QString()},
                  {QStringLiteral("imageState"), QString()},
                  {QStringLiteral("imageUrl"), QString()},
@@ -607,6 +608,7 @@ struct Write : Command {
       offer(1, "block.order");
       offer(2, "block.check");
       offer(1, "block.replace");
+      offer(1, "block.chart");
       offer(1, "block.delete");
       if (comments.size() < kMaxComments) offer(2, "comment.create");
     }
@@ -760,6 +762,14 @@ struct Write : Command {
     if (op == QLatin1String("block.order")) return set({{QStringLiteral("order"), value}, {QStringLiteral("updatedAt"), at}});
     if (op == QLatin1String("block.check")) {
       return set({{QStringLiteral("checked"), !current.value(QLatin1String("checked")).toBool()}, {QStringLiteral("updatedAt"), at}});
+    }
+    if (op == QLatin1String("block.chart")) {
+      // A chart lands on the block, or asking again replaces it.
+      const QJsonObject chart{{QStringLiteral("type"), QStringLiteral("bar")}, {QStringLiteral("title"), QStringLiteral("Turns")},
+                              {QStringLiteral("labels"), QJsonArray{QStringLiteral("May")}},
+                              {QStringLiteral("series"), QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("Turns")}, {QStringLiteral("values"), QJsonArray{at.size()}}}}},
+                              {QStringLiteral("request"), QStringLiteral("turns")}, {QStringLiteral("source"), at}};
+      return set({{QStringLiteral("kind"), QStringLiteral("chart")}, {QStringLiteral("chart"), chart}, {QStringLiteral("updatedAt"), at}});
     }
     if (op == QLatin1String("block.replace")) {
       // The whole block written anew, as a replay sends one: what it leaves out goes.
@@ -1317,6 +1327,8 @@ struct ImagesModel {
   QMap<QString, QString> addresses;
   // The addresses whose end has come; shown until a new one arrives.
   QSet<QString> lapsed;
+  // An address was refused since the rows were last rebuilt: the client will try again.
+  bool retrying = false;
   // What the last step asked to have signed, sorted.
   QStringList asked;
   int seq = 1;
@@ -1343,6 +1355,7 @@ bool refreshDue(const ImagesModel& model) {
 
 // Whatever rebuilds the rows asks for each image on screen with no good address.
 void askForImages(ImagesModel& model) {
+  model.retrying = false;
   const QSet<QString> wanted = onScreen(model);
   for (const QString& id : wanted) {
     if (model.inFlight.contains(id) || (model.addresses.contains(id) && !model.lapsed.contains(id))) continue;
@@ -1428,12 +1441,32 @@ struct ImagesSut {
     }
     RC_ASSERT(listed(pages.images()) == kept);
     RC_ASSERT(listed(pages.imageTrash()) == binned);
-    RC_ASSERT(refreshTimer()->isActive() == refreshDue(model));
+    RC_ASSERT(refreshTimer()->isActive() == (model.retrying || refreshDue(model)));
+    // A retry owed is not left waiting on another image's address, an hour away.
+    // Qt runs a timer this long on whole seconds, so 30 seconds can read a little over.
+    if (model.retrying) RC_ASSERT(refreshTimer()->remainingTime() <= 31'000);
   }
 
   QTimer* refreshTimer() { return pages.findChild<QTimer*>(QStringLiteral("spaceAddressRefresh")); }
 
   void answer(const QString& image) { pages.setImageAddress(image, addressFor(image), now + 3'600'000); }
+
+  // Runs a timer that is due as though its time had come.
+  void fire(QTimer* timer) {
+    if (!timer->isActive()) return;
+    timer->start(0);
+    QCoreApplication::processEvents();
+  }
+
+  // An answer waits for the rest of its batch, but not so long that anyone sees it.
+  void rebuildNow() {
+    QTimer* timer = pages.findChild<QTimer*>(QStringLiteral("spaceRebuildSoon"));
+    const int waits = timer->interval();
+    RC_ASSERT(waits > 0);
+    RC_ASSERT(waits <= 50);
+    fire(timer);
+    timer->setInterval(waits);
+  }
 };
 
 using ImageCommand = rc::state::Command<ImagesModel, ImagesSut>;
@@ -1579,7 +1612,10 @@ struct AnswerAddress : ImageCommand {
   void apply(ImagesModel& model) const override {
     model.asked.clear();
     model.inFlight.remove(image);
-    if (!ok) return;
+    if (!ok) {
+      model.retrying = true;
+      return;
+    }
     model.lapsed.remove(image);
     if (model.order.contains(image)) model.addresses.insert(image, addressFor(image));
     askForImages(model);
@@ -1587,7 +1623,7 @@ struct AnswerAddress : ImageCommand {
   void act(const ImagesModel&, ImagesSut& sut) const {
     if (ok) {
       sut.answer(image);
-      QCoreApplication::processEvents();
+      sut.rebuildNow();
     } else {
       sut.pages.imageAddressFailed(image);
     }
@@ -1616,7 +1652,7 @@ struct AnswerAllAtOnce : ImageCommand {
     sut.asked.clear();
     sut.changes = 0;
     for (const QString& image : model.inFlight) sut.answer(image);
-    QCoreApplication::processEvents();
+    sut.rebuildNow();
     RC_ASSERT(sut.changes == 1);
     sut.check(next);
   }
@@ -1624,22 +1660,20 @@ struct AnswerAllAtOnce : ImageCommand {
 };
 
 // An hour or two pass with nothing changing in the Space. What is on screen is
-// signed anew by the client's own timer; what is not waits until it is shown.
+// signed anew by the client's own timer, and what was refused is asked for again;
+// what is not on screen waits until it is shown.
 struct AddressesLapse : ImageCommand {
-  explicit AddressesLapse(const ImagesModel& model) { RC_PRE(!model.addresses.isEmpty()); }
-  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(!model.addresses.isEmpty()); }
+  explicit AddressesLapse(const ImagesModel& model) { RC_PRE(!model.addresses.isEmpty() || model.retrying); }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(!model.addresses.isEmpty() || model.retrying); }
   void apply(ImagesModel& model) const override {
     model.asked.clear();
-    const bool fires = refreshDue(model);
+    const bool fires = model.retrying || refreshDue(model);
     for (auto it = model.addresses.cbegin(); it != model.addresses.cend(); ++it) model.lapsed.insert(it.key());
     if (fires) askForImages(model);
   }
   void act(const ImagesModel&, ImagesSut& sut) const {
     sut.now += 2 * 3'600'000;
-    if (sut.refreshTimer()->isActive()) {
-      sut.refreshTimer()->start(0);
-      QCoreApplication::processEvents();
-    }
+    sut.fire(sut.refreshTimer());
   }
   void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
   void show(std::ostream& os) const override { os << "AddressesLapse"; }

@@ -170,9 +170,14 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
       { keys: "h", description: "Spaces: a page's history", chords: ["h"] },
       {
-        keys: "g · s · o · z",
+        keys: "A · s · o · z",
         description: "Spaces: ask an agent about a page · stop it · open its thread · clear it",
-        chords: ["g", "s", "o", "z"],
+        chords: ["shift+a", "s", "o", "z"],
+      },
+      {
+        keys: "g",
+        description: "Spaces: ask for a chart, or ask again for the selected one",
+        chords: ["g"],
       },
       {
         keys: "s · S",
@@ -406,7 +411,7 @@ export const KEYMAP_LAYERS = {
     h: "space.history",
     "space, x": "space.tick",
     c: "space.comment",
-    g: "space.askAgent",
+    "shift+a": "space.askAgent",
     o: "space.openAgentThread",
     z: "space.dismissAgent",
     l: "space.link",
@@ -418,6 +423,7 @@ export const KEYMAP_LAYERS = {
     i: "space.import",
     t: "space.fromThread",
     s: "space.newDeckOrStopAgent",
+    g: "space.visualize",
     "shift+s": "space.deckFromPage",
     v: "space.images",
     "ctrl+k": "palette.open",
@@ -566,6 +572,47 @@ export function rebindLayers(
   }
   freed.delete(chord);
   return { layers: next, freed: [...freed] };
+}
+
+/**
+ * The first chord that runs `action` in `mode` once `overrides` (keymap.json's
+ * entries, as the engine merges them into every unnamed Keymap) sit over the
+ * live `layers`; null when none does. ShellKeymap keeps the global layer under
+ * every mode but the terminal drawer.
+ */
+export function effectiveChord(
+  layers: Record<string, KeymapLayer>,
+  overrides: Record<string, unknown> | undefined,
+  mode: string,
+  action: string,
+): string | null {
+  const id = (chords: string) =>
+    splitChords(chords)
+      .map((chord) => normalizeChord(chord) ?? chord)
+      .join(",");
+  // A binding's action: the plain form, or the object form that also describes it.
+  const actionOf = (value: unknown) =>
+    value && typeof value === "object" && "action" in value ? value.action : value;
+  for (const layer of [layers[mode], mode === "terminal" ? undefined : layers.global]) {
+    if (!layer) continue;
+    const merged = new Map(
+      Object.entries(layer).map(([chords, bound]) => [id(chords), bound as unknown]),
+    );
+    for (const [chords, value] of Object.entries(overrides ?? {})) {
+      // A section for a named keymap, not a binding.
+      if (value && typeof value === "object" && !("action" in value)) continue;
+      merged.set(id(chords), value);
+    }
+    for (const [chords, value] of merged) {
+      if (actionOf(value) === action) return chords.split(",")[0]!;
+    }
+  }
+  return null;
+}
+
+/** A chord as the key-hint row spells it: "ctrl+k" → "^K", "f2" → "F2". */
+export function chordHint(chord: string): string {
+  return chordLabel(chord).replace(/^Ctrl\+/, "^");
 }
 
 /**

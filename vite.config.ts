@@ -55,6 +55,7 @@ export default defineConfig({
       "apps/desktop-qt/qml/HalC2/Bricks/js/scheduledTasks.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js",
       "apps/desktop-qt/qml/HalC2/Bricks/js/usageChart.js",
+      "apps/desktop-qt/qml/HalC2/Bricks/js/spaceChart.js",
       // Exported Lottie animation, kept as the tool wrote it.
       "apps/desktop-qt/examples/dashboard/cat-playing.json",
       "*.icon/**",

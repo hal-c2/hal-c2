@@ -61,10 +61,16 @@ defmodule HalC2.Plugins.CompileCheck do
 
   defp start do
     {:ok, peer, _node} =
-      :peer.start_link(%{connection: :standard_io, exec: exec(), args: boot()})
+      :peer.start_link(%{
+        connection: :standard_io,
+        exec: exec(),
+        args: boot(),
+        wait_boot: @timeout
+      })
 
-    :ok = :peer.call(peer, :code, :add_pathsa, [:code.get_path()])
-    {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:elixir])
+    # A busy machine is slow to start a VM, not a reason to say the check could not run.
+    :ok = :peer.call(peer, :code, :add_pathsa, [:code.get_path()], @timeout)
+    {:ok, _} = :peer.call(peer, :application, :ensure_all_started, [:elixir], @timeout)
     {:ok, peer}
   catch
     kind, reason ->

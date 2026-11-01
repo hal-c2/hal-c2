@@ -24,6 +24,7 @@ defmodule HalC2.Space do
 
   alias HalC2.Space.{
     Blocks,
+    Chart,
     Decks,
     History,
     ImageFile,
@@ -32,7 +33,8 @@ defmodule HalC2.Space do
     Markdown,
     PageAgent,
     Pages,
-    Sites
+    Sites,
+    Visualize
   }
 
   @index "spaces"
@@ -201,6 +203,29 @@ defmodule HalC2.Space do
 
   def delete_block(space_id, id, author \\ @user),
     do: transact(space_id, &Blocks.delete(&1, id, author))
+
+  @doc """
+  Draws a chart that answers `request` on a page (`HalC2.Space.Visualize`): a new block
+  placed by `after_id`, or, with `block_id`, in place of that chart. The model is asked
+  outside the stream, so nothing waits on it; when it cannot answer, the page is as it was.
+  """
+  def visualize(space_id, page_id, request, block_id \\ nil, after_id \\ :last, author \\ @user) do
+    with {:ok, request} <- chart_request(request),
+         {:ok, state} <- state(space_id),
+         {:ok, page} <- Blocks.chart_place(state, page_id, block_id),
+         {:ok, chart} <- Visualize.answer(request, page, Blocks.of_page(state, page_id)) do
+      put_chart(space_id, page_id, chart, block_id, after_id, author)
+    end
+  end
+
+  @doc "Writes a chart as `visualize/6` does, deciding again: the page may have changed."
+  def put_chart(space_id, page_id, chart, block_id, after_id \\ :last, author \\ @user) do
+    transact(space_id, &Blocks.put_chart(&1, page_id, chart, block_id, after_id, author))
+  end
+
+  defp chart_request(request) do
+    with {:error, message} <- Chart.request(request), do: {:error, :invalid, message}
+  end
 
   def add_comment(space_id, page_id, block_id, body, author \\ @user),
     do: transact(space_id, &Blocks.comment(&1, page_id, block_id, body, author))

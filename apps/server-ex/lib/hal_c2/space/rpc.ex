@@ -2,8 +2,8 @@ defmodule HalC2.Space.Rpc do
   @moduledoc """
   The `space.*` RPC methods (`packages/contracts/src/space.ts`) on `HalC2.Space`.
   Refusals are `SpaceError`s, a page a thread could not be summarised into a
-  `SpaceTextGenerationError`, and an image that could not be generated a
-  `SpaceImageGenerationError`.
+  `SpaceTextGenerationError`, an image that could not be generated a
+  `SpaceImageGenerationError`, and a chart that could not be drawn a `SpaceChartError`.
   """
 
   alias HalC2.Space
@@ -99,6 +99,11 @@ defmodule HalC2.Space.Rpc do
   defp call("block.delete", %{"spaceId" => s, "blockId" => b}),
     do: with({:ok, id} <- Space.delete_block(s, b), do: {:ok, %{"blockId" => id}})
 
+  defp call("block.visualize", %{"spaceId" => s, "pageId" => p, "request" => request} = i) do
+    after_id = Map.get(i, "afterBlockId", :last)
+    block(Space.visualize(s, p, request, i["blockId"], after_id))
+  end
+
   defp call("comment.add", %{"spaceId" => s, "pageId" => p, "body" => body} = i),
     do: comment(Space.add_comment(s, p, i["blockId"], body))
 
@@ -164,10 +169,10 @@ defmodule HalC2.Space.Rpc do
     page.restore page.delete page.publish page.unpublish page.exportMarkdown page.importMarkdown
     page.createFromThread page.history page.version page.restoreVersion page.askAgent
     page.stopAgent page.dismissAgent block.insert block.update block.setChecked block.move
-    block.delete comment.add comment.resolve comment.reopen deck.create deck.createFromPage
-    deck.rename deck.trash deck.restore deck.delete slide.insert slide.update slide.move
-    slide.delete image.add
-    image.generate image.trash image.restore image.delete image.providers)
+    block.delete block.visualize comment.add comment.resolve comment.reopen deck.create
+    deck.createFromPage deck.rename deck.trash deck.restore deck.delete slide.insert
+    slide.update slide.move slide.delete image.add image.generate image.trash image.restore
+    image.delete image.providers)
 
   defp agent({:ok, agent}), do: {:ok, %{"agent" => agent}}
   defp agent(refused), do: refused
@@ -209,6 +214,12 @@ defmodule HalC2.Space.Rpc do
        when reason in [:generation_unavailable, :generation_failed] do
     tag = if reason == :generation_unavailable, do: "unavailable", else: "failed"
     {:error, %{"_tag" => "SpaceTextGenerationError", "message" => message, "reason" => tag}}
+  end
+
+  defp reply({:error, reason, message})
+       when reason in [:chart_unavailable, :chart_failed, :chart_unanswerable] do
+    tag = reason |> Atom.to_string() |> String.replace_prefix("chart_", "")
+    {:error, %{"_tag" => "SpaceChartError", "message" => message, "reason" => tag}}
   end
 
   defp reply({:error, reason, message})

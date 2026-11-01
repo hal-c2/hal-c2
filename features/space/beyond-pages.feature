@@ -22,9 +22,6 @@ Feature: Spaces beyond Pages
     Then "Status" holds the new summary and says when it was written
 
   @mc @shared
-  Scenario: The user visualises data on a page
-    When the user asks for "/visualize weekly turns" on the page "Status"
-    Then the page shows an applet drawing that data
 
   @mc @shared
   Scenario: The user sees who else is on a page

@@ -3,7 +3,8 @@ defmodule HalC2.Space.Markdown do
   A page as Markdown and back. The page title is the `# ` heading on top, headings
   are `## `, checklist items `- [ ]` and `- [x]`, callouts `> ` quotes, a link to a
   subpage `[Title](#pageId)` and an image `![Caption](space-image:imageId)`. Everything
-  else is a paragraph.
+  else is a paragraph, which is also what a chart's table comes back as: only
+  `space.block.visualize` draws a chart.
   """
 
   @doc "The Markdown of a page; `title_of` names the page a subpage link points at."
@@ -28,6 +29,8 @@ defmodule HalC2.Space.Markdown do
 
   defp block(%{"kind" => "subpage_link", "linkedPageId" => id} = block, title_of),
     do: "[#{title_of.(id) || block["text"]}](##{id})"
+
+  defp block(%{"kind" => "chart", "chart" => chart}, _), do: HalC2.Space.Chart.markdown(chart)
 
   defp block(%{"kind" => "image", "imageId" => id, "text" => text}, _),
     do: "![#{String.replace(text, "\n", " ")}](space-image:#{id})"

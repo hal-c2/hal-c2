@@ -12,7 +12,14 @@ import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
 import type { ImageDecoder } from "../composerAttachments.ts";
 import { resolveSidebarListViewport } from "../layout.ts";
 import { buildRows, nextSidebarRefreshAt, SIDEBAR_SETTLED_SECTION_ID } from "../sidebar.logic.ts";
-import { KEYBINDING_GROUPS, KEYMAP_LAYERS, KEYMAP_PARITY } from "../keymap.ts";
+import {
+  chordHint,
+  effectiveChord,
+  KEYBINDING_GROUPS,
+  KEYMAP_LAYERS,
+  KEYMAP_PARITY,
+  type KeymapLayer,
+} from "../keymap.ts";
 import { PROJECT_ACTION_RUN_PREFIX, projectActionKeymap } from "../projectActions.ts";
 import type { EditorCommand } from "../promptEditor.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
@@ -170,6 +177,8 @@ export interface HostOptions {
   readonly trace?: (action: string, payload: unknown) => void;
   /** Warnings from before the host existed (keymap.json conflicts, missing plugin directories). */
   readonly startupWarnings?: ReadonlyArray<string>;
+  /** keymap.json's entries, which the QML engine merges over the published layers. */
+  readonly keymapOverrides?: Record<string, unknown> | undefined;
   /** Put the prompt's cursor after its text (see promptCursor.ts); runs once the text is set. */
   readonly promptCursorToEnd?: (text: string) => void;
   /** What the feature areas need from the entry (see features/index.ts). */
@@ -1489,6 +1498,10 @@ export function createHost(options: HostOptions): Host {
         | { items: string[]; banner: string | null }
         | undefined;
       const page = state.get("page") as { kind: string } | undefined;
+      const layers = (state.get("keybindings") as { layers: Record<string, KeymapLayer> }).layers;
+      const paletteChord = (inMode: string) =>
+        effectiveChord(layers, options.keymapOverrides, inMode, "palette.open");
+      const composeChord = paletteChord("compose");
       state.set(
         "statusRow",
         buildStatusRow({
@@ -1504,9 +1517,8 @@ export function createHost(options: HostOptions): Host {
             (state.get("composer") as { isRunning?: boolean } | undefined)?.isRunning === true,
           draft: page?.kind === "draft",
           pinnedError: (state.get("statusError") as { text: string } | null)?.text ?? null,
-          paletteAvailable:
-            (KEYMAP_LAYERS as Record<string, Record<string, string>>)[mode]?.["ctrl+k"] ===
-            "palette.open",
+          paletteKey: composeChord === null ? null : chordHint(composeChord),
+          paletteAvailable: paletteChord(state.get("mode") as TuiMode) !== null,
         }),
       );
     });

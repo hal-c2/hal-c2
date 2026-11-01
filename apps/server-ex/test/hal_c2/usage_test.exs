@@ -272,6 +272,39 @@ defmodule HalC2.UsageTest do
              HalC2.Usage.summary(%{@window | "sinceDay" => "2026-08-03"})
   end
 
+  test "an hour straddling the zone's midnight is one bucket on the day it starts in", ctx do
+    # Midnight in New York is 04:00Z, inside the hour that starts at 03:57Z.
+    File.write!(
+      Path.join(ctx.claude, "a.jsonl"),
+      claude_line(1, 1, at: "2026-10-20T03:07:00Z") <>
+        claude_line(2, 2, at: "2026-10-20T03:58:00Z") <>
+        claude_line(3, 3, at: "2026-10-20T04:07:00Z") <>
+        claude_line(4, 4, at: "2026-10-20T04:58:00Z")
+    )
+
+    start(ctx.home, ctx.settings)
+
+    summary =
+      summary(%{
+        "sinceDay" => "2026-10-18",
+        "untilDay" => "2026-10-22",
+        "timeZone" => "America/New_York",
+        "resolution" => "hour",
+        "sinceTime" => "2026-10-20T02:57:00.000Z",
+        "untilTime" => "2026-10-21T02:57:00.000Z"
+      })
+
+    assert for(
+             b <- summary["buckets"],
+             do: {b["day"], b["hourStart"], b["totals"]["outputTokens"]}
+           ) ==
+             [
+               {"2026-10-19", "2026-10-20T02:57:00.000Z", 1},
+               {"2026-10-19", "2026-10-20T03:57:00.000Z", 5},
+               {"2026-10-20", "2026-10-20T04:57:00.000Z", 4}
+             ]
+  end
+
   test "a transcript that grows counts its new lines once, even across restarts", ctx do
     path = Path.join(ctx.claude, "a.jsonl")
     File.write!(path, claude_line(1, 1))

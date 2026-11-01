@@ -18,6 +18,7 @@ Popup {
         { kind: "heading", label: qsTr("Heading"), icon: "hash", words: "heading title" },
         { kind: "checklist", label: qsTr("Checklist"), icon: "square-check", words: "checklist todo task" },
         { kind: "callout", label: qsTr("Callout"), icon: "info", words: "callout note" },
+        { kind: "chart", label: qsTr("Chart"), icon: "chart-no-axes-column", words: "chart visualize graph" },
         { kind: "subpage_link", label: qsTr("Link to a subpage"), icon: "link", words: "link subpage page" },
         { kind: "image", label: qsTr("Image"), icon: "image", words: "image picture photo" }
     ]
