@@ -174,9 +174,9 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["p", "shift+p"],
       },
       {
-        keys: "Y · u",
+        keys: "Y · U",
         description: "Spaces: copy a published page's link · unpublish it",
-        chords: ["shift+y", "u"],
+        chords: ["shift+y", "shift+u"],
       },
       {
         keys: "v",
@@ -399,7 +399,7 @@ export const KEYMAP_LAYERS = {
     p: "space.publish",
     "shift+p": "space.publishTailscale",
     "shift+y": "space.copySiteLink",
-    u: "space.unpublish",
+    "shift+u": "space.unpublish",
     i: "space.import",
     t: "space.fromThread",
     v: "space.images",

@@ -1070,7 +1070,7 @@ step("the site link of the page {string} is on the clipboard", (ctx: SpaceWorld,
 
 step("the user unpublishes the page {string}", async (ctx: SpaceWorld, title: string) => {
   await openPage(ctx, title);
-  await press(ctx, "u");
+  await press(ctx, "U");
 });
 
 step("the page {string} shows it is not published", async (ctx: SpaceWorld, title: string) => {
