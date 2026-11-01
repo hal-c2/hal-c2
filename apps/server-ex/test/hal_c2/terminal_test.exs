@@ -87,6 +87,15 @@ defmodule HalC2.TerminalTest do
       assert Terminal.saved_scrollback(long) == [{"term-1", "long thread\n"}]
     end
 
+    test "deleting the history of a terminal whose id is * leaves its siblings alone" do
+      Terminal.put_scrollback("thread-1", "*", "star\n")
+      Terminal.put_scrollback("thread-1", "term-1", "sibling\n")
+
+      Terminal.close(%{"threadId" => "thread-1", "terminalId" => "*", "deleteHistory" => true})
+
+      assert Terminal.saved_scrollback("thread-1") == [{"term-1", "sibling\n"}]
+    end
+
     test "a state from before the attach capture gains its field on upgrade" do
       assert {:ok, %{attach_capture: nil}} = Terminal.code_change(0, %{}, nil)
     end

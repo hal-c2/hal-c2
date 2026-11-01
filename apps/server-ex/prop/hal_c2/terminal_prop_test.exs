@@ -170,9 +170,10 @@ defmodule HalC2.TerminalPropTest do
   @keys [{"th1", "a"}, {"th1", "b"}, {"th2", "a"}]
   @registry HalC2.Terminal.Registry
   @wait 15_000
-  # Around every length where the history file's name stops fitting.
+  # Around every length where the history file's name stops fitting, and a wildcard.
   @scrollback_ids [
     "a",
+    "*",
     String.duplicate("b", 128),
     String.duplicate("c", 200),
     String.duplicate("🦀", 128)
