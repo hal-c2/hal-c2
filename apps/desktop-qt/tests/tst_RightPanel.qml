@@ -112,6 +112,7 @@ Item {
                 }
             }
             property int closed: 0
+            property bool outsideProject: false
             function closeFile() { closed += 1; }
             signal revealRequested
         }
@@ -634,6 +635,39 @@ Item {
             // The way back: the ordinary font brings the buttons out again.
             Theme.fontScale = 1;
             tryVerify(() => textButtons.every(button => button.visible) && !menuButton.visible);
+        }
+
+        // When the buttons come back, the ⋯ button leaves: focus on it, or in its open
+        // menu, moves to a button still on screen rather than stay on the hidden one.
+        function test_theHeaderMenuLeavingKeepsFocusOnAShownButton_data() {
+            return [
+                { tag: "on the button", menuOpen: false, outsideProject: false, home: "fileExplorerToggle" },
+                { tag: "in the open menu", menuOpen: true, outsideProject: false, home: "fileExplorerToggle" },
+                { tag: "no toggle outside the project", menuOpen: false, outsideProject: true, home: "fileClose" },
+                { tag: "open menu, no toggle", menuOpen: true, outsideProject: true, home: "fileClose" }
+            ];
+        }
+        function test_theHeaderMenuLeavingKeepsFocusOnAShownButton(data) {
+            const source = createTemporaryObject(fakeFiles, root);
+            source.outsideProject = data.outsideProject;
+            source.renderKind = "markdown";
+            const files = createTemporaryObject(filesComponent, root, { source: source, width: 360 });
+            const menuButton = findChild(files, "fileHeaderMenu");
+            const home = findChild(files, data.home);
+            tryVerify(() => findChild(files, "fileViewer").visible);
+            Theme.fontScale = 4;
+            tryVerify(() => menuButton.visible);
+            menuButton.forceActiveFocus();
+            tryVerify(() => menuButton.activeFocus);
+            const wrapItem = findChild(menuButton, "fileWrapItem");
+            if (data.menuOpen) {
+                mouseClick(menuButton);
+                tryVerify(() => wrapItem.visible && wrapItem.height > 0, 5000, "the menu opened");
+            }
+            Theme.fontScale = 1;
+            tryVerify(() => !menuButton.visible);
+            tryVerify(() => !wrapItem.visible, 5000, "an open menu closes with its button");
+            tryVerify(() => home.visible && home.activeFocus, 5000, "focus on " + files.Window.activeFocusItem);
         }
 
         // A tab too narrow to leave the tree room beside the header's buttons shows the

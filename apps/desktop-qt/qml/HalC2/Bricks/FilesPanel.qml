@@ -67,6 +67,12 @@ Rectangle {
             fileExplorerToggleButton.forceActiveFocus();
     }
 
+    // Where focus goes when the ⋯ button leaves: the toggle, or Close for a file
+    // outside the project, which has no toggle.
+    function focusHeaderHome() {
+        (fileExplorerToggleButton.wanted ? fileExplorerToggleButton : closeButton).forceActiveFocus();
+    }
+
     // The buttons trading places under the focused item would clear focus to
     // nowhere, and an open menu has no business outliving its button.
     onHeaderFitsChanged: {
@@ -77,7 +83,7 @@ Rectangle {
         if (headerCollapsed && focusOnText)
             headerMenuButton.forceActiveFocus();
         else if (!headerCollapsed && focusOnMenu)
-            fileExplorerToggleButton.forceActiveFocus();
+            focusHeaderHome();
     }
     Component.onCompleted: headerCollapsed = !headerFits
 
@@ -267,6 +273,12 @@ Rectangle {
                         id: headerMenu
 
                         y: parent.height
+                        // A popup gives focus back to its button when it has closed,
+                        // even a button the header no longer shows.
+                        onClosed: {
+                            if (root.fileOpen && !root.headerCollapsed)
+                                root.focusHeaderHome();
+                        }
 
                         ShellMenuItem {
                             objectName: "fileRenderItem"
