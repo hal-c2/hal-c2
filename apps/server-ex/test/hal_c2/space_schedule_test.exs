@@ -64,6 +64,9 @@ defmodule HalC2.SpaceScheduleTest do
 
   describe "a Space's stream that does not answer" do
     setup ctx do
+      Application.put_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, 200)
+      on_exit(fn -> Application.delete_env(:hal_c2, :scheduled_tasks_pages_timeout_ms) end)
+
       {:ok, other} = Space.create("Other")
       {:ok, page} = Space.create_page(other["id"], "Status")
       {:ok, _} = Schedule.set(other["id"], page["id"], "Summarise", ctx.cadence)
@@ -72,7 +75,29 @@ defmodule HalC2.SpaceScheduleTest do
       :sys.suspend(stream)
       on_exit(fn -> if Process.alive?(stream), do: :sys.resume(stream) end)
 
-      %{other: other["id"], other_page: page["id"]}
+      %{other: other["id"], other_page: page["id"], stream: stream}
+    end
+
+    test "has what it did not take written by a later tick", ctx do
+      {:ok, _} =
+        ScheduledTasks.put_page_task(%{
+          "id" => "page:" <> ctx.page,
+          "title" => "Page update",
+          "page" => %{"spaceId" => ctx.space, "pageId" => ctx.page},
+          "prompt" => "Summarise more",
+          "schedule" => ctx.cadence
+        })
+
+      # A stream that stops loses the write it never read, so only the tick can bring it.
+      ref = Process.monitor(ctx.stream)
+      Process.exit(ctx.stream, :kill)
+      assert_receive {:DOWN, ^ref, :process, _, :killed}
+
+      send(ScheduledTasks, :tick)
+      assert [_, _] = ScheduledTasks.page_tasks()
+
+      assert {:ok, %{page: page}} = Space.page(ctx.space, ctx.page)
+      assert page["schedule"]["instruction"] == "Summarise more"
     end
 
     test "does not keep another Space's task from settling at boot", ctx do

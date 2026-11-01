@@ -26,7 +26,7 @@ defmodule HalC2.ScheduledTasks do
   in the trash the task is `held`: it has no next run, and letting go of it aims the
   next run afresh, so what it missed does not run. Nothing that holds a stream's
   transaction may call this process, because it writes to those streams, and a stream
-  that does not answer in time is left for the next change (`by_space/3`).
+  that does not answer in time is left for the next tick (`by_space/3`).
   """
 
   use GenServer
@@ -263,8 +263,10 @@ defmodule HalC2.ScheduledTasks do
         end
       end)
 
-    # A tick that starts nothing (a due task still running) only re-arms the timer.
-    {:noreply, if(state.tasks == before, do: schedule(state), else: changed(state))}
+    # A tick that starts nothing (a due task still running) saves nothing, but writes what
+    # a stream did not take before, and re-arms the timer.
+    {:noreply,
+     if(state.tasks == before, do: state |> show_pages() |> schedule(), else: changed(state))}
   end
 
   # A run finished: record it, and answer a waiting "run now".
@@ -811,7 +813,7 @@ defmodule HalC2.ScheduledTasks do
   end
 
   # Writes each page task that changed since it was last shown, and clears the page of
-  # one that is gone. One the Space's stream refused stays unshown, for the next change.
+  # one that is gone. One the Space's stream refused stays unshown, for the next tick.
   defp show_pages(state) do
     current = Map.new(page_tasks(state), &{&1["id"], {&1["page"], HalC2.Space.Schedule.view(&1)}})
     shown = Map.get(state, :shown, %{})

@@ -5,7 +5,7 @@ defmodule HalC2.SpaceScheduleStallPropTest do
   modelled: a task is held exactly when the scheduler last read its page in the trash, a
   held task has no next run, a reconcile of one Space leaves the other's debt alone, a
   stream that does not answer holds up only its own Space, and once the streams answer
-  one tick settles every task, whatever went unanswered before.
+  one tick settles every task and shows it on its page, whatever went unanswered before.
   """
 
   use ExUnit.Case, async: false
@@ -76,11 +76,13 @@ defmodule HalC2.SpaceScheduleStallPropTest do
       {2, {:call, __MODULE__, :reconcile, [index]}},
       {2, {:call, __MODULE__, :restart_stalled, [index]}},
       {2, {:call, __MODULE__, :tick_stalled, [index]}},
+      {2, {:call, __MODULE__, :edit_stalled, [index]}},
       {3, {:call, __MODULE__, :tick, []}}
     ])
   end
 
   def precondition(s, {:call, _, :flip, [i, trashed, _answered]}), do: s[i].trashed == trashed
+  def precondition(s, {:call, _, :edit_stalled, [i]}), do: not s[i].held
   def precondition(_s, _call), do: true
 
   def next_state(s, _result, {:call, _, name, args}), do: step(s, name, args)
@@ -96,6 +98,7 @@ defmodule HalC2.SpaceScheduleStallPropTest do
   defp step(s, :reconcile, [i]), do: Map.put(s, i, %{s[i] | held: s[i].trashed})
   defp step(s, :restart_stalled, [i]), do: settled(s, i)
   defp step(s, :tick_stalled, [i]), do: settled(s, i)
+  defp step(s, :edit_stalled, [_i]), do: s
   defp step(s, :tick, []), do: settled(s, nil)
 
   # Every Space whose stream answers holds its page's fate; the `stalled` one keeps its own.
@@ -146,9 +149,35 @@ defmodule HalC2.SpaceScheduleStallPropTest do
     observed()
   end
 
+  # A change the stream cannot show, and it stops before reading the write: the task has
+  # the change, its page does not, and nothing but a tick will bring it.
+  def edit_stalled(i) do
+    {space, page} = page(i)
+    stream = Streams.ensure(Space.stream_id(space))
+    :sys.suspend(stream)
+
+    {:ok, _} =
+      ScheduledTasks.put_page_task(%{
+        "id" => "page:" <> page,
+        "title" => "Page update",
+        "page" => %{"spaceId" => space, "pageId" => page},
+        "prompt" => "Summarise #{System.unique_integer([:positive])}",
+        "schedule" => @cadence
+      })
+
+    ref = Process.monitor(stream)
+    Process.exit(stream, :kill)
+
+    receive do
+      {:DOWN, ^ref, :process, _, :killed} -> observed()
+    end
+  end
+
   def tick do
     send(ScheduledTasks, :tick)
-    observed()
+    observed = observed()
+    true = Enum.all?(Map.keys(observed), &shown?/1)
+    observed
   end
 
   defp stalled(i, fun) do
@@ -172,6 +201,14 @@ defmodule HalC2.SpaceScheduleStallPropTest do
       true = held == is_nil(task["nextRunAt"])
       {i, %{trashed: trashed?(i), held: held}}
     end
+  end
+
+  # Whether the page shows its task as the scheduler holds it.
+  defp shown?(i) do
+    {space, page} = page(i)
+    {:ok, state} = Space.state(space)
+    task = Enum.find(ScheduledTasks.page_tasks(), &(&1["page"]["pageId"] == page))
+    Pages.get(state, page)["schedule"] == Schedule.view(task)
   end
 
   defp trashed?(i) do
