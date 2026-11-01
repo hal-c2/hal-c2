@@ -5,7 +5,8 @@ name: CI
 #
 # Cheapest first: `changes` picks the jobs a commit needs, and nothing of the MC's starts
 # until mc_check has passed, so a formatting slip costs a minute, not every runner the
-# repository may use at once. A job that fails can be re-run alone.
+# repository may use at once. A job that fails can be re-run alone. A merge to main runs
+# only mc_check, to save its build: its tests ran on its pull request.
 
 on:
   pull_request:
@@ -33,7 +34,11 @@ jobs:
     timeout-minutes: 5
     outputs:
       mc: ${{ steps.changes.outputs.mc }}
+      unit: ${{ steps.changes.outputs.unit }}
+      props: ${{ steps.changes.outputs.props }}
       tui: ${{ steps.changes.outputs.tui }}
+      scenarios: ${{ steps.changes.outputs.scenarios }}
+      named: ${{ steps.changes.outputs.named }}
       proofs: ${{ steps.changes.outputs.proofs }}
     steps:
       - uses: actions/checkout@v6
@@ -44,7 +49,7 @@ jobs:
           persist-credentials: false
 
       - id: changes
-        run: .github/scripts/ci-changes.sh ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'all' || '' }} | tee -a "$GITHUB_OUTPUT"
+        run: .github/scripts/ci-changes.sh ${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && 'merged' || 'all' }} | tee -a "$GITHUB_OUTPUT"
 
   pr_assets:
     name: PR assets
@@ -118,7 +123,8 @@ jobs:
 
   mc:
     name: MC tests
-    needs: mc_check
+    needs: [changes, mc_check]
+    if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -148,7 +154,8 @@ jobs:
   # so one failed property re-runs a part of that. New files join a partition on their own.
   mc_props:
     name: MC properties (${{ matrix.partition }}/3)
-    needs: mc_check
+    needs: [changes, mc_check]
+    if: needs.changes.outputs.props == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -212,30 +219,23 @@ jobs:
           # maude.install asks the GitHub API for releases; unauthenticated, runners hit its rate limit.
           GITHUB_TOKEN: ${{ github.token }}
 
-  # The @mc scenarios of features/, directories grouped so each job stays under a quarter
-  # of an hour. `rest` runs every directory no other job names, new ones included.
+  # The @mc scenarios of features/, in the groups ci-changes.sh defines and selects.
   # HAL_C2_FEATURES without `--only cucumber` keeps @backlog out (test_helper.exs);
   # naming scenarios_test.exs keeps the unit suite, which the mc job runs, out.
   mc_scenarios:
     name: MC scenarios (${{ matrix.dirs }})
-    needs: mc_check
+    needs: [changes, mc_check]
+    if: needs.changes.outputs.scenarios != '[]'
     runs-on: ubuntu-24.04
     # The mc/orchestration shard runs its thousand scenarios in about 16 minutes.
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        dirs:
-          - mc/orchestration
-          - providers
-          - threads source-control
-          - mc/platform parity connections
-          - settings terminal files
-          - rest
+        dirs: ${{ fromJSON(needs.changes.outputs.scenarios) }}
     env:
       MIX_ENV: test
-      # Every directory of the matrix but `rest`, or `rest` runs it too.
-      NAMED: mc/orchestration|providers|threads|source-control|mc/platform|parity|connections|settings|terminal|files
+      NAMED: ${{ needs.changes.outputs.named }}
     defaults:
       run:
         working-directory: apps/server-ex
