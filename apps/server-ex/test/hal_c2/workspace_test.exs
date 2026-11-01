@@ -166,4 +166,25 @@ defmodule HalC2.WorkspaceTest do
 
     assert is_binary(error)
   end
+
+  test "a long text file cut at the read limit is still text", %{root: root} do
+    path = Path.join(root, "long.txt")
+    File.write!(path, String.duplicate("é", 600_000))
+
+    assert {:ok, %{"contents" => contents, "truncated" => true}} =
+             Workspace.read_file(%{"cwd" => root, "relativePath" => "long.txt"})
+
+    assert String.valid?(contents)
+  end
+
+  test "text in another encoding is told apart from binary data", %{root: root} do
+    File.write!(Path.join(root, "latin1.txt"), <<"caf", 0xE9>>)
+    File.write!(Path.join(root, "nulls.dat"), <<"a", 0, "b">>)
+
+    assert {:error, %{"failure" => "not_utf8"}} =
+             Workspace.read_file(%{"cwd" => root, "relativePath" => "latin1.txt"})
+
+    assert {:error, %{"failure" => "binary_file"}} =
+             Workspace.read_file(%{"cwd" => root, "relativePath" => "nulls.dat"})
+  end
 end

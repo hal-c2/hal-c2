@@ -4,6 +4,7 @@ import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-enti
 import type { PickRequest } from "./composerState.ts";
 import {
   createSpaceController,
+  imageTypeOf,
   refusalText,
   type TuiSpaceRow,
   type TuiSpaceState,
@@ -61,13 +62,17 @@ const events = (
   events: list.map(([seq, kind, id, patch]) => [seq, kind, id, patch as never, 0] as const),
 });
 
+const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
 /** A controller on a client whose streams and replies the test drives by hand. */
-function setup() {
+function setup(origin?: string) {
   const streams = new Map<string, Array<(frame: EntityStreamFrame) => void>>();
   const replies = new Map<string, Array<(value: unknown) => void>>();
   const calls: Array<{ method: string; payload: unknown }> = [];
   const statuses: string[] = [];
   const menus: PickRequest[] = [];
+  const asks: Array<(answer: string) => void> = [];
+  const uploads = { fails: false, sent: 0 };
   let state: TuiSpaceState | null = null;
   const controller = createSpaceController({
     client: {
@@ -86,7 +91,12 @@ function setup() {
         streams.set(stream, list);
         return () => {};
       },
+      uploadToMc: async () => {
+        if (uploads.fails) throw new Error("The MC refused the upload (413).");
+        uploads.sent += 1;
+      },
     },
+    readLocalBytes: async () => PNG,
     height: () => 30,
     width: () => 80,
     setOpen: () => {},
@@ -94,9 +104,10 @@ function setup() {
       state = next;
     },
     status: (text) => statuses.push(text),
-    ask: () => {},
+    ask: (spec) => asks.push(spec.onSubmit),
     menu: (spec) => menus.push(spec),
     threads: () => [{ id: "t1", title: "Work" }],
+    ...(origin ? { origin } : {}),
   });
   /** Send a frame on `stream`; `subscription` picks an older follow of the same stream. */
   const send = (stream: string, frame: EntityStreamFrame, subscription = -1) =>
@@ -108,12 +119,28 @@ function setup() {
       .rows.filter((row) => row.kind === kind && row.first)
       .map((row) => row.text.slice(2).trim());
   const select = (key: string) => controller.dispatch("space.select", { key });
-  return { controller, send, reply, view, texts, select, calls, statuses, menus, streams };
+  return {
+    controller,
+    send,
+    reply,
+    view,
+    texts,
+    select,
+    calls,
+    statuses,
+    menus,
+    asks,
+    uploads,
+    streams,
+  };
 }
 
 /** Open the Spaces, and the Space s1 ("Research") with its pages. */
-function inResearch(rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>) {
-  const t = setup();
+function inResearch(
+  rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
+  origin?: string,
+) {
+  const t = setup(origin);
   t.controller.dispatch("space.open", {});
   t.send("spaces", snapshot(1, [space("s1", "Research")]));
   t.select("space:s1");
@@ -201,6 +228,35 @@ describe("replies that come after the user moved on", () => {
   });
 });
 
+describe("publishing a page as a site", () => {
+  const publishPayload = (origin: string, action = "space.publish") => {
+    const t = inResearch([page("p1", "Roadmap")], origin);
+    t.select("page:p1");
+    t.controller.dispatch(action, {});
+    return t.calls.find((call) => call.method === "space.page.publish")?.payload;
+  };
+
+  test("a client that reached the MC on the LAN makes the link on that address", () => {
+    expect(publishPayload("http://192.168.1.20:3773")).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      baseUrl: "http://192.168.1.20:3773",
+    });
+  });
+
+  test("a client on loopback leaves the address to the MC", () => {
+    expect(publishPayload("http://127.0.0.1:3773")).toEqual({ spaceId: "s1", pageId: "p1" });
+  });
+
+  test("over Tailscale the MC names the address, wherever the client reached it", () => {
+    expect(publishPayload("http://192.168.1.20:3773", "space.publishTailscale")).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      tailscale: true,
+    });
+  });
+});
+
 describe("refusalText", () => {
   test("names text generation that is unavailable, wherever the client put the detail", () => {
     const error = Object.assign(new Error("No provider is set up."), {
@@ -216,5 +272,73 @@ describe("refusalText", () => {
       detail: { _tag: "SpaceError", reason: "cycle" },
     });
     expect(refusalText(error)).toBe("A page cannot move inside itself.");
+  });
+});
+
+describe("images", () => {
+  const image = (id: string, name: string, trashedAt: string | null = null) =>
+    ["image", id, { id, spaceId: "s1", name, prompt: null, trashedAt }] as const;
+  const placed = (id: string, imageId: string, text: string) =>
+    ["block", id, { ...block(id, "p1", text, id)[2], kind: "image", imageId }] as const;
+  const onPage = (rows: Parameters<typeof inResearch>[0]) => {
+    const t = inResearch([page("p1", "Roadmap"), ...rows]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+
+  test("a page puts what a terminal cannot draw in words, caption and all", () => {
+    const t = onPage([
+      image("i1", "cat.png"),
+      image("i2", "dog.png", "2026-07-15T12:00:00.000Z"),
+      placed("a", "i1", "cat.png"),
+      placed("b", "i1", "the family cat"),
+      placed("c", "i2", "dog.png"),
+      placed("d", "gone", "fox.png"),
+    ]);
+    expect(t.texts("block")).toEqual([
+      "[image: cat.png]",
+      "[image: cat.png] the family cat",
+      "[image: dog.png is in the trash]",
+      "[image: fox.png was deleted]",
+    ]);
+  });
+
+  test("Esc from the images goes back to where they were opened", () => {
+    const t = onPage([]);
+    t.controller.dispatch("space.images", {});
+    expect(t.view().view).toBe("images");
+    t.controller.dispatch("space.back", {});
+    expect(t.view().view).toBe("page");
+  });
+
+  test("an upload that fails says so and adds nothing", async () => {
+    const t = inResearch([]);
+    t.controller.dispatch("space.images", {});
+    t.controller.dispatch("space.import", {});
+    t.uploads.fails = true;
+    t.asks.at(-1)!("/home/me/cat.png");
+    await Bun.sleep(0);
+    t.reply("attachments.createUploadUrl", { attachmentId: "a1", relativeUrl: "/up/a1" });
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toBe("The MC refused the upload (413).");
+    expect(t.calls.map((call) => call.method)).not.toContain("space.image.add");
+  });
+
+  test("the content of a file decides its type, not its name", () => {
+    const ascii = (text: string) => new TextEncoder().encode(text);
+    expect(imageTypeOf(PNG)).toBe("image/png");
+    expect(imageTypeOf(Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]))).toBe("image/jpeg");
+    expect(imageTypeOf(ascii("GIF89a"))).toBe("image/gif");
+    expect(imageTypeOf(ascii("RIFF\0\0\0\0WEBPVP8 "))).toBe("image/webp");
+    expect(imageTypeOf(ascii("<svg xmlns='http://www.w3.org/2000/svg'/>"))).toBeNull();
+    expect(imageTypeOf(ascii("only words"))).toBeNull();
+  });
+
+  test("names image generation that failed", () => {
+    const error = Object.assign(new Error("No file."), {
+      detail: { _tag: "SpaceImageGenerationError", reason: "failed" },
+    });
+    expect(refusalText(error)).toBe("Image generation failed, so no image was made: No file.");
   });
 });

@@ -248,6 +248,10 @@ void ThreadPreviews::navigate(const QString& tabId, const QString& address) {
                  });
 }
 
+void ThreadPreviews::openPage(const QUrl& url) {
+  openThroughTab(url, m_environment, m_thread, m_mc, m_rows);
+}
+
 void ThreadPreviews::openAddress(const QString& address) {
   const QUrl url(address);
   if (!forwards(url, m_environment, m_thread, m_mc)) {

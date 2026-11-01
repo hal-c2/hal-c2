@@ -3,10 +3,16 @@ defmodule HalC2.Space do
   Spaces: Pages that people and agents write together (`features/space/`).
 
   The `spaces` stream indexes the Spaces, one `space` entity each, and each Space's
-  own `space:<id>` stream holds its `page`, `block` and `comment` entities. Every
-  change is a `HalC2.Streams.transact/3` on one of them, so the event log is the
-  only record and clients follow both streams through the stream shape. The
-  decisions live in `HalC2.Space.Pages` and `HalC2.Space.Blocks`.
+  own `space:<id>` stream holds its `page`, `block`, `comment`, `image` and `site` entities.
+  Every change is a `HalC2.Streams.transact/3` on one of them, so the event log is the
+  only record and clients follow both streams through the stream shape. The decisions
+  live in `HalC2.Space.Pages`, `HalC2.Space.Blocks`, `HalC2.Space.Images` and
+  `HalC2.Space.Sites`.
+
+  An image's bytes are the one thing not in the log: they are a file
+  (`HalC2.Space.ImageFile`), written before the entity that names it and removed after
+  the entity is gone, so no entity names a missing file. A crash between the two can
+  only leave an unnamed file behind.
 
   Replies are `{:ok, value}` or `{:error, reason, message}`; an author is
   `%{"type" => "user"}` or `%{"type" => "agent", "threadId" => id}`.
@@ -14,7 +20,7 @@ defmodule HalC2.Space do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState, Streams}
-  alias HalC2.Space.{Blocks, Markdown, Pages}
+  alias HalC2.Space.{Blocks, ImageFile, ImageGeneration, Images, Markdown, Pages, Sites}
 
   @index "spaces"
 
@@ -88,11 +94,11 @@ defmodule HalC2.Space do
     end
   end
 
-  @doc "Deletes a Space with no pages, in the trash or out of it."
+  @doc "Deletes a Space with no pages or images, in the trash or out of it."
   def delete(id) do
     # Decided in the Space's stream, so no page can be made in it meanwhile.
     Streams.transact(stream_id(id), :space, fn state ->
-      if StreamState.get(state, "page") == %{} do
+      if StreamState.get(state, "page") == %{} and StreamState.get(state, "image") == %{} do
         reply =
           Streams.transact(@index, :space, fn index ->
             if StreamState.get(index, "space")[id],
@@ -132,11 +138,20 @@ defmodule HalC2.Space do
   def transact(space_id, fun) when is_binary(space_id) do
     Streams.transact(stream_id(space_id), :space, fn state ->
       # The index is asked from inside the Space's stream: a delete decides there too.
-      if Streams.get(@index, "space", space_id), do: fun.(state), else: {[], no_space(space_id)}
+      if Streams.get(@index, "space", space_id),
+        do: fun.(state) |> and_sites(state),
+        else: {[], no_space(space_id)}
     end)
   end
 
   def transact(_space_id, _fun), do: {:error, :invalid, "spaceId is required."}
+
+  # Whatever a command does to pages, their sites follow in the same step.
+  defp and_sites({changes, reply}, state) do
+    if Sites.affected?(state, changes),
+      do: {changes ++ Sites.follow(state, with_changes(state, changes), changes), reply},
+      else: {changes, reply}
+  end
 
   @doc "The Space's stream state, for reads."
   def state(space_id) do
@@ -195,7 +210,105 @@ defmodule HalC2.Space do
     end
   end
 
+  # --- images --------------------------------------------------------------------------
+
+  @doc """
+  Keeps an upload (`attachments.createUploadUrl`) as an image of the Space, if its
+  content is a real image; `extra` sets fields such as `prompt`. The upload is used up
+  either way.
+  """
+  def add_image(space_id, attachment_id, name, extra \\ %{}, author \\ @user) do
+    with {:ok, _} <- state(space_id),
+         {:ok, name} <- Images.name(name),
+         {:ok, id, file} <- ImageFile.take(attachment_id) do
+      case transact(space_id, &Images.add(&1, space_id, id, name, file, extra, author)) do
+        {:ok, _} = kept ->
+          kept
+
+        refused ->
+          ImageFile.remove(id)
+          refused
+      end
+    end
+  end
+
+  @doc """
+  An image from a prompt, made by the provider of `selection` or else the first that can
+  (`HalC2.Space.ImageGeneration`). With none to make it, or one that fails, there is no
+  image.
+  """
+  def generate_image(space_id, prompt, selection \\ nil) do
+    with {:ok, _} <- state(space_id),
+         {:ok, prompt} <- Images.prompt(prompt) do
+      case ImageGeneration.generate(prompt, selection) do
+        {:ok, upload, used} ->
+          extra = %{"prompt" => prompt, "generatedBy" => used}
+
+          with {:error, :invalid, message} <-
+                 add_image(space_id, upload, Images.name_from(prompt), extra),
+               do: {:error, :image_failed, message}
+
+        {:error, :unsupported, message} ->
+          {:error, :image_unsupported, message}
+
+        {:error, :unavailable, message} ->
+          {:error, :image_unavailable, message}
+
+        {:error, :failed, message} ->
+          {:error, :image_failed, message}
+      end
+    end
+  end
+
+  def trash_image(space_id, id), do: transact(space_id, &Images.trash(&1, id))
+  def restore_image(space_id, id), do: transact(space_id, &Images.restore(&1, id))
+
+  @doc """
+  Deletes an image in the trash for good and removes its file. The blocks showing it
+  stay, on every page, and say it was deleted.
+  """
+  def delete_image(space_id, id) do
+    with {:ok, id} = deleted <- transact(space_id, &Images.delete(&1, id)) do
+      ImageFile.remove(id)
+      deleted
+    end
+  end
+
+  @doc "`{:ok, file, mime, name}` for an image of the Space, trashed or not, else `:error`."
+  def image_file(space_id, id) do
+    with {:ok, state} <- state(space_id),
+         %{} = image <- Images.get(state, id),
+         file when is_binary(file) <- ImageFile.existing(id) do
+      {:ok, file, image["mimeType"], image["name"]}
+    else
+      _ -> :error
+    end
+  end
+
   # --- Markdown and threads -----------------------------------------------------------
+
+  def publish_page(space_id, page_id, where \\ %{}) do
+    # Refused first: reaching for the address can publish the MC over Tailscale.
+    with {:ok, _} <- transact(space_id, &{[], Pages.fetch_live(&1, page_id)}),
+         {:ok, reached} <- reached(where) do
+      transact(space_id, &Sites.publish(&1, page_id, reached, move: where["tailscale"] == true))
+    end
+  end
+
+  def unpublish_page(space_id, page_id), do: transact(space_id, &Sites.unpublish(&1, page_id))
+
+  @doc """
+  The site at this link: the Space's stream is only touched for a Space that exists, as
+  anyone can ask, and only this one entity is read from it.
+  """
+  def site(space_id, token) do
+    if Streams.get(@index, "space", space_id), do: Streams.get(stream_id(space_id), "site", token)
+  end
+
+  defp reached(where) do
+    with {:error, {:tailscale, message}} <- HalC2.Web.address(where),
+         do: {:error, :unavailable, message}
+  end
 
   def export_markdown(space_id, page_id) do
     with {:ok, state} <- state(space_id),
@@ -248,7 +361,23 @@ defmodule HalC2.Space do
     end)
   end
 
-  # A link to a page this Space does not have is kept as a paragraph.
+  # A link to a page this Space does not have is kept as a paragraph, and so is an image
+  # it does not have or that is in the trash.
+  defp links(state, %{"kind" => "image"} = spec) do
+    case Images.fetch_live(state, spec["imageId"]) do
+      {:ok, _} ->
+        spec
+
+      _ ->
+        spec
+        |> Map.delete("imageId")
+        |> Map.merge(%{
+          "kind" => "paragraph",
+          "text" => "![#{spec["text"]}](space-image:#{spec["imageId"]})"
+        })
+    end
+  end
+
   defp links(state, %{"kind" => "subpage_link"} = spec) do
     if Pages.get(state, spec["linkedPageId"]),
       do: spec,

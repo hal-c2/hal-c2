@@ -196,6 +196,7 @@ async function main(): Promise<void> {
   let shellRoot: Parameters<typeof movePromptCursorToEnd>[0] | null = null;
   const host = createHost({
     client,
+    origin,
     size: { columns: renderer.width, rows: renderer.height },
     onQuit: handleExit,
     log: appendLog,
