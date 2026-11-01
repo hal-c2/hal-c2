@@ -31,6 +31,21 @@ export type FakeGeneration =
   | { readonly kind: "unavailable"; readonly message: string }
   | { readonly kind: "failed"; readonly message: string };
 
+export type FakeImageGeneration =
+  | { readonly kind: "available" }
+  | { readonly kind: "unavailable"; readonly message: string }
+  | { readonly kind: "failed"; readonly message: string };
+
+// HalC2.Space.ImageFile.check, as far as a scenario needs: the content decides.
+const imageMime = (bytes: Uint8Array): string | null => {
+  const text = String.fromCharCode(...bytes.subarray(0, 12));
+  if (text.startsWith("\x89PNG")) return "image/png";
+  if (text.startsWith("\xff\xd8\xff")) return "image/jpeg";
+  if (text.startsWith("GIF8")) return "image/gif";
+  if (text.startsWith("RIFF") && text.slice(8) === "WEBP") return "image/webp";
+  return null;
+};
+
 interface Watcher {
   readonly onFrame: (frame: EntityStreamFrame) => void;
 }
@@ -44,12 +59,18 @@ export interface FakeSpaceMc {
   readonly pageNamed: (title: string) => Entity;
   readonly blockNamed: (text: string) => Entity;
   readonly commentNamed: (body: string) => Entity;
+  readonly imageNamed: (name: string) => Entity;
+  readonly imagesOf: (spaceId: string) => Entity[];
+  /** An image already in the Space, as if uploaded earlier. */
+  readonly seedImage: (spaceId: string, name: string) => Entity;
   readonly spaces: () => Entity[];
   readonly pagesOf: (spaceId: string) => Entity[];
   readonly blocksOf: (pageId: string) => Entity[];
   readonly commentsOf: (pageId: string) => Entity[];
   /** What text generation does when a page is made from a thread. */
   generation: FakeGeneration;
+  /** What image generation does. */
+  imageGeneration: FakeImageGeneration;
   /** Where each summary was written: the folder of the thread the request named. */
   readonly summaries: Array<{ readonly threadId: string; readonly cwd: string | null }>;
   /** What the MC refused clients, newest last. */
@@ -184,6 +205,8 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
   // Per Space: its pages, blocks and comments, each in creation order.
   const content = new Map<string, Map<string, Map<string, Entity>>>();
   const seqs = new Map<string, number>();
+  // What `attachments.createUploadUrl` signed, and the bytes sent to it; an upload is taken once.
+  const uploads = new Map<string, { name: string; mimeType: string; bytes: Uint8Array | null }>();
   const watchers = new Map<string, Set<Watcher>>();
   let ids = 0;
   let clock = Date.parse("2026-07-15T12:00:00.000Z");
@@ -199,6 +222,7 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
         ["page", new Map()],
         ["block", new Map()],
         ["comment", new Map()],
+        ["image", new Map()],
       ]);
       content.set(spaceId, kinds);
     }
@@ -279,6 +303,9 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     livePage(spaceId, found.pageId);
     return found;
   };
+  const image = (spaceId: string, id: unknown): Entity =>
+    table(spaceId, "image").get(String(id)) ??
+    refuse("not_found", `There is no image ${String(id)} in this Space.`);
   const descendants = (spaceId: string, id: string): string[] => {
     const children = pages(spaceId)
       .filter((entry) => entry.parentPageId === id)
@@ -329,19 +356,24 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     order: string,
     by: SpaceAuthor,
   ) => {
-    const kinds = ["paragraph", "heading", "checklist", "callout", "subpage_link"];
+    const kinds = ["paragraph", "heading", "checklist", "callout", "subpage_link", "image"];
     if (!kinds.includes(spec.kind)) refuse("invalid", `A block is one of ${kinds.join(", ")}.`);
     if (spec.kind === "subpage_link" && !table(spaceId, "page").get(spec.linkedPageId)) {
       refuse("invalid", "A subpage link needs a page of this Space.");
+    }
+    const placed = spec.kind === "image" ? image(spaceId, spec.imageId) : null;
+    if (placed && placed.trashedAt !== null) {
+      refuse("trashed", `The image "${placed.name}" is in the trash.`);
     }
     const at = now();
     const entry = {
       id: nextId("block"),
       pageId,
       kind: spec.kind,
-      text: spec.kind === "subpage_link" ? (spec.text ?? "") : (spec.text ?? ""),
+      text: spec.text || placed?.name || "",
       checked: spec.kind === "checklist" && spec.checked === true,
       linkedPageId: spec.kind === "subpage_link" ? spec.linkedPageId : null,
+      ...(placed ? { imageId: placed.id } : {}),
       order,
       createdBy: by,
       updatedBy: by,
@@ -349,6 +381,25 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
       updatedAt: at,
     };
     return entry;
+  };
+
+  const newImage = (spaceId: string, spec: Entity, by: SpaceAuthor) => {
+    const at = now();
+    const entry = {
+      id: nextId("image"),
+      spaceId,
+      width: 1,
+      height: 1,
+      prompt: null,
+      generatedBy: null,
+      trashedAt: null,
+      createdBy: by,
+      createdAt: at,
+      updatedAt: at,
+      ...spec,
+    };
+    commit(`space:${spaceId}`, [["image", entry.id, { s: entry }]]);
+    return { image: entry };
   };
 
   const importPage = (
@@ -404,7 +455,7 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     },
     "space.delete": (input) => {
       space(input.spaceId);
-      if (pages(input.spaceId).length > 0) {
+      if (pages(input.spaceId).length > 0 || table(input.spaceId, "image").size > 0) {
         refuse("not_empty", "Empty the Space, trash included, before deleting it.");
       }
       commit("spaces", [["space", input.spaceId, { d: true }]]);
@@ -581,6 +632,104 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
       commit(`space:${input.spaceId}`, [["comment", entry.id, { s: entry }]]);
       return { comment: entry };
     },
+    "attachments.createUploadUrl": (input) => {
+      const attachmentId = nextId("attachment");
+      uploads.set(attachmentId, { name: input.name, mimeType: input.mimeType, bytes: null });
+      return { attachmentId, relativeUrl: `/api/attachments/upload/${attachmentId}` };
+    },
+    "space.image.add": (input, by) => {
+      space(input.spaceId);
+      const upload = uploads.get(input.attachmentId);
+      if (!upload?.bytes) return refuse("invalid", "That upload is not there.");
+      uploads.delete(input.attachmentId);
+      const mimeType = imageMime(upload.bytes);
+      if (mimeType === null) refuse("invalid", "That file is not an image.");
+      return newImage(
+        input.spaceId,
+        {
+          name: name(input.name ?? upload.name, "An image needs a name."),
+          mimeType,
+          sizeBytes: upload.bytes.length,
+        },
+        by,
+      );
+    },
+    "space.image.generate": (input, by) => {
+      space(input.spaceId);
+      const prompt = name(input.prompt, "An image needs a prompt.");
+      const generation = mc.imageGeneration;
+      if (generation.kind !== "available") {
+        throw new FakeSpaceRefusal(
+          "SpaceImageGenerationError",
+          generation.kind,
+          generation.message,
+        );
+      }
+      return newImage(
+        input.spaceId,
+        {
+          name: `${prompt}.png`,
+          mimeType: "image/png",
+          sizeBytes: 8,
+          prompt,
+          generatedBy: input.modelSelection ?? { instanceId: "codex", model: "default" },
+        },
+        by,
+      );
+    },
+    "space.image.providers": () =>
+      mc.imageGeneration.kind === "available"
+        ? {
+            providers: [
+              { instanceId: "codex", driver: "codex", status: "ready", message: null },
+              { instanceId: "grok", driver: "grok", status: "ready", message: null },
+              {
+                instanceId: "claudeAgent",
+                driver: "claudeAgent",
+                status: "unsupported",
+                message: "Claude has no image tool.",
+              },
+            ],
+            selection: { instanceId: "codex", model: "default" },
+          }
+        : {
+            providers: [
+              {
+                instanceId: "codex",
+                driver: "codex",
+                status: "unavailable",
+                message: "Codex is not set up.",
+              },
+              {
+                instanceId: "claudeAgent",
+                driver: "claudeAgent",
+                status: "unsupported",
+                message: "Claude has no image tool.",
+              },
+            ],
+            selection: null,
+          },
+    "space.image.trash": (input) => {
+      const found = image(input.spaceId, input.imageId);
+      if (found.trashedAt !== null) refuse("invalid", `"${found.name}" is already in the trash.`);
+      commit(`space:${input.spaceId}`, [["image", found.id, { s: { trashedAt: now() } }]]);
+      return { image: table(input.spaceId, "image").get(found.id) };
+    },
+    "space.image.restore": (input) => {
+      const found = image(input.spaceId, input.imageId);
+      if (found.trashedAt === null) refuse("invalid", `"${found.name}" is not in the trash.`);
+      commit(`space:${input.spaceId}`, [["image", found.id, { s: { trashedAt: null } }]]);
+      return { image: table(input.spaceId, "image").get(found.id) };
+    },
+    // Blocks outlive it: a page says the image was deleted.
+    "space.image.delete": (input) => {
+      const found = image(input.spaceId, input.imageId);
+      if (found.trashedAt === null) {
+        refuse("invalid", `Only an image in the trash can be deleted; "${found.name}" is not.`);
+      }
+      commit(`space:${input.spaceId}`, [["image", found.id, { d: true }]]);
+      return { imageId: found.id };
+    },
     "space.comment.resolve": (input) => resolve(input, now()),
     "space.comment.reopen": (input) => resolve(input, null),
   };
@@ -616,6 +765,11 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
           }
         });
       }
+      settings.on("upload", (payload) => {
+        const { relativeUrl, bytes } = payload as { relativeUrl: string; bytes: Uint8Array };
+        const upload = uploads.get(relativeUrl.split("/").at(-1)!);
+        if (upload) upload.bytes = bytes;
+      });
       settings.streams = (stream, onFrame) => {
         const watcher: Watcher = { onFrame };
         let set = watchers.get(stream);
@@ -641,6 +795,10 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     pageNamed: (title) => named("page", "title", title),
     blockNamed: (text) => named("block", "text", text),
     commentNamed: (body) => named("comment", "body", body),
+    imageNamed: (value) => named("image", "name", value),
+    imagesOf: (spaceId) => [...table(spaceId, "image").values()],
+    seedImage: (spaceId, value) =>
+      newImage(spaceId, { name: value, mimeType: "image/png", sizeBytes: 8 }, user).image,
     spaces: () => [...spaces.values()],
     pagesOf: (spaceId) => pages(spaceId),
     blocksOf: (pageId) => {
@@ -649,6 +807,7 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     },
     commentsOf: (pageId) => all("comment").filter((entry) => entry.pageId === pageId),
     generation: { kind: "unavailable", message: "No text generation provider is set up." },
+    imageGeneration: { kind: "unavailable", message: "No image generation provider is set up." },
     summaries: [],
     refusals: [],
     lastChanges: [],
