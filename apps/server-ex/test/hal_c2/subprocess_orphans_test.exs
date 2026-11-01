@@ -63,6 +63,20 @@ defmodule HalC2.Subprocess.OrphansTest do
     String.to_integer(line)
   end
 
+  # No `/proc` to read marks from means no mark for a boot to find either.
+  defp await_unmarked(pid, tries) when tries > 0 do
+    case File.read("/proc/#{pid}/environ") do
+      {:ok, environ} ->
+        if String.contains?(environ, "HAL_C2_PROGRAM_ID=") do
+          Process.sleep(10)
+          await_unmarked(pid, tries - 1)
+        end
+
+      _unreadable ->
+        :ok
+    end
+  end
+
   defp await_gone(pid, tries) when tries > 0 do
     if Orphans.gone?(pid) do
       :ok
@@ -101,6 +115,8 @@ defmodule HalC2.Subprocess.OrphansTest do
     {:ok, sub} = Subprocess.start(["sh", "-c", script])
     :ok = stop_supervised(:died)
     stranger = left_behind(sub)
+    # `$!` names the fork, which carries the mark until `env` has exec'd `sleep`.
+    await_unmarked(stranger, 500)
 
     boot(:next)
 
