@@ -10,6 +10,11 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
   bucket takes each instance's own probed name, and a hot upgrade from the
   single-name state keeps that name for the built-in instance only. A cast
   in the pre-instance shape (queued across that upgrade) is the built-in's.
+
+  A redemption runs against its own instance's CLI: a failed one keeps that
+  instance's idempotency key for its retry, whatever the other instance does
+  meanwhile, a finished one starts the next attempt on a new key, and only a
+  finished one reads that instance's limits again.
   """
 
   use ExUnit.Case, async: false
@@ -69,7 +74,11 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
   end
 
   defp setup do
-    HalC2.Prop.scratch_home("provider-usage-limits")
+    home = HalC2.Prop.scratch_home("provider-usage-limits")
+    # A refused redemption leaves the fake's windows at their baseline.
+    System.put_env("FAKE_CODEX_CONSUME_OUTCOME", "noCredit")
+    System.put_env("FAKE_CODEX_CONSUME_LOG", Path.join(home, "consumed-codex"))
+    System.put_env("FAKE_CODEX_CONSUME_FAIL", Path.join(home, "consume-fails"))
     Application.put_env(:hal_c2, :codex_command, ["python3", @fake_codex])
     Application.put_env(:hal_c2, :claude_command, ["python3", @fake_claude])
     HalC2.Prop.start_services([Settings, Limits])
@@ -78,7 +87,17 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
       Settings.put(
         %{
           "providerInstances" => %{
-            "codex-work" => %{"driver" => "codex", "enabled" => true, "displayName" => "Work"},
+            "codex-work" => %{
+              "driver" => "codex",
+              "enabled" => true,
+              "displayName" => "Work",
+              "environment" => [
+                %{
+                  "name" => "FAKE_CODEX_CONSUME_LOG",
+                  "value" => Path.join(home, "consumed-codex-work")
+                }
+              ]
+            },
             "claude-work" => %{
               "driver" => "claudeAgent",
               "enabled" => true,
@@ -102,19 +121,24 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
     HalC2.Prop.stop_services()
     Application.delete_env(:hal_c2, :codex_command)
     Application.delete_env(:hal_c2, :claude_command)
-    System.delete_env("FAKE_CODEX_ACCOUNT")
+
+    for var <-
+          ~w(FAKE_CODEX_ACCOUNT FAKE_CODEX_CONSUME_OUTCOME FAKE_CODEX_CONSUME_LOG FAKE_CODEX_CONSUME_FAIL),
+        do: System.delete_env(var)
   end
 
   # --- model ------------------------------------------------------------------
 
   # windows: instance => window id => {usedPercent, resetsAt, mins}; names: the
   # overage bucket name each Claude instance's probe saw; frozen: instances a
-  # probe found unsupported, whose turn updates are ignored.
+  # probe found unsupported, whose turn updates are ignored; pending: the Codex
+  # instances whose last redemption failed, so their next one retries its key.
   def initial_state do
     %{
       windows: Map.new(@instances, fn instance -> {instance, @baseline[@driver[instance]]} end),
       names: %{"claudeAgent" => "Fable 1", "claude-work" => "Opus 2"},
-      frozen: MapSet.new()
+      frozen: MapSet.new(),
+      pending: MapSet.new()
     }
   end
 
@@ -135,6 +159,7 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
         [oneof(~w(five_hour seven_day seven_day_overage_included)), integer(0, 100)]}},
       {2, {:call, __MODULE__, :probe, [oneof(@instances)]}},
       {1, {:call, __MODULE__, :unsupported_probe, []}},
+      {2, {:call, __MODULE__, :consume, [oneof(@codex), boolean()]}},
       {1, {:call, __MODULE__, :code_change_old, []}},
       {4, {:call, __MODULE__, :read, []}}
     ])
@@ -171,7 +196,53 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
   def next_state(state, result, {:call, mod, :legacy_claude_event, [type, percent]}),
     do: next_state(state, result, {:call, mod, :claude_event, ["claudeAgent", type, percent]})
 
-  def next_state(state, _result, {:call, _, :probe, [instance]}) do
+  def next_state(state, _result, {:call, _, :probe, [instance]}), do: probed(state, instance)
+
+  def next_state(state, _result, {:call, _, :consume, [instance, true]}),
+    do: Map.update!(state, :pending, &MapSet.put(&1, instance))
+
+  def next_state(state, _result, {:call, _, :consume, [instance, false]}) do
+    state
+    |> Map.update!(:pending, &MapSet.delete(&1, instance))
+    |> probed(instance)
+  end
+
+  def next_state(state, _result, {:call, _, :unsupported_probe, []}) do
+    state
+    |> put_in([:windows, "codex"], %{})
+    |> Map.update!(:frozen, &MapSet.put(&1, "codex"))
+  end
+
+  def next_state(state, _result, {:call, _, :code_change_old, []}),
+    do: %{
+      state
+      | names: %{"claudeAgent" => "Fable 1"},
+        pending: MapSet.intersection(state.pending, MapSet.new(["codex"]))
+    }
+
+  def next_state(state, _result, _call), do: state
+
+  def postcondition(state, {:call, _, :read, _}, view), do: view == state.windows
+
+  # The attempt lands in its own instance's log, as the pending key or as a new one.
+  def postcondition(state, {:call, _, :consume, [instance, fail?]}, {reply, before, later}) do
+    retried? = instance in state.pending
+
+    reply_ok =
+      if fail?,
+        do: match?({:error, %{"instanceId" => ^instance}}, reply),
+        else: reply == {:ok, %{"outcome" => "noCredit"}}
+
+    reply_ok and length(later) == length(before) + 1 and
+      if(retried?,
+        do: List.last(later) == List.last(before),
+        else: List.last(later) not in before
+      )
+  end
+
+  def postcondition(_state, _call, result), do: result == :ok
+
+  defp probed(state, instance) do
     state
     |> put_in([:windows, instance], @baseline[@driver[instance]])
     |> Map.update!(:frozen, &MapSet.delete(&1, instance))
@@ -182,20 +253,6 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
         else: state
     end)
   end
-
-  def next_state(state, _result, {:call, _, :unsupported_probe, []}) do
-    state
-    |> put_in([:windows, "codex"], %{})
-    |> Map.update!(:frozen, &MapSet.put(&1, "codex"))
-  end
-
-  def next_state(state, _result, {:call, _, :code_change_old, []}),
-    do: %{state | names: %{"claudeAgent" => "Fable 1"}}
-
-  def next_state(state, _result, _call), do: state
-
-  def postcondition(state, {:call, _, :read, _}, view), do: view == state.windows
-  def postcondition(_state, _call, result), do: result == :ok
 
   # A sparse update upserts by id and keeps a known reset or duration it omits;
   # a frozen (unsupported) instance's windows do not move.
@@ -260,11 +317,34 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
     result
   end
 
-  # What a hot upgrade meets from before bucket names were per instance: one
-  # name, which `code_change/3` keeps for the built-in instance only.
+  # Redeems on `instance`, failing once if asked; {reply, its log before, after}.
+  def consume(instance, fail?) do
+    if fail?, do: File.write!(System.get_env("FAKE_CODEX_CONSUME_FAIL"), "")
+    before = consumed(instance)
+    reply = Limits.consume_reset_credit(%{"instanceId" => instance})
+    {reply, before, consumed(instance)}
+  end
+
+  defp consumed(instance) do
+    path = Path.join(Application.get_env(:hal_c2, :home), "consumed-#{instance}")
+
+    case File.read(path) do
+      {:ok, log} -> String.split(log)
+      {:error, :enoent} -> []
+    end
+  end
+
+  # What a hot upgrade meets from before bucket names and pending redemptions
+  # were per instance: one of each, which `code_change/3` keeps for the built-in
+  # instance only.
   def code_change_old do
     pid = Process.whereis(Limits)
-    :sys.replace_state(pid, fn state -> %{state | claude_names: "Fable 1"} end)
+
+    :sys.replace_state(pid, fn state ->
+      {keys, state} = Map.pop(state, :redeem_keys)
+      state |> Map.put(:claude_names, "Fable 1") |> Map.put(:redeem_key, keys["codex"])
+    end)
+
     :ok = :sys.suspend(pid)
     :ok = :sys.change_code(pid, Limits, nil, :hot)
     :ok = :sys.resume(pid)
