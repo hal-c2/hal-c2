@@ -61,6 +61,11 @@ defmodule HalC2.Test.Mc do
   then the core; `restart/1` brings them all back.
   """
   def stop(mc) do
+    # The watch goes first: a runtime killed for not stopping in time, because it holds a
+    # request, must leave its turn for `HalC2.Orchestration.Recovery`, not end it in a
+    # race with the streams stopping.
+    ExUnit.Callbacks.stop_supervised(HalC2.Orchestration.TurnWatch)
+
     # Provider processes die with the MC.
     if Process.whereis(HalC2.Codex.Supervisor) do
       for {_, pid, _, _} <- DynamicSupervisor.which_children(HalC2.Codex.Supervisor),
