@@ -2796,7 +2796,7 @@ void ComposerController::searchPaths(const QString& target) {
   if (m_paths.target == target && m_paths.query == trigger->query) return;
   if (!canSearchPaths(target)) return;
   const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
-  m_paths = {target, trigger->query, false, false, {}, m_paths.request + 1};
+  m_paths = {target, trigger->query, place->environmentId, place->cwd(), false, false, {}, m_paths.request + 1};
   const int request = m_paths.request;
   WorkspaceFiles::searchEntries(m_client, this, place->environmentId, place->cwd(), trigger->query, 80,
                                 [this, request](const QList<FileTreeModel::Entry>& entries, bool,
@@ -2819,13 +2819,17 @@ bool ComposerController::canSearchPaths(const QString& target) const {
 }
 
 // A search the environment took down with it (unanswered, or failed) is
-// forgotten, so the same word is asked again once it can be.
+// forgotten, as is one of a checkout the route has left, so the same word is
+// asked again once it can be.
 void ComposerController::refreshPathSearch() {
   const QString target = this->target();
   if (target.isEmpty()) return;
-  if ((!m_paths.done || m_paths.failed) && !m_paths.query.isEmpty() && !canSearchPaths(m_paths.target)) {
-    m_paths = {{}, {}, false, false, {}, m_paths.request + 1};
+  bool stale = (!m_paths.done || m_paths.failed) && !canSearchPaths(m_paths.target);
+  if (m_paths.target == target && canSearchPaths(target)) {
+    const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
+    stale = stale || m_paths.environmentId != place->environmentId || m_paths.cwd != place->cwd();
   }
+  if (stale && !m_paths.query.isEmpty()) m_paths = {{}, {}, {}, {}, false, false, {}, m_paths.request + 1};
   searchPaths(target);
 }
 

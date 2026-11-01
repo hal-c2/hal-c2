@@ -125,6 +125,8 @@ struct Shell {
     });
   }
 
+  QVariantMap composerState() const { return bridge->state()->value(QStringLiteral("composer")).toMap(); }
+
   ComposerController* composer() const { return native->controller<ComposerController>(); }
 
   QVariantMap edit() { return {{QStringLiteral("clientId"), QStringLiteral("qml")}, {QStringLiteral("revision"), ++revision}}; }
@@ -255,6 +257,59 @@ private slots:
     shell.mc.drop();
     QTRY_COMPARE(files.searches, 2);
     QTRY_COMPARE(emptyText().toString(), QStringLiteral("No matching files or folders."));
+  }
+
+  // A search the MC refuses says so rather than that nothing matched, though
+  // the connection and the environment stayed up.
+  void aRefusedSearchSaysItCannotSearch() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    shell.mc.onRpc(QStringLiteral("projects.searchEntries"), [&shell](const FakeMc::Rpc& rpc) {
+      shell.mc.refuse(rpc, QStringLiteral("no such folder"));
+    });
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("suggestionsEmptyText")).toString(),
+                 QStringLiteral("Can't search files right now."));
+  }
+
+  // A route with no workspace says it cannot search, and answers once the
+  // project's folder is known.
+  void aRouteWithNoWorkspaceSaysItCannotSearch() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QJsonObject project = shell.mc.projects.value(QStringLiteral("p1"));
+    shell.mc.projects[QStringLiteral("p1")].remove(QStringLiteral("workspaceRoot"));
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    FakeFiles& files = fakeFiles(shell.mc);
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("suggestionsEmptyText")).toString(),
+                 QStringLiteral("Can't search files right now."));
+    QCOMPARE(files.searches, 0);
+
+    shell.mc.sendRow(QStringLiteral("p1"), project, QStringLiteral("project"));
+    QTRY_COMPARE(files.searches, 1);
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("suggestionsEmptyText")).toString(),
+                 QStringLiteral("No matching files or folders."));
+  }
+
+  // The same word stayed on the checkout it was first searched in after the
+  // route moved to another.
+  void aMovedCheckoutAsksTheSameWordAgain() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    FakeFiles& files = fakeFiles(shell.mc);
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(files.searches, 1);
+
+    QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+    row.insert(QStringLiteral("worktreePath"), QStringLiteral("/work/worktrees/other"));
+    shell.mc.sendRow(QStringLiteral("t1"), row);
+    QTRY_COMPARE(files.searches, 2);
   }
 
   // A queued run that arrived before its message was listed as a blank row;
