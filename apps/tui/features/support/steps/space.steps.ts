@@ -1052,6 +1052,45 @@ step("the user stops the agent of {string}", async (ctx: SpaceWorld, page: strin
   await press(ctx, "s");
 });
 
+step("the MC refuses the next ask", (ctx: SpaceWorld) => {
+  mc(ctx).refuseNextAsk();
+});
+
+step("the words {string} are kept to ask again", (ctx: SpaceWorld, words: string) => {
+  expect(mode(ctx)).toBe("ask");
+  expect(ctx.host!.state.get("ask")).toMatchObject({ value: words });
+});
+
+step("the agent of {string} does not stop when asked", (ctx: SpaceWorld) => {
+  mc(ctx).ignoreStops();
+});
+
+step("{string} says its agent is stopping", async (ctx: SpaceWorld, page: string) => {
+  const says = await agentSays(ctx, page);
+  expect(says).toStartWith("Stopping the agent…");
+  expect(says).toContain("s stops");
+});
+
+step("the user can stop the agent of {string} again", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page);
+  const before = mc(ctx).stopsAsked();
+  await press(ctx, "s");
+  await settle(ctx);
+  expect(mc(ctx).stopsAsked()).toBe(before + 1);
+});
+
+step("the thread of the agent of {string} is deleted", async (ctx: SpaceWorld, page: string) => {
+  mc(ctx).agentEnds(pageId(ctx, page), "stopped", "its thread was deleted");
+  await settle(ctx);
+});
+
+step(
+  "{string} says its agent stopped because {string}",
+  async (ctx: SpaceWorld, page: string, reason: string) => {
+    expect(await agentSays(ctx, page)).toStartWith(`The agent stopped: ${reason}.`);
+  },
+);
+
 step("{string} says its agent was stopped", async (ctx: SpaceWorld, page: string) => {
   expect(await agentSays(ctx, page)).toStartWith("The agent was stopped.");
 });

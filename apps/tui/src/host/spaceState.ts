@@ -549,13 +549,13 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       case "running":
         return `An agent is working on “${clip(agent.request, AGENT_REQUEST_MOST)}” · s stops · ${open}`;
       case "stopping":
-        return `Stopping the agent… · ${open}`;
+        return `Stopping the agent… · s stops · ${open}`;
       case "completed":
         return `The agent finished ${agent.edited ? "and changed" : "without changing"} this page. · ${open} · z clears`;
       case "failed":
         return `The agent failed: ${clip(agent.error ?? "", AGENT_ERROR_MOST)}. The page stays as it last wrote it. · h history · ${open} · z clears`;
       case "stopped":
-        return `The agent was stopped. · h history · ${open} · z clears`;
+        return `${agent.error ? `The agent stopped: ${clip(agent.error, AGENT_ERROR_MOST)}.` : "The agent was stopped."} · h history · ${open} · z clears`;
     }
   };
 
@@ -1226,7 +1226,26 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   const isActive = (agent: SpacePageAgent) =>
     agent.status === "running" || agent.status === "stopping";
 
-  /** The MC takes the word @agent off what is asked, so the field takes it with or without. */
+  /**
+   * The MC takes the word @agent off what is asked, so the field takes it with or without.
+   * An ask it refuses comes back with its words.
+   */
+  const askFor = (page: string, words = "") => {
+    options.ask({
+      label: "ask an agent",
+      placeholder: "what to do to this page",
+      value: words,
+      onSubmit: async (request) => {
+        const asked = await send(WS_METHODS.spacePageAskAgent, {
+          spaceId,
+          pageId: page,
+          request,
+        });
+        if (asked === null && open && request !== "") askFor(page, request);
+      },
+    });
+  };
+
   const askAgent = () => {
     const page = pageId;
     if (view !== "page" || page === null) return;
@@ -1235,13 +1254,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       options.status("An agent is already working on this page: s stops it.", "info");
       return;
     }
-    options.ask({
-      label: "ask an agent",
-      placeholder: "what to do to this page",
-      onSubmit: (request) => {
-        void send(WS_METHODS.spacePageAskAgent, { spaceId, pageId: page, request });
-      },
-    });
+    askFor(page);
   };
 
   /** Runs `fn` on the open page's agent; a page without one says so. */

@@ -61,7 +61,17 @@ export interface FakeSpaceMc {
   /** Longer than the pause that ends a version: the next edit starts another. */
   readonly aWhilePasses: () => void;
   /** The agent of a page ends by itself, as its thread's turn does on the MC. */
-  readonly agentEnds: (pageId: string, status: "completed" | "failed", error?: string) => void;
+  readonly agentEnds: (
+    pageId: string,
+    status: "completed" | "failed" | "stopped",
+    error?: string,
+  ) => void;
+  /** The next ask is refused, as when another client asked first. */
+  readonly refuseNextAsk: () => void;
+  /** Stops from now on leave an agent stopping, as a provider that ignores them does. */
+  readonly ignoreStops: () => void;
+  /** How many stops the MC was asked for. */
+  readonly stopsAsked: () => number;
 }
 
 /** One author's run of edits on a page, with what the page held at its end. */
@@ -476,10 +486,17 @@ export function fakeSpaceMc(options: {
     ]);
     return { agent: table(spaceId, "pageAgent").get(pageId) };
   };
+  let refusingAsk = false;
+  let ignoringStops = false;
+  let stops = 0;
   const isRunning = (agent: Entity | undefined) => agent !== undefined && agent.endedAt === null;
 
   const methods: Record<string, (input: Entity, by: SpaceAuthor) => unknown> = {
     "space.page.askAgent": (input) => {
+      if (refusingAsk) {
+        refusingAsk = false;
+        refuse("invalid", "An agent is already working on this page.");
+      }
       const found = livePage(input.spaceId, input.pageId);
       const request = String(input.request)
         .replace(/^@agent\b/i, "")
@@ -512,6 +529,13 @@ export function fakeSpaceMc(options: {
     "space.page.stopAgent": (input) => {
       if (!isRunning(table(input.spaceId, "pageAgent").get(input.pageId))) {
         refuse("invalid", "No agent is working on this page.");
+      }
+      stops += 1;
+      if (ignoringStops) {
+        commit(`space:${input.spaceId}`, [
+          ["pageAgent", input.pageId, { s: { status: "stopping" } }],
+        ]);
+        return { agent: table(input.spaceId, "pageAgent").get(input.pageId) };
       }
       return endAgent(input.spaceId, input.pageId, "stopped", null);
     },
@@ -849,6 +873,13 @@ export function fakeSpaceMc(options: {
     aWhilePasses: () => {
       stretch += 1;
     },
+    refuseNextAsk: () => {
+      refusingAsk = true;
+    },
+    ignoreStops: () => {
+      ignoringStops = true;
+    },
+    stopsAsked: () => stops,
     agentEnds: (pageId, status, error) => {
       const { spaceId } = all("page").find((candidate) => candidate.id === pageId)!;
       endAgent(spaceId, pageId, status, error ?? null);
