@@ -125,6 +125,7 @@ defmodule HalC2.SettingsPropTest do
             {1, {:call, __MODULE__, :unwatch, []}},
             {4, {:call, __MODULE__, :drain, []}},
             {2, {:call, __MODULE__, :restart, []}},
+            {1, {:call, __MODULE__, :restart_unreadable_then_removed, []}},
             {4, {:call, __MODULE__, :gossip, [incoming()]}},
             {2, {:call, __MODULE__, :gossip_unwritable, [unwritable(), incoming()]}},
             {2, {:call, __MODULE__, :records, []}},
@@ -284,6 +285,23 @@ defmodule HalC2.SettingsPropTest do
     }
   end
 
+  # Started on a file with nothing to read, which is then removed: a machine starting
+  # over, as a deleted file is.
+  def next_state(state, _result, {:call, _, :restart_unreadable_then_removed, []}) do
+    restarted =
+      next_state(%{state | file: :garbage, exists: true}, nil, {:call, __MODULE__, :restart, []})
+
+    %{
+      restarted
+      | doc: %{},
+        file: %{},
+        exists: false,
+        held: false,
+        version: 1,
+        records: Map.take(restarted.records, ["keybindings"])
+    }
+  end
+
   def next_state(state, _result, _call), do: state
 
   # A member's records taken up: the newer ones win, the document takes their keys,
@@ -388,12 +406,13 @@ defmodule HalC2.SettingsPropTest do
   def postcondition(
         state,
         {:call, _, :read, _},
-        {{doc, version}, via_settings, alive?, hal_c2_subagents?}
+        {{doc, version}, via_settings, alive?, hal_c2_subagents?, unreadable?}
       ) do
     alive? and doc == state.doc and version == state.version and
       (state.parallel or
          (via_settings == state.doc and
-            hal_c2_subagents? == (state.doc["nativeSubagents"] == "hal-c2")))
+            hal_c2_subagents? == (state.doc["nativeSubagents"] == "hal-c2") and
+            unreadable? == state.held))
   end
 
   def postcondition(state, {:call, _, :saved, _}, result) do
@@ -476,7 +495,7 @@ defmodule HalC2.SettingsPropTest do
     server = Process.whereis(Settings)
 
     {Settings.get(), Settings.settings(), is_pid(server) and Process.alive?(server),
-     Settings.hal_c2_subagents?()}
+     Settings.hal_c2_subagents?(), Settings.unreadable?()}
   end
 
   def saved, do: Settings.saved()
@@ -531,6 +550,18 @@ defmodule HalC2.SettingsPropTest do
   end
 
   def restart, do: HalC2.Prop.restart_service(Settings)
+
+  # A directory at settings.json reads as an error with no bytes to stamp.
+  def restart_unreadable_then_removed do
+    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
+    File.rm_rf!(path)
+    File.mkdir_p!(path)
+    HalC2.Prop.restart_service(Settings)
+    held? = Settings.unreadable?()
+    File.rmdir!(path)
+    check()
+    held? and not Settings.unreadable?()
+  end
 
   # What `HalC2.Cluster` hands on from a member, waited for.
   def gossip(records) do

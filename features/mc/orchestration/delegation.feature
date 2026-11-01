@@ -110,6 +110,7 @@ Feature: Delegating tasks to subagents
     When the agent in "parent" delegates a task with workspace "{'type':'worktree'}"
     Then the task ends "failed" with the result "Workspace preparation failed"
     And the subagent never ran
+    And retrying the subagent's setup is refused
 
   @mc
   Scenario: Cancelling a worktree's preparation ends the task
