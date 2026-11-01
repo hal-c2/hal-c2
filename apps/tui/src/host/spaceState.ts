@@ -135,8 +135,12 @@ const HINTS: Record<TuiSpaceView, string> = {
 
 const UNTITLED = "(untitled)";
 
-/** A slide's body in the one-line field: its lines apart by " / ", as the ledger writes them. */
-const BODY_LINE_BREAK = " / ";
+/** A slide's body for the one-line field: a line break is `\n`, a backslash `\\`, all else as written. */
+const bodyToField = (body: string) => body.replaceAll("\\", "\\\\").replaceAll("\n", "\\n");
+
+/** What `bodyToField` wrote, or typed: a backslash before anything else stays a backslash. */
+const bodyFromField = (text: string) =>
+  text.replace(/\\([\\n])/g, (_, escaped) => (escaped === "n" ? "\n" : "\\"));
 
 const BLOCK_KINDS: ReadonlyArray<{ readonly kind: SpaceBlockKind; readonly label: string }> = [
   { kind: "paragraph", label: "Paragraph" },
@@ -969,7 +973,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   const editSlide = (id: string) => {
     const slide = slidesOf(deckId).find((candidate) => candidate.id === id);
     if (!slide) return;
-    const body = slide.body.replaceAll("\n", BODY_LINE_BREAK);
+    const body = bodyToField(slide.body);
     options.ask({
       label: "slide title",
       value: slide.title,
@@ -978,14 +982,15 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           void send(WS_METHODS.spaceSlideUpdate, { spaceId, slideId: id, title });
         }
         options.ask({
-          label: "slide body, lines apart by /",
+          label: "slide body, \\n for a new line",
           value: body,
           onSubmit: (text) => {
-            if (text !== body) {
+            // The answer comes trimmed: a body left as it was is not an edit.
+            if (text !== body.trim()) {
               void send(WS_METHODS.spaceSlideUpdate, {
                 spaceId,
                 slideId: id,
-                body: text.split(BODY_LINE_BREAK).join("\n"),
+                body: bodyFromField(text),
               });
             }
           },

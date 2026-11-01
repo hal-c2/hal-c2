@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 
+import type { AskSpec } from "./askState.ts";
 import type { PickRequest } from "./composerState.ts";
 import {
   createSpaceController,
@@ -68,6 +69,7 @@ function setup() {
   const calls: Array<{ method: string; payload: unknown }> = [];
   const statuses: string[] = [];
   const menus: PickRequest[] = [];
+  const asks: AskSpec[] = [];
   let state: TuiSpaceState | null = null;
   const controller = createSpaceController({
     client: {
@@ -94,7 +96,7 @@ function setup() {
       state = next;
     },
     status: (text) => statuses.push(text),
-    ask: () => {},
+    ask: (spec) => asks.push(spec),
     menu: (spec) => menus.push(spec),
     threads: () => [{ id: "t1", title: "Work" }],
   });
@@ -108,7 +110,7 @@ function setup() {
       .rows.filter((row) => row.kind === kind && row.first)
       .map((row) => row.text.slice(2).trim());
   const select = (key: string) => controller.dispatch("space.select", { key });
-  return { controller, send, reply, view, texts, select, calls, statuses, menus, streams };
+  return { controller, send, reply, view, texts, select, calls, statuses, menus, asks, streams };
 }
 
 /** Open the Spaces, and the Space s1 ("Research") with its pages. */
@@ -226,6 +228,59 @@ describe("the presenter", () => {
     const t = presenting([slide("a", "Intro", "a")]);
     t.send("space:s1", events([11, "deck", "d1", { d: true }], [12, "slide", "a", { d: true }]));
     expect(t.view().view).toBe("pages");
+  });
+});
+
+describe("editing a slide on one line", () => {
+  /** Opens the slide's body field, its title left alone, and gives what the field shows. */
+  const bodyField = (body: string) => {
+    const t = inResearch([deck("d1", "Pitch"), slide("a", "Intro", "a", body)]);
+    t.select("deck:d1");
+    t.controller.dispatch("space.activate", {});
+    t.select("slide:a");
+    t.controller.dispatch("space.edit", {});
+    t.asks.at(-1)!.onSubmit("Intro");
+    const field = t.asks.at(-1)!;
+    expect(field.label).toContain("slide body");
+    const sent = () => t.calls.filter((call) => call.method === "space.slide.update");
+    return { value: field.value!, submit: field.onSubmit, sent };
+  };
+
+  // Each is ambiguous to a field that writes a line break as " / ".
+  const bodies = [
+    "Either / or",
+    "ends with /\nthen more",
+    "first\n/ starts with",
+    "/ /",
+    "C:\\new\\table",
+    "two\n\nparagraphs",
+    "trailing line\n",
+    "\\",
+    "\\\n",
+  ];
+
+  test.each(bodies)("%j comes back as written after an edit", (body) => {
+    const field = bodyField(body);
+    expect(field.value).not.toContain("\n");
+    field.submit(`${field.value}!`);
+    expect(field.sent()).toEqual([
+      {
+        method: "space.slide.update",
+        payload: { spaceId: "s1", slideId: "a", body: `${body}!` },
+      },
+    ]);
+  });
+
+  test.each([...bodies, "  outer spaces  "])("%j left as it was sends nothing", (body) => {
+    const field = bodyField(body);
+    field.submit(field.value.trim());
+    expect(field.sent()).toEqual([]);
+  });
+
+  test("\\n typed in the field starts a new line, and any other backslash stays", () => {
+    const field = bodyField("");
+    field.submit("Up\\nDown \\o/");
+    expect(field.sent().at(-1)?.payload).toMatchObject({ body: "Up\nDown \\o/" });
   });
 });
 

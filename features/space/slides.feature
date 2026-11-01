@@ -125,6 +125,21 @@ Feature: Slide decks in a Space
       When the MC restarts
       Then the slides of "Pitch" are still "One, Two, Three"
 
+  @tui
+  Rule: Editing a slide on one line in the terminal
+
+    Background:
+      Given the deck "Pitch" with the slides "One"
+
+    Scenario: A slash in a slide's body stays a slash
+      When the user changes the slide "One" to "One" reading "Either / or"
+      Then the slide "One" shows the line "Either / or"
+
+    Scenario: The user starts a new line in a slide's body
+      When the user changes the slide "One" to "One" reading "Up\nDown"
+      Then the slide "One" shows the line "Up"
+      And the slide "One" shows the line "Down"
+
   @mc @desktop @mobile @tui
   Rule: Trash
 

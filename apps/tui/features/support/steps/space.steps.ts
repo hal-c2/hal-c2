@@ -1035,6 +1035,17 @@ step(
 );
 
 step(
+  "the slide {string} shows the line {string}",
+  async (ctx: SpaceWorld, title: string, line: string) => {
+    await openSlide(ctx, title);
+    const shown = pane(ctx)
+      .rows.filter((row) => row.kind === "slide" && !row.first)
+      .map((row) => row.text.trim());
+    expect(shown).toContain(line);
+  },
+);
+
+step(
   "the user moves the slide {string} before {string}",
   async (ctx: SpaceWorld, title, before) => {
     await openSlide(ctx, title);
