@@ -312,11 +312,33 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     File.rm!(hold)
     replies = [Task.await(first, 15_000), second]
 
-    context |> Map.put(:thread, thread) |> Map.put(:replies, replies) |> Map.put(:sent, text)
+    context
+    |> Map.put(:thread, thread)
+    |> Map.put(:replies, replies)
+    |> Map.put(:repeat_command, command)
+    |> Map.put(:sent, text)
   end
 
-  step "both sends succeed", context do
-    assert [{:ok, _}, {:ok, _}] = context.replies
+  step "the first send succeeds", context do
+    assert [{:ok, _}, _] = context.replies
+    context
+  end
+
+  step "the first send fails saying Codex did not take the message into its running turn",
+       context do
+    assert [{:error, message}, _] = context.replies
+    assert message =~ "Codex did not take the message into its running turn"
+    context
+  end
+
+  step "the repeat is told {string} is still being sent", context do
+    assert [_, {:error, %{"message" => message}}] = context.replies
+    assert message =~ "still being sent"
+    context
+  end
+
+  step "sending {string} again now succeeds", context do
+    assert {:ok, _} = HalC2.Orchestration.dispatch(context.repeat_command)
     context
   end
 

@@ -5,7 +5,8 @@ defmodule HalC2.OrchestrationPropTest do
   starts a turn, waits in the queue, steers the running turn or restarts it; have the
   MC send the agent a message of its own (a `notification`, as a delegated task's
   result is); send a message again with its message id, as a client retrying after a
-  reconnect does, or send the same steer twice at once;
+  reconnect does, or send the same steer twice at once, which Codex takes or refuses:
+  the repeat hears it is still being sent, and the first hears how it went;
   cancel, edit, reorder and promote queued messages (and have Codex refuse to take a
   promoted one, also after the thread was archived while Codex was asked); resume a held queue; interrupt a turn, or the run of a message as a
   client that read it as active does (#403, #474);
@@ -161,7 +162,9 @@ defmodule HalC2.OrchestrationPropTest do
           oneof([:queue, :queue, :auto, :restart, :notice, :limit, :limit]),
           oneof(@instances)
         ]}},
-      {2, {:call, __MODULE__, :steer_twice, [tid, msg, oneof(@instances)]}},
+      {2,
+       {:call, __MODULE__, :steer_twice,
+        [tid, msg, oneof(@instances), oneof([:taken, :taken, :refused])]}},
       {1, {:call, __MODULE__, :rename, [tid, oneof(["Alpha", "Beta"])]}},
       {1, {:call, __MODULE__, :recover, [tid]}},
       {1, {:call, __MODULE__, :sweep, []}},
@@ -289,9 +292,13 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
-  # The second of two identical sends finds the first: they are one send.
-  def next_state(state, result, {:call, m, :steer_twice, [tid, msg, instance]}),
-    do: next_state(state, result, {:call, m, :send, [tid, msg, :auto, instance]})
+  # The second of two identical sends finds the first: they are one send. A steer Codex
+  # refuses leaves the thread as it was.
+  def next_state(state, result, {:call, m, :steer_twice, [tid, msg, instance, how]}) do
+    if steer_refused?(state, tid, instance, how),
+      do: %{state | next: state.next + 1},
+      else: next_state(state, result, {:call, m, :send, [tid, msg, :auto, instance]})
+  end
 
   # A message the thread already has was sent: sending it again changes nothing, in
   # whatever state the first one is now (running, queued, steered, cancelled, edited).
@@ -589,8 +596,15 @@ defmodule HalC2.OrchestrationPropTest do
   defp expected_reply(state, :create, [tid]),
     do: if(state.threads[tid], do: {:error, "Thread #{tid} already exists."}, else: :ok)
 
-  defp expected_reply(state, fun, [tid | _]) when fun in [:send, :steer_twice],
-    do: refusal(state, tid, :send) || :ok
+  defp expected_reply(state, :send, [tid | _]), do: refusal(state, tid, :send) || :ok
+
+  defp expected_reply(state, :steer_twice, [tid, _msg, instance, how]) do
+    cond do
+      refused = refusal(state, tid, :send) -> refused
+      steer_refused?(state, tid, instance, how) -> {:error, :steer_refused}
+      true -> :ok
+    end
+  end
 
   defp expected_reply(state, :rename, [tid, _]), do: refusal(state, tid, :rename) || :ok
 
@@ -641,6 +655,9 @@ defmodule HalC2.OrchestrationPropTest do
   defp reply_matches?({:error, :archived_meanwhile}, {:error, message}),
     do: message =~ ~r/not queued again: the thread was archived\.$/
 
+  defp reply_matches?({:error, :steer_refused}, {:error, message}),
+    do: message =~ "did not take the message into its running turn (turn moved on)"
+
   defp reply_matches?(expected, reply), do: expected == reply
 
   defp update(state, tid, fun), do: update_in(state.threads[tid], fun)
@@ -660,6 +677,14 @@ defmodule HalC2.OrchestrationPropTest do
 
     thread != nil and thread.status != :deleted and last != nil and
       last.status == :completed and last.msg == msg
+  end
+
+  # This steer reaches a running turn on its instance, and Codex refuses it there.
+  defp steer_refused?(state, tid, instance, how) do
+    thread = state.threads[tid]
+
+    how == :refused and refusal(state, tid, :send) == nil and
+      match?(%{instance: ^instance}, thread && running(thread))
   end
 
   # A promote of this queued message asks the running turn's provider to take it.
@@ -891,33 +916,45 @@ defmodule HalC2.OrchestrationPropTest do
   # The same steer sent twice at once, as a client retrying while the first is still on
   # its way: Codex holds the first (`hold-steer`, as a refused-archived promote does)
   # until the repeat has been decided, so the overlap does not depend on the
-  # scheduler. Both are answered alike.
-  def steer_twice(tid, msg, instance) do
+  # scheduler. `how` has Codex refuse it (`:refused`) once it lets it go. A repeat of a
+  # steer Codex holds hears it is still being sent, whatever Codex goes on to answer;
+  # any other repeat is answered as the first was.
+  def steer_twice(tid, msg, instance, how) do
     steers = active_runs(tid, instance)
     command = message(tid, msg, :auto, instance)
+    if how == :refused, do: File.touch!(Process.get(:reject_steer))
     File.touch!(Process.get(:hold_steer))
     first = Task.async(fn -> Orchestration.dispatch(command) end)
 
-    results =
+    {one, repeat, held?} =
       case asked(tid, msg, first) do
         :asked ->
           repeat = Orchestration.dispatch(command)
           File.rm!(Process.get(:hold_steer))
-          [Task.await(first, @wait_ms), repeat]
+          {Task.await(first, @wait_ms), repeat, steers != []}
 
         {:done, one} ->
           File.rm!(Process.get(:hold_steer))
-          [one, Orchestration.dispatch(command)]
+          {one, Orchestration.dispatch(command), false}
 
         :timeout ->
           File.rm!(Process.get(:hold_steer))
-          [Task.await(first, @wait_ms), Orchestration.dispatch(command)]
+          {Task.await(first, @wait_ms), Orchestration.dispatch(command), false}
       end
 
+    if how == :refused, do: File.rm!(Process.get(:reject_steer))
+
     result =
-      case Enum.uniq_by(results, &outcome/1) do
-        [one] -> one
-        both -> {:unexpected, both}
+      cond do
+        held? and
+            match?({:error, %{"message" => "This message is still being sent" <> _}}, repeat) ->
+          one
+
+        not held? and outcome(one) == outcome(repeat) ->
+          one
+
+        true ->
+          {:unexpected, {one, repeat}}
       end
 
     reply(result, if(match?({:ok, _}, result), do: steers, else: []))
