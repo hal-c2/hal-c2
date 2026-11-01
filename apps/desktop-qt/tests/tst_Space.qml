@@ -113,6 +113,19 @@ Item {
             compare(root.dispatched("space.history.restore"), [{ version: 7 }]);
         }
 
+        function test_a_version_read_draws_its_chart_and_cannot_ask_again() {
+            const row = chartBlock("bar");
+            const view = withHistory({
+                reading: true,
+                version: { version: 7, at: "2026-09-23T10:00:00Z", title: "Roadmap" },
+                blocks: [row]
+            });
+            const chart = findChild(findChild(view, "spaceVersionView"), "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            compare(findChild(chart, "spaceChartTitle").text, "Signups");
+            verify(!findChild(view, "spaceAskAgain:" + row.text).visible);
+        }
+
         function test_reading_the_newest_version_offers_no_restore() {
             const view = withHistory({
                 reading: true,

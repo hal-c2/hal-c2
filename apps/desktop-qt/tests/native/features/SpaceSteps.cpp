@@ -1829,6 +1829,18 @@ const Steps steps([] {
     const QStringList texts = column(viewOf(world)->history()->blocks(), QStringLiteral("text"));
     expect(texts == listed(c[0]), QStringLiteral("the version reads %1").arg(show(texts)));
   });
+  step(QStringLiteral("the version draws a chart of %1 (\\d+) and %1 (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    SpaceRows* blocks = viewOf(world)->history()->blocks();
+    const QVariantList labels{c[0], c[2]};
+    const QVariantList values{c[1].toDouble(), c[3].toDouble()};
+    for (const QVariantMap& row : blocks->rows()) {
+      if (row.value(QStringLiteral("kind")) != QLatin1String("chart")) continue;
+      const QVariantMap chart = row.value(QStringLiteral("chart")).toMap();
+      expect(chart.value(QStringLiteral("labels")).toList() == labels && chart.value(QStringLiteral("series")).toList().value(0).toMap().value(QStringLiteral("values")).toList() == values, QStringLiteral("the version's chart reads %1").arg(show(chart.value(QStringLiteral("labels")).toStringList())));
+      return;
+    }
+    expect(false, QStringLiteral("no chart in the version"));
+  });
   step(QStringLiteral("the version shows the image %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expectShown(world, [&] {
       const QVariantMap block = versionImage(world, c[0]);

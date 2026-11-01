@@ -1184,6 +1184,18 @@ step("the version reads {string}", (ctx: SpaceWorld, texts: string) => {
   expect(versionBlocks(ctx)).toEqual(list(texts));
 });
 
+step(
+  "the version draws a chart of {string} {int} and {string} {int}",
+  (ctx: SpaceWorld, first: string, a: number, next: string, b: number) => {
+    expect(pane(ctx).view).toBe("version");
+    const rows = pane(ctx).rows.filter((row) => row.blockKind === "chart");
+    expect(numbersOf(rows)).toEqual([
+      [first, a],
+      [next, b],
+    ]);
+  },
+);
+
 step("the version shows the image {string}", (ctx: SpaceWorld, name: string) => {
   expect(versionBlocks(ctx)).toContain(`[image: ${name}]`);
 });

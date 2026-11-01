@@ -67,6 +67,13 @@ Feature: A page's history
       When the image "cat.png" is in the image trash
       Then the version says the image "cat.png" is in the trash
 
+    Scenario: A version draws the chart it had
+      Given the page "Roadmap" has a chart of "May" 3 and "June" 5
+      And a while passes
+      And the user changes the block "Final" to "Later"
+      When the user reads the version 1 back on "Roadmap"
+      Then the version draws a chart of "May" 3 and "June" 5
+
     Scenario: A client watching the Space sees a restore land
       Given a second client watching the Space "Research"
       When the user restores the version 1 back on "Roadmap"
@@ -179,6 +186,15 @@ Feature: A page's history
       When the user restores the version 1 back on "Roadmap"
       Then the page "Roadmap" shows its site is up to date
       And the history has 4 versions
+
+    Scenario: Drawing a chart again is an edit, and a restore brings its numbers back
+      Given the page "Roadmap" has a chart of "May" 3 and "June" 5
+      And a while passes
+      When the chart on "Roadmap" is drawn again with "May" 3 and "June" 8
+      And the user opens the history of "Roadmap"
+      Then the history has 3 versions
+      When the user restores the version 1 back on "Roadmap"
+      Then the chart holds "May" 3 and "June" 5
 
     Scenario: A restore brings an image's block back, whatever became of the image
       Given the image "cat.png" in "Research"

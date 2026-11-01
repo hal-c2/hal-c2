@@ -6,7 +6,7 @@ defmodule HalC2.Space.History do
   nothing while nobody asks.
 
   A version is a run of content edits (the title, a block's kind, text, tick, link,
-  image or place) by one author with at most `@gap` between any two of them. It is named by the
+  image, chart or place) by one author with at most `@gap` between any two of them. It is named by the
   `seq` of its last edit: any `seq` reads the page as it stood then, so a name stays
   good when its run later grows. Moves and the trash are not edits, so they make no
   version and a restore leaves them alone.
@@ -33,7 +33,7 @@ defmodule HalC2.Space.History do
   alias HalC2.Space.Pages
 
   @gap :timer.minutes(5)
-  @content ~w(kind text checked linkedPageId imageId order)
+  @content ~w(kind text checked linkedPageId imageId chart order)
   @default_limit 30
   @max_limit 100
 

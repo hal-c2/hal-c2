@@ -523,6 +523,15 @@ Item {
             verify(list.itemAtIndex(0).readOnly);
         }
 
+        function test_aVersionDrawsItsChart() {
+            const screen = openHistory({ reading: true, version: { version: 1, at: "2026-10-31T10:00:00Z", title: "Roadmap" }, blocks: [chartBlock()] });
+            screen.readVersion(1);
+            waitForRendering(screen);
+            const chart = findChild(findChild(screen, "spaceVersionBlocks"), "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            compare(findChild(chart, "spaceChartTitle").text, "Signups");
+        }
+
         function test_theNewestVersionOffersNoRestoreWhileRead() {
             const screen = openHistory({ reading: true, version: { version: 3, at: "2026-10-31T10:00:00Z", title: "Roadmap" } });
             screen.readVersion(3);
