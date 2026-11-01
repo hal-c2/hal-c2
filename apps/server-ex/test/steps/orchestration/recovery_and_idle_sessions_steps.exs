@@ -233,6 +233,37 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     Map.put(context, :left_command, String.to_integer(line))
   end
 
+  # Only this service restarts, into a file where the state dir goes (the dir set aside
+  # beside it), so the rest of the MC keeps a state dir it read at its own start.
+  step "the MC restarted unable to make the directory of its program records", context do
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.Subprocess.Orphans)
+    state = Path.dirname(HalC2.Subprocess.Orphans.dir())
+    File.rename!(state, state <> ".aside")
+    File.write!(state, "")
+    ExUnit.Callbacks.start_supervised!(HalC2.Subprocess.Orphans)
+    context
+  end
+
+  step "a program start is refused", context do
+    assert {:error, {:untracked, :no_records_dir}} =
+             HalC2.Subprocess.start(["sh", "-c", "exit 0"])
+
+    context
+  end
+
+  step "the directory of program records can be made again", context do
+    state = Path.dirname(HalC2.Subprocess.Orphans.dir())
+    File.rm!(state)
+    File.rename!(state <> ".aside", state)
+    context
+  end
+
+  step "a program starts", context do
+    assert {:ok, sub} = HalC2.Subprocess.start(["sh", "-c", "exit 0"])
+    HalC2.Subprocess.stop(sub)
+    context
+  end
+
   defp mc_died(sub) do
     pid = HalC2.Subprocess.os_pid(sub)
     dir = HalC2.Subprocess.Orphans.dir()

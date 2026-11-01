@@ -7,3 +7,5 @@ mix local.hex --force --if-missing
 mix local.rebar --force --if-missing
 mix deps.get
 mix compile
+# The MC builds, so the devcontainer's attach warning about it no longer holds.
+rm -f ../../.hal-c2/devcontainer-mc-install-warning

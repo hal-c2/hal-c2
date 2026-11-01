@@ -559,6 +559,47 @@ export function rebindLayers(
 }
 
 /**
+ * The first chord that runs `action` in `mode` once `overrides` (keymap.json's
+ * entries, as the engine merges them into every unnamed Keymap) sit over the
+ * live `layers`; null when none does. ShellKeymap keeps the global layer under
+ * every mode but the terminal drawer.
+ */
+export function effectiveChord(
+  layers: Record<string, KeymapLayer>,
+  overrides: Record<string, unknown> | undefined,
+  mode: string,
+  action: string,
+): string | null {
+  const id = (chords: string) =>
+    splitChords(chords)
+      .map((chord) => normalizeChord(chord) ?? chord)
+      .join(",");
+  // A binding's action: the plain form, or the object form that also describes it.
+  const actionOf = (value: unknown) =>
+    value && typeof value === "object" && "action" in value ? value.action : value;
+  for (const layer of [layers[mode], mode === "terminal" ? undefined : layers.global]) {
+    if (!layer) continue;
+    const merged = new Map(
+      Object.entries(layer).map(([chords, bound]) => [id(chords), bound as unknown]),
+    );
+    for (const [chords, value] of Object.entries(overrides ?? {})) {
+      // A section for a named keymap, not a binding.
+      if (value && typeof value === "object" && !("action" in value)) continue;
+      merged.set(id(chords), value);
+    }
+    for (const [chords, value] of merged) {
+      if (actionOf(value) === action) return chords.split(",")[0]!;
+    }
+  }
+  return null;
+}
+
+/** A chord as the key-hint row spells it: "ctrl+k" → "^K", "f2" → "F2". */
+export function chordHint(chord: string): string {
+  return chordLabel(chord).replace(/^Ctrl\+/, "^");
+}
+
+/**
  * Check a user's keymap.json (chord → action, null unbinds). Two entries
  * that spell the same chord for different actions ("ctrl+t" and "Ctrl+T")
  * conflict: JSON would let the later one win silently, so both are dropped

@@ -19,7 +19,9 @@ export interface TuiStatusRowInput {
   readonly draft: boolean;
   /** The error the user has not acknowledged yet (statusLog.ts), or null. */
   readonly pinnedError: string | null;
-  /** Whether ^K opens the palette in the active keymap layer (host.ts). */
+  /** The key that opens the palette at the prompt ("^K"), or null with none (host.ts). */
+  readonly paletteKey?: string | null;
+  /** Whether a key opens the palette in the active keymap layer (host.ts). */
   readonly paletteAvailable?: boolean;
 }
 
@@ -43,11 +45,12 @@ export interface TuiStatusRowState {
 /** The glue between a pinned error and the message that came after it. */
 const PINNED_SEPARATOR = " · ";
 /** How a pinned error says it is waiting to be dismissed, so it does not read as a stuck line. */
-const DISMISS_HINT = "click error or ^K to dismiss";
-/** Where ^K does not open the palette (terminal drawer, image preview), only the click is promised. */
+const dismissHint = (paletteKey: string) => `click error or ${paletteKey} to dismiss`;
+/** Where no key opens the palette (terminal drawer, image preview), only the click is promised. */
 const DISMISS_HINT_CLICK_ONLY = "click error to dismiss";
 
 export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
+  const paletteKey = input.paletteKey === undefined ? "^K" : input.paletteKey;
   const composeHint = [
     "Alt+↑/↓ threads",
     "Enter send",
@@ -56,7 +59,7 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
     "^N new",
     "^E term",
     ...(input.draft ? [] : input.threadHints),
-    "^K commands",
+    ...(paletteKey === null ? [] : [`${paletteKey} commands`]),
     "^F find",
     `^L panel ${input.sourceControlOpen ? "▾" : "▸"}`,
     ...(input.working ? ["Esc stop"] : input.draft ? ["Esc clear"] : []),
@@ -78,8 +81,8 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
   const pinnedLabel = beside ? `${statusGlyphColor("error").glyph} ${input.pinnedError}` : "";
   // A pinned error announces how to dismiss it at the head of the hints, which
   // `clip` keeps, instead of widening the status budget the layout promises.
-  // The ^K half is only promised where the compose hint is in effect: the
-  // terminal drawer and image preview bind no ctrl+k there.
+  // The key half is only promised where the compose hint is in effect: the
+  // terminal drawer and image preview do not open the palette.
   const composeInEffect =
     (input.paletteAvailable ?? true) &&
     !input.imagePreview &&
@@ -88,7 +91,7 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
     !input.terminalOpen;
   const hintWithDismiss =
     input.pinnedError !== null
-      ? `${composeInEffect ? DISMISS_HINT : DISMISS_HINT_CLICK_ONLY} · ${hint}`
+      ? `${composeInEffect && paletteKey !== null ? dismissHint(paletteKey) : DISMISS_HINT_CLICK_ONLY} · ${hint}`
       : hint;
   const room = Math.max(0, input.mainWidth - 2);
   // Widths are terminal cells, as `clip` counts them: a wide character takes two.
