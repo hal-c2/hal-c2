@@ -122,6 +122,13 @@ Feature: Reattaching to terminals
       Then the new shell's history begins with "migrations applied"
 
     @mc
+    Scenario: A terminal whose id is too long for a file name keeps its history
+      Given a terminal whose id is 200 characters long that has printed "long id build"
+      When a client closes the terminal without deleting its history
+      And later opens the long terminal again
+      Then its history contains "long id build"
+
+    @mc
     Scenario: Closing a terminal with history deletion removes its saved output
       Given a terminal that has printed "secret token"
       When a client closes the terminal and deletes its history

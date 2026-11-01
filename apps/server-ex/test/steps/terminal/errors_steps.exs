@@ -36,6 +36,31 @@ defmodule HalC2.Steps.Terminal.Errors do
     context
   end
 
+  step "the MC cannot read its provider settings", context do
+    file = Path.join(HalC2.Paths.config_dir(), "settings.json")
+    File.mkdir_p!(Path.dirname(file))
+    File.write!(file, "{not json")
+    Mc.ensure(HalC2.Settings)
+    context
+  end
+
+  step "a client opens a terminal for the provider instance {string}",
+       %{args: [id]} = context do
+    {reply, context} =
+      Terminal.open(context, %{
+        "cwd" => Terminal.mkdir(context, "/work/app"),
+        "providerInstanceId" => id
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the open fails saying the settings cannot be read", context do
+    assert {:error, message, %{"_tag" => "TerminalProviderEnvironmentError"}} = context.reply
+    assert message =~ "settings.json cannot be read"
+    context
+  end
+
   step "the folder {string} cannot be read by the MC", %{args: [path]} = context do
     # The folder sits in a directory the MC may not enter.
     dir = Terminal.mkdir(context, path)

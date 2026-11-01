@@ -54,6 +54,19 @@ describe("TerminalProviderEnvironmentError", () => {
     );
     expect(decoded.message).not.toContain("secret backend unavailable");
   });
+
+  it("tells the user its reason", () => {
+    const decoded = decodeTerminalError({
+      _tag: "TerminalProviderEnvironmentError",
+      providerInstanceId: "codex",
+      cause: "settings.json cannot be read",
+      reason: "settings.json cannot be read",
+    });
+
+    expect(decoded.message).toBe(
+      "Could not prepare the terminal environment for provider instance: codex: settings.json cannot be read",
+    );
+  });
 });
 
 describe("TerminalListResult", () => {

@@ -1,3 +1,6 @@
+# A machine's own shell startup is not a test's: it may outlast a wait. A test that cares sets its own.
+System.put_env("SHELL", "/bin/sh")
+
 # Tests tagged :codex or :claude drive the real provider CLIs; run them with
 # `mix test --include codex` / `--include claude`. Tests tagged :parity compare
 # against output HAL-C2 produced before the MC, from real data; see
