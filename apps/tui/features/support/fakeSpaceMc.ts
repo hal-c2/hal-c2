@@ -60,6 +60,8 @@ export interface FakeSpaceMc {
   readonly restart: () => void;
   /** Longer than the pause that ends a version: the next edit starts another. */
   readonly aWhilePasses: () => void;
+  /** The agent of a page ends by itself, as its thread's turn does on the MC. */
+  readonly agentEnds: (pageId: string, status: "completed" | "failed", error?: string) => void;
 }
 
 /** One author's run of edits on a page, with what the page held at its end. */
@@ -197,6 +199,8 @@ function parseMarkdown(markdown: string): { title: string | null; blocks: Entity
 export function fakeSpaceMc(options: {
   readonly cwdOf: (threadId: string) => string | null;
   readonly titleOf: (threadId: string) => string | null;
+  /** The thread an ask on a page runs in; the real MC starts a new one. */
+  readonly agentThreadId: () => string;
 }) {
   const spaces = new Map<string, Entity>();
   // Per Space: its pages, blocks and comments, each in creation order.
@@ -221,6 +225,7 @@ export function fakeSpaceMc(options: {
         ["page", new Map()],
         ["block", new Map()],
         ["comment", new Map()],
+        ["pageAgent", new Map()],
       ]);
       content.set(spaceId, kinds);
     }
@@ -460,7 +465,63 @@ export function fakeSpaceMc(options: {
     return [["space", personal.id, { s: personal }]];
   };
 
+  /** Ends the page's agent; like the MC, edited says whether its thread wrote to the page. */
+  const endAgent = (spaceId: string, pageId: string, status: string, error: string | null) => {
+    const threadId = table(spaceId, "pageAgent").get(pageId)!.threadId;
+    const edited = blocksOf(spaceId, pageId).some(
+      (entry) => entry.createdBy.type === "agent" && entry.createdBy.threadId === threadId,
+    );
+    commit(`space:${spaceId}`, [
+      ["pageAgent", pageId, { s: { status, edited, error, endedAt: now() } }],
+    ]);
+    return { agent: table(spaceId, "pageAgent").get(pageId) };
+  };
+  const isRunning = (agent: Entity | undefined) => agent !== undefined && agent.endedAt === null;
+
   const methods: Record<string, (input: Entity, by: SpaceAuthor) => unknown> = {
+    "space.page.askAgent": (input) => {
+      const found = livePage(input.spaceId, input.pageId);
+      const request = String(input.request)
+        .replace(/^@agent\b/i, "")
+        .trim();
+      if (request === "") refuse("invalid", "Say what the agent should do.");
+      if (isRunning(table(input.spaceId, "pageAgent").get(found.id))) {
+        refuse("invalid", "An agent is already working on this page.");
+      }
+      commit(`space:${input.spaceId}`, [
+        [
+          "pageAgent",
+          found.id,
+          {
+            s: {
+              id: found.id,
+              pageId: found.id,
+              threadId: options.agentThreadId(),
+              request,
+              status: "running",
+              edited: false,
+              error: null,
+              startedAt: now(),
+              endedAt: null,
+            },
+          },
+        ],
+      ]);
+      return { agent: table(input.spaceId, "pageAgent").get(found.id) };
+    },
+    "space.page.stopAgent": (input) => {
+      if (!isRunning(table(input.spaceId, "pageAgent").get(input.pageId))) {
+        refuse("invalid", "No agent is working on this page.");
+      }
+      return endAgent(input.spaceId, input.pageId, "stopped", null);
+    },
+    "space.page.dismissAgent": (input) => {
+      if (isRunning(table(input.spaceId, "pageAgent").get(input.pageId))) {
+        refuse("invalid", "The agent is still working on this page.");
+      }
+      commit(`space:${input.spaceId}`, [["pageAgent", input.pageId, { d: true }]]);
+      return { pageId: input.pageId };
+    },
     "space.list": () => {
       commit("spaces", seeded());
       return { spaces: [...spaces.values()] };
@@ -787,6 +848,10 @@ export function fakeSpaceMc(options: {
     lastChanges: [],
     aWhilePasses: () => {
       stretch += 1;
+    },
+    agentEnds: (pageId, status, error) => {
+      const { spaceId } = all("page").find((candidate) => candidate.id === pageId)!;
+      endAgent(spaceId, pageId, status, error ?? null);
     },
     restart: () => {
       for (const [stream, set] of watchers) {

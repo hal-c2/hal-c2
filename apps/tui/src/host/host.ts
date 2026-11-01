@@ -772,6 +772,10 @@ export function createHost(options: HostOptions): Host {
       const selection = store.getState().selection;
       return selection?.kind === "thread" ? selection.id : null;
     },
+    openThread: (threadId) => {
+      space.close();
+      dispatch("thread.open", { key: threadKey(threadId) });
+    },
   });
   // Adding a project is a page over the conversation (mode "project").
   const addProject = createAddProjectController({

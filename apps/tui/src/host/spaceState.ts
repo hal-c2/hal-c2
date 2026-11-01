@@ -15,6 +15,7 @@ import {
   type SpaceComment,
   type SpaceId,
   type SpacePage,
+  type SpacePageAgent,
   type SpacePageHistoryResult,
   type SpacePageVersion,
   type SpacePageVersionContent,
@@ -100,6 +101,8 @@ export interface SpaceControllerOptions {
   readonly threads: () => ReadonlyArray<{ readonly id: string; readonly title: string }>;
   /** The selected thread, offered first when making a page from a thread. */
   readonly currentThreadId?: () => string | null;
+  /** Leave the pane for a thread: the one a page's agent runs in. */
+  readonly openThread: (threadId: string) => void;
 }
 
 export interface SpaceController {
@@ -130,10 +133,14 @@ const HINTS: Record<TuiSpaceView, string> = {
   spaces: "  ⏎ open · n new · e rename · d delete · esc close",
   pages:
     "  ⏎ open · n new · a subpage · e rename · m move · d trash · r restore · D delete · i import · t from thread · h history · esc back",
-  page: "  ⏎ edit · n add · c comment · x tick/resolve · m move · d delete · l link · y copy · h history · esc back",
+  page: "  ⏎ edit · n add · c comment · x tick/resolve · m move · d delete · l link · y copy · h history · g ask an agent · esc back",
   history: "  ⏎ read · r restore · esc back",
   version: "  r restore · esc back",
 };
+
+/** The most of an agent's request and error the page repeats; its thread has them whole. */
+const AGENT_REQUEST_MOST = 60;
+const AGENT_ERROR_MOST = 200;
 
 /** How many versions a look at the history starts with, and the most a refresh asks for again. */
 const HISTORY_STRETCH = 30;
@@ -305,6 +312,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   const trashed = (): SpacePage[] => pages().filter((page) => page.trashedAt !== null);
 
+  const agentOfPage = (id: string | null) =>
+    (entitiesOf(space, "pageAgent") as unknown as SpacePageAgent[]).find(
+      (agent) => agent.pageId === id,
+    );
   const threadTitle = (threadId: string) =>
     options.threads().find((thread) => thread.id === threadId)?.title ?? "an agent";
 
@@ -530,6 +541,24 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return `page · ${page?.title ?? ""}${from}${bin}`;
   };
 
+  /** What the open page says about its agent, and the keys that go with it. */
+  const agentText = (agent: SpacePageAgent): string => {
+    const title = options.threads().find((thread) => thread.id === agent.threadId)?.title;
+    const open = `o opens ${title ? `“${title}”` : "its thread"}`;
+    switch (agent.status) {
+      case "running":
+        return `An agent is working on “${clip(agent.request, AGENT_REQUEST_MOST)}” · s stops · ${open}`;
+      case "stopping":
+        return `Stopping the agent… · ${open}`;
+      case "completed":
+        return `The agent finished ${agent.edited ? "and changed" : "without changing"} this page. · ${open} · z clears`;
+      case "failed":
+        return `The agent failed: ${clip(agent.error ?? "", AGENT_ERROR_MOST)}. The page stays as it last wrote it. · h history · ${open} · z clears`;
+      case "stopped":
+        return `The agent was stopped. · h history · ${open} · z clears`;
+    }
+  };
+
   const feedState = (): { status: TuiSpaceState["status"]; message: string } => {
     const error = view === "spaces" ? spacesError : spaceError;
     if (error !== null) return { status: "error", message: error };
@@ -566,8 +595,16 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
               ? "This version has no blocks"
               : "An empty page · n adds a block";
     }
-    // Window the rows around the selection.
-    const room = Math.max(1, options.height() - SPACE_CHROME_ROWS - (message === "" ? 0 : 1));
+    if (status === "ready" && view === "page") {
+      const agent = agentOfPage(pageId);
+      if (agent) {
+        message = agentText(agent);
+        if (agent.status === "failed") status = "error";
+      }
+    }
+    // Window the rows around the selection, under a message that may wrap.
+    const messageRows = message === "" ? 0 : wrapWords(message, width()).length;
+    const room = Math.max(1, options.height() - SPACE_CHROME_ROWS - messageRows);
     const first = rows.findIndex((row) => row.selected);
     const last = rows.findLastIndex((row) => row.selected);
     if (first >= 0) {
@@ -1186,6 +1223,51 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     }
   };
 
+  const isActive = (agent: SpacePageAgent) =>
+    agent.status === "running" || agent.status === "stopping";
+
+  /** The MC takes the word @agent off what is asked, so the field takes it with or without. */
+  const askAgent = () => {
+    const page = pageId;
+    if (view !== "page" || page === null) return;
+    const current = agentOfPage(page);
+    if (current && isActive(current)) {
+      options.status("An agent is already working on this page: s stops it.", "info");
+      return;
+    }
+    options.ask({
+      label: "ask an agent",
+      placeholder: "what to do to this page",
+      onSubmit: (request) => {
+        void send(WS_METHODS.spacePageAskAgent, { spaceId, pageId: page, request });
+      },
+    });
+  };
+
+  /** Runs `fn` on the open page's agent; a page without one says so. */
+  const withAgent = (fn: (agent: SpacePageAgent) => void) => () => {
+    if (view !== "page") return;
+    const agent = agentOfPage(pageId);
+    if (agent) fn(agent);
+    else options.status("No agent was asked on this page: g asks one.", "info");
+  };
+
+  const stopAgent = withAgent((agent) => {
+    void send(WS_METHODS.spacePageStopAgent, { spaceId, pageId: agent.pageId });
+  });
+
+  const dismissAgent = withAgent((agent) => {
+    void send(WS_METHODS.spacePageDismissAgent, { spaceId, pageId: agent.pageId });
+  });
+
+  const openAgentThread = withAgent((agent) => {
+    if (options.threads().some((thread) => thread.id === agent.threadId)) {
+      options.openThread(agent.threadId);
+    } else {
+      options.status("The agent's thread is not available.", "info");
+    }
+  });
+
   const comment = () => {
     const page = pageId;
     if (view !== "page" || page === null) return;
@@ -1394,6 +1476,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.history": inView(showHistory),
     "space.tick": onPages(toggle),
     "space.comment": onPages(comment),
+    "space.askAgent": onPages(askAgent),
+    "space.stopAgent": onPages(stopAgent),
+    "space.dismissAgent": onPages(dismissAgent),
+    "space.openAgentThread": onPages(openAgentThread),
     "space.move": onPages(moveEntry),
     "space.link": onPages(link),
     "space.export": onPages(exportMarkdown),
@@ -1465,6 +1551,18 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Restore page from the trash", action: "space.restore" },
           { title: "Page history", action: "space.history" },
         );
+        const agent = agentOfPage(pageId);
+        if (!agent || !isActive(agent)) {
+          entries.push({ title: "Ask an agent about this page", action: "space.askAgent" });
+        }
+        if (agent) {
+          entries.push({ title: "Open the agent's thread", action: "space.openAgentThread" });
+          entries.push(
+            isActive(agent)
+              ? { title: "Stop the agent", action: "space.stopAgent" }
+              : { title: "Clear what the page says about its agent", action: "space.dismissAgent" },
+          );
+        }
       }
       return entries;
     },

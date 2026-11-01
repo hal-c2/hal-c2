@@ -39,6 +39,8 @@ Ship pages in July.
 - [ ] Cut the branch
 - [ ] Write the notes
 `;
+// The fake MC runs an agent asked on a page in this thread of the scenario's Background.
+const AGENT_THREAD = "Work";
 const UNAVAILABLE = "No text generation provider is set up.";
 const FAILED = "The provider returned no text.";
 
@@ -54,6 +56,7 @@ function mc(ctx: SpaceWorld): FakeSpaceMc {
     },
     titleOf: (threadId) =>
       env(ctx).threads.find((candidate) => candidate.id === threadId)?.title ?? null,
+    agentThreadId: () => threadNamed(ctx, AGENT_THREAD).id,
   });
   return ctx.spaceMc;
 }
@@ -972,4 +975,100 @@ step("the user cannot restore a version of {string}", async (ctx: SpaceWorld, ti
       .blocksOf(pageId(ctx, title))
       .map((block) => block.text),
   ).toEqual(["Final"]);
+});
+
+// --- an agent in a page ---
+
+const agentSays = async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page);
+  return pane(ctx).message;
+};
+
+step("the user asks {string} on the page {string}", async (ctx: SpaceWorld, ask: string, page) => {
+  await openPage(ctx, page);
+  await press(ctx, "g");
+  await answer(ctx, ask);
+});
+
+step(
+  "{string} says its agent is working on {string}",
+  async (ctx: SpaceWorld, page: string, request: string) => {
+    expect(await agentSays(ctx, page)).toStartWith(`An agent is working on “${request}”`);
+  },
+);
+
+step("{string} links to its agent's thread", async (ctx: SpaceWorld, page: string) => {
+  expect(await agentSays(ctx, page)).toContain(`o opens “${AGENT_THREAD}”`);
+  await press(ctx, "o");
+  expect(pane(ctx).open).toBe(false);
+  expect(mode(ctx)).toBe("compose");
+});
+
+step("the agent of {string} adds the block {string}", (ctx: SpaceWorld, page: string, text) =>
+  asAgent(ctx, AGENT_THREAD, page, "space.block.insert", {
+    pageId: pageId(ctx, page),
+    kind: "paragraph",
+    text,
+  }),
+);
+
+step(
+  "the block {string} was written by the agent of {string}",
+  async (ctx: SpaceWorld, text: string, page: string) => {
+    await openPage(ctx, page);
+    const rows = pane(ctx).rows.filter((row) => row.key === blockKey(ctx, text));
+    expect(rows.at(-1)!.text.endsWith(`${text}  · ${AGENT_THREAD}`)).toBe(true);
+  },
+);
+
+step("the agent of {string} finishes", async (ctx: SpaceWorld, page: string) => {
+  mc(ctx).agentEnds(pageId(ctx, page), "completed");
+  await settle(ctx);
+});
+
+step(
+  "the agent of {string} fails with {string}",
+  async (ctx: SpaceWorld, page: string, error: string) => {
+    mc(ctx).agentEnds(pageId(ctx, page), "failed", error);
+    await settle(ctx);
+  },
+);
+
+step("{string} says its agent finished and changed the page", async (ctx: SpaceWorld, page) => {
+  expect(await agentSays(ctx, page)).toStartWith("The agent finished and changed this page.");
+});
+
+step(
+  "{string} says its agent finished without changing the page",
+  async (ctx: SpaceWorld, page) => {
+    expect(await agentSays(ctx, page)).toStartWith(
+      "The agent finished without changing this page.",
+    );
+  },
+);
+
+step("the user stops the agent of {string}", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page);
+  await press(ctx, "s");
+});
+
+step("{string} says its agent was stopped", async (ctx: SpaceWorld, page: string) => {
+  expect(await agentSays(ctx, page)).toStartWith("The agent was stopped.");
+});
+
+step(
+  "{string} says its agent failed with {string}",
+  async (ctx: SpaceWorld, page: string, error: string) => {
+    expect(await agentSays(ctx, page)).toStartWith(`The agent failed: ${error}.`);
+    expect(pane(ctx).status).toBe("error");
+  },
+);
+
+step("the user dismisses the agent of {string}", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page);
+  await press(ctx, "z");
+});
+
+step("{string} says nothing about an agent", async (ctx: SpaceWorld, page: string) => {
+  expect(await agentSays(ctx, page)).toBe("");
 });

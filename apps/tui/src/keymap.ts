@@ -167,6 +167,12 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       },
       { keys: "l", description: "Spaces: link a subpage", chords: ["l"] },
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
+      { keys: "h", description: "Spaces: a page's history", chords: ["h"] },
+      {
+        keys: "g · s · o · z",
+        description: "Spaces: ask an agent about a page · stop it · open its thread · clear it",
+        chords: ["g", "s", "o", "z"],
+      },
       {
         keys: "Tab · ^Enter",
         description: "Add project: browse ⇄ edit · run the action",
@@ -378,6 +384,10 @@ export const KEYMAP_LAYERS = {
     h: "space.history",
     "space, x": "space.tick",
     c: "space.comment",
+    g: "space.askAgent",
+    s: "space.stopAgent",
+    o: "space.openAgentThread",
+    z: "space.dismissAgent",
     l: "space.link",
     y: "space.export",
     i: "space.import",
