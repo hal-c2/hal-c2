@@ -326,6 +326,12 @@ const deviceGone = async (ctx: SpaceWorld, device: string) => {
 step("the device {string} leaves the page {string}", deviceGone);
 step("the connection of the device {string} drops", deviceGone);
 
+step("the environment is connected again", async (ctx: SpaceWorld) => {
+  ctx.fake!.emitConnection("connected");
+  mc(ctx).retellViewers();
+  await settle(ctx);
+});
+
 step("the agent in {string} is working on the page {string}", (ctx: SpaceWorld, thread, title) => {
   mc(ctx).agentOn(pageId(ctx, title), thread);
 });

@@ -90,6 +90,8 @@ export interface FakeSpaceMc {
   /** Another device comes to the page, and goes from wherever it is. */
   readonly deviceOn: (pageId: string, device: string) => void;
   readonly deviceGone: (device: string) => void;
+  /** Answers the followers of every page again, as a reconnect's subscribe does. */
+  readonly retellViewers: () => void;
   /** An agent, by its thread's title, comes to the page, and goes from wherever it is. */
   readonly agentOn: (pageId: string, title: string) => void;
   readonly agentGone: (title: string) => void;
@@ -935,6 +937,9 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     },
     deviceOn: (pageId, device) => on(devicesOn, pageId, device),
     deviceGone: (device) => gone(devicesOn, device),
+    retellViewers: () => {
+      for (const pageId of pageClients.keys()) tellPage(pageId);
+    },
     agentOn: (pageId, title) => on(agentsOn, pageId, title),
     agentGone: (title) => gone(agentsOn, title),
     clientsOn: (pageId) => pageClients.get(pageId)?.size ?? 0,

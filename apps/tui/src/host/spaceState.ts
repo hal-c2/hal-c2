@@ -125,6 +125,8 @@ export interface SpaceController {
   readonly mode: () => "space";
   /** Republish after a resize or a theme change. */
   readonly sync: () => void;
+  /** The connection is down: who is on the page is unknown until the MC's next frame. */
+  readonly connectionLost: () => void;
   readonly commands: () => ReadonlyArray<{ readonly title: string; readonly action: string }>;
   /** Resolves once the RPCs in flight have answered. */
   readonly settled: () => Promise<void>;
@@ -1562,6 +1564,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     mode: () => "space",
     sync: () => {
       if (open) publish();
+    },
+    connectionLost: () => {
+      if (viewers === "") return;
+      viewers = "";
+      publish();
     },
     commands: () => {
       const entries: Array<{ title: string; action: string }> = [

@@ -244,6 +244,16 @@ describe("who else is on the page", () => {
     expect(t.view().viewers).toBe("");
   });
 
+  test("a lost connection forgets who was on the page until the MC says again", () => {
+    const t = onRoadmap();
+    t.tellPage[0]!([{ type: "user", devices: ["Phone"] }]);
+    t.controller.connectionLost();
+    expect(t.view().viewers).toBe("");
+    expect([...t.onPage]).toEqual(["p1"]);
+    t.tellPage[0]!([{ type: "user", devices: ["Laptop"] }]);
+    expect(t.view().viewers).toBe("Also here: Laptop");
+  });
+
   test("a late answer for a page the user left does not reach the next", () => {
     const t = onRoadmap();
     t.controller.dispatch("space.back", {});

@@ -76,6 +76,17 @@ Feature: Who else is on a page
       When the user leaves the page
       Then the user is no longer on the page "Roadmap"
 
+  @tui
+  Rule: A client that lost its connection does not say who is on a page
+
+    Scenario: Who else is on the page goes away with the connection and comes back with it
+      Given the page "Roadmap" is open on the device "Phone"
+      And the user opens the page "Roadmap"
+      When the environment is disconnected
+      Then the page shows nobody else
+      When the environment is connected again
+      Then the page shows the user also on "Phone"
+
   @mobile
   Rule: The phone is on a page only while it shows it
 
@@ -138,6 +149,20 @@ Feature: Who else is on a page
       Given a thread "Work"
       And the user opens the page "Roadmap"
       When the agent in "Work" adds the block "Agent note" to "Roadmap"
+      Then the page shows the agent of "Work"
+
+    Scenario: An agent changing a block counts as working on its page
+      Given a thread "Work"
+      And "Roadmap" has the blocks "Ship it"
+      And the user opens the page "Roadmap"
+      When the agent in "Work" changes the block "Ship it" to "Shipped"
+      Then the page shows the agent of "Work"
+
+    Scenario: An agent deleting a block counts as working on its page
+      Given a thread "Work"
+      And "Roadmap" has the blocks "Ship it"
+      And the user opens the page "Roadmap"
+      When the agent in "Work" deletes the block "Ship it"
       Then the page shows the agent of "Work"
 
     Scenario: An agent refused a page is not on it
