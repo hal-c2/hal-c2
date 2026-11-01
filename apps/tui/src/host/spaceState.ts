@@ -828,11 +828,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return `page · ${page?.title ?? ""}${from}${bin}${published}`;
   };
 
-  /** What the open page says about its agent, and the keys that go with it. */
   // An error as a sentence's middle: a provider's own text may end its sentence already.
   const agentError = (error: string | null | undefined): string =>
     clip((error ?? "").replace(/[.\s]+$/, ""), AGENT_ERROR_MOST);
 
+  /** What the open page says about its agent, and the keys that go with it. */
   const agentText = (agent: SpacePageAgent): string => {
     const title = options.threads().find((thread) => thread.id === agent.threadId)?.title;
     const open = `o opens ${title ? `“${title}”` : "its thread"}`;
