@@ -65,7 +65,8 @@ defmodule HalC2.Terminal do
              do: call(ensure(input), {:attach, input, subscriber})
 
       {pid, _} ->
-        with {:ok, input} <- provider_env(input), do: call(pid, {:attach, input, subscriber})
+        with {:ok, input} <- running_attach_env(input),
+             do: call(pid, {:attach, input, subscriber})
     end
   end
 
@@ -211,8 +212,17 @@ defmodule HalC2.Terminal do
 
   # A `providerInstanceId` runs the shell as that provider does: the instance's
   # variables over the client's env, and its home as CODEX_HOME or
-  # CLAUDE_CONFIG_DIR. The snapshot never carries env, so secrets stay here.
+  # CLAUDE_CONFIG_DIR. The snapshot never carries env, so secrets stay here. Settings
+  # that could not be read refuse every instance: they cannot say what it sets.
   defp provider_env(%{"providerInstanceId" => id} = input) when is_binary(id) do
+    if HalC2.Settings.unreadable?(),
+      do: {:error, settings_unreadable_error(id)},
+      else: provider_env(input, id)
+  end
+
+  defp provider_env(input), do: {:ok, input}
+
+  defp provider_env(input, id) do
     settings = HalC2.Settings.settings()
     instance = get_in(settings, ["providerInstances", id])
     driver = (instance || %{})["driver"] || id
@@ -243,7 +253,27 @@ defmodule HalC2.Terminal do
     end
   end
 
-  defp provider_env(input), do: {:ok, input}
+  # A live shell needs nothing more from settings, so unreadable ones do not keep a
+  # client from it. Without a `cwd` the attach starts nothing, even if the shell ended.
+  defp running_attach_env(%{"providerInstanceId" => id} = input) when is_binary(id) do
+    if HalC2.Settings.unreadable?(),
+      do: {:ok, Map.drop(input, ["cwd", "providerInstanceId"])},
+      else: provider_env(input)
+  end
+
+  defp running_attach_env(input), do: {:ok, input}
+
+  defp settings_unreadable_error(id) do
+    %{
+      "_tag" => "TerminalProviderEnvironmentError",
+      "providerInstanceId" => id,
+      "cause" => "settings.json cannot be read",
+      "reason" => "settings.json cannot be read",
+      "message" =>
+        "Could not prepare the terminal environment for provider instance: #{id}: " <>
+          "settings.json cannot be read"
+    }
+  end
 
   defp put_home(env, _driver, ""), do: env
   defp put_home(env, "codex", home), do: Map.put(env, "CODEX_HOME", Path.expand(home))

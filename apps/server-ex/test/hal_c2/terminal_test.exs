@@ -151,6 +151,81 @@ defmodule HalC2.TerminalTest do
       assert {:ok, %{"history" => ""}} = Terminal.open(input)
     end
 
+    test "unreadable settings refuse a provider's terminal until they can be read",
+         %{input: input} do
+      settings = Path.join(HalC2.Paths.config_dir(), "settings.json")
+      File.mkdir_p!(Path.dirname(settings))
+      File.write!(settings, "{not json")
+      server = start_supervised!(HalC2.Settings)
+
+      for id <- ~w(codex work) do
+        assert {:error, %{"_tag" => "TerminalProviderEnvironmentError", "message" => message}} =
+                 Terminal.open(Map.put(input, "providerInstanceId", id))
+
+        assert message =~ "settings.json cannot be read"
+        assert Terminal.running("thread-1") == []
+      end
+
+      codex = Map.put(input, "providerInstanceId", "codex")
+
+      assert {:error, %{"_tag" => "TerminalProviderEnvironmentError"}} =
+               Terminal.restart(codex)
+
+      assert {:error, %{"_tag" => "TerminalProviderEnvironmentError"}} =
+               Terminal.attach(codex, self())
+
+      assert Terminal.running("thread-1") == []
+
+      # A terminal that names no provider needs nothing from them, and a client can
+      # come back to a live shell whatever it names.
+      assert {:ok, %{"pid" => shell}} = Terminal.open(input)
+      assert {:ok, %{"pid" => ^shell}} = Terminal.attach(codex, self())
+
+      # A shell that ended is not started again without the instance's variables.
+      {:ok, nil} = Terminal.write(Map.put(input, "data", "exit 3\n"))
+      assert_receive {:hal_c2_terminal, _, %{"type" => "exited", "exitCode" => 3}}, 5_000
+
+      assert {:ok, %{"status" => "exited", "pid" => nil}} =
+               Terminal.attach(Map.put(codex, "restartIfNotRunning", true), self())
+
+      {:ok, nil} = Terminal.close(input)
+
+      File.write!(settings, "{}")
+      send(server, :check)
+      _ = :sys.get_state(server)
+
+      assert {:ok, _} = Terminal.open(Map.put(input, "providerInstanceId", "codex"))
+    end
+
+    test "a settings file that could not be read at all stops refusing once removed",
+         %{input: input} do
+      settings = Path.join(HalC2.Paths.config_dir(), "settings.json")
+      File.mkdir_p!(settings)
+      server = start_supervised!(HalC2.Settings)
+      codex = Map.put(input, "providerInstanceId", "codex")
+
+      assert {:error, %{"_tag" => "TerminalProviderEnvironmentError"}} = Terminal.open(codex)
+
+      File.rmdir!(settings)
+      send(server, :check)
+      _ = :sys.get_state(server)
+
+      assert {:ok, _} = Terminal.open(codex)
+    end
+
+    test "settings that break while running keep the last document's terminals",
+         %{input: input} do
+      settings = Path.join(HalC2.Paths.config_dir(), "settings.json")
+      server = start_supervised!(HalC2.Settings)
+      {:ok, _} = HalC2.Settings.update(&Map.put(&1, "nativeSubagents", "provider"))
+
+      File.write!(settings, "{not json")
+      send(server, :check)
+      _ = :sys.get_state(server)
+
+      assert {:ok, _} = Terminal.open(Map.put(input, "providerInstanceId", "codex"))
+    end
+
     test "a provider instance's shell has its variables and home, and an unknown one is refused",
          %{input: input, tmp_dir: dir} do
       start_supervised!(HalC2.Settings)
