@@ -67,27 +67,16 @@ defmodule HalC2.Web do
     end
   end
 
-  # An MC listening on every interface is reached at the address it was told to use for
-  # its members, or when it has none on the network address of this machine that others
-  # most likely share.
+  # An MC listening on every interface is reached at the network address of this machine
+  # that others most likely share.
   def address(_input) do
     if Application.get_env(:hal_c2, :host, "127.0.0.1") in ["0.0.0.0", "::"] do
-      case cluster_listen_ip() || network_ip(:inet.getifaddrs()) do
+      case network_ip(:inet.getifaddrs()) do
         nil -> {:ok, reached_at(base_url())}
         ip -> {:ok, reached_at("http://#{ip}:#{port()}")}
       end
     else
       {:ok, reached_at(base_url())}
-    end
-  end
-
-  defp cluster_listen_ip do
-    with ip when is_binary(ip) <- Application.get_env(:hal_c2, :cluster_listen),
-         {:ok, {a, _, _, _}} when a not in [0, 127] <-
-           :inet.parse_ipv4strict_address(String.to_charlist(ip)) do
-      ip
-    else
-      _ -> nil
     end
   end
 
