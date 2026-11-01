@@ -484,29 +484,41 @@ defmodule HalC2.Space.PageAgent do
   end
 
   # The clients' order for a new thread, then the model last used, then the first
-  # provider that can run at all.
+  # provider that can run at all. A model on a provider that can't run gives way.
   defp model(settings, project, last) do
-    case project_model(settings, project) || (last && last["modelSelection"]) || first_model() do
+    providers = HalC2.Environment.providers()
+
+    candidates = project_models(settings, project) ++ [last && last["modelSelection"]]
+
+    case Enum.find(candidates, &runs?(&1, providers)) || first_model(providers) do
       nil -> {:error, :invalid, "No provider can start an agent right now."}
       model -> {:ok, model}
     end
   end
 
   # `settings` is already `HalC2.Settings.for_project/1`'s: the project's override is its
-  # default only if its provider is enabled.
-  defp project_model(settings, project) do
+  # default only if its provider is enabled, and then it comes before the project's own.
+  defp project_models(settings, project) do
     default = settings["defaultModelSelection"]
 
     override =
       get_in(settings, ["projectSettingsOverrides", project["id"], "defaultModelSelection"])
 
-    if default != nil and override == default,
-      do: default,
-      else: project["defaultModelSelection"] || default
+    if override == default,
+      do: [default, project["defaultModelSelection"]],
+      else: [project["defaultModelSelection"], default]
   end
 
-  defp first_model do
-    Enum.find_value(HalC2.Environment.providers(), fn provider ->
+  defp runs?(%{"instanceId" => instance}, providers) do
+    Enum.any?(providers, fn provider ->
+      provider["instanceId"] == instance and HalC2.Mcp.Tools.Threads.constraints(provider) == []
+    end)
+  end
+
+  defp runs?(_model, _providers), do: false
+
+  defp first_model(providers) do
+    Enum.find_value(providers, fn provider ->
       with [] <- HalC2.Mcp.Tools.Threads.constraints(provider),
            %{"slug" => slug} <- get_in(provider, ["models", Access.at(0)]) do
         %{"instanceId" => provider["instanceId"], "model" => slug}

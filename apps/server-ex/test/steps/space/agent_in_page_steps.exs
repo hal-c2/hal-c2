@@ -24,7 +24,8 @@ defmodule HalC2.Steps.Space.AgentInPage do
         context = remember(context, title, id, thread_id)
 
         if String.contains?(request, "wait") and launches?() do
-          World.await_latest_run(context, thread(title), "running")
+          # A real start through the fake provider, slow on a loaded machine.
+          World.await_latest_run(context, thread(title), "running", 30_000)
           World.await_row(thread_id, &is_binary(&1["title"]))
         end
 
@@ -255,12 +256,32 @@ defmodule HalC2.Steps.Space.AgentInPage do
 
   step "the project {string} overrides its model with one on a turned off provider",
        %{args: [project]} = context do
-    off = %{"instanceId" => "off", "model" => "gpt-off"}
-
     World.update_settings(context, %{
       "providerInstances" => %{"off" => %{"driver" => "codex", "enabled" => false}},
-      "projectSettingsOverrides" => %{project => %{"defaultModelSelection" => off}}
+      "projectSettingsOverrides" => %{project => %{"defaultModelSelection" => off_model()}}
     })
+  end
+
+  step "the project {string} keeps a model of its own on a turned off provider",
+       %{args: [project]} = context do
+    turn_off_provider(context)
+    project_model(project, off_model())
+    context
+  end
+
+  step "the thread {string} last used a model on a turned off provider",
+       %{args: [title]} = context do
+    turn_off_provider(context)
+    id = World.thread_id(context, title)
+
+    Streams.transact(id, :thread, fn state ->
+      thread = StreamState.get(state, "thread")[id]
+      moved = Map.put(thread, "modelSelection", off_model())
+      {[{"thread", id, HalC2.Patch.diff(thread, moved)}], :ok}
+    end)
+
+    World.await_row(id, &(&1["modelSelection"]["instanceId"] == "off"))
+    context
   end
 
   step "the MC goes down before an agent's thread can start", context do
@@ -384,6 +405,15 @@ defmodule HalC2.Steps.Space.AgentInPage do
     context
   end
 
+  step "the agent's thread of {string} is on a provider that can run",
+       %{args: [title]} = context do
+    instance = World.thread(context, thread(title))["modelSelection"]["instanceId"]
+    provider = Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance))
+    assert provider != nil
+    assert HalC2.Mcp.Tools.Threads.constraints(provider) == []
+    context
+  end
+
   step "the agent's thread of {string} uses the model of {string}",
        %{args: [title, other]} = context do
     model = World.thread(context, other)["modelSelection"]
@@ -420,6 +450,25 @@ defmodule HalC2.Steps.Space.AgentInPage do
   # --- helpers ------------------------------------------------------------------------
 
   defp thread(title), do: "agent of #{title}"
+
+  defp off_model, do: %{"instanceId" => "off", "model" => "gpt-off"}
+
+  defp turn_off_provider(context) do
+    World.update_settings(context, %{
+      "providerInstances" => %{"off" => %{"driver" => "codex", "enabled" => false}}
+    })
+  end
+
+  defp project_model(project, model) do
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.update",
+        "projectId" => project,
+        "defaultModelSelection" => model
+      })
+
+    World.await_row(project, &(&1["defaultModelSelection"] == model))
+  end
 
   # Newer than "Work", and on a model of its own for the ask to leave alone.
   defp background_thread(context, project, created_by, opts) do

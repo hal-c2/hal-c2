@@ -121,6 +121,16 @@ Feature: An agent in a page
       When the user asks "tidy this and wait" on the page "Roadmap"
       Then the agent's thread of "Roadmap" uses the model of "Work"
 
+    Scenario: A model the project keeps itself gives way when its provider is turned off
+      Given the project "shop" keeps a model of its own on a turned off provider
+      When the user asks "tidy this and wait" on the page "Roadmap"
+      Then the agent's thread of "Roadmap" uses the model of "Work"
+
+    Scenario: The model last used gives way when its provider is turned off
+      Given the thread "Work" last used a model on a turned off provider
+      When the user asks "tidy this and wait" on the page "Roadmap"
+      Then the agent's thread of "Roadmap" is on a provider that can run
+
     Scenario: The word @agent is not part of what is asked
       When the user asks "@agent   tidy this and wait" on the page "Roadmap"
       Then "Roadmap" says its agent is working on "tidy this and wait"
