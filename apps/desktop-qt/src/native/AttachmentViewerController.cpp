@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <QStringDecoder>
+#include <QUrl>
 
 #include "ComposerController.h"
 #include "McClient.h"
@@ -21,6 +22,17 @@ namespace {
 
 const NativeControllerRegistrar<AttachmentViewerController> registrar(QStringLiteral("attachmentViewer"), {QStringLiteral("attachmentViewer")});
 
+// video, audio or document when that is what a preview holds; else empty.
+QString mediaKind(const QVariantMap& preview) {
+  const QString mime = preview.value(QStringLiteral("mimeType")).toString().section(QLatin1Char(';'), 0, 0).trimmed().toLower();
+  if (mime.startsWith(QLatin1String("video/"))) return QStringLiteral("video");
+  if (mime.startsWith(QLatin1String("audio/"))) return QStringLiteral("audio");
+  if (mime == QLatin1String("application/pdf")) return QStringLiteral("document");
+  const QString named = WorkspaceFiles::mediaKindOf(preview.value(QStringLiteral("name")).toString());
+  if (named == QLatin1String("pdf")) return QStringLiteral("document");
+  return named == QLatin1String("video") || named == QLatin1String("audio") ? named : QString();
+}
+
 // What this viewer draws a preview as.
 QString kindOf(const QVariantMap& preview) {
   const QString mime = preview.value(QStringLiteral("mimeType")).toString().section(QLatin1Char(';'), 0, 0).trimmed().toLower();
@@ -28,10 +40,9 @@ QString kindOf(const QVariantMap& preview) {
   const QString extension = name.contains(QLatin1Char('.')) ? name.section(QLatin1Char('.'), -1) : QString();
   static const QStringList markdown{QStringLiteral("md"), QStringLiteral("markdown"), QStringLiteral("mdown"), QStringLiteral("mkd"), QStringLiteral("mdx")};
   if (mime.startsWith(QLatin1String("image/")) && !preview.value(QStringLiteral("url")).toString().isEmpty()) return QStringLiteral("image");
-  // A PDF, a video or anything binary came with no text this machine can show.
-  if (mime == QLatin1String("application/pdf") || extension == QLatin1String("pdf") || !preview.contains(QStringLiteral("text"))) {
-    return QStringLiteral("unsupported");
-  }
+  const QString media = mediaKind(preview);
+  if (!media.isEmpty()) return preview.value(QStringLiteral("url")).toString().isEmpty() ? QStringLiteral("unsupported") : media;
+  if (!preview.contains(QStringLiteral("text"))) return QStringLiteral("unsupported");
   if (!WorkspaceFiles::previewDelimiter(name, mime).isNull()) return QStringLiteral("table");
   if (mime == QLatin1String("text/html") || extension == QLatin1String("html") || extension == QLatin1String("htm")) return QStringLiteral("page");
   if (mime == QLatin1String("text/markdown") || mime == QLatin1String("text/x-markdown") || markdown.contains(extension)) return QStringLiteral("markdown");
@@ -108,30 +119,42 @@ void AttachmentViewerController::show(QVariantMap preview) {
   m_bridge->publish(QStringLiteral("attachmentViewer"), preview);
 }
 
-void AttachmentViewerController::fetch(Fetched done) {
-  const int request = ++m_request;
+QUrl AttachmentViewerController::keepDocument(const QByteArray& bytes) {
+  auto copy = std::make_unique<QTemporaryFile>(QDir::tempPath() + QStringLiteral("/hal-c2-XXXXXX.pdf"));
+  if (!copy->open() || copy->write(bytes) != bytes.size() || !copy->flush()) return {};
+  m_document = std::move(copy);
+  return QUrl::fromLocalFile(m_document->fileName());
+}
+
+void AttachmentViewerController::sign(Signed done) {
   const QVariantMap sent = m_sent;
-  const QString why = tr("The attachment is unavailable.");
-  const QString reconnect = tr("Reconnect to the environment and try again.");
   m_client->call(this, sent.value(QStringLiteral("environment")).toString(), QStringLiteral("assets.createUrl"),
                  QJsonObject{{QStringLiteral("resource"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("attachment")},
                                                                        {QStringLiteral("attachmentId"), sent.value(QStringLiteral("id")).toString()},
                                                                        {QStringLiteral("fileName"), sent.value(QStringLiteral("name")).toString()},
                                                                        {QStringLiteral("mimeType"), sent.value(QStringLiteral("mimeType")).toString()}}}},
-                 [=, this](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (request != m_request) return;
+                 [this, done](const QJsonValue& result, const std::optional<QString>& error) {
                    const QString relative = result.toObject().value(QLatin1String("relativeUrl")).toString();
                    if (error || relative.isEmpty()) {
-                     const QString said = error.value_or(why);
-                     return done({}, said.startsWith(QLatin1String("not connected")) ? reconnect : why, said);
+                     const QString said = error.value_or(tr("The attachment is unavailable."));
+                     return done({}, said.startsWith(QLatin1String("not connected")) ? tr("Reconnect to the environment and try again.") : tr("The attachment is unavailable."), said);
                    }
-                   m_client->download(this, relative, [=, this](const QByteArray& bytes, const std::optional<QString>& error) {
-                     if (request != m_request) return;
-                     if (!error) return done(bytes, {}, {});
-                     // Without an HTTP answer the MC said nothing about the file.
-                     done({}, error->startsWith(QLatin1String("HTTP ")) ? why : reconnect, *error);
-                   });
+                   done(relative, {}, {});
                  });
+}
+
+void AttachmentViewerController::fetch(Fetched done) {
+  const int request = ++m_request;
+  sign([=, this](const QString& relative, const QString& problem, const QString& reason) {
+    if (request != m_request) return;
+    if (!problem.isEmpty()) return done({}, problem, reason);
+    m_client->download(this, relative, [=, this](const QByteArray& bytes, const std::optional<QString>& error) {
+      if (request != m_request) return;
+      if (!error) return done(bytes, {}, {});
+      // Without an HTTP answer the MC said nothing about the file.
+      done({}, error->startsWith(QLatin1String("HTTP ")) ? tr("The attachment is unavailable.") : tr("Reconnect to the environment and try again."), *error);
+    });
+  });
 }
 
 void AttachmentViewerController::openSent() {
@@ -141,6 +164,26 @@ void AttachmentViewerController::openSent() {
                     {QStringLiteral("origin"), tr("Sent")},
                     {QStringLiteral("kind"), QStringLiteral("loading")}};
   show(shown);
+  const auto failed = [this, shown](const QString& problem) {
+    QVariantMap told = shown;
+    told.insert(QStringLiteral("kind"), QStringLiteral("failed"));
+    told.insert(QStringLiteral("problem"), problem);
+    show(told);
+  };
+  const QString media = mediaKind(shown);
+  // A player streams what it plays, from an address, rather than holding it here.
+  if (media == QLatin1String("video") || media == QLatin1String("audio")) {
+    const int request = ++m_request;
+    sign([=, this](const QString& relative, const QString& problem, const QString&) {
+      if (request != m_request) return;
+      if (!problem.isEmpty()) return failed(problem);
+      QVariantMap preview = shown;
+      preview.insert(QStringLiteral("url"), m_client->origin().resolved(QUrl(relative)).toString());
+      preview.insert(QStringLiteral("kind"), media);
+      show(preview);
+    });
+    return;
+  }
   fetch([this, shown](const QByteArray& bytes, const QString& problem, const QString&) mutable {
     if (!problem.isEmpty()) {
       shown.insert(QStringLiteral("kind"), QStringLiteral("failed"));
@@ -149,7 +192,9 @@ void AttachmentViewerController::openSent() {
     }
     QVariantMap preview = shown;
     const bool image = shown.value(QStringLiteral("mimeType")).toString().startsWith(QLatin1String("image/"));
-    if (image) {
+    if (mediaKind(shown) == QLatin1String("document")) {
+      preview.insert(QStringLiteral("url"), keepDocument(bytes).toString());
+    } else if (image) {
       preview.insert(QStringLiteral("url"), QStringLiteral("data:%1;base64,%2").arg(shown.value(QStringLiteral("mimeType")).toString(), QString::fromLatin1(bytes.toBase64())));
     } else if (!bytes.contains('\0')) {
       preview.insert(QStringLiteral("text"), wholeText(bytes));
@@ -194,6 +239,16 @@ bool AttachmentViewerController::handle(const QString& action, const QVariant& p
     m_viewing = preview.value(QStringLiteral("id")).toString();
     m_sent.clear();
     ++m_request;
+    // What a draft's player or document view reads: the picked file, or what was captured.
+    const QString media = mediaKind(preview);
+    const QString path = preview.value(QStringLiteral("path")).toString();
+    const QByteArray bytes = preview.take(QStringLiteral("bytes")).toByteArray();
+    preview.remove(QStringLiteral("path"));
+    if (!media.isEmpty() && !path.isEmpty()) {
+      preview.insert(QStringLiteral("url"), QUrl::fromLocalFile(path).toString());
+    } else if (media == QLatin1String("document") && !bytes.isEmpty()) {
+      preview.insert(QStringLiteral("url"), keepDocument(bytes).toString());
+    }
     const QString kind = kindOf(preview);
     preview.insert(QStringLiteral("kind"), kind);
     preview.insert(QStringLiteral("origin"), tr("Draft"));
@@ -227,6 +282,11 @@ bool AttachmentViewerController::handle(const QString& action, const QVariant& p
       }
       show(shown);
     });
+  } else if (action == QLatin1String("attachment.viewer.mediaFailed")) {
+    QVariantMap shown = m_shown;
+    shown.insert(QStringLiteral("kind"), QStringLiteral("failed"));
+    shown.insert(QStringLiteral("problem"), tr("The attachment is unavailable."));
+    show(shown);
   } else if (action == QLatin1String("attachment.viewer.copy")) {
     QGuiApplication::clipboard()->setText(m_shown.value(QStringLiteral("text")).toString());
   } else if (action == QLatin1String("attachment.viewer.save")) {

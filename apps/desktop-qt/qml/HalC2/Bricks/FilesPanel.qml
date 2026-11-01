@@ -8,7 +8,7 @@ import HalC2.Shell
 // from a WorkspaceFiles (Panel.files). The tree loads a folder when it is
 // expanded; typing searches the whole workspace. A file opens beside the
 // tree, one row per line, to read, edit or copy whole; an image shows as
-// itself, and other media open in the browser.
+// itself, and other media play in it, or open in the browser where they cannot.
 //
 //   FilesPanel { anchors.fill: parent; source: Panel.files }
 Rectangle {
@@ -409,7 +409,7 @@ Rectangle {
                     anchors.fill: parent
                     anchors.margins: 10
                     active: root.visible && root.source?.fileStatus === "ready" && root.mediaKind.length > 0
-                    sourceComponent: root.mediaKind === "image" ? mediaImage : mediaElsewhere
+                    sourceComponent: root.mediaKind === "image" ? mediaImage : mediaPlayer
                 }
                 Component {
                     id: mediaImage
@@ -438,6 +438,39 @@ Rectangle {
                             text: qsTr("Loading...")
                             color: root.muted
                             font.pixelSize: Math.round(13 * Theme.fontScale)
+                        }
+                    }
+                }
+                // Played or paged here. Its own file behind a Loader, so a machine
+                // without the Qt module offers the browser instead.
+                Component {
+                    id: mediaPlayer
+
+                    Item {
+                        Loader {
+                            id: player
+
+                            anchors.fill: parent
+                            Component.onCompleted: {
+                                const document = root.mediaKind === "pdf";
+                                setSource(document ? "DocumentView.qml" : "MediaPlayerView.qml", document ? {
+                                    source: root.source.mediaDocument
+                                } : {
+                                    source: root.source.mediaUrl,
+                                    video: root.mediaKind === "video"
+                                });
+                            }
+                        }
+                        Connections {
+                            target: player.item
+                            function onFailed() {
+                                root.source.mediaFailed(root.source.mediaUrl);
+                            }
+                        }
+                        Loader {
+                            anchors.fill: parent
+                            active: player.status === Loader.Error
+                            sourceComponent: mediaElsewhere
                         }
                     }
                 }

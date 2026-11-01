@@ -20,6 +20,7 @@
 #include "Brick.h"
 #include "ComposerBrick.h"
 #include "Harness.h"
+#include "MediaFixtures.h"
 #include "NativeShell.h"
 #include "Stream.h"
 
@@ -37,6 +38,11 @@ struct FakeAttachments {
   bool unreachable = false;
   int signatures = 0;
   std::shared_ptr<QTemporaryDir> saves;
+};
+
+// The sent attachment a scenario talks about before it is opened.
+struct FakeSent {
+  QString name;
 };
 
 QByteArray picture() {
@@ -252,6 +258,18 @@ void expectToast(World& world, const QString& type, const QString& title) {
 }
 
 const QByteArray kPage = "<html><body><h1>Report</h1></body></html>";
+
+// The viewer's video, once it plays.
+QQuickItem* playingVideo(World& world) {
+  QQuickItem* player = nullptr;
+  world.waitFor(
+      [&] {
+        player = world.brick->root()->findChild<QQuickItem*>(QStringLiteral("mediaPlayerView"));
+        return player && player->property("playing").toBool();
+      },
+      [&] { return QStringLiteral("the video to play; %1").arg(show(viewed(world))); });
+  return player;
+}
 
 const Steps steps([] {
   const QString q = QStringLiteral("\"([^\"]*)\"");
@@ -482,6 +500,7 @@ const Steps steps([] {
         {QStringLiteral("receipt.png"), {QStringLiteral("image/png"), picture()}},
         {QStringLiteral("notes.md"), {QStringLiteral("text/markdown"), "# Notes\n"}},
         {QStringLiteral("build.log"), {QStringLiteral("text/plain"), "built\n"}},
+        {QStringLiteral("invoice.pdf"), {QStringLiteral("application/pdf"), mediaFixture(QStringLiteral("invoice.pdf"))}},
     };
     const auto kind = kinds.value(c[0]);
     openDraft(world, {{QStringLiteral("name"), c[0]}, {QStringLiteral("mimeType"), kind.first}, {QStringLiteral("base64"), QString::fromLatin1(kind.second.toBase64())}});
@@ -497,6 +516,47 @@ const Steps steps([] {
   });
   step(QStringLiteral("it is shown as text"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { auto* text = world.brick->root()->findChild<QQuickItem*>(QStringLiteral("attachmentViewerText")); return text && text->property("text") == QLatin1String("built\n"); }, QStringLiteral("the text"));
+  });
+
+  step(QStringLiteral("it is shown as a document the user can page through"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* document = nullptr;
+    world.waitFor([&] { document = world.brick->root()->findChild<QQuickItem*>(QStringLiteral("documentView")); return document && document->property("pageCount").toInt() == 2; }, QStringLiteral("the document"));
+    QMetaObject::invokeMethod(document, "goTo", Q_ARG(QVariant, 1));
+    world.waitFor([&] { return document->property("currentPage").toInt() == 1; }, QStringLiteral("the second page"));
+  });
+  step(QStringLiteral("a sent message carries the attachment %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<FakeSent>().name = c[0];
+  });
+  step(QStringLiteral("the user opens the attachment from the conversation"), [](World& world, const Captures&, const Table&) {
+    const QString name = world.mc.part<FakeSent>().name;
+    openSent(world, name, QStringLiteral("application/pdf"), mediaFixture(name));
+  });
+  step(QStringLiteral("%1 is shown as a document from the environment").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { auto* document = world.brick->root()->findChild<QQuickItem*>(QStringLiteral("documentView")); return document && document->property("pageCount").toInt() == 2; }, QStringLiteral("the document"));
+    expect(viewed(world).value(QStringLiteral("name")) == c[0] && world.mc.part<FakeAttachments>().signatures > 0, show(viewed(world)));
+  });
+
+  // --- A video in a message.
+  step(QStringLiteral("a message carries a video"), [](World& world, const Captures&, const Table&) { world.mc.part<FakeSent>().name = QStringLiteral("clip.mp4"); });
+  step(QStringLiteral("a message carries a video and an image and the user opened the video"), [](World& world, const Captures&, const Table&) {
+    messageWithImages(world, 1);
+    openSent(world, QStringLiteral("clip.mp4"), QStringLiteral("video/mp4"), mediaFixture(QStringLiteral("clip.mp4")));
+    playingVideo(world);
+  });
+  step(QStringLiteral("the user opens the video"), [](World& world, const Captures&, const Table&) {
+    openSent(world, QStringLiteral("clip.mp4"), QStringLiteral("video/mp4"), mediaFixture(QStringLiteral("clip.mp4")));
+  });
+  step(QStringLiteral("it starts playing in the viewer"), [](World& world, const Captures&, const Table&) { playingVideo(world); });
+  step(QStringLiteral("the user presses the right arrow key with focus on the video"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* player = playingVideo(world);
+    world.waitFor([&] { return player->hasActiveFocus(); }, QStringLiteral("the video to have focus"));
+    QTest::keyClick(player->window(), Qt::Key_Right);
+    world.sync();
+  });
+  step(QStringLiteral("the key is left to the video and the viewer stays on the video"), [](World& world, const Captures&, const Table&) {
+    // The seek may have run the short clip to its end, so it need not still be playing.
+    auto* player = world.brick->root()->findChild<QQuickItem*>(QStringLiteral("mediaPlayerView"));
+    expect(player && player->hasActiveFocus() && player->property("position").toReal() > 0 && viewed(world).value(QStringLiteral("kind")) == QLatin1String("video"), show(viewed(world)));
   });
 
   // --- As captured.

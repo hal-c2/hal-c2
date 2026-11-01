@@ -1,4 +1,5 @@
 #include "FakeFiles.h"
+#include "MediaFixtures.h"
 
 #include <QBuffer>
 #include <QDateTime>
@@ -75,7 +76,8 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     } else {
       fake.downloaded.append(path);
       const bool image = QRegularExpression(QStringLiteral("\\.(png|jpe?g|gif|webp|bmp)$")).match(path).hasMatch();
-      const QByteArray body = image ? png() : fake.files.value(path, fake.outside.value(path)).toUtf8();
+      const QByteArray media = mediaFixture(path);
+      const QByteArray body = !media.isEmpty() ? media : image ? png() : fake.files.value(path, fake.outside.value(path)).toUtf8();
       socket->write("HTTP/1.1 200 OK\r\nContent-Type: " + QByteArray(image ? "image/png" : "application/octet-stream") +
                     "\r\nConnection: close\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body);
     }

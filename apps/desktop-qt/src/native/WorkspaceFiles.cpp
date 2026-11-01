@@ -1,5 +1,7 @@
 #include "WorkspaceFiles.h"
 
+#include <QDir>
+
 #include <QDateTime>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -456,9 +458,21 @@ void WorkspaceFiles::signMedia(int request) {
                    m_mediaUrl = m_client->origin().resolved(QUrl(relative));
                    m_mediaExpires = QDateTime::fromMSecsSinceEpoch(
                        qint64(result.toObject().value(QLatin1String("expiresAt")).toDouble()) - 60'000, QTimeZone::UTC);
-                   m_fileStatus = QStringLiteral("ready");
-                   emit fileChanged();
-                   if (std::exchange(m_openOnSign, 0) == request) emit mediaOpened(m_mediaUrl);
+                   const auto ready = [this, request] {
+                     m_fileStatus = QStringLiteral("ready");
+                     emit fileChanged();
+                     if (std::exchange(m_openOnSign, 0) == request) emit mediaOpened(m_mediaUrl);
+                   };
+                   if (mediaKind() != QLatin1String("pdf")) return ready();
+                   // Qt PDF opens local files alone.
+                   m_client->download(this, relative, [this, request, ready](const QByteArray& bytes, const std::optional<QString>& error) {
+                     if (request != m_fileRequest) return;
+                     auto copy = std::make_unique<QTemporaryFile>(QDir::tempPath() + QStringLiteral("/hal-c2-XXXXXX.pdf"));
+                     const bool kept = !error && copy->open() && copy->write(bytes) == bytes.size() && copy->flush();
+                     if (kept) m_mediaDocument = std::move(copy);
+                     ready();
+                     if (!kept) mediaFailed(m_mediaUrl);
+                   });
                  });
 }
 

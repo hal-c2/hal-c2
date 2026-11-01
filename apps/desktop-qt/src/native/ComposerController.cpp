@@ -2512,6 +2512,9 @@ QVariantMap ComposerController::attachmentPreview(const QString& id) {
       whole = file.atEnd();
     }
   }
+  // A player or document view reads the whole file, not this preview's first part.
+  if (!found->path.isEmpty()) preview.insert(QStringLiteral("path"), found->path);
+  if (whole) preview.insert(QStringLiteral("bytes"), bytes);
   bytes.truncate(1024 * 1024);
   if (!bytes.contains('\0')) {
     preview.insert(QStringLiteral("text"), QString::fromUtf8(bytes));

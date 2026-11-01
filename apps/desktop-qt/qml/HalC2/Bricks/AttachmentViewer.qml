@@ -122,6 +122,34 @@ Dialog {
             fillMode: Image.PreserveAspectFit
             asynchronous: true
         }
+        // Its own files behind a Loader, so a machine without the Qt module says
+        // the attachment cannot be shown.
+        Loader {
+            id: media
+
+            readonly property bool wanted: dialog.kind === "video" || dialog.kind === "audio" || dialog.kind === "document"
+
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: wanted && status !== Loader.Error
+            onWantedChanged: load()
+            Component.onCompleted: load()
+            function load() {
+                if (!wanted)
+                    setSource("");
+                else if (dialog.kind === "document")
+                    setSource("DocumentView.qml", { source: dialog.attachment.url });
+                else
+                    setSource("MediaPlayerView.qml", { source: dialog.attachment.url, video: dialog.kind === "video", autoPlay: true });
+            }
+
+            Connections {
+                target: media.item
+                function onFailed() {
+                    Shell.dispatch("attachment.viewer.mediaFailed");
+                }
+            }
+        }
         Flickable {
             id: page
 
@@ -214,7 +242,7 @@ Dialog {
             objectName: "attachmentViewerUnsupported"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: dialog.kind === "unsupported"
+            visible: dialog.kind === "unsupported" || (media.wanted && media.status === Loader.Error)
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             text: qsTr("This attachment cannot be shown here.")

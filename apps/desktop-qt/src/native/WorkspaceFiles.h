@@ -4,6 +4,8 @@
 #include <QDateTime>
 #include <QHash>
 #include <QObject>
+#include <QTemporaryFile>
+#include <memory>
 #include <QPointer>
 #include <QString>
 #include <QTimer>
@@ -108,6 +110,7 @@ class WorkspaceFiles : public QObject {
   // What the open file previews as instead of text: image, video, audio, pdf,
   // or "" for a file read as text.
   Q_PROPERTY(QString mediaKind READ mediaKind NOTIFY fileChanged)
+  Q_PROPERTY(QUrl mediaDocument READ mediaDocument NOTIFY fileChanged)
   // Where the preview loads a media file from, once signed; else empty.
   Q_PROPERTY(QUrl mediaUrl READ mediaUrl NOTIFY fileChanged)
   Q_PROPERTY(bool rendered READ rendered WRITE setRendered NOTIFY renderedChanged)
@@ -201,6 +204,8 @@ public:
   // What a file previews as, by its extension: image, video, audio, pdf, or "".
   static QString mediaKindOf(const QString& path);
   QString mediaKind() const { return mediaKindOf(m_openPath); }
+  // A PDF's local copy, once read; what the document view opens.
+  QUrl mediaDocument() const { return m_mediaDocument ? QUrl::fromLocalFile(m_mediaDocument->fileName()) : QUrl(); }
   QUrl mediaUrl() const { return m_mediaUrl; }
   bool rendered() const;
   void setRendered(bool rendered);
@@ -336,6 +341,7 @@ private:
   QUrl m_mediaUrl;
   // When the MC stops serving m_mediaUrl, a minute early.
   QDateTime m_mediaExpires;
+  std::unique_ptr<QTemporaryFile> m_mediaDocument;
   // The signing whose address openMedia is waiting for; else 0.
   int m_openOnSign = 0;
   int m_revealLine = 0;

@@ -168,13 +168,6 @@ Feature: Viewing and editing files
       Examples:
         | path            | kind     |
         | assets/logo.png | an image |
-
-      # The desktop links neither Qt Multimedia (whose FFmpeg is not bundled)
-      # nor Qt PDF, so it offers a video, audio or a PDF to open in the
-      # browser, and shows an HTML page's text and markup.
-      @backlog
-      Examples: Not yet on any surface
-        | path              | kind       |
         | media/intro.mp4   | a video    |
         | media/theme.mp3   | audio      |
         | docs/manual.pdf   | a document |
@@ -198,12 +191,7 @@ Feature: Viewing and editing files
       Examples:
         | path            | kind  | result   |
         | assets/logo.png | image | is shown |
-
-      # No audio player on the desktop yet (see above).
-      @backlog
-      Examples: Not yet on any surface
-        | path            | kind  | result |
-        | media/theme.mp3 | audio | plays  |
+        | media/theme.mp3 | audio | plays    |
 
     @desktop @tui
     Scenario Outline: Rendered files can be switched to their source and back
@@ -727,13 +715,9 @@ Feature: Viewing and editing files
         | receipt.png | an image                                    |
         | notes.md    | rendered Markdown that can switch to source |
         | build.log   | text                                        |
-
-      @backlog
-      Examples: A document (the clients have no PDF renderer yet)
-        | file        | shown                                       |
         | invoice.pdf | a document the user can page through        |
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: An attachment in a sent message opens in the same viewer
       Given a sent message carries the attachment "invoice.pdf"
       When the user opens the attachment from the conversation
@@ -873,13 +857,13 @@ Feature: Viewing and editing files
       And the image has an address on the web
       Then the viewer offers to open the original
 
-    @backlog @desktop
+    @desktop
     Scenario: A large video starts playing
       Given a message carries a video
       When the user opens the video
       Then it starts playing in the viewer
 
-    @backlog @desktop
+    @desktop
     Scenario: The arrow keys belong to a video that has focus
       Given a message carries a video and an image and the user opened the video
       When the user presses the right arrow key with focus on the video
