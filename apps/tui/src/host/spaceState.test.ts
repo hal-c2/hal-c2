@@ -242,6 +242,13 @@ describe("a chart on a page", () => {
     expect(t.texts("block")).toEqual(["Signups (a chart; Numbers from this page)"]);
   });
 
+  test("shows its own words when its numbers do not match its labels", () => {
+    const [kind, key, fields] = chartBlock("c1");
+    const chart = { ...fields.chart, series: [{ name: "Signups", values: [3] }] };
+    const t = onPage([kind, key, { ...fields, chart }]);
+    expect(t.texts("block")).toEqual(["Signups (a chart; Numbers from this page)"]);
+  });
+
   test("asks again from the words it was asked for in, and replaces itself", async () => {
     const t = onPage(chartBlock("c1"));
     t.select("block:c1");

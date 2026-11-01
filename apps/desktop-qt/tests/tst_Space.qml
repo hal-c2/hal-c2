@@ -70,6 +70,7 @@ Item {
             verify(findChild(chart, "spaceChartLabel:May") !== null);
             verify(findChild(chart, "spaceChartBar") !== null);
             verify(findChild(chart, "spaceChartLine") === null);
+            verify(!findChild(chart, "spaceChartUnmatched").visible);
             verify(!findChild(chart, "spaceChartLegend").visible, "one series needs no legend");
             verify(!findChild(view, "spaceBlockEditor:" + chartBlock("bar").text).visible, "a chart is not edited as text");
         }
@@ -107,6 +108,21 @@ Item {
             compare(findChild(chart, "spaceChartCell:5").x, findChild(chart, "spaceChartCell:Signups").x);
             mouseClick(findChild(chart, "spaceChartNumbers"));
             tryVerify(() => !findChild(chart, "spaceChartTable").visible);
+        }
+
+        function test_a_chart_draws_nothing_when_its_numbers_do_not_match_its_labels() {
+            for (const values of [[3], [3, 5, 8], [3, "5"], [3, -5]]) {
+                const row = chartBlock("bar");
+                row.chart.series[0].values = values;
+                const view = root.research({ blocks: [row] });
+                const chart = findChild(view, "spaceChart");
+                tryVerify(() => chart !== null && chart.width > 0);
+                verify(findChild(chart, "spaceChartUnmatched").visible, JSON.stringify(values));
+                verify(findChild(chart, "spaceChartBar") === null);
+                verify(findChild(chart, "spaceChartLabel:May") === null);
+                verify(!findChild(chart, "spaceChartNumbers").visible);
+                compare(findChild(chart, "spaceChartTitle").text, "Signups");
+            }
         }
 
         function test_a_chart_shows_markup_as_plain_text() {

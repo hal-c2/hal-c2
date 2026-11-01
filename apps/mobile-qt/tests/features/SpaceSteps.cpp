@@ -1006,6 +1006,16 @@ void givenChart(World& world, const QString& page, const QString& first, int a, 
   spaces.chart = {};
 }
 
+// The same page with a chart missing a number, which the MC would refuse.
+void givenUnmatchedChart(World& world, const QString& page) {
+  FakeSpaces& spaces = fake(world.mc);
+  spaces.asked = givenPage(world, page);
+  spaces.chart = chartOf(QStringLiteral("bar"), QStringLiteral("Signups"), kFromThisPage, {{QStringLiteral("May"), 3}, {QStringLiteral("June"), 5}});
+  spaces.chart[QStringLiteral("series")] = QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("Signups")}, {QStringLiteral("values"), QJsonArray{3}}}};
+  given(world, QStringLiteral("block.visualize"), {{QStringLiteral("pageId"), spaces.asked}, {QStringLiteral("request"), QStringLiteral("signups")}});
+  spaces.chart = {};
+}
+
 // The chart row the open page shows, or none.
 QVariantMap shownChart(World& world) {
   for (const QVariantMap& row : viewOf(world)->blocks()->rows()) {
@@ -1578,6 +1588,9 @@ const Steps steps([] {
   step(S("the page %1 has a chart of %1 (\\d+) and %1 (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
     givenChart(world, c[0], c[1], c[2].toInt(), c[3], c[4].toInt());
   });
+  step(S("the page %1 has a chart with 2 labels and 1 number").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenUnmatchedChart(world, c[0]);
+  });
   step(S("the page %1 has the blocks %1 and a chart of %1 (\\d+) and %1 (\\d+) and the blocks %1").arg(q), [](World& world, const Captures& c, const Table&) {
     givenBlock(world, c[0], S("paragraph"), c[1]);
     givenChart(world, c[0], c[2], c[3].toInt(), c[4], c[5].toInt());
@@ -1624,6 +1637,12 @@ const Steps steps([] {
     lookAtPage(world, fake(world.mc).asked);
     expectShown(world, [&] { return world.find(S("spaceChartNumbers")) != nullptr; }, S("a chart on the page"));
     world.tap(S("spaceChartNumbers"));
+  });
+  step(S("the chart's numbers are not shown"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    world.item(S("spaceChartUnmatched"));
+    expect(world.find(S("spaceChartNumbers")) == nullptr, S("the chart offers its numbers"));
+    expect(world.find(S("spaceChartBar")) == nullptr, S("the chart draws its bars"));
   });
   step(S("the numbers read %1 (\\d+)(?: and %1 (\\d+))?").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtPage(world, fake(world.mc).asked);

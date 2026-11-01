@@ -320,8 +320,8 @@ Item {
             });
         }
 
-        function openChart() {
-            const screen = makeScreen({ blocks: [chartBlock()] });
+        function openChart(row = chartBlock()) {
+            const screen = makeScreen({ blocks: [row] });
             screen.openSpace("s1");
             screen.openPage("p1");
             waitForRendering(screen);
@@ -341,6 +341,15 @@ Item {
             tryVerify(() => findChild(screen, "spaceChartNumbers") !== null);
             mouseClick(findChild(screen, "spaceChartNumbers"));
             tryVerify(() => findChild(screen, "spaceChartCell:May") !== null);
+        }
+
+        function test_aChartWhoseNumbersDoNotMatchItsLabelsIsNotDrawn() {
+            const row = chartBlock();
+            row.chart.series[0].values = [3];
+            const screen = openChart(row);
+            tryVerify(() => findChild(screen, "spaceChartUnmatched") !== null);
+            tryVerify(() => findChild(screen, "spaceChartUnmatched").visible);
+            verify(findChild(screen, "spaceChartBar") === null);
         }
 
         function test_theAddMenuAsksForAChartWhereItWasOpened() {

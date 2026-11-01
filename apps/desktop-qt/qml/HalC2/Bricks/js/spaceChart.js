@@ -3,6 +3,27 @@
 // A chart block's arithmetic: where its marks go, in a plot of the given size.
 // Everything here reads the chart as data; nothing in it is ever interpreted.
 
+// Whether every series has one number, from zero up, for each label. The MC
+// refuses any other chart, but a chart is untrusted data: drawn anyway, a missing
+// number would read as zero and a spare one would rescale the rest.
+function matched(chart) {
+    const count = chart.labels?.length ?? 0;
+    const series = chart.series ?? [];
+    if (count === 0 || series.length === 0)
+        return false;
+    for (let s = 0; s < series.length; ++s) {
+        const values = series[s]?.values;
+        if (values?.length !== count)
+            return false;
+        for (let i = 0; i < count; ++i) {
+            const value = values[i];
+            if (typeof value !== "number" || !isFinite(value) || value < 0)
+                return false;
+        }
+    }
+    return true;
+}
+
 // The largest value of any series.
 function peak(chart) {
     let most = 0;

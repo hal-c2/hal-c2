@@ -832,10 +832,14 @@ function seedChart(
   ctx: SpaceWorld,
   page: string,
   points: ReadonlyArray<readonly [string, number]>,
+  values = points.map(([, value]) => value),
 ) {
   const before = mc(ctx).generation;
   mc(ctx).generation = AVAILABLE;
-  mc(ctx).chart = chartOf("bar", "Signups", FROM_THIS_PAGE, points);
+  mc(ctx).chart = {
+    ...chartOf("bar", "Signups", FROM_THIS_PAGE, points),
+    series: [{ name: "Signups", values }],
+  };
   mc(ctx).run("space.block.visualize", {
     spaceId: currentSpaceId(ctx),
     pageId: seedPage(ctx, page),
@@ -976,6 +980,27 @@ step("the second client sees a chart titled {string}", async (ctx: SpaceWorld, t
   await ctx.second!.settled();
   const row = secondPane(ctx).rows.find((one) => one.blockKind === "chart");
   expect(row && words(row)).toBe(title);
+});
+
+step(
+  "the page {string} has a chart with 2 labels and 1 number",
+  (ctx: SpaceWorld, page: string) => {
+    seedChart(
+      ctx,
+      page,
+      [
+        ["May", 3],
+        ["June", 5],
+      ],
+      [3],
+    );
+  },
+);
+
+step("the chart's numbers are not shown", async (ctx: SpaceWorld) => {
+  const rows = await chartDrawn(ctx);
+  expect(rows.map(words).join(" ")).toContain("a chart");
+  expect(numbersOf(rows)).toEqual([]);
 });
 
 // A terminal draws a chart's numbers beside it: there is nothing to open, only the chart to read.

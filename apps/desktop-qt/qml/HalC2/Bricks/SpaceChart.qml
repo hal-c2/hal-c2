@@ -10,7 +10,9 @@ import "js/usageChart.js" as UsageChartMath
 // A chart block drawn from its description (SpaceChart in packages/contracts):
 // bars or a line, where its numbers came from, and the numbers themselves on
 // request. The description is untrusted data: every string in it is shown as
-// plain text. It draws once and again only when the data or its size changes.
+// plain text. One whose numbers do not match its labels is not drawn at all, so
+// no number is shown against the wrong label. It draws once and again only when
+// the data or its size changes.
 ColumnLayout {
     id: view
 
@@ -19,8 +21,11 @@ ColumnLayout {
     property var chart: ({})
     property bool numbersShown: false
 
-    readonly property var seriesList: chart.series ?? []
-    readonly property var scale: UsageChartMath.niceScale(SpaceChartMath.peak(chart), 4)
+    readonly property bool matched: SpaceChartMath.matched(chart)
+    // What the marks and the table read: nothing when the numbers do not match.
+    readonly property var drawn: matched ? chart : ({})
+    readonly property var seriesList: drawn.series ?? []
+    readonly property var scale: UsageChartMath.niceScale(SpaceChartMath.peak(drawn), 4)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property real fontSize: Math.round(12 * Theme.fontScale)
@@ -43,6 +48,17 @@ ColumnLayout {
         wrapMode: Text.Wrap
     }
 
+    Text {
+        objectName: "spaceChartUnmatched"
+        Layout.fillWidth: true
+        visible: !view.matched
+        text: qsTr("This chart is not drawn: its numbers do not match its labels. Ask for it again.")
+        textFormat: Text.PlainText
+        color: view.muted
+        font.pixelSize: view.fontSize
+        wrapMode: Text.Wrap
+    }
+
     Item {
         id: plot
 
@@ -53,6 +69,7 @@ ColumnLayout {
 
         Layout.fillWidth: true
         Layout.preferredHeight: Math.round(170 * Theme.fontScale)
+        visible: view.matched
 
         Repeater {
             model: view.scale.ticks
@@ -95,7 +112,7 @@ ColumnLayout {
             height: plot.marksHeight
 
             Repeater {
-                model: view.chart.type === "bar" ? SpaceChartMath.bars(view.chart, view.scale.max, plot.marksWidth, plot.marksHeight) : []
+                model: view.drawn.type === "bar" ? SpaceChartMath.bars(view.drawn, view.scale.max, plot.marksWidth, plot.marksHeight) : []
 
                 delegate: Rectangle {
                     required property var modelData
@@ -112,7 +129,7 @@ ColumnLayout {
             }
 
             Repeater {
-                model: view.chart.type === "line" ? SpaceChartMath.lines(view.chart, view.scale.max, plot.marksWidth, plot.marksHeight) : []
+                model: view.drawn.type === "line" ? SpaceChartMath.lines(view.drawn, view.scale.max, plot.marksWidth, plot.marksHeight) : []
 
                 delegate: Item {
                     id: line
@@ -158,7 +175,7 @@ ColumnLayout {
         }
 
         Repeater {
-            model: SpaceChartMath.ticks(view.chart, plot.marksWidth, Math.round(64 * Theme.fontScale))
+            model: SpaceChartMath.ticks(view.drawn, plot.marksWidth, Math.round(64 * Theme.fontScale))
 
             delegate: Text {
                 required property var modelData
@@ -230,6 +247,7 @@ ColumnLayout {
             objectName: "spaceChartNumbers"
             subtle: true
             implicitHeight: 26
+            visible: view.matched
             text: view.numbersShown ? qsTr("Hide numbers") : qsTr("Numbers")
             onClicked: view.numbersShown = !view.numbersShown
         }
@@ -239,13 +257,13 @@ ColumnLayout {
     Grid {
         objectName: "spaceChartTable"
         Layout.fillWidth: true
-        visible: view.numbersShown
+        visible: view.matched && view.numbersShown
         columns: view.seriesList.length + 1
         columnSpacing: 16
         rowSpacing: 2
 
         Repeater {
-            model: view.numbersShown ? SpaceChartMath.cells(view.chart) : []
+            model: view.matched && view.numbersShown ? SpaceChartMath.cells(view.drawn) : []
 
             delegate: Text {
                 required property var modelData

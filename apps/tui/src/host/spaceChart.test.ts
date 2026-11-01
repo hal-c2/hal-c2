@@ -124,14 +124,16 @@ describe("the description is untrusted", () => {
     expect(chart.series[0]!.values).toHaveLength(24);
   });
 
-  test("shows a value that is not a number as no number, with no bar", () => {
-    const [may, june] = chartLines(
-      data({ series: [{ name: "s", values: ["3", Number.POSITIVE_INFINITY] }] }),
-      30,
-    );
-    expect(may!.bar).toBe("");
-    expect(may!.number.trim()).toBe("–");
-    expect(june!.number.trim()).toBe("–");
+  test("is no chart when its numbers do not match its labels", () => {
+    const series = (values: unknown) => ({
+      labels: ["May", "June"],
+      series: [{ name: "s", values }],
+    });
+    for (const values of [[3], [3, 5, 8], ["3", 5], [3, Number.POSITIVE_INFINITY], [3, -5], null]) {
+      expect(chartData(series(values))).toBeNull();
+    }
+    expect(chartData({ labels: ["May"], series: [] })).toBeNull();
+    expect(chartData({ labels: [], series: [{ name: "s", values: [] }] })).toBeNull();
   });
 
   test("is no chart when it does not have the shape of one", () => {

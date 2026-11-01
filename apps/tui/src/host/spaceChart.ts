@@ -1,7 +1,7 @@
 // A chart block as lines of text: bars with their numbers, or a small table for a line
 // chart, which a terminal cannot draw well. The description is untrusted data from the
 // stream, so its strings lose anything that could steer a terminal, its size is capped
-// as the MC caps it, and a number is shown as it is or not at all.
+// as the MC caps it, and one whose numbers do not match its labels is no chart at all.
 import { SPACE_CHART_LIMITS } from "@hal-c2/contracts";
 
 import { clip } from "../format.ts";
@@ -23,7 +23,7 @@ interface ChartData {
   readonly labels: ReadonlyArray<string>;
   readonly series: ReadonlyArray<{
     readonly name: string;
-    readonly values: ReadonlyArray<unknown>;
+    readonly values: ReadonlyArray<number>;
   }>;
 }
 
@@ -47,30 +47,36 @@ const padStart = (text: string, width: number) =>
   `${" ".repeat(Math.max(0, width - widthOf(text)))}${text}`;
 
 const isValue = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value);
-const numberText = (value: unknown) => (isValue(value) ? String(value) : "–");
+  typeof value === "number" && Number.isFinite(value) && value >= 0;
+
+/** One number, from zero up, for each of `count` labels: anything else could misread as a number. */
+const isValues = (values: unknown, count: number): values is ReadonlyArray<number> =>
+  Array.isArray(values) && values.length === count && values.every(isValue);
 
 /** The chart `value` describes, made safe to draw; null when it is not one. */
 export function chartData(value: unknown): ChartData | null {
   const chart = value as Partial<Record<keyof ChartData, unknown>> | null | undefined;
   if (typeof chart !== "object" || chart === null) return null;
   if (!Array.isArray(chart.labels) || !Array.isArray(chart.series)) return null;
+  const count = chart.labels.length;
+  if (count === 0 || chart.series.length === 0) return null;
+  if (!chart.series.every((one: SeriesData | null) => isValues(one?.values, count))) return null;
   return {
     type: plain(chart.type),
     title: plain(chart.title),
     source: plain(chart.source),
     request: plain(chart.request),
     labels: chart.labels.slice(0, SPACE_CHART_LIMITS.labels).map(plain),
-    series: chart.series.slice(0, SPACE_CHART_LIMITS.series).map((one: SeriesData | null) => ({
-      name: plain(one?.name),
-      values: Array.isArray(one?.values) ? one.values.slice(0, SPACE_CHART_LIMITS.labels) : [],
+    series: chart.series.slice(0, SPACE_CHART_LIMITS.series).map((one: SeriesData) => ({
+      name: plain(one.name),
+      values: (one.values as ReadonlyArray<number>).slice(0, SPACE_CHART_LIMITS.labels),
     })),
   };
 }
 
 /** `value` of `peak` in `cells` columns, to the eighth; anything above zero shows. */
-function barOf(value: unknown, peak: number, cells: number): string {
-  if (!isValue(value) || value <= 0 || peak <= 0 || cells <= 0) return "";
+function barOf(value: number, peak: number, cells: number): string {
+  if (value <= 0 || peak <= 0 || cells <= 0) return "";
   const eighths = Math.min(cells * 8, Math.max(1, Math.round((value / peak) * cells * 8)));
   return `${"█".repeat(Math.floor(eighths / 8))}${PARTIAL[eighths % 8]}`;
 }
@@ -79,7 +85,7 @@ function barOf(value: unknown, peak: number, cells: number): string {
 function barLines(chart: ChartData, width: number, drawBars: boolean): TuiChartLine[] {
   const several = chart.series.length > 1;
   const values = chart.series.flatMap((one) => one.values);
-  const numberWidth = widest(values.map(numberText));
+  const numberWidth = widest(values.map(String));
   const labelWidth = Math.min(
     widest(chart.labels),
     Math.max(MIN_WORDS, Math.floor(width * LABEL_SHARE)),
@@ -92,17 +98,17 @@ function barLines(chart: ChartData, width: number, drawBars: boolean): TuiChartL
     : 0;
   const wordsWidth = labelWidth + (several ? GAP.length + nameWidth : 0);
   const cells = drawBars ? Math.max(0, width - wordsWidth - numberWidth - 2 * GAP.length) : 0;
-  const peak = Math.max(0, ...values.filter(isValue));
+  const peak = Math.max(0, ...values);
   return chart.labels.flatMap((label, row) =>
     chart.series.map((one, column) => {
-      const value = one.values[row];
+      const value = one.values[row]!;
       const shownLabel = padEnd(column === 0 ? clip(label, labelWidth) : "", labelWidth);
       const bar = barOf(value, peak, cells);
       const name = several ? `${GAP}${padEnd(clip(one.name, nameWidth), nameWidth)}` : "";
       return {
         words: `${shownLabel}${name}${GAP}`,
         bar,
-        number: `${" ".repeat(cells - widthOf(bar))}${GAP}${padStart(numberText(value), numberWidth)}`,
+        number: `${" ".repeat(cells - widthOf(bar))}${GAP}${padStart(String(value), numberWidth)}`,
       };
     }),
   );
@@ -115,7 +121,7 @@ function tableLines(chart: ChartData, width: number): TuiChartLine[] | null {
     Math.max(MIN_WORDS, Math.floor(width * LABEL_SHARE)),
   );
   const columns = chart.series.map((one) => {
-    const numbers = one.values.map(numberText);
+    const numbers = one.values.map(String);
     return {
       name: one.name,
       numbers,
@@ -136,7 +142,7 @@ function tableLines(chart: ChartData, width: number): TuiChartLine[] | null {
       header: true,
     },
     ...chart.labels.map((label, index) => ({
-      words: row(label, (column) => column.numbers[index] ?? "–"),
+      words: row(label, (column) => column.numbers[index]!),
       bar: "",
       number: "",
     })),

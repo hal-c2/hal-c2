@@ -140,6 +140,15 @@ Feature: Charts on a page
       When the user asks for "/visualize signups" on the page "Status"
       Then the request and the page's text went to the model outside any project's folder
 
+  # The MC refuses such a chart. A client does not take that on trust: a missing number
+  # drawn would read as zero against its label.
+  @desktop @mobile @tui
+  Rule: A number is never shown against the wrong label
+
+    Scenario: A chart whose numbers do not match its labels is not drawn
+      Given the page "Status" has a chart with 2 labels and 1 number
+      Then the chart's numbers are not shown
+
   @mc
   Rule: A chart is data and nothing else
 
