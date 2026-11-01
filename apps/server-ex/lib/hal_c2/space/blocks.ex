@@ -204,14 +204,16 @@ defmodule HalC2.Space.Blocks do
 
       {block, [first | rest]} ->
         next =
-          Map.merge(block, %{
+          block
+          |> Map.merge(%{
             "kind" => first["kind"],
-            "text" => first["text"] || "",
+            "text" => text(state, first),
             "checked" => first["kind"] == "checklist" and first["checked"] == true,
             "linkedPageId" => first["linkedPageId"],
             "updatedBy" => author,
             "updatedAt" => Entities.now()
           })
+          |> with_image(first)
 
         {inserted, _} = insert_all(state, page_id, rest, block["id"], author)
         [{"block", block["id"], Patch.diff(block, next)} | inserted]

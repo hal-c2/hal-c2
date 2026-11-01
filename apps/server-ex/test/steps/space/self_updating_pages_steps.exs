@@ -9,7 +9,7 @@ defmodule HalC2.Steps.Space.SelfUpdatingPages do
   import ExUnit.Assertions
 
   alias HalC2.{ScheduledTasks, Space, StreamState, Streams}
-  alias HalC2.Space.{Blocks, Pages}
+  alias HalC2.Space.{Blocks, Images, Pages}
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
@@ -147,6 +147,24 @@ defmodule HalC2.Steps.Space.SelfUpdatingPages do
   step "text generation writes {string}", %{args: [markdown]} = context do
     System.delete_env("FAKE_TEXT_FAIL")
     World.text_writers(context, [:codex, :claude], %{"markdown" => markdown})
+  end
+
+  step "text generation writes the image {string} of the Space", %{args: [name]} = context do
+    image = Enum.find(Images.live(state(context)), &(&1["name"] == name))
+    markdown = "![#{name}](space-image:#{image["id"]})"
+    System.delete_env("FAKE_TEXT_FAIL")
+    World.text_writers(context, [:codex, :claude], %{"markdown" => markdown})
+  end
+
+  step "the first block of {string} shows the image {string}",
+       %{args: [title, name]} = context do
+    image = Enum.find(Images.live(state(context)), &(&1["name"] == name))
+
+    assert %{"kind" => "image", "text" => ^name, "imageId" => id} =
+             hd(blocks(context, title))
+
+    assert id == image["id"]
+    context
   end
 
   step "the generated part of {string} reads {string}", %{args: [title, text]} = context do

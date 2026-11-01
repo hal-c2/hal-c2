@@ -63,15 +63,31 @@ defmodule HalC2.Space.Schedule do
   """
   def remove(space_id, page_id) do
     with {:ok, _} <- live(space_id, page_id),
+         :ok <- has_task(page_id),
+         {:ok, page} <- release_page(space_id, page_id),
          {:ok, _} <- scheduled(ScheduledTasks.delete(%{"id" => task_id(page_id)})) do
-      Space.transact(space_id, fn state ->
-        with {:ok, page} <- Pages.fetch_live(state, page_id) do
-          next = Map.merge(page, %{"schedule" => nil, "writtenAt" => nil})
-          {page_change(page, next) ++ release(state, page_id), {:ok, next}}
-        end
-        |> Pages.refused()
-      end)
+      # A run can land between the release and the delete, which ends it.
+      release_page(space_id, page_id)
+      {:ok, page}
     end
+  end
+
+  defp has_task(page_id) do
+    if Enum.any?(ScheduledTasks.page_tasks(), &(&1["id"] == task_id(page_id))),
+      do: :ok,
+      else: {:error, :not_found, "This page has no update."}
+  end
+
+  # What the task wrote goes first: a task kept can still be removed, while a task gone
+  # would leave a generated part nothing can release.
+  defp release_page(space_id, page_id) do
+    Space.transact(space_id, fn state ->
+      with {:ok, page} <- Pages.fetch_live(state, page_id) do
+        next = Map.merge(page, %{"schedule" => nil, "writtenAt" => nil})
+        {page_change(page, next) ++ release(state, page_id), {:ok, next}}
+      end
+      |> Pages.refused()
+    end)
   end
 
   defp page_change(page, next) do

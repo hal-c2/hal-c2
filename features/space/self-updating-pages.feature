@@ -215,6 +215,13 @@ Feature: Pages that update themselves
       When the user removes the update of "Status"
       Then the blocks of "Status" read "Weekly status"
 
+    Scenario: Removing the update keeps an image the run wrote first
+      Given the image "chart.png" in "Research"
+      And text generation writes the image "chart.png" of the Space
+      And the update of "Status" has run
+      When the user removes the update of "Status"
+      Then the first block of "Status" shows the image "chart.png"
+
     Scenario: Removing a page's update stops its runs
       Given the time for the next run of "Status" is noted
       And the user has removed the update of "Status"
