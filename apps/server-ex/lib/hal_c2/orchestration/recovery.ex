@@ -121,7 +121,9 @@ defmodule HalC2.Orchestration.Recovery do
 
     # A queued run with nothing ahead of it: the MC went before moving it on. Settling holds
     # it where the user can see, which a program left to go on would not do.
-    waiting? = running == [] and Enum.any?(runs, &(&1["status"] == "queued"))
+    waiting? =
+      running == [] and Enum.any?(runs, &(&1["status"] == "queued" and &1["queueHeld"] != true))
+
     running == saved and not waiting?
   end
 

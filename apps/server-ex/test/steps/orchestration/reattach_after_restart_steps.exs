@@ -491,6 +491,10 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
     World.numbered_run(context, thread, 90, "queued")
   end
 
+  step "a held queued run waits in {string}", %{args: [thread]} = context do
+    World.numbered_run(context, thread, 90, "queued", %{"queueHeld" => true})
+  end
+
   step "the queued run of {string} is held", %{args: [thread]} = context do
     assert World.state(context, thread).entities["run"]["run-90"]["queueHeld"] == true
     context

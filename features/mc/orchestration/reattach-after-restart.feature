@@ -223,6 +223,14 @@ Feature: Reattaching to provider programs after a restart
       Then that provider process has been killed
       And the queued run of "t1" is held
 
+    Scenario: An idle program stays when the queue was already held
+      Given thread "t1" finished a turn on "codex" and its provider process is live
+      And a held queued run waits in "t1"
+      When the MC dies
+      And the MC restarts
+      Then the provider process of "t1" is the one that was running
+      And the queued run of "t1" is held
+
     # The stop went out before the MC left, and the program never answers it.
     Scenario Outline: A stop that was out when the MC went still settles
       Given thread "t1" has a running turn on "<provider>"
