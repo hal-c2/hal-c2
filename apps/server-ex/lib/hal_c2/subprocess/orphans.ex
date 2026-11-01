@@ -22,10 +22,20 @@ defmodule HalC2.Subprocess.Orphans do
   group of its own (`setsid`, `setpgid`: a shell on a pty, a `node` child spawned
   `detached`) is not in it and keeps running, a dev server holding its port with it.
   The agent that would resume is dead either way. Reaching those would take a cgroup,
-  or the ancestry recorded at spawn (hal-c2/hal-c2#387). Nor does it reach the
-  background commands of a program that had already exited by the boot (a CLI that
-  stopped on its closed stdin): with no leader left to check, its group's id cannot
-  be told from a later group's, so the record is dropped and they are not signalled.
+  or the ancestry recorded at spawn (hal-c2/hal-c2#387).
+
+  A program that had already exited by the boot (a CLI that stopped on its closed
+  stdin) may have left background commands in its group. With no leader, the group's
+  id alone cannot be told from a later group's: a daemon that reused the pid and
+  called `setsid` has the same one. So each program runs with a random mark in its
+  environment (`HAL_C2_PROGRAM_ID`), which its record names and its descendants
+  inherit, and the boot kills, one pid at a time, the processes in that group whose
+  `/proc/<pid>/environ` holds the mark. A command started with the mark stripped from
+  its environment is not told from a stranger and keeps running. macOS offers no
+  `/proc`, so there such a record is dropped with its commands left running
+  (hal-c2/hal-c2#702). Nor does anything reach what a program left behind when it
+  exited under a live MC, which removes the record at that exit.
+
   Nor is the last identity read atomic with the signal: a pid reused in the moment
   between that read and the external `kill` running would be signalled instead;
   closing that needs a pidfd (`pidfd_open` + `pidfd_send_signal`), which no helper
@@ -74,6 +84,10 @@ defmodule HalC2.Subprocess.Orphans do
   @doc "`opts[:owner]` replaces this MC's identity in the records it writes, for tests."
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
+  # The name is free of KEY, SECRET and TOKEN: providers that filter what their
+  # commands inherit (Codex's default shell policy) drop names with those in them.
+  @mark_var "HAL_C2_PROGRAM_ID"
+
   @doc "Where the records live."
   def dir, do: Path.join(HalC2.Paths.state_dir(), "subprocesses")
 
@@ -102,8 +116,14 @@ defmodule HalC2.Subprocess.Orphans do
       Application.get_env(:hal_c2, :start_mc, false) and
         HalC2.Paths.platform() != :windows
 
+  @doc "A new mark for a program, and the environment entry that carries it."
+  def new_mark do
+    mark = Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
+    {mark, {@mark_var, mark}}
+  end
+
   @doc """
-  Records the program `os_pid`, run by the Exile process `proc`, until `proc` ends.
+  Records the program `os_pid`, started with the environment entry of `mark`, run by the Exile process `proc`, until `proc` ends.
   `track/2` writes the record in the calling process, not in this service, so a
   program started while the service restarts is still on disk for the next boot; only
   removing the record when the program ends needs the service. `{:error, reason}` when
@@ -116,16 +136,16 @@ defmodule HalC2.Subprocess.Orphans do
   service's `init/1`, or after a hot upgrade before it is started — refuses
   with `:not_started` instead, and logs it once.
   """
-  @spec track(pid, pos_integer) :: :ok | {:error, term}
-  def track(proc, os_pid) do
+  @spec track(pid, pos_integer, String.t()) :: :ok | {:error, term}
+  def track(proc, os_pid, mark) do
     case :persistent_term.get(__MODULE__, nil) do
-      %{dir: dir, owner: owner} -> record(dir, owner, proc, os_pid)
+      %{dir: dir, owner: owner} -> record(dir, owner, proc, os_pid, mark)
       {:unavailable, reason} -> {:error, reason}
       nil -> untracked()
     end
   end
 
-  defp record(dir, owner, proc, os_pid) do
+  defp record(dir, owner, proc, os_pid, mark) do
     case process_result(os_pid) do
       # Already gone: nothing to record. Unreadable is not gone: refuse, as a
       # failed write is refused, rather than run the program unrecorded.
@@ -139,7 +159,7 @@ defmodule HalC2.Subprocess.Orphans do
         # The start time in the name keeps a reused pid's record apart from the one
         # before.
         path = Path.join(dir, "#{os_pid}-#{:erlang.phash2(started)}.json")
-        record = %{"pid" => os_pid, "started" => started, "mc" => owner}
+        record = %{"pid" => os_pid, "started" => started, "mark" => mark, "mc" => owner}
 
         # Written whole under another name, then renamed, so a VM that dies mid-write
         # leaves no partial record. `reap/2` reads a `.tmp` like any record, and drops
@@ -595,7 +615,7 @@ defmodule HalC2.Subprocess.Orphans do
             "pid" => pid,
             "started" => started,
             "mc" => %{"pid" => mc, "started" => mc_started} = owner
-          }}
+          } = record}
        )
        when is_integer(pid) and pid > 1 and is_binary(started) and is_integer(mc) and mc > 0 and
               is_binary(mc_started) do
@@ -623,8 +643,7 @@ defmodule HalC2.Subprocess.Orphans do
             :kept
 
           _gone_or_reused ->
-            File.rm(path)
-            :gone
+            sweep(path, pid, record["mark"])
         end
     end
   end
@@ -632,5 +651,80 @@ defmodule HalC2.Subprocess.Orphans do
   defp reap_record(path, _malformed) do
     File.rm(path)
     :gone
+  end
+
+  # The program is gone: kills what it left in its group, until none is left. With no
+  # `/proc` to read marks from, or no mark (a record from before marks), nothing can
+  # be told from a stranger, so nothing is signalled.
+  defp sweep(path, group, mark) when is_binary(mark) and mark != "" do
+    if File.dir?("/proc/self") do
+      sweep(path, group, "#{@mark_var}=#{mark}", 50, :gone)
+    else
+      File.rm(path)
+      :gone
+    end
+  end
+
+  defp sweep(path, _group, _mark) do
+    File.rm(path)
+    :gone
+  end
+
+  # Marks are read afresh each round, so a command that forked meanwhile is caught and
+  # each pid is signalled right after its mark is read. Nothing signals an outside
+  # process's death, so the result is awaited, bounded, as in `await_left/3`; what stays
+  # keeps the record for the next boot.
+  defp sweep(path, group, entry, tries, outcome) do
+    case members(group, entry) do
+      [] ->
+        File.rm(path)
+        outcome
+
+      _left when tries == 0 ->
+        Logger.warning("commands of group #{group}, which an earlier MC left, are still there")
+        :kept
+
+      :unknown ->
+        Process.sleep(10)
+        sweep(path, group, entry, tries - 1, outcome)
+
+      pids ->
+        System.cmd("kill", ["-KILL", "--" | Enum.map(pids, &to_string/1)], stderr_to_stdout: true)
+
+        Process.sleep(10)
+        sweep(path, group, entry, tries - 1, :killed)
+    end
+  end
+
+  # The running processes in `group` that carry `entry`, never this MC itself, or
+  # `:unknown` when one could not be read (it is likely exiting, which the next round
+  # sees) or `/proc` cannot be listed.
+  defp members(group, entry) do
+    with {:ok, names} <- File.ls("/proc") do
+      me = System.pid()
+
+      Enum.reduce_while(names, [], fn name, pids ->
+        with true <- name != me and name =~ ~r/^\d+$/,
+             {:ok, {state, _started, ^group}} when state not in ["Z", "X"] <-
+               process_result(name),
+             true <- marked?(name, entry) do
+          {:cont, [String.to_integer(name) | pids]}
+        else
+          :unknown -> {:halt, :unknown}
+          _other -> {:cont, pids}
+        end
+      end)
+    else
+      _ -> :unknown
+    end
+  end
+
+  # An environ that cannot be read (another user's, one exiting) carries no mark we
+  # can prove. Compared whole, so no other variable's value can pass for it.
+  defp marked?(pid, entry) do
+    case File.read("/proc/#{pid}/environ") do
+      {:ok, environ} -> entry in :binary.split(environ, <<0>>, [:global])
+      {:error, _} -> false
+    end
   end
 end

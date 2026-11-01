@@ -39,10 +39,12 @@ defmodule HalC2.Subprocess do
     cmd = spawn_command(cmd)
     {prefix, opts} = Keyword.pop(opts, :stderr_prefix)
     stderr = if prefix, do: :consume, else: :disable
+    {mark, entry} = HalC2.Subprocess.Orphans.new_mark()
+    opts = Keyword.update(opts, :env, [entry], &(Enum.to_list(&1 || []) ++ [entry]))
 
     with :ok <- trackable(),
          {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, stderr)),
-         :ok <- track(proc) do
+         :ok <- track(proc, mark) do
       owner = self()
       reader = spawn_link(fn -> reader_init(proc, owner) end)
       :ok = Proc.change_pipe_owner(proc, :stdout, reader)
@@ -89,10 +91,10 @@ defmodule HalC2.Subprocess do
   # wakes, and the caller is a session's start. A program already gone (its Exile
   # process ended, or the port has no pid) has nothing to record, as in
   # `Orphans.track/2`.
-  defp track(proc) do
+  defp track(proc, mark) do
     case os_pid_of(proc) do
       {:ok, os_pid} ->
-        track(proc, os_pid)
+        track(proc, os_pid, mark)
 
       :gone ->
         :ok
@@ -121,8 +123,8 @@ defmodule HalC2.Subprocess do
     :exit, reason -> {:error, {:os_pid, {:exit, reason}}}
   end
 
-  defp track(proc, os_pid) do
-    with {:error, reason} <- HalC2.Subprocess.Orphans.track(proc.pid, os_pid) do
+  defp track(proc, os_pid, mark) do
+    with {:error, reason} <- HalC2.Subprocess.Orphans.track(proc.pid, os_pid, mark) do
       stop_untracked(proc, os_pid)
       {:error, {:untracked, reason}}
     end
