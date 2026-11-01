@@ -318,6 +318,57 @@ Item {
             compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.restore", "space.page.delete"]);
         }
 
+        function site(more) {
+            return Object.assign({ id: "page-1", title: "Roadmap", parentPageId: "", trashed: false, sourceThreadId: "", sourceThreadTitle: "",
+                                   site: { url: "http://192.168.1.20:3773/sites/space-1/token", localOnly: false, behind: false, publishedAt: "" } }, more);
+        }
+
+        function test_an_unpublished_page_shows_no_site_and_offers_publishing() {
+            const view = root.research();
+            verify(!findChild(view, "spaceSiteBanner").visible);
+            mouseClick(findChild(view, "spacePageActions"));
+            const publish = findChild(view, "spacePublish");
+            verify(publish.visible);
+            compare(publish.text, "Publish as a site");
+            verify(!findChild(view, "spaceUnpublish").visible);
+            verify(!findChild(view, "spaceCopySiteLink").visible);
+            publish.triggered();
+            compare(dispatched("space.page.publish"), [{ pageId: "page-1" }]);
+        }
+
+        function test_a_published_page_shows_its_link_and_the_ways_on_and_back() {
+            const view = root.research({ page: site() });
+            verify(findChild(view, "spaceSiteBanner").visible);
+            compare(findChild(view, "spaceSiteLink").text, "http://192.168.1.20:3773/sites/space-1/token");
+            compare(findChild(view, "spacePublish").text, "Publish again");
+            verify(!findChild(view, "spaceSiteLocalOnly").visible);
+            mouseClick(findChild(view, "spaceSiteCopy"));
+            mouseClick(findChild(view, "spaceSiteRepublish"));
+            mouseClick(findChild(view, "spaceSiteUnpublish"));
+            compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.copySiteLink", "space.page.publish", "space.page.unpublish"]);
+        }
+
+        function test_the_page_says_when_its_site_is_behind() {
+            const view = root.research({ page: site() });
+            const upToDate = findChild(view, "spaceSiteStatus").text;
+            Spaces.page = site({ site: { url: "http://mc/sites/s/t", localOnly: false, behind: true, publishedAt: "" } });
+            verify(findChild(view, "spaceSiteStatus").text !== upToDate);
+        }
+
+        function test_a_link_only_this_machine_can_open_says_so_with_the_way_on() {
+            const view = root.research({ page: site({ site: { url: "http://127.0.0.1:3773/sites/s/t", localOnly: true, behind: false, publishedAt: "" } }) });
+            verify(findChild(view, "spaceSiteLocalOnly").visible);
+            mouseClick(findChild(view, "spaceSiteTailscale"));
+            compare(dispatched("space.page.publish"), [{ pageId: "page-1", tailscale: true }]);
+        }
+
+        function test_a_trashed_page_offers_no_publishing() {
+            const view = root.research({ page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: true, sourceThreadId: "", sourceThreadTitle: "" } });
+            mouseClick(findChild(view, "spacePageActions"));
+            verify(!findChild(view, "spacePublish").visible);
+            verify(findChild(view, "spaceCopyMarkdown").visible);
+        }
+
         function test_the_trash_restores_and_deletes_for_good() {
             const view = root.research({ trash: [{ id: "page-9", title: "Old", trashedAt: "2026-09-23T10:00:00.000Z" }] });
             const trash = findChild(view, "spaceTrash");

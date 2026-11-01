@@ -15,8 +15,8 @@ import {
  * Spaces hold Pages that people and agents write together. Clients read them
  * from streams, the same subscribe/resume path as projects and threads:
  * `SPACES_STREAM_ID` holds one `space` entity per Space, and `spaceStreamId(id)`
- * holds that Space's `page`, `block`, `comment` and `image` entities. The RPCs below
- * change them. An image's bytes are never on a stream: fetch them on demand from the
+ * holds that Space's `page`, `block`, `comment`, `image` and `site` entities. The RPCs
+ * below change them. An image's bytes are never on a stream: fetch them on demand from the
  * address `assets.createUrl` signs for a `space-image`.
  */
 export const SPACES_STREAM_ID = "spaces";
@@ -226,6 +226,55 @@ export type SpacePageMoveInput = typeof SpacePageMoveInput.Type;
 export const SpacePageRef = Schema.Struct({ spaceId: SpaceId, pageId: SpacePageId });
 export type SpacePageRef = typeof SpacePageRef.Type;
 
+/** A block as a published site shows it. A link to another page is only that page's title. */
+export const SpaceSiteBlock = Schema.Struct({
+  kind: SpaceBlockKind,
+  text: Schema.String,
+  checked: Schema.optional(Schema.Boolean),
+});
+export type SpaceSiteBlock = typeof SpaceSiteBlock.Type;
+
+/**
+ * A page published as a site, one per page, in the Space's stream. `id` is the secret in
+ * `url`: anyone holding the link reads `snapshot`, the page as it was at `publishedAt`,
+ * and nothing else. `behind` says the page has changed since. `localOnly` says only the
+ * MC's own machine can open `url`.
+ */
+export const SpaceSite = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  url: TrimmedNonEmptyString,
+  localOnly: Schema.Boolean,
+  publishedAt: IsoDateTime,
+  behind: Schema.Boolean,
+  snapshot: Schema.Struct({
+    title: TrimmedNonEmptyString,
+    blocks: Schema.Array(SpaceSiteBlock),
+  }),
+});
+export type SpaceSite = typeof SpaceSite.Type;
+
+/**
+ * Publishes a live page, or brings its site up to date under the same link. The link is
+ * on `baseUrl` when the caller knows an address others reach the MC at, over Tailscale
+ * with `tailscale` (which needs `access:write`), else on the address the MC listens on.
+ */
+export const SpacePagePublishInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  baseUrl: Schema.optional(TrimmedNonEmptyString),
+  tailscale: Schema.optional(Schema.Boolean),
+});
+export type SpacePagePublishInput = typeof SpacePagePublishInput.Type;
+
+export const SpacePagePublishResult = Schema.Struct({ site: SpaceSite });
+export type SpacePagePublishResult = typeof SpacePagePublishResult.Type;
+
+/** Takes the page's site down for good: publishing later makes a new link. */
+export const SpacePageUnpublishResult = Schema.Struct({ pageId: SpacePageId });
+export type SpacePageUnpublishResult = typeof SpacePageUnpublishResult.Type;
+
 export const SpacePageResult = Schema.Struct({ page: SpacePage });
 export type SpacePageResult = typeof SpacePageResult.Type;
 
@@ -384,7 +433,7 @@ export type SpaceImageProvidersResult = typeof SpaceImageProvidersResult.Type;
 /** A Space request the MC refused: something missing, a page in the trash, a move into itself. */
 export class SpaceError extends Schema.TaggedError<SpaceError>()("SpaceError", {
   message: Schema.String,
-  reason: Schema.Literals(["invalid", "notFound", "trashed", "notEmpty", "cycle"]),
+  reason: Schema.Literals(["invalid", "notFound", "trashed", "notEmpty", "cycle", "unavailable"]),
 }) {}
 
 /**
