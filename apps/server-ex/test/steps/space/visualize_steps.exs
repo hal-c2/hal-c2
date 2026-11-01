@@ -27,7 +27,9 @@ defmodule HalC2.Steps.Space.Visualize do
       |> World.add_message("Work", "assistant", "not a turn")
       |> World.add_message("Work", "user", "two")
 
-    # Indexing is a cast the store has by the time it answers a write.
+    # The pass a start runs, which may not have ended. Its write also waits out the index,
+    # a cast the store has by the time it answers.
+    :ok = HalC2.Search.backfill()
     Store.put_meta("test.flush", "1")
     Map.put(context, :turns_taken, 2)
   end

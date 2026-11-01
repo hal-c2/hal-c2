@@ -528,12 +528,8 @@ defmodule HalC2.Store do
   end
 
   defp open(path, db) do
-    new? = not table?(db, "streams")
     Enum.each(@schema, &(:ok = Sqlite3.execute(db, &1)))
     add_typed(db)
-    # A new store has no older threads to read (`Search.backfill/0`).
-    if new?,
-      do: :ok = Sqlite3.execute(db, "INSERT OR IGNORE INTO meta VALUES ('messages_typed', '1')")
 
     :ok =
       Sqlite3.execute(
@@ -630,14 +626,6 @@ defmodule HalC2.Store do
     :ok = Sqlite3.release(db, stmt)
     :persistent_term.put({:id, path_key(self())}, id)
     id
-  end
-
-  defp table?(db, name) do
-    {:ok, stmt} = Sqlite3.prepare(db, "SELECT 1 FROM sqlite_master WHERE name = ?1")
-    :ok = Sqlite3.bind(stmt, [name])
-    found = Sqlite3.step(db, stmt) != :done
-    :ok = Sqlite3.release(db, stmt)
-    found
   end
 
   # A column an older MC ignores, so the schema version stays and it can still open this

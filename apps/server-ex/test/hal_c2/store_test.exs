@@ -304,9 +304,8 @@ defmodule HalC2.StoreTest do
     assert Store.search_messages(path, "%two%", 10) == []
   end
 
-  test "a store an older MC wrote gains the column and is left to be read", %{path: path} do
+  test "a store an older MC wrote gains the column, and its rows wait to be read", %{path: path} do
     {:ok, _} = Store.append([{:thread, "t1", [change("t1")]}])
-    assert Store.meta(path, "messages_typed") == "1"
     :ok = stop_supervised(Store)
 
     {:ok, db} = Sqlite3.open(path)
@@ -315,7 +314,6 @@ defmodule HalC2.StoreTest do
       Sqlite3.execute(db, """
       DROP INDEX messages_typed;
       ALTER TABLE messages DROP COLUMN typed;
-      DELETE FROM meta WHERE key = 'messages_typed';
       INSERT INTO messages (stream, id, role, text, created_at)
         SELECT key, 'm1', 'user', 'old', '2026-01-01T09:00:00Z' FROM streams;
       """)
@@ -323,7 +321,6 @@ defmodule HalC2.StoreTest do
     :ok = Sqlite3.close(db)
     start_supervised!({Store, path: path})
 
-    assert Store.meta(path, "messages_typed") == nil
     assert Store.typed_messages_since(path, "2026-01-01") == []
     assert [{"t1", "user", "old", _}] = Store.search_messages(path, "%old%", 10)
 
