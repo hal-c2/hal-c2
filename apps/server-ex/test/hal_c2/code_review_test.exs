@@ -368,6 +368,29 @@ defmodule HalC2.CodeReviewTest do
     assert sessions_stopped?(thread_id)
   end
 
+  test "a stop cancels the queue before the end of the interrupted run can start it",
+       _context do
+    System.put_env("FAKE_CODEX_END_BEFORE_INTERRUPT_REPLY", "1")
+    on_exit(fn -> System.delete_env("FAKE_CODEX_END_BEFORE_INTERRUPT_REPLY") end)
+    review = start_review()
+    thread_id = review["threadId"]
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "queued-message",
+        "text" => "and another thing",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "queue_after_active"}
+      })
+
+    assert :ok = HalC2.Orchestration.stop_plugin_thread(thread_id, @id)
+
+    runs = HalC2.Streams.state(thread_id) |> HalC2.StreamState.list("run")
+    assert Enum.find(runs, &(&1["userMessageId"] == "queued-message"))["status"] == "cancelled"
+  end
+
   test "a stop walks through a task that already ended to the task below it", _context do
     review = start_review()
     thread_id = review["threadId"]
