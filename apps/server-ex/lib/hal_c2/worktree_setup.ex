@@ -351,7 +351,10 @@ defmodule HalC2.WorktreeSetup do
           entry
       end)
 
-    {:ok, %{state | watchers: watchers}}
+    setups =
+      Map.new(state.setups, fn {id, setup} -> {id, Map.put_new(setup, :superseded, false)} end)
+
+    {:ok, %{state | watchers: watchers, setups: setups}}
   end
 
   defp forget(state, thread_id) do
