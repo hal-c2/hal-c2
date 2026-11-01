@@ -625,7 +625,7 @@ defmodule HalC2.Vcs do
         else: ["worktree", "add", path, ref]
 
     fresh = not File.exists?(path)
-    new_branch = input["newRefName"] && not ref?(cwd, "refs/heads/#{input["newRefName"]}")
+    new_branch = input["newRefName"] && not branch?(cwd, input["newRefName"])
 
     with :ok <-
            run(
@@ -652,15 +652,27 @@ defmodule HalC2.Vcs do
   # it was to make (`branch`, nil when there was none or it was there before), in a path
   # that was free. A failure with an exit code changed nothing.
   defp clear_cut_short({:error, error}, cwd, path, branch)
-       when not is_map_key(error, "exitCode") do
+       when not is_map_key(error, "exitCode"),
+       do: clear_worktree(cwd, path, branch)
+
+  defp clear_cut_short(_result, _cwd, _path, _branch), do: :ok
+
+  @doc """
+  Takes away a worktree this MC made in a folder that was free, whole or cut short: the
+  folder, git's record of it, and `branch` when that is one it made too (else nil).
+  What git started for it must have stopped (`Git.stop_children/1`).
+  """
+  def clear_worktree(cwd, path, branch) do
     Git.run(cwd, ["worktree", "unlock", path])
     Git.run(cwd, ["worktree", "remove", "--force", path], timeout: worktree_timeout())
     File.rm_rf(path)
     Git.run(cwd, ["worktree", "prune"])
     if branch, do: Git.run(cwd, ["branch", "-D", branch])
+    changed(cwd)
   end
 
-  defp clear_cut_short(_result, _cwd, _path, _branch), do: :ok
+  @doc "Whether `name` is a local branch of the checkout `cwd`."
+  def branch?(cwd, name), do: ref?(cwd, "refs/heads/#{name}")
 
   @doc "How long `git worktree add` and `git worktree remove` may run, in ms."
   def worktree_timeout, do: Application.get_env(:hal_c2, :worktree_timeout, @worktree_timeout)

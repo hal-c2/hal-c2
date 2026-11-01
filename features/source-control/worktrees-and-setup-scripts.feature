@@ -281,6 +281,16 @@ Feature: Worktrees and setup scripts
     When the user cancels the setup
     Then what the checkout started is no longer running
     And the worktree is removed
+    And neither the worktree nor its new branch is left in "shop"
+    And the thread no longer points at a worktree
+    And the setup is reported as cancelled
+
+  @mc
+  Scenario: Cancelling setup while its branch is being named
+    Given a thread's worktree setup is running its script while its branch is being named
+    When the user cancels the setup
+    Then the branch is no longer being named
+    And neither the worktree nor its new branch is left in "shop"
     And the thread no longer points at a worktree
     And the setup is reported as cancelled
 

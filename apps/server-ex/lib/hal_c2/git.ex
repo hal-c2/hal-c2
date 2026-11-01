@@ -40,6 +40,7 @@ defmodule HalC2.Git do
   # The program says its pid before it becomes git, as Exile's stream does not tell it,
   # and says it where `stop_children/1` can find it when the caller was killed instead.
   defp stopping_children(key, argv, run) do
+    File.mkdir_p!(Path.dirname(children_file(key)))
     result = run.(["sh", "-c", ~s(echo $$ > "$0"; exec "$@"), children_file(key) | argv])
 
     if match?({:ok, {:ok, _}}, result),
@@ -65,7 +66,7 @@ defmodule HalC2.Git do
   end
 
   defp children_file(key),
-    do: Path.join(System.tmp_dir!(), "hal-c2-git-#{System.pid()}-#{:erlang.phash2(key)}")
+    do: Path.join([HalC2.Paths.state_dir(), "git", "#{System.pid()}-#{:erlang.phash2(key)}"])
 
   # SIGKILL cannot be held off, so this waits only for the kernel to take them down.
   defp stop_group(group, tries \\ 100) do

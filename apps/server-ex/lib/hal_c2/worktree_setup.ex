@@ -106,6 +106,8 @@ defmodule HalC2.WorktreeSetup do
       run_id: run_id,
       root: project["workspaceRoot"],
       claimed: nil,
+      new_branch: nil,
+      naming: nil,
       cancellable: true
     }
 
@@ -125,6 +127,7 @@ defmodule HalC2.WorktreeSetup do
       %{cancellable: true, worker: worker} = setup when is_pid(worker) ->
         Process.unlink(worker)
         Process.exit(worker, :kill)
+        stop_naming(setup.naming)
         cleanup(thread_id, setup)
         state = update(state, thread_id, &finish(&1, "cancelled", nil))
         state = put_in(state.setups[thread_id].worker, nil)
@@ -143,15 +146,28 @@ defmodule HalC2.WorktreeSetup do
       else: {:reply, :ok, state}
   end
 
-  # The worktree's folder, claimed before `git worktree add` so a cancel during the
-  # checkout still removes it.
-  def handle_call({:claim, thread_id, path}, _from, state) do
+  # The worktree's folder, and its branch if the add will make one, claimed before
+  # `git worktree add` so a cancel during the checkout still removes them.
+  def handle_call({:claim, thread_id, path, new_branch}, _from, state) do
     state =
-      if state.setups[thread_id],
-        do: put_in(state.setups[thread_id].claimed, path),
+      if setup = state.setups[thread_id],
+        do: put_in(state.setups[thread_id], %{setup | claimed: path, new_branch: new_branch}),
         else: state
 
     {:reply, :ok, state}
+  end
+
+  # Started here so that no cancel falls between the task starting and it being known.
+  # A cancel can kill the worker while this call waits in the queue.
+  def handle_call({:name_branch, thread_id, path, old, text}, {worker, _}, state) do
+    case state.setups[thread_id] do
+      %{worker: ^worker, run_id: run_id} ->
+        naming = rename_later(thread_id, run_id, path, old, text)
+        {:reply, :ok, put_in(state.setups[thread_id].naming, naming)}
+
+      _ ->
+        {:reply, :ok, state}
+    end
   end
 
   def handle_call({:uncancellable, thread_id}, _from, state) do
@@ -304,9 +320,13 @@ defmodule HalC2.WorktreeSetup do
       # A checkout cut short leaves what git started still writing, and the worktree
       # locked as "initializing". A claimed folder was free, so all of it is the setup's.
       HalC2.Git.stop_children(path)
-      HalC2.Git.run(setup.root, ["worktree", "unlock", path])
-      HalC2.Vcs.remove_worktree(%{"cwd" => setup.root, "path" => path, "force" => true})
-      if setup.claimed, do: File.rm_rf(setup.claimed)
+
+      if setup.claimed do
+        HalC2.Vcs.clear_worktree(setup.root, path, made_branch(setup, path))
+      else
+        HalC2.Git.run(setup.root, ["worktree", "unlock", path])
+        HalC2.Vcs.remove_worktree(%{"cwd" => setup.root, "path" => path, "force" => true})
+      end
 
       Orchestration.dispatch(%{
         "type" => "thread.metadata.update",
@@ -319,6 +339,31 @@ defmodule HalC2.WorktreeSetup do
     Orchestration.fail_prepared(thread_id, setup.run_id, "cancelled")
   rescue
     error -> Logger.warning("worktree cleanup for #{thread_id}: #{Exception.message(error)}")
+  end
+
+  # The branch the setup made, under the name it has now: naming it may have finished.
+  # A folder without `.git` would answer for whatever repository is around it.
+  defp made_branch(%{new_branch: nil}, _path), do: nil
+
+  defp made_branch(%{new_branch: branch}, path) do
+    with true <- File.exists?(Path.join(path, ".git")),
+         {:ok, out} when out != "" <- HalC2.Git.ok(path, ["branch", "--show-current"]) do
+      String.trim(out)
+    else
+      _ -> branch
+    end
+  end
+
+  # Gone when this returns, so nothing it would write lands after the cancel's own.
+  defp stop_naming(nil), do: :ok
+
+  defp stop_naming(naming) do
+    ref = Process.monitor(naming)
+    Process.exit(naming, :kill)
+
+    receive do
+      {:DOWN, ^ref, _, _, _} -> :ok
+    end
   end
 
   # --- the worker ------------------------------------------------------------------
@@ -360,7 +405,11 @@ defmodule HalC2.WorktreeSetup do
     branch = temporary || strategy["branch"]
 
     path = HalC2.Vcs.worktree_path(root, branch)
-    unless File.exists?(path), do: GenServer.call(server, {:claim, thread_id, path})
+
+    unless File.exists?(path) do
+      new_branch = if not HalC2.Vcs.branch?(root, branch), do: branch
+      GenServer.call(server, {:claim, thread_id, path, new_branch})
+    end
 
     {path, branch} =
       case HalC2.Vcs.create_worktree(
@@ -389,7 +438,9 @@ defmodule HalC2.WorktreeSetup do
 
     status.("checkout", "done", %{"percent" => 100})
     submodules(root, path, set, status)
-    if branch == temporary, do: rename_later(thread_id, run_id, path, branch, text)
+
+    if branch == temporary,
+      do: GenServer.call(server, {:name_branch, thread_id, path, branch, text})
 
     Orchestration.progress_prepared(thread_id, run_id, "setup")
 
@@ -711,38 +762,38 @@ defmodule HalC2.WorktreeSetup do
   end
 
   # The temporary branch gets a name from the first message, in the background. The
-  # worktree works on its temporary branch if that fails.
+  # worktree works on its temporary branch if that fails. A cancel stops it.
   defp rename_later(thread_id, run_id, path, old, text) do
-    Task.start(fn ->
-      with {:ok, %{"branch" => generated}} <- HalC2.TextGeneration.branch_name(path, text || ""),
-           name when name != "" <- sanitize(generated) do
-        case HalC2.Vcs.rename_branch(path, old, name) do
-          {:ok, new} ->
-            HalC2.Vcs.Watch.refresh(path)
+    {:ok, naming} =
+      Task.start(fn ->
+        with {:ok, %{"branch" => generated}} <- HalC2.TextGeneration.branch_name(path, text || ""),
+             name when name != "" <- sanitize(generated) do
+          case HalC2.Vcs.rename_branch(path, old, name) do
+            {:ok, new} ->
+              HalC2.Vcs.Watch.refresh(path)
 
-            Orchestration.dispatch(%{
-              "type" => "thread.metadata.update",
-              "threadId" => thread_id,
-              "branch" => new,
-              "worktreePath" => path
-            })
+              Orchestration.dispatch(%{
+                "type" => "thread.metadata.update",
+                "threadId" => thread_id,
+                "branch" => new,
+                "worktreePath" => path
+              })
 
-          # A cancel removed the worktree under it, and the user knows.
-          {:error, reason} ->
-            if File.dir?(path) do
+            {:error, reason} ->
               Orchestration.warn_prepared(
                 thread_id,
                 run_id,
                 "The branch was not renamed",
                 message(reason)
               )
-            end
+          end
+        else
+          {:error, reason} -> Logger.warning("branch name not generated: #{message(reason)}")
+          _ -> :ok
         end
-      else
-        {:error, reason} -> Logger.warning("branch name not generated: #{message(reason)}")
-        _ -> :ok
-      end
-    end)
+      end)
+
+    naming
   end
 
   defp sanitize(raw) do

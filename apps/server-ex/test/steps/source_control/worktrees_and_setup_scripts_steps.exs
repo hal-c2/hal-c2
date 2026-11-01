@@ -346,6 +346,33 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
+  step "a thread's worktree setup is running its script while its branch is being named",
+       context do
+    context = context |> Shared.answering_writer() |> put_setup(nil, "read _", false)
+    writer = Path.join(Mc.tmp_dir(context.mc, "writer"), "held")
+    File.write!(writer, "#!/bin/sh\nexec sleep 600\n")
+    File.chmod!(writer, 0o755)
+    Application.put_env(:hal_c2, :text_claude_command, writer)
+
+    context = launch(context, "list the files")
+
+    {snapshot, context} =
+      World.await_setup(context, &(World.setup_stage(&1, "setup-script") == "running"))
+
+    naming = :sys.get_state(HalC2.WorktreeSetup).setups[context.setup_thread].naming
+    assert Process.alive?(naming)
+
+    Map.merge(context, %{
+      naming: naming,
+      worktree: %{path: snapshot["worktreePath"], root: World.project(context).root}
+    })
+  end
+
+  step "the branch is no longer being named", context do
+    refute Process.alive?(context.naming)
+    context
+  end
+
   step "what the checkout started is no longer running", context do
     {_, status} = System.cmd("kill", ["-0", context.hook_pid], stderr_to_stdout: true)
     assert status != 0, "the checkout's hook #{context.hook_pid} is still running"
