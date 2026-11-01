@@ -1335,6 +1335,31 @@ Feature: Planner
       And the user removes "Issue 7"
       Then GitHub is asked last to move #7 out of its milestone
 
+    # The same removal while the milestone waits on GitHub for another push. That push may
+    # never report, or report twice, and the issue still has to go.
+    @mc
+    Scenario: A task removed during a push that then stops still takes its issue out of the milestone
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub refuses moving #7 to "Launch"
+      And GitHub takes moving #9 to "Beta" late
+      When the user moves "Issue 7" from "Beta" to "Launch"
+      And while GitHub holds moving "Issue 9" from "Launch" to "Beta", the user removes "Issue 7" and the push is stopped
+      And the user moves "Issue 9" from "Beta" to "Launch"
+      Then GitHub is asked last to move #7 out of its milestone
+
+    @mc
+    Scenario: A task removed during a push answered again after a restart still takes its issue out of the milestone
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub refuses moving #7 to "Launch"
+      And GitHub takes moving #9 to "Beta" late
+      And GitHub takes moving #7 out of its milestone late
+      When the user moves "Issue 7" from "Beta" to "Launch"
+      And while GitHub holds moving "Issue 9" from "Launch" to "Beta", the user removes "Issue 7" and GitHub takes the move
+      And "planner" is restarted and that answer is reported to the planner again
+      Then the answer reported again moves #7 out of its milestone
+
     @mc
     Scenario: A dependency on a task without an issue stays in the plan
       Given "planner" syncs "acme/api" both ways

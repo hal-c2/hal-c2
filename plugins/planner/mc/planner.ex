@@ -1091,8 +1091,10 @@ defmodule HalC2Plugins.Planner do
     state = %{state | items: Sync.landed(state.items, moved)}
     item = state.items[id] |> Map.merge(extra) |> Map.put("syncError", error)
     item = if stated, do: %{item | "issue" => Map.merge(item["issue"], stated)}, else: item
-    # What the task's change meanwhile left behind: the report's `synced` was made without.
-    item = Map.update!(item, "synced", &Sync.left_behind(&1, flight[:left] || []))
+    # What the task's change meanwhile left behind: the report's `synced` was made without,
+    # a resent one as well as the first.
+    left = if(replay?, do: flight[:answered_left] || [], else: []) ++ (flight[:left] || [])
+    item = Map.update!(item, "synced", &Sync.left_behind(&1, left))
     stale? = Sync.reasserts(moved, [], state.items, state.projects) != []
 
     {next, state} =
@@ -1116,6 +1118,7 @@ defmodule HalC2Plugins.Planner do
             leg: next_leg,
             moving: Sync.moving(ops),
             left: [],
+            answered_left: left,
             answered: reported,
             answered_leg: leg,
             answered_board: leg_board,
@@ -1858,8 +1861,22 @@ defmodule HalC2Plugins.Planner do
         state.pushing[id] ->
           flight = state.pushing[id]
           flight = %{flight | changed: true}
-          flight = Map.put(flight, :left, (flight[:left] || []) ++ Map.get(left, id, []))
-          {pushes, put_in(state.pushing[id], flight)}
+          marks = Map.get(left, id, [])
+          flight = Map.put(flight, :left, (flight[:left] || []) ++ marks)
+          state = put_in(state.pushing[id], flight)
+
+          # On the task too, for a flight that ends without a report; a report's `synced`
+          # has none of them, so the flight keeps them to put back.
+          state =
+            if marks == [],
+              do: state,
+              else:
+                put_in(
+                  state.items[id]["synced"],
+                  Sync.synced(old, new, before) |> Sync.left_behind(marks)
+                )
+
+          {pushes, state}
 
         true ->
           synced = Sync.synced(old, new, before) |> Sync.left_behind(Map.get(left, id, []))
@@ -2135,6 +2152,7 @@ defmodule HalC2Plugins.Planner do
                 leg: leg,
                 moving: loaded_moving(saved["moving"]),
                 left: saved["left"] || [],
+                answered_left: saved["answeredLeft"] || [],
                 answered: answered,
                 answered_leg: answered_leg,
                 answered_board: saved["answeredBoard"],
@@ -2260,6 +2278,7 @@ defmodule HalC2Plugins.Planner do
             "leg" => saved_term(flight[:leg]),
             "moving" => flight[:moving] || [],
             "left" => flight[:left] || [],
+            "answeredLeft" => flight[:answered_left] || [],
             "answered" => saved_term(answered),
             "answeredBoard" => flight[:answered_board]
           }
