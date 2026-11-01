@@ -998,8 +998,15 @@ defmodule HalC2.PluginsPropTest do
       {:DOWN, ^ref, _, _, _} -> :ok
     end
 
-    :sys.get_state(sup)
+    await_restart(plugin_module(id), sup)
     {:ok, Map.put(observe(), :worker_settings, running_settings(id))}
+  end
+
+  # A killed worker's `:DOWN` can reach the test before its exit reaches the supervisor,
+  # so a supervisor that answers may not have heard of the kill yet: ask until it restarted.
+  defp await_restart(module, sup) do
+    :sys.get_state(sup)
+    if !Process.whereis(module), do: await_restart(module, sup)
   end
 
   # A worker announced in the form a host from before an update in place took, queued
@@ -1028,26 +1035,31 @@ defmodule HalC2.PluginsPropTest do
 
   defp kill_until_down(_module, _sup, _ref, 0), do: raise("the plugin's supervisor never gave up")
 
+  # Only a kill spends the bound: with no worker to kill, the supervisor has yet to hear
+  # of the last kill (`await_restart/2`), and it either restarts the worker or gives up.
   defp kill_until_down(module, sup, sup_ref, left) do
-    if worker = Process.whereis(module) do
-      ref = Process.monitor(worker)
-      Process.exit(worker, :kill)
+    left =
+      if worker = Process.whereis(module) do
+        ref = Process.monitor(worker)
+        Process.exit(worker, :kill)
 
-      receive do
-        {:DOWN, ^ref, _, _, _} -> :ok
+        receive do
+          {:DOWN, ^ref, _, _, _} -> left - 1
+        end
+      else
+        left
       end
 
-      try do
-        :sys.get_state(sup)
-      catch
-        :exit, _ -> :ok
-      end
+    try do
+      :sys.get_state(sup)
+    catch
+      :exit, _ -> :ok
     end
 
     receive do
       {:DOWN, ^sup_ref, _, _, _} -> :ok
     after
-      0 -> kill_until_down(module, sup, sup_ref, left - 1)
+      0 -> kill_until_down(module, sup, sup_ref, left)
     end
   end
 
