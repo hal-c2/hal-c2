@@ -4,7 +4,8 @@
 // says nothing matches; a word after it says nothing until the search for that
 // word has answered, and an older word's answer (landing late) never counts.
 // While the environment is away a word not yet answered says it can't be
-// searched, and once it returns that word is asked again and answers.
+// searched, and once it returns that word is asked again and answers. Moving the
+// checkout asks the word again, and the old checkout's late answer never counts.
 // Scope: the caret is at the end of the text, on one thread, with a workspace
 // present. Not modelled: a route with no workspace and switching target between
 // issuing a search and its answer; the claim above is proven only inside this
@@ -22,6 +23,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ThreadStore.h"
+#include "WorkspaceController.h"
 
 namespace prop = halc2::prop;
 
@@ -63,6 +65,7 @@ struct Model {
   // The searches asked so far, each one the MC receives.
   int asked = 0;
   bool online = true;
+  int moves = 0;
 
   // The @ word the composer itself reads from the text with the caret at its
   // end, so the model does not restate the trigger rules.
@@ -147,6 +150,13 @@ struct Sut {
                                                                                                          {QStringLiteral("revision"), ++revision}}},
                                                                     {QStringLiteral("text"), text},
                                                                     {QStringLiteral("cursor"), text.size()}});
+  }
+
+  // The MC's row of the thread changes.
+  void sendThread(const QString& field, const QString& value) {
+    QJsonObject& row = mc.threads[QStringLiteral("t1")];
+    row.insert(field, value);
+    mc.sendRow(QStringLiteral("t1"), row);
   }
 
   QTemporaryDir home;
@@ -256,6 +266,41 @@ struct GoOnline : Command {
   void show(std::ostream& os) const override { os << "GoOnline"; }
 };
 
+// The route moves to another checkout, online: any search is of the old one,
+// and a held answer from it that lands now changes nothing.
+struct MoveCheckout : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.online); }
+  void apply(Model& m) const override {
+    ++m.moves;
+    m.searched.clear();
+    m.answered = false;
+    m.search();
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    const Model m1 = nextState(m0);
+    const QString cwd = QStringLiteral("/work/worktrees/%1").arg(m1.moves);
+    sut.sendThread(QStringLiteral("worktreePath"), cwd);
+    RC_ASSERT(prop::until([&] {
+      const auto& place = sut.native->controller<WorkspaceController>()->place();
+      return place && place->cwd() == cwd;
+    }));
+    RC_ASSERT(prop::until([&] { return fakeFiles(sut.mc).searches >= m1.asked; }));
+    // The newest held answer may be the current search's; older ones never are.
+    if (sut.mc.heldAnswers() >= 2) {
+      sut.mc.answerOldestHeld();
+      // Frames arrive in order, so this row landing means the answer has too.
+      const QString marker = QStringLiteral("moved %1").arg(m1.moves);
+      sut.sendThread(QStringLiteral("title"), marker);
+      RC_ASSERT(prop::until([&] {
+        const auto thread = sut.native->store()->thread(sut.key);
+        return thread && thread->title == marker;
+      }));
+    }
+    verify(m1, sut);
+  }
+  void show(std::ostream& os) const override { os << "MoveCheckout"; }
+};
+
 }  // namespace
 
 class ComposerSuggestionsProp : public QObject {
@@ -267,7 +312,7 @@ private slots:
       Sut sut;
       Model model;
       const auto commands = *rc::gen::scale(
-          0.6, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Type, Type, Type, Hold, AnswerHeld, GoOffline, GoOnline>()));
+          0.6, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Type, Type, Type, Hold, AnswerHeld, GoOffline, GoOnline, MoveCheckout>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
