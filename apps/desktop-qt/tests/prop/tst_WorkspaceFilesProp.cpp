@@ -4,7 +4,8 @@
 // the tab, opens and closes folders and files, searches, retries, and the
 // agent changes the files and the tree is listed again. A media file is never
 // read: it previews from an address the MC signs, which may run out, fail to
-// load, and be signed again.
+// load, and be signed again. A PDF is then downloaded through that address, in
+// any order against everything else, and is not ready before it has come.
 //
 // The model is what the user should see: each folder's listing from the
 // newest request for it that was answered (an older answer landing later is
@@ -18,6 +19,7 @@
 
 #include <QDateTime>
 #include <QJsonArray>
+#include <QTcpSocket>
 
 #include <memory>
 
@@ -29,13 +31,17 @@ namespace {
 
 using Entry = FileTreeModel::Entry;
 
-rc::Gen<QString> oneOf(const QStringList& values) { return rc::gen::elementOf(std::vector<QString>(values.begin(), values.end())); }
+rc::Gen<QString> oneOf(const QStringList &values) {
+  return rc::gen::elementOf(std::vector<QString>(values.begin(), values.end()));
+}
 
-const QStringList kRoots{QStringLiteral("/w1"), QStringLiteral("/w2"), QString()};
+const QStringList kRoots{QStringLiteral("/w1"), QStringLiteral("/w2"),
+                         QString()};
 const QStringList kFolders{QStringLiteral("d"), QStringLiteral("d/e")};
-const QStringList kQueries{QString(), QStringLiteral("w"), QStringLiteral("md"), QStringLiteral("zz")};
+const QStringList kQueries{QString(), QStringLiteral("w"), QStringLiteral("md"),
+                           QStringLiteral("zz")};
 
-QString parentOf(const QString& path) {
+QString parentOf(const QString &path) {
   const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
   return slash < 0 ? QString() : path.left(slash);
 }
@@ -43,50 +49,73 @@ QString parentOf(const QString& path) {
 // A workspace's disk at a version: `d/e` deep, a file in each folder, the
 // top's and the deepest's named after the version so a stale listing shows,
 // and an image and a video.
-QList<Entry> listingOf(const QString& root, int version, const QString& folder) {
+QList<Entry> listingOf(const QString &root, int version,
+                       const QString &folder) {
   const QString tag = root.mid(1);
   const QString v = QString::number(version);
   if (folder.isEmpty())
-    return {{QStringLiteral("d"), true, false}, {QStringLiteral("logo.png"), false, false}, {tag + QLatin1Char('-') + v + QStringLiteral(".txt"), false, false}};
+    return {
+        {QStringLiteral("d"), true, false},
+        {QStringLiteral("logo.png"), false, false},
+        {QStringLiteral("manual.pdf"), false, false},
+        {tag + QLatin1Char('-') + v + QStringLiteral(".txt"), false, false}};
   if (folder == QLatin1String("d"))
-    return {{QStringLiteral("d/e"), true, false}, {QStringLiteral("d/clip.mp4"), false, false}, {QStringLiteral("d/") + tag + QStringLiteral(".md"), false, false}};
-  return {{QStringLiteral("d/e/") + tag + QLatin1Char('-') + v + QStringLiteral(".txt"), false, false}};
+    return {{QStringLiteral("d/e"), true, false},
+            {QStringLiteral("d/clip.mp4"), false, false},
+            {QStringLiteral("d/") + tag + QStringLiteral(".md"), false, false}};
+  return {{QStringLiteral("d/e/") + tag + QLatin1Char('-') + v +
+               QStringLiteral(".txt"),
+           false, false}};
 }
 
-QStringList filesOf(const QString& root, int version) {
+QStringList filesOf(const QString &root, int version) {
   QStringList files;
-  for (const QString& folder : {QString(), QStringLiteral("d"), QStringLiteral("d/e")}) {
-    for (const Entry& entry : listingOf(root, version, folder)) {
-      if (!entry.directory) files.append(entry.path);
+  for (const QString &folder :
+       {QString(), QStringLiteral("d"), QStringLiteral("d/e")}) {
+    for (const Entry &entry : listingOf(root, version, folder)) {
+      if (!entry.directory)
+        files.append(entry.path);
     }
   }
   return files;
 }
 
-QStringList matchesOf(const QString& root, int version, const QString& query) {
+QStringList matchesOf(const QString &root, int version, const QString &query) {
   QStringList matches;
-  for (const QString& file : filesOf(root, version)) {
-    if (file.contains(query)) matches.append(file);
+  for (const QString &file : filesOf(root, version)) {
+    if (file.contains(query))
+      matches.append(file);
   }
   return matches;
 }
 
-QString contentsOf(const QString& root, int version, const QString& path) {
-  return root + QLatin1Char(':') + path + QLatin1Char('@') + QString::number(version);
+QString contentsOf(const QString &root, int version, const QString &path) {
+  return root + QLatin1Char(':') + path + QLatin1Char('@') +
+         QString::number(version);
 }
 
-bool isMedia(const QString& path) { return path.endsWith(QLatin1String(".png")) || path.endsWith(QLatin1String(".mp4")); }
+bool isDocument(const QString &path) {
+  return path.endsWith(QLatin1String(".pdf"));
+}
+bool isMedia(const QString &path) {
+  return path.endsWith(QLatin1String(".png")) ||
+         path.endsWith(QLatin1String(".mp4")) || isDocument(path);
+}
 
 // The address the MC signs `count`-th, for `path`.
-QString addressOf(int count, const QString& path) {
-  return QStringLiteral("/api/assets/%1/%2").arg(count).arg(path.section(QLatin1Char('/'), -1));
+QString addressOf(int count, const QString &path) {
+  return QStringLiteral("/api/assets/%1/%2")
+      .arg(count)
+      .arg(path.section(QLatin1Char('/'), -1));
 }
 
-QJsonArray toJson(const QList<Entry>& entries) {
+QJsonArray toJson(const QList<Entry> &entries) {
   QJsonArray array;
-  for (const Entry& entry : entries) {
-    array.append(QJsonObject{{QStringLiteral("path"), entry.path},
-                             {QStringLiteral("kind"), entry.directory ? QStringLiteral("directory") : QStringLiteral("file")}});
+  for (const Entry &entry : entries) {
+    array.append(QJsonObject{
+        {QStringLiteral("path"), entry.path},
+        {QStringLiteral("kind"), entry.directory ? QStringLiteral("directory")
+                                                 : QStringLiteral("file")}});
   }
   return array;
 }
@@ -95,13 +124,15 @@ enum class State { Unloaded, Loading, Loaded, Failed };
 
 // One request the MC holds: what it is for, and its answer as the disk was.
 struct Request {
-  QString kind;  // list, search, read or sign
-  QString key;   // the folder, the query or the file
+  QString kind; // list, search, read, sign or download
+  QString key;  // the folder, the query, the file or the signed address
   QString root;
   int seq = 0;
   QList<Entry> entries;
   QString contents;
-  bool operator==(const Request& other) const { return kind == other.kind && key == other.key && root == other.root; }
+  bool operator==(const Request &other) const {
+    return kind == other.kind && key == other.key && root == other.root;
+  }
 };
 
 struct Model {
@@ -146,16 +177,18 @@ struct Model {
 
   int version() const { return versions.value(root); }
 
-  int ask(const QString& kind, const QString& key) {
+  int ask(const QString &kind, const QString &key) {
     Request request{kind, key, root, ++seq, {}, {}};
     if (kind == QLatin1String("list")) {
       request.entries = listingOf(root, version(), key);
       latestList[key] = request.seq;
     } else if (kind == QLatin1String("search")) {
-      for (const QString& match : matchesOf(root, version(), key)) request.entries.append({match, false, false});
+      for (const QString &match : matchesOf(root, version(), key))
+        request.entries.append({match, false, false});
       latestSearch = request.seq;
     } else {
-      if (kind == QLatin1String("read")) request.contents = contentsOf(root, version(), key);
+      if (kind == QLatin1String("read"))
+        request.contents = contentsOf(root, version(), key);
       latestRead = request.seq;
     }
     pending.append(request);
@@ -165,16 +198,19 @@ struct Model {
   // FileTreeModel::reload: a search on screen stays.
   void reloadTree() {
     tree.clear();
-    if (!searchShown) selected.clear();
+    if (!searchShown)
+      selected.clear();
     tree[QString()] = {State::Loading, {}, true};
     ask(QStringLiteral("list"), QString());
   }
 
-  void expand(const QString& folder) {
-    Folder& entry = tree[folder];
-    if (entry.expanded) return;
+  void expand(const QString &folder) {
+    Folder &entry = tree[folder];
+    if (entry.expanded)
+      return;
     entry.expanded = true;
-    if (entry.state != State::Unloaded) return;
+    if (entry.state != State::Unloaded)
+      return;
     entry.state = State::Loading;
     ask(QStringLiteral("list"), folder);
   }
@@ -182,19 +218,23 @@ struct Model {
   // WorkspaceFiles::walkReveal: opens the folders above the file, and selects
   // it once they are listed.
   void walk() {
-    if (revealing.isEmpty() || tree.value(QString()).state != State::Loaded) return;
+    if (revealing.isEmpty() || tree.value(QString()).state != State::Loaded)
+      return;
     const QStringList parts = revealing.split(QLatin1Char('/'));
     QString folder;
     for (qsizetype i = 0; i + 1 < parts.size(); ++i) {
-      folder = folder.isEmpty() ? parts.at(i) : folder + QLatin1Char('/') + parts.at(i);
+      folder = folder.isEmpty() ? parts.at(i)
+                                : folder + QLatin1Char('/') + parts.at(i);
       expand(folder);
-      if (tree.value(folder).state != State::Loaded) return;
+      if (tree.value(folder).state != State::Loaded)
+        return;
     }
     selected = std::exchange(revealing, QString());
   }
 
-  void setQuery(const QString& next) {
-    if (next == query) return;
+  void setQuery(const QString &next) {
+    if (next == query)
+      return;
     query = next;
     // Whatever is on its way answers an older query.
     latestSearch = -1;
@@ -205,7 +245,8 @@ struct Model {
       return;
     }
     revealing.clear();
-    if (root.isEmpty()) return;
+    if (root.isEmpty())
+      return;
     searching = true;
     ask(QStringLiteral("search"), query);
   }
@@ -221,7 +262,8 @@ struct Model {
   // WorkspaceFiles::openMedia: the browser gets the address shown while it
   // works, else the next one signed for this open.
   void openMedia() {
-    if (!isMedia(openPath)) return;
+    if (!isMedia(openPath))
+      return;
     if (fileStatus == QLatin1String("ready") && !expired()) {
       opened.append(mediaUrl);
       return;
@@ -231,17 +273,21 @@ struct Model {
   }
 
   // A media file shown with an address that no longer works.
-  bool expired() const { return isMedia(openPath) && (mediaUrl.isEmpty() || !fresh); }
+  bool expired() const {
+    return isMedia(openPath) && (mediaUrl.isEmpty() || !fresh);
+  }
 
   // WorkspaceFiles::reloadFile: a media file is signed for, any other read.
   void reload() {
     fileStatus = QStringLiteral("loading");
     mediaUrl.clear();
-    ask(isMedia(openPath) ? QStringLiteral("sign") : QStringLiteral("read"), openPath);
+    ask(isMedia(openPath) ? QStringLiteral("sign") : QStringLiteral("read"),
+        openPath);
   }
 
-  void setTarget(const QString& next) {
-    if (next == root) return;
+  void setTarget(const QString &next) {
+    if (next == root)
+      return;
     root = next;
     tree.clear();
     selected.clear();
@@ -258,12 +304,16 @@ struct Model {
 
   void setActive(bool next) {
     active = next;
-    if (active && !root.isEmpty() && tree.value(QString()).state == State::Unloaded) reloadTree();
-    if (active && fileStatus == QLatin1String("ready") && expired()) reload();
+    if (active && !root.isEmpty() &&
+        tree.value(QString()).state == State::Unloaded)
+      reloadTree();
+    if (active && fileStatus == QLatin1String("ready") && expired())
+      reload();
   }
 
-  void open(const QString& path) {
-    if (root.isEmpty()) return;
+  void open(const QString &path) {
+    if (root.isEmpty())
+      return;
     if (path != openPath || fileStatus != QLatin1String("ready") || expired()) {
       openPath = path;
       reload();
@@ -278,58 +328,87 @@ struct Model {
   }
 
   // The MC answers the request, the `rank`-th like it (oldest first).
-  void answer(const Request& like, int rank, bool ok, bool lasting) {
+  void answer(const Request &like, int rank, bool ok, bool lasting) {
     qsizetype at = 0;
     for (int seen = rank; at < pending.size(); ++at) {
-      if (pending.at(at) == like && seen-- == 0) break;
+      if (pending.at(at) == like && seen-- == 0)
+        break;
     }
     const Request request = pending.takeAt(at);
     const bool sign = request.kind == QLatin1String("sign");
-    if (sign && ok) ++signedCount;
-    if (request.root != root) return;
+    if (sign && ok)
+      ++signedCount;
+    if (request.root != root)
+      return;
     if (request.kind == QLatin1String("list")) {
-      if (latestList.value(request.key) != request.seq) return;
-      Folder& folder = tree[request.key];
+      if (latestList.value(request.key) != request.seq)
+        return;
+      Folder &folder = tree[request.key];
       folder.state = ok ? State::Loaded : State::Failed;
       folder.children = ok ? request.entries : QList<Entry>();
       walk();
     } else if (request.kind == QLatin1String("search")) {
-      if (latestSearch != request.seq) return;
+      if (latestSearch != request.seq)
+        return;
       searching = false;
       searchShown = true;
       matches.clear();
       if (ok) {
-        for (const Entry& entry : request.entries) matches.append(entry.path);
+        for (const Entry &entry : request.entries)
+          matches.append(entry.path);
       }
     } else {
-      if (latestRead != request.seq) return;
-      fileStatus = ok ? QStringLiteral("ready") : QStringLiteral("error");
+      if (latestRead != request.seq)
+        return;
+      if (request.kind == QLatin1String("download")) {
+        // A copy that did not come is a document that failed to load, once
+        // shown.
+        fileStatus = ok ? QStringLiteral("ready") : QStringLiteral("error");
+        if (std::exchange(openOnSign, -1) == request.seq)
+          opened.append(mediaUrl);
+        if (!ok)
+          mediaUrl.clear();
+        return;
+      }
       text = ok ? request.contents : QString();
       if (sign && ok) {
         mediaUrl = addressOf(signedCount, request.key);
         fresh = lasting;
-        if (std::exchange(openOnSign, -1) == request.seq) opened.append(mediaUrl);
+        if (isDocument(request.key)) {
+          pending.append({QStringLiteral("download"),
+                          mediaUrl,
+                          request.root,
+                          request.seq,
+                          {},
+                          {}});
+          return;
+        }
+        if (std::exchange(openOnSign, -1) == request.seq)
+          opened.append(mediaUrl);
       }
+      fileStatus = ok ? QStringLiteral("ready") : QStringLiteral("error");
     }
   }
 
-  void rowsUnder(const QString& path, QStringList& rows) const {
+  void rowsUnder(const QString &path, QStringList &rows) const {
     const Folder folder = tree.value(path);
     switch (folder.state) {
-      case State::Loading:
-        rows.append(path + QStringLiteral(" loading"));
-        break;
-      case State::Failed:
-        rows.append(path + QStringLiteral(" error"));
-        break;
-      case State::Loaded:
-        for (const Entry& child : folder.children) {
-          rows.append(child.path + (child.directory ? QStringLiteral(" directory") : QStringLiteral(" file")));
-          if (child.directory && tree.value(child.path).expanded) rowsUnder(child.path, rows);
-        }
-        break;
-      case State::Unloaded:
-        break;
+    case State::Loading:
+      rows.append(path + QStringLiteral(" loading"));
+      break;
+    case State::Failed:
+      rows.append(path + QStringLiteral(" error"));
+      break;
+    case State::Loaded:
+      for (const Entry &child : folder.children) {
+        rows.append(child.path + (child.directory ? QStringLiteral(" directory")
+                                                  : QStringLiteral(" file")));
+        if (child.directory && tree.value(child.path).expanded)
+          rowsUnder(child.path, rows);
+      }
+      break;
+    case State::Unloaded:
+      break;
     }
   }
 
@@ -337,57 +416,71 @@ struct Model {
   QStringList rows() const {
     QStringList rows;
     if (!searchShown) {
-      if (tree.value(QString()).expanded) rowsUnder(QString(), rows);
+      if (tree.value(QString()).expanded)
+        rowsUnder(QString(), rows);
       return rows;
     }
     // The matches under their folders, folders first: the fixed disk's
     // folders all come before its files.
     QStringList folders;
-    for (const QString& match : matches) {
-      for (QString folder = parentOf(match); !folder.isEmpty(); folder = parentOf(folder)) {
-        if (!folders.contains(folder)) folders.append(folder);
+    for (const QString &match : matches) {
+      for (QString folder = parentOf(match); !folder.isEmpty();
+           folder = parentOf(folder)) {
+        if (!folders.contains(folder))
+          folders.append(folder);
       }
     }
-    const std::function<void(const QString&)> under = [&](const QString& folder) {
-      for (const QString& child : kFolders) {
-        if (parentOf(child) == folder && folders.contains(child)) {
-          rows.append(child + QStringLiteral(" directory"));
-          under(child);
-        }
-      }
-      QStringList files;
-      for (const QString& match : matches) {
-        if (parentOf(match) == folder && !files.contains(match)) files.append(match);
-      }
-      std::sort(files.begin(), files.end(), [](const QString& a, const QString& b) { return QString::compare(a, b, Qt::CaseInsensitive) < 0; });
-      for (const QString& file : files) rows.append(file + QStringLiteral(" file"));
-    };
+    const std::function<void(const QString &)> under =
+        [&](const QString &folder) {
+          for (const QString &child : kFolders) {
+            if (parentOf(child) == folder && folders.contains(child)) {
+              rows.append(child + QStringLiteral(" directory"));
+              under(child);
+            }
+          }
+          QStringList files;
+          for (const QString &match : matches) {
+            if (parentOf(match) == folder && !files.contains(match))
+              files.append(match);
+          }
+          std::sort(files.begin(), files.end(),
+                    [](const QString &a, const QString &b) {
+                      return QString::compare(a, b, Qt::CaseInsensitive) < 0;
+                    });
+          for (const QString &file : files)
+            rows.append(file + QStringLiteral(" file"));
+        };
     under(QString());
     return rows;
   }
 
   QString rootStatus() const {
-    if (searchShown) return QStringLiteral("ready");
+    if (searchShown)
+      return QStringLiteral("ready");
     switch (tree.value(QString()).state) {
-      case State::Loaded:
-        return QStringLiteral("ready");
-      case State::Failed:
-        return QStringLiteral("error");
-      default:
-        return QStringLiteral("loading");
+    case State::Loaded:
+      return QStringLiteral("ready");
+    case State::Failed:
+      return QStringLiteral("error");
+    default:
+      return QStringLiteral("loading");
     }
   }
 };
 
-void showValue(const Request& request, std::ostream& os) {
-  os << request.kind.toStdString() << " '" << request.key.toStdString() << "' of " << request.root.toStdString();
+void showValue(const Request &request, std::ostream &os) {
+  os << request.kind.toStdString() << " '" << request.key.toStdString()
+     << "' of " << request.root.toStdString();
 }
 
 struct Sut {
   struct Held {
     Request request;
     FakeMc::Rpc rpc;
+    QTcpSocket *download = nullptr;
   };
+  // The workspace each signed address is of.
+  QHash<QString, QString> signedRoots;
 
   FakeMc mc;
   McClient client;
@@ -401,35 +494,61 @@ struct Sut {
   QStringList opened;
 
   Sut() {
-    const auto hold = [this](const QString& kind, const QString& keyField) {
-      return [this, kind, keyField](const FakeMc::Rpc& rpc) {
-        // A signing names the workspace by its folder, or by its thread (/w1's is w1).
-        const QJsonObject of = kind == QLatin1String("sign") ? rpc.payload.value(QLatin1String("resource")).toObject() : rpc.payload;
+    const auto hold = [this](const QString &kind, const QString &keyField) {
+      return [this, kind, keyField](const FakeMc::Rpc &rpc) {
+        // A signing names the workspace by its folder, or by its thread (/w1's
+        // is w1).
+        const QJsonObject of =
+            kind == QLatin1String("sign")
+                ? rpc.payload.value(QLatin1String("resource")).toObject()
+                : rpc.payload;
         const QString thread = of.value(QLatin1String("threadId")).toString();
-        const QString root = thread.isEmpty() ? of.value(QLatin1String("cwd")).toString() : QLatin1Char('/') + thread;
+        const QString root = thread.isEmpty()
+                                 ? of.value(QLatin1String("cwd")).toString()
+                                 : QLatin1Char('/') + thread;
         const QString key = of.value(keyField).toString();
         const int version = versions.value(root);
         Request request{kind, key, root, 0, {}, {}};
         if (kind == QLatin1String("list")) {
           request.entries = listingOf(root, version, key);
         } else if (kind == QLatin1String("search")) {
-          for (const QString& match : matchesOf(root, version, key)) request.entries.append({match, false, false});
+          for (const QString &match : matchesOf(root, version, key))
+            request.entries.append({match, false, false});
         } else if (kind == QLatin1String("read")) {
           request.contents = contentsOf(root, version, key);
         }
         held.append({request, rpc});
       };
     };
-    mc.onRpc(QStringLiteral("projects.listEntries"), hold(QStringLiteral("list"), QStringLiteral("directoryPath")));
-    mc.onRpc(QStringLiteral("projects.searchEntries"), hold(QStringLiteral("search"), QStringLiteral("query")));
-    mc.onRpc(QStringLiteral("projects.readFile"), hold(QStringLiteral("read"), QStringLiteral("relativePath")));
-    mc.onRpc(QStringLiteral("assets.createUrl"), hold(QStringLiteral("sign"), QStringLiteral("path")));
+    mc.onRpc(QStringLiteral("projects.listEntries"),
+             hold(QStringLiteral("list"), QStringLiteral("directoryPath")));
+    mc.onRpc(QStringLiteral("projects.searchEntries"),
+             hold(QStringLiteral("search"), QStringLiteral("query")));
+    mc.onRpc(QStringLiteral("projects.readFile"),
+             hold(QStringLiteral("read"), QStringLiteral("relativePath")));
+    mc.onRpc(QStringLiteral("assets.createUrl"),
+             hold(QStringLiteral("sign"), QStringLiteral("path")));
+    mc.onRaw(QStringLiteral("/api/assets/"), [this](QTcpSocket *socket,
+                                                    const QByteArray &head) {
+      socket->read(head.size());
+      const QString address =
+          QString::fromUtf8(head.left(head.indexOf('\r')).split(' ').value(1));
+      held.append({{QStringLiteral("download"),
+                    address,
+                    signedRoots.value(address),
+                    0,
+                    {},
+                    {}},
+                   {},
+                   socket});
+    });
     client.setRetryDelays({20});
     client.open(mc.origin(), QStringLiteral("token"));
     halc2::prop::until([this] { return client.isReady(); });
     files = std::make_unique<WorkspaceFiles>(&client);
     files->setSearchDelay(0);
-    QObject::connect(files.get(), &WorkspaceFiles::mediaOpened, [this](const QUrl& url) { opened.append(url.path()); });
+    QObject::connect(files.get(), &WorkspaceFiles::mediaOpened,
+                     [this](const QUrl &url) { opened.append(url.path()); });
     files->setTarget(QStringLiteral("env-a"), QString());
     mirror = std::make_unique<halc2::prop::ModelMirror>(files->tree());
   }
@@ -442,65 +561,88 @@ struct Sut {
   // the MC and every answer sent before it has been read.
   bool sync() {
     auto answered = std::make_shared<bool>(false);
-    client.call(&barrier, {}, QStringLiteral("test.barrier"), {}, [answered](const QJsonValue&, const std::optional<QString>&) {
-      *answered = true;
-    });
+    client.call(&barrier, {}, QStringLiteral("test.barrier"), {},
+                [answered](const QJsonValue &, const std::optional<QString> &) {
+                  *answered = true;
+                });
     return halc2::prop::until([&] { return *answered; });
   }
 
-  void answer(const Request& request, int rank, bool ok, bool lasting) {
+  void answer(const Request &request, int rank, bool ok, bool lasting) {
     for (qsizetype i = 0; i < held.size(); ++i) {
-      if (!(held.at(i).request == request) || rank-- > 0) continue;
+      if (!(held.at(i).request == request) || rank-- > 0)
+        continue;
       const Held answered = held.takeAt(i);
-      if (!ok) {
+      if (answered.download) {
+        answered.download->write(ok ? "HTTP/1.1 200 OK\r\nConnection: "
+                                      "close\r\nContent-Length: 4\r\n\r\n%PDF"
+                                    : "HTTP/1.1 404 Not Found\r\nConnection: "
+                                      "close\r\nContent-Length: 0\r\n\r\n");
+        answered.download->disconnectFromHost();
+      } else if (!ok) {
         mc.refuse(answered.rpc, QStringLiteral("no"));
       } else if (request.kind == QLatin1String("sign")) {
         // An hour, or less than the minute the client keeps in hand.
-        const qint64 expires = QDateTime::currentMSecsSinceEpoch() + (lasting ? 3600'000 : 30'000);
-        mc.reply(answered.rpc, QJsonObject{{QStringLiteral("relativeUrl"), addressOf(++signedCount, request.key)},
-                                           {QStringLiteral("expiresAt"), double(expires)}});
+        const qint64 expires =
+            QDateTime::currentMSecsSinceEpoch() + (lasting ? 3600'000 : 30'000);
+        signedRoots.insert(addressOf(++signedCount, request.key), request.root);
+        mc.reply(answered.rpc,
+                 QJsonObject{{QStringLiteral("relativeUrl"),
+                              addressOf(signedCount, request.key)},
+                             {QStringLiteral("expiresAt"), double(expires)}});
       } else if (request.kind == QLatin1String("read")) {
-        mc.reply(answered.rpc, QJsonObject{{QStringLiteral("contents"), answered.request.contents}});
+        mc.reply(answered.rpc, QJsonObject{{QStringLiteral("contents"),
+                                            answered.request.contents}});
       } else {
-        mc.reply(answered.rpc, QJsonObject{{QStringLiteral("entries"), toJson(answered.request.entries)}});
+        mc.reply(answered.rpc, QJsonObject{{QStringLiteral("entries"),
+                                            toJson(answered.request.entries)}});
       }
       return;
     }
-    RC_FAIL("the MC holds no " + rc::toString(request.kind) + " '" + rc::toString(request.key) + "'");
+    RC_FAIL("the MC holds no " + rc::toString(request.kind) + " '" +
+            rc::toString(request.key) + "'");
   }
 
   QStringList rows() const {
     QStringList rows;
-    FileTreeModel* tree = files->tree();
+    FileTreeModel *tree = files->tree();
     for (int row = 0; row < tree->rowCount(); ++row) {
       const QModelIndex at = tree->index(row);
-      rows.append(at.data(FileTreeModel::PathRole).toString() + QLatin1Char(' ') + at.data(FileTreeModel::KindRole).toString());
+      rows.append(at.data(FileTreeModel::PathRole).toString() +
+                  QLatin1Char(' ') +
+                  at.data(FileTreeModel::KindRole).toString());
     }
     return rows;
   }
 };
 
-QStringList asked(const QList<Request>& requests) {
+QStringList asked(const QList<Request> &requests) {
   QStringList asked;
-  for (const Request& request : requests) asked.append(request.kind + QLatin1Char(' ') + request.key + QStringLiteral(" of ") + request.root);
+  for (const Request &request : requests)
+    asked.append(request.kind + QLatin1Char(' ') + request.key +
+                 QStringLiteral(" of ") + request.root);
   asked.sort();
   return asked;
 }
 
-void check(const Model& expected, Sut& sut) {
+void check(const Model &expected, Sut &sut) {
   const QStringList pending = asked(expected.pending);
   // A search goes out from a timer, after the command.
   halc2::prop::until([&] {
     QList<Request> held;
-    for (const Sut::Held& request : sut.held) held.append(request.request);
+    for (const Sut::Held &request : sut.held)
+      held.append(request.request);
     return asked(held) == pending;
   });
   RC_ASSERT(sut.sync());
   QList<Request> held;
-  for (const Sut::Held& request : sut.held) held.append(request.request);
+  for (const Sut::Held &request : sut.held)
+    held.append(request.request);
   RC_ASSERT(asked(held) == pending);
 
-  WorkspaceFiles& files = *sut.files;
+  WorkspaceFiles &files = *sut.files;
+  // A download is answered over HTTP, which the barrier does not cover.
+  halc2::prop::until([&] { return files.fileStatus() == expected.fileStatus; });
   RC_ASSERT(files.root() == expected.root);
   RC_ASSERT(sut.rows() == expected.rows());
   RC_ASSERT(files.tree()->rootStatus() == expected.rootStatus());
@@ -510,9 +652,12 @@ void check(const Model& expected, Sut& sut) {
   RC_ASSERT(files.searching() == expected.searching);
   RC_ASSERT(files.openPath() == expected.openPath);
   RC_ASSERT(files.fileStatus() == expected.fileStatus);
-  if (expected.fileStatus != QLatin1String("loading")) RC_ASSERT(files.text() == expected.text);
+  if (expected.fileStatus != QLatin1String("loading"))
+    RC_ASSERT(files.text() == expected.text);
   RC_ASSERT(files.mediaUrl().path() == expected.mediaUrl);
-  if (!expected.mediaUrl.isEmpty()) RC_ASSERT(files.mediaUrl() == sut.client.origin().resolved(QUrl(expected.mediaUrl)));
+  if (!expected.mediaUrl.isEmpty())
+    RC_ASSERT(files.mediaUrl() ==
+              sut.client.origin().resolved(QUrl(expected.mediaUrl)));
   RC_ASSERT(sut.opened == expected.opened);
   const QStringList problems = sut.mirror->problems();
   RC_ASSERT(problems == QStringList());
@@ -520,12 +665,11 @@ void check(const Model& expected, Sut& sut) {
 
 using Command = rc::state::Command<Model, Sut>;
 
-template <class Self>
-struct Step : Command {
-  void run(const Model& before, Sut& sut) const override {
+template <class Self> struct Step : Command {
+  void run(const Model &before, Sut &sut) const override {
     Model expected = before;
     apply(expected);
-    static_cast<const Self*>(this)->act(before, sut);
+    static_cast<const Self *>(this)->act(before, sut);
     check(expected, sut);
   }
 };
@@ -534,43 +678,56 @@ struct Step : Command {
 struct SetTarget : Step<SetTarget> {
   QString root = *oneOf(kRoots);
   bool thread = *rc::gen::arbitrary<bool>();
-  explicit SetTarget(const Model&) {}
-  void apply(Model& model) const override { model.setTarget(root); }
-  void act(const Model&, Sut& sut) const { sut.files->setTarget(QStringLiteral("env-a"), root, thread ? root.mid(1) : QString()); }
-  void show(std::ostream& os) const override { os << "workspace '" << root.toStdString() << (thread ? "' of its thread" : "'"); }
+  explicit SetTarget(const Model &) {}
+  void apply(Model &model) const override { model.setTarget(root); }
+  void act(const Model &, Sut &sut) const {
+    sut.files->setTarget(QStringLiteral("env-a"), root,
+                         thread ? root.mid(1) : QString());
+  }
+  void show(std::ostream &os) const override {
+    os << "workspace '" << root.toStdString()
+       << (thread ? "' of its thread" : "'");
+  }
 };
 
 struct SetActive : Step<SetActive> {
   bool active = *rc::gen::arbitrary<bool>();
-  explicit SetActive(const Model&) {}
-  void apply(Model& model) const override { model.setActive(active); }
-  void act(const Model&, Sut& sut) const { sut.files->setActive(active); }
-  void show(std::ostream& os) const override { os << (active ? "show the tab" : "hide the tab"); }
+  explicit SetActive(const Model &) {}
+  void apply(Model &model) const override { model.setActive(active); }
+  void act(const Model &, Sut &sut) const { sut.files->setActive(active); }
+  void show(std::ostream &os) const override {
+    os << (active ? "show the tab" : "hide the tab");
+  }
 };
 
 // The user clicks a folder the tree shows.
 struct Toggle : Step<Toggle> {
   QString folder;
-  explicit Toggle(const Model& model) {
+  explicit Toggle(const Model &model) {
     folder = *oneOf(kFolders);
     RC_PRE(!model.searchShown);
-    RC_PRE(model.tree.value(parentOf(folder)).state == State::Loaded && model.tree.value(parentOf(folder)).expanded);
+    RC_PRE(model.tree.value(parentOf(folder)).state == State::Loaded &&
+           model.tree.value(parentOf(folder)).expanded);
   }
-  void checkPreconditions(const Model& model) const override {
+  void checkPreconditions(const Model &model) const override {
     RC_PRE(!model.searchShown);
     const Model::Folder parent = model.tree.value(parentOf(folder));
     RC_PRE(parent.state == State::Loaded && parent.expanded);
-    RC_PRE(std::any_of(parent.children.begin(), parent.children.end(), [&](const Entry& entry) { return entry.path == folder; }));
+    RC_PRE(
+        std::any_of(parent.children.begin(), parent.children.end(),
+                    [&](const Entry &entry) { return entry.path == folder; }));
   }
-  void apply(Model& model) const override {
+  void apply(Model &model) const override {
     if (model.tree.value(folder).expanded) {
       model.tree[folder].expanded = false;
     } else {
       model.expand(folder);
     }
   }
-  void act(const Model&, Sut& sut) const { sut.files->tree()->toggle(folder); }
-  void show(std::ostream& os) const override { os << "toggle " << folder.toStdString(); }
+  void act(const Model &, Sut &sut) const { sut.files->tree()->toggle(folder); }
+  void show(std::ostream &os) const override {
+    os << "toggle " << folder.toStdString();
+  }
 };
 
 struct Answer : Step<Answer> {
@@ -579,132 +736,175 @@ struct Answer : Step<Answer> {
   bool ok = *rc::gen::weightedElement<bool>({{4, true}, {1, false}});
   // A signed address good for an hour, or one that has all but run out.
   bool lasting = *rc::gen::arbitrary<bool>();
-  explicit Answer(const Model& model) {
+  explicit Answer(const Model &model) {
     RC_PRE(!model.pending.isEmpty());
     const int index = *rc::gen::inRange<int>(0, int(model.pending.size()));
     request = model.pending.at(index);
-    for (int i = 0; i < index; ++i) rank += model.pending.at(i) == request ? 1 : 0;
+    for (int i = 0; i < index; ++i)
+      rank += model.pending.at(i) == request ? 1 : 0;
   }
-  void checkPreconditions(const Model& model) const override {
-    RC_PRE(std::count(model.pending.begin(), model.pending.end(), request) > rank);
+  void checkPreconditions(const Model &model) const override {
+    RC_PRE(std::count(model.pending.begin(), model.pending.end(), request) >
+           rank);
   }
-  void apply(Model& model) const override { model.answer(request, rank, ok, lasting); }
-  void act(const Model&, Sut& sut) const { sut.answer(request, rank, ok, lasting); }
-  void show(std::ostream& os) const override {
-    os << (ok ? "answer " : "refuse ") << request.kind.toStdString() << " '" << request.key.toStdString() << "' of '"
-       << request.root.toStdString() << "' #" << rank << (request.kind == QLatin1String("sign") && ok && !lasting ? " (running out)" : "");
+  void apply(Model &model) const override {
+    model.answer(request, rank, ok, lasting);
+  }
+  void act(const Model &, Sut &sut) const {
+    sut.answer(request, rank, ok, lasting);
+  }
+  void show(std::ostream &os) const override {
+    os << (ok ? "answer " : "refuse ") << request.kind.toStdString() << " '"
+       << request.key.toStdString() << "' of '" << request.root.toStdString()
+       << "' #" << rank
+       << (request.kind == QLatin1String("sign") && ok && !lasting
+               ? " (running out)"
+               : "");
   }
 };
 
 // The agent changed the workspace: the disk moves on and every listed folder
 // is asked for again.
 struct Change : Step<Change> {
-  explicit Change(const Model& model) { RC_PRE(!model.root.isEmpty()); }
-  void checkPreconditions(const Model& model) const override { RC_PRE(!model.root.isEmpty()); }
-  void apply(Model& model) const override {
+  explicit Change(const Model &model) { RC_PRE(!model.root.isEmpty()); }
+  void checkPreconditions(const Model &model) const override {
+    RC_PRE(!model.root.isEmpty());
+  }
+  void apply(Model &model) const override {
     ++model.versions[model.root];
     for (auto it = model.tree.cbegin(); it != model.tree.cend(); ++it) {
-      if (it->state == State::Loaded) model.ask(QStringLiteral("list"), it.key());
+      if (it->state == State::Loaded)
+        model.ask(QStringLiteral("list"), it.key());
     }
   }
-  void act(const Model& before, Sut& sut) const {
+  void act(const Model &before, Sut &sut) const {
     sut.versions[before.root] = before.version() + 1;
     sut.files->tree()->refresh();
   }
-  void show(std::ostream& os) const override { os << "the agent changes the workspace"; }
+  void show(std::ostream &os) const override {
+    os << "the agent changes the workspace";
+  }
 };
 
 struct Retry : Step<Retry> {
   QString folder;
-  explicit Retry(const Model& model) {
+  explicit Retry(const Model &model) {
     QStringList failed;
     for (auto it = model.tree.cbegin(); it != model.tree.cend(); ++it) {
-      if (it->state == State::Failed) failed.append(it.key());
+      if (it->state == State::Failed)
+        failed.append(it.key());
     }
     RC_PRE(!failed.isEmpty());
     folder = *oneOf(failed);
   }
-  void checkPreconditions(const Model& model) const override {
-    RC_PRE(!model.searchShown && model.tree.value(folder).state == State::Failed);
+  void checkPreconditions(const Model &model) const override {
+    RC_PRE(!model.searchShown &&
+           model.tree.value(folder).state == State::Failed);
   }
-  void apply(Model& model) const override {
+  void apply(Model &model) const override {
     model.tree[folder].state = State::Loading;
     model.ask(QStringLiteral("list"), folder);
   }
   // The top folder's "Try again", or a folder's error row.
-  void act(const Model&, Sut& sut) const {
+  void act(const Model &, Sut &sut) const {
     if (folder.isEmpty()) {
       sut.files->reload();
     } else {
       sut.files->tree()->retry(folder);
     }
   }
-  void show(std::ostream& os) const override { os << "retry '" << folder.toStdString() << "'"; }
+  void show(std::ostream &os) const override {
+    os << "retry '" << folder.toStdString() << "'";
+  }
 };
 
 struct Query : Step<Query> {
   QString query = *oneOf(kQueries);
-  explicit Query(const Model&) {}
-  void apply(Model& model) const override { model.setQuery(query); }
-  void act(const Model&, Sut& sut) const { sut.files->setQuery(query); }
-  void show(std::ostream& os) const override { os << "search '" << query.toStdString() << "'"; }
+  explicit Query(const Model &) {}
+  void apply(Model &model) const override { model.setQuery(query); }
+  void act(const Model &, Sut &sut) const { sut.files->setQuery(query); }
+  void show(std::ostream &os) const override {
+    os << "search '" << query.toStdString() << "'";
+  }
 };
 
 struct Open : Step<Open> {
   QString path;
-  explicit Open(const Model& model) {
+  explicit Open(const Model &model) {
     RC_PRE(!model.root.isEmpty());
     path = *oneOf(filesOf(model.root, model.version()));
   }
-  void checkPreconditions(const Model& model) const override { RC_PRE(!model.root.isEmpty()); }
-  void apply(Model& model) const override { model.open(path); }
-  void act(const Model&, Sut& sut) const { sut.files->openFile(path); }
-  void show(std::ostream& os) const override { os << "open " << path.toStdString(); }
+  void checkPreconditions(const Model &model) const override {
+    RC_PRE(!model.root.isEmpty());
+  }
+  void apply(Model &model) const override { model.open(path); }
+  void act(const Model &, Sut &sut) const { sut.files->openFile(path); }
+  void show(std::ostream &os) const override {
+    os << "open " << path.toStdString();
+  }
 };
 
 // The preview could not load an address: the one shown, or one it showed
 // before.
 struct MediaFailed : Step<MediaFailed> {
   bool shown = *rc::gen::arbitrary<bool>();
-  explicit MediaFailed(const Model& model) { RC_PRE(!model.mediaUrl.isEmpty()); }
-  void checkPreconditions(const Model& model) const override { RC_PRE(!model.mediaUrl.isEmpty()); }
-  void apply(Model& model) const override {
-    if (!shown) return;
+  explicit MediaFailed(const Model &model) {
+    RC_PRE(!model.mediaUrl.isEmpty());
+  }
+  void checkPreconditions(const Model &model) const override {
+    RC_PRE(!model.mediaUrl.isEmpty());
+  }
+  void apply(Model &model) const override {
+    // Nothing is on screen to fail while a document is still coming.
+    if (!shown || model.fileStatus != QLatin1String("ready"))
+      return;
     model.mediaUrl.clear();
     model.fileStatus = QStringLiteral("error");
   }
-  void act(const Model& before, Sut& sut) const {
-    sut.files->mediaFailed(shown ? sut.files->mediaUrl() : sut.client.origin().resolved(QUrl(before.mediaUrl + QStringLiteral("-old"))));
+  void act(const Model &before, Sut &sut) const {
+    sut.files->mediaFailed(
+        shown ? sut.files->mediaUrl()
+              : sut.client.origin().resolved(
+                    QUrl(before.mediaUrl + QStringLiteral("-old"))));
   }
-  void show(std::ostream& os) const override { os << (shown ? "the preview fails to load" : "an older preview fails to load"); }
+  void show(std::ostream &os) const override {
+    os << (shown ? "the preview fails to load"
+                 : "an older preview fails to load");
+  }
 };
 
 // "Open in browser" on a video.
 struct OpenMedia : Step<OpenMedia> {
-  explicit OpenMedia(const Model& model) { RC_PRE(isMedia(model.openPath)); }
-  void checkPreconditions(const Model& model) const override { RC_PRE(isMedia(model.openPath)); }
-  void apply(Model& model) const override { model.openMedia(); }
-  void act(const Model&, Sut& sut) const { sut.files->openMedia(); }
-  void show(std::ostream& os) const override { os << "open the media in the browser"; }
+  explicit OpenMedia(const Model &model) { RC_PRE(isMedia(model.openPath)); }
+  void checkPreconditions(const Model &model) const override {
+    RC_PRE(isMedia(model.openPath));
+  }
+  void apply(Model &model) const override { model.openMedia(); }
+  void act(const Model &, Sut &sut) const { sut.files->openMedia(); }
+  void show(std::ostream &os) const override {
+    os << "open the media in the browser";
+  }
 };
 
 // The file's "Try again".
 struct ReloadFile : Step<ReloadFile> {
-  explicit ReloadFile(const Model& model) { RC_PRE(!model.openPath.isEmpty()); }
-  void checkPreconditions(const Model& model) const override { RC_PRE(!model.openPath.isEmpty()); }
-  void apply(Model& model) const override { model.reload(); }
-  void act(const Model&, Sut& sut) const { sut.files->reloadFile(); }
-  void show(std::ostream& os) const override { os << "reload the file"; }
+  explicit ReloadFile(const Model &model) { RC_PRE(!model.openPath.isEmpty()); }
+  void checkPreconditions(const Model &model) const override {
+    RC_PRE(!model.openPath.isEmpty());
+  }
+  void apply(Model &model) const override { model.reload(); }
+  void act(const Model &, Sut &sut) const { sut.files->reloadFile(); }
+  void show(std::ostream &os) const override { os << "reload the file"; }
 };
 
 struct Close : Step<Close> {
-  explicit Close(const Model&) {}
-  void apply(Model& model) const override { model.close(); }
-  void act(const Model&, Sut& sut) const { sut.files->closeFile(); }
-  void show(std::ostream& os) const override { os << "close the file"; }
+  explicit Close(const Model &) {}
+  void apply(Model &model) const override { model.close(); }
+  void act(const Model &, Sut &sut) const { sut.files->closeFile(); }
+  void show(std::ostream &os) const override { os << "close the file"; }
 };
 
-}  // namespace
+} // namespace
 
 class WorkspaceFilesProp : public QObject {
   Q_OBJECT
@@ -712,52 +912,79 @@ class WorkspaceFilesProp : public QObject {
 private slots:
   // A table read back is the table written, whatever its cells hold.
   void tables() {
-    QVERIFY(rc::check("a delimited file parses back to the cells it was written from", [] {
-      const auto rows = *rc::gen::container<std::vector<std::vector<std::string>>>(
-          rc::gen::nonEmpty(rc::gen::container<std::vector<std::string>>(rc::gen::container<std::string>(rc::gen::elementOf(std::string("ab ,\"\n"))))));
-      const std::vector<std::vector<std::string>> kept(rows.begin(), rows.begin() + std::min<size_t>(rows.size(), 100));
-      QString text;
-      QList<QStringList> expected;
-      for (const auto& row : kept) {
-        QStringList cells;
-        QStringList written;
-        for (const std::string& cell : std::vector<std::string>(row.begin(), row.begin() + std::min<size_t>(row.size(), 30))) {
-          cells.append(QString::fromStdString(cell));
-          written.append(u'"' + QString(cells.last()).replace(u'"', QStringLiteral("\"\"")) + u'"');
-        }
-        expected.append(cells);
-        text += written.join(u',') + u'\n';
-      }
-      const auto parsed = WorkspaceFiles::parseDelimited(text, u',');
-      RC_ASSERT(parsed.rows == expected);
-      RC_ASSERT(!parsed.truncated);
-    }));
+    QVERIFY(rc::check(
+        "a delimited file parses back to the cells it was written from", [] {
+          const auto rows =
+              *rc::gen::container<std::vector<std::vector<std::string>>>(
+                  rc::gen::nonEmpty(
+                      rc::gen::container<std::vector<std::string>>(
+                          rc::gen::container<std::string>(
+                              rc::gen::elementOf(std::string("ab ,\"\n"))))));
+          const std::vector<std::vector<std::string>> kept(
+              rows.begin(), rows.begin() + std::min<size_t>(rows.size(), 100));
+          QString text;
+          QList<QStringList> expected;
+          for (const auto &row : kept) {
+            QStringList cells;
+            QStringList written;
+            for (const std::string &cell : std::vector<std::string>(
+                     row.begin(),
+                     row.begin() + std::min<size_t>(row.size(), 30))) {
+              cells.append(QString::fromStdString(cell));
+              written.append(
+                  u'"' +
+                  QString(cells.last()).replace(u'"', QStringLiteral("\"\"")) +
+                  u'"');
+            }
+            expected.append(cells);
+            text += written.join(u',') + u'\n';
+          }
+          const auto parsed = WorkspaceFiles::parseDelimited(text, u',');
+          RC_ASSERT(parsed.rows == expected);
+          RC_ASSERT(!parsed.truncated);
+        }));
   }
 
   // The edges of the last row, whatever ends the file.
   void tableEdges() {
     using Rows = QList<QStringList>;
-    for (const QString& ending : {QString(), QStringLiteral("\n"), QStringLiteral("\r\n")}) {
-      QCOMPARE(WorkspaceFiles::parseDelimited(QStringLiteral("name\r\nAlice\r\n\"\"") + ending, u',').rows,
-               (Rows{{QStringLiteral("name")}, {QStringLiteral("Alice")}, {QString()}}));
+    for (const QString &ending :
+         {QString(), QStringLiteral("\n"), QStringLiteral("\r\n")}) {
+      QCOMPARE(WorkspaceFiles::parseDelimited(
+                   QStringLiteral("name\r\nAlice\r\n\"\"") + ending, u',')
+                   .rows,
+               (Rows{{QStringLiteral("name")},
+                     {QStringLiteral("Alice")},
+                     {QString()}}));
     }
-    QCOMPARE(WorkspaceFiles::parseDelimited(QStringLiteral("\"\""), u',').rows, (Rows{{QString()}}));
+    QCOMPARE(WorkspaceFiles::parseDelimited(QStringLiteral("\"\""), u',').rows,
+             (Rows{{QString()}}));
     QCOMPARE(WorkspaceFiles::parseDelimited(QString(), u',').rows, Rows());
-    QCOMPARE(WorkspaceFiles::parseDelimited(QStringLiteral("\ufeff"), u',').rows, Rows());
-    const QString full = QStringLiteral("x\n").repeated(99) + QStringLiteral("\"\"");
+    QCOMPARE(
+        WorkspaceFiles::parseDelimited(QStringLiteral("\ufeff"), u',').rows,
+        Rows());
+    const QString full =
+        QStringLiteral("x\n").repeated(99) + QStringLiteral("\"\"");
     QCOMPARE(WorkspaceFiles::parseDelimited(full, u',').rows.size(), 100);
     QVERIFY(!WorkspaceFiles::parseDelimited(full, u',').truncated);
-    QVERIFY(WorkspaceFiles::parseDelimited(full + QStringLiteral("\nextra"), u',').truncated);
+    QVERIFY(
+        WorkspaceFiles::parseDelimited(full + QStringLiteral("\nextra"), u',')
+            .truncated);
   }
 
   void files() {
-    QVERIFY(rc::check("the Files tab shows the newest answers about the workspace on screen", [] {
-      Sut sut;
-      RC_ASSERT(sut.client.isReady());
-      rc::state::check(Model(), sut,
-                       rc::state::gen::execOneOfWithArgs<SetTarget, SetActive, Toggle, Toggle, Answer, Answer, Answer, Answer, Change,
-                                                         Retry, Query, Open, Open, Close, MediaFailed, ReloadFile, OpenMedia>());
-    }));
+    QVERIFY(rc::check(
+        "the Files tab shows the newest answers about the workspace on screen",
+        [] {
+          Sut sut;
+          RC_ASSERT(sut.client.isReady());
+          rc::state::check(
+              Model(), sut,
+              rc::state::gen::execOneOfWithArgs<
+                  SetTarget, SetActive, Toggle, Toggle, Answer, Answer, Answer,
+                  Answer, Change, Retry, Query, Open, Open, Close, MediaFailed,
+                  ReloadFile, OpenMedia>());
+        }));
   }
 };
 
