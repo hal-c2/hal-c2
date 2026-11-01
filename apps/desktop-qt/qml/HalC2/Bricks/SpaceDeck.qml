@@ -211,18 +211,43 @@ Rectangle {
                 // The Space it was made in: an edit written as the Space changes still goes there.
                 property string spaceId: ""
 
-                Component.onCompleted: spaceId = Spaces.spaceId
+                // What was last taken from the slide: text that differs is the user's edit, written
+                // while the deck was live even if it is in the trash by now.
+                property string shownTitle: ""
+                property string shownBody: ""
 
-                // A read-only field cannot differ from its slide, so text that differs was
-                // written while the deck was live, even if a trashed deck has been picked since.
+                Component.onCompleted: {
+                    spaceId = Spaces.spaceId;
+                    showTitle();
+                    showBody();
+                }
+
+                function showTitle() {
+                    shownTitle = title;
+                    slideTitle.text = title;
+                }
+
+                function showBody() {
+                    shownBody = body;
+                    slideBody.text = body;
+                }
+
                 function writeTitle() {
-                    if (slideTitle.text !== card.title)
+                    if (slideTitle.text === shownTitle) {
+                        showTitle();
+                    } else {
+                        shownTitle = slideTitle.text;
                         Shell.dispatch("space.slide.update", { spaceId: card.spaceId, slideId: card.slideId, title: slideTitle.text });
+                    }
                 }
 
                 function writeBody() {
-                    if (slideBody.text !== card.body)
+                    if (slideBody.text === shownBody) {
+                        showBody();
+                    } else {
+                        shownBody = slideBody.text;
                         Shell.dispatch("space.slide.update", { spaceId: card.spaceId, slideId: card.slideId, body: slideBody.text });
+                    }
                 }
 
                 objectName: "spaceSlide:" + index
@@ -235,11 +260,11 @@ Rectangle {
                 // The fields follow the slide while the user is not writing in them.
                 onTitleChanged: {
                     if (!slideTitle.activeFocus)
-                        slideTitle.text = card.title;
+                        card.showTitle();
                 }
                 onBodyChanged: {
                     if (!slideBody.activeFocus)
-                        slideBody.text = card.body;
+                        card.showBody();
                 }
 
                 RowLayout {
@@ -267,7 +292,6 @@ Rectangle {
 
                             objectName: "spaceSlideTitle:" + card.index
                             Layout.fillWidth: true
-                            text: card.title
                             readOnly: deck.trashed
                             color: deck.foreground
                             selectByMouse: true
@@ -280,7 +304,7 @@ Rectangle {
                                     card.writeTitle();
                             }
                             Keys.onEscapePressed: {
-                                text = card.title;
+                                card.showTitle();
                                 focus = false;
                             }
 
@@ -297,7 +321,6 @@ Rectangle {
 
                             objectName: "spaceSlideBody:" + card.index
                             Layout.fillWidth: true
-                            text: card.body
                             readOnly: deck.trashed
                             color: deck.foreground
                             textFormat: TextEdit.PlainText
@@ -309,7 +332,7 @@ Rectangle {
                                     card.writeBody();
                             }
                             Keys.onEscapePressed: {
-                                text = card.body;
+                                card.showBody();
                                 focus = false;
                             }
 

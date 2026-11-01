@@ -183,6 +183,61 @@ Item {
             compare(root.dispatched("space.slide.update")[0], Object.assign({ spaceId: "space-1", slideId: "s1" }, data.write));
         }
 
+        function test_leaving_a_slide_keeps_an_edit_from_another_client_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", role: "title" },
+                { tag: "body", field: "spaceSlideBody:0", role: "body" }
+            ];
+        }
+
+        function test_leaving_a_slide_keeps_an_edit_from_another_client(data) {
+            const view = pitch({});
+            const field = findChild(view, data.field);
+            field.forceActiveFocus();
+            Spaces.slides.setProperty(0, data.role, "Theirs");
+            field.focus = false;
+            compare(root.dispatched("space.slide.update"), []);
+            compare(field.text, "Theirs");
+        }
+
+        function test_escape_on_a_slide_keeps_an_edit_from_another_client() {
+            const view = pitch({});
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.text = "Mine";
+            Spaces.slides.setProperty(0, "title", "Theirs");
+            keyClick(Qt.Key_Escape);
+            compare(root.dispatched("space.slide.update"), []);
+            compare(title.text, "Theirs");
+        }
+
+        function test_an_edit_from_another_client_does_not_replace_what_is_being_typed_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", role: "title" },
+                { tag: "body", field: "spaceSlideBody:0", role: "body" }
+            ];
+        }
+
+        function test_an_edit_from_another_client_does_not_replace_what_is_being_typed(data) {
+            const view = pitch({ slides: [{ id: "s1", title: "", body: "" }, { id: "s2", title: "Two", body: "" }, { id: "s3", title: "Three", body: "" }] });
+            const field = findChild(view, data.field);
+            field.forceActiveFocus();
+            keyClick(Qt.Key_M);
+            compare(field.text, "m");
+            Spaces.slides.setProperty(0, data.role, "Theirs");
+            compare(field.text, "m");
+        }
+
+        function test_writing_over_an_edit_from_another_client_is_the_users_to_make() {
+            const view = pitch({});
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.text = "Mine";
+            Spaces.slides.setProperty(0, "title", "Theirs");
+            title.focus = false;
+            compare(root.dispatched("space.slide.update"), [{ spaceId: "space-1", slideId: "s1", title: "Mine" }]);
+        }
+
         function test_leaving_a_slide_of_a_trashed_deck_writes_nothing() {
             const view = pitch({ deck: { id: "deck-1", title: "Pitch", trashed: true }, decks: [], deckTrash: [{ id: "deck-1", title: "Pitch", trashedAt: "t" }] });
             const title = findChild(view, "spaceSlideTitle:0");

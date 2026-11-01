@@ -589,6 +589,39 @@ Item {
             compare(dispatched("space.slide.update"), [{ spaceId: "s1", slideId: "s1", body: "First" }]);
         }
 
+        function test_leavingASlideKeepsAnEditFromAnotherClient_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", role: "title" },
+                { tag: "body", field: "spaceSlideBody:0", role: "body" }
+            ];
+        }
+
+        function test_leavingASlideKeepsAnEditFromAnotherClient(data) {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, data.field) !== null);
+            const editor = findChild(screen, data.field);
+            editor.forceActiveFocus();
+            Spaces.slides.setProperty(0, data.role, "Theirs");
+            editor.focus = false;
+            compare(dispatched("space.slide.update"), []);
+            compare(editor.text, "Theirs");
+        }
+
+        function test_writingOverAnEditFromAnotherClientIsTheUsersToMake() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, "spaceSlideTitle:0") !== null);
+            const editor = findChild(screen, "spaceSlideTitle:0");
+            editor.forceActiveFocus();
+            editor.text = "Mine";
+            Spaces.slides.setProperty(0, "title", "Theirs");
+            editor.focus = false;
+            compare(dispatched("space.slide.update"), [{ spaceId: "s1", slideId: "s1", title: "Mine" }]);
+        }
+
         function test_leavingADeckInTheTrashWritesNothing() {
             const screen = makeScreen(deckState({ decks: [], deckTrash: [{ id: "d1", title: "Pitch", trashedAt: "2026-10-01T10:00:00Z" }], deck: { id: "d1", title: "Pitch", trashed: true } }));
             screen.openSpace("s1");

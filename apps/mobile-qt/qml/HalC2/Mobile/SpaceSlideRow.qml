@@ -23,30 +23,55 @@ Rectangle {
     // The Space it was made in: an edit written as the Space changes still goes there.
     property string spaceId: ""
 
-    Component.onCompleted: spaceId = Spaces.spaceId
+    // What was last taken from the slide: text that differs is the user's edit,
+    // written while the deck was live even if it is in the trash by now.
+    property string shownTitle: ""
+    property string shownBody: ""
+
+    Component.onCompleted: {
+        spaceId = Spaces.spaceId;
+        showTitle();
+        showBody();
+    }
 
     signal menuRequested
 
-    // A read-only editor cannot differ from its slide, so text that differs was
-    // written while the deck was live, even if a trashed deck has been picked since.
+    function showTitle() {
+        shownTitle = title;
+        titleEditor.text = title;
+    }
+
+    function showBody() {
+        shownBody = body;
+        bodyEditor.text = body;
+    }
+
     function writeTitle() {
-        if (titleEditor.text !== title)
+        if (titleEditor.text === shownTitle) {
+            showTitle();
+        } else {
+            shownTitle = titleEditor.text;
             Shell.dispatch("space.slide.update", { spaceId: spaceId, slideId: slideId, title: titleEditor.text });
+        }
     }
 
     function writeBody() {
-        if (bodyEditor.text !== body)
+        if (bodyEditor.text === shownBody) {
+            showBody();
+        } else {
+            shownBody = bodyEditor.text;
             Shell.dispatch("space.slide.update", { spaceId: spaceId, slideId: slideId, body: bodyEditor.text });
+        }
     }
 
     // What the MC wrote shows unless the user is writing there.
     onTitleChanged: {
         if (!titleEditor.activeFocus)
-            titleEditor.text = title;
+            showTitle();
     }
     onBodyChanged: {
         if (!bodyEditor.activeFocus)
-            bodyEditor.text = body;
+            showBody();
     }
     // Scrolled away or the screen left mid-edit: what was written still counts.
     // An editor without focus wrote its text as it lost it.
@@ -95,7 +120,6 @@ Rectangle {
                 font.pixelSize: Math.round(18 * Theme.fontScale)
                 font.weight: Font.DemiBold
                 Accessible.name: qsTr("Slide title")
-                Component.onCompleted: text = row.title
                 onActiveFocusChanged: {
                     if (!activeFocus)
                         row.writeTitle();
@@ -123,7 +147,6 @@ Rectangle {
                 selectionColor: Theme.palette.color("accent", "#2563eb")
                 font.pixelSize: Math.round(15 * Theme.fontScale)
                 Accessible.name: qsTr("What the slide says")
-                Component.onCompleted: text = row.body
                 onActiveFocusChanged: {
                     if (!activeFocus)
                         row.writeBody();
