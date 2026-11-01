@@ -8,7 +8,8 @@
 // step the rows hold only the shown page's versions, newest first and none twice;
 // at most one stretch is on its way; and an answer to anything since replaced
 // changes nothing. Once every answer is in and none was refused, the rows are the
-// page's newest versions, whatever raced whatever.
+// page's newest versions, whatever raced whatever. A refresh that reaches a row
+// already held never leaves fewer rows, though the MC sends only so many at once.
 
 #include "Prop.h"
 
@@ -25,6 +26,8 @@ const QStringList kPages{QStringLiteral("page-1"), QStringLiteral("page-2")};
 // What the fake MC sends when not told how many, small enough to page through.
 constexpr int kStretch = 3;
 constexpr int kMaxVersions = 12;
+// The most the fake MC sends at once, below what a refresh asks for.
+constexpr int kMost = 5;
 
 struct Model {
   // Each page's versions, oldest first; numbers are never shared between pages.
@@ -59,7 +62,7 @@ using Command = rc::state::Command<Model, Sut>;
 QJsonObject answerTo(const Model& model, const QJsonObject& payload) {
   const QList<qint64> all = model.versions.value(payload.value(QLatin1String("pageId")).toString());
   const qint64 before = payload.value(QLatin1String("before")).toInteger(-1);
-  const int limit = payload.value(QLatin1String("limit")).toInt(kStretch);
+  const int limit = std::min(payload.value(QLatin1String("limit")).toInt(kStretch), kMost);
   QJsonArray shown;
   QJsonValue next(QJsonValue::Null);
   for (auto it = all.crbegin(); it != all.crend(); ++it) {
@@ -105,6 +108,10 @@ void answer(const Model& model, Sut& sut, size_t index, bool refuse) {
   const Sut::Waiting waiting = sut.waiting.at(index);
   sut.waiting.erase(sut.waiting.begin() + static_cast<std::ptrdiff_t>(index));
   const bool live = waiting.token == sut.live;
+  const QList<qint64> held = rowsOf(sut);
+  const auto keeps = [&] {
+    return live && !refuse && waiting.fromTheTop && held.contains(waiting.answer.value(QLatin1String("nextBefore")).toInteger(-1));
+  };
   if (live) {
     sut.live = 0;
     if (refuse) {
@@ -114,6 +121,7 @@ void answer(const Model& model, Sut& sut, size_t index, bool refuse) {
     }
   }
   ask(model, sut, refuse ? sut.history.failed(waiting.token) : sut.history.receive(waiting.token, waiting.answer));
+  if (keeps()) RC_ASSERT(rowsOf(sut).size() >= held.size());
 }
 
 struct Open : Command {

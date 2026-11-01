@@ -823,8 +823,19 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       }).then(
         (result) => {
           if (asked !== historyAsked) return;
-          current.versions = more ? [...current.versions, ...result.versions] : result.versions;
-          current.nextBefore = result.nextBefore;
+          // A refresh that stopped at a row already held joins up with the older rows;
+          // one that stopped short of them leaves a gap, so they go.
+          const joined = current.versions.findIndex((row) => row.version === result.nextBefore);
+          const older = joined >= 0 ? current.versions.slice(joined + 1) : [];
+          if (more) {
+            current.versions = [...current.versions, ...result.versions];
+            current.nextBefore = result.nextBefore;
+          } else if (older.length > 0) {
+            current.versions = [...result.versions, ...older];
+          } else {
+            current.versions = result.versions;
+            current.nextBefore = result.nextBefore;
+          }
           settleHistory(current);
         },
         () => {

@@ -171,6 +171,16 @@ Feature: A page's history
       When the user restores the version 1 back on "Roadmap"
       Then the block "Later" has the open comment "Why?"
 
+    Scenario: Deleting a page for good is the user's edit of a page that linked to it
+      Given the page "Ideas"
+      And the agent in "Work" links "Ideas" from "Roadmap"
+      And the page "Ideas" is in the trash
+      And the user deletes the page "Ideas" for good
+      When the user opens the history of "Roadmap"
+      Then the history has 4 versions
+      And the newest version was written by the user
+      And the version 1 back was written by the thread "Work"
+
     Scenario: The history outlives a restart
       Given the MC restarts
       When the user opens the history of "Roadmap"

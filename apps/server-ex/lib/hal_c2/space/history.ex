@@ -12,7 +12,8 @@ defmodule HalC2.Space.History do
   version and a restore leaves them alone.
 
   An author is what the edit's block says (`updatedBy`), which is why deleting a block
-  someone else last wrote first stamps it (`HalC2.Space.Blocks.delete/3`). A title is
+  someone else last wrote first stamps it (`HalC2.Space.Blocks.delete/3`), as does
+  deleting the page a link leads to (`HalC2.Space.Pages.delete/3`). A title is
   the user's, or the source thread's when the page is made from one. There is no agent
   rename, so that holds.
 

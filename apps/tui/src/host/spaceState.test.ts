@@ -267,6 +267,28 @@ describe("a page's history", () => {
     expect(t.view().rows.filter((row) => row.kind === "version")).toHaveLength(2);
   });
 
+  test("a refresh past what the MC sends at once keeps the older versions", async () => {
+    const t = onRoadmap();
+    t.reply("space.page.history", { versions: [version(9), version(8)], nextBefore: 8 });
+    await t.controller.settled();
+    t.select("more:more");
+    t.controller.dispatch("space.activate", {});
+    t.reply("space.page.history", { versions: [version(7), version(6)], nextBefore: 6 });
+    await t.controller.settled();
+    t.controller.dispatch("space.history", {});
+    t.reply("space.page.history", { versions: [version(10), version(9)], nextBefore: 9 });
+    await t.controller.settled();
+    const versions = t.view().rows.filter((row) => row.kind === "version");
+    expect(versions.map((row) => row.key)).toEqual([
+      "version:10",
+      "version:9",
+      "version:8",
+      "version:7",
+      "version:6",
+    ]);
+    expect(t.view().rows.some((row) => row.kind === "more")).toBe(true);
+  });
+
   test("a version being read cannot be edited", async () => {
     const t = onRoadmap();
     t.reply("space.page.history", { versions: [version(9), version(8)], nextBefore: null });
