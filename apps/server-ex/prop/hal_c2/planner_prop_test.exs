@@ -170,6 +170,7 @@ defmodule HalC2.PlannerPropTest do
   @owner_focus @focus ++
                  [
                    :set_owner,
+                   :wait,
                    :own_while_looking,
                    :legacy_owner,
                    :assign,
@@ -353,6 +354,33 @@ defmodule HalC2.PlannerPropTest do
     end
   end
 
+  # Longer than the generator reaches often: an owner put on a relinked issue, a later part
+  # of that push refused, and the owner changed again.
+  test "an owner change after a relink's push was refused past the add leaves only the new owner" do
+    calls = [
+      {:add, ["a", nil, :task]},
+      {:add, ["b", nil, :task]},
+      {:link, ["a", nil]},
+      {:link, ["b", nil]},
+      {:wait, ["a", "b"]},
+      {:refuse_owner, [:drop, true]},
+      {:relink, ["a", @repository]},
+      {:set_owner, ["a", "alice"]},
+      {:set_owner, ["a", "dana"]},
+      {:refuse_owner, [:drop, false]},
+      {:look, []}
+    ]
+
+    cmds =
+      for {{f, args}, n} <- Enum.with_index(calls, 1),
+          do: {:set, {:var, n}, {:call, __MODULE__, f, args}}
+
+    begin_case()
+    {history, state, result} = run_commands(__MODULE__, cmds)
+    end_case()
+    assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
+  end
+
   property "an owner change replaces only the old owner on GitHub, whatever races it",
     numtests: HalC2.Prop.numtests(20),
     start_size: 20,
@@ -420,7 +448,8 @@ defmodule HalC2.PlannerPropTest do
   # changed since the look before, which its updated listing therefore names. An item's
   # `owner`: a login, `@stored_owner`, or nil. `assignees`: issue of `@repository` → the
   # logins GitHub lists, in its order, stamped as changed like any other change to it.
-  # `refusing`: which of `:add` and `:remove` GitHub refuses of any issue's assignees now.
+  # `refusing`: which of `:add` and `:remove` GitHub refuses of any issue's assignees now,
+  # and `:drop`, of its relations, which refuses a push past the assignees.
   # `focus`: the commands a focused case keeps, or nil for all of them.
   def initial_state,
     do: %{
@@ -686,6 +715,9 @@ defmodule HalC2.PlannerPropTest do
     # Renaming a task again while GitHub holds its push, so its answer chains one.
     flying = for slot <- pushed, Map.has_key?(m.flights, slot), do: slot
 
+    waiting = for slot <- pushed, m.items[slot].after != [], do: slot
+    dropping = for slot <- pushed, m.items[slot].sync == {:refused_owner, :drop}, do: slot
+
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
        {6, {:call, __MODULE__, :link_pr, [item, elements(@pulls)]}},
@@ -693,7 +725,7 @@ defmodule HalC2.PlannerPropTest do
        {4, {:call, __MODULE__, :wait, [item, item]}},
        {6, {:call, __MODULE__, :set_owner, [item, elements(@owners)]}},
        {1, {:call, __MODULE__, :legacy_owner, [item]}},
-       {3, {:call, __MODULE__, :refuse_owner, [elements([:add, :remove]), boolean()]}},
+       {3, {:call, __MODULE__, :refuse_owner, [elements([:add, :remove, :drop]), boolean()]}},
        {2, {:call, __MODULE__, :nest, [item, oneof([nil, item])]}},
        {2, {:call, __MODULE__, :move, [item, oneof([nil, item]), oneof([nil, item])]}},
        {2, {:call, __MODULE__, :remove, [item]}},
@@ -785,6 +817,17 @@ defmodule HalC2.PlannerPropTest do
          else: [
            # What owners take most: a task with an issue changing hands, and GitHub seen.
            {30, {:call, __MODULE__, :set_owner, [elements(pushed), elements(@owners)]}},
+           {10, {:call, __MODULE__, :wait, [elements(pushed), elements(pushed)]}},
+           # A relink dropping what a task waits for, GitHub refusing that past the assignees,
+           # and the owner changing again before it takes.
+           {if(waiting == [], do: 5, else: 60),
+            {:call, __MODULE__, :relink,
+             [elements(if(waiting == [], do: pushed, else: waiting)), @repository]}},
+           {if(waiting == [], do: 1, else: 40),
+            {:call, __MODULE__, :refuse_owner, [:drop, true]}},
+           {if(dropping == [], do: 1, else: 80),
+            {:call, __MODULE__, :set_owner,
+             [elements(if(dropping == [], do: pushed, else: dropping)), elements(@owners)]}},
            {10, {:call, __MODULE__, :legacy_owner, [elements(pushed)]}},
            {20,
             {:call, __MODULE__, :assign,
@@ -1055,22 +1098,51 @@ defmodule HalC2.PlannerPropTest do
       not own_ancestor?(observed.items) and read_alone?(before, call, alone)
   end
 
-  # Once an owner change takes whole, GitHub lists the new owner, whatever the model says
-  # it should, unless GitHub was already taken to have them.
-  defp owner_on_github?(before, m, {:call, _, :set_owner, [slot, owner]}, observed) do
-    %{issue: n, sync: sync} = m.items[slot]
+  # Once a task's owner change takes whole, GitHub lists the new owner and not the old on the
+  # issue that had them, whatever the model says it should.
+  defp owner_on_github?(before, m, {:call, _, cmd, [first | _]}, observed)
+       when cmd in [:set_owner, :own_while_looking, :rename, :redate] do
+    retrying =
+      for {slot, item} <- before.items,
+          not Map.has_key?(before.flights, slot),
+          item.sync != nil or before.synced[slot] != nil,
+          do: slot
 
-    if here?(n) and sync == nil and not Map.has_key?(m.flights, slot) and login?(owner) and
-         not same_login?(baseline(before, slot).owner, owner) and
-         not Enum.any?(Map.get(observed.assignees, n, []), &same_login?(&1, owner)) do
-      IO.puts("GitHub lists #{inspect(observed.assignees[n])} on ##{n}, not #{inspect(owner)}")
-      false
-    else
-      true
-    end
+    changed = if cmd in [:set_owner, :own_while_looking], do: [first], else: []
+
+    Enum.all?(Enum.uniq(changed ++ retrying), fn slot ->
+      item = m.items[slot]
+
+      Map.has_key?(before.flights, slot) or item.sync != nil or Map.has_key?(m.flights, slot) or
+        owner_replaced?(baseline(before, slot), item, observed.assignees)
+    end)
   end
 
   defp owner_on_github?(_before, _m, _call, _observed), do: true
+
+  defp owner_replaced?(%{owner: old} = b, %{owner: owner, issue: n}, assignees) do
+    listed? = fn number, login ->
+      Enum.any?(Map.get(assignees, number, []), &same_login?(&1, login))
+    end
+
+    holder = b.owner_issue || b.issue
+
+    cond do
+      old == owner or same_login?(old, owner) ->
+        true
+
+      login?(owner) and here?(n) and not listed?.(n, owner) ->
+        IO.puts("GitHub lists #{inspect(assignees[n])} on ##{n}, not #{inspect(owner)}")
+        false
+
+      login?(old) and here?(holder) and listed?.(holder, old) ->
+        IO.puts("GitHub still lists #{inspect(old)} on ##{holder}")
+        false
+
+      true ->
+        true
+    end
+  end
 
   # Whether a task the plugin answers is its own ancestor.
   defp own_ancestor?(items) do
@@ -1287,7 +1359,15 @@ defmodule HalC2.PlannerPropTest do
     item = %{before.items[slot] | issue: @issues[slot], state: :open}
     # GitHub assigns the new issue the task's owner, when that is a login.
     owner = if login?(item.owner), do: item.owner
-    made = %{baseline(before, slot) | due: nil, state: :open, owner: owner}
+
+    made = %{
+      baseline(before, slot)
+      | due: nil,
+        state: :open,
+        owner: owner,
+        owner_issue: owner && @issues[slot]
+    }
+
     before = put_in(before.assignees[@issues[slot]], if(owner, do: [owner], else: []))
 
     {before |> put_in([:items, slot], item) |> push_now(slot, made) |> ties_moved(slot, before),
@@ -1725,7 +1805,8 @@ defmodule HalC2.PlannerPropTest do
   # left it, or else what it has.
   defp baseline(m, slot), do: m.synced[slot] || own(m, slot)
 
-  # The task in `slot` of `m` as GitHub is taken to have it: its name, due date, owner, state
+  # The task in `slot` of `m` as GitHub is taken to have it: its name, due date, owner and,
+  # once a push put them on an issue other than `issue`, that issue (`owner_issue`), state
   # (`state_of/1`), the tasks it waits for and its parent (`{slot, gen}`), of those with
   # an issue, all GitHub can have, the issues those had then (`refs`), and the issue it
   # has them on, none when it has no issue.
@@ -1740,6 +1821,7 @@ defmodule HalC2.PlannerPropTest do
       name: item.name,
       due: item.due,
       owner: item.owner,
+      owner_issue: nil,
       state: state_of(item.status),
       after: Enum.filter(after_keys, &is_map_key(refs, &1)),
       parent: if(is_map_key(refs, parent), do: parent),
@@ -1819,11 +1901,12 @@ defmodule HalC2.PlannerPropTest do
 
   # A change of case alone asks nothing, an owner that is no login is neither taken off nor
   # added, and an issue no project has was never pushed the old owner.
-  defp owner_ops(item, %{owner: old, issue: was}) do
+  defp owner_ops(item, %{owner: old, issue: was, owner_issue: holder}) do
     if old == item.owner or same_login?(old, item.owner) do
       []
     else
-      off = if login?(old) and here?(was), do: [{:unassign, was, old}], else: []
+      holder = holder || was
+      off = if login?(old) and here?(holder), do: [{:unassign, holder, old}], else: []
       on = if login?(item.owner), do: [{:assign, item.issue, item.owner}], else: []
       off ++ on
     end
@@ -1875,7 +1958,7 @@ defmodule HalC2.PlannerPropTest do
             {:halt, {m, %{took | error: {:refused_owner, :remove}}}}
           else
             m = %{touch(m, [n]) | assignees: unassigned(m.assignees, n, login)}
-            {:cont, {m, put_in(took.b.owner, nil)}}
+            {:cont, {m, %{took | b: %{took.b | owner: nil, owner_issue: nil}}}}
           end
 
         {:assign, n, login} ->
@@ -1883,7 +1966,7 @@ defmodule HalC2.PlannerPropTest do
             {:halt, {m, %{took | error: {:refused_owner, :add}}}}
           else
             m = %{touch(m, [n]) | assignees: assigned(m.assignees, n, login)}
-            {:cont, {m, put_in(took.b.owner, login)}}
+            {:cont, {m, %{took | b: %{took.b | owner: login, owner_issue: n}}}}
           end
 
         {:block, {n, r} = pair, k} ->
@@ -1897,8 +1980,12 @@ defmodule HalC2.PlannerPropTest do
           {:cont, {%{m | rel: MapSet.put(m.rel, {:blocked, pair})}, %{took | b: b}}}
 
         {:unblock, pair, k} ->
-          b = %{took.b | after: took.b.after -- [k]}
-          {:cont, {%{m | rel: MapSet.delete(m.rel, {:blocked, pair})}, %{took | b: b}}}
+          if MapSet.member?(m.refusing, :drop) do
+            {:halt, {m, %{took | error: {:refused_owner, :drop}}}}
+          else
+            b = %{took.b | after: took.b.after -- [k]}
+            {:cont, {%{m | rel: MapSet.delete(m.rel, {:blocked, pair})}, %{took | b: b}}}
+          end
 
         {:unsub, pair, _k} ->
           {:cont, {%{m | rel: MapSet.delete(m.rel, {:sub, pair})}, put_in(took.b.parent, nil)}}
@@ -2343,7 +2430,8 @@ defmodule HalC2.PlannerPropTest do
     observe(:ok)
   end
 
-  # GitHub starts or stops refusing adding, or removing, the assignees of any issue.
+  # GitHub starts or stops refusing adding, or removing, the assignees of any issue, or
+  # dropping a task it waits for. The log says so, for `related/0`.
   def refuse_owner(kind, on) do
     refusing = Process.get(:pl_refusing)
     refusing = if on, do: MapSet.put(refusing, kind), else: MapSet.delete(refusing, kind)
@@ -2351,6 +2439,15 @@ defmodule HalC2.PlannerPropTest do
     path = System.get_env("FAKE_GH_RULES")
     rules = Enum.reject(path |> File.read!() |> JSON.decode!(), & &1["owner_rule"])
     File.write!(path <> ".tmp", JSON.encode!(owner_rules() ++ rules))
+
+    if kind == :drop,
+      do:
+        File.write!(
+          System.get_env("FAKE_GH_LOG"),
+          JSON.encode!(%{"args" => ["refusing-drop", on]}) <> "\n",
+          [:append]
+        )
+
     File.rename!(path <> ".tmp", path)
     observe(:ok)
   end
@@ -2364,7 +2461,17 @@ defmodule HalC2.PlannerPropTest do
       if MapSet.member?(Process.get(:pl_refusing), kind),
         do: Map.merge(rule, %{"exit" => 1, "stderr" => "HTTP 422: refused owner #{kind}\n"}),
         else: Map.merge(rule, %{"stdout" => "{}", "record" => assignee_changes()})
-    end
+    end ++
+      if MapSet.member?(Process.get(:pl_refusing), :drop),
+        do: [
+          %{
+            "owner_rule" => true,
+            "stdin" => ["removeBlockedBy"],
+            "exit" => 1,
+            "stderr" => "HTTP 422: refused owner drop\n"
+          }
+        ],
+        else: []
   end
 
   defp assignee_changes, do: Path.join(Process.get(:pl_gh), "assignees")
@@ -3550,20 +3657,32 @@ defmodule HalC2.PlannerPropTest do
 
   # The relations GitHub has, as the mutations asked of it in order made and dropped them.
   defp related do
-    Enum.reduce(gh_calls(), MapSet.new(), fn line, rel ->
-      with %{"args" => ["api", "graphql" | _], "stdin" => stdin} <- JSON.decode!(line),
-           {:ok, %{"query" => query, "variables" => vars}} <- JSON.decode(stdin),
-           [_, change, kind] <- Regex.run(~r/(add|remove)(BlockedBy|SubIssue)\(input/, query) do
-        pair = {issue_number(vars["issue"]), issue_number(vars["other"])}
-        relation = {if(kind == "BlockedBy", do: :blocked, else: :sub), pair}
+    {rel, _refusing} =
+      Enum.reduce(gh_calls(), {MapSet.new(), false}, fn line, {rel, refusing} ->
+        case JSON.decode!(line) do
+          %{"args" => ["refusing-drop", on]} -> {rel, on}
+          call -> {related(rel, call, refusing), refusing}
+        end
+      end)
 
-        if change == "add",
-          do: MapSet.put(rel, relation),
-          else: MapSet.delete(rel, relation)
-      else
-        _ -> rel
+    rel
+  end
+
+  defp related(rel, call, refusing) do
+    with %{"args" => ["api", "graphql" | _], "stdin" => stdin} <- call,
+         {:ok, %{"query" => query, "variables" => vars}} <- JSON.decode(stdin),
+         [_, change, kind] <- Regex.run(~r/(add|remove)(BlockedBy|SubIssue)\(input/, query) do
+      pair = {issue_number(vars["issue"]), issue_number(vars["other"])}
+      relation = {if(kind == "BlockedBy", do: :blocked, else: :sub), pair}
+
+      cond do
+        change == "add" -> MapSet.put(rel, relation)
+        refusing and kind == "BlockedBy" -> rel
+        true -> MapSet.delete(rel, relation)
       end
-    end)
+    else
+      _ -> rel
+    end
   end
 
   defp issue_number("I_" <> n), do: String.to_integer(n)
@@ -3582,7 +3701,7 @@ defmodule HalC2.PlannerPropTest do
       match = Regex.run(~r/refused push (\d+)/, error) ->
         {:refused, match |> List.last() |> String.to_integer()}
 
-      match = Regex.run(~r/refused owner (add|remove)/, error) ->
+      match = Regex.run(~r/refused owner (add|remove|drop)/, error) ->
         {:refused_owner, match |> List.last() |> String.to_existing_atom()}
 
       true ->
