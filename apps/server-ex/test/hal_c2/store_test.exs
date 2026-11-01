@@ -233,7 +233,7 @@ defmodule HalC2.StoreTest do
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        Store.index_messages("p1", [{"m1", "user", "hello", "2026-01-01T00:00:00Z"}])
+        Store.index_messages("p1", [{"m1", "user", "hello", "2026-01-01T00:00:00Z", true}])
         _ = :sys.get_state(Store)
       end)
 
@@ -261,7 +261,7 @@ defmodule HalC2.StoreTest do
 
   test "a batch of messages is indexed whole or not at all", %{path: path} do
     {:ok, _} = Store.append([{:thread, "t1", [change("t1")]}])
-    messages = [{"m1", "user", "one", "a"}, {"m2", "user", "two", "b"}]
+    messages = [{"m1", "user", "one", "a", true}, {"m2", "user", "two", "b", true}]
 
     Store.index_messages("t1", messages)
     _ = :sys.get_state(Store)
@@ -270,7 +270,11 @@ defmodule HalC2.StoreTest do
     # The second row cannot be stored, so the first must not stay either.
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        Store.index_messages("t1", [{"m3", "user", "three", "c"}, {"m4", "user", nil, "d"}])
+        Store.index_messages("t1", [
+          {"m3", "user", "three", "c", true},
+          {"m4", "user", nil, "d", true}
+        ])
+
         _ = :sys.get_state(Store)
       end)
 
@@ -278,6 +282,54 @@ defmodule HalC2.StoreTest do
 
     assert Store.search_messages(path, "%three%", 10) == []
     assert Store.search_messages(path, "%two%", 10) == [{"t1", "user", "two", "b"}]
+  end
+
+  test "typed messages are counted per day, and one deleted is forgotten", %{path: path} do
+    {:ok, _} = Store.append([{:thread, "t1", [change("t1")]}])
+
+    Store.index_messages("t1", [
+      {"m1", "user", "one", "2026-01-01T09:00:00Z", true},
+      {"m2", "user", "two", "2026-01-01T10:00:00Z", true},
+      {"m3", "user", "sent by an agent", "2026-01-01T11:00:00Z", false},
+      {"m4", "user", "three", "2026-01-02T09:00:00Z", true},
+      {"m5", "user", "too old", "2025-12-31T09:00:00Z", true}
+    ])
+
+    Store.index_messages("t1", [{"m2", :deleted}])
+    _ = :sys.get_state(Store)
+
+    assert Enum.sort(Store.typed_messages_since(path, "2026-01-01")) ==
+             [{"t1", "2026-01-01", 1}, {"t1", "2026-01-02", 1}]
+
+    assert Store.search_messages(path, "%two%", 10) == []
+  end
+
+  test "a store an older MC wrote gains the column and is left to be read", %{path: path} do
+    {:ok, _} = Store.append([{:thread, "t1", [change("t1")]}])
+    assert Store.meta(path, "messages_typed") == "1"
+    :ok = stop_supervised(Store)
+
+    {:ok, db} = Sqlite3.open(path)
+
+    :ok =
+      Sqlite3.execute(db, """
+      DROP INDEX messages_typed;
+      ALTER TABLE messages DROP COLUMN typed;
+      DELETE FROM meta WHERE key = 'messages_typed';
+      INSERT INTO messages (stream, id, role, text, created_at)
+        SELECT key, 'm1', 'user', 'old', '2026-01-01T09:00:00Z' FROM streams;
+      """)
+
+    :ok = Sqlite3.close(db)
+    start_supervised!({Store, path: path})
+
+    assert Store.meta(path, "messages_typed") == nil
+    assert Store.typed_messages_since(path, "2026-01-01") == []
+    assert [{"t1", "user", "old", _}] = Store.search_messages(path, "%old%", 10)
+
+    Store.index_messages("t1", [{"m1", "user", "old", "2026-01-01T09:00:00Z", true}])
+    _ = :sys.get_state(Store)
+    assert Store.typed_messages_since(path, "2026-01-01") == [{"t1", "2026-01-01", 1}]
   end
 
   test "the meta entries under a prefix are read in one go, and only those", %{path: path} do

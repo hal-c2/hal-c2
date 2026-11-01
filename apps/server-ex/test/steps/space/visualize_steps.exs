@@ -59,6 +59,52 @@ defmodule HalC2.Steps.Space.Visualize do
     |> tap(fn _ -> Store.put_meta("test.flush", "1") end)
   end
 
+  step "a client forked {string}, and the fork took a turn of its own",
+       %{args: [title]} = context do
+    run = "run-to-fork"
+    # A moment ago: a fork tells what it copied by being older than the fork.
+    at = World.iso_from_now(-1_000)
+
+    context =
+      context
+      |> World.add_run(title, "completed", at, %{"id" => run})
+      |> World.add_message(title, "user", "before the fork", at, %{"runId" => run})
+      |> World.fork_thread(title, "#{title} fork")
+      |> World.add_message("#{title} fork", "user", "after the fork")
+
+    assert Enum.any?(
+             StreamState.list(World.stream(context, "#{title} fork"), "message"),
+             &(&1["text"] == "before the fork")
+           )
+
+    Store.put_meta("test.flush", "1")
+    Map.update!(context, :turns_taken, &(&1 + 2))
+  end
+
+  step "the user took back a message they sent to {string}", %{args: [title]} = context do
+    id = "msg-taken-back"
+
+    context
+    |> World.add_message(title, "user", "never mind", nil, %{"id" => id})
+    |> World.put_entity(title, "message", id, HalC2.Patch.delete())
+    |> tap(fn _ -> Store.put_meta("test.flush", "1") end)
+  end
+
+  step "an older MC indexed them, not saying who typed what", context do
+    # Index casts land before this write returns.
+    Store.delete_meta("messages_typed")
+    {:ok, db} = Exqlite.Sqlite3.open(Store.path())
+    :ok = Exqlite.Sqlite3.execute(db, "PRAGMA busy_timeout = 5000")
+    :ok = Exqlite.Sqlite3.execute(db, "UPDATE messages SET typed = NULL")
+    :ok = Exqlite.Sqlite3.close(db)
+    context
+  end
+
+  step "the MC has read its older threads", context do
+    :ok = HalC2.Search.backfill()
+    context
+  end
+
   # --- what the model says -----------------------------------------------------------
 
   step "text generation charts the request from the MC's threads", context do
@@ -130,6 +176,14 @@ defmodule HalC2.Steps.Space.Visualize do
 
   step "{string} also says {string}", %{args: [title, text]} = context do
     insert(context, title, text)
+    context
+  end
+
+  # The title and its line break come first in the text the model reads, up to 8,000 bytes.
+  step "{string} has the number {int} where the model stops reading",
+       %{args: [title, number]} = context do
+    padding = String.duplicate("x", 8_000 - byte_size(title) - 1 - 4)
+    insert(context, title, "#{padding} #{number}")
     context
   end
 

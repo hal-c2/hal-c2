@@ -13,7 +13,7 @@ defmodule HalC2.Space.Visualize do
   """
 
   alias HalC2.Space.Chart
-  alias HalC2.{Store, StreamState, TextGeneration}
+  alias HalC2.{Search, Store, TextGeneration}
 
   @page_bytes 8_000
   @weeks 12
@@ -28,7 +28,6 @@ defmodule HalC2.Space.Visualize do
   }
 
   @page_source "Numbers from this page"
-  @not_typed ~w(senderThreadId scheduledTaskId notification delegatedCompletion providerWake)
 
   @unanswerable "No chart was drawn: only numbers written on this page, and the turns and " <>
                   "threads on this MC, can be charted, and neither answers that."
@@ -40,7 +39,7 @@ defmodule HalC2.Space.Visualize do
   def answer(request, page, blocks) do
     text = page_text(page, blocks)
 
-    case TextGeneration.chart(request, text, @datasets) do
+    case TextGeneration.chart(request, Chart.cut(text, @page_bytes), @datasets) do
       {:ok, reply} ->
         reply |> chart(request, text) |> refused()
 
@@ -56,11 +55,14 @@ defmodule HalC2.Space.Visualize do
   defp refused(:unanswerable), do: {:error, :chart_unanswerable, @unanswerable}
   defp refused({:error, message}), do: {:error, :chart_failed, "No chart was drawn. #{message}"}
 
-  @doc "The text a chart of this page may take its numbers from: not a chart's, not a link's."
+  @doc """
+  The text a chart of this page may take its numbers from: not a chart's, not a link's.
+  The model reads only its first `@page_bytes`, but a number is checked against all of it:
+  the cut could fall inside a number, and half of one is not on the page.
+  """
   def page_text(page, blocks) do
     [page["title"] | for(b <- blocks, b["kind"] not in ~w(chart subpage_link), do: b["text"])]
     |> Enum.join("\n")
-    |> Chart.cut(@page_bytes)
   end
 
   defp chart(%{"source" => "none"}, _request, _text), do: :unanswerable
@@ -73,13 +75,17 @@ defmodule HalC2.Space.Visualize do
   end
 
   defp chart(%{"source" => id} = reply, request, _text) when is_map_key(@datasets, id) do
-    case counted(id, Date.utc_today()) do
-      {labels, name, values, source} ->
-        data = %{"labels" => labels, "series" => [%{"name" => name, "values" => values}]}
-        describe(reply, data, request, source)
+    if String.starts_with?(id, "turns_") and not Search.read?() do
+      {:error, "This MC is still reading its older threads, so try again in a minute."}
+    else
+      case counted(id, Date.utc_today()) do
+        {labels, name, values, source} ->
+          data = %{"labels" => labels, "series" => [%{"name" => name, "values" => values}]}
+          describe(reply, data, request, source)
 
-      nil ->
-        :unanswerable
+        nil ->
+          :unanswerable
+      end
     end
   end
 
@@ -169,25 +175,14 @@ defmodule HalC2.Space.Visualize do
         do: {id, row}
   end
 
-  # `{thread id, day, 1}`s. The index says which threads to read, but not who sent a
-  # message: only its entity does, so each is read from the log, not its running stream.
+  # `{thread id, day, count}`s, from the index, which knows who typed what without
+  # loading a thread.
   defp turns(threads, since) do
-    path = Store.path()
-    since = Date.to_iso8601(since)
-
-    for id <- Store.threads_messaged_since(path, since),
+    for {id, _day, _count} = row <-
+          Store.typed_messages_since(Store.path(), Date.to_iso8601(since)),
         is_map_key(threads, id),
-        %{"createdAt" => <<day::binary-size(10), _::binary>>} = message <-
-          path |> StreamState.load(id) |> StreamState.list("message"),
-        day >= since and typed?(message),
-        do: {id, day, 1}
+        do: row
   end
-
-  # What an agent, a schedule or the MC sent has the role of a user's message too.
-  defp typed?(%{"role" => "user"} = message),
-    do: not Enum.any?(@not_typed, &(message[&1] != nil))
-
-  defp typed?(_message), do: false
 
   defp started(threads, since) do
     since = Date.to_iso8601(since)

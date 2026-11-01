@@ -81,7 +81,8 @@ defmodule HalC2.Store do
       state BLOB NOT NULL
     )
     """,
-    # Finished user and assistant messages, for thread search. Derived from events.
+    # Finished user and assistant messages, for thread search and counting turns.
+    # Derived from events. `typed` is NULL on a row an older MC wrote (`Search.backfill/0`).
     """
     CREATE TABLE IF NOT EXISTS messages (
       stream INTEGER NOT NULL REFERENCES streams(key),
@@ -89,6 +90,7 @@ defmodule HalC2.Store do
       role TEXT NOT NULL,
       text TEXT NOT NULL,
       created_at TEXT,
+      typed INTEGER,
       PRIMARY KEY (stream, id)
     )
     """
@@ -238,9 +240,10 @@ defmodule HalC2.Store do
   end
 
   @doc """
-  Records finished messages of a stream for search, as `{id, role, text, created_at}`.
-  Asynchronous, and ignored for a stream that has no events. A call to the store from the
-  same process afterwards (`:sys.get_state/1`, say) returns once they are indexed.
+  Records finished messages of a stream, as `{id, role, text, created_at, typed?}`, and
+  forgets those given as `{id, :deleted}`. Asynchronous, and ignored for a stream that has
+  no events. A call to the store from the same process afterwards (`:sys.get_state/1`,
+  say) returns once they are indexed.
   """
   def index_messages(store \\ __MODULE__, stream_id, messages),
     do: GenServer.cast(store, {:index_messages, stream_id, messages})
@@ -266,17 +269,19 @@ defmodule HalC2.Store do
     end)
   end
 
-  @doc "The ids of the threads with a message in a user's role since `since` (an ISO date)."
-  def threads_messaged_since(path, since) do
+  @doc "The messages typed since `since` (an ISO date), as `{stream_id, day, count}`."
+  def typed_messages_since(path, since) do
     with_reader(path, fn db ->
       {:ok, stmt} =
         Sqlite3.prepare(db, """
-        SELECT DISTINCT s.id FROM messages m JOIN streams s ON s.key = m.stream
-        WHERE m.role = 'user' AND m.created_at >= ?1
+        SELECT s.id, substr(m.created_at, 1, 10), COUNT(*)
+        FROM messages m JOIN streams s ON s.key = m.stream
+        WHERE m.typed = 1 AND m.created_at >= ?1
+        GROUP BY m.stream, 2
         """)
 
       :ok = Sqlite3.bind(stmt, [since])
-      step_reduce(db, stmt, [], fn [id], acc -> [id | acc] end)
+      step_reduce(db, stmt, [], fn [id, day, count], acc -> [{id, day, count} | acc] end)
     end)
   end
 
@@ -523,7 +528,12 @@ defmodule HalC2.Store do
   end
 
   defp open(path, db) do
+    new? = not table?(db, "streams")
     Enum.each(@schema, &(:ok = Sqlite3.execute(db, &1)))
+    add_typed(db)
+    # A new store has no older threads to read (`Search.backfill/0`).
+    if new?,
+      do: :ok = Sqlite3.execute(db, "INSERT OR IGNORE INTO meta VALUES ('messages_typed', '1')")
 
     :ok =
       Sqlite3.execute(
@@ -620,6 +630,31 @@ defmodule HalC2.Store do
     :ok = Sqlite3.release(db, stmt)
     :persistent_term.put({:id, path_key(self())}, id)
     id
+  end
+
+  defp table?(db, name) do
+    {:ok, stmt} = Sqlite3.prepare(db, "SELECT 1 FROM sqlite_master WHERE name = ?1")
+    :ok = Sqlite3.bind(stmt, [name])
+    found = Sqlite3.step(db, stmt) != :done
+    :ok = Sqlite3.release(db, stmt)
+    found
+  end
+
+  # A column an older MC ignores, so the schema version stays and it can still open this
+  # store. The index holds what a count reads, so it never touches a message's text.
+  defp add_typed(db) do
+    {:ok, stmt} =
+      Sqlite3.prepare(db, "SELECT 1 FROM pragma_table_info('messages') WHERE name = 'typed'")
+
+    missing? = Sqlite3.step(db, stmt) == :done
+    :ok = Sqlite3.release(db, stmt)
+    if missing?, do: :ok = Sqlite3.execute(db, "ALTER TABLE messages ADD COLUMN typed INTEGER")
+
+    :ok =
+      Sqlite3.execute(
+        db,
+        "CREATE INDEX IF NOT EXISTS messages_typed ON messages(created_at, stream) WHERE typed = 1"
+      )
   end
 
   # The schema version a store was written with, or 0 for a new file.
@@ -740,14 +775,7 @@ defmodule HalC2.Store do
         :ok = Sqlite3.execute(state.db, "BEGIN IMMEDIATE")
 
         try do
-          for {id, role, text, created_at} <- messages,
-              do:
-                :ok =
-                  exec(
-                    state.db,
-                    "INSERT INTO messages (stream, id, role, text, created_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(stream, id) DO UPDATE SET role = excluded.role, text = excluded.text, created_at = excluded.created_at",
-                    [key, id, role, text, created_at]
-                  )
+          for message <- messages, do: :ok = index_message(state.db, key, message)
 
           :ok = Sqlite3.execute(state.db, "COMMIT")
         rescue
@@ -761,6 +789,17 @@ defmodule HalC2.Store do
       do: Logger.warning("the store ignored messages of #{stream_id}: #{inspect(result)}")
 
     {:noreply, state}
+  end
+
+  defp index_message(db, key, {id, :deleted}),
+    do: exec(db, "DELETE FROM messages WHERE stream = ?1 AND id = ?2", [key, id])
+
+  defp index_message(db, key, {id, role, text, created_at, typed?}) do
+    exec(
+      db,
+      "INSERT INTO messages (stream, id, role, text, created_at, typed) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(stream, id) DO UPDATE SET role = excluded.role, text = excluded.text, created_at = excluded.created_at, typed = excluded.typed",
+      [key, id, role, text, created_at, if(typed?, do: 1, else: 0)]
+    )
   end
 
   # A linked process (the checkpointer) takes the store down as it did before the store

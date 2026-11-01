@@ -141,6 +141,12 @@ Feature: Charts on a page
         | 10-20   | 20     |
         | In 2026. | 2026  |
 
+    Scenario: A number the model only saw part of does not count
+      Given "Status" has the number 12345 where the model stops reading
+      And text generation answers with a bar chart of "May" 123
+      When the user asks for "/visualize signups" on the page "Status"
+      Then the user is told no chart was drawn
+
     Scenario: A number too large to read leaves the rest of the page readable
       Given "Status" has the blocks "Signups were 3 in May"
       And "Status" also holds a number too large to read
@@ -160,6 +166,30 @@ Feature: Charts on a page
       And a worker took turns on this MC
       And text generation charts the request from the MC's threads and invents the values
       When the user asks for "/visualize weekly turns" on the page "Status"
+      Then the chart holds the turns the MC counted
+
+    Scenario: What a fork copied is not a turn again
+      Given this MC's threads took turns this week
+      And a client forked "Work", and the fork took a turn of its own
+      And text generation charts the request from the MC's threads and invents the values
+      When the user asks for "/visualize weekly turns" on the page "Status"
+      Then the chart holds the turns the MC counted
+
+    Scenario: A message taken back is not a turn
+      Given this MC's threads took turns this week
+      And the user took back a message they sent to "Work"
+      And text generation charts the request from the MC's threads and invents the values
+      When the user asks for "/visualize weekly turns" on the page "Status"
+      Then the chart holds the turns the MC counted
+
+    Scenario: Threads an older MC wrote are read once, then counted
+      Given this MC's threads took turns this week
+      And an older MC indexed them, not saying who typed what
+      And text generation charts the request from the MC's threads and invents the values
+      When the user asks for "/visualize weekly turns" on the page "Status"
+      Then the user is told no chart was drawn
+      When the MC has read its older threads
+      And the user asks for "/visualize weekly turns" on the page "Status"
       Then the chart holds the turns the MC counted
 
     Scenario: A worker is not one of the threads counted
