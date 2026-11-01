@@ -17,11 +17,13 @@
 #include "NavigationController.h"
 #include "OnboardingController.h"
 #include "ProviderSettingsController.h"
+#include "ProviderUpdateNotice.h"
 #include "SettingsController.h"
 #include "FileActionsController.h"
 #include "PluginController.h"
 #include "ThreadMenuController.h"
 #include "RightPanelController.h"
+#include "ServerUpdateController.h"
 #include "ThisMachine.h"
 #include "ThreadStore.h"
 #include "ToastController.h"
@@ -70,6 +72,7 @@ void World::start() {
   m_native->controller<FileActionsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<ProviderSettingsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<RightPanelController>()->review()->setClipboardWriter(writeClipboard);
+  m_native->shared<ServerUpdateController>()->setClipboardWriter(writeClipboard);
   m_bridge->setClipboardWriter(writeClipboard);
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),
@@ -152,7 +155,9 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<RightPanelController>()->agents()->setClock([now] { return now.toUTC(); });
   m_native->controller<UsageController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<OnboardingController>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<ProviderUpdateNotice>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->expire();
+  m_native->controller<ProviderUpdateNotice>()->expire();
 }
 
 void World::connect(const QString& token) {

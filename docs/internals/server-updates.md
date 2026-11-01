@@ -8,6 +8,13 @@ installs the whole bundle and exits with status 75, which `bin/hal-c2-service` a
 starting the MC again on the new version. Only a release can install a version; a checkout run
 by `mise run mc` reports no `serverSelfUpdate` capability.
 
+An MC the desktop app started (`HAL_C2_DESKTOP_HOST=1`) never installs a version itself: it
+reports "desktop-managed", and [`HalC2.DesktopUpdate`](../../apps/server-ex/lib/hal_c2/desktop_update.ex)
+asks the desktop app, over its `desktopUpdateControl` subscription, to update and restart both.
+Only the socket that exchanged the desktop bootstrap token may hold that subscription or report
+the app's updater with `server.reportDesktopUpdateStatus`; reports name the run by its
+`requestId`, and a failed install after the commit becomes the outcome clients see in `ready`.
+
 ## Restart and rollback
 
 `releases/start_erl.data` names the version the next boot runs. The previous file is kept beside

@@ -23,6 +23,8 @@ UsageModelPrices 1.0 UsageModelPrices.qml
 ProviderModelList 1.0 ProviderModelList.qml
 ComposerUsageLimits 1.0 ComposerUsageLimits.qml
 ConnectionStatusRow 1.0 ConnectionStatusRow.qml
+ServerUpdateAction 1.0 ServerUpdateAction.qml
+ServerUpdatesList 1.0 ServerUpdatesList.qml
 ShellTextField 1.0 ShellTextField.qml
 ShellSwitch 1.0 ShellSwitch.qml
 ShellSpinBox 1.0 ShellSpinBox.qml
@@ -67,6 +69,7 @@ PullRequestThreadDialog 1.0 PullRequestThreadDialog.qml
 EditFromHereDialog 1.0 EditFromHereDialog.qml
 WorktreeSetupCard 1.0 WorktreeSetupCard.qml
 LimitRecoveryBanner 1.0 LimitRecoveryBanner.qml
+ProviderUpdateNotice 1.0 ProviderUpdateNotice.qml
 ThreadLineage 1.0 ThreadLineage.qml
 CentreHost 1.0 CentreHost.qml
 ThreadView 1.0 ThreadView.qml
@@ -136,3 +139,4 @@ PluginThreadPart 1.0 PluginThreadPart.qml
 PluginSettings 1.0 PluginSettings.qml
 NotificationsSettings 1.0 NotificationsSettings.qml
 PairingSettings 1.0 PairingSettings.qml
+MaintenanceSettings 1.0 MaintenanceSettings.qml

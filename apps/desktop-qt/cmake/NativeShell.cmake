@@ -52,6 +52,12 @@ function(hal_c2_add_native_library)
   # Snap Shot's capture sounds, as :/hal-c2/sounds/*.oga.
   qt_add_resources(hal_c2_native hal_c2_native_sounds PREFIX "/hal-c2" BASE "${_hal_c2_src}/native"
                    FILES "${_hal_c2_src}/native/sounds/snap-shot-click.oga" "${_hal_c2_src}/native/sounds/snap-shot-whoosh.oga")
+  # The desktop app's own updates (DesktopUpdater): the GitHub releases feed a
+  # release build checks (HAL_C2_UPDATE_FEED in the environment wins), and only
+  # a release build updates itself.
+  set(HAL_C2_UPDATE_FEED "" CACHE STRING "The releases feed the desktop app updates from; empty: none")
+  target_compile_definitions(hal_c2_native PRIVATE "HAL_C2_UPDATE_FEED=\"${HAL_C2_UPDATE_FEED}\""
+                             $<$<CONFIG:Release>:HAL_C2_RELEASE_BUILD>)
   # A development build finds the KDE and Hyprland capture helpers where cargo
   # builds them (CaptureHelper::defaultPaths); a package carries its own.
   get_filename_component(_hal_c2_root "${_hal_c2_src}/../../.." ABSOLUTE)

@@ -160,6 +160,11 @@ SettingsPage {
             Layout.topMargin: 4
         }
 
+        ServerUpdatesList {
+            Layout.fillWidth: true
+            Layout.topMargin: 4
+        }
+
         Heading {
             text: qsTr("Authorized clients")
         }
