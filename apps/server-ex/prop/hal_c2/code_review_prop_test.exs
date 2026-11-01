@@ -1003,8 +1003,7 @@ defmodule HalC2.CodeReviewPropTest do
     File.write!(pids, "")
     send(@server, :poll)
     wait_for_file(pids)
-    {:monitors, [{:process, poller} | _]} = Process.info(Process.whereis(@server), :monitors)
-    ref = Process.monitor(poller)
+    ref = Process.monitor(poller(Process.whereis(@server)))
     reply = killing(fn -> plugins("disable", %{"id" => @id}) end)
 
     receive do
@@ -1333,8 +1332,8 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   defp await_poller(pid, deadline) do
-    case Process.info(pid, :monitors) do
-      {:monitors, [{:process, poller} | _]} ->
+    case poller(pid) do
+      poller when is_pid(poller) ->
         ref = Process.monitor(poller)
 
         receive do
@@ -1344,9 +1343,18 @@ defmodule HalC2.CodeReviewPropTest do
             Process.demonitor(ref, [:flush])
         end
 
-      _ ->
+      nil ->
         :ok
     end
+  end
+
+  # The look under way: the one process the plugin both links and monitors. A monitor
+  # alone will not do: the server's own calls in flight (a file it saves goes through
+  # the file server) monitor their callee for as long as they last.
+  defp poller(pid) do
+    {:links, links} = Process.info(pid, :links)
+    {:monitors, monitors} = Process.info(pid, :monitors)
+    Enum.find_value(monitors, fn {:process, p} -> p in links and p end)
   end
 
   defp await_any(kids) do
