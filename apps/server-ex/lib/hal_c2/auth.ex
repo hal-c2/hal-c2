@@ -316,14 +316,26 @@ defmodule HalC2.Auth do
   @doc "Called by a socket of `session_id` once open; it counts as connected until it exits."
   def connected(session_id), do: GenServer.cast(__MODULE__, {:connected, session_id, self()})
 
-  @doc "What people call the device of `session_id`, or nil: its label, else its device type."
+  @doc """
+  What people call the device of `session_id`, or nil: its label, else its device type,
+  trimmed. Pairing takes them as given, so a blank one counts as none.
+  """
   def device_name(session_id) do
     with_db(HalC2.Store.path(), fn db ->
       case query(db, "SELECT label, device_type FROM auth_sessions WHERE id = ?1", [session_id]) do
-        [[label, device_type]] -> label || device_type
+        [[label, device_type]] -> named(label) || named(device_type)
         [] -> nil
       end
     end)
+  end
+
+  defp named(nil), do: nil
+
+  defp named(name) do
+    case String.trim(name) do
+      "" -> nil
+      trimmed -> trimmed
+    end
   end
 
   @doc "`POST /api/auth/pairing-token`: a pairing link, with its one-time credential."

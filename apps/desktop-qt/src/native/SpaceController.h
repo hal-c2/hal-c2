@@ -162,6 +162,7 @@ public:
   QString pageId() const { return m_pageId; }
   QVariantMap page() const;
   QString deckId() const { return m_deckId; }
+  bool imagesShown() const { return m_imagesShown; }
   QVariantMap deck() const;
   bool presenting() const { return m_presenting; }
   QVariantMap slide() const { return m_presenting ? m_slides->get(m_slideIndex) : QVariantMap(); }

@@ -882,7 +882,8 @@ void SpaceController::followSpace() {
 }
 
 void SpaceController::followViewers() {
-  const bool onShow = m_open && m_client->isReady() && (!m_pageShownBySteps || m_pageShown);
+  // A deck or the image browser takes the selected page's place.
+  const bool onShow = m_open && m_client->isReady() && deckId().isEmpty() && !imagesShown() && (!m_pageShownBySteps || m_pageShown);
   const QString page = onShow ? pageId() : QString();
   if (page == m_followedViewers) return;
   if (m_viewersSubscription) m_client->unsubscribe(std::exchange(m_viewersSubscription, 0));

@@ -854,6 +854,31 @@ defmodule HalC2.AuthConcurrentPropTest do
   @tickets [6, 7, 8, 9]
   @owners %{6 => 4, 7 => 4, 8 => 5, 9 => :local}
 
+  property "a device's name is the first of its label and type with words in it, trimmed",
+    numtests: HalC2.Prop.numtests(100) do
+    words = oneof([nil, "", " ", " \t", "Phone", " Phone ", "mobile"])
+
+    forall {label, device_type} <- {words, words} do
+      HalC2.Prop.scratch_home("auth-device-name")
+      HalC2.Prop.start_services([{Store, path: Store.home_path()}, Auth])
+      {:ok, %{"credential" => credential}} = Auth.create_pairing_link(%{})
+
+      {:ok, access, _expires_in, _scopes} =
+        Auth.exchange(credential, %{label: label, device_type: device_type})
+
+      {:ok, %{id: id}} = Auth.session(access)
+      name = Auth.device_name(id)
+      HalC2.Prop.stop_services()
+
+      expected =
+        [label, device_type]
+        |> Enum.map(&String.trim(&1 || ""))
+        |> Enum.find(&(&1 != ""))
+
+      name == expected
+    end
+  end
+
   property "a token or ticket is used once however many callers race",
     numtests: HalC2.Prop.numtests(100),
     max_size: 12 do

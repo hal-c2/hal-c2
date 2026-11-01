@@ -1005,6 +1005,8 @@ step("the user makes a deck from the page {string}", async (ctx: SpaceWorld, tit
   await press(ctx, "S");
 });
 
+step("the user opens the deck {string}", (ctx: SpaceWorld, title: string) => openDeck(ctx, title));
+
 step("the deck {string}", (ctx: SpaceWorld, title: string) => {
   seedDeck(ctx, title);
 });
@@ -1224,6 +1226,14 @@ step(
   (ctx: SpaceWorld, name: string, space: string) =>
     addFile(ctx, name, new TextEncoder().encode("only words"), space),
 );
+
+step("the user opens the images of {string}", async (ctx: SpaceWorld, space: string) => {
+  if (pane(ctx).view === "page") await press(ctx, "v");
+  else await openImages(ctx, space);
+  expect(pane(ctx).view).toBe("images");
+});
+
+step("the user closes the images", (ctx: World) => press(ctx, "Esc"));
 
 step("the images of {string} are {string}", async (ctx: SpaceWorld, space: string, names) => {
   await openImages(ctx, space);

@@ -76,6 +76,42 @@ Feature: Who else is on a page
       When the user leaves the page
       Then the user is no longer on the page "Roadmap"
 
+  @desktop @mobile @tui
+  Rule: A deck or the images in the page's place are not being on the page
+
+    Scenario: Opening a deck leaves the page
+      Given the deck "Pitch"
+      And the page "Roadmap" is open on the device "Phone"
+      And the user opens the page "Roadmap"
+      And the page shows the user also on "Phone"
+      When the user opens the deck "Pitch"
+      Then the user is no longer on the page "Roadmap"
+
+    Scenario: Back on the page from a deck, the user is on it again
+      Given the deck "Pitch"
+      And the page "Roadmap" is open on the device "Phone"
+      And the user opens the deck "Pitch"
+      When the user opens the page "Roadmap"
+      Then the page shows the user also on "Phone"
+
+    Scenario: Opening the images leaves the page
+      Given the page "Roadmap" is open on the device "Phone"
+      And the user opens the page "Roadmap"
+      And the page shows the user also on "Phone"
+      When the user opens the images of "Research"
+      Then the user is no longer on the page "Roadmap"
+
+  @desktop @tui
+  Rule: Closing the images puts the page back
+
+    Scenario: Closing the images, the user is on the page again
+      Given the page "Roadmap" is open on the device "Phone"
+      And the user opens the page "Roadmap"
+      And the user opens the images of "Research"
+      And the user is no longer on the page "Roadmap"
+      When the user closes the images
+      Then the page shows the user also on "Phone"
+
   @tui
   Rule: A client that lost its connection does not say who is on a page
 
@@ -106,6 +142,23 @@ Feature: Who else is on a page
       When the window narrows to a phone's width
       Then the user is no longer on the page "Roadmap"
 
+    Scenario: In the wide layout a deck on show is not being on the page
+      Given the deck "Pitch"
+      And the page "Roadmap" is open on the device "Phone"
+      And the user opens the Space "Research"
+      And the user unfolds the phone
+      And the page shows the user also on "Phone"
+      When the user opens the deck "Pitch"
+      Then the user is no longer on the page "Roadmap"
+
+    Scenario: In the wide layout the images on show are not being on the page
+      Given the page "Roadmap" is open on the device "Phone"
+      And the user opens the Space "Research"
+      And the user unfolds the phone
+      And the page shows the user also on "Phone"
+      When the user opens the images of "Research"
+      Then the user is no longer on the page "Roadmap"
+
   @mc
   Rule: The MC tracks viewers per page and writes nothing down
 
@@ -114,6 +167,11 @@ Feature: Who else is on a page
       When the user opens the page "Roadmap"
       Then the page shows the user also on "Phone"
       And the device "Phone" sees the user also on "This device"
+
+    Scenario: A device paired with a blank name goes by no name
+      Given the page "Roadmap" is open on the device "  "
+      When the user opens the page "Roadmap"
+      Then the page shows the user also on "Another client"
 
     Scenario: A device with the page open twice counts once until it leaves both
       Given the user opens the page "Roadmap"

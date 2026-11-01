@@ -1586,6 +1586,15 @@ const Steps steps([] {
   step(S("the user leaves the page"), [](World& world, const Captures&, const Table&) {
     backTo(world, S("pages"));
   });
+  // In the wide layout the deck takes the page's place beside the sidebar.
+  step(S("the user opens the deck %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.find(S("desktopLayout"))) {
+      world.tap(S("spaceDeckRow:") + c[0]);
+      world.waitFor([&] { return viewOf(world)->deckId() == idOfDeck(world, c[0]); }, [&] { return S("the deck to open; %1").arg(describe(world)); });
+    } else {
+      lookAtDeck(world, idOfDeck(world, c[0]));
+    }
+  });
   step(S("the user is no longer on the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
     const QString page = idOfPage(world, c[0]);
@@ -2517,7 +2526,11 @@ const Steps steps([] {
     }
   });
   step(QStringLiteral("the user opens the images of %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    lookAtImages(world, idOfSpace(world, c[0]), false);
+    if (world.find(S("desktopLayout"))) {
+      world.tap(S("spaceImages"));
+    } else {
+      lookAtImages(world, idOfSpace(world, c[0]), false);
+    }
   });
   step(QStringLiteral("the user sees the image %1 with its name").arg(q), [](World& world, const Captures& c, const Table&) {
     expectShown(world, [&] {

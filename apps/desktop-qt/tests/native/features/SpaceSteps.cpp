@@ -1436,6 +1436,9 @@ const Steps steps([] {
   step(QStringLiteral("the user leaves the page"), [](World& world, const Captures&, const Table&) {
     world.native().controller<NavigationController>()->open(NavigationController::Route::of(QStringLiteral("usage")));
   });
+  step(QStringLiteral("the user opens the deck %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtDeck(world, idOfDeck(world, c[0]));
+  });
   step(QStringLiteral("the user is no longer on the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString page = idOfPage(world, c[0]);
     expectShown(world, [&] {
@@ -2098,6 +2101,9 @@ const Steps steps([] {
   step(QStringLiteral("the user opens the images of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     look(world, idOfSpace(world, c[0]));
     act(world, QStringLiteral("space.images.show"), {{QStringLiteral("shown"), true}});
+  });
+  step(QStringLiteral("the user closes the images"), [](World& world, const Captures&, const Table&) {
+    act(world, QStringLiteral("space.images.show"), {{QStringLiteral("shown"), false}});
   });
   step(QStringLiteral("the user sees the image %1 with its name").arg(q), [](World& world, const Captures& c, const Table&) {
     expectShown(world, [&] {

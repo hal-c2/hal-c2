@@ -1,12 +1,12 @@
 // Which page SpaceController says it is on (the `spacePresence` shape), as a state
 // machine over what moves it: the Space route opening and closing, the page
-// selected, the connection going and coming back, the phone's layout folding, and
-// its Space screen saying a page is shown.
+// selected, a deck or the image browser taking its place, the connection going and
+// coming back, the phone's layout folding, and its Space screen saying a page is shown.
 //
 // After each step the MC has exactly one subscription, to the page on show, or none
-// when there is none: the route is open, the client connected, and in the phone's
-// layout (steps) the screen says so. What the client shows is who the MC has on that
-// page, and nobody with no page on show.
+// when there is none: the route is open, the client connected, no deck or image browser
+// in the page's place, and in the phone's layout (steps) the screen says so. What the
+// client shows is who the MC has on that page, and nobody with no page on show.
 
 #include "Prop.h"
 
@@ -28,6 +28,7 @@ namespace {
 
 const QString kSpaceId = QStringLiteral("space-1");
 const QStringList kPages = {QStringLiteral("page-1"), QStringLiteral("page-2")};
+const QString kDeck = QStringLiteral("deck-1");
 const QStringList kDevices = {QStringLiteral("Phone"), QStringLiteral("Laptop")};
 
 QString oneOf(const QStringList& values) {
@@ -39,11 +40,14 @@ struct Model {
   bool ready = true;
   bool bySteps = false;
   bool shown = false;
+  bool deckThere = true;
+  bool deckOpen = false;
+  bool images = false;
   QString page = kPages.first();
   // Who the MC has on each page.
   QHash<QString, QStringList> devices;
 
-  QString followed() const { return open && ready && (!bySteps || shown) ? page : QString(); }
+  QString followed() const { return open && ready && !deckOpen && !images && (!bySteps || shown) ? page : QString(); }
 };
 
 QJsonObject viewersFrame(const Model& model, int id, const QString& page) {
@@ -86,15 +90,25 @@ struct Shell {
                            {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{QStringLiteral("space"), kSpaceId, spaceRow})}},
                            {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("index-1")}});
     space()->selectSpace(kSpaceId);
+    feedRows(true);
+    space()->selectPage(kPages.first());
+  }
+
+  // The Space's copy as a new snapshot brings it, with its deck or without.
+  void feedRows(bool withDeck) {
     QJsonArray rows;
     for (const QString& id : kPages) {
       rows.append(QJsonArray{QStringLiteral("page"), id,
                              QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("title"), id}, {QStringLiteral("parentPageId"), QJsonValue::Null},
                                          {QStringLiteral("trashedAt"), QJsonValue::Null}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}}});
     }
+    if (withDeck) {
+      rows.append(QJsonArray{QStringLiteral("deck"), kDeck,
+                             QJsonObject{{QStringLiteral("id"), kDeck}, {QStringLiteral("title"), kDeck}, {QStringLiteral("trashedAt"), QJsonValue::Null},
+                                         {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}}});
+    }
     space()->receiveSpace({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("offset"), 1}, {QStringLiteral("part"), 0}, {QStringLiteral("rows"), rows},
                            {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
-    space()->selectPage(kPages.first());
   }
 
   QStringList subscribedPages() const {
@@ -117,6 +131,7 @@ struct Shell {
     RC_ASSERT(subscribedPages() == pages);
     RC_ASSERT(space()->viewers().value(QStringLiteral("devices")).toStringList() == devices);
     RC_ASSERT(space()->pageId() == model.page);
+    RC_ASSERT(space()->deckId() == (model.deckOpen ? kDeck : QString()));
   }
 };
 
@@ -140,7 +155,10 @@ struct SetRoute : Command {
 
 struct SelectPage : Command {
   QString page = oneOf(kPages);
-  void apply(Model& model) const override { model.page = page; }
+  void apply(Model& model) const override {
+    model.page = page;
+    model.deckOpen = false;
+  }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;
     apply(expected);
@@ -149,6 +167,49 @@ struct SelectPage : Command {
     shell.check(expected);
   }
   void show(std::ostream& os) const override { os << "SelectPage(" << page.toStdString() << ")"; }
+};
+
+struct SelectDeck : Command {
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.deckThere); }
+  void apply(Model& model) const override { model.deckOpen = true; }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    shell.told = expected;
+    RC_ASSERT(shell.space()->handle(QStringLiteral("space.selectDeck"), QVariantMap{{QStringLiteral("deckId"), kDeck}}));
+    shell.check(expected);
+  }
+  void show(std::ostream& os) const override { os << "SelectDeck"; }
+};
+
+// The deck deleted on another client, the page back in its place, or made again.
+struct DeckThere : Command {
+  bool there = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override {
+    model.deckThere = there;
+    if (!there) model.deckOpen = false;
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    shell.told = expected;
+    shell.feedRows(there);
+    shell.check(expected);
+  }
+  void show(std::ostream& os) const override { os << "DeckThere(" << there << ")"; }
+};
+
+struct ImagesShown : Command {
+  bool shown = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override { model.images = shown; }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    shell.told = expected;
+    RC_ASSERT(shell.space()->handle(QStringLiteral("space.images.show"), QVariantMap{{QStringLiteral("shown"), shown}}));
+    shell.check(expected);
+  }
+  void show(std::ostream& os) const override { os << "ImagesShown(" << shown << ")"; }
 };
 
 // The phone folding (steps decide) or unfolding (the selected page is on show).
@@ -235,7 +296,7 @@ private slots:
   void followsThePageOnShow() {
     QVERIFY(rc::check("the client is on the page on show, and only that page, whatever moved", [] {
       Shell shell;
-      rc::state::check(Model{}, shell, rc::state::gen::execOneOfWithArgs<SetRoute, SetRoute, SelectPage, Fold, PageShown, PageShown, GoOffline, GoOnline, DeviceMoves>());
+      rc::state::check(Model{}, shell, rc::state::gen::execOneOfWithArgs<SetRoute, SetRoute, SelectPage, SelectDeck, DeckThere, ImagesShown, Fold, PageShown, PageShown, GoOffline, GoOnline, DeviceMoves>());
     }));
   }
 };
