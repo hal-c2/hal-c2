@@ -43,7 +43,7 @@ defmodule HalC2.Mcp.Tools.Pages do
         %{"spaceId" => s, "pageId" => p, "kind" => _} = args,
         caller
       ) do
-    spec = Map.take(args, ~w(kind text checked linkedPageId))
+    spec = Map.take(args, ~w(kind text checked linkedPageId imageId))
 
     s
     |> Space.insert_block(p, spec, Map.get(args, "afterBlockId", :last), author(caller))

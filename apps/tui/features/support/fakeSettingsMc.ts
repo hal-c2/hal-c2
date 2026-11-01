@@ -116,6 +116,17 @@ export function fakeSettingsMc(): FakeSettingsMc {
         if (!handler) throw new Error("unsupported");
         return (await handler(payload, environmentId)) as T;
       },
+      // An upload is a call as far as a fake MC goes; `upload` answers it if it keeps the bytes.
+      uploadToMc: async (relativeUrl, bytes, mimeType) => {
+        calls.push({
+          method: "upload",
+          payload: { relativeUrl, mimeType },
+          environmentId: undefined,
+        });
+        const handler = handlers.get("upload");
+        if (!handler) throw new Error("unsupported");
+        await handler({ relativeUrl, bytes, mimeType }, undefined);
+      },
       subscribeScheduledTasks: (onTasks) => {
         taskWatchers.add(onTasks);
         fake.onScheduledTasksSubscribe?.();

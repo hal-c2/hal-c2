@@ -7,7 +7,10 @@
 // about: how the MC's refusal reaches the user.
 
 #include <QAbstractItemModel>
+#include <QBuffer>
 #include <QDateTime>
+#include <QFile>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
@@ -54,6 +57,10 @@ struct FakeSpaces {
   QSet<QString> talked;
   // How text generation answers: available, unavailable or failed.
   QString generation = QStringLiteral("available");
+  // How image generation answers: available, unavailable or failed.
+  QString imageGeneration = QStringLiteral("available");
+  // The images a client asked an address for.
+  QStringList signedImages;
   // The folder the last summary was written in, and the thread it was of.
   QString cwd;
   QString summarised;
@@ -399,12 +406,18 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
                    const QJsonObject& author) {
   if (const auto why = writable(mc, space, pageId)) return *why;
   static const QStringList kinds{QStringLiteral("paragraph"), QStringLiteral("heading"), QStringLiteral("checklist"),
-                                 QStringLiteral("callout"), QStringLiteral("subpage_link")};
+                                 QStringLiteral("callout"), QStringLiteral("subpage_link"), QStringLiteral("image")};
   const QString kind = text(spec, QLatin1String("kind"));
   if (!kinds.contains(kind)) return refused(QStringLiteral("invalid"), QStringLiteral("There is no block kind %1.").arg(kind));
   const QString linked = text(spec, QLatin1String("linkedPageId"));
   if (kind == QLatin1String("subpage_link") && one(mc, streamOf(space), QStringLiteral("page"), linked).isEmpty()) {
     return refused(QStringLiteral("notFound"), QStringLiteral("A subpage link needs a page to link to."));
+  }
+  const QString imageId = text(spec, QLatin1String("imageId"));
+  const QJsonObject image = one(mc, streamOf(space), QStringLiteral("image"), imageId);
+  if (kind == QLatin1String("image")) {
+    if (image.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no image %1 in this Space.").arg(imageId));
+    if (trashed(image)) return refused(QStringLiteral("trashed"), QStringLiteral("The image \"%1\" is in the trash.").arg(text(image, QLatin1String("name"))));
   }
   const std::optional<QString> order = place(mc, space, pageId, after);
   if (!order) return refused(QStringLiteral("notFound"), QStringLiteral("There is no block %1 on the page.").arg(after.toString()));
@@ -421,6 +434,10 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
                     {QStringLiteral("updatedAt"), at}};
   if (kind == QLatin1String("checklist")) block.insert(QStringLiteral("checked"), spec.value(QLatin1String("checked")).toBool());
   if (kind == QLatin1String("subpage_link")) block.insert(QStringLiteral("linkedPageId"), linked);
+  if (kind == QLatin1String("image")) {
+    block.insert(QStringLiteral("imageId"), imageId);
+    if (text(block, QLatin1String("text")).isEmpty()) block.insert(QStringLiteral("text"), image.value(QLatin1String("name")));
+  }
   set(mc, streamOf(space), QStringLiteral("block"), id, block);
   return {{{QStringLiteral("block"), block}}};
 }
@@ -452,6 +469,66 @@ QJsonObject makeSpace(FakeMc& mc, const QString& name) {
   return space;
 }
 
+// Keeps an image of the Space, as what the MC knows about it.
+Answer keepImage(FakeMc& mc, const QString& space, const QString& name, const QJsonValue& prompt, const QJsonValue& generatedBy) {
+  const QString id = newId(mc, QStringLiteral("image"));
+  const QString at = stamp(mc);
+  const QJsonObject image{{QStringLiteral("id"), id},
+                          {QStringLiteral("spaceId"), space},
+                          {QStringLiteral("name"), name},
+                          {QStringLiteral("mimeType"), QStringLiteral("image/png")},
+                          {QStringLiteral("sizeBytes"), 64},
+                          {QStringLiteral("width"), 4},
+                          {QStringLiteral("height"), 3},
+                          {QStringLiteral("prompt"), prompt},
+                          {QStringLiteral("generatedBy"), generatedBy},
+                          {QStringLiteral("trashedAt"), QJsonValue::Null},
+                          {QStringLiteral("createdBy"), kUser},
+                          {QStringLiteral("createdAt"), at},
+                          {QStringLiteral("updatedAt"), at}};
+  set(mc, streamOf(space), QStringLiteral("image"), id, image);
+  return {{{QStringLiteral("image"), image}}};
+}
+
+// `space.image.*` as the MC's (apps/server-ex lib/hal_c2/space/images.ex). The
+// file behind an upload is the MC's to check; this fake takes every upload.
+Answer imageCall(FakeMc& mc, const QString& space, const QString& method, const QJsonObject& in) {
+  const QString stream = streamOf(space);
+  const QString tag = QStringLiteral("SpaceImageGenerationError");
+  if (method == QLatin1String("image.add")) {
+    if (text(in, QLatin1String("attachmentId")).isEmpty()) return refused(QStringLiteral("invalid"), QStringLiteral("There is no such upload."));
+    return keepImage(mc, space, text(in, QLatin1String("name")), QJsonValue::Null, QJsonValue::Null);
+  }
+  if (method == QLatin1String("image.generate")) {
+    if (fake(mc).imageGeneration == QLatin1String("unavailable")) return refused(QStringLiteral("unavailable"), QStringLiteral("No provider that can make an image is set up."), tag);
+    if (fake(mc).imageGeneration == QLatin1String("failed")) return refused(QStringLiteral("failed"), QStringLiteral("The provider left no image."), tag);
+    const QString prompt = text(in, QLatin1String("prompt"));
+    return keepImage(mc, space, prompt + QStringLiteral(".png"), prompt, QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}});
+  }
+  const QString id = text(in, QLatin1String("imageId"));
+  const QJsonObject image = one(mc, stream, QStringLiteral("image"), id);
+  if (image.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no image %1 in this Space.").arg(id));
+  const QString name = text(image, QLatin1String("name"));
+  const auto answer = [&] { return Answer{{{QStringLiteral("image"), one(mc, stream, QStringLiteral("image"), id)}}}; };
+  if (method == QLatin1String("image.trash")) {
+    if (trashed(image)) return refused(QStringLiteral("trashed"), QStringLiteral("The image \"%1\" is in the trash.").arg(name));
+    const QString at = stamp(mc);
+    set(mc, stream, QStringLiteral("image"), id, {{QStringLiteral("trashedAt"), at}, {QStringLiteral("updatedAt"), at}});
+    return answer();
+  }
+  if (method == QLatin1String("image.restore")) {
+    if (!trashed(image)) return refused(QStringLiteral("invalid"), QStringLiteral("The image \"%1\" is not in the trash.").arg(name));
+    set(mc, stream, QStringLiteral("image"), id, {{QStringLiteral("trashedAt"), QJsonValue::Null}, {QStringLiteral("updatedAt"), stamp(mc)}});
+    return answer();
+  }
+  if (method == QLatin1String("image.delete")) {
+    if (!trashed(image)) return refused(QStringLiteral("invalid"), QStringLiteral("Only an image in the trash can be deleted; move \"%1\" there first.").arg(name));
+    remove(mc, stream, QStringLiteral("image"), id);
+    return {{{QStringLiteral("imageId"), id}}};
+  }
+  return refused(QStringLiteral("invalid"), QStringLiteral("space.%1 is missing a required field.").arg(method));
+}
+
 // Personal, for an MC that has no Space yet.
 void seed(FakeMc& mc) {
   if (all(mc, kIndex, QStringLiteral("space")).isEmpty()) makeSpace(mc, QStringLiteral("Personal"));
@@ -475,15 +552,24 @@ Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
     seed(mc);
     return {{{QStringLiteral("space"), makeSpace(mc, text(in, QLatin1String("name")).trimmed())}}};
   }
+  if (method == QLatin1String("image.providers")) {
+    const auto provider = [](const char* id, const char* status, const QString& message) {
+      return QJsonObject{{QStringLiteral("instanceId"), QLatin1String(id)}, {QStringLiteral("driver"), QLatin1String(id)}, {QStringLiteral("status"), QLatin1String(status)}, {QStringLiteral("message"), message}};
+    };
+    const bool able = fake(mc).imageGeneration == QLatin1String("available");
+    return {{{QStringLiteral("providers"), QJsonArray{provider("codex", able ? "ready" : "unavailable", {}), provider("claudeAgent", "unsupported", QStringLiteral("Claude does not generate images here."))}},
+             {QStringLiteral("selection"), able ? QJsonValue(QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}}) : QJsonValue(QJsonValue::Null)}}};
+  }
   if (spaceOf(mc, space).isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no Space %1.").arg(space));
+  if (method.startsWith(QLatin1String("image."))) return imageCall(mc, space, method, in);
   if (method == QLatin1String("rename")) {
     if (blank(in.value(QLatin1String("name")))) return refused(QStringLiteral("invalid"), QStringLiteral("A Space needs a name."));
     set(mc, kIndex, QStringLiteral("space"), space, {{QStringLiteral("name"), text(in, QLatin1String("name")).trimmed()}, {QStringLiteral("updatedAt"), stamp(mc)}});
     return {{{QStringLiteral("space"), spaceOf(mc, space)}}};
   }
   if (method == QLatin1String("delete")) {
-    if (!all(mc, stream, QStringLiteral("page")).isEmpty()) {
-      return refused(QStringLiteral("notEmpty"), QStringLiteral("A Space with pages cannot be deleted; delete its pages first."));
+    if (!all(mc, stream, QStringLiteral("page")).isEmpty() || !all(mc, stream, QStringLiteral("image")).isEmpty()) {
+      return refused(QStringLiteral("notEmpty"), QStringLiteral("A Space with pages or images cannot be deleted; delete them first."));
     }
     remove(mc, kIndex, QStringLiteral("space"), space);
     return {{{QStringLiteral("spaceId"), space}}};
@@ -848,6 +934,69 @@ void watch(World& world, const QString& id = {}) {
   expect(second->spaceId() == id && second->space().live(), QStringLiteral("the second client did not follow the Space"));
 }
 
+// Signs addresses for the Space's images, and leaves every other resource to
+// whoever fakes it. Registered once a scenario has images, as other domains
+// answer `assets.createUrl` too.
+void signImages(World& world) {
+  world.mc.onRpc(QStringLiteral("assets.createUrl"), [&mc = world.mc](const FakeMc::Rpc& rpc) {
+    const QJsonObject resource = rpc.payload.value(QLatin1String("resource")).toObject();
+    if (resource.value(QLatin1String("_tag")) != QLatin1String("space-image")) return mc.passOn(rpc);
+    const QString id = text(resource, QLatin1String("imageId"));
+    fake(mc).signedImages.append(id);
+    mc.reply(rpc, QJsonObject{{QStringLiteral("relativeUrl"), QStringLiteral("/assets/space/%1?signature=x").arg(id)}, {QStringLiteral("expiresAt"), 4102444800000.0}});
+  });
+}
+
+// `attachments.createUploadUrl` and the upload it hands out: the phone's scenarios
+// have no other use for them, and what the bytes are is the MC's to check.
+void takeUploads(World& world) {
+  const QString url = QStringLiteral("/api/attachments/upload/token");
+  world.mc.onHttp(url, [](const QJsonObject&, std::function<void(int, const QJsonObject&)> respond) { respond(204, {}); });
+  world.mc.onRpc(QStringLiteral("attachments.createUploadUrl"), [&mc = world.mc, url](const FakeMc::Rpc& rpc) {
+    mc.reply(rpc, QJsonObject{{QStringLiteral("attachmentId"), QStringLiteral("pending-1")}, {QStringLiteral("relativeUrl"), url}, {QStringLiteral("expiresAt"), 4102444800000.0}});
+  });
+}
+
+// The image the user calls `said`, in or out of the trash; it is remembered
+// after it goes.
+QString idOfImage(World& world, const QString& said) {
+  const QString known = fake(world.mc).named.value(QStringLiteral("image\n") + said);
+  if (!known.isEmpty()) return known;
+  for (const QJsonObject& image : all(world.mc, streamOf(current(world)), QStringLiteral("image"))) {
+    if (text(image, QLatin1String("name")) == said) {
+      name(world, QStringLiteral("image"), said, text(image, QLatin1String("id")));
+      return text(image, QLatin1String("id"));
+    }
+  }
+  fail(QStringLiteral("the Space has no image %1").arg(said));
+}
+
+QString givenImage(World& world, const QString& said) {
+  signImages(world);
+  const QJsonObject image = given(world, QStringLiteral("image.add"), {{QStringLiteral("attachmentId"), QStringLiteral("given")}, {QStringLiteral("name"), said}})
+                                .value(QLatin1String("image"))
+                                .toObject();
+  name(world, QStringLiteral("image"), said, text(image, QLatin1String("id")));
+  return text(image, QLatin1String("id"));
+}
+
+// A file in the scenario's home, as the user would pick it.
+QString givenFile(World& world, const QString& said, const QByteArray& bytes) {
+  const QString path = world.homeDir() + QLatin1Char('/') + said;
+  QFile file(path);
+  expect(file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size(), QStringLiteral("could not write %1").arg(path));
+  return QUrl::fromLocalFile(path).toString();
+}
+
+QByteArray pngBytes() {
+  QImage image(4, 3, QImage::Format_RGB32);
+  image.fill(Qt::red);
+  QBuffer buffer;
+  buffer.open(QIODevice::WriteOnly);
+  image.save(&buffer, "PNG");
+  return buffer.data();
+}
+
 SpacePages& second(World& world) {
   SpacePages* pages = fake(world.mc).second.get();
   if (!pages) fail(QStringLiteral("no second client is watching"));
@@ -872,7 +1021,7 @@ void expectStep(World& world, const QString& wanted) {
 
 // The user takes Android's Back until the screen shows `wanted`.
 void backTo(World& world, const QString& wanted) {
-  static const QStringList order{S("spaces"), S("pages"), S("page"), S("comments")};
+  static const QStringList order{S("spaces"), S("pages"), S("images"), S("page"), S("comments")};
   while (order.indexOf(shown(world)) > order.indexOf(wanted)) {
     const QString was = shown(world);
     world.back();
@@ -971,6 +1120,47 @@ void blockMenu(World& world, const QString& said, const QString& choice) {
   lookAtPage(world, text(blockSaying(world, said), QLatin1String("pageId")));
   world.tap(S("spaceBlockMenu:") + said);
   choose(world, choice);
+}
+
+// The image block of the open page saying `said`, once there is one.
+std::optional<QVariantMap> imageBlock(World& world, const QString& said) {
+  for (const QVariantMap& block : viewOf(world)->blocks()->rows()) {
+    if (block.value(S("kind")) == QLatin1String("image") && block.value(S("text")) == said) return block;
+  }
+  return std::nullopt;
+}
+
+void expectImageState(World& world, const QString& page, const QString& said, const QString& state) {
+  lookAtPage(world, idOfPage(world, page));
+  expectShown(world, [&] {
+    const auto block = imageBlock(world, said);
+    return block && block->value(S("imageState")) == state;
+  }, S("%1 to show the image %2 as %3").arg(page, said, state));
+}
+
+// The images of the scenario's Space on screen, or those in its trash.
+void lookAtImages(World& world, const QString& space, bool trash) {
+  if (shown(world) != QLatin1String("images") || viewOf(world)->spaceId() != space) {
+    look(world, space);
+    world.tap(S("spaceImages"));
+    expectStep(world, S("images"));
+  }
+  QQuickItem* images = world.find(S("spaceImagesView"));
+  if (images->property("trashShown").toBool() != trash) world.tap(S("spaceImagesTrash"));
+  world.waitFor([&] { return images->property("trashShown").toBool() == trash; }, S("the images to show the wanted list"));
+}
+
+// The menu of the image `said`, `choice` taken from it.
+void imageMenu(World& world, const QString& said, bool trash, const QString& choice) {
+  lookAtImages(world, current(world), trash);
+  world.waitFor([&] { return world.find(S("spaceImageMenu:") + said) != nullptr; }, [&] { return S("the image %1 to be listed; %2").arg(said, describe(world)); });
+  world.tap(S("spaceImageMenu:") + said);
+  choose(world, choice);
+  settle(world);
+}
+
+bool imageTrashed(World& world, const QString& id) {
+  return viewOf(world)->imageTrash()->indexOf(id) >= 0;
 }
 
 // The comments of the page `id`, on screen.
@@ -1604,6 +1794,140 @@ const Steps steps([] {
     world.waitFor([&] { return world.shows(start, false); }, [&] { return S("the phone to show \"%1\"; it shows %2").arg(start, show(world.texts())); });
     expect(!world.state(S("space")).toMap().value(S("busy")).toBool(), S("the Space view still says it is writing"));
     expect(navigation(world)->route().kind == QLatin1String("thread"), S("the user was taken from the thread"));
+  });
+
+  // Images.
+  step(QStringLiteral("the user adds the image %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    signImages(world);
+    takeUploads(world);
+    look(world, idOfSpace(world, c[1]));
+    // The system's file picker is not this app's; what it answers with goes here.
+    act(world, QStringLiteral("space.image.addFile"), {{QStringLiteral("url"), givenFile(world, c[0], pngBytes())}});
+  });
+  step(QStringLiteral("the user adds the file %1 holding plain text to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, idOfSpace(world, c[1]));
+    act(world, QStringLiteral("space.image.addFile"), {{QStringLiteral("url"), givenFile(world, c[0], "Plain words, whatever the name says.")}});
+  });
+  step(QStringLiteral("the image request is refused"), [](World& world, const Captures&, const Table&) {
+    const auto said = [&] { return world.state(QStringLiteral("space")).toMap().value(QStringLiteral("error")).toString(); };
+    world.waitFor([&] { return !said().isEmpty() && toldOf(world, said()); }, [&] { return QStringLiteral("the user to be told why; %1, toasts %2").arg(describe(world), show(toasts(world))); });
+  });
+  step(QStringLiteral("the images of %1 are %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, idOfSpace(world, c[0]));
+    expectShown(world, [&] { return column(viewOf(world)->images(), QStringLiteral("name")) == listed(c[1]); }, QStringLiteral("the images to be %1").arg(c[1]));
+  });
+  step(QStringLiteral("the image trash of %1 holds %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, idOfSpace(world, c[0]));
+    expectShown(world, [&] { return column(viewOf(world)->imageTrash(), QStringLiteral("name")) == listed(c[1]); }, QStringLiteral("the image trash to hold %1").arg(c[1]));
+  });
+  step(QStringLiteral("the second client sees the image %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return column(second(world).images(), QStringLiteral("name")).contains(c[0]); }, [&] { return QStringLiteral("the second client to show the image %1").arg(c[0]); });
+  });
+  step(QStringLiteral("image generation is available"), [](World& world, const Captures&, const Table&) {
+    signImages(world);
+    fake(world.mc).imageGeneration = QStringLiteral("available");
+  });
+  step(QStringLiteral("no image generation provider is available"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).imageGeneration = QStringLiteral("unavailable");
+  });
+  step(QStringLiteral("image generation fails"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).imageGeneration = QStringLiteral("failed");
+  });
+  step(QStringLiteral("the user generates an image of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, idOfSpace(world, c[1]));
+    // The dialog holds back a blank prompt or no provider; the MC's answer is what this is about.
+    act(world, QStringLiteral("space.image.generate"), {{QStringLiteral("prompt"), c[0]}});
+  });
+  step(QStringLiteral("%1 has a generated image of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, idOfSpace(world, c[0]));
+    expectShown(world, [&] { return column(viewOf(world)->images(), QStringLiteral("prompt")).contains(c[1]); }, QStringLiteral("a generated image of %1").arg(c[1]));
+    expect(!world.state(QStringLiteral("space")).toMap().value(QStringLiteral("generatingImage")).toBool(), QStringLiteral("the Space view still says it is generating"));
+  });
+  step(QStringLiteral("the user is told image generation (is unavailable|failed)"), [](World& world, const Captures& c, const Table&) {
+    const QString start = c[0] == QLatin1String("failed") ? QStringLiteral("Image generation failed, so no image was made: The provider left no image.")
+                                                          : QStringLiteral("Image generation is unavailable, so no image was made.");
+    world.waitFor([&] { return toldOf(world, start); }, [&] { return QStringLiteral("the user to be told \"%1\"; toasts %2").arg(start, show(toasts(world))); });
+    expect(!world.state(QStringLiteral("space")).toMap().value(QStringLiteral("generatingImage")).toBool(), QStringLiteral("the Space view still says it is generating"));
+  });
+  step(QStringLiteral("the image providers on offer say which can generate"), [](World& world, const Captures&, const Table&) {
+    openSpaces(world);
+    act(world, QStringLiteral("space.image.providers"), {});
+    QVariantMap status;
+    world.waitFor([&] {
+      for (const QVariant& provider : world.state(QStringLiteral("space")).toMap().value(QStringLiteral("imageProviders")).toMap().value(QStringLiteral("providers")).toList()) {
+        status.insert(provider.toMap().value(QStringLiteral("instanceId")).toString(), provider.toMap().value(QStringLiteral("status")));
+      }
+      return status.value(QStringLiteral("codex")) == QLatin1String("ready") && status.value(QStringLiteral("claudeAgent")) == QLatin1String("unsupported");
+    }, [&] { return QStringLiteral("the providers to say which can generate; they say %1").arg(show(status)); });
+  });
+  step(QStringLiteral("the image %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(idOfSpace(world, c[1]) == current(world), QStringLiteral("%1 is not the scenario's Space").arg(c[1]));
+    givenImage(world, c[0]);
+  });
+  step(QStringLiteral("the user places the image %1 on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString image = idOfImage(world, c[0]);
+    lookAtPage(world, idOfPage(world, c[1]));
+    world.waitFor([&] { return viewOf(world)->images()->indexOf(image) >= 0 || imageTrashed(world, image); }, S("the Space to know the image"));
+    // The sheet does not offer an image in the trash; the MC's refusal is what this is about.
+    if (imageTrashed(world, image)) {
+      act(world, S("space.block.insert"), {{S("pageId"), viewOf(world)->pageId()}, {S("kind"), S("image")}, {S("text"), c[0]}, {S("imageId"), image}});
+      return;
+    }
+    world.tap(S("spaceAddBlock"));
+    choose(world, S("image"));
+    world.waitFor([&] { return world.find(S("spaceSheetItem:") + image) != nullptr; }, S("the sheet to offer the image"));
+    world.tap(S("spaceSheetItem:") + image);
+    settle(world);
+  });
+  step(QStringLiteral("%1 shows the image %1 already").arg(q), [](World& world, const Captures& c, const Table&) {
+    given(world, QStringLiteral("block.insert"), {{QStringLiteral("pageId"), idOfPage(world, c[0])}, {QStringLiteral("kind"), QStringLiteral("image")}, {QStringLiteral("text"), c[1]}, {QStringLiteral("imageId"), idOfImage(world, c[1])}});
+  });
+  step(QStringLiteral("%1 shows the image %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectImageState(world, c[0], c[1], QStringLiteral("shown"));
+    // Its bytes come by a signed address, on the MC this client talks to.
+    expectShown(world, [&] { return imageBlock(world, c[1])->value(QStringLiteral("imageUrl")).toString().contains(QLatin1String("/assets/space/")); }, QStringLiteral("the image to have an address"));
+  });
+  step(QStringLiteral("%1 says the image %1 is in the trash").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectImageState(world, c[0], c[1], QStringLiteral("trashed"));
+  });
+  step(QStringLiteral("%1 says the image %1 was deleted").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectImageState(world, c[0], c[1], QStringLiteral("deleted"));
+  });
+  step(QStringLiteral("the image %1 is in the image trash").arg(q), [](World& world, const Captures& c, const Table&) {
+    given(world, QStringLiteral("image.trash"), {{QStringLiteral("imageId"), idOfImage(world, c[0])}});
+  });
+  step(QStringLiteral("the user moves the image %1 to the trash").arg(q), [](World& world, const Captures& c, const Table&) {
+    imageMenu(world, c[0], false, S("trash"));
+  });
+  step(QStringLiteral("the user restores the image %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    imageMenu(world, c[0], true, S("restore"));
+  });
+  step(QStringLiteral("the user deletes the image %1 for good").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString image = idOfImage(world, c[0]);
+    look(world, current(world));
+    world.waitFor([&] { return viewOf(world)->images()->indexOf(image) >= 0 || imageTrashed(world, image); }, S("the Space to know the image"));
+    // A live image's menu has no such choice; the MC's refusal is what this is about.
+    if (imageTrashed(world, image)) {
+      imageMenu(world, c[0], true, S("delete"));
+    } else {
+      act(world, S("space.image.delete"), {{S("imageId"), image}});
+    }
+  });
+  step(QStringLiteral("the user opens the images of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtImages(world, idOfSpace(world, c[0]), false);
+  });
+  step(QStringLiteral("the user sees the image %1 with its name").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, [&] {
+      const auto row = rowOf(viewOf(world)->images(), idOfImage(world, c[0]));
+      return row && row->value(S("name")) == c[0] && !row->value(S("url")).toString().isEmpty() && world.find(S("spaceImage:") + c[0]) != nullptr;
+    }, S("the image %1 with a name and an address").arg(c[0]));
+  });
+  step(QStringLiteral("no address has been signed for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(!fake(world.mc).signedImages.contains(idOfImage(world, c[0])), QStringLiteral("the client signed an address for %1 before it was shown").arg(c[0]));
+  });
+  step(QStringLiteral("an address has been signed for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return fake(world.mc).signedImages.contains(idOfImage(world, c[0])); }, [&] { return QStringLiteral("an address to be signed for %1").arg(c[0]); });
   });
 });
 

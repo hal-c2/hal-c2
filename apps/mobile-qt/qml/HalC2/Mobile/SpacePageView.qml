@@ -109,6 +109,7 @@ ColumnLayout {
 
             width: ListView.view.width
             readOnly: view.trashed
+            onScreen: view.visible
             onEditingChanged: {
                 if (editing) {
                     view.editing = blockRow;
