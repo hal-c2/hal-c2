@@ -1004,11 +1004,16 @@ defmodule HalC2.PluginsPropTest do
 
   # A killed worker's `:DOWN` can reach the test before its exit reaches the supervisor,
   # so a supervisor that answers may not have heard of the kill yet: ask until it restarted.
-  # The deadline only keeps a wrong host from hanging the run.
+  # The worker's name appears before its start returns and is announced to the host, so a
+  # last answer says the restart is over. The deadline only keeps a wrong host from hanging
+  # the run.
   defp await_restart(module, sup, deadline \\ deadline()) do
     if past?(deadline), do: raise("the plugin's supervisor never restarted its worker")
     :sys.get_state(sup)
-    if !Process.whereis(module), do: await_restart(module, sup, deadline)
+
+    if Process.whereis(module),
+      do: :sys.get_state(sup),
+      else: await_restart(module, sup, deadline)
   end
 
   defp deadline, do: System.monotonic_time(:millisecond) + 60_000
