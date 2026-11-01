@@ -113,7 +113,7 @@ defmodule HalC2.StorageCleanup do
         do: files(dir, key, get_in(settings, ["storageCleanup", key]), now)
   end
 
-  # This MC's threads as `HalC2.Scratch.stale/3` reads them, a live session or a
+  # This MC's threads as `HalC2.Scratch.stale/4` reads them, a live session or a
   # background task keeping a thread running however long ago its last turn was.
   defp scratch_threads do
     for {{mc, id}, {"thread", thread}} <- HalC2.Shell.rows(),

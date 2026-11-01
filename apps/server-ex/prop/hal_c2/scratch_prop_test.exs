@@ -1,6 +1,6 @@
 defmodule HalC2.ScratchPropTest do
   @moduledoc """
-  The law of `HalC2.Scratch.stale/3`, which decides what the sweep deletes: a folder goes
+  The law of `HalC2.Scratch.stale/4`, which decides what the sweep deletes: a folder goes
   exactly when no thread is running or was active recently enough to claim it.
   """
 
