@@ -280,6 +280,7 @@ QString field(const QString& type) {
 QJsonObject json(const Run& run) {
   QJsonObject entity{{QStringLiteral("id"), run.id}, {QStringLiteral("ordinal"), run.ordinal}, {QStringLiteral("status"), run.status}};
   if (run.held) entity.insert(QStringLiteral("queueHeld"), true);
+  if (run.status != QLatin1String("queued") && run.status != QLatin1String("cancelled")) entity.insert(QStringLiteral("startedAt"), clock().toString(Qt::ISODate));
   return entity;
 }
 
@@ -912,7 +913,8 @@ struct ResumeHeld : Change {
                                {{QStringLiteral("s"),
                                  QJsonObject{{QStringLiteral("ordinal"), started.ordinal},
                                              {QStringLiteral("status"), QStringLiteral("running")},
-                                             {QStringLiteral("queueHeld"), false}}}})};
+                                             {QStringLiteral("queueHeld"), false},
+                                             {QStringLiteral("startedAt"), clock().toString(Qt::ISODate)}}}})};
     events.append(renumberWaiting(model, started.ordinal));
     Item message{QStringLiteral("ask-") + run, QStringLiteral("user_message"), run, ++model.ordinal, QStringLiteral("ask"), false,
                  QStringLiteral("completed")};

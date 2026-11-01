@@ -85,12 +85,13 @@ bool heldNeverStarted(const QJsonObject& run) {
   return (status == QLatin1String("queued") || status == QLatin1String("cancelled")) && run.value(QLatin1String("queueHeld")).toBool();
 }
 
-// Whether a run ever started: not one still queued, held or not, nor one
-// cancelled from the queue, which has no start time.
+// Whether a run ever started: not one still queued, held or not, nor one that
+// ended with no start time (cancelled from the queue, its workspace never ready).
 bool everStarted(const QJsonObject& run) {
   const QString status = text(run, QLatin1String("status"));
   if (status == QLatin1String("queued") || heldNeverStarted(run)) return false;
-  return status != QLatin1String("cancelled") || run.value(QLatin1String("startedAt")).isString();
+  const bool endedEarly = status == QLatin1String("cancelled") || status == QLatin1String("failed") || status == QLatin1String("interrupted");
+  return !endedEarly || run.value(QLatin1String("startedAt")).isString();
 }
 
 // When a turn item happened: its start, else its last update.

@@ -74,10 +74,15 @@ private slots:
     const QJsonObject cancelledQueued{{QStringLiteral("status"), QStringLiteral("cancelled")}};
     const QJsonObject cancelledHeld{{QStringLiteral("status"), QStringLiteral("cancelled")}, {QStringLiteral("queueHeld"), true}};
     const QJsonObject cancelledAfterStart{{QStringLiteral("status"), QStringLiteral("cancelled")}, {QStringLiteral("startedAt"), kAt}};
+    const QJsonObject failedPreparing{{QStringLiteral("status"), QStringLiteral("failed")}};
+    const QJsonObject failedAfterStart{{QStringLiteral("status"), QStringLiteral("failed")}, {QStringLiteral("startedAt"), kAt}};
+    const QJsonObject stoppedPreparing{{QStringLiteral("status"), QStringLiteral("interrupted")}};
     const QJsonObject rolledBack{{QStringLiteral("status"), QStringLiteral("rolled_back")}};
 
-    const QList<std::pair<QJsonObject, int>> cases{{completed, 3},  {queued, 2},              {held, 2},      {cancelledQueued, 2},
-                                                   {cancelledHeld, 2}, {cancelledAfterStart, 3}, {rolledBack, 2}};
+    const QList<std::pair<QJsonObject, int>> cases{{completed, 3},        {queued, 2},           {held, 2},
+                                                   {cancelledQueued, 2},  {cancelledHeld, 2},    {cancelledAfterStart, 3},
+                                                   {failedPreparing, 2},  {failedAfterStart, 3}, {stoppedPreparing, 2},
+                                                   {rolledBack, 2}};
     for (const auto& [other, turn] : cases) {
       TimelineModel model(QStringLiteral("thread"));
       snapshot(model,
@@ -90,6 +95,18 @@ private slots:
                4);
       QCOMPARE(model.rewindPointOf(QStringLiteral("ask")).value(QStringLiteral("turn")).toInt(), turn);
     }
+
+    // A run recovery queued again still shows its message, and keeps its place.
+    TimelineModel requeued(QStringLiteral("thread"));
+    snapshot(requeued,
+             {earlier(QStringLiteral("run-0"), 1, completed), row(QStringLiteral("run"), [] {
+                QJsonObject shown = run(QStringLiteral("queued"));
+                shown.insert(QStringLiteral("ordinal"), 2);
+                return shown;
+              }()),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("ask"), QStringLiteral("user_message"), 3, {{QStringLiteral("text"), QStringLiteral("ask")}}))},
+             3);
+    QCOMPARE(requeued.rewindPointOf(QStringLiteral("ask")).value(QStringLiteral("turn")).toInt(), 2);
   }
 
   // A new copy of the same thread (the MC's log changed, so the client could
