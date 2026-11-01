@@ -1401,15 +1401,13 @@ defmodule HalC2.Orchestration do
     runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
     active = Enum.find_value(runs, &(&1["status"] in @active_statuses && &1["id"]))
 
-    # The queue goes before the interrupt, or the end of the interrupted run starts what it
-    # holds. `active` is read before it: nothing was active and nothing is queued, so
-    # nothing is left for the end of a run to start. Whatever it held is looked at again.
-    queued = cancel_queued(thread_id)
-
     if active && active != asked do
       dispatch(%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => active})
     end
 
+    # Read before the queue: nothing was active and nothing is queued, so nothing is left
+    # for the end of a run to start. Whatever the queue held is looked at again.
+    queued = cancel_queued(thread_id)
     released = if active || queued, do: :busy, else: release_session(thread_id)
     left = deadline - System.monotonic_time(:millisecond)
 
