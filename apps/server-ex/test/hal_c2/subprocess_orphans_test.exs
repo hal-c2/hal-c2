@@ -50,6 +50,114 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert File.ls!(Orphans.dir()) == []
   end
 
+  # hal-c2/hal-c2#380. The line `leave` makes the program exit, as a provider does on its
+  # closed stdin, with its background command running; it answers with that command's pid.
+  @leaves ~s(sleep 60 & while read l; do [ "$l" = leave ] && { echo $!; exit 0; }; done)
+
+  defp left_behind(sub) do
+    leader = Subprocess.os_pid(sub)
+    :ok = Subprocess.write_line(sub, "leave")
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
+    Subprocess.ack(sub)
+    await_gone(leader, 500)
+    String.to_integer(line)
+  end
+
+  defp await_gone(pid, tries) when tries > 0 do
+    if Orphans.gone?(pid) do
+      :ok
+    else
+      Process.sleep(10)
+      await_gone(pid, tries - 1)
+    end
+  end
+
+  test "a boot kills what a program that exited after its MC died left in its group" do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @leaves])
+    :ok = stop_supervised(:died)
+    command = left_behind(sub)
+    refute Orphans.gone?(command)
+
+    boot(:next)
+
+    assert Orphans.gone?(command)
+    assert File.ls!(Orphans.dir()) == []
+  end
+
+  test "a boot spares a process in that group without the program's mark" do
+    # What a later group with the same id looks like: no leader, and not this program's.
+    script = ~s(env -u HAL_C2_PROGRAM_ID sleep 60 & while read l; do echo $!; exit 0; done)
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", script])
+    :ok = stop_supervised(:died)
+    stranger = left_behind(sub)
+
+    boot(:next)
+
+    refute Orphans.gone?(stranger)
+    assert File.ls!(Orphans.dir()) == []
+    System.cmd("kill", ["-KILL", "#{stranger}"])
+  end
+
+  test "only a marked process holds up a sweep when it cannot be read" do
+    marked = fn -> true end
+    stranger = fn -> false end
+
+    assert Orphans.member({:ok, {"S", "t", 7}}, 7, marked) == :member
+    assert Orphans.member({:ok, {"S", "t", 7}}, 7, stranger) == :stranger
+    assert Orphans.member({:ok, {"Z", "t", 7}}, 7, marked) == :stranger
+    assert Orphans.member({:ok, {"S", "t", 8}}, 7, marked) == :stranger
+    assert Orphans.member(:gone, 7, marked) == :stranger
+    assert Orphans.member(:unknown, 7, marked) == :unreadable
+    # Another user's process under `hidepid`: neither its stat nor its environ reads.
+    assert Orphans.member(:unknown, 7, stranger) == :stranger
+  end
+
+  test "a record from before marks signals nothing once its program is gone" do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @leaves])
+    :ok = stop_supervised(:died)
+    command = left_behind(sub)
+    [record] = File.ls!(Orphans.dir())
+    path = Path.join(Orphans.dir(), record)
+
+    File.write!(
+      path,
+      path |> File.read!() |> JSON.decode!() |> Map.delete("mark") |> JSON.encode!()
+    )
+
+    boot(:next)
+
+    refute Orphans.gone?(command)
+    assert File.ls!(Orphans.dir()) == []
+    System.cmd("kill", ["-KILL", "#{command}"])
+  end
+
+  test "a boot with no kill to run keeps the record of what a gone program left" do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @leaves])
+    :ok = stop_supervised(:died)
+    command = left_behind(sub)
+    path = System.get_env("PATH")
+    System.put_env("PATH", Path.join(Orphans.dir(), "no-bin"))
+
+    try do
+      boot(:blind)
+    after
+      System.put_env("PATH", path)
+    end
+
+    refute Orphans.gone?(command)
+    assert [_record] = File.ls!(Orphans.dir())
+    :ok = stop_supervised(:blind)
+
+    boot(:next)
+
+    assert Orphans.gone?(command)
+    assert File.ls!(Orphans.dir()) == []
+  end
+
   test "a record a VM that died while writing it left is reaped when whole, dropped when not" do
     boot(:died, owner: dead_mc())
     {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
@@ -450,7 +558,7 @@ defmodule HalC2.Subprocess.OrphansTest do
 
   test "tracking a program already gone is fine, and gone? tells it from a running one" do
     boot(:mc)
-    assert :ok = Orphans.track(self(), 2_000_000_000)
+    assert :ok = Orphans.track(self(), 2_000_000_000, "mark")
     {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
     pid = Subprocess.os_pid(sub)
     refute Orphans.gone?(pid)

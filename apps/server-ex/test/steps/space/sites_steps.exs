@@ -7,7 +7,6 @@ defmodule HalC2.Steps.Space.Sites do
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
-  import ExUnit.Callbacks, only: [start_supervised!: 1]
 
   alias HalC2.{Space, StreamState, Streams}
   alias HalC2.Space.Sites
@@ -254,12 +253,6 @@ defmodule HalC2.Steps.Space.Sites do
 
   step "the MC listens only on this machine", context do
     assert {:ok, %{"localOnly" => true}} = HalC2.Web.address()
-    context
-  end
-
-  step "the MC listens on every network interface", context do
-    World.put_app_env(:host, "0.0.0.0")
-    start_supervised!(HalC2.Cluster)
     context
   end
 
