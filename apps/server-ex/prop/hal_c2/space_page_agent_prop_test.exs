@@ -22,6 +22,9 @@ defmodule HalC2.SpacePageAgentPropTest do
     still going, a thread moving or one about to continue;
   - a queued run held for the user is not work: it does not keep the page working or
     decide how the agent ended;
+  - background work its run left keeps an agent working until it ends, unless a stop was
+    asked for: that waits for runs only;
+  - a run interrupted without a stop says why;
   - a stop marks an agent stopping, whatever its run then ends as it says stopped, and
     a page with none refuses; on one that has ended it changes nothing;
   - a dismissal is refused while the agent is at work;
@@ -40,6 +43,7 @@ defmodule HalC2.SpacePageAgentPropTest do
 
   @pages ~w(p1 p2)
   @active ~w(running stopping)
+  @background_item "background-command"
   @ended %{"completed" => "completed", "failed" => "failed", "interrupted" => "stopped"}
 
   property "the agents of a Space's pages follow the model",
@@ -93,6 +97,8 @@ defmodule HalC2.SpacePageAgentPropTest do
             {1, {:call, __MODULE__, :ask_lost, [elements(pages)]}},
             {4, {:call, __MODULE__, :lose_report, [elements(pages), elements(Map.keys(@ended))]}},
             {2, {:call, __MODULE__, :hold_message, [elements(pages)]}},
+            {3, {:call, __MODULE__, :leave_background, [elements(pages)]}},
+            {3, {:call, __MODULE__, :end_background, [elements(pages)]}},
             {1, {:call, __MODULE__, :delete_thread, [elements(pages)]}},
             {4, {:call, __MODULE__, :begin_move, [elements(pages)]}},
             {4, {:call, __MODULE__, :give_up_move, [elements(pages)]}},
@@ -129,8 +135,18 @@ defmodule HalC2.SpacePageAgentPropTest do
   def precondition(s, {:call, _, :reconcile_continuing, [name]}), do: active?(s, name)
 
   # Stands in for what a real thread could be doing, so it needs one that exists.
-  def precondition(s, {:call, _, cmd, [name]}) when cmd in [:hold_message, :delete_thread],
+  def precondition(s, {:call, _, :delete_thread, [name]}),
     do: active?(s, name) and s.pages[name].agent.run != nil
+
+  # A held run is the latest, and nothing counts as background behind one that has not
+  # settled (`HalC2.Projection.BackgroundWork`), so the two are not combined here.
+  def precondition(s, {:call, _, cmd, [name]}) when cmd in [:hold_message, :leave_background] do
+    active?(s, name) and s.pages[name].agent.run != nil and
+      not s.pages[name].agent.held and not s.pages[name].agent.background
+  end
+
+  def precondition(s, {:call, _, :end_background, [name]}),
+    do: active?(s, name) and s.pages[name].agent.background
 
   def precondition(s, {:call, _, :begin_move, [name]}) do
     active?(s, name) and s.pages[name].agent.run not in [nil, "running"] and
@@ -192,7 +208,8 @@ defmodule HalC2.SpacePageAgentPropTest do
   end
 
   defp step(s, :end_run, [name, ended]) do
-    {:ok, settle(s, name, @ended[ended], ended == "failed"), 1}
+    page = s.pages[name]
+    settle_if_over(put(s, name, %{page | agent: %{page.agent | run: ended}}), name)
   end
 
   defp step(s, :lose_report, [name, ended]) do
@@ -206,7 +223,13 @@ defmodule HalC2.SpacePageAgentPropTest do
 
   defp step(s, :continuation_fails, [name, _how]), do: step(s, :end_run, [name, "interrupted"])
 
-  defp step(s, :hold_message, _), do: {:ok, s, 0}
+  defp step(s, :hold_message, [name]), do: {:ok, update_agent(s, name, %{held: true}), 0}
+
+  defp step(s, :leave_background, [name]),
+    do: {:ok, update_agent(s, name, %{background: true}), 0}
+
+  defp step(s, :end_background, [name]),
+    do: settle_if_over(update_agent(s, name, %{background: false}), name)
 
   defp step(s, :delete_thread, [name]), do: {:ok, settle(s, name, "stopped", true), 1}
 
@@ -217,7 +240,7 @@ defmodule HalC2.SpacePageAgentPropTest do
 
   defp step(s, :give_up_move, [name]) do
     page = s.pages[name]
-    {:ok, run_over(put(s, name, %{page | agent: %{page.agent | moving: false}}), name), 1}
+    settle_if_over(put(s, name, %{page | agent: %{page.agent | moving: false}}), name)
   end
 
   defp step(s, :move_away, [name]), do: {:ok, settle(s, name, "stopped", true), 1}
@@ -236,8 +259,9 @@ defmodule HalC2.SpacePageAgentPropTest do
         {:not_found, s, 0}
 
       %{agent: %{status: "running"} = agent} = page ->
-        marked = put(s, name, %{page | agent: %{agent | status: "stopping"}})
-        {:ok, if(over?(agent), do: settle(marked, name, "stopped", false), else: marked), 1}
+        stopping = %{agent | status: "stopping"}
+        marked = put(s, name, %{page | agent: stopping})
+        {:ok, if(over?(stopping), do: settle(marked, name, "stopped", false), else: marked), 1}
 
       %{agent: %{status: "stopping"} = agent} ->
         if over?(agent), do: {:ok, settle(s, name, "stopped", false), 1}, else: {:ok, s, 0}
@@ -288,18 +312,40 @@ defmodule HalC2.SpacePageAgentPropTest do
     {:ok, next, if(next == s, do: 0, else: 1)}
   end
 
-  defp agent(run),
-    do: %{status: "running", edited: false, wrote: false, said: false, run: run, moving: false}
+  defp agent(run) do
+    %{
+      status: "running",
+      edited: false,
+      wrote: false,
+      said: false,
+      run: run,
+      moving: false,
+      held: false,
+      background: false
+    }
+  end
+
+  defp update_agent(s, name, fields) do
+    page = s.pages[name]
+    put(s, name, %{page | agent: Map.merge(page.agent, fields)})
+  end
+
+  # The Space's stream only hears of this if the agent settled.
+  defp settle_if_over(s, name) do
+    if over?(s.pages[name].agent), do: {:ok, run_over(s, name), 1}, else: {:ok, s, 0}
+  end
 
   defp put(s, name, page), do: %{s | pages: Map.put(s.pages, name, page)}
 
-  defp over?(%{run: run, moving: moving}), do: run != "running" and not moving
+  # A stop waits for runs only: what they left in the background can go on for good.
+  defp over?(%{run: run, moving: moving, background: background, status: status}),
+    do: run != "running" and not moving and (not background or status == "stopping")
 
   # What its run ended as: a lost launch fails with a reason, as a failed run does.
   defp run_over(s, name) do
     case s.pages[name].agent.run do
       nil -> settle(s, name, "failed", true)
-      ended -> settle(s, name, @ended[ended], ended == "failed")
+      ended -> settle(s, name, @ended[ended], ended in ["failed", "interrupted"])
     end
   end
 
@@ -473,6 +519,41 @@ defmodule HalC2.SpacePageAgentPropTest do
       }
 
       Streams.transact(thread, :thread, fn _ -> {[{"run", id, Patch.diff(nil, run)}], :ok} end)
+    end)
+  end
+
+  # A command still going, on the thread's run, as a dev server left behind is.
+  def leave_background(name) do
+    act(fn _space ->
+      thread = thread(name)
+
+      item = %{
+        "id" => @background_item,
+        "threadId" => thread,
+        "runId" => run_id(thread),
+        "ordinal" => 1_000,
+        "type" => "command_execution",
+        "status" => "running"
+      }
+
+      Streams.transact(thread, :thread, fn _ ->
+        {[{"turn-item", @background_item, Patch.diff(nil, item)}], :ok}
+      end)
+    end)
+  end
+
+  def end_background(name) do
+    act(fn _space ->
+      thread = thread(name)
+
+      Streams.transact(thread, :thread, fn state ->
+        item = StreamState.get(state, "turn-item")[@background_item]
+
+        {[{"turn-item", @background_item, Patch.diff(item, %{item | "status" => "completed"})}],
+         :ok}
+      end)
+
+      PageAgent.report(thread)
     end)
   end
 

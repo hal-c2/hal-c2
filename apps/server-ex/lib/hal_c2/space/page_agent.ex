@@ -14,7 +14,7 @@ defmodule HalC2.Space.PageAgent do
   by the page's current entity settles it, so forks and earlier asks do nothing.
 
   Nothing else leaves a page saying it is working. Deleting the thread and moving it off
-  this MC report too, with `error` saying why when the user did not ask for the stop. What
+  this MC report too, and `error` says why an agent stopped when the page did not ask. What
   a crash lost (a launch, a report) `reconcile/1` settles at the next start.
   """
 
@@ -30,6 +30,9 @@ defmodule HalC2.Space.PageAgent do
   @active ~w(running stopping)
   @run_active ~w(preparing starting running waiting)
   @never_started "the MC restarted before its thread could start"
+  # A restart, a continuation that could not start and an interrupt in the thread itself
+  # all leave the same run behind. A stop from the page never says this.
+  @interrupted "its run was interrupted"
 
   @doc "Whether an entity's agent is still at work."
   def active?(%{"status" => status}), do: status in @active
@@ -150,8 +153,9 @@ defmodule HalC2.Space.PageAgent do
   # A thread stays marked for its page after it settled, and `edited?/3` folds the Space's
   # log, so a thread no longer this page's agent stops at the first read.
   defp settle(space_id, page_id, thread_id) do
-    with true <- agent_of?(space_id, page_id, thread_id),
-         {ended, error} <- ended(thread_id) do
+    with %{"threadId" => ^thread_id, "status" => status} when status in @active <-
+           entity(Streams.state(Space.stream_id(space_id)), page_id),
+         {ended, error} <- ended(thread_id, status == "stopping") do
       edited = edited?(space_id, page_id, thread_id)
 
       Space.transact(space_id, fn state ->
@@ -173,17 +177,12 @@ defmodule HalC2.Space.PageAgent do
     end
   end
 
-  defp agent_of?(space_id, page_id, thread_id) do
-    case entity(Streams.state(Space.stream_id(space_id)), page_id) do
-      %{"threadId" => ^thread_id, "status" => status} -> status in @active
-      _ -> false
-    end
-  end
-
   # How the thread's work ended and why it did, or nil while it is not over. A stop settles
   # a launch still under way; nothing else gets here with a thread or run missing unless
-  # the launch died with the MC.
-  defp ended(thread_id) do
+  # the launch died with the MC. A stop waits for the runs, not for what they left in the
+  # background: that can go on for as long as a dev server does, and the page would have
+  # no way out.
+  defp ended(thread_id, stopping?) do
     stream = Streams.state(thread_id)
     thread = StreamState.get(stream, "thread")[thread_id]
     runs = StreamState.list(stream, "run")
@@ -194,10 +193,14 @@ defmodule HalC2.Space.PageAgent do
       moved = thread["movedTo"] -> {"stopped", moved_away(moved)}
       thread["moving"] != nil -> nil
       runs == [] -> {"failed", @never_started}
-      not Delegation.settled?(stream) -> nil
+      stopping? and Enum.any?(runs, &run_to_end?/1) -> nil
+      not stopping? and not Delegation.settled?(stream) -> nil
       true -> run_end(stream, runs)
     end
   end
+
+  defp run_to_end?(%{"status" => "queued"} = run), do: run["queueHeld"] != true
+  defp run_to_end?(run), do: run["status"] in @run_active
 
   # Spaces stay on their MC: the agent can go on over there, but not on this page.
   defp moved_away(%{"label" => label}),
@@ -209,7 +212,7 @@ defmodule HalC2.Space.PageAgent do
          |> HalC2.Projection.Shell.latest_run() do
       %{"status" => "completed"} -> {"completed", nil}
       %{"status" => "failed"} = run -> {"failed", failure(stream, run)}
-      _ -> {"stopped", nil}
+      _ -> {"stopped", @interrupted}
     end
   end
 

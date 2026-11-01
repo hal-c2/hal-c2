@@ -44,6 +44,8 @@ Rectangle {
 
             Text {
                 objectName: "spaceAgentText"
+                // The request and the provider's error are shown as they came, not as markup.
+                textFormat: Text.PlainText
                 Layout.fillWidth: true
                 text: {
                     switch (strip.status) {

@@ -84,6 +84,30 @@ defmodule HalC2.Steps.Space.AgentInPage do
     context
   end
 
+  step "the agent of {string} leaves a command running in the background",
+       %{args: [title]} = context do
+    name = thread(title)
+    [run | _] = World.state(context, name) |> StreamState.list("run")
+
+    World.put_entity(context, name, "turn-item", "background-command", %{
+      "s" => %{
+        "id" => "background-command",
+        "threadId" => World.thread_id(context, name),
+        "runId" => run["id"],
+        "ordinal" => 1_000,
+        "type" => "command_execution",
+        "status" => "running",
+        "input" => "npm run dev"
+      }
+    })
+  end
+
+  step "the run of the agent of {string} ends", %{args: [title]} = context do
+    context = complete(context, thread(title), "completed", nil)
+    World.await_runs(context, thread(title), ["completed"])
+    context
+  end
+
   step "the agent of {string} fails with {string}", %{args: [title, message]} = context do
     complete(context, thread(title), "failed", %{"message" => message})
   end

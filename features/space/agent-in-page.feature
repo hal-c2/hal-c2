@@ -169,6 +169,14 @@ Feature: An agent in a page
       When the user asks "fail at this" on the page "Roadmap"
       Then "Roadmap" says its agent failed with "the turn failed"
 
+    Scenario: A stop does not wait for a command the agent left running
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      And the agent of "Roadmap" leaves a command running in the background
+      And the run of the agent of "Roadmap" ends
+      And "Roadmap" says its agent is working on "tidy this and wait"
+      When the user stops the agent of "Roadmap"
+      Then "Roadmap" says its agent was stopped
+
     Scenario: Stopping a run still only queued settles the page too
       Given the user asks "tidy this and wait" on the page "Roadmap"
       And the user sends "and later" to the agent of "Roadmap" behind its run
@@ -212,13 +220,13 @@ Feature: An agent in a page
       And the user sends "and later" to the agent of "Roadmap" behind its run
       And the agent's thread of "Roadmap" does not continue after a restart
       When the MC restarts
-      Then "Roadmap" says its agent was stopped
+      Then "Roadmap" says its agent stopped because "its run was interrupted"
 
     Scenario: A restart that ends the run settles the page
       Given the user asks "tidy this and wait" on the page "Roadmap"
       And the agent's thread of "Roadmap" does not continue after a restart
       When the MC restarts
-      Then "Roadmap" says its agent was stopped
+      Then "Roadmap" says its agent stopped because "its run was interrupted"
 
     Scenario: A restart the agent's thread continues from keeps the page working
       Given the user asks "tidy this and wait" on the page "Roadmap"
@@ -232,7 +240,7 @@ Feature: An agent in a page
       And the agent's thread of "Roadmap" continues after a restart
       And the provider the agent's thread of "Roadmap" ran on is gone
       When the MC restarts
-      Then "Roadmap" says its agent was stopped
+      Then "Roadmap" says its agent stopped because "its run was interrupted"
 
     Scenario: What the page says outlives a restart
       Given the user asks "tidy this and wait" on the page "Roadmap"
