@@ -11,7 +11,9 @@
 // the workspace open read-only and nothing more is sent to it by full path;
 // every other edit is still written once its writes are answered; and the agent
 // rewriting the open file never takes back an edit: a read from before a save
-// is not shown after it, however late it is answered.
+// is not shown after it, however late it is answered. A tick only ever flips the
+// task the user clicked, in the text they clicked it in, or nothing: edits and
+// the agent add tasks above it, so a tick landing late would land on another.
 
 #include "Prop.h"
 
@@ -27,12 +29,29 @@
 namespace {
 
 const QStringList kEnvironments{QStringLiteral("env-a"), QStringLiteral("env-b")};
-const QStringList kPaths{QStringLiteral("a.txt"), QStringLiteral("/tmp/x.txt"), QStringLiteral("/tmp/y.txt")};
+const QString kTasks = QStringLiteral("t.md");
+const QStringList kPaths{QStringLiteral("a.txt"), kTasks, QStringLiteral("/tmp/x.txt"), QStringLiteral("/tmp/y.txt")};
 const QString kRoot = QStringLiteral("/w");
 
 rc::Gen<QString> oneOf(const QStringList& values) { return rc::gen::elementOf(std::vector<QString>(values.begin(), values.end())); }
 
 bool outside(const QString& path) { return path.startsWith(QLatin1Char('/')); }
+
+// New text in a file: the tasks file takes it as the first task, moving the others along.
+QString adding(const QString& text, const QString& label) {
+  const qsizetype line = text.indexOf(QLatin1Char('\n'));
+  if (line < 0) return text + label;
+  return text.left(line + 1) + QStringLiteral("- [ ]") + label + QLatin1Char('\n') + text.mid(line + 1);
+}
+
+// Each task of a text, in order, as its label and whether it is ticked.
+QList<std::pair<QString, bool>> tasksOf(const QString& text) {
+  QList<std::pair<QString, bool>> tasks;
+  for (const QString& line : text.split(QLatin1Char('\n'))) {
+    if (line.startsWith(QLatin1String("- ["))) tasks.append({line.mid(5), line.at(3) == u'x'});
+  }
+  return tasks;
+}
 
 // What the user sees and does; the rest is read off the fake MC.
 struct Model {
@@ -59,7 +78,7 @@ struct Sut {
   QList<Write> held;
   // Reads the viewer makes on its own of an open file, answered with what the disk held when asked.
   bool holdReads = false;
-  QList<std::function<void()>> heldReads;
+  QList<std::function<void(bool)>> heldReads;
   // The last edit typed into the open file; the viewer must keep showing it.
   QString typed;
   // Every write sent, as "<environment> <path>", and the environments that refused one by full path.
@@ -70,17 +89,23 @@ struct Sut {
   // The user edited the file since opening it. (Read again, it may show the text
   // from before a write still under way: the MC answers each call on its own.)
   bool edited = false;
+  // Tasks the user clicked, as "<environment> <path> <label>"; no other may be ticked.
+  QSet<QString> clicked;
+  // A read failed, which leaves the file without its text until it is read again.
+  bool readFailed = false;
+  int agentWrites = 0;
 
   Sut() {
     for (const QString& environment : kEnvironments) {
       for (const QString& path : kPaths) disk.insert(key(environment, path), environment + QLatin1Char(':') + path);
+      disk[key(environment, kTasks)] += QStringLiteral("\n- [ ] t0\n- [ ] t1\n- [ ] t2");
     }
     mc.onRpc(QStringLiteral("projects.listEntries"), [this](const FakeMc::Rpc& rpc) { mc.reply(rpc, QJsonObject{{QStringLiteral("entries"), QJsonArray()}}); });
     mc.onRpc(QStringLiteral("projects.readFile"), [this](const FakeMc::Rpc& rpc) {
       const QString path = rpc.payload.value(QLatin1String("relativePath")).toString();
       const QJsonObject answer{{QStringLiteral("relativePath"), path}, {QStringLiteral("contents"), disk.value(key(rpc.environment, path))}};
       if (holdReads) {
-        heldReads.append([this, rpc, answer] { mc.reply(rpc, answer); });
+        heldReads.append([this, rpc, answer](bool fail) { fail ? mc.refuse(rpc, QStringLiteral("Could not read the file.")) : mc.reply(rpc, answer); });
       } else {
         mc.reply(rpc, answer);
       }
@@ -117,6 +142,12 @@ struct Sut {
     return halc2::prop::until([&] { return *answered; });
   }
 
+  // Whether a text of this file has a task ticked that the user never clicked.
+  bool tickedUnasked(const QString& environment, const QString& path, const QString& text) const {
+    const QList<std::pair<QString, bool>> tasks = tasksOf(text);
+    return std::any_of(tasks.cbegin(), tasks.cend(), [&](const auto& task) { return task.second && !clicked.contains(key(environment, path) + QLatin1Char(' ') + task.first); });
+  }
+
   // The MC answers the `index`-th write it holds: env-b refuses one by full path.
   void answer(qsizetype index) {
     const Write write = held.takeAt(index);
@@ -139,14 +170,21 @@ void check(const Model& expected, Sut& sut) {
   RC_ASSERT(files.openPath() == expected.openPath);
   RC_ASSERT(sut.resent == QStringList());
   // A write carries only its own file's text: what it held, edited.
-  for (const Sut::Write& write : std::as_const(sut.held)) RC_ASSERT(write.contents.startsWith(write.environment + QLatin1Char(':') + write.path));
+  for (const Sut::Write& write : std::as_const(sut.held)) {
+    RC_ASSERT(write.contents.startsWith(write.environment + QLatin1Char(':') + write.path));
+    RC_ASSERT(!sut.tickedUnasked(write.environment, write.path, write.contents));
+  }
+  for (const QString& environment : kEnvironments) RC_ASSERT(!sut.tickedUnasked(environment, kTasks, sut.disk.value(Sut::key(environment, kTasks))));
   for (auto it = sut.disk.cbegin(); it != sut.disk.cend(); ++it) RC_ASSERT(it.value().startsWith(it.key().section(QLatin1Char(' '), 0, 0) + QLatin1Char(':') + it.key().section(QLatin1Char(' '), 1)));
   // env-b's files outside the workspace are never written.
   for (const QString& path : kPaths) {
     if (outside(path)) RC_ASSERT(sut.disk.value(Sut::key(QStringLiteral("env-b"), path)) == QStringLiteral("env-b:") + path);
   }
   if (expected.openPath.isEmpty()) return;
+  // Until a read answers: the problem, or loading again.
+  if (sut.readFailed && files.fileStatus() != QLatin1String("ready")) return;
   RC_ASSERT(files.text().contains(sut.typed));
+  RC_ASSERT(!sut.tickedUnasked(expected.environment, expected.openPath, files.text()));
   RC_ASSERT(files.fileStatus() == QStringLiteral("ready"));
   const bool readOnly = outside(expected.openPath) && sut.refused.contains(expected.environment);
   RC_ASSERT(files.editable() == !readOnly);
@@ -201,7 +239,7 @@ struct Edit : Step<Edit> {
     const bool editable = sut.files->editable();
     const QString text = sut.files->text();
     sut.files->setEditing(true);
-    sut.files->edit(text + QStringLiteral(" +%1").arg(before.edits));
+    sut.files->edit(adding(text, QStringLiteral(" +%1").arg(before.edits)));
     // Read-only takes no edit.
     if (!editable) RC_ASSERT(sut.files->text() == text && !sut.files->editing());
     sut.edited = sut.edited || editable;
@@ -210,26 +248,55 @@ struct Edit : Step<Edit> {
   void show(std::ostream& os) const override { os << "edit"; }
 };
 
-// The agent rewrites the open project file: it adds to the end of what is on disk.
-struct AgentWrites : Step<AgentWrites> {
-  explicit AgentWrites(const Model& model) { RC_PRE(model.openPath == kPaths.first()); }
-  void checkPreconditions(const Model& model) const override { RC_PRE(model.openPath == kPaths.first()); }
+// The user clicks a task of the markdown they see, whatever else is under way.
+struct Tick : Step<Tick> {
+  int pick = *rc::gen::inRange(0, 8);
+  explicit Tick(const Model& model) { RC_PRE(model.openPath == kTasks); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.openPath == kTasks); }
   void apply(Model&) const override {}
   void act(const Model& before, Sut& sut) const {
-    sut.disk[Sut::key(before.environment, before.openPath)] += QStringLiteral(" agent");
+    const QList<std::pair<QString, bool>> tasks = tasksOf(sut.files->text());
+    if (tasks.isEmpty()) return;
+    sut.clicked.insert(Sut::key(before.environment, before.openPath) + QLatin1Char(' ') + tasks.at(pick % tasks.size()).first);
+    sut.files->toggleTask(pick % tasks.size());
+  }
+  void show(std::ostream& os) const override { os << "tick task #" << pick; }
+};
+
+// The user enters or leaves edit mode without typing.
+struct SetEditing : Step<SetEditing> {
+  bool editing = *rc::gen::arbitrary<bool>();
+  explicit SetEditing(const Model& model) { RC_PRE(!model.openPath.isEmpty()); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.openPath.isEmpty()); }
+  void apply(Model&) const override {}
+  void act(const Model&, Sut& sut) const { sut.files->setEditing(editing); }
+  void show(std::ostream& os) const override { os << (editing ? "enter" : "leave") << " edit mode"; }
+};
+
+// The agent rewrites the open project file: it adds to what is on disk.
+struct AgentWrites : Step<AgentWrites> {
+  explicit AgentWrites(const Model& model) { RC_PRE(!model.openPath.isEmpty() && !outside(model.openPath)); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.openPath.isEmpty() && !outside(model.openPath)); }
+  void apply(Model&) const override {}
+  void act(const Model& before, Sut& sut) const {
+    QString& text = sut.disk[Sut::key(before.environment, before.openPath)];
+    text = adding(text, QStringLiteral(" agent%1").arg(++sut.agentWrites));
     sut.files->followOpenFile();
   }
   void show(std::ostream& os) const override { os << "the agent rewrites the file"; }
 };
 
-// The MC answers the oldest read it holds, if any.
+// The MC answers the oldest read it holds, if any, or fails it.
 struct AnswerRead : Step<AnswerRead> {
+  bool fail = *rc::gen::inRange(0, 4) == 0;
   explicit AnswerRead(const Model&) {}
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const {
-    if (!sut.heldReads.isEmpty()) sut.heldReads.takeFirst()();
+    if (sut.heldReads.isEmpty()) return;
+    sut.readFailed = sut.readFailed || fail;
+    sut.heldReads.takeFirst()(fail);
   }
-  void show(std::ostream& os) const override { os << "answer a read"; }
+  void show(std::ostream& os) const override { os << (fail ? "fail a read" : "answer a read"); }
 };
 
 // The MC answers one write it holds, if any.
@@ -253,7 +320,7 @@ struct Settle : Step<Settle> {
     RC_ASSERT(sut.sync());
     for (int round = 0; round < 10 && !(sut.held.isEmpty() && sut.heldReads.isEmpty()); ++round) {
       while (!sut.held.isEmpty()) sut.answer(0);
-      while (!sut.heldReads.isEmpty()) sut.heldReads.takeFirst()();
+      while (!sut.heldReads.isEmpty()) sut.heldReads.takeFirst()(false);
       RC_ASSERT(sut.sync());
     }
     RC_ASSERT(sut.held.isEmpty() && sut.heldReads.isEmpty());
@@ -290,7 +357,7 @@ private slots:
     QVERIFY(rc::check("edits are written to their own file, never by full path where that was refused", [] {
       Sut sut;
       RC_ASSERT(sut.client.isReady());
-      rc::state::check(Model(), sut, rc::state::gen::execOneOfWithArgs<SetTarget, Open, Open, Edit, Edit, Answer, Answer, AgentWrites, AnswerRead, Settle, Close>());
+      rc::state::check(Model(), sut, rc::state::gen::execOneOfWithArgs<SetTarget, Open, Open, Edit, Edit, Tick, Tick, Tick, SetEditing, Answer, Answer, AgentWrites, AnswerRead, AnswerRead, Settle, Close>());
     }));
   }
 };
