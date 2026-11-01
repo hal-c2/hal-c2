@@ -676,19 +676,22 @@ defmodule HalC2.Subprocess.Orphans do
   # keeps the record for the next boot.
   defp sweep(path, group, entry, tries, outcome) do
     case members(group, entry) do
-      [] ->
+      {[], false} ->
         File.rm(path)
         outcome
 
       _left when tries == 0 ->
-        Logger.warning("commands of group #{group}, which an earlier MC left, are still there")
+        Logger.warning(
+          "commands of group #{group}, which an earlier MC left, are still there or unreadable"
+        )
+
         :kept
 
-      :unknown ->
+      {[], true} ->
         Process.sleep(10)
         sweep(path, group, entry, tries - 1, outcome)
 
-      pids ->
+      {pids, _unreadable?} ->
         System.cmd("kill", ["-KILL", "--" | Enum.map(pids, &to_string/1)], stderr_to_stdout: true)
 
         Process.sleep(10)
@@ -696,28 +699,38 @@ defmodule HalC2.Subprocess.Orphans do
     end
   end
 
-  # The running processes in `group` that carry `entry`, never this MC itself, or
-  # `:unknown` when one could not be read (it is likely exiting, which the next round
-  # sees) or `/proc` cannot be listed.
+  # `{running processes in group that carry entry, never this MC itself; whether a marked
+  # process could not be placed}`. No listing of `/proc` proves nothing, so it counts
+  # as unreadable.
   defp members(group, entry) do
-    with {:ok, names} <- File.ls("/proc") do
-      me = System.pid()
+    case File.ls("/proc") do
+      {:ok, names} ->
+        me = System.pid()
 
-      Enum.reduce_while(names, [], fn name, pids ->
-        with true <- name != me and name =~ ~r/^\d+$/,
-             {:ok, {state, _started, ^group}} when state not in ["Z", "X"] <-
-               process_result(name),
-             true <- marked?(name, entry) do
-          {:cont, [String.to_integer(name) | pids]}
-        else
-          :unknown -> {:halt, :unknown}
-          _other -> {:cont, pids}
+        for name <- names, name != me, name =~ ~r/^\d+$/, reduce: {[], false} do
+          {pids, unreadable?} ->
+            case member(process_result(name), group, fn -> marked?(name, entry) end) do
+              :member -> {[String.to_integer(name) | pids], unreadable?}
+              :unreadable -> {pids, true}
+              :stranger -> {pids, unreadable?}
+            end
         end
-      end)
-    else
-      _ -> :unknown
+
+      {:error, _} ->
+        {[], true}
     end
   end
+
+  @doc false
+  # What a process read from `/proc` is to a sweep of `group`. An unreadable stat holds
+  # the sweep up only when the process has the mark: a stranger's (another user's under
+  # `hidepid`, which stays that way) must not keep the record at every boot. `marked?`
+  # is a function so most processes, in other groups, have no environ read.
+  def member({:ok, {state, _started, group}}, group, marked?) when state not in ["Z", "X"],
+    do: if(marked?.(), do: :member, else: :stranger)
+
+  def member(:unknown, _group, marked?), do: if(marked?.(), do: :unreadable, else: :stranger)
+  def member(_other, _group, _marked?), do: :stranger
 
   # An environ that cannot be read (another user's, one exiting) carries no mark we
   # can prove. Compared whole, so no other variable's value can pass for it.

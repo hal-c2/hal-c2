@@ -100,6 +100,20 @@ defmodule HalC2.Subprocess.OrphansTest do
     System.cmd("kill", ["-KILL", "#{stranger}"])
   end
 
+  test "only a marked process holds up a sweep when it cannot be read" do
+    marked = fn -> true end
+    stranger = fn -> false end
+
+    assert Orphans.member({:ok, {"S", "t", 7}}, 7, marked) == :member
+    assert Orphans.member({:ok, {"S", "t", 7}}, 7, stranger) == :stranger
+    assert Orphans.member({:ok, {"Z", "t", 7}}, 7, marked) == :stranger
+    assert Orphans.member({:ok, {"S", "t", 8}}, 7, marked) == :stranger
+    assert Orphans.member(:gone, 7, marked) == :stranger
+    assert Orphans.member(:unknown, 7, marked) == :unreadable
+    # Another user's process under `hidepid`: neither its stat nor its environ reads.
+    assert Orphans.member(:unknown, 7, stranger) == :stranger
+  end
+
   test "a record from before marks signals nothing once its program is gone" do
     boot(:died, owner: dead_mc())
     {:ok, sub} = Subprocess.start(["sh", "-c", @leaves])
