@@ -47,6 +47,10 @@ later take its repository out of the watched list. Discarding its review stops
 following it. A re-review is told the previous review's findings, so it can say
 which of them the new commits address instead of raising them again.
 
+A new review of a pull request stops the agent of the one before it if that agent
+is still working, and removes its checkout. Whatever that agent had not reported
+stays in its thread only; the new review covers the whole change again.
+
 If the reviewing agent runs into its provider's usage limit, reviews pause
 until the limit resets: the review it stopped and the ones behind it wait in
 the queue instead of failing one by one, and the Reviews page says so.

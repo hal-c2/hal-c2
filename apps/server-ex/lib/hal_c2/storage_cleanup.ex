@@ -3,8 +3,9 @@ defmodule HalC2.StorageCleanup do
   Removes what the user's storage settings say may go:
   thread worktrees under `<home>/worktrees` (after days idle, once merged, once
   their thread is deleted, or when their branch is already in the default
-  branch), and browser artifacts and rotated logs (`*.log.N`, `*.ndjson.N` under
-  `<home>/logs`) past their age.
+  branch), browser artifacts and rotated logs (`*.log.N`, `*.ndjson.N` under
+  `<home>/logs`) past their age, and threads' temp folders (`HalC2.Scratch`), the one
+  rule on by default, since nothing in them is anyone's to keep.
 
   A sweep runs an hour apart and when the cleanup settings change. It is
   deliberately timid: a worktree goes only when exactly one thread uses it, that
@@ -99,11 +100,31 @@ defmodule HalC2.StorageCleanup do
       error -> Logger.warning("worktree cleanup failed: #{Exception.message(error)}")
     end
 
+    HalC2.Scratch.clear_leftovers()
+
+    # An empty sidebar has not been read yet, and every folder would look like nobody's.
+    if HalC2.Shell.rows() != [],
+      do: HalC2.Scratch.sweep(scratch_threads(), HalC2.Scratch.idle_days(settings), now)
+
     for {dir, key} <- [
           {Path.join(HalC2.Paths.data_dir(), "browser-artifacts"), "browserArtifactsAfterDays"},
           {Path.join(HalC2.Paths.state_dir(), "logs"), "logsAfterDays"}
         ],
         do: files(dir, key, get_in(settings, ["storageCleanup", key]), now)
+  end
+
+  # This MC's threads as `HalC2.Scratch.stale/4` reads them, a live session or a
+  # background task keeping a thread running however long ago its last turn was.
+  defp scratch_threads do
+    for {{mc, id}, {"thread", thread}} <- HalC2.Shell.rows(),
+        mc == node(),
+        thread["deletedAt"] == nil do
+      running? =
+        thread["activeRunId"] != nil or (thread["pendingBackgroundTasks"] || []) != [] or
+          session?(id)
+
+      {id, activity_at(thread), running?}
+    end
   end
 
   # --- worktrees -----------------------------------------------------------------

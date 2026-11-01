@@ -67,6 +67,14 @@ defmodule HalC2.Web.Socket do
   def rpc_timeout("scheduledTasks.runNow"),
     do: max(rpc_timeout(), HalC2.ScheduledTasks.run_timeout_ms() + 10_000)
 
+  # A desktop app update has its own deadline (`HalC2.DesktopUpdate`).
+  def rpc_timeout("server.updateServer") do
+    case HalC2.DesktopUpdate.update_timeout() do
+      :infinity -> :infinity
+      ms -> max(rpc_timeout(), ms + 10_000)
+    end
+  end
+
   def rpc_timeout(_method), do: rpc_timeout()
 
   @impl true
@@ -230,6 +238,17 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  def handle_info({:hal_c2_desktop_update_control, mc, message}, state) do
+    case state.by_terminal do
+      %{{:desktop_update_control, ^mc} => id} ->
+        {:push, Protocol.encode(%{"t" => "desktopUpdateControl", "id" => id, "event" => message}),
+         state}
+
+      _ ->
+        {:ok, state}
+    end
+  end
+
   def handle_info({:hal_c2_git_action, action_id, event}, state) do
     case state.by_terminal do
       %{{:git_action, ^action_id} => id} ->
@@ -364,7 +383,22 @@ defmodule HalC2.Web.Socket do
   # slow command never holds up streaming.
   # Each call needs the scope the contract declares for it (`HalC2.Rpc.required_scope/2`),
   # checked here, before the call goes to whichever member owns the environment.
-  defp rpc(state, id, environment, method, payload) do
+  # The desktop app's reports go to its MC from here, in the order it sent them.
+  defp rpc(state, id, environment, "server.reportDesktopUpdateStatus", payload)
+       when is_map(payload) do
+    if desktop_host?(state) do
+      HalC2.DesktopUpdate.report(payload)
+      send(self(), {:rpc_reply, id, {:ok, %{}}})
+      state
+    else
+      scoped_rpc(state, id, environment, "server.reportDesktopUpdateStatus", payload)
+    end
+  end
+
+  defp rpc(state, id, environment, method, payload),
+    do: scoped_rpc(state, id, environment, method, payload)
+
+  defp scoped_rpc(state, id, environment, method, payload) do
     scope = HalC2.Rpc.required_scope(method, payload)
 
     if allowed?(state, scope) do
@@ -419,16 +453,24 @@ defmodule HalC2.Web.Socket do
        when mc != node() and method in @session_methods,
        do: {:error, @session_elsewhere}
 
-  defp call_mc(state, _socket, mc, method, payload, timeout) do
-    args =
-      if method in @session_methods,
-        do: [method, payload || %{}, state.session],
-        else: [method, payload || %{}]
+  defp call_mc(state, socket, mc, method, payload, timeout) do
+    {module, fun, args} =
+      cond do
+        method in @session_methods ->
+          {HalC2.Rpc, :handle, [method, payload || %{}, state.session]}
+
+        # A desktop app update this socket asks for is cancelled when it goes.
+        method == "server.updateServer" and mc == node() ->
+          {HalC2.Upgrade, :update, [payload || %{}, nil, socket]}
+
+        true ->
+          {HalC2.Rpc, :handle, [method, payload || %{}]}
+      end
 
     try do
       # Each call runs in its own task; some (a provider update, a scheduled task run)
       # take minutes.
-      :erpc.call(mc, HalC2.Rpc, :handle, args, timeout)
+      :erpc.call(mc, module, fun, args, timeout)
     catch
       :error, {:erpc, :timeout} ->
         {:error, "#{method} timed out"}
@@ -623,6 +665,23 @@ defmodule HalC2.Web.Socket do
 
       {:error, reason} ->
         {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
+  # Only the desktop app that started this MC, on its bootstrap session.
+  defp subscribe(state, id, {:desktop_update_control, mc} = shape, _) do
+    if mc == node() and desktop_host?(state) do
+      :ok = HalC2.DesktopUpdate.attach(self())
+
+      {:ok,
+       %{
+         state
+         | subs: Map.put(state.subs, id, shape),
+           by_terminal: Map.put(state.by_terminal, shape, id)
+       }}
+    else
+      reason = "Only the desktop app that started this MC can drive its updates."
+      {:push, Protocol.encode(error_frame(id, reason)), state}
     end
   end
 
@@ -952,6 +1011,12 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # The desktop app that started this MC, on the session its bootstrap token made.
+  defp desktop_host?(state),
+    do:
+      HalC2.DesktopUpdate.available?() and
+        HalC2.Auth.session_subject(state.session) == "desktop-bootstrap"
+
   defp allowed?(%{scopes: :all}, _scope), do: true
   defp allowed?(%{scopes: scopes}, scope), do: scope in scopes
 
@@ -969,6 +1034,7 @@ defmodule HalC2.Web.Socket do
   defp shape_scope({kind, _, _}) when kind in [:server_update, :git_action, :preview_automation],
     do: "orchestration:operate"
 
+  defp shape_scope({:desktop_update_control, _}), do: "orchestration:operate"
   defp shape_scope(_shape), do: "orchestration:read"
 
   # The subscriptions watching `mc`'s config under one of `refs`.
@@ -1299,7 +1365,13 @@ defmodule HalC2.Web.Socket do
         end
 
       {{:server_update, mc, _input}, subs} ->
+        # A desktop app update this socket asked for is cancelled.
+        :erpc.cast(mc, HalC2.DesktopUpdate, :abandon, [self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:server_update, mc})}
+
+      {{:desktop_update_control, _mc} = shape, subs} ->
+        HalC2.DesktopUpdate.detach(self())
+        %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, shape)}
 
       {{:git_action, _mc, %{"actionId" => action_id}}, subs} ->
         %{

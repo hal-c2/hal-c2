@@ -10,20 +10,28 @@
 #include <QVariantMap>
 
 #include <functional>
+#include <memory>
 #include <optional>
 
+#include "CaptureShortcutConfig.h"
 #include "NativeController.h"
+#include "SnapShotBackend.h"
 
 class NativeWindow;
 class McClient;
 class ShellBridge;
 class ShellStore;
-class SnapShotBackend;
+class QThread;
 
 // Snap Shot: the capture
 // shortcut takes the window the user is working in and attaches it to the
 // current draft. The platform half is a SnapShotBackend (the desktop portal
-// on Linux Wayland; unavailable elsewhere for now).
+// on Linux Wayland, MacSnapShot on macOS; unavailable elsewhere for now).
+//
+// Where the backend has `permissions` (macOS), setup stays on the access step
+// until each is allowed and a discarded test capture worked, and it comes back
+// there after macOS quits the app from a permission prompt
+// (snapShotSetupResume, until the user closes setup).
 //
 // The settings are this device's snapShot* rows (SettingsController). While
 // Snap Shot is on the backend holds the saved shortcut; off, it lets it go.
@@ -41,12 +49,21 @@ class SnapShotBackend;
 // string as it reads. Actions:
 //   snapShot.enable {on}, snapShot.setup.open {step?}, snapShot.setup.continue,
 //   snapShot.setup.back, snapShot.setup.close {completed?}, snapShot.setup.done,
-//   snapShot.record.start, snapShot.record.key {key, modifiers},
+//   snapShot.record.start, snapShot.record.key {key, modifiers, repeat?},
 //   snapShot.record.modifier {modifier, code, down}, snapShot.record.cancel,
 //   snapShot.shortcut.save, snapShot.shortcut.discard,
-//   snapShot.shortcut.permissions, snapShot.set {key, value} (accessibility,
+//   snapShot.shortcut.permissions, snapShot.permission.allow {id},
+//   snapShot.set {key, value} (accessibility,
 //   flash, animations), snapShot.sound {value: off | soft-pop | camera-shutter},
-//   snapShot.sound.play {sound}.
+//   snapShot.sound.play {sound}, and on a desktop that keeps the shortcut in
+//   its own config (Niri, Hyprland): snapShot.config.review {remove?, file?},
+//   snapShot.config.save {id?}, snapShot.config.cancel, snapShot.config.copy,
+//   snapShot.config.complete. Setup ignores its actions while `wizard.busy`.
+//
+// On those desktops the user reviews each change to that config before it is
+// written (`config` in the state); CaptureShortcutConfig reads, edits and
+// writes on a thread of its own, one change at a time, because the compositor's
+// tools it runs can take seconds.
 class SnapShotController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -63,6 +80,9 @@ public:
   void setMaxImageBytes(qint64 bytes) { m_maxImageBytes = bytes; }
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
 
+  // Tests stand in for `niri` and `hyprctl`.
+  static void setConfigTools(const std::optional<CaptureShortcutConfig::Tools>& tools);
+
   static inline const QString kSection = QStringLiteral("/settings/snap-shot");
   static constexpr qint64 kMaxImageBytes = 10 * 1024 * 1024;
 
@@ -71,13 +91,32 @@ public:
   static std::optional<QByteArray> encode(const QImage& image, qint64 maxBytes, QString* mimeType);
 
 private:
-  struct Check {
-    bool available = false;
-    QString message;
-  };
+  using Check = SnapShotBackend::Check;
   struct Wizard {
     QString step;
     bool wasEnabled = false;
+    // The user asked to check access again, and nothing has changed since.
+    bool checked = false;
+    // What went wrong in setup, shown in it.
+    QString error;
+  };
+
+  // The compositor config change under review, and how the last one went.
+  struct ConfigFlow {
+    std::optional<CaptureShortcutConfig::Preview> preview;
+    bool preparing = false;
+    bool saving = false;
+    QString error;
+    // Why, for Advanced.
+    QString details;
+    QString result;
+    QString backup;
+    // The file the user chose; empty for the compositor's default.
+    QString file;
+    bool copied = false;
+    // The user is removing the binding, not adding it.
+    bool removing = false;
+    bool saved = false;
   };
 
   QVariant setting(const QString& key) const;
@@ -91,6 +130,12 @@ private:
   void follow();
   // Holds the saved shortcut while Snap Shot is on.
   void applyShortcut();
+  // The permissions capture needs are allowed, on a backend that has them.
+  bool permissionsReady() const;
+  bool includeAccessibility() const;
+  void saveResume();
+  // Opens setup again after macOS restarted the app from a permission prompt.
+  void resumeSetup();
 
   QString initialStep(const QString& requested) const;
   void openSetup(const QString& requested);
@@ -98,7 +143,10 @@ private:
   void stopRecording();
   void resetCandidate();
   void record(const QJsonObject& shortcut);
-  Check check(const QJsonObject& shortcut) const;
+  // Asks whether the recorded shortcut can be held; only the newest answer counts.
+  void checkCandidate();
+  // Setup is waiting on the desktop and cannot be left or stepped through.
+  bool busy() const;
   // The HAL-C2 command already bound to `shortcut`, or empty.
   QString conflict(const QJsonObject& shortcut) const;
   QString label(const QJsonObject& shortcut) const;
@@ -106,13 +154,27 @@ private:
   bool canSave() const;
   QString shortcutStatus() const;
 
+  void onApplicationState(Qt::ApplicationState state);
   void onActivated();
-  void onCaptured(const QImage& image, const QString& appName, const QString& windowTitle);
+  void onCaptured(const QImage& image, const QString& appName, const QString& windowTitle, const QJsonObject& context);
   void onFailed(const QString& message);
+  void onSetupFailed(const QString& message);
+  void onTested(const QString& error);
   // Where a capture lands in `window`: its thread or draft, else the last one
   // it showed, else a new draft; empty with no project.
   QString target(NativeWindow* window);
   void noteRoute(NativeWindow* window);
+
+  // Keeps the shortcut in the compositor's config: niri or hyprland.
+  bool managed() const;
+  CaptureShortcutConfig::Target configTarget() const;
+  QString binding() const;
+  void review(bool remove, const QString& file);
+  void saveReview(const QString& id);
+  void withdrawReview();
+  // Runs `work` on the config's thread and `done` back here; false while one runs.
+  bool runConfig(std::function<void()> work, std::function<void()> done);
+  QVariant configState() const;
 
   void publish();
   QVariantMap state() const;
@@ -129,12 +191,23 @@ private:
   // name for).
   QString m_shortcutProblem;
   std::optional<Wizard> m_wizard;
+  // The test capture is under way: setup waits for it.
+  bool m_testing = false;
+  bool m_resumeChecked = false;
+  // Setup came back and Settings has been opened to it.
+  bool m_resumeShown = true;
   bool m_recording = false;
   // Modifier keys held while recording: "<modifier>:<scan code>".
   QSet<QString> m_held;
   std::optional<QJsonObject> m_candidate;
   std::optional<Check> m_check;
+  // A check is out; m_checkId names the one whose answer counts.
+  bool m_checking = false;
+  quint64 m_checkId = 0;
   // Each window's last thread or draft (by window id).
   QHash<QString, QString> m_lastTarget;
   QVariantMap m_published;
+  std::unique_ptr<CaptureShortcutConfig> m_config;
+  QThread* m_configThread = nullptr;
+  ConfigFlow m_flow;
 };
