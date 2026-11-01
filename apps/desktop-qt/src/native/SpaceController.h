@@ -117,7 +117,9 @@ class SpacePages : public QObject {
   Q_PROPERTY(QString spaceId READ spaceId NOTIFY changed)
   Q_PROPERTY(QString spaceName READ spaceName NOTIFY changed)
   Q_PROPERTY(QString pageId READ pageId NOTIFY changed)
-  // {id, title, parentPageId, trashed, sourceThreadId, sourceThreadTitle}, or empty.
+  // {id, title, parentPageId, trashed, sourceThreadId, sourceThreadTitle, site},
+  // or empty. `site` is what the page has published, {url, localOnly, behind,
+  // publishedAt}, or empty.
   Q_PROPERTY(QVariantMap page READ page NOTIFY changed)
   // loading, live or unreachable: the selected Space's stream (the index's
   // before a Space is selected).
@@ -140,6 +142,7 @@ public:
   // sourceThreadTitle, schedule, writtenAt}. `schedule` is what the MC shows of
   // the page's update plus its `cadenceLabel`, empty when it has none.
   QVariantMap page() const;
+  QVariantMap siteOf(const QString& pageId) const;
   QString status() const;
   // "Every 2 hours", "Every day at 07:30", "Mon, Wed at 09:00".
   static QString cadenceLabel(const QJsonObject& cadence);
@@ -262,6 +265,8 @@ private:
 // `space.page.schedule.setEnabled {pageId, enabled}`,
 // `space.page.schedule.runNow {pageId}`, `space.page.schedule.remove {pageId}`,
 // `space.page.copyMarkdown {pageId}`, `space.page.saveMarkdown {pageId, url}`,
+// `space.page.publish {pageId, tailscale}`, `space.page.unpublish {pageId}`,
+// `space.page.copySiteLink {pageId}`,
 // `space.page.importMarkdown {markdown}`, `space.page.importFile {url}`,
 // `space.pageFromThread {threadKey}`,
 // `space.block.insert {pageId, kind, text, checked, linkedPageId, imageId, afterBlockId}`

@@ -17,6 +17,7 @@
 #include "NavigationController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "ThisMachine.h"
 #include "ToastController.h"
 
 namespace {
@@ -274,7 +275,8 @@ QVariantMap SpacePages::page() const {
           {QStringLiteral("sourceThreadId"), thread},
           {QStringLiteral("sourceThreadTitle"), thread.isEmpty() ? QString() : threadTitle(thread)},
           {QStringLiteral("schedule"), updateOf(page)},
-          {QStringLiteral("writtenAt"), text(page, QLatin1String("writtenAt"))}};
+          {QStringLiteral("writtenAt"), text(page, QLatin1String("writtenAt"))},
+          {QStringLiteral("site"), siteOf(m_pageId)}};
 }
 
 QString SpacePages::cadenceLabel(const QJsonObject& cadence) {
@@ -300,6 +302,17 @@ QVariantMap SpacePages::updateOf(const QJsonObject& page) {
   QVariantMap update = schedule.toVariantMap();
   update.insert(QStringLiteral("cadenceLabel"), cadenceLabel(schedule.value(QLatin1String("cadence")).toObject()));
   return update;
+}
+
+QVariantMap SpacePages::siteOf(const QString& pageId) const {
+  for (const QJsonObject& site : m_space.of(QStringLiteral("site"))) {
+    if (text(site, QLatin1String("pageId")) != pageId) continue;
+    return {{QStringLiteral("url"), text(site, QLatin1String("url"))},
+            {QStringLiteral("localOnly"), site.value(QLatin1String("localOnly")).toBool()},
+            {QStringLiteral("behind"), site.value(QLatin1String("behind")).toBool()},
+            {QStringLiteral("publishedAt"), text(site, QLatin1String("publishedAt"))}};
+  }
+  return {};
 }
 
 QString SpacePages::status() const {
@@ -1006,6 +1019,28 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
       m_bridge->setClipboardText(markdown);
       toast(QStringLiteral("success"), tr("Page copied as Markdown"));
     });
+  } else if (action == QLatin1String("space.page.publish")) {
+    QJsonObject publish{{QStringLiteral("pageId"), pageId}};
+    // A machine this client reached over the network is reached there by anyone
+    // else, and the MC may only know the loopback it listens on: as for a pairing
+    // link, the client names the address.
+    const QUrl reached = m_client->origin().adjusted(QUrl::RemovePath | QUrl::RemoveQuery | QUrl::RemoveFragment);
+    if (input.value(QLatin1String("tailscale")).toBool()) {
+      publish.insert(QStringLiteral("tailscale"), true);
+    } else if (!thisMachine::loopbackHost(reached.host())) {
+      publish.insert(QStringLiteral("baseUrl"), reached.toString());
+    }
+    call(QStringLiteral("page.publish"), publish);
+  } else if (action == QLatin1String("space.page.unpublish")) {
+    call(QStringLiteral("page.unpublish"), {{QStringLiteral("pageId"), pageId}});
+  } else if (action == QLatin1String("space.page.copySiteLink")) {
+    const QString url = siteOf(pageId).value(QStringLiteral("url")).toString();
+    if (url.isEmpty()) {
+      refuse(tr("This page is not published."));
+    } else {
+      m_bridge->setClipboardText(url);
+      toast(QStringLiteral("success"), tr("Site link copied"));
+    }
   } else if (action == QLatin1String("space.page.saveMarkdown")) {
     const QString path = QUrl(field(QLatin1String("url"))).toLocalFile();
     exportPage(pageId, [this, path](const QString& markdown) {

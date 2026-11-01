@@ -65,7 +65,7 @@ const events = (
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 /** A controller on a client whose streams and replies the test drives by hand. */
-function setup() {
+function setup(origin?: string) {
   const streams = new Map<string, Array<(frame: EntityStreamFrame) => void>>();
   const replies = new Map<string, Array<(value: unknown) => void>>();
   const calls: Array<{ method: string; payload: unknown }> = [];
@@ -107,6 +107,7 @@ function setup() {
     ask: (spec) => asks.push(spec.onSubmit),
     menu: (spec) => menus.push(spec),
     threads: () => [{ id: "t1", title: "Work" }],
+    ...(origin ? { origin } : {}),
   });
   /** Send a frame on `stream`; `subscription` picks an older follow of the same stream. */
   const send = (stream: string, frame: EntityStreamFrame, subscription = -1) =>
@@ -135,8 +136,11 @@ function setup() {
 }
 
 /** Open the Spaces, and the Space s1 ("Research") with its pages. */
-function inResearch(rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>) {
-  const t = setup();
+function inResearch(
+  rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
+  origin?: string,
+) {
+  const t = setup(origin);
   t.controller.dispatch("space.open", {});
   t.send("spaces", snapshot(1, [space("s1", "Research")]));
   t.select("space:s1");
@@ -221,6 +225,35 @@ describe("replies that come after the user moved on", () => {
     t.reply("space.page.createFromThread", { page: page("p5", "Release plan")[2] });
     await t.controller.settled();
     expect(t.view().title).toBe("page · Release plan");
+  });
+});
+
+describe("publishing a page as a site", () => {
+  const publishPayload = (origin: string, action = "space.publish") => {
+    const t = inResearch([page("p1", "Roadmap")], origin);
+    t.select("page:p1");
+    t.controller.dispatch(action, {});
+    return t.calls.find((call) => call.method === "space.page.publish")?.payload;
+  };
+
+  test("a client that reached the MC on the LAN makes the link on that address", () => {
+    expect(publishPayload("http://192.168.1.20:3773")).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      baseUrl: "http://192.168.1.20:3773",
+    });
+  });
+
+  test("a client on loopback leaves the address to the MC", () => {
+    expect(publishPayload("http://127.0.0.1:3773")).toEqual({ spaceId: "s1", pageId: "p1" });
+  });
+
+  test("over Tailscale the MC names the address, wherever the client reached it", () => {
+    expect(publishPayload("http://192.168.1.20:3773", "space.publishTailscale")).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      tailscale: true,
+    });
   });
 });
 

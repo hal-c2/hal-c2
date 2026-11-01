@@ -176,8 +176,17 @@ Item {
         });
     }
 
-    function pageMenu(id, title, parentPageId) {
-        sheet.ask([
+    // `site`: the open page's site (SpaceController's `page.site`). Of a page only
+    // listed nothing is known, so its site is reached by opening it.
+    function pageMenu(id, title, parentPageId, site) {
+        const siteRows = site === undefined ? [] : [
+            { id: "publish", label: (site.url ?? "") === "" ? qsTr("Publish as a site") : qsTr("Publish again"), icon: "globe" },
+            { id: "publishTailscale", label: qsTr("Publish over Tailscale"), icon: "globe" }
+        ].concat((site.url ?? "") === "" ? [] : [
+            { id: "copySite", label: qsTr("Copy site link"), icon: "copy" },
+            { id: "unpublish", label: qsTr("Unpublish"), icon: "circle-x" }
+        ]);
+        sheet.ask(siteRows.concat([
             { id: "rename", label: qsTr("Rename"), icon: "pencil" },
             { id: "subpage", label: qsTr("New subpage"), icon: "plus" },
             { id: "into", label: qsTr("Move into…"), icon: "folder" },
@@ -185,7 +194,7 @@ Item {
             { id: "copy", label: qsTr("Copy as Markdown"), icon: "copy" }
         ].concat(updateRows(id), [
             { id: "trash", label: qsTr("Move to trash"), icon: "trash", destructive: true }
-        ]), choice => {
+        ])), choice => {
             if (choice === "update") {
                 askUpdate();
             } else if (choice === "updateRun") {
@@ -194,6 +203,14 @@ Item {
                 Shell.dispatch("space.page.schedule.setEnabled", { pageId: id, enabled: Spaces.page.schedule?.enabled !== true });
             } else if (choice === "updateRemove") {
                 Shell.dispatch("space.page.schedule.remove", { pageId: id });
+            } else if (choice === "publish") {
+                Shell.dispatch("space.page.publish", { pageId: id });
+            } else if (choice === "publishTailscale") {
+                Shell.dispatch("space.page.publish", { pageId: id, tailscale: true });
+            } else if (choice === "copySite") {
+                Shell.dispatch("space.page.copySiteLink", { pageId: id });
+            } else if (choice === "unpublish") {
+                Shell.dispatch("space.page.unpublish", { pageId: id });
             } else if (choice === "rename") {
                 text.ask({ title: qsTr("Rename page"), placeholder: qsTr("Title"), text: title, action: qsTr("Rename") }, renamed => Shell.dispatch("space.page.rename", { pageId: id, title: renamed }));
             } else if (choice === "subpage") {

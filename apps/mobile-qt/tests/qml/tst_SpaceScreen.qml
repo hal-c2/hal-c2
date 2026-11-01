@@ -80,6 +80,67 @@ Item {
             compare(screen.view, "page");
         }
 
+        function sheetIds(screen) {
+            return sheetOf(screen).rows.map(row => row.id);
+        }
+
+        function test_theOpenPageOffersPublishingAndAListedOneDoesNot() {
+            const screen = makeScreen();
+            screen.pageMenu("p1", "Roadmap", "");
+            verify(!sheetIds(screen).includes("publish"));
+            sheetOf(screen).close();
+            screen.pageMenu("p1", "Roadmap", "", {});
+            verify(sheetIds(screen).includes("publish"));
+            verify(sheetIds(screen).includes("publishTailscale"));
+            verify(!sheetIds(screen).includes("unpublish"));
+            verify(!sheetIds(screen).includes("copySite"));
+        }
+
+        function test_aPublishedPageShowsItsLinkAndTheWaysOnAndBack() {
+            const site = { url: "http://192.168.1.20:3773/sites/s1/token", localOnly: false, behind: false, publishedAt: "" };
+            const screen = makeScreen({ page: root.pageOf("p1", { site: site }) });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const notice = findChild(screen, "spaceSiteNotice");
+            verify(notice !== null);
+            verify(notice.visible);
+            compare(findChild(screen, "spaceSiteLink").text, site.url);
+            verify(!findChild(screen, "spaceSiteLocalOnly").visible);
+            verify(!findChild(screen, "spaceSiteTailscale").visible);
+            mouseClick(findChild(screen, "spaceSiteCopy"));
+            mouseClick(findChild(screen, "spaceSiteRepublish"));
+            mouseClick(findChild(screen, "spaceSiteUnpublish"));
+            compare(Shell.dispatchedActions.filter(entry => entry.action.startsWith("space.page.")).map(entry => entry.action),
+                    ["space.page.copySiteLink", "space.page.publish", "space.page.unpublish"]);
+            screen.pageMenu("p1", "Roadmap", "", site);
+            verify(sheetIds(screen).includes("copySite"));
+            verify(sheetIds(screen).includes("unpublish"));
+        }
+
+        function test_theSiteNoticeSaysWhenItIsBehindOrOnlyForThisMachine() {
+            const site = { url: "http://127.0.0.1:3773/sites/s1/token", localOnly: true, behind: false, publishedAt: "" };
+            const screen = makeScreen({ page: root.pageOf("p1", { site: site }) });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const upToDate = findChild(screen, "spaceSiteStatus").text;
+            verify(findChild(screen, "spaceSiteLocalOnly").visible);
+            const tailscale = findChild(screen, "spaceSiteTailscale");
+            // The row it wraps into is laid out on the next polish.
+            waitForItemPolished(tailscale.parent);
+            mouseClick(tailscale);
+            compare(dispatched("space.page.publish"), [{ pageId: "p1", tailscale: true }]);
+            Spaces.page = root.pageOf("p1", { site: Object.assign({}, site, { behind: true }) });
+            verify(findChild(screen, "spaceSiteStatus").text !== upToDate);
+        }
+
+        function test_anUnpublishedPageShowsNoSite() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const notice = findChild(screen, "spaceSiteNotice");
+            verify(notice === null || !notice.visible);
+        }
+
         function test_backTakesOneStepAtATimeThenLeaves() {
             const screen = makeScreen();
             screen.openSpace("s1");
