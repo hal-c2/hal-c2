@@ -155,6 +155,27 @@ const Steps steps([] {
   step(QStringLiteral("the user opens storage settings"), [](World& world, const Captures&, const Table&) {
     openStorage(world);
   });
+  step(QStringLiteral("deleting idle threads' temporary files reads 7 days"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return rule(world, QStringLiteral("threadTempAfterDays")).value(QStringLiteral("value")).toInt() == 7; },
+                  [&] { return QStringLiteral("idle threads' temporary files at 7 days; storage is %1").arg(show(storage(world))); });
+  });
+  step(QStringLiteral("the machine's temporary files folder is set to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject& settings = fakeConfig(world.mc).settings;
+    QJsonObject cleanup = settings.value(QLatin1String("storageCleanup")).toObject();
+    cleanup.insert(QStringLiteral("temporaryFilesFolder"), c[0]);
+    settings.insert(QStringLiteral("storageCleanup"), cleanup);
+  });
+  step(QStringLiteral("the user sets the temporary files folder to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The page shows the field once the documents are read; a change before that has nothing to edit.
+    world.waitFor([&] { return storage(world).value(QStringLiteral("status")) == QLatin1String("ready") && storage(world).contains(QStringLiteral("temporaryFilesFolder")); },
+                  [&] { return QStringLiteral("the folder to be offered; storage is %1").arg(show(storage(world))); });
+    world.bridge().dispatch(QStringLiteral("storageSettings.temporaryFilesFolder"), QVariantMap{{QStringLiteral("folder"), c[0]}});
+  });
+  step(QStringLiteral("the machine's temporary files folder is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto folder = [&] { return cleanupOf(world, world.mc.environmentId, QStringLiteral("temporaryFilesFolder")).toString(); };
+    world.waitFor([&] { return folder() == c[0]; },
+                  [&] { return QStringLiteral("the folder to be saved; it is %1").arg(folder()); });
+  });
   step(QStringLiteral("the user is asked to update that machine first"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return storage(world).value(QStringLiteral("status")) == QLatin1String("unsupported"); },
                   [&] { return QStringLiteral("storage settings to ask for an update; they are %1").arg(show(storage(world))); });

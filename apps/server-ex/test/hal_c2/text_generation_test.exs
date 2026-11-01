@@ -170,7 +170,7 @@ defmodule HalC2.TextGenerationTest do
       })
 
       assert {:ok, %{"branch" => branch}} = TextGeneration.branch_name(repo, "Add login")
-      assert branch =~ ~r{^acp-branch-fake/two-in-hal-c2-text-\d+$}
+      assert branch =~ ~r{^acp-branch-fake/two-in-hal-c2-text-\d+-\d+$}
     end
   end
 

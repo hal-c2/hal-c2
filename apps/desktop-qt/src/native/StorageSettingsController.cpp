@@ -66,6 +66,15 @@ public:
           return settings;
         });
       }
+    } else if (action == QLatin1String("storageSettings.temporaryFilesFolder")) {
+      const QString folder = input.value(QStringLiteral("folder")).toString().trimmed();
+      if (scope()->projectScope()) return true;
+      scope()->write([folder](QJsonObject settings, const QString&) {
+        QJsonObject storage = settings.value(QLatin1String("storageCleanup")).toObject();
+        storage.insert(QStringLiteral("temporaryFilesFolder"), folder);
+        settings.insert(QStringLiteral("storageCleanup"), storage);
+        return settings;
+      });
     } else if (action == QLatin1String("storageSettings.mode")) {
       const QString mode = input.value(QStringLiteral("mode")).toString();
       if (!scope()->projectScope()) return true;
@@ -88,6 +97,8 @@ private:
     QString key, title, description;
     bool days;
     bool worktree;
+    // The days a rule that was never set reads as; null when it starts off.
+    QJsonValue unset = QJsonValue(QJsonValue::Null);
   };
 
   static const QList<Rule>& rules() {
@@ -105,6 +116,9 @@ private:
          QStringLiteral("Delete saved browser captures after this many days. Older capture links will no longer open."), true, false},
         {QStringLiteral("logsAfterDays"), QStringLiteral("Delete old rotated logs"),
          QStringLiteral("Delete inactive rotated log files after this many days. Current logs are kept."), true, false},
+        {QStringLiteral("threadTempAfterDays"), QStringLiteral("Delete idle threads' temporary files"),
+         QStringLiteral("Delete a thread's temporary files after it has been idle for this many days. They always go with the thread."), true,
+         false, QJsonValue(7)},
     };
     return list;
   }
@@ -180,6 +194,7 @@ private:
       const auto value = scope->read([key](const QJsonObject& settings, const QString& projectId) {
         if (find(key)->worktree) return worktreeRules(settings, projectId).value(key);
         const QJsonValue value = settings.value(QLatin1String("storageCleanup")).toObject().value(key);
+        if (value.isUndefined()) return find(key)->unset;
         return value.isDouble() ? value : QJsonValue(QJsonValue::Null);
       });
       (rule.worktree ? worktrees : artifacts)
@@ -192,6 +207,13 @@ private:
     }
     state.insert(QStringLiteral("worktrees"), worktrees);
     state.insert(QStringLiteral("artifacts"), artifacts);
+    if (!project) {
+      const auto folder = scope->read([](const QJsonObject& settings, const QString&) {
+        return QJsonValue(settings.value(QLatin1String("storageCleanup")).toObject().value(QLatin1String("temporaryFilesFolder")).toString());
+      });
+      state.insert(QStringLiteral("temporaryFilesFolder"),
+                   QVariantMap{{QStringLiteral("value"), folder.value.toString()}, {QStringLiteral("mixed"), folder.mixed}});
+    }
     m_bridge->publish(QStringLiteral("storageSettings"), state);
   }
 

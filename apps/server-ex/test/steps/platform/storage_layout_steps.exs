@@ -399,6 +399,9 @@ defmodule HalC2.Steps.Platform.StorageLayout do
         :ok = World.merge_settings(%{"providers" => %{"grok" => %{"enabled" => false}}})
         assert File.regular?(expected)
 
+      "temporary files" ->
+        assert under.(HalC2.Scratch.dir("hal-c2-step"))
+
       "its keybindings" ->
         assert HalC2.Environment.server_config()["keybindingsConfigPath"] == expected
 
