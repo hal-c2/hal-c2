@@ -444,6 +444,25 @@ Item {
             compare(screen.openedPageId, "p2");
         }
 
+        function test_anAskTheMcRefusesComesBackWithItsWords() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            Spaces.agentAskAnswered("p2", "tidy this", true);
+            verify(!findChild(screen, "spaceTextDialog").opened);
+            Spaces.agentAskAnswered("p2", "tidy this", false);
+            tryVerify(() => findChild(screen, "spaceTextDialog").opened);
+            compare(findChild(screen, "spaceTextField").text, "tidy this");
+            findChild(screen, "spaceTextDialog").close();
+        }
+
+        function test_aStoppingAgentCanBeStoppedAgain() {
+            const screen = makeScreen({ agent: { status: "stopping", request: "tidy this", threadId: "t9" } });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            mouseClick(findChild(screen, "spaceAgentStop"));
+            compare(dispatched("space.agent.stop"), [{ pageId: "p1" }]);
+        }
+
         function test_aWorkingAgentCanBeFollowedAndStopped() {
             const screen = makeScreen({ agent: { status: "running", request: "tidy this", threadId: "t9" } });
             screen.openSpace("s1");

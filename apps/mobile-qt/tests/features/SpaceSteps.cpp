@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include "FakeThreads.h"
 #include "Harness.h"
@@ -70,6 +71,10 @@ struct FakeSpaces {
   // The folder the last summary was written in, and the thread it was of.
   QString cwd;
   QString summarised;
+  // Whether the next ask is refused, whether a stop ends an agent, and how many came.
+  bool refuseAsk = false;
+  bool ignoresStop = false;
+  int stops = 0;
   // How the client's last `space.*` was answered.
   QString lastMethod;
   Answer last;
@@ -567,8 +572,9 @@ Answer agentCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
   const QString stream = streamOf(text(in, QLatin1String("spaceId")));
   const QString pageId = text(in, QLatin1String("pageId"));
   const QJsonObject asked = one(mc, stream, QStringLiteral("pageAgent"), pageId);
-  const bool active = text(asked, QLatin1String("status")) == QLatin1String("running");
+  const bool active = text(asked, QLatin1String("status")) == QLatin1String("running") || text(asked, QLatin1String("status")) == QLatin1String("stopping");
   if (method == QLatin1String("page.askAgent")) {
+    if (std::exchange(fake(mc).refuseAsk, false)) return refused(QStringLiteral("invalid"), QStringLiteral("An agent is already working on this page."));
     QString request = text(in, QLatin1String("request")).trimmed();
     if (request.startsWith(QLatin1String("@agent"))) request = request.mid(6).trimmed();
     if (request.isEmpty()) return refused(QStringLiteral("invalid"), QStringLiteral("Say what the agent should do."));
@@ -593,7 +599,9 @@ Answer agentCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
   }
   if (asked.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("No agent was asked on this page."));
   if (method == QLatin1String("page.stopAgent")) {
-    if (active) set(mc, stream, QStringLiteral("pageAgent"), pageId, {{QStringLiteral("status"), QStringLiteral("stopped")}, {QStringLiteral("endedAt"), stamp(mc)}});
+    ++fake(mc).stops;
+    if (active && fake(mc).ignoresStop) set(mc, stream, QStringLiteral("pageAgent"), pageId, {{QStringLiteral("status"), QStringLiteral("stopping")}});
+    else if (active) set(mc, stream, QStringLiteral("pageAgent"), pageId, {{QStringLiteral("status"), QStringLiteral("stopped")}, {QStringLiteral("endedAt"), stamp(mc)}});
     return {{{QStringLiteral("agent"), one(mc, stream, QStringLiteral("pageAgent"), pageId)}}};
   }
   if (active) return refused(QStringLiteral("invalid"), QStringLiteral("The agent is still working on this page."));
@@ -1514,7 +1522,40 @@ const Steps steps([] {
     lookAtPage(world, idOfPage(world, c[1]));
     world.tap(S("spacePageActions"));
     choose(world, S("agent"));
-    answer(world, c[0]);
+    if (!fake(world.mc).refuseAsk) {
+      answer(world, c[0]);
+      return;
+    }
+    // A refusal asks again, so the dialog does not stay closed for `answer`.
+    world.awaitPopup(S("spaceTextDialog"));
+    world.type(c[0]);
+    world.tap(S("spaceTextSave"));
+    world.waitFor([&] { return !fake(world.mc).refuseAsk; }, [] { return S("the ask to reach the MC"); });
+    world.sync();
+  });
+  step(S("the MC refuses the next ask"), [](World& world, const Captures&, const Table&) { fake(world.mc).refuseAsk = true; });
+  step(S("the words %1 are kept to ask again").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.awaitPopup(S("spaceTextDialog"));
+    const QString kept = world.item(S("spaceTextField"))->property("text").toString();
+    expect(kept == c[0], S("the dialog holds \"%1\"").arg(kept));
+    world.tap(S("spaceTextCancel"));
+  });
+  step(S("the agent of %1 does not stop when asked").arg(q), [](World& world, const Captures&, const Table&) { fake(world.mc).ignoresStop = true; });
+  step(S("%1 says its agent is stopping").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectAgent(world, c[0], [](const QVariantMap& agent) { return agent.value(S("status")) == S("stopping"); }, S("stopping"));
+  });
+  step(S("the user can stop the agent of %1 again").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, idOfPage(world, c[0]));
+    const int before = fake(world.mc).stops;
+    world.tap(S("spaceAgentStop"));
+    world.waitFor([&] { return fake(world.mc).stops == before + 1; }, [] { return S("a second stop to reach the MC"); });
+  });
+  step(S("the thread of the agent of %1 is deleted").arg(q), [](World& world, const Captures& c, const Table&) {
+    set(world.mc, streamOf(current(world)), S("pageAgent"), idOfPage(world, c[0]), {{S("status"), S("stopped")}, {S("error"), S("its thread was deleted")}, {S("endedAt"), stamp(world.mc)}});
+    world.sync();
+  });
+  step(S("%1 says its agent stopped because %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectAgent(world, c[0], [&](const QVariantMap& agent) { return agent.value(S("status")) == S("stopped") && agent.value(S("error")) == c[1]; }, S("stopped because %1").arg(c[1]));
   });
   step(S("%1 says its agent is working on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expectAgent(world, c[0], [&](const QVariantMap& agent) { return agent.value(S("status")) == S("running") && agent.value(S("request")) == c[1]; }, S("working on %1").arg(c[1]));

@@ -119,11 +119,20 @@ Item {
     }
 
     // What an agent should do to the page `id`, which opens to show the agent working.
-    function askAgent(id) {
-        text.ask({ title: qsTr("Ask an agent"), placeholder: qsTr("What should it do to this page?"), action: qsTr("Ask"), multiline: true }, request => {
+    // An ask the MC refuses comes back with its words (`words`).
+    function askAgent(id, words) {
+        text.ask({ title: qsTr("Ask an agent"), placeholder: qsTr("What should it do to this page?"), action: qsTr("Ask"), multiline: true, text: words ?? "" }, request => {
             openPage(id);
             Shell.dispatch("space.agent.ask", { pageId: id, request: request });
         });
+    }
+
+    Connections {
+        target: Spaces
+        function onAgentAskAnswered(pageId, request, taken) {
+            if (!taken)
+                screen.askAgent(pageId, request);
+        }
     }
 
     function askImport() {
