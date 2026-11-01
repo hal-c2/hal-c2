@@ -229,6 +229,7 @@ defmodule HalC2.Settings do
 
     cond do
       folder in [nil, "", held] -> :ok
+      not is_binary(folder) -> temporary_files_error(folder, ": it must be a path")
       HalC2.Paths.absolute(folder, HalC2.Paths.platform()) == nil -> relative_folder(folder)
       true -> make_folder(folder)
     end
@@ -248,7 +249,7 @@ defmodule HalC2.Settings do
        "_tag" => "ServerSettingsError",
        "settingsPath" => path(),
        "operation" => "normalize",
-       "message" => "Temporary files cannot go in \"#{folder}\"#{why}."
+       "message" => "Temporary files cannot go in #{inspect(folder)}#{why}."
      }}
   end
 

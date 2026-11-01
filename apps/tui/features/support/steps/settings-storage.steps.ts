@@ -93,7 +93,7 @@ step("deleting idle threads' temporary files reads 7 days", (ctx: SettingsWorld)
 step(
   "the machine's temporary files folder is set to {string}",
   (ctx: SettingsWorld, folder: string) => {
-    documentOf(ctx, fixture(ctx).local.id).settings = {
+    documentOf(ctx).settings = {
       storageCleanup: { temporaryFilesFolder: folder },
     };
   },
@@ -109,6 +109,6 @@ step(
 );
 
 step("the machine's temporary files folder is {string}", (ctx: SettingsWorld, folder: string) => {
-  const { settings } = documentOf(ctx, fixture(ctx).local.id);
+  const { settings } = documentOf(ctx);
   expect((settings.storageCleanup as Record<string, unknown>).temporaryFilesFolder).toBe(folder);
 });

@@ -171,7 +171,8 @@ defmodule HalC2.Steps.Platform.TemporaryFiles do
 
   step "a temporary file an earlier MC left is still there", context do
     mine = Scratch.dir("hal-c2-using")
-    earlier = Path.join(Path.dirname(mine), "hal-c2-crash-1-1")
+    {out, 0} = System.cmd("sh", ["-c", "echo $$"])
+    earlier = Path.join(Path.dirname(mine), "hal-c2-crash-#{String.trim(out)}-1")
     File.mkdir_p!(earlier)
     Map.put(context, :earlier, earlier)
   end

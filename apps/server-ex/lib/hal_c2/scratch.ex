@@ -38,17 +38,17 @@ defmodule HalC2.Scratch do
   end
 
   @doc """
-  Removes what an earlier MC on this home left: every name but this OS process's.
-  `HomeLock` has made sure no other MC is using the home.
+  Removes what a process that has ended left, read from the OS pid in each name. A
+  running one may be another program on this home (`mix hal_c2.thread.import`), and
+  a pid used again only keeps a leftover a while longer.
   """
   def clear_leftovers do
-    mine = "-#{System.pid()}-"
-
     for root <- roots(),
         dir = Path.join(root, "mc"),
         {:ok, names} <- [File.ls(dir)],
         name <- names,
-        not String.contains?(name, mine) do
+        [_, pid] <- [Regex.run(~r/-(\d+)-\d+(\.[^.]+)?$/, name, capture: [0, 1])],
+        HalC2.Subprocess.Orphans.gone?(String.to_integer(pid)) do
       File.rm_rf(Path.join(dir, name))
     end
 
@@ -117,8 +117,9 @@ defmodule HalC2.Scratch do
 
   # The chosen place while it can be used. `get/0` reads a table, so a launch can afford it.
   defp root do
+    # The MC keeps the document as written, so a hand-edited one may hold anything here.
     chosen = get_in(HalC2.Settings.settings(), ["storageCleanup", "temporaryFilesFolder"])
-    wanted = Paths.scratch_dir(if chosen != "", do: chosen)
+    wanted = Paths.scratch_dir(if is_binary(chosen) and chosen != "", do: chosen)
 
     try do
       Paths.mkdir_private!(wanted)

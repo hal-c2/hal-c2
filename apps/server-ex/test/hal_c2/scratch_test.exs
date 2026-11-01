@@ -23,13 +23,38 @@ defmodule HalC2.ScratchTest do
     assert Scratch.idle_days(%{"storageCleanup" => %{"threadTempAfterDays" => nil}}) == nil
   end
 
-  test "another MC's scratch goes, this one's stays" do
+  test "an ended process's scratch goes; a running one's stays, a file's too" do
     mine = Scratch.dir("x")
-    theirs = Path.join(Path.dirname(mine), "x-1-1")
-    File.mkdir_p!(theirs)
+    {out, 0} = System.cmd("sh", ["-c", "echo $$"])
+    ended = String.trim(out)
+    dir = Path.dirname(mine)
+    theirs = Path.join(dir, "x-#{ended}-1")
+    file = Path.join(dir, "x-#{ended}-2.sqlite")
+    # Another program on this home, such as a thread import from a shell.
+    running = Path.join(dir, "x-1-1.sqlite")
+    Enum.each([theirs, file, running], &File.write!(&1, ""))
+
     Scratch.clear_leftovers()
+
     assert File.dir?(mine)
+    assert File.exists?(running)
     refute File.exists?(theirs)
+    refute File.exists?(file)
+  end
+
+  test "a hand-edited folder that is no path reads as unset" do
+    start_supervised!(HalC2.Settings)
+
+    {:ok, _} =
+      HalC2.Settings.update(&Map.put(&1, "storageCleanup", %{"temporaryFilesFolder" => 5}))
+
+    assert [{"TMPDIR", dir} | _] = Scratch.thread_env("t")
+    assert String.starts_with?(dir, HalC2.Paths.default_scratch_dir())
+
+    assert {:error, %{"message" => message}} =
+             HalC2.Settings.validate(%{"storageCleanup" => %{"temporaryFilesFolder" => 6}})
+
+    assert message =~ "must be a path"
   end
 
   test "a thread's folder leaves room for a socket path in a long home" do
