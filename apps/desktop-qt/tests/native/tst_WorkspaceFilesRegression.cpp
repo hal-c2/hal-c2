@@ -490,6 +490,43 @@ private slots:
     QVERIFY(QTest::qWaitFor([&] { return files.text() == QLatin1String("grown"); }));
     QVERIFY(files.truncatedNotice().contains(QLatin1String("2,000,000")));
   }
+
+  void aFailedRereadDropsTheLimitNotice() {
+    Held held;
+    QVERIFY(held.ready());
+    WorkspaceFiles files(&held.client);
+    files.setTarget(QStringLiteral("env-a"), QStringLiteral("/w"));
+    const auto reads = [&] { return held.callsOf(QStringLiteral("projects.readFile")); };
+    files.openFile(QStringLiteral("a.txt"));
+    QVERIFY(QTest::qWaitFor([&] { return reads().size() == 1; }));
+    held.mc.reply(reads().last(), QJsonObject{{QStringLiteral("relativePath"), QStringLiteral("a.txt")}, {QStringLiteral("contents"), QStringLiteral("first")}, {QStringLiteral("byteLength"), 2000000}, {QStringLiteral("truncated"), true}});
+    QVERIFY(QTest::qWaitFor([&] { return !files.truncatedNotice().isEmpty(); }));
+    files.followOpenFile();
+    QVERIFY(QTest::qWaitFor([&] { return reads().size() == 2; }));
+    held.mc.refuse(reads().last(), QStringLiteral("Not found."));
+    QVERIFY(QTest::qWaitFor([&] { return files.fileStatus() == QLatin1String("error"); }));
+    QVERIFY(files.truncatedNotice().isEmpty());
+  }
+
+  // The agent appends to a file at the limit while a tick waits on the re-read.
+  void aTickIsNotSavedOverAFileThatGrewPastTheLimit() {
+    Held held;
+    QVERIFY(held.ready());
+    WorkspaceFiles files(&held.client);
+    files.setTarget(QStringLiteral("env-a"), QStringLiteral("/w"));
+    const auto reads = [&] { return held.callsOf(QStringLiteral("projects.readFile")); };
+    const QString text = QStringLiteral("- [ ] t0");
+    files.openFile(QStringLiteral("a.md"));
+    QVERIFY(QTest::qWaitFor([&] { return reads().size() == 1; }));
+    held.mc.reply(reads().last(), QJsonObject{{QStringLiteral("relativePath"), QStringLiteral("a.md")}, {QStringLiteral("contents"), text}});
+    QVERIFY(QTest::qWaitFor([&] { return files.fileStatus() == QLatin1String("ready"); }));
+    files.toggleTask(0);
+    QVERIFY(QTest::qWaitFor([&] { return reads().size() == 2; }));
+    held.mc.reply(reads().last(), QJsonObject{{QStringLiteral("relativePath"), QStringLiteral("a.md")}, {QStringLiteral("contents"), text}, {QStringLiteral("byteLength"), 2000000}, {QStringLiteral("truncated"), true}});
+    QVERIFY(QTest::qWaitFor([&] { return !files.truncatedNotice().isEmpty(); }));
+    // A tick would have changed the text in the same answer.
+    QCOMPARE(files.text(), text);
+  }
 };
 
 QTEST_GUILESS_MAIN(WorkspaceFilesRegression)

@@ -247,6 +247,8 @@ void WorkspaceFiles::refreshFile() {
                    if (error) {
                      m_fileStatus = QStringLiteral("error");
                      m_fileProblem = readProblem(result, *error);
+                     m_truncated = false;
+                     m_truncatedNotice.clear();
                      setText({});
                      emit fileChanged();
                      return;
@@ -262,7 +264,10 @@ void WorkspaceFiles::refreshFile() {
                    } else {
                      // A file past the limit can change size with the same first 1 MB.
                      if (notice != m_truncatedNotice) emit fileChanged();
-                     for (const int task : ticks) applyTask(task);
+                     // Saving what a cut-off read shows would drop the rest of the file.
+                     if (!m_truncated) {
+                       for (const int task : ticks) applyTask(task);
+                     }
                    }
                  });
 }
