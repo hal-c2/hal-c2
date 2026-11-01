@@ -3,8 +3,8 @@ import QtTest
 import "../qml/HalC2/Bricks"
 import HalC2.Shell
 
-// features/space/pages.feature and slides.feature: what the Space view asks of
-// SpaceController as the user writes a page or a deck, and what it shows of the
+// features/space/pages.feature, visualize.feature and slides.feature: what the Space view
+// asks of SpaceController as the user writes a page or a deck, and what it shows of the
 // Space it is given.
 Item {
     id: root
@@ -145,6 +145,156 @@ Item {
             const view = root.research({ comments: [{ id: "c1", blockId: "", blockText: "", blockGone: false, body: "Why?", resolved: false, byAgent: false, createdAt: "" }] });
             view.commentsShown = true;
             verify(findChild(view, "spaceCommentBlock:Why?").text !== "On a block no longer on this page");
+        }
+
+        function chartBlock(type) {
+            return root.block("c1", "Signups (a chart; Numbers from this page)", {
+                kind: "chart",
+                chart: { type: type, title: "Signups", labels: ["May", "June"], series: [{ name: "Signups", values: [3, 5] }], request: "signups", source: "Numbers from this page" }
+            });
+        }
+
+        function test_a_chart_draws_its_bars_and_says_where_its_numbers_came_from() {
+            const view = root.research({ blocks: [chartBlock("bar")] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            compare(findChild(chart, "spaceChartTitle").text, "Signups");
+            compare(findChild(chart, "spaceChartSource").text, "Numbers from this page");
+            verify(findChild(chart, "spaceChartLabel:May") !== null);
+            verify(findChild(chart, "spaceChartBar") !== null);
+            verify(findChild(chart, "spaceChartLine") === null);
+            verify(!findChild(chart, "spaceChartUnmatched").visible);
+            verify(!findChild(chart, "spaceChartLegend").visible, "one series needs no legend");
+            verify(!findChild(view, "spaceBlockEditor:" + chartBlock("bar").text).visible, "a chart is not edited as text");
+        }
+
+        function test_a_chart_keeps_a_long_label_inside_the_plot() {
+            const row = chartBlock("line");
+            row.chart.labels = ["The first week of the year", "The last week"];
+            const view = root.research({ blocks: [row] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            const label = findChild(chart, "spaceChartLabel:The last week");
+            verify(label.x + label.width <= chart.width);
+            verify(findChild(chart, "spaceChartLabel:The first week of the year").x >= 0);
+        }
+
+        function test_a_chart_draws_its_line() {
+            const view = root.research({ blocks: [chartBlock("line")] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            verify(findChild(chart, "spaceChartLine") !== null);
+            verify(findChild(chart, "spaceChartBar") === null);
+        }
+
+        function test_a_chart_shows_the_numbers_behind_it_and_hides_them_again() {
+            const view = root.research({ blocks: [chartBlock("bar")] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            verify(findChild(chart, "spaceChartCell:May") === null);
+            mouseClick(findChild(chart, "spaceChartNumbers"));
+            tryVerify(() => findChild(chart, "spaceChartCell:May") !== null);
+            verify(findChild(chart, "spaceChartCell:5") !== null);
+            // In its own column: the empty corner holds the first one's place.
+            tryVerify(() => findChild(chart, "spaceChartCell:5").x > 0);
+            compare(findChild(chart, "spaceChartCell:May").x, 0);
+            compare(findChild(chart, "spaceChartCell:5").x, findChild(chart, "spaceChartCell:Signups").x);
+            mouseClick(findChild(chart, "spaceChartNumbers"));
+            tryVerify(() => !findChild(chart, "spaceChartTable").visible);
+        }
+
+        function test_a_chart_draws_nothing_when_its_numbers_do_not_match_its_labels() {
+            for (const values of [[3], [3, 5, 8], [3, "5"], [3, -5]]) {
+                const row = chartBlock("bar");
+                row.chart.series[0].values = values;
+                const view = root.research({ blocks: [row] });
+                const chart = findChild(view, "spaceChart");
+                tryVerify(() => chart !== null && chart.width > 0);
+                verify(findChild(chart, "spaceChartUnmatched").visible, JSON.stringify(values));
+                verify(findChild(chart, "spaceChartBar") === null);
+                verify(findChild(chart, "spaceChartLabel:May") === null);
+                verify(!findChild(chart, "spaceChartNumbers").visible);
+                compare(findChild(chart, "spaceChartTitle").text, "Signups");
+            }
+        }
+
+        function test_a_chart_shows_markup_as_plain_text() {
+            const row = chartBlock("bar");
+            row.chart.title = "<b>Signups</b>";
+            const view = root.research({ blocks: [row] });
+            const title = findChild(view, "spaceChartTitle");
+            tryVerify(() => title !== null);
+            compare(title.textFormat, Text.PlainText);
+            compare(title.text, "<b>Signups</b>");
+        }
+
+        function test_a_visualize_request_asks_the_mc_and_is_not_written_as_a_block() {
+            const view = root.research({});
+            const composer = findChild(view, "spaceComposer");
+            composer.forceActiveFocus();
+            composer.text = "/visualize weekly turns";
+            verify(!findChild(view, "spaceSlashMenu").visible);
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize weekly turns" }]);
+            compare(root.dispatched("space.block.insert").length, 0);
+            compare(composer.text, "");
+        }
+
+        function test_the_slash_menu_starts_a_visualize_request() {
+            const view = root.research({});
+            const composer = findChild(view, "spaceComposer");
+            composer.forceActiveFocus();
+            keyClick("/");
+            keyClick("v");
+            const slash = findChild(view, "spaceSlashMenu");
+            tryVerify(() => slash.visible);
+            compare(slash.shown.map(entry => entry.kind), ["chart"]);
+            keyClick(Qt.Key_Return);
+            tryVerify(() => !slash.visible);
+            compare(composer.text, "/visualize ");
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize").length, 0);
+        }
+
+        function test_asking_again_replaces_the_chart_and_can_be_dropped() {
+            const view = root.research({ blocks: [chartBlock("bar")] });
+            const again = findChild(view, "spaceAskAgain:" + chartBlock("bar").text);
+            tryVerify(() => again !== null);
+            again.clicked();
+            const composer = findChild(view, "spaceComposer");
+            compare(composer.text, "/visualize signups");
+            const hint = findChild(view, "spaceReplacing");
+            tryVerify(() => hint.visible);
+            mouseClick(hint);
+            tryVerify(() => !hint.visible);
+            compare(composer.text, "");
+            again.clicked();
+            composer.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", blockId: "c1" }]);
+        }
+
+        function test_writing_a_block_or_adding_below_ends_asking_again() {
+            const blocks = [chartBlock("bar"), root.block("b2", "Below", {})];
+            const view = root.research({ blocks: blocks });
+            const again = findChild(view, "spaceAskAgain:" + blocks[0].text);
+            tryVerify(() => again !== null);
+            const hint = findChild(view, "spaceReplacing");
+            const composer = findChild(view, "spaceComposer");
+            again.clicked();
+            tryVerify(() => hint.visible);
+            composer.text = "A plain paragraph";
+            composer.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            tryVerify(() => !hint.visible);
+            again.clicked();
+            tryVerify(() => hint.visible);
+            findChild(view, "spaceBlock:" + blocks[1].text).addBelowRequested("b2");
+            tryVerify(() => !hint.visible);
+            composer.text = "/visualize signups";
+            composer.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", afterBlockId: "b2" }]);
         }
 
         function pitch(more) {
@@ -403,6 +553,7 @@ Item {
             keyClick("/");
             keyClick("c");
             keyClick("h");
+            keyClick("e");
             const slash = findChild(view, "spaceSlashMenu");
             tryVerify(() => slash.visible);
             compare(slash.shown.map(entry => entry.kind), ["checklist"]);

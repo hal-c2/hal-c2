@@ -170,6 +170,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
       { keys: "h", description: "Spaces: a page's history", chords: ["h"] },
       {
+        keys: "g",
+        description: "Spaces: ask for a chart, or ask again for the selected one",
+        chords: ["g"],
+      },
+      {
         keys: "s · S",
         description: "Spaces: new deck / make a deck from the page",
         chords: ["s", "shift+s"],
@@ -409,6 +414,7 @@ export const KEYMAP_LAYERS = {
     u: "space.unpublish",
     i: "space.import",
     t: "space.fromThread",
+    g: "space.visualize",
     s: "space.newDeck",
     "shift+s": "space.deckFromPage",
     v: "space.images",
@@ -558,6 +564,47 @@ export function rebindLayers(
   }
   freed.delete(chord);
   return { layers: next, freed: [...freed] };
+}
+
+/**
+ * The first chord that runs `action` in `mode` once `overrides` (keymap.json's
+ * entries, as the engine merges them into every unnamed Keymap) sit over the
+ * live `layers`; null when none does. ShellKeymap keeps the global layer under
+ * every mode but the terminal drawer.
+ */
+export function effectiveChord(
+  layers: Record<string, KeymapLayer>,
+  overrides: Record<string, unknown> | undefined,
+  mode: string,
+  action: string,
+): string | null {
+  const id = (chords: string) =>
+    splitChords(chords)
+      .map((chord) => normalizeChord(chord) ?? chord)
+      .join(",");
+  // A binding's action: the plain form, or the object form that also describes it.
+  const actionOf = (value: unknown) =>
+    value && typeof value === "object" && "action" in value ? value.action : value;
+  for (const layer of [layers[mode], mode === "terminal" ? undefined : layers.global]) {
+    if (!layer) continue;
+    const merged = new Map(
+      Object.entries(layer).map(([chords, bound]) => [id(chords), bound as unknown]),
+    );
+    for (const [chords, value] of Object.entries(overrides ?? {})) {
+      // A section for a named keymap, not a binding.
+      if (value && typeof value === "object" && !("action" in value)) continue;
+      merged.set(id(chords), value);
+    }
+    for (const [chords, value] of merged) {
+      if (actionOf(value) === action) return chords.split(",")[0]!;
+    }
+  }
+  return null;
+}
+
+/** A chord as the key-hint row spells it: "ctrl+k" → "^K", "f2" → "F2". */
+export function chordHint(chord: string): string {
+  return chordLabel(chord).replace(/^Ctrl\+/, "^");
 }
 
 /**

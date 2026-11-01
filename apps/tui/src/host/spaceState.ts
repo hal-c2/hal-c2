@@ -7,7 +7,9 @@
 // from another client or an agent shows as it lands; the keys only send `space.*`
 // RPCs. A page's history (h) is the exception: it is not on a stream, so it is asked
 // for while it is open, again when the Space's stream moves. The SpaceView brick
-// paints `space` and dispatches `space.*`.
+// paints `space` and dispatches `space.*`. A chart block draws as text (`spaceChart.ts`)
+// and is asked for in words; an entry taller than the pane, as a chart can be, scrolls
+// through itself before the selection moves on.
 import * as NodePath from "node:path";
 
 import {
@@ -47,6 +49,7 @@ import type { AskSpec } from "./askState.ts";
 import type { PickRequest } from "./composerState.ts";
 import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
+import { chartData, chartLines } from "./spaceChart.ts";
 import { chunk, styled, type StyledText } from "./styledText.ts";
 
 /** Rows the pane's border and header take. */
@@ -167,7 +170,7 @@ const HINTS: Record<TuiSpaceView, string> = {
   spaces: "  ⏎ open · n new · e rename · d delete · esc close",
   pages:
     "  ⏎ open · n new · s new deck · S deck from page · a subpage · e rename · m move · d trash · r restore · D delete · p present a deck, publish a page · i import · t from thread · h history · v images · esc back",
-  page: "  ⏎ edit · n add · c comment · x tick/resolve · m move · d delete · l link · y copy · S deck · p publish · h history · v images · esc back",
+  page: "  ⏎ edit · n add · g chart · c comment · x tick/resolve · m move · d delete · l link · y copy · S deck · p publish · h history · v images · esc back",
   deck: "  ⏎ edit · n add · m move · d delete · p present · r restore · v images · esc back",
   present: "  → next · ← back · pgup/pgdn scroll · esc leave",
   images: "  n generate · i add a file · d trash · r restore · D delete · esc back",
@@ -216,6 +219,7 @@ const BLOCK_KINDS: ReadonlyArray<{ readonly kind: SpaceBlockKind; readonly label
   { kind: "checklist", label: "Checklist item" },
   { kind: "callout", label: "Callout" },
   { kind: "subpage_link", label: "Link to a subpage" },
+  { kind: "chart", label: "Chart" },
   { kind: "image", label: "Image" },
 ];
 
@@ -450,6 +454,66 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     first: true,
   });
 
+  /** Its title, its plot with the numbers, and where the numbers came from. */
+  const chartRows = (
+    block: SpaceBlock,
+    chart: NonNullable<ReturnType<typeof chartData>>,
+  ): TuiSpaceRow[] => {
+    const key = `block:${block.id}`;
+    const active = selected.page === key;
+    const bg = active ? { bg: palette.selectedBg } : {};
+    const room = width() - 2;
+    const row = (lead: string, line: StyledText, text: string, first = false): TuiSpaceRow => ({
+      key,
+      kind: "block",
+      text: `${lead}${text}`,
+      line,
+      selected: active,
+      blockKind: block.kind,
+      first,
+    });
+    const agent = agentOf(block);
+    const sources = wrapWords(chart.source === "" ? " " : chart.source, room);
+    return [
+      ...wrapWords(chart.title === "" ? " " : chart.title, room).map((text, index) => {
+        const lead = index === 0 ? marker(active) : "  ";
+        return row(
+          lead,
+          styled(
+            chunk(lead, { fg: palette.dim, ...bg }),
+            chunk(text, { fg: palette.text, bold: true, ...bg }),
+          ),
+          text,
+          index === 0,
+        );
+      }),
+      ...chartLines(chart, room).map(({ words, bar, number, header }) =>
+        row(
+          "  ",
+          styled(
+            chunk("  ", bg),
+            chunk(words, { fg: header ? palette.dim : palette.text, ...bg }),
+            bar !== "" && chunk(bar, { fg: palette.accent, ...bg }),
+            number !== "" && chunk(number, { fg: palette.text, ...bg }),
+          ),
+          `${words}${bar}${number}`,
+        ),
+      ),
+      ...sources.map((text, index) => {
+        const by = index === sources.length - 1 && agent ? `  · ${agent}` : "";
+        return row(
+          "  ",
+          styled(
+            chunk("  ", bg),
+            chunk(text, { fg: palette.dim, ...bg }),
+            by !== "" && chunk(by, { fg: palette.faint, ...bg }),
+          ),
+          `${text}${by}`,
+        );
+      }),
+    ];
+  };
+
   /** A placed image in words. Its caption names it once the image is gone from the stream. */
   const imagePlaceholder = (block: SpaceBlock): string => {
     const image = imageById(block.imageId);
@@ -464,6 +528,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     image.prompt ? `${image.name}  · ${image.prompt}` : image.name;
 
   const blockRows = (block: SpaceBlock): TuiSpaceRow[] => {
+    // A chart this client cannot read shows what it says of itself, as any block does.
+    const chart = block.kind === "chart" ? chartData(block.chart) : null;
+    if (chart) return chartRows(block, chart);
     const key = `block:${block.id}`;
     const active = selected[view] === key;
     const linked = block.kind === "subpage_link" ? pageById(block.linkedPageId) : undefined;
@@ -793,7 +860,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const room = Math.max(1, options.height() - SPACE_CHROME_ROWS - (message === "" ? 0 : 1));
     const first = rows.findIndex((row) => row.selected);
     const last = rows.findLastIndex((row) => row.selected);
-    if (first >= 0) {
+    if (first >= 0 && last - first + 1 > room) {
+      top = Math.max(first, Math.min(top, last - room + 1));
+    } else if (first >= 0) {
       if (first < top) top = first;
       if (last >= top + room) top = Math.max(0, Math.min(first, last - room + 1));
     }
@@ -1089,8 +1158,21 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   const move = (delta: number) => {
-    const keys = entryKeys(allRows());
+    const rows = allRows();
+    const keys = entryKeys(rows);
     if (keys.length === 0) return;
+    // The rest of an entry taller than the pane comes before the next entry.
+    const first = rows.findIndex((row) => row.selected);
+    const last = rows.findLastIndex((row) => row.selected);
+    const room = Math.max(1, options.height() - SPACE_CHROME_ROWS);
+    if (first >= 0 && last - first + 1 > room) {
+      const within = Math.max(first, Math.min(last - room + 1, top + delta));
+      if (within !== top) {
+        top = within;
+        publish();
+        return;
+      }
+    }
     const index = keys.indexOf(selected[view] ?? "");
     const next = Math.max(0, Math.min(keys.length - 1, (index < 0 ? 0 : index) + delta));
     selected[view] = keys[next] ?? null;
@@ -1481,6 +1563,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           link();
           return;
         }
+        if (kind === "chart") {
+          visualize(false);
+          return;
+        }
         if (kind === "image") {
           placeImage();
           return;
@@ -1490,6 +1576,50 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           label: name,
           placeholder: "text",
           onSubmit: (text) => insertBlock({ kind, text }),
+        });
+      },
+    });
+  };
+
+  /**
+   * Asks the MC for a chart in the user's words. On a chart it asks again, starting from
+   * the words that chart was asked for in, and replaces it; elsewhere a new chart goes
+   * where a new block would, as it always does from the add menu (`again` false). The MC
+   * draws it or says why not, and the stream shows it.
+   */
+  const visualize = (again = true) => {
+    const id = spaceId;
+    const page = pageId;
+    if (view !== "page" || id === null || page === null) {
+      options.status("Open a page to ask for a chart.", "info");
+      return;
+    }
+    const entry = selectedEntry();
+    const replacing =
+      again && entry?.kind === "block"
+        ? blocksOf(page).find((block) => block.id === entry.id && block.kind === "chart")
+        : undefined;
+    const asked = generation;
+    options.ask({
+      label: replacing ? "ask again" : "chart",
+      placeholder: "what should it show?",
+      ...(replacing ? { value: chartData(replacing.chart)?.request ?? "" } : {}),
+      onSubmit: (request) => {
+        const after = replacing ? null : anchorBlock();
+        options.status("Drawing a chart…", "info");
+        void send<{ block: SpaceBlock }>(WS_METHODS.spaceBlockVisualize, {
+          spaceId: id,
+          pageId: page,
+          request,
+          ...(replacing ? { blockId: replacing.id } : {}),
+          ...(after === null ? {} : { afterBlockId: after }),
+        }).then((result) => {
+          if (!result) return;
+          options.status(`Drew “${chartData(result.block.chart)?.title ?? "a chart"}”.`, "info");
+          if (asked === generation && pageId === page) {
+            selected.page = `block:${result.block.id}`;
+            publish();
+          }
         });
       },
     });
@@ -1568,6 +1698,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       const block = blocksOf(pageId ?? "").find((candidate) => candidate.id === entry.id);
       if (block?.kind === "subpage_link") {
         options.status("A link shows its page's title: rename the page instead.", "info");
+        return;
+      }
+      if (block?.kind === "chart") {
+        visualize();
         return;
       }
       options.ask({
@@ -2180,6 +2314,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.unpublish": onPages(unpublishSite),
     "space.import": onPages(importMarkdown),
     "space.fromThread": onPages(fromThread),
+    "space.visualize": onPages(visualize),
     "space.newDeck": onPages(newDeck),
     "space.deckFromPage": onPages(deckFromPage),
     "space.present": onPages(present),
@@ -2277,6 +2412,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       } else {
         entries.push(
           { title: "Add a block", action: "space.new" },
+          {
+            title: "Ask for a chart, or ask again for the selected one",
+            action: "space.visualize",
+          },
           { title: "Edit block", action: "space.edit" },
           { title: "Move block", action: "space.move" },
           { title: "Delete block", action: "space.delete" },

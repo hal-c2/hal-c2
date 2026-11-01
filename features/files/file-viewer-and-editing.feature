@@ -271,6 +271,15 @@ Feature: Viewing and editing files
       And the file tree gives way before the buttons do
       And a tab too narrow to leave the tree room for ten characters of a name at the user's font size shows the file alone
 
+    @desktop @backlog-desktop
+    Scenario: A font too large for the Files tab keeps the way out of the file
+      Given the user's interface font is so large the buttons above the file do not fit the Files tab
+      When the user opens "docs/guide.md"
+      Then the file explorer toggle and the close button stay on screen
+      And the Rendered, Edit and Wrap buttons are in a menu above the file
+      When the interface font is small enough again
+      Then those buttons are back above the file
+
     @desktop
     Scenario: The rendered or source choice is remembered on this device
       Given the user chose to see Markdown source

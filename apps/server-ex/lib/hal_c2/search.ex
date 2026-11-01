@@ -2,49 +2,76 @@ defmodule HalC2.Search do
   @moduledoc """
   Thread search (`orchestration.searchThreads`): finished user and assistant
   messages whose text contains the query, one match per active thread, preferring
-  what the user wrote. Messages are indexed in `HalC2.Store` as they finish; threads
-  written before the index existed are indexed once at startup (`backfill/0`).
+  what the user wrote. Messages are indexed in `HalC2.Store` as they finish, with whether
+  a person typed them; threads an older MC wrote are read once at startup (`backfill/0`).
   """
 
   alias HalC2.{Store, StreamState}
 
   @roles ["user", "assistant"]
   @snippet 240
+  @not_typed ~w(senderThreadId scheduledTaskId notification delegatedCompletion providerWake)
+  @read "messages_typed"
 
-  @doc "Indexes the messages `events` finished, reading them from the committed `stream`."
+  @doc "Indexes the messages `events` finished or deleted, reading them from the committed `stream`."
   def index(stream_id, events, stream) do
-    messages =
-      for %{kind: "message", entity: id} <- events,
-          message = StreamState.get(stream, "message")[id],
-          message["role"] in @roles and message["streaming"] != true,
-          uniq: true,
-          do: {id, message["role"], message["text"] || "", message["createdAt"]}
+    messages = StreamState.get(stream, "message")
+    thread = StreamState.get(stream, "thread")[stream_id]
 
-    if messages != [], do: Store.index_messages(stream_id, messages)
+    entries =
+      for %{kind: "message", entity: id} <- events,
+          entry = entry(id, messages[id], thread),
+          uniq: true,
+          do: entry
+
+    if entries != [], do: Store.index_messages(stream_id, entries)
     :ok
   end
 
-  @doc "Indexes every thread's messages once, for logs written before the index existed."
+  @doc "Indexes every thread's messages once, for logs an older MC wrote."
   def backfill do
     path = Store.path()
 
-    if Store.meta(path, "messages_indexed") != "1" do
+    if not read?() do
       for %{id: id, kind: "thread"} <- Store.list_streams(path) do
         state = StreamState.load(path, id)
+        thread = StreamState.get(state, "thread")[id]
 
-        messages =
+        entries =
           for message <- StreamState.list(state, "message"),
-              message["role"] in @roles and message["streaming"] != true,
-              do: {message["id"], message["role"], message["text"] || "", message["createdAt"]}
+              entry = entry(message["id"], message, thread),
+              do: entry
 
-        if messages != [], do: Store.index_messages(id, messages)
+        if entries != [], do: Store.index_messages(id, entries)
       end
 
-      Store.put_meta("messages_indexed", "1")
+      Store.put_meta(@read, "1")
     end
 
     :ok
   end
+
+  @doc "Whether the index says who typed every message, so turns can be counted from it."
+  def read?, do: Store.meta(Store.path(), @read) == "1"
+
+  defp entry(id, nil, _thread), do: {id, :deleted}
+
+  defp entry(id, %{"role" => role} = message, thread) when role in @roles do
+    if message["streaming"] != true,
+      do: {id, role, message["text"] || "", message["createdAt"], typed?(message, thread)}
+  end
+
+  defp entry(_id, _message, _thread), do: nil
+
+  # What an agent, a schedule or the MC sent has the role of a user's message too, and so
+  # does what a fork copied from its source, which keeps the time it was first sent.
+  defp typed?(%{"role" => "user"} = message, thread) do
+    not Enum.any?(@not_typed, &(message[&1] != nil)) and
+      not (get_in(thread, ["lineage", "relationshipToParent"]) == "fork" and
+             message["createdAt"] < thread["createdAt"])
+  end
+
+  defp typed?(_message, _thread), do: false
 
   @doc """
   Searches with `query` (trimmed, 2 to 200 characters) for up to `limit` (1 to 50,

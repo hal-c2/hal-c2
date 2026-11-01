@@ -16,4 +16,11 @@ CI=true vp i
 # install:mc also compiles the MC. A broken MC compile must not fail container
 # creation for TypeScript-only work, so warn loudly instead of failing here;
 # `mise run mc` will surface the same error when the MC is actually run.
-mise run install:mc || echo "warning: MC deps/compile failed; the container is usable, run 'mise run install:mc' to retry" >&2
+# Under a prebuild nobody watches this run, so the warning also goes to a file
+# (in the workspace, which prebuilds keep) that postAttachCommand prints until
+# install:mc next succeeds.
+warning=.hal-c2/devcontainer-mc-install-warning
+mkdir -p "$(dirname "$warning")"
+if ! mise run install:mc; then
+  echo "warning: MC deps/compile failed; the container is usable, run 'mise run install:mc' to retry" | tee "$warning" >&2
+fi

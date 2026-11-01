@@ -43,6 +43,8 @@ Rectangle {
         sourceSize: Qt.size(1440, 1440)
         fillMode: Image.PreserveAspectFit
         asynchronous: true
+        // A new address for the same bytes must not blank the picture.
+        retainWhileLoading: true
     }
 
     RowLayout {

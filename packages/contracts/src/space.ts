@@ -62,9 +62,48 @@ export const SpaceBlockKind = Schema.Literals([
   "checklist",
   "callout",
   "subpage_link",
+  "chart",
   "image",
 ]);
 export type SpaceBlockKind = typeof SpaceBlockKind.Type;
+
+/** The limits of a chart, in UTF-8 bytes for text. `HalC2.Space.Chart` enforces them. */
+export const SPACE_CHART_LIMITS = {
+  labels: 24,
+  series: 4,
+  titleBytes: 120,
+  labelBytes: 40,
+  requestBytes: 200,
+  sourceBytes: 160,
+  value: 1e15,
+} as const;
+
+/** Plain text a client shows as it is, and never interprets. */
+const SpaceChartText = (maxLength: number) => Schema.String.check(Schema.isMaxLength(maxLength));
+
+/**
+ * A chart our own drawing code draws: data only, with no URL, script, QML or formatting.
+ * The MC refuses anything else, and clients still treat every field as untrusted text.
+ * Values are from zero up, one per label.
+ */
+export const SpaceChart = Schema.Struct({
+  type: Schema.Literals(["bar", "line"]),
+  title: SpaceChartText(SPACE_CHART_LIMITS.titleBytes),
+  labels: Schema.Array(SpaceChartText(SPACE_CHART_LIMITS.labelBytes)).check(
+    Schema.isMaxLength(SPACE_CHART_LIMITS.labels),
+  ),
+  series: Schema.Array(
+    Schema.Struct({
+      name: SpaceChartText(SPACE_CHART_LIMITS.labelBytes),
+      values: Schema.Array(Schema.Finite).check(Schema.isMaxLength(SPACE_CHART_LIMITS.labels)),
+    }),
+  ).check(Schema.isMaxLength(SPACE_CHART_LIMITS.series)),
+  /** What was asked for, offered again when the user asks again. */
+  request: SpaceChartText(SPACE_CHART_LIMITS.requestBytes),
+  /** Where the numbers came from, written by the MC and not the model. */
+  source: SpaceChartText(SPACE_CHART_LIMITS.sourceBytes),
+});
+export type SpaceChart = typeof SpaceChart.Type;
 
 export const SpaceBlock = Schema.Struct({
   id: SpaceBlockId,
@@ -75,6 +114,8 @@ export const SpaceBlock = Schema.Struct({
   checked: Schema.Boolean,
   /** The page a `subpage_link` block points at. */
   linkedPageId: Schema.NullOr(SpacePageId),
+  /** What a `chart` block draws. Its `text` says what it is, for clients that do not draw it. */
+  chart: Schema.optional(SpaceChart),
   /** The image an `image` block shows; its `text` is the caption. Only on image blocks. */
   imageId: Schema.optional(SpaceImageId),
   /**
@@ -561,6 +602,29 @@ export type SpaceImageProvidersResult = typeof SpaceImageProvidersResult.Type;
 export class SpaceError extends Schema.TaggedError<SpaceError>()("SpaceError", {
   message: Schema.String,
   reason: Schema.Literals(["invalid", "notFound", "trashed", "notEmpty", "cycle", "unavailable"]),
+}) {}
+
+/**
+ * A chart from `request` ("weekly turns"), drawn from what the MC counts or what the page
+ * says, or refused. A new block goes where `afterBlockId` says; with `blockId` the chart
+ * in that block is replaced where it is, and stays as it was if this fails.
+ */
+export const SpaceBlockVisualizeInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  request: Schema.String.check(Schema.isMaxLength(SPACE_CHART_LIMITS.requestBytes)),
+  blockId: Schema.optional(SpaceBlockId),
+  afterBlockId: AfterBlockId,
+});
+export type SpaceBlockVisualizeInput = typeof SpaceBlockVisualizeInput.Type;
+
+/**
+ * No chart was drawn: no text generation provider (`unavailable`), it failed or its answer
+ * was refused (`failed`), or real data cannot answer the request (`unanswerable`).
+ */
+export class SpaceChartError extends Schema.TaggedError<SpaceChartError>()("SpaceChartError", {
+  message: Schema.String,
+  reason: Schema.Literals(["unavailable", "failed", "unanswerable"]),
 }) {}
 
 /** A page could not be written from a thread: no text generation provider, or it failed. */
