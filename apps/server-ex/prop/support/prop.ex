@@ -52,9 +52,26 @@ defmodule HalC2.Prop do
   @doc "Stops what `start_services/1` started, waiting for every child to exit."
   def stop_services do
     case Process.delete({__MODULE__, :services}) do
-      nil -> :ok
-      sup -> Supervisor.stop(sup)
+      nil ->
+        :ok
+
+      sup ->
+        plugins = plugins_supervisor()
+        Supervisor.stop(sup)
+        if plugins, do: await_down(plugins)
     end
+  end
+
+  # What runs the plugins hangs off `HalC2.Plugins` and ends after it, so stopping the
+  # services does not wait for it. A plugin still running could save into the home of
+  # the next case, which would load it.
+  defp plugins_supervisor do
+    if Process.whereis(HalC2.Plugins), do: :sys.get_state(HalC2.Plugins).supervisor
+  end
+
+  defp await_down(pid) do
+    ref = Process.monitor(pid)
+    receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
   end
 
   @doc "Stops the service `id` and starts it again, as a crash or an upgrade would."
