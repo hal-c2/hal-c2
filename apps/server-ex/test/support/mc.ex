@@ -1782,6 +1782,8 @@ defmodule HalC2.Test.Mc.World do
   terminals (a setup script runs in one), and the fake Codex agent.
   """
   def worktree_services do
+    # A machine's own shell startup is not a scenario's: it may outlast a wait.
+    put_env("SHELL", "/bin/sh")
     Mc.ensure(HalC2.Settings)
     Mc.ensure(HalC2.Workspace)
     Mc.ensure({Registry, keys: :unique, name: HalC2.Terminal.Registry})

@@ -624,11 +624,45 @@ defmodule HalC2.WorktreeSetupTest do
 
     assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
     assert %{"worktreePath" => ^path} = await_phase(thread_id, "failed")
-    Process.sleep(200)
+    refute Map.has_key?(:sys.get_state(HalC2.WorktreeSetup).setups[thread_id], :expiry)
 
     File.write!(Path.join(repo, ".pass"), "")
     assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
     assert %{"worktreePath" => ^path} = await_phase(thread_id, "done")
+  end
+
+  test "a retry runs the script as it is saved now", %{repo: repo} do
+    script = %{
+      "id" => "setup",
+      "name" => "Setup",
+      "icon" => "configure",
+      "runOnWorktreeCreate" => true,
+      "async" => false
+    }
+
+    project(repo, [Map.put(script, "command", "exit 3")])
+    thread_id = launch("list the files")
+    await_phase(thread_id, "failed")
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.update",
+        "projectId" => "p1",
+        "scripts" => [Map.put(script, "command", "echo fixed > corrected.txt")]
+      })
+
+    assert_receive {:hal_c2_shell,
+                    {:rows, _,
+                     [
+                       {"p1",
+                        {"project",
+                         %{"scripts" => [%{"command" => "echo fixed > corrected.txt"}]}}}
+                     ]}},
+                   1_000
+
+    assert {:ok, %{"retried" => true}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
+    %{"worktreePath" => path} = await_phase(thread_id, "done")
+    assert File.read!(Path.join(path, "corrected.txt")) == "fixed\n"
   end
 
   test "a retry can be cancelled, which removes the worktree", %{repo: repo} do
