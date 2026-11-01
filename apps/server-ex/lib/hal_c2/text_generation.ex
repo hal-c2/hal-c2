@@ -215,7 +215,11 @@ defmodule HalC2.TextGeneration do
   def driver(id),
     do: get_in(HalC2.Settings.settings(), ["providerInstances", id, "driver"]) || id
 
-  defp usable?(settings, %{"instanceId" => id}) when is_binary(id) do
+  @doc "A provider's default model for writing text."
+  def default_model(driver), do: @default_models[driver]
+
+  @doc "Whether a selection's provider is enabled and installed under `settings`."
+  def usable?(settings, %{"instanceId" => id}) when is_binary(id) do
     case driver(id) do
       "codex" -> enabled?(settings, id) and executable?(codex_command(id))
       "claudeAgent" -> enabled?(settings, id) and executable?(claude_command(id))
@@ -226,7 +230,7 @@ defmodule HalC2.TextGeneration do
     end
   end
 
-  defp usable?(_settings, _selection), do: false
+  def usable?(_settings, _selection), do: false
 
   # Codex and Claude are on unless turned off.
   defp enabled?(settings, id) do
@@ -768,11 +772,21 @@ defmodule HalC2.TextGeneration do
   defp scan(text, start, _index, _depth, _in_string, _escaping),
     do: binary_part(text, start, byte_size(text) - start)
 
-  defp run_cli([command | args], cwd, input) do
+  @doc """
+  Runs a provider CLI in `cwd` with `input` on stdin: `{:ok, stdout}` or `{:error,
+  message}`. Options: `:timeout` (default `timeout/0`), `:env`.
+  """
+  def run_cli([command | args], cwd, input, opts \\ []) do
     task =
       Task.async(fn ->
         [command | args]
-        |> Exile.stream(cd: cwd, input: [input], stderr: :consume, ignore_epipe: true)
+        |> Exile.stream(
+          cd: cwd,
+          input: if(input == "", do: [], else: [input]),
+          stderr: :consume,
+          ignore_epipe: true,
+          env: opts[:env] || []
+        )
         |> Enum.reduce({[], [], nil}, fn
           {:stdout, data}, {out, err, status} -> {[out, data], err, status}
           {:stderr, data}, {out, err, status} -> {out, [err, data], status}
@@ -780,7 +794,7 @@ defmodule HalC2.TextGeneration do
         end)
       end)
 
-    case Task.yield(task, timeout()) || Task.shutdown(task, :brutal_kill) do
+    case Task.yield(task, opts[:timeout] || timeout()) || Task.shutdown(task, :brutal_kill) do
       {:ok, {out, _err, {:status, 0}}} ->
         {:ok, IO.iodata_to_binary(out)}
 
@@ -806,7 +820,8 @@ defmodule HalC2.TextGeneration do
 
   # The CLI an instance writes text with: its binary path in settings, else the one on PATH.
   defp claude_command(instance), do: cli(instance, :text_claude_command, "claude")
-  defp codex_command(instance), do: cli(instance, :text_codex_command, "codex")
+  @doc false
+  def codex_command(instance), do: cli(instance, :text_codex_command, "codex")
 
   defp cli(instance, key, default),
     do:

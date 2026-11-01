@@ -2,8 +2,9 @@ defmodule HalC2.SpacePropTest do
   @moduledoc """
   A state machine over the pages, blocks and comments of one Space (`HalC2.Space`):
   pages made, moved, trashed, restored and deleted for good; blocks inserted, moved,
-  ticked, edited and deleted; comments added, resolved and reopened; and the Space's streams
-  restarting, which reads everything back from the event log.
+  ticked, edited and deleted; comments added, resolved and reopened; images added,
+  placed, trashed, restored and deleted for good; and the Space's streams restarting,
+  which reads everything back from the event log.
 
   After each command the test reads the Space's stream back and checks it against
   the model:
@@ -18,7 +19,10 @@ defmodule HalC2.SpacePropTest do
   - a chart is drawn in a new block or in place of a chart, and only there: its text
     cannot be edited, and asking again keeps its place and its comments;
   - each command writes one event per entity it changes, and a refusal, a tick to
-    the same value, or resolving a resolved comment (reopening an open one) writes none.
+    the same value, or resolving a resolved comment (reopening an open one) writes none;
+  - an image has its file exactly as long as its entity exists, whatever shows it: a page
+    or block going takes no image with it, and an image going leaves its blocks in place;
+    a trashed image cannot be placed, and only a trashed image can be deleted.
   """
 
   use ExUnit.Case, async: false
@@ -26,7 +30,7 @@ defmodule HalC2.SpacePropTest do
   use PropCheck.StateM
 
   alias HalC2.{Space, StreamState, Streams}
-  alias HalC2.Space.{Blocks, Chart}
+  alias HalC2.Space.{Blocks, Chart, ImageFile}
 
   @moduletag timeout: :infinity
   @moduletag capture_log: true
@@ -34,6 +38,7 @@ defmodule HalC2.SpacePropTest do
   @pages ~w(p1 p2 p3 p4)
   @blocks ~w(b1 b2 b3 b4 b5)
   @comments ~w(c1 c2 c3)
+  @images ~w(i1 i2 i3)
 
   property "a Space's pages, blocks and comments follow the model",
     numtests: HalC2.Prop.numtests(100),
@@ -49,6 +54,7 @@ defmodule HalC2.SpacePropTest do
 
         {:ok, space} = Space.create("Prop")
         Process.put(:space, space["id"])
+        File.mkdir_p!(HalC2.Attachments.dir())
         Process.put(:names, %{})
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
@@ -63,13 +69,15 @@ defmodule HalC2.SpacePropTest do
   # --- model ----------------------------------------------------------------------
 
   # pages: name => %{parent, trashed}; order: page => its block names in order;
-  # blocks: name => %{page, kind, checked, text, chart}; comments: name => %{block, resolved}.
-  def initial_state, do: %{pages: %{}, order: %{}, blocks: %{}, comments: %{}}
+  # blocks: name => %{page, kind, checked, text, chart}; comments: name => %{block, resolved};
+  # images: name => %{trashed}.
+  def initial_state, do: %{pages: %{}, order: %{}, blocks: %{}, comments: %{}, images: %{}}
 
   def command(s) do
     pages = Map.keys(s.pages)
     blocks = Map.keys(s.blocks)
     comments = Map.keys(s.comments)
+    images = Map.keys(s.images)
 
     frequency(
       [{3, {:call, __MODULE__, :create_page, [elements(@pages), parent(pages)]}}] ++
@@ -108,6 +116,24 @@ defmodule HalC2.SpacePropTest do
             {2, {:call, __MODULE__, :resolve_comment, [elements(comments)]}},
             {2, {:call, __MODULE__, :reopen_comment, [elements(comments)]}}
           ]
+        ) ++
+        [{2, {:call, __MODULE__, :add_image, [elements(@images)]}}] ++
+        if(images == [],
+          do: [],
+          else:
+            [
+              {2, {:call, __MODULE__, :trash_image, [elements(images)]}},
+              {2, {:call, __MODULE__, :restore_image, [elements(images)]}},
+              {1, {:call, __MODULE__, :delete_image, [elements(images)]}}
+            ] ++
+              if(pages == [],
+                do: [],
+                else: [
+                  {3,
+                   {:call, __MODULE__, :place_image,
+                    [elements(@blocks), elements(pages), elements(images)]}}
+                ]
+              )
         ) ++
         [{1, {:call, __MODULE__, :restart, []}}]
     )
@@ -166,6 +192,17 @@ defmodule HalC2.SpacePropTest do
   def precondition(s, {:call, _, cmd, [name]}) when cmd in [:resolve_comment, :reopen_comment],
     do: Map.has_key?(s.comments, name)
 
+  def precondition(s, {:call, _, :add_image, [name]}), do: not Map.has_key?(s.images, name)
+
+  def precondition(s, {:call, _, cmd, [name]})
+      when cmd in [:trash_image, :restore_image, :delete_image],
+      do: Map.has_key?(s.images, name)
+
+  def precondition(s, {:call, _, :place_image, [name, page, image]}),
+    do:
+      not Map.has_key?(s.blocks, name) and Map.has_key?(s.pages, page) and
+        Map.has_key?(s.images, image)
+
   def precondition(_s, {:call, _, :restart, []}), do: true
 
   def next_state(s, _result, {:call, _, cmd, args}), do: elem(step(s, cmd, args), 1)
@@ -220,10 +257,11 @@ defmodule HalC2.SpacePropTest do
       comments = for {comment, %{block: block}} <- s.comments, block in blocks, do: comment
 
       next = %{
-        pages: Map.drop(s.pages, pages),
-        order: Map.drop(s.order, pages),
-        blocks: Map.drop(s.blocks, blocks),
-        comments: Map.drop(s.comments, comments)
+        s
+        | pages: Map.drop(s.pages, pages),
+          order: Map.drop(s.order, pages),
+          blocks: Map.drop(s.blocks, blocks),
+          comments: Map.drop(s.comments, comments)
       }
 
       {:ok, next, length(pages) + length(blocks) + length(comments)}
@@ -366,6 +404,42 @@ defmodule HalC2.SpacePropTest do
     end
   end
 
+  defp step(s, :add_image, [name]),
+    do: {:ok, put_in(s.images[name], %{trashed: false}), 1}
+
+  defp step(s, :trash_image, [name]) do
+    if s.images[name].trashed,
+      do: {:trashed, s, 0},
+      else: {:ok, put_in(s.images[name].trashed, true), 1}
+  end
+
+  defp step(s, :restore_image, [name]) do
+    if s.images[name].trashed,
+      do: {:ok, put_in(s.images[name].trashed, false), 1},
+      else: {:invalid, s, 0}
+  end
+
+  defp step(s, :delete_image, [name]) do
+    if s.images[name].trashed,
+      do: {:ok, %{s | images: Map.delete(s.images, name)}, 1},
+      else: {:invalid, s, 0}
+  end
+
+  defp step(s, :place_image, [name, page, image]) do
+    cond do
+      not live?(s, page) ->
+        {:trashed, s, 0}
+
+      s.images[image].trashed ->
+        {:trashed, s, 0}
+
+      true ->
+        block = %{page: page, kind: "image", checked: false, text: name, chart: nil}
+        order = s.order[page] ++ [name]
+        {:ok, %{s | blocks: Map.put(s.blocks, name, block), order: %{s.order | page => order}}, 1}
+    end
+  end
+
   defp step(s, :restart, []), do: {:ok, s, 0}
 
   defp summary(title), do: Chart.summary(chart(title))
@@ -388,7 +462,7 @@ defmodule HalC2.SpacePropTest do
     before ++ [after_id, name | rest]
   end
 
-  defp snapshot(s), do: Map.take(s, [:pages, :order, :blocks, :comments])
+  defp snapshot(s), do: Map.take(s, [:pages, :order, :blocks, :comments, :images])
 
   # --- the system under test ------------------------------------------------------
 
@@ -438,6 +512,32 @@ defmodule HalC2.SpacePropTest do
   def resolve_comment(name), do: act(&Space.resolve_comment(&1, id(name)))
   def reopen_comment(name), do: act(&Space.reopen_comment(&1, id(name)))
 
+  def add_image(name) do
+    upload = "pending-#{HalC2.Environment.uuid4()}"
+    file = Path.join(HalC2.Attachments.dir(), upload <> ".png")
+
+    File.write!(
+      file,
+      <<0x89, "PNG\r\n", 0x1A, "\n", 13::32, "IHDR", 2::32, 2::32, 8, 6, 0, 0, 0>>
+    )
+
+    act(name, &Space.add_image(&1, upload, "Image #{name}"))
+  end
+
+  def trash_image(name), do: act(&Space.trash_image(&1, id(name)))
+  def restore_image(name), do: act(&Space.restore_image(&1, id(name)))
+
+  def delete_image(name) do
+    act(fn space ->
+      with {:ok, _} = deleted <- Space.delete_image(space, id(name)), do: deleted
+    end)
+  end
+
+  def place_image(name, page, image) do
+    spec = %{"kind" => "image", "text" => name, "imageId" => id(image)}
+    act(name, &Space.insert_block(&1, id(page), spec))
+  end
+
   def restart do
     act(fn _ ->
       HalC2.Prop.restart_service(HalC2.Streams)
@@ -468,7 +568,12 @@ defmodule HalC2.SpacePropTest do
 
   defp read_back do
     state = Streams.state(stream())
-    ids = for kind <- ~w(page block comment), id <- Map.keys(StreamState.get(state, kind)), do: id
+
+    ids =
+      for kind <- ~w(page block comment image),
+          id <- Map.keys(StreamState.get(state, kind)),
+          do: id
+
     names = Map.filter(Process.get(:names), fn {_, id} -> id in ids end)
     Process.put(:names, names)
     name = Map.new(names, fn {name, id} -> {id, name} end)
@@ -505,6 +610,10 @@ defmodule HalC2.SpacePropTest do
         Map.new(StreamState.list(state, "comment"), fn comment ->
           {name.(comment["id"]),
            %{block: name.(comment["blockId"]), resolved: comment["resolvedAt"] != nil}}
+        end),
+      images:
+        Map.new(StreamState.list(state, "image"), fn image ->
+          {name.(image["id"]), %{trashed: image["trashedAt"] != nil}}
         end)
     }
 
@@ -514,7 +623,14 @@ defmodule HalC2.SpacePropTest do
         keys == Enum.uniq(Enum.sort(keys))
       end)
 
-    {snapshot, ordered}
+    # Every image has its file and no file outlives its image.
+    files =
+      Path.wildcard(Path.join(HalC2.Attachments.dir(), "space_image_*")) |> Enum.sort()
+
+    kept =
+      StreamState.get(state, "image") |> Map.keys() |> Enum.map(&ImageFile.path/1) |> Enum.sort()
+
+    {snapshot, ordered and files == kept}
   end
 
   defp id(name) when is_binary(name), do: Map.fetch!(Process.get(:names), name)

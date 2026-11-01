@@ -2,7 +2,8 @@ defmodule HalC2.Space.Rpc do
   @moduledoc """
   The `space.*` RPC methods (`packages/contracts/src/space.ts`) on `HalC2.Space`.
   Refusals are `SpaceError`s, a page a thread could not be summarised into a
-  `SpaceTextGenerationError`, and a chart that could not be drawn a `SpaceChartError`.
+  `SpaceTextGenerationError`, an image that could not be generated a
+  `SpaceImageGenerationError`, and a chart that could not be drawn a `SpaceChartError`.
   """
 
   alias HalC2.Space
@@ -43,7 +44,7 @@ defmodule HalC2.Space.Rpc do
     do: page(Space.create_page_from_thread(s, t, i["parentPageId"]))
 
   defp call("block.insert", %{"spaceId" => s, "pageId" => p, "kind" => _} = i) do
-    spec = Map.take(i, ~w(kind text checked linkedPageId))
+    spec = Map.take(i, ~w(kind text checked linkedPageId imageId))
     block(Space.insert_block(s, p, spec, Map.get(i, "afterBlockId", :last)))
   end
 
@@ -73,6 +74,23 @@ defmodule HalC2.Space.Rpc do
   defp call("comment.reopen", %{"spaceId" => s, "commentId" => c}),
     do: comment(Space.reopen_comment(s, c))
 
+  defp call("image.add", %{"spaceId" => s, "attachmentId" => a, "name" => name}),
+    do: image(Space.add_image(s, a, name))
+
+  defp call("image.generate", %{"spaceId" => s, "prompt" => prompt} = i),
+    do: image(Space.generate_image(s, prompt, i["modelSelection"]))
+
+  defp call("image.trash", %{"spaceId" => s, "imageId" => id}),
+    do: image(Space.trash_image(s, id))
+
+  defp call("image.restore", %{"spaceId" => s, "imageId" => id}),
+    do: image(Space.restore_image(s, id))
+
+  defp call("image.delete", %{"spaceId" => s, "imageId" => id}),
+    do: with({:ok, id} <- Space.delete_image(s, id), do: {:ok, %{"imageId" => id}})
+
+  defp call("image.providers", _), do: {:ok, HalC2.Space.ImageGeneration.providers()}
+
   defp call(method, _input) do
     if method in methods(),
       do: {:error, :invalid, "space.#{method} is missing a required field."},
@@ -82,7 +100,8 @@ defmodule HalC2.Space.Rpc do
   @methods ~w(list create rename delete page.create page.rename page.move page.trash
     page.restore page.delete page.exportMarkdown page.importMarkdown page.createFromThread
     block.insert block.update block.setChecked block.move block.delete block.visualize
-    comment.add comment.resolve comment.reopen)
+    comment.add comment.resolve comment.reopen image.add image.generate image.trash
+    image.restore image.delete image.providers)
 
   @doc "The methods after `space.`."
   def methods, do: @methods
@@ -91,6 +110,7 @@ defmodule HalC2.Space.Rpc do
   defp page(result), do: with({:ok, page} <- result, do: {:ok, %{"page" => page}})
   defp block(result), do: with({:ok, block} <- result, do: {:ok, %{"block" => block}})
   defp comment(result), do: with({:ok, comment} <- result, do: {:ok, %{"comment" => comment}})
+  defp image(result), do: with({:ok, image} <- result, do: {:ok, %{"image" => image}})
 
   @reasons %{
     invalid: "invalid",
@@ -113,6 +133,12 @@ defmodule HalC2.Space.Rpc do
        when reason in [:chart_unavailable, :chart_failed, :chart_unanswerable] do
     tag = reason |> Atom.to_string() |> String.replace_prefix("chart_", "")
     {:error, %{"_tag" => "SpaceChartError", "message" => message, "reason" => tag}}
+  end
+
+  defp reply({:error, reason, message})
+       when reason in [:image_unsupported, :image_unavailable, :image_failed] do
+    tag = reason |> Atom.to_string() |> String.replace_prefix("image_", "")
+    {:error, %{"_tag" => "SpaceImageGenerationError", "message" => message, "reason" => tag}}
   end
 
   defp reply({:error, reason, message}),

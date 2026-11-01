@@ -10,9 +10,9 @@ defmodule HalC2.Space.Blocks do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState}
-  alias HalC2.Space.{Chart, Order, Pages}
+  alias HalC2.Space.{Chart, Images, Order, Pages}
 
-  @kinds ~w(paragraph heading checklist callout subpage_link)
+  @kinds ~w(paragraph heading checklist callout subpage_link image)
 
   @doc "The kinds of block written directly. A `chart` is only made by `put_chart/6`."
   def kinds, do: @kinds
@@ -29,7 +29,9 @@ defmodule HalC2.Space.Blocks do
 
   @doc """
   New blocks on a live page from `specs` (maps of `kind`, `text`, `checked`,
-  `linkedPageId`), in order after `after`. Used by insert and by imports.
+  `linkedPageId`, `imageId`), in order after `after`. Used by insert and by imports.
+  An image block's text is its caption, the image's name unless given, so a client
+  that does not know the kind still shows something true.
   """
   def insert_all(state, page_id, specs, after_id, author) do
     with {:ok, _page} <- Pages.fetch_live(state, page_id),
@@ -40,7 +42,8 @@ defmodule HalC2.Space.Blocks do
       {blocks, _} =
         Enum.map_reduce(specs, low, fn spec, low ->
           order = Order.between(low, high)
-          {new_block(page_id, spec, order, author, at), order}
+          block = new_block(page_id, Map.put(spec, "text", text(state, spec)), order, author, at)
+          {with_image(block, spec), order}
         end)
 
       {Enum.map(blocks, &{"block", &1["id"], Patch.diff(nil, &1)}), {:ok, blocks}}
@@ -63,6 +66,19 @@ defmodule HalC2.Space.Blocks do
       "updatedAt" => at
     }
   end
+
+  defp text(state, %{"kind" => "image"} = spec) do
+    case spec["text"] do
+      text when text in [nil, ""] -> Images.get(state, spec["imageId"])["name"]
+      text -> text
+    end
+  end
+
+  defp text(_state, spec), do: spec["text"] || ""
+
+  # Only an image block has the key: every other block stays as it was written.
+  defp with_image(block, %{"kind" => "image", "imageId" => id}), do: Map.put(block, "imageId", id)
+  defp with_image(block, _spec), do: block
 
   def insert(state, page_id, spec, after_id, author) do
     case insert_all(state, page_id, [spec], after_id, author) do
@@ -297,6 +313,9 @@ defmodule HalC2.Space.Blocks do
           nil -> {:error, :invalid, "A subpage link needs a page of this Space."}
           _ -> :ok
         end
+
+      spec["kind"] == "image" ->
+        with {:ok, _} <- Images.fetch_live(state, spec["imageId"]), do: :ok
 
       true ->
         :ok

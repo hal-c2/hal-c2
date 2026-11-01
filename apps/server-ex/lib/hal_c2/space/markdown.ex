@@ -1,9 +1,10 @@
 defmodule HalC2.Space.Markdown do
   @moduledoc """
   A page as Markdown and back. The page title is the `# ` heading on top, headings
-  are `## `, checklist items `- [ ]` and `- [x]`, callouts `> ` quotes, and a link to
-  a subpage `[Title](#pageId)`. Everything else is a paragraph, which is also what a
-  chart's table comes back as: only `space.block.visualize` draws a chart.
+  are `## `, checklist items `- [ ]` and `- [x]`, callouts `> ` quotes, a link to a
+  subpage `[Title](#pageId)` and an image `![Caption](space-image:imageId)`. Everything
+  else is a paragraph, which is also what a chart's table comes back as: only
+  `space.block.visualize` draws a chart.
   """
 
   @doc "The Markdown of a page; `title_of` names the page a subpage link points at."
@@ -31,11 +32,14 @@ defmodule HalC2.Space.Markdown do
 
   defp block(%{"kind" => "chart", "chart" => chart}, _), do: HalC2.Space.Chart.markdown(chart)
 
+  defp block(%{"kind" => "image", "imageId" => id, "text" => text}, _),
+    do: "![#{String.replace(text, "\n", " ")}](space-image:#{id})"
+
   defp block(%{"text" => text}, _), do: text
 
   @doc """
   The title and blocks Markdown holds, each block a map of `kind`, `text`, `checked`
-  and, for a subpage link, `linkedPageId`. The title is a leading `# ` heading, if any.
+  and, for a subpage link, `linkedPageId` or, for an image, `imageId`. The title is a leading `# ` heading, if any.
   """
   @spec parse(String.t()) :: {String.t() | nil, [map]}
   def parse(markdown) do
@@ -81,6 +85,10 @@ defmodule HalC2.Space.Markdown do
       match = Regex.run(~r/^\[(.+)\]\(#([\w-]+)\)$/, String.trim(line)) ->
         [_, text, id] = match
         lines(rest, [%{new("subpage_link", text) | "linkedPageId" => id} | acc])
+
+      match = Regex.run(~r/^!\[(.*)\]\(space-image:([\w-]+)\)$/, String.trim(line)) ->
+        [_, text, id] = match
+        lines(rest, [Map.put(new("image", text), "imageId", id) | acc])
 
       String.starts_with?(line, ">") ->
         {quote, rest} = Enum.split_while([line | rest], &String.starts_with?(&1, ">"))

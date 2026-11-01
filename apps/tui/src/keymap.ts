@@ -168,8 +168,13 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "l", description: "Spaces: link a subpage", chords: ["l"] },
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
       {
-        keys: "v",
+        keys: "g",
         description: "Spaces: ask for a chart, or ask again for the selected one",
+        chords: ["g"],
+      },
+      {
+        keys: "v",
+        description: "Spaces: the Space's images (n generates one, i adds a file)",
         chords: ["v"],
       },
       {
@@ -386,7 +391,8 @@ export const KEYMAP_LAYERS = {
     y: "space.export",
     i: "space.import",
     t: "space.fromThread",
-    v: "space.visualize",
+    g: "space.visualize",
+    v: "space.images",
     "ctrl+k": "palette.open",
     "ctrl+p": "space.close",
   },

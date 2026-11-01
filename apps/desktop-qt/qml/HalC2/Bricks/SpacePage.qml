@@ -31,6 +31,7 @@ Rectangle {
     // `link`: the new subpage also gets a link block on this page.
     signal subpageRequested(string parentPageId, bool link)
     signal commentRequested(string blockId)
+    signal imagesRequested
 
     function kindLabel(kind) {
         const labels = {
@@ -38,13 +39,14 @@ Rectangle {
             heading: qsTr("Heading"),
             checklist: qsTr("Checklist"),
             callout: qsTr("Callout"),
-            subpage_link: qsTr("Subpage link")
+            subpage_link: qsTr("Subpage link"),
+            image: qsTr("Image")
         };
         return labels[kind] ?? kind;
     }
 
     function kindIcon(kind) {
-        const icons = { paragraph: "text-wrap", heading: "hash", checklist: "square-check", callout: "info", subpage_link: "link" };
+        const icons = { paragraph: "text-wrap", heading: "hash", checklist: "square-check", callout: "info", subpage_link: "link", image: "image" };
         return icons[kind] ?? "text-wrap";
     }
 
@@ -76,10 +78,12 @@ Rectangle {
         return children;
     }
 
-    function insert(kind, text, linkedPageId) {
+    function insert(kind, text, linkedPageId, imageId) {
         const payload = { pageId: Spaces.pageId, kind: kind, text: text, checked: false };
         if (linkedPageId)
             payload.linkedPageId = linkedPageId;
+        if (imageId)
+            payload.imageId = imageId;
         if (page.insertAfter !== "")
             payload.afterBlockId = page.insertAfter;
         Shell.dispatch("space.block.insert", payload);
@@ -138,6 +142,10 @@ Rectangle {
         }
         if (kind === "subpage_link") {
             linkMenu.popup(kindButton, 0, -linkMenu.implicitHeight - 4);
+            return;
+        }
+        if (kind === "image") {
+            imageMenu.popup(kindButton, 0, -imageMenu.implicitHeight - 4);
             return;
         }
         page.newKind = kind;
@@ -527,6 +535,45 @@ Rectangle {
                 text: qsTr("New subpage…")
                 iconName: "plus"
                 onTriggered: page.subpageRequested(Spaces.pageId, true)
+            }
+        }
+
+        // The Space's images, which an image block can show.
+        ShellMenu {
+            id: imageMenu
+
+            objectName: "spaceImageMenu"
+
+            Instantiator {
+                model: imageMenu.visible ? Spaces.images : null
+
+                delegate: ShellMenuItem {
+                    required property var model
+
+                    objectName: "spaceImageMenu:" + model.name
+                    text: model.name
+                    iconName: "image"
+                    onTriggered: page.insert("image", model.name, "", model.id)
+                }
+
+                onObjectAdded: (index, object) => imageMenu.insertItem(index, object)
+                onObjectRemoved: (index, object) => imageMenu.removeItem(object)
+            }
+
+            ShellMenuItem {
+                text: qsTr("No images yet")
+                enabled: false
+                visible: imageMenu.visible && Spaces.images.count === 0
+                height: visible ? implicitHeight : 0
+            }
+
+            ShellMenuSeparator {}
+
+            ShellMenuItem {
+                objectName: "spaceImageMenuBrowse"
+                text: qsTr("Add or generate images…")
+                iconName: "plus"
+                onTriggered: page.imagesRequested()
             }
         }
     }
