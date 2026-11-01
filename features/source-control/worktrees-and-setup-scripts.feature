@@ -300,6 +300,13 @@ Feature: Worktrees and setup scripts
     And neither the worktree nor its new branch is left in "shop"
 
   @mc
+  Scenario: Cancelling setup just as its branch is renamed takes the named branch
+    Given a thread's worktree setup has renamed its branch and not yet said so
+    When the user cancels the setup
+    Then the branch "claude-branch" is not left in "shop"
+    And neither the worktree nor its new branch is left in "shop"
+
+  @mc
   Scenario: Cancelling setup keeps a branch its script switched to
     Given a thread's setup script has switched its worktree to the branch "kept"
     When the user cancels the setup

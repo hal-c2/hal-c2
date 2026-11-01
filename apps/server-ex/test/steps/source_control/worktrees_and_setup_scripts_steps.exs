@@ -379,6 +379,32 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
+  step "a thread's worktree setup has renamed its branch and not yet said so", context do
+    dir = Mc.tmp_dir(context.mc, "git")
+    renamed = Path.join(dir, "renamed")
+    {_, 0} = System.cmd("mkfifo", [renamed])
+    git = Path.join(dir, "git-renames")
+
+    File.write!(git, """
+    #!/bin/sh
+    case "$*" in *"branch -m"*) git "$@"; echo > "#{renamed}"; exec sleep 600;; esac
+    exec git "$@"
+    """)
+
+    File.chmod!(git, 0o755)
+    World.put_app_env(:git_command, git)
+
+    context = context |> Shared.answering_writer() |> put_setup(nil, "read _", false)
+    context = launch(context, "list the files")
+
+    {_, context} =
+      World.await_setup(context, &(World.setup_stage(&1, "setup-script") == "running"))
+
+    # Opening the pipe waits for git to have taken the name.
+    {_, 0} = System.cmd("cat", [renamed])
+    context
+  end
+
   step "a thread's setup script has switched its worktree to the branch {string}",
        %{args: [branch]} = context do
     World.git!(World.project(context).root, ["branch", branch])

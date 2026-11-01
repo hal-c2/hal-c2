@@ -493,8 +493,34 @@ defmodule HalC2.WorktreeSetupTest do
     {_, 0} = System.cmd("cat", [started])
     assert %{setups: _} = :sys.get_state(HalC2.WorktreeSetup, 2_000)
 
+    # A second click while it goes ahead is not told the cancel failed.
+    assert {:ok, %{"cancelled" => true}} = HalC2.WorktreeSetup.cancel(%{"threadId" => thread_id})
+
     {_, 0} = System.cmd("sh", ["-c", "echo go > \"$0\"", hold])
     assert {:ok, %{"cancelled" => true}} = Task.await(cancel, 30_000)
+  end
+
+  test "a cleanup that exits still ends the run", %{repo: repo} do
+    project(repo, [
+      %{
+        "id" => "slow",
+        "name" => "Slow",
+        "command" => "sleep 30",
+        "icon" => "configure",
+        "runOnWorktreeCreate" => true,
+        "async" => false
+      }
+    ])
+
+    thread_id = launch("list the files")
+    await_running_script(thread_id)
+
+    # A terminal that does not answer makes closing it exit.
+    [{terminal, _}] = Registry.lookup(HalC2.Terminal.Registry, {thread_id, "setup"})
+    :sys.suspend(terminal)
+    assert {:ok, %{"cancelled" => true}} = HalC2.WorktreeSetup.cancel(%{"threadId" => thread_id})
+    await_phase(thread_id, "cancelled")
+    assert [%{"status" => "cancelled"}] = StreamState.list(current(thread_id), "run")
   end
 
   # Commits `file` on a new `branch` off main, leaving the checkout on main.

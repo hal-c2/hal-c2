@@ -108,6 +108,8 @@ defmodule HalC2.WorktreeSetup do
       claimed: nil,
       new_branch: nil,
       naming: nil,
+      renaming: nil,
+      cancelling: false,
       cancellable: true
     }
 
@@ -140,8 +142,12 @@ defmodule HalC2.WorktreeSetup do
           end
         end)
 
-        setup = %{setup | worker: nil, cancellable: false}
+        setup = %{setup | worker: nil, cancellable: false, cancelling: true}
         {:noreply, put_in(state.setups[thread_id], setup)}
+
+      # Already going ahead; the clicks a slow removal draws are not refused.
+      %{cancelling: true, snapshot: %{"phase" => "running"}} ->
+        {:reply, true, state}
 
       _ ->
         {:reply, false, state}
@@ -181,10 +187,23 @@ defmodule HalC2.WorktreeSetup do
   end
 
   # What a cancel deletes follows the name; HEAD says nothing, as the script can move it.
-  def handle_call({:renamed, thread_id, run_id, name}, _from, state) do
+  # Known before git takes it, as a cancel can come at any point of the rename: then the
+  # branch has one name or the other. `to` nil is a rename that failed.
+  def handle_call({:renaming, thread_id, run_id, to}, _from, state) do
     case state.setups[thread_id] do
       %{run_id: ^run_id, new_branch: branch} = setup when is_binary(branch) ->
-        {:reply, :ok, put_in(state.setups[thread_id], %{setup | new_branch: name})}
+        {:reply, :ok, put_in(state.setups[thread_id], %{setup | renaming: to})}
+
+      _ ->
+        {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:renamed, thread_id, run_id}, _from, state) do
+    case state.setups[thread_id] do
+      %{run_id: ^run_id, renaming: name} = setup when is_binary(name) ->
+        setup = %{setup | new_branch: name, renaming: nil}
+        {:reply, :ok, put_in(state.setups[thread_id], setup)}
 
       _ ->
         {:reply, :ok, state}
@@ -340,7 +359,22 @@ defmodule HalC2.WorktreeSetup do
   end
 
   # A cancelled setup leaves nothing behind: no worktree, no workspace on the thread.
+  # The run ends whatever becomes of the removal.
   defp cleanup(thread_id, setup) do
+    attempt(thread_id, fn -> remove_workspace(thread_id, setup) end)
+
+    attempt(thread_id, fn -> Orchestration.fail_prepared(thread_id, setup.run_id, "cancelled") end)
+  end
+
+  defp attempt(thread_id, fun) do
+    fun.()
+  rescue
+    error -> Logger.warning("worktree cleanup for #{thread_id}: #{Exception.message(error)}")
+  catch
+    :exit, reason -> Logger.warning("worktree cleanup for #{thread_id}: #{inspect(reason)}")
+  end
+
+  defp remove_workspace(thread_id, setup) do
     path = setup.snapshot["worktreePath"] || setup.claimed
 
     if path do
@@ -355,7 +389,8 @@ defmodule HalC2.WorktreeSetup do
       HalC2.Git.stop_children(path)
 
       if setup.claimed do
-        HalC2.Vcs.clear_worktree(setup.root, path, setup.new_branch)
+        branches = Enum.reject([setup.new_branch, setup.renaming], &is_nil/1)
+        HalC2.Vcs.clear_worktree(setup.root, path, branches)
       else
         HalC2.Git.run(setup.root, ["worktree", "unlock", path])
         HalC2.Vcs.remove_worktree(%{"cwd" => setup.root, "path" => path, "force" => true})
@@ -368,10 +403,6 @@ defmodule HalC2.WorktreeSetup do
         "branch" => nil
       })
     end
-
-    Orchestration.fail_prepared(thread_id, setup.run_id, "cancelled")
-  rescue
-    error -> Logger.warning("worktree cleanup for #{thread_id}: #{Exception.message(error)}")
   end
 
   # Gone when this returns, so nothing it would write lands after the cancel's own.
@@ -786,12 +817,14 @@ defmodule HalC2.WorktreeSetup do
   defp rename_later(thread_id, run_id, path, old, text) do
     {:ok, naming} =
       Task.start(fn ->
+        renaming = &GenServer.call(__MODULE__, {:renaming, thread_id, run_id, &1})
+
         with {:ok, %{"branch" => generated}} <- HalC2.TextGeneration.branch_name(path, text || ""),
              name when name != "" <- sanitize(generated) do
-          case HalC2.Vcs.rename_branch(path, old, name) do
+          case HalC2.Vcs.rename_branch(path, old, name, renaming) do
             {:ok, new} ->
               HalC2.Vcs.Watch.refresh(path)
-              GenServer.call(__MODULE__, {:renamed, thread_id, run_id, new})
+              GenServer.call(__MODULE__, {:renamed, thread_id, run_id})
 
               Orchestration.dispatch(%{
                 "type" => "thread.metadata.update",
@@ -801,6 +834,8 @@ defmodule HalC2.WorktreeSetup do
               })
 
             {:error, reason} ->
+              renaming.(nil)
+
               Orchestration.warn_prepared(
                 thread_id,
                 run_id,

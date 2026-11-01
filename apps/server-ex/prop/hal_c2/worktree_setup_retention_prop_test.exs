@@ -81,7 +81,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
 
   # --- model ------------------------------------------------------------------------
 
-  # thread => %{phase: "running" | ended phase, sequence: n, branch: what a cancel deletes}
+  # thread => %{phase: "running" | ended phase, sequence: n, branch: what a cancel deletes,
+  # renaming: the name it may have taken already}
   def initial_state, do: %{}
 
   def command(_state) do
@@ -92,6 +93,9 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
       {2, {:call, __MODULE__, :expire_own, [oneof(@threads)]}},
       {2, {:call, __MODULE__, :expire_stale, [oneof(@threads)]}},
       {2, {:call, __MODULE__, :cleaned_up, [oneof(@threads), oneof(~w(own stale))]}},
+      {2,
+       {:call, __MODULE__, :renaming,
+        [oneof(@threads), oneof(~w(own stale)), oneof(["named", nil])]}},
       {2, {:call, __MODULE__, :renamed, [oneof(@threads), oneof(~w(own stale))]}}
     ])
   end
@@ -99,7 +103,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :seed, [thread]}),
-    do: Map.put(state, thread, %{phase: "running", sequence: 0, branch: "temporary"})
+    do:
+      Map.put(state, thread, %{phase: "running", sequence: 0, branch: "temporary", renaming: nil})
 
   # A cancel's cleanup ending counts for its own run only, and only while that runs.
   def next_state(state, _result, {:call, _, :cleaned_up, [thread, "own"]}) do
@@ -112,10 +117,20 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
     end
   end
 
-  def next_state(state, _result, {:call, _, :renamed, [thread, "own"]}) do
+  def next_state(state, _result, {:call, _, :renaming, [thread, "own", name]}) do
     case state[thread] do
       nil -> state
-      setup -> Map.put(state, thread, %{setup | branch: "named"})
+      setup -> Map.put(state, thread, %{setup | renaming: name})
+    end
+  end
+
+  def next_state(state, _result, {:call, _, :renamed, [thread, "own"]}) do
+    case state[thread] do
+      %{renaming: name} = setup when is_binary(name) ->
+        Map.put(state, thread, %{setup | branch: name, renaming: nil})
+
+      _ ->
+        state
     end
   end
 
@@ -164,7 +179,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
        %{
          phase: setup.snapshot["phase"],
          sequence: setup.snapshot["sequence"],
-         branch: setup.new_branch
+         branch: setup.new_branch,
+         renaming: setup.renaming
        }}
     end) == model and
       Enum.all?(setups, fn {_, setup} ->
@@ -187,7 +203,14 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
     }
 
     :sys.replace_state(WorktreeSetup, fn state ->
-      setup = %{snapshot: snapshot, cancellable: true, run_id: "run", new_branch: "temporary"}
+      setup = %{
+        snapshot: snapshot,
+        cancellable: true,
+        run_id: "run",
+        new_branch: "temporary",
+        renaming: nil
+      }
+
       put_in(state.setups[thread], setup)
     end)
   end
@@ -215,8 +238,10 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
     end
   end
 
-  def renamed(thread, run),
-    do: GenServer.call(WorktreeSetup, {:renamed, thread, run_id(run), "named"})
+  def renaming(thread, run, name),
+    do: GenServer.call(WorktreeSetup, {:renaming, thread, run_id(run), name})
+
+  def renamed(thread, run), do: GenServer.call(WorktreeSetup, {:renamed, thread, run_id(run)})
 
   defp run_id("own"), do: "run"
   defp run_id("stale"), do: "replaced"

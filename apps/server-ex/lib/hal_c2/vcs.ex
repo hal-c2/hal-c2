@@ -664,7 +664,8 @@ defmodule HalC2.Vcs do
 
   @doc """
   Takes away a worktree this MC made in a folder that was free, whole or cut short: the
-  folder, git's record of it, and `branch` when that is one it made too (else nil).
+  folder, git's record of it, and `branch` when that is one it made too (else nil), or
+  the names in a list when it may have either.
   What git started for it must have stopped (`Git.stop_children/1`).
   """
   def clear_worktree(cwd, path, branch) do
@@ -672,7 +673,7 @@ defmodule HalC2.Vcs do
     Git.run(cwd, ["worktree", "remove", "--force", path], timeout: worktree_timeout())
     File.rm_rf(path)
     Git.run(cwd, ["worktree", "prune"])
-    if branch, do: Git.run(cwd, ["branch", "-D", branch])
+    for name <- List.wrap(branch), do: Git.run(cwd, ["branch", "-D", name])
     changed(cwd)
   end
 
@@ -714,8 +715,9 @@ defmodule HalC2.Vcs do
   @doc """
   Renames the branch `old` of the checkout `cwd` to `new`, or to `new-1` through
   `new-100` when that is taken: `{:ok, name}`, or `{:error, message}` leaving it as it was.
+  `on_name` hears the name before git takes it; `Git.stop_children(cwd)` stops the rename.
   """
-  def rename_branch(cwd, old, new) do
+  def rename_branch(cwd, old, new, on_name \\ fn _name -> :ok end) do
     candidates = [new | Enum.map(1..100, &"#{new}-#{&1}")]
 
     case Enum.find(candidates, &branch_free?(cwd, &1)) do
@@ -723,7 +725,9 @@ defmodule HalC2.Vcs do
         {:error, "Could not find an available branch name for '#{new}'."}
 
       name ->
-        case Git.ok(cwd, ["branch", "-m", "--", old, name]) do
+        on_name.(name)
+
+        case Git.ok(cwd, ["branch", "-m", "--", old, name], stop_children: cwd) do
           {:ok, _} -> {:ok, name}
           {:error, {_status, err}} -> {:error, err}
           {:error, reason} -> {:error, reason}
