@@ -99,7 +99,7 @@ Feature: Images in a Space
       Then the user is told image generation failed
       And the images of "Research" are ""
 
-  @mc @desktop @mobile
+  @mc @desktop @mobile @tui
   Rule: Choosing the provider
 
     Scenario: The user is offered only the providers that can generate an image
