@@ -117,6 +117,24 @@ defmodule HalC2.Steps.Space.AgentInPage do
     World.queue_message(context, thread(title), text)
   end
 
+  step "the user cancels the message behind the run of the agent of {string}",
+       %{args: [title]} = context do
+    [queued] =
+      for run <- World.state(context, thread(title)) |> StreamState.list("run"),
+          run["status"] == "queued",
+          do: run
+
+    context =
+      World.command(context, %{
+        "type" => "queued-run.cancel",
+        "threadId" => World.thread_id(context, thread(title)),
+        "runId" => queued["id"]
+      })
+
+    assert {:ok, _} = context.reply
+    context
+  end
+
   step "the user sends {string} to the agent of {string}", %{args: [text, title]} = context do
     World.run_turn(context, thread(title), text)
   end
@@ -136,6 +154,46 @@ defmodule HalC2.Steps.Space.AgentInPage do
   step "the agent's thread of {string} continues after a restart",
        %{args: [_title]} = context do
     World.update_settings(context, %{"continueThreadsAfterServerUpdate" => true})
+    context
+  end
+
+  # The stop is marked and the crash takes the interrupt with it.
+  step "the MC goes down as the user stops the agent of {string}", %{args: [title]} = context do
+    id = page_id(context, title)
+
+    {:ok, _} =
+      Space.transact(context.space, fn state ->
+        agent = StreamState.get(state, "pageAgent")[id]
+        stopping = Map.put(agent, "status", "stopping")
+        {[{"pageAgent", id, HalC2.Patch.diff(agent, stopping)}], {:ok, stopping}}
+      end)
+
+    context
+  end
+
+  # So the restart puts it back in the queue (`HalC2.Orchestration.Recovery`).
+  step "the provider never got the run of the agent of {string}", %{args: [title]} = context do
+    id = World.thread_id(context, thread(title))
+
+    Streams.transact(id, :thread, fn state ->
+      run = HalC2.Projection.Shell.latest_run(StreamState.list(state, "run"))
+
+      unstarted =
+        Map.merge(run, %{"status" => "starting", "startedAt" => nil, "activeAttemptId" => nil})
+
+      {[{"run", run["id"], HalC2.Patch.diff(run, unstarted)}], :ok}
+    end)
+
+    context
+  end
+
+  step "the agent's thread of {string} did not go on", %{args: [title]} = context do
+    :ok = HalC2.Orchestration.Effects.drain(World.thread_id(context, thread(title)))
+
+    assert [%{"status" => status}] =
+             World.state(context, thread(title)) |> StreamState.list("run")
+
+    assert status in ~w(interrupted cancelled)
     context
   end
 

@@ -155,7 +155,9 @@ defmodule HalC2.Orchestration.Recovery do
 
     continued =
       if Application.get_env(:hal_c2, :auto_actions, true) do
-        for thread_id <- requeued, do: HalC2.Orchestration.start_next(thread_id)
+        for thread_id <- requeued, not HalC2.Space.PageAgent.stopping?(thread_id) do
+          HalC2.Orchestration.start_next(thread_id)
+        end
 
         interrupted =
           for {thread_id, run} <- runs, continue?(thread_id, run) do
@@ -191,7 +193,7 @@ defmodule HalC2.Orchestration.Recovery do
       {"thread", thread} ->
         thread["archivedAt"] == nil and thread["deletedAt"] == nil and
           HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
-            true and latest?(thread_id, run)
+            true and latest?(thread_id, run) and not HalC2.Space.PageAgent.stopping?(thread_id)
 
       _ ->
         false

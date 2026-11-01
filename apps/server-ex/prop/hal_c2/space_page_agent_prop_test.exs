@@ -21,12 +21,14 @@ defmodule HalC2.SpacePageAgentPropTest do
     back, and the reconciliation settles every lost launch and report, but never a run
     still going, a thread moving or one about to continue;
   - a queued run held for the user is not work: it does not keep the page working or
-    decide how the agent ended;
+    decide how the agent ended, and neither does one the user cancelled;
   - background work its run left keeps an agent working until it ends, unless a stop was
     asked for: that waits for runs only;
   - a run interrupted without a stop says why;
   - a stop marks an agent stopping, whatever its run then ends as it says stopped, and
     a page with none refuses; on one that has ended it changes nothing;
+  - the reconciliation finishes a stop a crash cut short: a run the restart put back in the
+    queue is cancelled, and a thread said to be about to go on is no exception;
   - a dismissal is refused while the agent is at work;
   - deleting a page for good takes its agent with it.
   """
@@ -97,6 +99,8 @@ defmodule HalC2.SpacePageAgentPropTest do
             {1, {:call, __MODULE__, :ask_lost, [elements(pages)]}},
             {4, {:call, __MODULE__, :lose_report, [elements(pages), elements(Map.keys(@ended))]}},
             {2, {:call, __MODULE__, :hold_message, [elements(pages)]}},
+            {3, {:call, __MODULE__, :cancel_message, [elements(pages)]}},
+            {3, {:call, __MODULE__, :requeue_run, [elements(pages)]}},
             {3, {:call, __MODULE__, :leave_background, [elements(pages)]}},
             {3, {:call, __MODULE__, :end_background, [elements(pages)]}},
             {1, {:call, __MODULE__, :delete_thread, [elements(pages)]}},
@@ -145,11 +149,19 @@ defmodule HalC2.SpacePageAgentPropTest do
       not s.pages[name].agent.held and not s.pages[name].agent.background
   end
 
+  def precondition(s, {:call, _, :cancel_message, [name]}),
+    do: active?(s, name) and s.pages[name].agent.run != nil
+
+  # What a restart does to a run its provider never got; only one being stopped is left
+  # like this here, as nothing in the model starts the run again.
+  def precondition(s, {:call, _, :requeue_run, [name]}),
+    do: going?(s, name) and s.pages[name].agent.status == "stopping"
+
   def precondition(s, {:call, _, :end_background, [name]}),
     do: active?(s, name) and s.pages[name].agent.background
 
   def precondition(s, {:call, _, :begin_move, [name]}) do
-    active?(s, name) and s.pages[name].agent.run not in [nil, "running"] and
+    active?(s, name) and s.pages[name].agent.run not in [nil, "running", "requeued"] and
       not s.pages[name].agent.moving
   end
 
@@ -225,6 +237,9 @@ defmodule HalC2.SpacePageAgentPropTest do
 
   defp step(s, :hold_message, [name]), do: {:ok, update_agent(s, name, %{held: true}), 0}
 
+  defp step(s, :cancel_message, _), do: {:ok, s, 0}
+  defp step(s, :requeue_run, [name]), do: {:ok, update_agent(s, name, %{run: "requeued"}), 0}
+
   defp step(s, :leave_background, [name]),
     do: {:ok, update_agent(s, name, %{background: true}), 0}
 
@@ -264,7 +279,9 @@ defmodule HalC2.SpacePageAgentPropTest do
         {:ok, if(over?(stopping), do: settle(marked, name, "stopped", false), else: marked), 1}
 
       %{agent: %{status: "stopping"} = agent} ->
-        if over?(agent), do: {:ok, settle(s, name, "stopped", false), 1}, else: {:ok, s, 0}
+        if stops_now?(agent),
+          do: {:ok, settle(s, name, "stopped", false), 1},
+          else: {:ok, s, 0}
 
       _ ->
         {:ok, s, 0}
@@ -302,11 +319,14 @@ defmodule HalC2.SpacePageAgentPropTest do
 
   defp step(s, :restart, []), do: {:ok, s, 0}
 
-  # A thread about to go on is left, whatever else settles.
+  # A thread about to go on is left, whatever else settles, unless it was asked to stop.
   defp reconcile(s, continuing) do
     next =
-      for {name, _} <- s.pages, name != continuing, active?(s, name), reduce: s do
-        acc -> if over?(acc.pages[name].agent), do: run_over(acc, name), else: acc
+      for {name, _} <- s.pages,
+          active?(s, name),
+          name != continuing or s.pages[name].agent.status == "stopping",
+          reduce: s do
+        acc -> if stops_now?(acc.pages[name].agent), do: run_over(acc, name), else: acc
       end
 
     {:ok, next, if(next == s, do: 0, else: 1)}
@@ -338,8 +358,14 @@ defmodule HalC2.SpacePageAgentPropTest do
   defp put(s, name, page), do: %{s | pages: Map.put(s.pages, name, page)}
 
   # A stop waits for runs only: what they left in the background can go on for good.
-  defp over?(%{run: run, moving: moving, background: background, status: status}),
-    do: run != "running" and not moving and (not background or status == "stopping")
+  defp over?(%{run: run, moving: moving, background: background, status: status}) do
+    run not in ["running", "requeued"] and not moving and
+      (not background or status == "stopping")
+  end
+
+  # Over once what can still be stopped has been: a stop cancels a run in the queue.
+  defp stops_now?(%{run: "requeued", status: "stopping"}), do: true
+  defp stops_now?(agent), do: over?(agent)
 
   # What its run ended as: a lost launch fails with a reason, as a failed run does.
   defp run_over(s, name) do
@@ -519,6 +545,41 @@ defmodule HalC2.SpacePageAgentPropTest do
       }
 
       Streams.transact(thread, :thread, fn _ -> {[{"run", id, Patch.diff(nil, run)}], :ok} end)
+    end)
+  end
+
+  # A message queued behind the run and taken back: the highest ordinal, never started.
+  def cancel_message(name) do
+    act(fn _space ->
+      thread = thread(name)
+      id = "cancelled-" <> Integer.to_string(System.unique_integer([:positive]))
+
+      run = %{
+        "id" => id,
+        "threadId" => thread,
+        "ordinal" => 2_000_000,
+        "status" => "cancelled",
+        "queuePosition" => nil,
+        "createdAt" => HalC2.Orchestration.Entities.now()
+      }
+
+      Streams.transact(thread, :thread, fn _ -> {[{"run", id, Patch.diff(nil, run)}], :ok} end)
+    end)
+  end
+
+  # As `HalC2.Orchestration.Recovery` does to a run its provider never got.
+  def requeue_run(name) do
+    act(fn _space ->
+      thread = thread(name)
+
+      Streams.transact(thread, :thread, fn state ->
+        run = StreamState.get(state, "run")[run_id(thread)]
+
+        queued =
+          Map.merge(run, %{"status" => "queued", "queuePosition" => 0, "queueHeld" => false})
+
+        {[{"run", run["id"], Patch.diff(run, queued)}], :ok}
+      end)
     end)
   end
 

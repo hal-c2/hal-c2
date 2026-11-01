@@ -197,6 +197,13 @@ Feature: An agent in a page
       When the user sends "say more" to the agent of "Roadmap"
       Then "Roadmap" says nothing about an agent
 
+    Scenario: A message the user took back does not change how the agent ended
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      And the user sends "and later" to the agent of "Roadmap" behind its run
+      And the user cancels the message behind the run of the agent of "Roadmap"
+      When the agent of "Roadmap" finishes
+      Then "Roadmap" says its agent finished without changing the page
+
     Scenario: A thread being stopped and then deleted says it was stopped
       Given the user asks "tidy this and wait" on the page "Roadmap"
       And the user stops the agent of "Roadmap"
@@ -234,6 +241,22 @@ Feature: An agent in a page
       When the MC restarts
       Then the agent's thread of "Roadmap" continues its work
       And "Roadmap" says its agent is working on "tidy this and wait"
+
+    Scenario: A restart does not undo a stop by continuing the thread
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      And the agent's thread of "Roadmap" continues after a restart
+      And the MC goes down as the user stops the agent of "Roadmap"
+      When the MC restarts
+      Then "Roadmap" says its agent was stopped
+      And the agent's thread of "Roadmap" did not go on
+
+    Scenario: A restart does not undo a stop by starting a run from the queue
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      And the provider never got the run of the agent of "Roadmap"
+      And the MC goes down as the user stops the agent of "Roadmap"
+      When the MC restarts
+      Then "Roadmap" says its agent was stopped
+      And the agent's thread of "Roadmap" did not go on
 
     Scenario: A continuation that cannot start settles the page
       Given the user asks "tidy this and wait" on the page "Roadmap"

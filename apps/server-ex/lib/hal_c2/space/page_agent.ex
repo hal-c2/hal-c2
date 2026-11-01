@@ -113,16 +113,36 @@ defmodule HalC2.Space.PageAgent do
   Called once at the start of an MC, after restarted turns have settled: every page still
   saying its agent is working is settled if its thread has nothing left to do, whatever
   the crash lost on the way. `continued` are the threads about to go on, whose runs do not
-  exist yet.
+  exist yet. A stop the crash cut short is finished here, as nothing else will repeat it:
+  what the restart put back in the queue goes with it.
   """
   def reconcile(continued \\ []) do
     for %{"id" => space_id} <- StreamState.list(Streams.state(Space.index()), "space"),
-        %{"pageId" => page_id, "threadId" => thread_id} <- working(space_id),
-        thread_id not in continued do
-      retrying(thread_id, fn -> settle(space_id, page_id, thread_id) end)
+        %{"pageId" => page_id, "threadId" => thread_id, "status" => status} <- working(space_id),
+        status == "stopping" or thread_id not in continued do
+      retrying(thread_id, fn ->
+        if status == "stopping", do: stop_thread(thread_id)
+        settle(space_id, page_id, thread_id)
+      end)
     end
 
     :ok
+  end
+
+  @doc "Whether the page `thread_id` works on asked it to stop: a restart does not start it again."
+  def stopping?(thread_id) do
+    with %{"spacePage" => %{"spaceId" => space_id, "pageId" => page_id}} <-
+           Streams.get(thread_id, "thread", thread_id),
+         %{"threadId" => ^thread_id, "status" => "stopping"} <-
+           entity(Streams.state(Space.stream_id(space_id)), page_id) do
+      true
+    else
+      _ -> false
+    end
+  catch
+    kind, reason ->
+      Logger.warning("page agent of #{thread_id} not read: #{inspect({kind, reason})}")
+      false
   end
 
   defp working(space_id) do
@@ -206,9 +226,11 @@ defmodule HalC2.Space.PageAgent do
   defp moved_away(%{"label" => label}),
     do: "its thread moved to #{label}, where it can no longer edit this page"
 
+  # Of the runs that began: one cancelled reached here from the queue, and says nothing of
+  # how the work ended.
   defp run_end(stream, runs) do
     case runs
-         |> Enum.reject(&(&1["status"] in ~w(rolled_back queued)))
+         |> Enum.reject(&(&1["status"] in ~w(rolled_back queued cancelled)))
          |> HalC2.Projection.Shell.latest_run() do
       %{"status" => "completed"} -> {"completed", nil}
       %{"status" => "failed"} = run -> {"failed", failure(stream, run)}
