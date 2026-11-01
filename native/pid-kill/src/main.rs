@@ -13,7 +13,7 @@
 #[cfg(target_os = "linux")]
 mod linux {
     use std::ffi::{c_int, c_long, c_uint, c_void};
-    use std::io::Error;
+    use std::io::{Error, ErrorKind};
     use std::ptr::null;
 
     // The same on every architecture Linux gave numbers to after 4.20.
@@ -88,6 +88,12 @@ mod linux {
         stat.rsplit(')').next()?.split_whitespace().nth(19)
     }
 
+    // Lossy: the command name in it is raw bytes, which the kernel may have cut mid-character.
+    fn read_stat(pid: c_int) -> Result<String, Error> {
+        let stat = std::fs::read(format!("/proc/{pid}/stat"))?;
+        Ok(String::from_utf8_lossy(&stat).into_owned())
+    }
+
     pub fn kill_checked(pid: c_int, ticks: &str, group: bool) -> Outcome {
         let fd = match Pidfd::open(pid) {
             Ok(fd) => fd,
@@ -101,10 +107,13 @@ mod linux {
             }
         };
 
-        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        match read_stat(pid) {
             Ok(stat) if start_ticks(&stat) == Some(ticks) => {}
             Ok(_) => return Outcome::NotThatProcess,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Outcome::NotThatProcess,
+            // ESRCH: reaped after the file was opened.
+            Err(e) if e.kind() == ErrorKind::NotFound || e.raw_os_error() == Some(ESRCH) => {
+                return Outcome::NotThatProcess;
+            }
             Err(e) => return Outcome::Failed(format!("reading its stat: {e}")),
         }
 
@@ -132,12 +141,14 @@ mod linux {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use std::io::{BufRead, BufReader};
         use std::os::unix::process::{CommandExt, ExitStatusExt};
-        use std::process::{Child, Command};
+        use std::process::{Child, Command, Stdio};
 
         fn ticks(pid: u32) -> String {
-            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
-            start_ticks(&stat).unwrap().to_owned()
+            start_ticks(&read_stat(pid as c_int).unwrap())
+                .unwrap()
+                .to_owned()
         }
 
         fn sleeper(new_group: bool) -> Child {
@@ -151,7 +162,10 @@ mod linux {
 
         #[test]
         fn reads_the_start_ticks_past_a_command_name_with_parentheses() {
-            let fields = (4..=21).map(|n| n.to_string()).collect::<Vec<_>>().join(" ");
+            let fields = (4..=21)
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
             let stat = format!("123 (a) b) c) S {fields} 999 1000");
             assert_eq!(start_ticks(&stat), Some("999"));
             assert_eq!(start_ticks("123 (sh) S 1"), None);
@@ -160,6 +174,30 @@ mod linux {
         #[test]
         fn kills_the_process_that_started_at_those_ticks() {
             let mut child = sleeper(false);
+            let outcome = kill_checked(child.id() as c_int, &ticks(child.id()), false);
+            assert_eq!(outcome, Outcome::Delivered);
+            assert_eq!(child.wait().unwrap().signal(), Some(SIGKILL));
+        }
+
+        #[test]
+        fn kills_a_process_whose_name_is_not_utf8() {
+            let mut child = Command::new("sh")
+                .args([
+                    "-c",
+                    r#"printf 'a\346' > /proc/$$/comm; echo named; read l"#,
+                ])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut named = String::new();
+            BufReader::new(child.stdout.take().unwrap())
+                .read_line(&mut named)
+                .unwrap();
+            assert_eq!(named, "named\n");
+            let comm = std::fs::read(format!("/proc/{}/comm", child.id())).unwrap();
+            assert!(String::from_utf8(comm).is_err());
+
             let outcome = kill_checked(child.id() as c_int, &ticks(child.id()), false);
             assert_eq!(outcome, Outcome::Delivered);
             assert_eq!(child.wait().unwrap().signal(), Some(SIGKILL));
@@ -195,7 +233,10 @@ mod linux {
             let fd = Pidfd::open(child.id() as c_int).unwrap();
             child.kill().unwrap();
             child.wait().unwrap();
-            assert_eq!(fd.signal(SIGKILL, 0).unwrap_err().raw_os_error(), Some(ESRCH));
+            assert_eq!(
+                fd.signal(SIGKILL, 0).unwrap_err().raw_os_error(),
+                Some(ESRCH)
+            );
         }
 
         #[test]
@@ -204,7 +245,10 @@ mod linux {
             let (pid, started) = (child.id(), ticks(child.id()));
             child.kill().unwrap();
             child.wait().unwrap();
-            assert_eq!(kill_checked(pid as c_int, &started, false), Outcome::NotThatProcess);
+            assert_eq!(
+                kill_checked(pid as c_int, &started, false),
+                Outcome::NotThatProcess
+            );
         }
     }
 }
