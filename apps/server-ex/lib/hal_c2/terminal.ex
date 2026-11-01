@@ -37,6 +37,8 @@ defmodule HalC2.Terminal do
   @fallback_shells ~w(/bin/zsh /bin/bash /bin/sh)
   @excluded_env ~w(PORT ELECTRON_RENDERER_PORT ELECTRON_RUN_AS_NODE BINDIR ROOTDIR EMU PROGNAME)
   @excluded_env_prefixes ~w(HAL_C2_ VITE_ RELEASE_ ERL_)
+  @max_file_name 255
+  @hashed_prefix "terminal-hashed_"
 
   # --- API ------------------------------------------------------------------------
 
@@ -102,8 +104,12 @@ defmodule HalC2.Terminal do
 
     # Scrollback of terminals that are not running is on disk only.
     if delete do
-      pattern = history_path(thread_id, input["terminalId"] || "*")
-      Enum.each(Path.wildcard(pattern), &File.rm/1)
+      input["terminalId"]
+      |> case do
+        nil -> saved_ids(thread_id)
+        terminal_id -> [terminal_id]
+      end
+      |> Enum.each(&delete_history(thread_id, &1))
     end
 
     {:ok, nil}
@@ -141,19 +147,9 @@ defmodule HalC2.Terminal do
   """
   def list(%{"threadId" => thread_id}) do
     running = running(thread_id)
-    prefix = "terminal_#{Base.url_encode64(thread_id, padding: false)}_"
-
-    saved =
-      for path <- Path.wildcard(history_path(thread_id, "*")),
-          name = Path.basename(path, ".log"),
-          String.starts_with?(name, prefix),
-          {:ok, id} <- [
-            Base.url_decode64(String.replace_prefix(name, prefix, ""), padding: false)
-          ],
-          do: id
 
     ids =
-      (running ++ saved)
+      (running ++ saved_ids(thread_id))
       |> Enum.uniq()
       |> Enum.sort_by(fn id ->
         case Regex.run(~r/^term-(\d+)$/, id) do
@@ -810,9 +806,7 @@ defmodule HalC2.Terminal do
   defp schedule_persist(state), do: state
 
   defp persist(state) do
-    path = history_path(state.thread_id, state.terminal_id)
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, History.value(state.history))
+    write_history(state.thread_id, state.terminal_id, History.value(state.history))
   rescue
     error -> Logger.warning("terminal history not saved: #{Exception.message(error)}")
   end
@@ -840,31 +834,61 @@ defmodule HalC2.Terminal do
   A thread's saved scrollback as `[{terminal_id, text}]`, read from disk so it works
   whether or not its terminals are running. A thread file carries it.
   """
-  def saved_scrollback(thread_id) do
-    prefix = "terminal_#{Base.url_encode64(thread_id, padding: false)}_"
-
-    for path <- Path.wildcard(history_path(thread_id, "*")),
-        name = Path.basename(path, ".log"),
-        String.starts_with?(name, prefix),
-        {:ok, id} <- [Base.url_decode64(String.replace_prefix(name, prefix, ""), padding: false)],
-        do: {id, read_history(thread_id, id)}
-  end
+  def saved_scrollback(thread_id),
+    do: for(id <- saved_ids(thread_id), do: {id, read_history(thread_id, id)})
 
   @doc "Saves scrollback for a thread's terminal, as a thread file brings it."
-  def put_scrollback(thread_id, terminal_id, text) do
+  def put_scrollback(thread_id, terminal_id, text),
+    do: write_history(thread_id, terminal_id, text)
+
+  defp write_history(thread_id, terminal_id, text) do
     path = history_path(thread_id, terminal_id)
     File.mkdir_p!(Path.dirname(path))
+    if hashed_history?(path), do: File.write!(id_path(path), terminal_id)
     File.write!(path, text)
   end
 
-  # `terminal_id` "*" gives a wildcard pattern for all of a thread's terminals.
-  defp history_path(thread_id, terminal_id) do
-    terminal =
-      if terminal_id == "*", do: "*", else: Base.url_encode64(terminal_id, padding: false)
-
-    name = "terminal_#{Base.url_encode64(thread_id, padding: false)}_#{terminal}.log"
-    Path.join([HalC2.Paths.state_dir(), "terminals", name])
+  defp delete_history(thread_id, terminal_id) do
+    path = history_path(thread_id, terminal_id)
+    File.rm(path)
+    if hashed_history?(path), do: File.rm(id_path(path))
   end
+
+  # The ids of a thread's terminals with scrollback on disk.
+  defp saved_ids(thread_id) do
+    prefix = "terminal_#{encode_id(thread_id)}_"
+
+    named =
+      for path <- Path.wildcard(terminals_path(prefix <> "*.log")),
+          name = Path.basename(path, ".log"),
+          {:ok, id} <- [
+            Base.url_decode64(String.replace_prefix(name, prefix, ""), padding: false)
+          ],
+          do: id
+
+    hashed =
+      for path <- Path.wildcard(terminals_path("#{@hashed_prefix}#{hash_id(thread_id)}_*.id")),
+          {:ok, id} <- [File.read(path)],
+          do: id
+
+    named ++ hashed
+  end
+
+  # The ids are in the file name so that the name alone says whose scrollback it is.
+  # Ids too long for that are hashed, with the terminal's id in a file beside it.
+  defp history_path(thread_id, terminal_id) do
+    name = "terminal_#{encode_id(thread_id)}_#{encode_id(terminal_id)}.log"
+
+    if byte_size(name) <= @max_file_name,
+      do: terminals_path(name),
+      else: terminals_path("#{@hashed_prefix}#{hash_id(thread_id)}_#{hash_id(terminal_id)}.log")
+  end
+
+  defp hashed_history?(path), do: String.starts_with?(Path.basename(path), @hashed_prefix)
+  defp id_path(path), do: Path.rootname(path, ".log") <> ".id"
+  defp terminals_path(name), do: Path.join([HalC2.Paths.state_dir(), "terminals", name])
+  defp encode_id(id), do: Base.url_encode64(id, padding: false)
+  defp hash_id(id), do: encode_id(:crypto.hash(:sha256, id))
 
   defp now, do: DateTime.utc_now() |> DateTime.to_iso8601()
 

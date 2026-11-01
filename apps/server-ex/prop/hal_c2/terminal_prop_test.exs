@@ -170,6 +170,13 @@ defmodule HalC2.TerminalPropTest do
   @keys [{"th1", "a"}, {"th1", "b"}, {"th2", "a"}]
   @registry HalC2.Terminal.Registry
   @wait 15_000
+  # Around every length where the history file's name stops fitting.
+  @scrollback_ids [
+    "a",
+    String.duplicate("b", 128),
+    String.duplicate("c", 200),
+    String.duplicate("🦀", 128)
+  ]
 
   property "terminals, their clients and the hub agree with the model",
     numtests: HalC2.Prop.numtests(100),
@@ -244,6 +251,54 @@ defmodule HalC2.TerminalPropTest do
 
       History.value(split) == History.value(history) and split.pending == history.pending
     end
+  end
+
+  property "saved scrollback survives ids of any length",
+    numtests: HalC2.Prop.numtests(100),
+    max_size: 40 do
+    forall ops <- list(scrollback_op()) do
+      HalC2.Prop.scratch_home("terminal-scrollback")
+      HalC2.Prop.start_services([{Registry, keys: :unique, name: @registry}])
+
+      model =
+        Enum.reduce(ops, %{}, fn
+          {:put, thread, terminal, text}, model ->
+            Terminal.put_scrollback(thread, terminal, text)
+            Map.put(model, {thread, terminal}, text)
+
+          {:delete, thread, terminal}, model ->
+            Terminal.close(%{
+              "threadId" => thread,
+              "terminalId" => terminal,
+              "deleteHistory" => true
+            })
+
+            Map.delete(model, {thread, terminal})
+
+          {:delete_all, thread}, model ->
+            Terminal.close(%{"threadId" => thread, "deleteHistory" => true})
+            Map.reject(model, fn {{t, _}, _} -> t == thread end)
+        end)
+
+      agrees =
+        Enum.all?(@scrollback_ids, fn thread ->
+          expected = for {{^thread, terminal}, text} <- model, do: {terminal, text}
+          Enum.sort(Terminal.saved_scrollback(thread)) == Enum.sort(expected)
+        end)
+
+      HalC2.Prop.stop_services()
+      agrees
+    end
+  end
+
+  defp scrollback_op do
+    id = oneof(@scrollback_ids)
+
+    oneof([
+      {:put, id, id, oneof(["one\n", "two\n"])},
+      {:delete, id, id},
+      {:delete_all, id}
+    ])
   end
 
   defp text_chunk,
