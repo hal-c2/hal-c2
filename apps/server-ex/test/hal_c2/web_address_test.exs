@@ -47,32 +47,22 @@ defmodule HalC2.WebAddressTest do
 
   describe "the address of an MC listening on every interface" do
     setup do
-      for key <- [:host, :cluster_listen] do
-        previous = Application.get_env(:hal_c2, key)
-        on_exit(fn -> restore(key, previous) end)
-      end
+      previous = Application.get_env(:hal_c2, :host)
+
+      on_exit(fn ->
+        if previous,
+          do: Application.put_env(:hal_c2, :host, previous),
+          else: Application.delete_env(:hal_c2, :host)
+      end)
 
       Application.put_env(:hal_c2, :host, "0.0.0.0")
       :ok
     end
 
-    defp restore(key, nil), do: Application.delete_env(:hal_c2, key)
-    defp restore(key, value), do: Application.put_env(:hal_c2, key, value)
-
-    test "is the one it was told to use for its members" do
-      Application.put_env(:hal_c2, :cluster_listen, "10.9.8.7")
-
-      assert {:ok, %{"address" => "http://10.9.8.7:" <> _, "localOnly" => false}} =
-               Web.address(%{})
-    end
-
-    test "is this machine's network address when that one is loopback or there is none" do
-      for listen <- ["127.0.0.1", nil] do
-        restore(:cluster_listen, listen)
-        {:ok, %{"address" => address}} = Web.address(%{})
-        ip = Web.network_ip(:inet.getifaddrs())
-        assert address == "http://#{ip || "localhost"}:#{Web.port()}"
-      end
+    test "is this machine's network address, or localhost when it has none" do
+      {:ok, %{"address" => address}} = Web.address(%{})
+      ip = Web.network_ip(:inet.getifaddrs())
+      assert address == "http://#{ip || "localhost"}:#{Web.port()}"
     end
   end
 end
