@@ -169,6 +169,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "l", description: "Spaces: link a subpage", chords: ["l"] },
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
       {
+        keys: "g",
+        description: "Spaces: ask for a chart, or ask again for the selected one",
+        chords: ["g"],
+      },
+      {
         keys: "s · S",
         description: "Spaces: new deck / make a deck from the page",
         chords: ["s", "shift+s"],
@@ -407,6 +412,7 @@ export const KEYMAP_LAYERS = {
     u: "space.unpublish",
     i: "space.import",
     t: "space.fromThread",
+    g: "space.visualize",
     s: "space.newDeck",
     "shift+s": "space.deckFromPage",
     v: "space.images",

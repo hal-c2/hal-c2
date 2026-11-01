@@ -194,7 +194,7 @@ ColumnLayout {
                     view.editing = null;
                 }
             }
-            onMenuRequested: view.screen.blockMenu(blockRow.index, blockRow.blockId, blockRow.text)
+            onMenuRequested: view.screen.blockMenu(blockRow.index, blockRow.blockId, blockRow.text, blockRow.kind === "chart" ? blockRow.chart.request : undefined)
             onLinkOpened: view.screen.openPage(blockRow.linkedPageId)
             onCommentsRequested: view.screen.showComments(blockRow.blockId)
         }
@@ -225,5 +225,15 @@ ColumnLayout {
                 onClicked: view.screen.addBlockMenu(undefined)
             }
         }
+    }
+
+    Label {
+        objectName: "spaceDrawing"
+        Layout.fillWidth: true
+        Layout.margins: 12
+        visible: Shell.state.space?.drawing === true
+        text: qsTr("Drawing a chart…")
+        color: Theme.palette.color("textMuted", "#a1a1aa")
+        font.pixelSize: Math.round(13 * Theme.fontScale)
     }
 }

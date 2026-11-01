@@ -38,6 +38,11 @@ const QStringList kImageTypes{QStringLiteral("image/png"), QStringLiteral("image
 // to the rows would sign it again.
 const qint64 kAddressMarginMs = 60'000;
 const qint64 kAddressAtLeastMs = 5 * 60'000;
+// How soon a refused address is asked for again, with nothing else changing.
+const int kAddressRetryMs = 30'000;
+// Long enough to take in the signed addresses of one batch, which arrive over
+// several turns of the event loop.
+const int kRebuildSoonMs = 50;
 
 // HalC2.Patch: `s` sets, `u` unsets, `a` appends to strings, `d` deletes
 // (alone) or replaces (with `s`/`a`). nullopt when the entity is gone.
@@ -246,7 +251,7 @@ SpacePages::SpacePages(QObject* parent)
       m_pages(new SpaceRows({"id", "title", "depth", "parentPageId", "hasChildren", "fromThread"}, this)),
       m_trash(new SpaceRows({"id", "title", "trashedAt"}, this)),
       m_blocks(new SpaceRows({"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
-                              "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
+                              "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
                              this)),
       m_comments(new SpaceRows({"id", "blockId", "blockText", "body", "resolved", "byAgent", "createdAt"}, this)),
       m_decks(new SpaceRows({"id", "title"}, this)),
@@ -259,8 +264,9 @@ SpacePages::SpacePages(QObject* parent)
   m_addressRefresh->setSingleShot(true);
   connect(m_addressRefresh, &QTimer::timeout, this, &SpacePages::rebuild);
   m_rebuildSoon = new QTimer(this);
+  m_rebuildSoon->setObjectName(QStringLiteral("spaceRebuildSoon"));
   m_rebuildSoon->setSingleShot(true);
-  m_rebuildSoon->setInterval(0);
+  m_rebuildSoon->setInterval(kRebuildSoonMs);
   connect(m_rebuildSoon, &QTimer::timeout, this, &SpacePages::rebuild);
 }
 
@@ -371,11 +377,12 @@ void SpacePages::setImagesShown(bool shown) {
 void SpacePages::setImageAddress(const QString& imageId, const QString& url, qint64 expiresAt) {
   if (!m_signing.remove(imageId)) return;
   m_addresses.insert(imageId, {url, qMax(expiresAt, m_now() + kAddressAtLeastMs)});
-  m_rebuildSoon->start();
+  if (!m_rebuildSoon->isActive()) m_rebuildSoon->start();
 }
 
 void SpacePages::imageAddressFailed(const QString& imageId) {
   m_signing.remove(imageId);
+  if (!m_addressRefresh->isActive() || m_addressRefresh->remainingTime() > kAddressRetryMs) m_addressRefresh->start(kAddressRetryMs);
 }
 
 QStringList SpacePages::imagesToSign(const QSet<QString>& wanted) {
@@ -633,6 +640,7 @@ void SpacePages::rebuild() {
                    {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : titleOf(linked)},
                    {QStringLiteral("byAgent"), byAgent(block.value(QLatin1String("createdBy")))},
                    {QStringLiteral("openComments"), open.value(id)},
+                   {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()},
                    {QStringLiteral("imageId"), imageId},
                    {QStringLiteral("imageState"), imageState},
                    {QStringLiteral("imageUrl"), imageState == QLatin1String("shown") ? m_addresses.value(imageId).url : QString()},
@@ -939,6 +947,7 @@ void SpaceController::toast(const QString& type, const QString& title, const QSt
 void SpaceController::publish() {
   m_bridge->publish(QStringLiteral("space"), QVariantMap{{QStringLiteral("error"), m_error},
                                                           {QStringLiteral("busy"), m_writing > 0},
+                                                          {QStringLiteral("drawing"), m_drawing > 0},
                                                           {QStringLiteral("written"), m_written},
                                                           {QStringLiteral("addingImage"), m_addingImages > 0},
                                                           {QStringLiteral("generatingImage"), m_generatingImages > 0},
@@ -1250,6 +1259,23 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
   } else if (action == QLatin1String("space.block.move")) {
     QJsonObject move = orNull(pick({"spaceId", "blockId"}), QLatin1String("afterBlockId"));
     call(QStringLiteral("block.move"), move);
+  } else if (action == QLatin1String("space.block.visualize")) {
+    QJsonObject ask = orNull(pick({"spaceId", "request", "blockId"}), QLatin1String("afterBlockId"));
+    ask.insert(QStringLiteral("pageId"), pageId);
+    ++m_drawing;
+    publish();
+    call(
+        QStringLiteral("block.visualize"), ask,
+        [this](const QJsonObject&) {
+          --m_drawing;
+          publish();
+        },
+        // The MC's refusal says why no chart was drawn.
+        [this](const QJsonObject&) {
+          --m_drawing;
+          publish();
+          return QString();
+        });
   } else if (action == QLatin1String("space.block.delete")) {
     call(QStringLiteral("block.delete"), pick({"spaceId", "blockId"}));
   } else if (action == QLatin1String("space.comment.add")) {

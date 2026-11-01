@@ -791,7 +791,7 @@ defmodule HalC2.Steps.Threads do
     :ok =
       Exqlite.Sqlite3.execute(
         db,
-        "DELETE FROM messages; DELETE FROM meta WHERE key = 'messages_indexed'"
+        "DELETE FROM messages; DELETE FROM meta WHERE key = 'messages_typed'"
       )
 
     :ok = Exqlite.Sqlite3.close(db)
@@ -808,7 +808,7 @@ defmodule HalC2.Steps.Threads do
   step "the old threads are indexed once and can be searched", context do
     context = search(context, "invoices table")
     assert [_] = matches(context, "Old work")
-    assert HalC2.Store.meta(HalC2.Store.path(), "messages_indexed") == "1"
+    assert HalC2.Store.meta(HalC2.Store.path(), "messages_typed") == "1"
     context
   end
 

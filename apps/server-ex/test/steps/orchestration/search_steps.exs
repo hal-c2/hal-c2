@@ -99,7 +99,7 @@ defmodule HalC2.Steps.Orchestration.Search do
     {:ok, db} = Exqlite.Sqlite3.open(context.mc.store)
     :ok = Exqlite.Sqlite3.execute(db, "PRAGMA busy_timeout = 5000")
     :ok = Exqlite.Sqlite3.execute(db, "DELETE FROM messages")
-    :ok = Exqlite.Sqlite3.execute(db, "DELETE FROM meta WHERE key = 'messages_indexed'")
+    :ok = Exqlite.Sqlite3.execute(db, "DELETE FROM meta WHERE key = 'messages_typed'")
     :ok = Exqlite.Sqlite3.close(db)
 
     {reply, context} = search(context, %{"query" => "ledger"})

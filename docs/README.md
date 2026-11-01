@@ -11,6 +11,7 @@
 - [Project settings](./user/project-settings.md)
 - [Appearance and themes](./user/appearance.md)
 - [Keyboard shortcuts](./user/keybindings.md)
+- [Charts on a page](./user/charts.md)
 - [Publishing a page as a site](./user/sites.md)
 - [SnapShots](./user/snap-shot.md)
 - [Import browser sessions](./user/browser-import.md)

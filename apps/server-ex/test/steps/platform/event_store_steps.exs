@@ -547,7 +547,7 @@ defmodule HalC2.Steps.Platform.EventStore do
     # Index casts land before this call returns.
     Store.path()
     sql!(context, "DELETE FROM messages")
-    sql!(context, "DELETE FROM meta WHERE key = 'messages_indexed'")
+    sql!(context, "DELETE FROM meta WHERE key = 'messages_typed'")
     assert Store.search_messages(context.mc.store, "%flux%", 10) == []
     context
   end
@@ -559,13 +559,13 @@ defmodule HalC2.Steps.Platform.EventStore do
     assert found |> Enum.map(&elem(&1, 0)) |> Enum.sort() ==
              Enum.sort([World.thread_id(context, "main"), World.thread_id(context, "other")])
 
-    assert Store.meta(context.mc.store, "messages_indexed") == "1"
+    assert Store.meta(context.mc.store, "messages_typed") == "1"
 
     # A later start does not index them again.
     sql!(context, "DELETE FROM messages")
     backfill()
     assert Store.search_messages(context.mc.store, "%flux%", 10) == []
-    sql!(context, "DELETE FROM meta WHERE key = 'messages_indexed'")
+    sql!(context, "DELETE FROM meta WHERE key = 'messages_typed'")
     backfill()
     context
   end

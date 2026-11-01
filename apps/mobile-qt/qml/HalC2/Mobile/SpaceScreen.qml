@@ -230,10 +230,13 @@ Item {
             { id: "checklist", label: qsTr("Checklist"), icon: "square-check" },
             { id: "callout", label: qsTr("Callout"), icon: "info" },
             { id: "subpage_link", label: qsTr("Subpage link"), icon: "link" },
+            { id: "chart", label: qsTr("Chart"), icon: "chart-no-axes-column" },
             { id: "image", label: qsTr("Image"), icon: "image" }
         ], kind => {
             if (kind === "subpage_link")
                 pickLink(afterBlockId);
+            else if (kind === "chart")
+                askChart({ afterBlockId: afterBlockId });
             else if (kind === "image")
                 pickImage(afterBlockId);
             else
@@ -272,6 +275,19 @@ Item {
         });
     }
 
+    // A chart for the page: `where` holds the block it goes after, or the chart
+    // it replaces with the words that chart was asked for in.
+    function askChart(where, request) {
+        text.ask({ title: where.blockId === undefined ? qsTr("New chart") : qsTr("Ask again"), placeholder: qsTr("What should it show?"), text: request ?? "", action: qsTr("Draw") }, asked => {
+            const payload = { pageId: Spaces.pageId, request: asked };
+            if (where.blockId !== undefined)
+                payload.blockId = where.blockId;
+            else if (where.afterBlockId !== undefined)
+                payload.afterBlockId = where.afterBlockId;
+            Shell.dispatch("space.block.visualize", payload);
+        });
+    }
+
     function insert(block, afterBlockId) {
         const payload = Object.assign({ pageId: Spaces.pageId, checked: false }, block);
         if (afterBlockId !== undefined)
@@ -279,16 +295,20 @@ Item {
         Shell.dispatch("space.block.insert", payload);
     }
 
-    function blockMenu(row, id, said) {
+    // `chartRequest` is what a chart was asked for with; other blocks have none.
+    function blockMenu(row, id, said, chartRequest) {
         const blockAt = at => Spaces.blocks.get(at).id;
-        sheet.ask([
+        const again = chartRequest === undefined ? [] : [{ id: "again", label: qsTr("Ask again"), icon: "refresh-cw" }];
+        sheet.ask(again.concat([
             { id: "up", label: qsTr("Move up"), icon: "arrow-up", enabled: row > 0 },
             { id: "down", label: qsTr("Move down"), icon: "arrow-down", enabled: row < Spaces.blocks.count - 1 },
             { id: "below", label: qsTr("Add a block below"), icon: "plus" },
             { id: "comment", label: qsTr("Comment"), icon: "message-square-plus" },
             { id: "delete", label: qsTr("Delete"), icon: "trash", destructive: true }
-        ], choice => {
-            if (choice === "up")
+        ]), choice => {
+            if (choice === "again")
+                askChart({ blockId: id }, chartRequest);
+            else if (choice === "up")
                 Shell.dispatch("space.block.move", { blockId: id, afterBlockId: row > 1 ? blockAt(row - 2) : "" });
             else if (choice === "down")
                 Shell.dispatch("space.block.move", { blockId: id, afterBlockId: blockAt(row + 1) });

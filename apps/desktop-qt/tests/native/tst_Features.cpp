@@ -642,6 +642,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/snap-shot.feature"),
     QStringLiteral("planning/planner.feature"),
     QStringLiteral("space/pages.feature"),
+    QStringLiteral("space/visualize.feature"),
     QStringLiteral("space/slides.feature"),
     QStringLiteral("space/sites.feature"),
     QStringLiteral("space/images.feature"),

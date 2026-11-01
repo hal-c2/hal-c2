@@ -63,6 +63,20 @@ defmodule HalC2.Subprocess.OrphansTest do
     String.to_integer(line)
   end
 
+  # No `/proc` to read marks from means no mark for a boot to find either.
+  defp await_unmarked(pid, tries) when tries > 0 do
+    case File.read("/proc/#{pid}/environ") do
+      {:ok, environ} ->
+        if String.contains?(environ, "HAL_C2_PROGRAM_ID=") do
+          Process.sleep(10)
+          await_unmarked(pid, tries - 1)
+        end
+
+      _unreadable ->
+        :ok
+    end
+  end
+
   defp await_gone(pid, tries) when tries > 0 do
     if Orphans.gone?(pid) do
       :ok
@@ -101,6 +115,8 @@ defmodule HalC2.Subprocess.OrphansTest do
     {:ok, sub} = Subprocess.start(["sh", "-c", script])
     :ok = stop_supervised(:died)
     stranger = left_behind(sub)
+    # `$!` names the fork, which carries the mark until `env` has exec'd `sleep`.
+    await_unmarked(stranger, 500)
 
     boot(:next)
 
@@ -721,6 +737,14 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert Orphans.parse_stat("123 (sh) S 1 123 " <> garbage) == :unknown
     # Without the boot it started in, the ticks are no identity at all.
     assert Orphans.parse_stat("123 (sh) S 1 123 " <> rest, "") == :unknown
+  end
+
+  test "only a read that says the process is no more reads as gone" do
+    # A program reaped between the read's open and its read answers :esrch.
+    assert Orphans.unreadable_stat(:enoent) == :gone
+    assert Orphans.unreadable_stat(:esrch) == :gone
+    assert Orphans.unreadable_stat(:eacces) == :unknown
+    assert Orphans.unreadable_stat(:eio) == :unknown
   end
 
   test "tracking a program already gone is fine, and gone? tells it from a running one" do
