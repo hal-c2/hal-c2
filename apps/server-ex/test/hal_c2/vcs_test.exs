@@ -169,6 +169,38 @@ defmodule HalC2.VcsTest do
     assert status != 0, "it tracks #{out}"
   end
 
+  test "a checkout stopped by the time limit keeps a branch that was already there", %{
+    repo: repo,
+    tmp_dir: dir
+  } do
+    git!(repo, ~w(branch kept))
+    git = Path.join(dir, "git-hangs")
+
+    File.write!(
+      git,
+      "#!/bin/sh\ncase \"$*\" in *\"worktree add\"*) exec sleep 120;; esac\nexec git \"$@\"\n"
+    )
+
+    File.chmod!(git, 0o755)
+    Application.put_env(:hal_c2, :git_command, git)
+    Application.put_env(:hal_c2, :worktree_timeout, 300)
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :git_command)
+      Application.delete_env(:hal_c2, :worktree_timeout)
+    end)
+
+    assert {:error, _} =
+             Vcs.create_worktree(%{
+               "cwd" => repo,
+               "refName" => "main",
+               "newRefName" => "kept",
+               "path" => Path.join(dir, "free")
+             })
+
+    assert git!(repo, ~w(branch --list kept)) =~ "kept"
+  end
+
   defp commit!(repo, message),
     do: git!(repo, ~w(-c user.name=t -c user.email=t@t commit -q -m) ++ [message])
 

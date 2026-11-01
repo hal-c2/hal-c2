@@ -128,6 +128,14 @@ Feature: Worktrees and setup scripts
     Then the setup fails when the limit stops git
     And neither the worktree nor its new branch is left in "shop"
 
+  @mc
+  Scenario: A checkout stopped while it is filling the worktree leaves nothing behind
+    Given git is stopped on "shop" while it is still filling its new worktree
+    When the user sends the first message of a thread in a new worktree
+    Then the setup fails when the limit stops git
+    And nothing is still writing where the worktree was
+    And neither the worktree nor its new branch is left in "shop"
+
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (WORKTREE_ADD_TIMEOUT_MS, WORKTREE_REMOVE_TIMEOUT_MS)
   @mc
   Scenario Outline: Creating and removing a worktree is given minutes, not seconds

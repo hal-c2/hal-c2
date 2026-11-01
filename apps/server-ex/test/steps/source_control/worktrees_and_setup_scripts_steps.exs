@@ -310,6 +310,42 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
+  # What `git worktree add` starts to fill the worktree goes on after git itself is
+  # stopped, and puts back what is removed around it.
+  step "git is stopped on {string} while it is still filling its new worktree", context do
+    dir = Mc.tmp_dir(context.mc, "git")
+    git = Path.join(dir, "git-fills")
+    writer = Path.join(dir, "writer")
+
+    File.write!(git, """
+    #!/bin/sh
+    case "$*" in
+    *"worktree add"*)
+      git "$@"
+      while [ "$1" != "-b" ]; do shift; done
+      path=$3
+      echo "$path" > "#{writer}.path"
+      (i=0; while [ $i -lt 600 ]; do mkdir -p "$path"; : > "$path/late"; sleep 0.05; i=$((i + 1)); done) &
+      echo $! > "#{writer}.pid"
+      exec sleep 120;;
+    esac
+    exec git "$@"
+    """)
+
+    File.chmod!(git, 0o755)
+    World.put_app_env(:git_command, git)
+    World.put_app_env(:worktree_timeout, 300)
+    Map.put(context, :writer, writer)
+  end
+
+  step "nothing is still writing where the worktree was", context do
+    pid = String.trim(File.read!(context.writer <> ".pid"))
+    assert {_, status} = System.cmd("kill", ["-0", pid], stderr_to_stdout: true)
+    assert status != 0, "the checkout's writer #{pid} is still running"
+    refute File.exists?(String.trim(File.read!(context.writer <> ".path")))
+    context
+  end
+
   step "the setup fails when the limit stops git", context do
     {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
     assert snapshot["phase"] == "failed", inspect(snapshot)

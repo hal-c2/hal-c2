@@ -13,8 +13,9 @@ defmodule HalC2.Git do
 
   @doc """
   Runs `git args` in `cwd`. Options: `:env` (`[{name, value}]`), `:input` (stdin),
-  `:max_bytes` (default 50 MB), `:timeout` (ms; none by default) and `:on_stderr` (called
-  with each chunk of stderr as it arrives). Fails only when
+  `:max_bytes` (default 50 MB), `:timeout` (ms; none by default), `:on_stderr` (called
+  with each chunk of stderr as it arrives) and `:stop_children` (a git that does not
+  finish takes the programs it started with it before this returns). Fails only when
   git cannot be started, will not exit, or runs past its timeout, saying which.
   `Application.get_env(:hal_c2, :git_command)` stands in for `git`.
   """
@@ -22,10 +23,45 @@ defmodule HalC2.Git do
   def run(cwd, args, opts \\ []) do
     argv = [Application.get_env(:hal_c2, :git_command, "git") | args]
 
-    case within(opts[:timeout], fn -> stream("git", argv, cwd, opts) end) do
+    run = fn argv -> within(opts[:timeout], fn -> stream("git", argv, cwd, opts) end) end
+
+    case if(opts[:stop_children], do: stopping_children(argv, run), else: run.(argv)) do
       {:ok, result} -> result
       {:exit, reason} -> {:error, "git #{hd(args)} exited: #{inspect(reason)}"}
       :timeout -> {:error, "git #{hd(args)} timed out after #{opts[:timeout]} ms"}
+    end
+  end
+
+  # Exile starts a program as the leader of its own session, so its children are in the
+  # group its pid names; killing the task signals only the program, and only afterwards.
+  # The program says its pid before it becomes git, as Exile's stream does not tell it.
+  defp stopping_children(argv, run) do
+    file = Path.join(System.tmp_dir!(), "hal-c2-git-#{System.pid()}-#{System.unique_integer()}")
+
+    result = run.(["sh", "-c", ~s(echo $$ > "$0"; exec "$@"), file | argv])
+
+    if not match?({:ok, {:ok, _}}, result) do
+      with {:ok, pid} <- File.read(file), {group, _} <- Integer.parse(pid) do
+        stop_group(group)
+      end
+    end
+
+    File.rm(file)
+    result
+  end
+
+  # SIGKILL cannot be held off, so this waits only for the kernel to take them down.
+  defp stop_group(group, tries \\ 100) do
+    case System.cmd("kill", ["-s", "KILL", "--", "-#{group}"], stderr_to_stdout: true) do
+      {_, 0} when tries > 0 ->
+        Process.sleep(50)
+        stop_group(group, tries - 1)
+
+      {_, 0} ->
+        Logger.warning("git's process group #{group} outlived SIGKILL")
+
+      _gone ->
+        :ok
     end
   end
 
