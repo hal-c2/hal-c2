@@ -1381,7 +1381,8 @@ Rectangle {
                     objectName: "envModePicker"
                     // A draft can go back to the worktree the project worked in last.
                     readonly property var previous: contextStrip.wsReady ? contextStrip.ws.previousWorktree ?? null : null
-                    model: previous ? [qsTr("Current checkout"), qsTr("New worktree"), previous.label] : [qsTr("Current checkout"), qsTr("New worktree")]
+                    readonly property string currentLabel: contextStrip.wsReady ? contextStrip.ws.currentWorkspaceLabel ?? "" : ""
+                    model: previous ? [currentLabel, qsTr("New worktree"), previous.label] : [currentLabel, qsTr("New worktree")]
                     currentIndex: contextStrip.wsReady && contextStrip.ws.envMode === "worktree" ? 1 : 0
                     Accessible.name: qsTr("Checkout mode")
                     onActivated: index => {
@@ -1395,9 +1396,22 @@ Rectangle {
                 }
 
                 RowLayout {
+                    id: envModeLocked
+                    objectName: "envModeLocked"
+
+                    readonly property string hint: contextStrip.wsReady ? contextStrip.ws.envModeHint ?? "" : ""
+
                     visible: contextStrip.wsReady && !contextStrip.ws.envModeChangeable
                     spacing: 6
                     Layout.leftMargin: 7
+                    Accessible.description: hint
+
+                    HoverHandler {
+                        id: envModeLockedHover
+                    }
+
+                    ToolTip.visible: envModeLockedHover.hovered && hint.length > 0
+                    ToolTip.text: hint
 
                     ShellIcon {
                         name: contextStrip.envModeIcon
@@ -1407,6 +1421,7 @@ Rectangle {
                     }
 
                     Text {
+                        objectName: "envModeLockedLabel"
                         text: contextStrip.wsReady ? contextStrip.ws.envModeLabel : ""
                         color: composer.secondary
                         font.pixelSize: Math.round(12 * Theme.fontScale)
@@ -1667,6 +1682,52 @@ Rectangle {
                                 text: contextStrip.wsReady ? qsTr("Showing %1 of %2 refs — type to narrow").arg(contextStrip.ws.branches.length).arg(contextStrip.ws.branchesTotal) : ""
                                 color: composer.muted
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
+                            }
+
+                            // Only when picking the base of a new thread's new
+                            // worktree; the setting stays as it is.
+                            ColumnLayout {
+                                objectName: "startFromOriginRow"
+                                visible: contextStrip.wsReady && contextStrip.ws.isDraft && contextStrip.ws.envMode === "worktree" && !contextStrip.ws.worktreePath
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 8
+                                Layout.rightMargin: 4
+                                Layout.bottomMargin: 4
+                                spacing: 2
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: qsTr("Start from origin")
+                                        color: composer.foreground
+                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    }
+
+                                    ShellSwitch {
+                                        id: startFromOrigin
+                                        objectName: "startFromOrigin"
+                                        Accessible.name: qsTr("Start from origin")
+                                        onToggled: Shell.dispatch("workspace.startFromOrigin.set", {
+                                            enabled: checked
+                                        })
+
+                                        Binding on checked {
+                                            value: contextStrip.wsReady && contextStrip.ws.startFromOrigin === true
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    objectName: "startFromOriginHelp"
+                                    Layout.fillWidth: true
+                                    Layout.rightMargin: 4
+                                    text: qsTr("Creates the worktree from the latest matching branch on origin instead of your local branch.")
+                                    color: composer.muted
+                                    wrapMode: Text.Wrap
+                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                }
                             }
                         }
                     }

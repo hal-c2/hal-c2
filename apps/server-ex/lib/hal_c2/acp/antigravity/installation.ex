@@ -521,8 +521,7 @@ defmodule HalC2.Acp.Antigravity.Installation do
 
   # The runtime starts here and says it is the release it should be.
   defp validate(executable, harness, release) do
-    home = Path.join(System.tmp_dir!(), "hal-c2-agy-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(home)
+    home = HalC2.Scratch.dir("hal-c2-agy")
 
     env = [
       {"GEMINI_HOME", home},

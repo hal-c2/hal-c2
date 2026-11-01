@@ -650,8 +650,7 @@ defmodule HalC2.ThreadArchive do
     meta = archive["thread"]
     id = meta["id"]
 
-    source =
-      Path.join(System.tmp_dir!(), "hal-c2-thread-#{System.unique_integer([:positive])}.sqlite")
+    source = HalC2.Scratch.path("hal-c2-thread", ".sqlite")
 
     rewrite =
       rewriter(

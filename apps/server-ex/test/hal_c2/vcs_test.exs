@@ -154,6 +154,53 @@ defmodule HalC2.VcsTest do
     refute_receive {:hal_c2_vcs, _, _}, 200
   end
 
+  test "a new branch started from a remote ref has no upstream", %{repo: repo} do
+    assert {:ok, %{"worktree" => %{"path" => path}}} =
+             Vcs.create_worktree(%{
+               "cwd" => repo,
+               "refName" => "origin/main",
+               "newRefName" => "wt/from-origin",
+               "path" => nil
+             })
+
+    {out, status} =
+      System.cmd("git", ~w(rev-parse --abbrev-ref @{upstream}), cd: path, stderr_to_stdout: true)
+
+    assert status != 0, "it tracks #{out}"
+  end
+
+  test "a checkout stopped by the time limit keeps a branch that was already there", %{
+    repo: repo,
+    tmp_dir: dir
+  } do
+    git!(repo, ~w(branch kept))
+    git = Path.join(dir, "git-hangs")
+
+    File.write!(
+      git,
+      "#!/bin/sh\ncase \"$*\" in *\"worktree add\"*) exec sleep 120;; esac\nexec git \"$@\"\n"
+    )
+
+    File.chmod!(git, 0o755)
+    Application.put_env(:hal_c2, :git_command, git)
+    Application.put_env(:hal_c2, :worktree_timeout, 300)
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :git_command)
+      Application.delete_env(:hal_c2, :worktree_timeout)
+    end)
+
+    assert {:error, _} =
+             Vcs.create_worktree(%{
+               "cwd" => repo,
+               "refName" => "main",
+               "newRefName" => "kept",
+               "path" => Path.join(dir, "free")
+             })
+
+    assert git!(repo, ~w(branch --list kept)) =~ "kept"
+  end
+
   defp commit!(repo, message),
     do: git!(repo, ~w(-c user.name=t -c user.email=t@t commit -q -m) ++ [message])
 

@@ -49,6 +49,10 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.start_next/1" =>
         ~w(start-next decideNext begin-turn retry start-failed),
       "HalC2.Orchestration.release_session/1" => ~w(release-session release-idle keep-turn),
+      # An interrupt of each active run, then release_session/1 once none is left and the
+      # queue is empty (the model has no cancel of one queued run: it only shortens the queue).
+      "HalC2.Orchestration.stop_plugin_thread/3" =>
+        ~w(interrupt-any interrupt-undriven release-session release-idle keep-turn),
       "HalC2.Orchestration.runtime/1" => "begin-turn",
       "HalC2.Orchestration.earlier_run?/3" => ~w(stale-pin stop-work),
       "HalC2.Orchestration.TurnWriter.started/1" => "started",
@@ -99,6 +103,7 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.release_prepared/2" => @preparing,
       "HalC2.Orchestration.progress_prepared/3" => @preparing,
       "HalC2.Orchestration.fail_prepared/4" => @preparing,
+      "HalC2.Orchestration.warn_prepared/4" => @items,
       "HalC2.Orchestration.upsert/4" => @changes,
       "HalC2.Orchestration.create/3" => @changes,
       "HalC2.Orchestration.next_ordinal/1" => @changes,

@@ -23,6 +23,8 @@ defmodule HalC2.CodeReviewPropTest do
     took is not posted again, but one it refused or never got is;
   - a report with nothing to post goes back to the agent as an error, and one posted
     automatically is answered once GitHub has, with how the post went;
+  - a new run stops the thread it replaces before its checkout goes, and a report from
+    a thread the review moved past, or whose review is published, is refused;
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
     and the look for pull requests, and leaves no checkout no review points at;
   - a settings save keeps them going, and starts queued reviews when it makes room;
@@ -350,6 +352,7 @@ defmodule HalC2.CodeReviewPropTest do
       discarded: [],
       checkouts: checkouts(m),
       orphans: [],
+      unstopped: [],
       posts: Enum.sort(m.posts),
       # A plugin turned off has no process to report from; its pause is saved with the
       # reviews and shows again once it is on.
@@ -464,7 +467,11 @@ defmodule HalC2.CodeReviewPropTest do
           end
         end
 
-      _ ->
+      # A thread that was or is the review's hears why it cannot report any more.
+      %{run: run, past: past} ->
+        {m, if(k == run or k in past, do: :error)}
+
+      nil ->
         {m, nil}
     end
   end
@@ -581,14 +588,18 @@ defmodule HalC2.CodeReviewPropTest do
       comments: [],
       publish_error: false,
       seq: nil,
-      followed: false
+      followed: false,
+      past: []
     }
   end
 
   defp queue(m, key) do
+    r = m.reviews[key]
+
     review = %{
-      m.reviews[key]
+      r
       | status: :queued,
+        past: if(r.run, do: [r.run | r.past], else: r.past),
         seq: m.seq + 1,
         verdict: nil,
         comments: [],
@@ -688,7 +699,8 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # Posts the review of `key` as it is now, unless GitHub already took a review of its
-  # commit; GitHub answers at once unless the gate holds it.
+  # commit, which makes it published with nothing posted; GitHub answers at once unless
+  # the gate holds it.
   defp post(m, key) do
     r = m.reviews[key]
     kept = Enum.count(r.comments, &(not &1))
@@ -696,7 +708,7 @@ defmodule HalC2.CodeReviewPropTest do
 
     cond do
       {key, r.reviewed} in m.github ->
-        {put_review(m, key, %{r | status: :waiting, publish_error: true}), :error}
+        {put_review(m, key, %{r | status: :published, publish_error: false}), :ok}
 
       m.gate == :closed ->
         m = %{m | posts: m.posts ++ [sent]}
@@ -1002,8 +1014,7 @@ defmodule HalC2.CodeReviewPropTest do
     File.write!(pids, "")
     send(@server, :poll)
     wait_for_file(pids)
-    {:monitors, [{:process, poller} | _]} = Process.info(Process.whereis(@server), :monitors)
-    ref = Process.monitor(poller)
+    ref = Process.monitor(poller(Process.whereis(@server)))
     reply = killing(fn -> plugins("disable", %{"id" => @id}) end)
 
     receive do
@@ -1030,13 +1041,12 @@ defmodule HalC2.CodeReviewPropTest do
 
   def crash do
     pid = Process.whereis(@server)
-    {:parent, sup} = Process.info(pid, :parent)
 
     killing(fn ->
       ref = Process.monitor(pid)
       Process.exit(pid, :kill)
       receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
-      await_restart(sup, pid, 1_000)
+      await_restart(pid)
     end)
 
     observe(nil, :restarted)
@@ -1166,9 +1176,28 @@ defmodule HalC2.CodeReviewPropTest do
       discarded: Enum.filter(Process.get(:cr_discarded), &thread(&1)["plugin"]["listed"]),
       checkouts: length(checkout_dirs()),
       orphans: orphans(),
+      unstopped: unstopped(view),
       posts: posts(),
       problems: Process.put(:cr_problems, []) |> Enum.reverse()
     }
+  end
+
+  # The threads that lost their checkout to a newer run or a discard, and still have
+  # a turn running: a review's earlier threads, once it has a checkout of a later one.
+  defp unstopped(:off), do: []
+
+  defp unstopped(_view) do
+    reviews = GenServer.call(@server, :reviews)
+
+    for {key, tids} <- Process.get(:cr_tids),
+        %{"checkout" => checkout} when is_binary(checkout) <- [reviews[key]],
+        tid <- Enum.take_while(tids, &(&1 != Path.basename(checkout))),
+        thread(tid) != nil,
+        Enum.any?(
+          HalC2.StreamState.list(HalC2.Streams.state(tid), "run"),
+          &(&1["status"] in ~w(preparing starting running waiting))
+        ),
+        do: tid
   end
 
   defp review_view(r) do
@@ -1333,8 +1362,8 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   defp await_poller(pid, deadline) do
-    case Process.info(pid, :monitors) do
-      {:monitors, [{:process, poller} | _]} ->
+    case poller(pid) do
+      poller when is_pid(poller) ->
         ref = Process.monitor(poller)
 
         receive do
@@ -1344,9 +1373,18 @@ defmodule HalC2.CodeReviewPropTest do
             Process.demonitor(ref, [:flush])
         end
 
-      _ ->
+      nil ->
         :ok
     end
+  end
+
+  # The look under way: the one process the plugin both links and monitors. A monitor
+  # alone will not do: the server's own calls in flight (a file it saves goes through
+  # the file server) monitor their callee for as long as they last.
+  defp poller(pid) do
+    {:links, links} = Process.info(pid, :links)
+    {:monitors, monitors} = Process.info(pid, :monitors)
+    Enum.find_value(monitors, fn {:process, p} -> p in links and p end)
   end
 
   defp await_any(kids) do
@@ -1437,16 +1475,16 @@ defmodule HalC2.CodeReviewPropTest do
       System.cmd("timeout", ["5", "sh", "-c", "until [ -s '#{path}' ]; do sleep 0.05; done"])
   end
 
-  defp await_restart(_sup, _old, 0), do: problem("code-review was not restarted after a crash")
-
-  defp await_restart(sup, old, tries) do
-    case Supervisor.which_children(sup) do
-      [{_, pid, _, _}] when is_pid(pid) and pid != old ->
-        :ok
-
-      _ ->
-        :sys.get_state(sup)
-        await_restart(sup, old, tries - 1)
+  # Back once the process replacing `old` publishes, as it does on starting. The
+  # supervisor hears of the crash a moment after this process does, so asking it
+  # straight away can still name `old`.
+  defp await_restart(old) do
+    receive do
+      {:hal_c2_plugin_topic, _, @id, "reviews", value} ->
+        Process.put(:cr_topic, value)
+        if Process.whereis(@server) in [nil, old], do: await_restart(old)
+    after
+      10_000 -> problem("code-review was not restarted after a crash")
     end
   end
 

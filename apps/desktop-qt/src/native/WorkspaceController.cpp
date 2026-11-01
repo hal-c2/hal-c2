@@ -14,6 +14,8 @@
 #include "NavigationController.h"
 #include "McClient.h"
 #include "ProjectScripts.h"
+#include "ComposerController.h"
+#include "ProjectActionsController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
@@ -520,8 +522,16 @@ QString WorkspaceController::envMode() const {
 
 bool WorkspaceController::envModeChangeable() const {
   if (!m_place) return false;
-  if (!m_place->draftId.isEmpty()) return true;
+  if (!m_place->draftId.isEmpty()) return !eachModelGetsWorktree();
   return !locked() && m_place->worktreePath.isEmpty();
+}
+
+// Several models chosen for the draft: each starts in a worktree of its own, so
+// there is no workspace left to choose.
+bool WorkspaceController::eachModelGetsWorktree() const {
+  if (!m_place || m_place->draftId.isEmpty()) return false;
+  const auto* composer = NativeShell::of(this)->controller<ComposerController>();
+  return composer && composer->choseSeveralModels(m_place->draftId);
 }
 
 QString WorkspaceController::currentBranch() const {
@@ -671,6 +681,8 @@ QVariantMap WorkspaceController::build() const {
   const Checkout checkout = m_checkouts.value(place.draftId);
   const QString mode = envMode();
   const bool changeable = envModeChangeable();
+  const bool eachModel = eachModelGetsWorktree();
+  const QString currentWorkspace = place.worktreePath.isEmpty() ? QStringLiteral("Current checkout") : QStringLiteral("Current worktree");
   QVariant previous = QVariant::fromValue(nullptr);
   if (const std::optional<PreviousWorktree> seed = previousWorktree()) {
     previous = QVariantMap{{QStringLiteral("label"), seed->branch ? QStringLiteral("Previous worktree (%1)").arg(*seed->branch)
@@ -740,9 +752,11 @@ QVariantMap WorkspaceController::build() const {
       {QStringLiteral("isDraft"), draft},
       {QStringLiteral("envMode"), mode},
       {QStringLiteral("envModeLabel"),
-       changeable ? (mode == QLatin1String("worktree") ? QStringLiteral("New worktree")
-                                                       : QStringLiteral("Current checkout"))
-                  : (place.worktreePath.isEmpty() ? QStringLiteral("Local checkout") : QStringLiteral("Worktree"))},
+       eachModel    ? QStringLiteral("New worktree")
+       : changeable ? (mode == QLatin1String("worktree") ? QStringLiteral("New worktree") : currentWorkspace)
+                    : (place.worktreePath.isEmpty() ? QStringLiteral("Local checkout") : QStringLiteral("Worktree"))},
+      {QStringLiteral("currentWorkspaceLabel"), currentWorkspace},
+      {QStringLiteral("envModeHint"), eachModel ? QStringLiteral("Each model starts in its own worktree.") : QString()},
       {QStringLiteral("envModeChangeable"), changeable},
       {QStringLiteral("startFromOrigin"), checkout.startFromOrigin},
       {QStringLiteral("branch"), nullable(branch)},
@@ -773,7 +787,7 @@ QVariantMap WorkspaceController::build() const {
 }
 
 std::optional<WorkspaceController::PreviousWorktree> WorkspaceController::previousWorktree() const {
-  if (!m_place || m_place->draftId.isEmpty()) return std::nullopt;
+  if (!m_place || m_place->draftId.isEmpty() || eachModelGetsWorktree()) return std::nullopt;
   std::optional<PreviousWorktree> latest;
   qint64 latestAt = 0;
   for (const sidebar::Thread& thread : m_store->threads()) {
@@ -1026,9 +1040,16 @@ void WorkspaceController::runScript(const QString& scriptId) {
 void WorkspaceController::setEnvMode(const QString& mode) {
   if (!envModeChangeable() || (mode != QLatin1String("local") && mode != QLatin1String("worktree"))) return;
   if (!m_place->draftId.isEmpty()) {
-    updateCheckout([mode](Checkout& checkout) {
+    // Choosing a new worktree starts with the setting's word on origin; the
+    // base picker's switch changes it for this thread alone.
+    const auto* actions = NativeShell::of(this)->controller<ProjectActionsController>();
+    const bool fromOrigin = actions && actions->startsWorktreesFromOrigin(m_place->environmentId);
+    updateCheckout([mode, fromOrigin](Checkout& checkout) {
+      const bool wasNew = checkout.envMode == QLatin1String("worktree") && !checkout.worktreePath;
       checkout.envMode = mode;
-      if (mode == QLatin1String("worktree")) checkout.worktreePath.reset();
+      if (mode != QLatin1String("worktree")) return;
+      checkout.worktreePath.reset();
+      if (!wasNew) checkout.startFromOrigin = fromOrigin;
     });
     return;
   }

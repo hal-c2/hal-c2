@@ -25,7 +25,7 @@ Item {
     }
 
     function block(id, text, more) {
-        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0 }, more ?? {});
+        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more ?? {});
     }
 
     function pageOf(id, more) {
@@ -93,6 +93,47 @@ Item {
             verify(screen.stepBack());
             compare(screen.view, "spaces");
             verify(!screen.stepBack());
+        }
+
+        function test_theImagesAreOneStepFromThePagesAndSignedOnlyWhileOpen() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.showImages();
+            compare(screen.view, "images");
+            compare(dispatched("space.images.show")[0].shown, true);
+            verify(screen.stepBack());
+            compare(screen.view, "pages");
+            compare(dispatched("space.images.show")[1].shown, false);
+        }
+
+        function test_aPageOffersTheSpacesImagesAndTheWayToGetMore() {
+            const screen = makeScreen({ images: [{ id: "i1", name: "cat.png", prompt: "", url: "" }] });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            screen.pickImage(undefined);
+            const rows = sheetOf(screen).rows;
+            compare(rows.map(row => row.id), ["i1", "browse"]);
+            sheetOf(screen).choose("i1");
+            const inserted = dispatched("space.block.insert")[0];
+            compare(inserted.kind, "image");
+            compare(inserted.imageId, "i1");
+            compare(inserted.text, "cat.png");
+            screen.pickImage(undefined);
+            sheetOf(screen).choose("browse");
+            compare(screen.view, "images");
+        }
+
+        function test_anImageInTheTrashComesBackOrGoesForGood() {
+            const screen = makeScreen();
+            screen.imageMenu("i1");
+            sheetOf(screen).choose("trash");
+            compare(dispatched("space.image.trash")[0].imageId, "i1");
+            screen.imageTrashMenu("i1");
+            sheetOf(screen).choose("restore");
+            compare(dispatched("space.image.restore")[0].imageId, "i1");
+            screen.imageTrashMenu("i1");
+            sheetOf(screen).choose("delete");
+            compare(dispatched("space.image.delete")[0].imageId, "i1");
         }
 
         function test_aNewPageOpensWhenItArrives() {

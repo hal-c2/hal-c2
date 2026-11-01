@@ -115,7 +115,7 @@ function resolveQmlDir(): string {
 }
 
 async function main(): Promise<void> {
-  const logPath = process.env.HAL_C2_TUI_LOG ?? "/tmp/hal-c2-tui.log";
+  const logPath = process.env.HAL_C2_TUI_LOG ?? NodePath.join(NodeOS.tmpdir(), "hal-c2-tui.log");
   const appendLog = (line: string) => {
     try {
       NodeFS.appendFileSync(logPath, `${line}\n`);

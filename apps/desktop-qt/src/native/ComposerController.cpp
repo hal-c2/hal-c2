@@ -992,6 +992,7 @@ bool ComposerController::toggleMultipleModel(const QString& target, const QStrin
         QStringLiteral("warning"), QStringLiteral("Only one model can be chosen"),
         QStringLiteral("Multiple models need a new thread in a Git project. Each gets its own worktree."));
     m_drafts[target].multipleModels.reset();
+    NativeShell::of(this)->controller<WorkspaceController>()->publish();
     return selectModel(target, instanceId, model);
   }
   Draft& kept = m_drafts[target];
@@ -1009,6 +1010,7 @@ bool ComposerController::toggleMultipleModel(const QString& target, const QStrin
     if (!kept.multipleModels) m_bridge->dispatch(QStringLiteral("workspace.envMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("worktree")}});
     m_drafts[target].multipleModels = models;
   }
+  NativeShell::of(this)->controller<WorkspaceController>()->publish();
   save();
   publish();
   return true;
@@ -2695,6 +2697,7 @@ bool ComposerController::selectModel(const QString& target, const QString& insta
   }
   kept.modelSelection = chosen;
   kept.multipleModels.reset();
+  NativeShell::of(this)->controller<WorkspaceController>()->publish();
   save();
   publish();
   return true;

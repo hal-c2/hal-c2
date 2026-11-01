@@ -149,8 +149,7 @@ defmodule HalC2.PortableSessions do
   end
 
   defp opencode_import(instance, export, root) do
-    file =
-      Path.join(System.tmp_dir!(), "hal-c2-opencode-#{System.unique_integer([:positive])}.json")
+    file = HalC2.Scratch.path("hal-c2-opencode", ".json")
 
     try do
       File.write!(file, JSON.encode!(export))
