@@ -97,6 +97,35 @@ Feature: Agent code review
       Then a new review of #12 starts for the new head commit
 
     @mc
+    Scenario: A new run stops the agent it replaces before removing its checkout
+      Given "code-review" reviews new pushes
+      And a review of #12 is running
+      And the review's agent is still working after its review failed
+      And #12 has a new head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the replaced thread has no running turn
+      And the replaced thread's checkout is removed
+
+    @mc
+    Scenario: A report from a replaced thread is refused with a reason that names the replacement
+      Given "code-review" reviews new pushes
+      And a review of #12 is running
+      And the review's agent is still working after its review failed
+      And #12 has a new head commit
+      When "code-review" looks at "acme/api" again
+      And the replaced thread's agent reports late
+      Then the report is refused saying it was replaced by a run of the new head commit
+      And the new review of #12 has no findings from the replaced thread
+
+    @mc
+    Scenario: A report from a thread whose review is published hears that it is published
+      Given the review of #12 is waiting to be published
+      When the user publishes the review of #12
+      And the agent reports again
+      Then the report is refused saying "This review is already published."
+
+    @mc
     Scenario: A new push is left alone when the user does not want re-reviews
       Given "code-review" does not review new pushes
       And #12 was reviewed at an older head commit

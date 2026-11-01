@@ -246,6 +246,74 @@ defmodule HalC2.CodeReviewTest do
     assert reviewed == context.shas[2]
   end
 
+  test "a new run stops the agent it replaces, and tells it why its report is refused",
+       context do
+    save_settings(%{"reviewNewPushes" => true})
+    old = start_review()
+    # The review failed while the agent goes on, as across a restart of the plugin.
+    event = %{"type" => "turn.finished", "threadId" => old["threadId"], "status" => "failed"}
+    :ok = apply(@server, :handle_event, [event, %{}])
+    settle()
+    assert %{"status" => "failed"} = review()
+    assert [%{"status" => "running"}] = active_runs(old["threadId"])
+
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+
+    assert %{"status" => "running", "threadId" => new, "reviewedSha" => sha} = review()
+    assert new != old["threadId"]
+    assert [] = active_runs(old["threadId"])
+    refute File.exists?(old["checkout"])
+
+    assert Enum.any?(HalC2.Plugins.tools(old["threadId"]), &(&1["name"] == "code_review_report"))
+
+    assert {:error, "plugin_failed", message} =
+             HalC2.Plugins.call_tool(
+               "code_review_report",
+               %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+               old["threadId"]
+             )
+
+    assert message =~ "replaced by a newer run for #{String.slice(sha, 0, 7)}"
+    assert %{"status" => "running", "threadId" => ^new, "verdict" => nil} = review()
+  end
+
+  test "discarding a failed review stops the agent still working in its checkout", _context do
+    review = start_review()
+    event = %{"type" => "turn.finished", "threadId" => review["threadId"], "status" => "failed"}
+    :ok = apply(@server, :handle_event, [event, %{}])
+    settle()
+
+    {:ok, _} = call("discard", %{"key" => @key})
+
+    assert [] = active_runs(review["threadId"])
+    refute File.exists?(review["checkout"])
+
+    assert HalC2.Plugins.tools(review["threadId"])
+           |> Enum.all?(&(&1["name"] != "code_review_report"))
+  end
+
+  test "a thread whose review is published is told so when it reports again", _context do
+    review = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    {:ok, _} = call("publish", %{"key" => @key})
+    settle()
+
+    assert {:error, "plugin_failed", message} =
+             HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+
+    assert message =~ "already published"
+  end
+
+  test "only the plugin that started a thread can stop it", _context do
+    review = start_review()
+
+    assert {:error, _} = HalC2.Orchestration.stop_plugin_thread(review["threadId"], "other")
+    assert [_] = active_runs(review["threadId"])
+  end
+
   test "a push to a followed pull request is seen after its repository stops being watched",
        context do
     review = start_review()
@@ -700,6 +768,12 @@ defmodule HalC2.CodeReviewTest do
   end
 
   def hold(_thread_id, _server, _test, _stage, _stream_id), do: :ok
+
+  defp active_runs(thread_id) do
+    HalC2.Streams.state(thread_id)
+    |> HalC2.StreamState.list("run")
+    |> Enum.filter(&(&1["status"] in ~w(preparing starting running waiting)))
+  end
 
   defp thread(thread_id) do
     HalC2.StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id]

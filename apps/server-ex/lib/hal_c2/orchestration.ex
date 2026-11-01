@@ -1303,6 +1303,78 @@ defmodule HalC2.Orchestration do
     end)
   end
 
+  @doc """
+  Stops a thread the plugin started: interrupts whatever it is running and releases
+  its session, so nothing of its agent is left working in its workspace, background
+  work between turns included. The thread stays, and a later message resumes it.
+  Answers once that is done, `:busy` if it is not within `timeout` ms, or `{:error,
+  message}` for a thread that is not the plugin's to stop.
+  """
+  def stop_plugin_thread(thread_id, plugin_id, timeout \\ 15_000) do
+    read = fn state ->
+      thread = StreamState.get(state, "thread")[thread_id]
+
+      cond do
+        thread == nil ->
+          {[], {:error, "unknown thread #{thread_id}"}}
+
+        get_in(thread, ["plugin", "id"]) != plugin_id ->
+          {[], {:error, "Thread #{thread_id} was not started by #{plugin_id}."}}
+
+        thread["deletedAt"] != nil or thread["movedTo"] != nil ->
+          {[], :ok}
+
+        true ->
+          {[], :stop}
+      end
+    end
+
+    case HalC2.Streams.transact(thread_id, :thread, read) do
+      :stop ->
+        :ok = HalC2.Streams.watch(thread_id, self())
+
+        try do
+          stop_runs(thread_id, nil, System.monotonic_time(:millisecond) + timeout)
+        after
+          HalC2.Streams.Server.unsubscribe(thread_id, self())
+        end
+
+      answer ->
+        answer
+    end
+  end
+
+  # A run promoted from the queue meanwhile is interrupted too; a runtime still closing
+  # its turn after the run ended answers `:busy`, and is asked again.
+  defp stop_runs(thread_id, asked, deadline) do
+    runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
+    active = Enum.find_value(runs, &(&1["status"] in @active_statuses && &1["id"]))
+
+    if active && active != asked do
+      dispatch(%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => active})
+    end
+
+    released = if active, do: :busy, else: release_session(thread_id)
+    left = deadline - System.monotonic_time(:millisecond)
+
+    cond do
+      released != :busy ->
+        released
+
+      left <= 0 ->
+        :busy
+
+      true ->
+        receive do
+          {:hal_c2_stream, ^thread_id, _} -> :ok
+        after
+          min(left, 500) -> :ok
+        end
+
+        stop_runs(thread_id, active || asked, deadline)
+    end
+  end
+
   defp organize_fields(thread, changes, at) do
     settled =
       case changes["settled"] do

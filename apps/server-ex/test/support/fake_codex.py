@@ -11,7 +11,7 @@
 # in FAKE_CODEX_GATE (see stream_reply); "answer from gate" waits for the gate file
 # "answer" and replies with its contents, or with no message when it is empty; a steer
 # with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
-import glob, json, os, re, sys, time, uuid
+import glob, json, os, re, sys, threading, time, uuid
 
 # With FAKE_CODEX_TRACE set, every message read is appended to it as a JSON line.
 # FAKE_CODEX_MODELS is the JSON `data` model/list answers with.
@@ -30,7 +30,15 @@ def trace(entry):
 # The arguments the app-server was started with, first in the trace.
 trace({"argv": sys.argv[1:], "home": os.environ.get("CODEX_HOME")})
 
+send_lock = threading.Lock()
+# The turns turn/interrupt stopped, which an "answer from gate" turn no longer answers.
+interrupted_turns = set()
+
 def send(msg):
+    with send_lock:
+        write(msg)
+
+def write(msg):
     # FAKE_CODEX_FRAMING plays the wire's shapes: "split" writes a message in two
     # flushes, "crlf" ends lines as Windows does, "blank" pads them with blank
     # lines, and "batch" flushes only when a turn or a reply ends, so several
@@ -64,6 +72,20 @@ def gate(name):
     path = os.path.join(os.environ["FAKE_CODEX_GATE"], name)
     while not os.path.exists(path):
         time.sleep(0.01)
+
+# Ends an "answer from gate" turn once the gate file "answer" exists. It runs beside the
+# read loop, so a stop reaches the turn while it waits, as it does a real one.
+def answer_from_gate(ctx, turn_id):
+    path = os.path.join(os.environ["FAKE_CODEX_GATE"], "answer")
+    while not os.path.exists(path):
+        if turn_id in interrupted_turns:
+            return
+        time.sleep(0.01)
+    answer = open(path).read()
+    if answer:
+        send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": ""}}})
+        send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": answer}}})
+    send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
 
 # "stream paragraphs" writes three paragraphs and a code block in pieces; "stream a reply"
 # writes text while a command runs and the plan changes. Each waits at gates in between.
@@ -299,12 +321,7 @@ for line in sys.stdin:
             stream_reply(ctx, text)
             continue
         if "answer from gate" in text:
-            gate("answer")
-            answer = open(os.path.join(os.environ["FAKE_CODEX_GATE"], "answer")).read()
-            if answer:
-                send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": ""}}})
-                send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": answer}}})
-            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            threading.Thread(target=answer_from_gate, args=(ctx, turn_id), daemon=True).start()
             continue
         # "in the background" starts a dev server in a unified exec terminal and ends the
         # turn with it running (or, with "wait", keeps the turn open); Codex reports it
@@ -615,6 +632,7 @@ for line in sys.stdin:
     elif method == "thread/backgroundTerminals/terminate":
         send({"id": mid, "result": {"terminated": True}})
     elif method == "turn/interrupt":
+        interrupted_turns.add(params["turnId"])
         send({"id": mid, "result": {}})
         # FAKE_CODEX_IGNORE_INTERRUPT acknowledges the stop and never ends the turn.
         if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):

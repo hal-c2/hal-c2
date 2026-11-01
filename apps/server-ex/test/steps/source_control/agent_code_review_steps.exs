@@ -962,6 +962,75 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     Map.put(context, :pushed, head)
   end
 
+  step "\#{int} has a new head commit", %{args: [number]} = context do
+    head =
+      push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
+
+    context
+    |> put_in([:heads, number], head)
+    |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
+  end
+
+  # The review failed on hearing a turn end, as it does when the plugin restarts under
+  # a run, while the agent goes on: the provider's turn is still open.
+  step "the review's agent is still working after its review failed", context do
+    event = %{"type" => "turn.finished", "threadId" => context.thread, "status" => "failed"}
+    :ok = apply(HalC2Plugins.CodeReview, :handle_event, [event, %{}])
+    {_, context} = await_review(context, 12, &(&1["status"] == "failed"))
+
+    context
+    |> Map.put(:replaced_thread, context.thread)
+    |> Map.put(:replaced_checkout, context.review["checkout"])
+  end
+
+  step "the replaced thread has no running turn", context do
+    runs = HalC2.StreamState.list(HalC2.Streams.state(context.replaced_thread), "run")
+    assert runs != []
+
+    refute Enum.any?(runs, &(&1["status"] in ~w(preparing starting running waiting))),
+           inspect(runs)
+
+    context
+  end
+
+  step "the replaced thread's checkout is removed", context do
+    refute File.exists?(context.replaced_checkout)
+    context
+  end
+
+  step "the replaced thread's agent reports late", context do
+    result = call_report(%{context | thread: context.replaced_thread}, findings("approve", 1))
+    Map.put(context, :report_result, result)
+  end
+
+  step "the report is refused saying it was replaced by a run of the new head commit", context do
+    assert %{"isError" => true, "content" => [%{"text" => text}]} = context.report_result
+    assert text =~ "replaced by a newer run for #{String.slice(context.heads[12], 0, 7)}"
+    assert text =~ "your report was not recorded"
+    refute text =~ "capability_denied"
+    context
+  end
+
+  step "the new review of \#{int} has no findings from the replaced thread",
+       %{args: [number]} = context do
+    {reply, context} = plugin(context, "reviews", %{})
+    assert {:ok, snapshot} = reply
+    review = review(snapshot, number)
+    assert review["threadId"] != context.replaced_thread
+    assert review["verdict"] == nil
+    context
+  end
+
+  step "the agent reports again", context do
+    Map.put(context, :report_result, call_report(context, findings("approve", 1)))
+  end
+
+  step "the report is refused saying {string}", %{args: [message]} = context do
+    assert %{"isError" => true, "content" => [%{"text" => text}]} = context.report_result
+    assert text =~ message
+    context
+  end
+
   step "\#{int} gets a review of the commit that was reviewed", %{args: [number]} = context do
     {review, context} = await_review(context, number, &(&1["status"] == "published"))
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
