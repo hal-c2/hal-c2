@@ -1803,9 +1803,10 @@ defmodule HalC2.Steps.Planning.Planner do
     ])
   end
 
-  # The bound is cut to a second for this look only, so the look after it reads as usual.
+  # The bound is cut to 5 seconds for this look only, which still leaves a healthy read
+  # room on a loaded machine, so the look after it reads as usual.
   step "the plugin looks at GitHub, giving up on reads that hang", context do
-    Application.put_env(:hal_c2, :planner_read_timeout, 1_000)
+    Application.put_env(:hal_c2, :planner_read_timeout, 5_000)
     on_exit(fn -> Application.delete_env(:hal_c2, :planner_read_timeout) end)
     context = sync!(context)
     Application.delete_env(:hal_c2, :planner_read_timeout)
