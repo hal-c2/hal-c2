@@ -2273,8 +2273,7 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   # As above, but GitHub holds `second` too: the scenario hears when it reaches GitHub
-  # and answers it after. Each name is noted when GitHub is asked for it or, for `first`,
-  # when GitHub answers.
+  # and answers it after. Each name is noted when GitHub is asked for it.
   step "GitHub takes renaming \#{int} to {string} late and to {string} late",
        %{args: [number, first, second]} = context do
     gate = Path.join(context.mc.home, "gh-gate")
@@ -2294,7 +2293,7 @@ defmodule HalC2.Steps.Planning.Planner do
 
     context
     |> World.cli_rules([
-      rename.(first, "cat '#{gate}' > /dev/null; echo '#{first}' >> '#{names}'"),
+      rename.(first, "echo '#{first}' >> '#{names}'; cat '#{gate}' > /dev/null"),
       rename.(
         second,
         "echo '#{second}' >> '#{names}'; echo > '#{started}'; cat '#{chained}' > /dev/null"
