@@ -54,6 +54,8 @@ defmodule HalC2.ScheduledTasksProofTest do
       "HalC2.ScheduledTasks handle_info _" => "ignores what it does not know, as stale does",
       "HalC2.ScheduledTasks state :unsettled" =>
         "Spaces to reconcile again on a tick; `reconcile-pages` may already come at any time",
+      "HalC2.ScheduledTasks state :silent" =>
+        "Spaces not to wait on when showing a page's task: it only puts off writing the page's view, and the model has no view; no task or run reads it",
       "HalC2.ScheduledTasks state :path" =>
         "where the tasks are saved; the model keeps them across a crash without a file"
     },
