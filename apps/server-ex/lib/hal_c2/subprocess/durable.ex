@@ -137,6 +137,8 @@ defmodule HalC2.Subprocess.Durable do
   """
   def launch(thread_id, cmd, opts) do
     dir = Path.join(root(), "#{hash(thread_id)}-#{System.unique_integer([:positive])}-#{now()}")
+    {mark, entry} = Orphans.new_mark()
+    opts = Keyword.update(opts, :env, [entry], &(Enum.to_list(&1 || []) ++ [entry]))
 
     with :ok <- make_dir(dir),
          :ok <- touch_files(dir),
@@ -147,6 +149,7 @@ defmodule HalC2.Subprocess.Durable do
         "pid" => pid,
         "started" => started,
         "group" => group,
+        "mark" => mark,
         "created" => now()
       }
 
@@ -441,7 +444,7 @@ defmodule HalC2.Subprocess.Durable do
     end
 
     status = read_status(dir)
-    File.rm_rf(dir)
+    remove(dir)
     if status, do: {:ok, status}, else: {:error, :killed}
   end
 
@@ -451,8 +454,31 @@ defmodule HalC2.Subprocess.Durable do
       if running?(dir), do: signal("-KILL", meta["group"])
     end
 
-    File.rm_rf(dir)
+    remove(dir)
     :ok
+  end
+
+  # What the program left in its group outlives it, a dev server say, and with the dir
+  # gone nothing could name it. A dir whose commands could not all be killed stays, so
+  # the next boot's `survivors/0` comes here again.
+  defp remove(dir) do
+    with %{"group" => group, "mark" => mark} <- meta(dir),
+         :kept <- sweep(Path.join(dir, "meta"), group, mark) do
+      :ok
+    else
+      _ -> File.rm_rf(dir)
+    end
+  end
+
+  # In a process of its own, as `shell/3`.
+  defp sweep(path, group, mark) do
+    {runner, ref} =
+      spawn_monitor(fn -> exit({:swept, Orphans.sweep_group(path, group, mark)}) end)
+
+    receive do
+      {:DOWN, ^ref, :process, ^runner, {:swept, outcome}} -> outcome
+      {:DOWN, ^ref, :process, ^runner, _crash} -> :kept
+    end
   end
 
   defp await_gone(_dir, tries) when tries <= 0, do: :ok

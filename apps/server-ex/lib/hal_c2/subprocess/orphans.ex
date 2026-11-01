@@ -48,9 +48,9 @@ defmodule HalC2.Subprocess.Orphans do
 
   The kernel's parent-death signal (`PR_SET_PDEATHSIG`) is not used. It would kill
   the program but leave its background commands with no leader to check the group
-  against, and macOS has none. A thread's provider program is outside all this: it
-  outlives the MC on purpose (`HalC2.Subprocess.Durable`), and this only tracks the
-  helper connecting the MC to it.
+  against, and macOS has none. A thread's provider program is outside the records: it
+  outlives the MC on purpose (`HalC2.Subprocess.Durable`), and they only track the
+  helper connecting the MC to it. It has a mark of its own, for `sweep_group/3`.
 
   macOS reads processes with `ps` and kills with BSD `kill`; no test runs there but
   the one of how `ps` output is read. Windows has neither `/proc` nor `ps`, so an MC
@@ -682,6 +682,13 @@ defmodule HalC2.Subprocess.Orphans do
   # The program is gone: kills what it left in its group, until none is left. With no
   # `/proc` to read marks from, or no mark (a record from before marks), nothing can
   # be told from a stranger, so nothing is signalled.
+  @doc """
+  Kills what a program whose leader is gone left in `group`, as a boot does for a record:
+  the processes carrying `mark`, one pid at a time. `path` goes once none are left;
+  `:kept` means some are, and it stays for the next boot. Nothing is signalled on macOS.
+  """
+  def sweep_group(path, group, mark), do: sweep(path, group, mark)
+
   defp sweep(path, group, mark) when is_binary(mark) and mark != "" do
     if File.dir?("/proc/self") do
       sweep(path, group, "#{@mark_var}=#{mark}", 50, :gone)

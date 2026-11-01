@@ -261,6 +261,23 @@ defmodule HalC2.SubprocessDurableTest do
              :erlang.binary_to_term(File.read!(Path.join(dir, "snapshot")))
   end
 
+  # Marks are read from `/proc`, as for a program a boot finds gone (`Orphans`).
+  @tag skip: not File.dir?("/proc/self")
+  test "what a program left in its group goes with it, under a stop and a kill" do
+    for finish <- [&Subprocess.stop/1, &Durable.kill_dir(&1.durable.dir)] do
+      {:ok, sub} = Subprocess.start(["sh", "-c", "sleep 60 & echo $!; exit 0"], durable: "t1")
+      assert {[line], _} = lines(sub, 1)
+      left = String.to_integer(line)
+      assert_receive {:subprocess_eof, _}, 5_000
+      refute HalC2.Subprocess.Orphans.gone?(left)
+
+      finish.(sub)
+      assert await_gone(left, 100)
+      refute File.exists?(sub.durable.dir)
+      flush_messages()
+    end
+  end
+
   defp flush_messages do
     receive do
       _ -> flush_messages()

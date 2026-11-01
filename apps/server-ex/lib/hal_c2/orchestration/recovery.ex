@@ -106,9 +106,10 @@ defmodule HalC2.Orchestration.Recovery do
   end
 
   defp current?(thread_id, snapshot) do
+    runs = HalC2.Streams.state(thread_id) |> StreamState.list("run")
+
     running =
-      HalC2.Streams.state(thread_id)
-      |> StreamState.list("run")
+      runs
       |> Enum.filter(&(&1["status"] in ~w(preparing starting running waiting)))
       |> Enum.map(& &1["id"])
 
@@ -118,7 +119,10 @@ defmodule HalC2.Orchestration.Recovery do
         _ -> []
       end
 
-    running == saved
+    # A queued run with nothing ahead of it: the MC went before moving it on. Settling holds
+    # it where the user can see, which a program left to go on would not do.
+    waiting? = running == [] and Enum.any?(runs, &(&1["status"] == "queued"))
+    running == saved and not waiting?
   end
 
   @doc false

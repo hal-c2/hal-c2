@@ -214,6 +214,15 @@ Feature: Reattaching to provider programs after a restart
       And the MC restarts
       Then "t1" shows that paragraph once
 
+    # The MC went between a turn's end and moving the queue on.
+    Scenario: A queued run with nothing ahead of it is held, not left waiting
+      Given thread "t1" finished a turn on "codex" and its provider process is live
+      And a queued run waits in "t1"
+      When the MC dies
+      And the MC restarts
+      Then that provider process has been killed
+      And the queued run of "t1" is held
+
     # The stop went out before the MC left, and the program never answers it.
     Scenario Outline: A stop that was out when the MC went still settles
       Given thread "t1" has a running turn on "<provider>"
