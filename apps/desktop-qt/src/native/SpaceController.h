@@ -192,8 +192,9 @@ private:
 //            openComments, imageId, imageState, imageUrl, imageWidth,
 //            imageHeight}: the page's blocks by their `order`; imageState is
 //            shown, trashed or deleted on an image block, else ""
-//   comments {id, blockId, blockText, body, resolved, byAgent, createdAt}:
-//            the page's comments, open ones first
+//   comments {id, blockId, blockText, blockGone, body, resolved, byAgent,
+//            createdAt}: the page's comments, open ones first; blockGone when
+//            the block it is on has left the page, as a restore can do
 //   images, imageTrash {id, name, prompt, mimeType, width, height, generatedBy,
 //            url}: the Space's images and those in its trash, the latest first
 //

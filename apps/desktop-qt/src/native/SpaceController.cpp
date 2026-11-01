@@ -419,7 +419,7 @@ SpacePages::SpacePages(QObject* parent)
       m_blocks(new SpaceRows({"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
                               "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
                              this)),
-      m_comments(new SpaceRows({"id", "blockId", "blockText", "body", "resolved", "byAgent", "createdAt"}, this)),
+      m_comments(new SpaceRows({"id", "blockId", "blockText", "blockGone", "body", "resolved", "byAgent", "createdAt"}, this)),
       m_images(new SpaceRows({"id", "name", "prompt", "mimeType", "width", "height", "generatedBy", "url"}, this)),
       m_imageTrash(new SpaceRows({"id", "name", "prompt", "mimeType", "width", "height", "generatedBy", "url"}, this)),
       m_history(new SpaceHistory([this](const QString& id) { return titleOf(id); },
@@ -729,8 +729,10 @@ void SpacePages::rebuild() {
   }
   QSet<QString> wanted;
   QList<QVariantMap> blocks;
+  QSet<QString> onPage;
   for (const QJsonObject& block : sorted(pageBlocks, QLatin1String("order"))) {
     const QString id = text(block, QLatin1String("id"));
+    onPage.insert(id);
     const QString imageId = text(block, QLatin1String("kind")) == QLatin1String("image") ? text(block, QLatin1String("imageId")) : QString();
     const QVariantMap fields = imageFields(imageId);
     if (fields.value(QStringLiteral("imageState")) == QLatin1String("shown")) wanted.insert(imageId);
@@ -793,6 +795,7 @@ void SpacePages::rebuild() {
                      {QStringLiteral("blockId"), blockId},
                      {QStringLiteral("blockText"),
                       text(m_space.entity(QStringLiteral("block"), blockId), QLatin1String("text"))},
+                     {QStringLiteral("blockGone"), !blockId.isEmpty() && !onPage.contains(blockId)},
                      {QStringLiteral("body"), text(comment, QLatin1String("body"))},
                      {QStringLiteral("resolved"), !comment.value(QLatin1String("resolvedAt")).toString().isEmpty()},
                      {QStringLiteral("byAgent"), byAgent(comment.value(QLatin1String("author")))},

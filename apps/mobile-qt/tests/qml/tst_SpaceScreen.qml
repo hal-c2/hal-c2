@@ -378,7 +378,7 @@ Item {
         }
 
         function test_aCommentOnAPageInTheTrashCannotBeResolved() {
-            const comment = { id: "c1", blockId: "", blockText: "", body: "Note", resolved: false, byAgent: false };
+            const comment = { id: "c1", blockId: "", blockText: "", blockGone: false, body: "Note", resolved: false, byAgent: false };
             const screen = makeScreen({ comments: [comment], page: root.pageOf("p1", { trashed: true }) });
             screen.openSpace("s1");
             screen.openPage("p1");
@@ -507,17 +507,17 @@ Item {
 
         function test_aCommentSaysItsBlockIsGone() {
             const screen = makeScreen({ blocks: [root.block("b1", "Draft")], comments: [
-                { id: "c1", blockId: "b9", blockText: "", body: "Why?", resolved: false, byAgent: false, createdAt: "" },
-                { id: "c2", blockId: "", blockText: "", body: "Page", resolved: false, byAgent: false, createdAt: "" },
-                { id: "c3", blockId: "b1", blockText: "Draft", body: "Here", resolved: false, byAgent: false, createdAt: "" }
+                { id: "c1", blockId: "b9", blockText: "", blockGone: true, body: "Why?", resolved: false, byAgent: false, createdAt: "" },
+                { id: "c2", blockId: "", blockText: "", blockGone: false, body: "Page", resolved: false, byAgent: false, createdAt: "" },
+                { id: "c3", blockId: "b1", blockText: "Draft", blockGone: false, body: "Here", resolved: false, byAgent: false, createdAt: "" }
             ] });
             screen.openSpace("s1");
             screen.openPage("p1");
             screen.showComments("");
             waitForRendering(screen);
-            verify(findChild(screen, "spaceCommentRow:Why?").blockGone);
-            verify(!findChild(screen, "spaceCommentRow:Page").blockGone);
-            verify(!findChild(screen, "spaceCommentRow:Here").blockGone);
+            compare(findChild(screen, "spaceCommentBlock:Why?").text, "On a block no longer on this page");
+            compare(findChild(screen, "spaceCommentBlock:Page").text, "");
+            compare(findChild(screen, "spaceCommentBlock:Here").text, "Draft");
         }
 
         function test_whatWasWrittenGoesToTheMcWhenTheEditorLosesFocus() {

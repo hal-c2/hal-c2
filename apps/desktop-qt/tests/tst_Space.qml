@@ -135,16 +135,15 @@ Item {
         }
 
         function test_a_comment_whose_block_a_restore_took_away_says_so() {
-            const view = root.research({ comments: [{ id: "c1", blockId: "gone", blockText: "", body: "Why?", resolved: false, byAgent: false, createdAt: "" }] });
+            const view = root.research({ comments: [{ id: "c1", blockId: "gone", blockText: "", blockGone: true, body: "Why?", resolved: false, byAgent: false, createdAt: "" }] });
             view.commentsShown = true;
-            const row = findChild(view, "spaceCommentRow:Why?");
-            verify(row.blockGone);
+            compare(findChild(view, "spaceCommentBlock:Why?").text, "On a block no longer on this page");
         }
 
         function test_a_comment_on_the_page_itself_has_lost_no_block() {
-            const view = root.research({ comments: [{ id: "c1", blockId: "", blockText: "", body: "Why?", resolved: false, byAgent: false, createdAt: "" }] });
+            const view = root.research({ comments: [{ id: "c1", blockId: "", blockText: "", blockGone: false, body: "Why?", resolved: false, byAgent: false, createdAt: "" }] });
             view.commentsShown = true;
-            verify(!findChild(view, "spaceCommentRow:Why?").blockGone);
+            verify(findChild(view, "spaceCommentBlock:Why?").text !== "On a block no longer on this page");
         }
 
         function test_a_slash_picks_the_kind_of_the_next_block() {
@@ -319,8 +318,8 @@ Item {
 
         function test_a_comment_goes_on_the_chosen_block_and_is_resolved_or_reopened() {
             const view = root.research({
-                comments: [{ id: "c1", blockId: "b2", blockText: "Two", body: "Which week?", resolved: false, byAgent: false, createdAt: "" },
-                           { id: "c2", blockId: "b2", blockText: "Two", body: "Done", resolved: true, byAgent: true, createdAt: "" }]
+                comments: [{ id: "c1", blockId: "b2", blockText: "Two", blockGone: false, body: "Which week?", resolved: false, byAgent: false, createdAt: "" },
+                           { id: "c2", blockId: "b2", blockText: "Two", blockGone: false, body: "Done", resolved: true, byAgent: true, createdAt: "" }]
             });
             mouseClick(findChild(view, "spaceComment:One"));
             const comments = findChild(view, "spaceComments");
