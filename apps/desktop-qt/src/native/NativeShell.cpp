@@ -275,14 +275,18 @@ void NativeShell::closeWindow(const QString& id) {
   m_windows.erase(it);
   if (m_activeWindow == window) m_activeWindow = nullptr;
   saveWindows();
-  // Its route and panels; the drafts are every window's.
-  if (!m_stateDir.isEmpty() && id == NativeWindow::kMain) {
-    QFile::remove(QDir(m_stateDir).filePath(QStringLiteral("shell-route.json")));
-    QFile::remove(QDir(m_stateDir).filePath(QStringLiteral("shell-panel.json")));
-    QFile::remove(QDir(m_stateDir).filePath(QStringLiteral("shell-terminals.json")));
-  } else if (!m_stateDir.isEmpty()) {
-    QDir(windowDir(id)).removeRecursively();
-  }
+  // Its route and panels go when it does, as it saves them until then; the
+  // drafts are every window's.
+  connect(window, &QObject::destroyed, [stateDir = m_stateDir, dir = windowDir(id), main = id == NativeWindow::kMain] {
+    if (stateDir.isEmpty()) return;
+    if (!main) {
+      QDir(dir).removeRecursively();
+      return;
+    }
+    QFile::remove(QDir(stateDir).filePath(QStringLiteral("shell-route.json")));
+    QFile::remove(QDir(stateDir).filePath(QStringLiteral("shell-panel.json")));
+    QFile::remove(QDir(stateDir).filePath(QStringLiteral("shell-terminals.json")));
+  });
   emit windowClosing(window);
   auto* panel = window->controller<RightPanelController>();
   WorkspaceFiles* files = panel ? panel->files() : nullptr;

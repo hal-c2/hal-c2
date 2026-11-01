@@ -666,6 +666,21 @@ Feature: Viewing and editing files
         | closes this window, leaving another |
         | quits the app                       |
 
+    @desktop
+    Scenario: A closed window goes once its edits are written
+      Given a save of "src/app.ts" is being written
+      And the user makes another edit
+      When the user closes this window, leaving another
+      Then the file ends up with both edits
+      And the closed window is gone, with what it kept on this device
+
+    @desktop
+    Scenario: Quitting does not wait for ever for an MC that does not answer
+      Given a save of "src/app.ts" is being written
+      And the user makes another edit
+      When the user quits the app and the MC does not answer
+      Then the app stops waiting with the write unanswered
+
     # Legacy: packages/client-runtime/src/state/projectCommands.ts (optimisticFile), apps/web/src/components/files/projectFilesQueryState.ts
     @desktop
     Scenario: A saved edit stays on screen while the file is read again
