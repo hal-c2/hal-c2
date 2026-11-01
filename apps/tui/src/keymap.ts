@@ -174,6 +174,16 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["g", "s", "o", "z"],
       },
       {
+        keys: "p · P",
+        description: "Spaces: publish a page as a site · publish it over Tailscale",
+        chords: ["p", "shift+p"],
+      },
+      {
+        keys: "Y · u",
+        description: "Spaces: copy a published page's link · unpublish it",
+        chords: ["shift+y", "u"],
+      },
+      {
         keys: "v",
         description: "Spaces: the Space's images (n generates one, i adds a file)",
         chords: ["v"],
@@ -395,6 +405,10 @@ export const KEYMAP_LAYERS = {
     z: "space.dismissAgent",
     l: "space.link",
     y: "space.export",
+    p: "space.publish",
+    "shift+p": "space.publishTailscale",
+    "shift+y": "space.copySiteLink",
+    u: "space.unpublish",
     i: "space.import",
     t: "space.fromThread",
     v: "space.images",

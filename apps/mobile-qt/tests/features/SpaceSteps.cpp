@@ -89,6 +89,13 @@ struct FakeSpaces {
   QHash<QString, QString> named;
   // The Space the scenario writes in.
   QString current;
+  // Where the MC makes a site's link: on the address it knows, marked when only
+  // this machine can open that, and what Tailscale names the machine (none: not running).
+  QString address = QStringLiteral("http://192.168.1.20:3773");
+  bool localOnly = false;
+  QString tailnet;
+  // The link each page was last published on, kept after it stops working.
+  QHash<QString, QString> links;
   // What each stream was sent, where the current Space's log stood when a
   // block moved, and what the client's blocks did since.
   struct Change {
@@ -641,7 +648,14 @@ Answer historyCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
   return {{{QStringLiteral("page"), one(mc, streamOf(space), QStringLiteral("page"), pageId)}}};
 }
 
-Answer written(FakeMc& mc, const QString& method, const QJsonObject& in);
+// What a site shows of the page: its title and its blocks' text.
+QJsonArray siteSnapshot(FakeMc& mc, const QString& space, const QJsonObject& page) {
+  QJsonArray shown{text(page, QLatin1String("title"))};
+  for (const QJsonObject& block : sortedBy(all(mc, streamOf(space), QStringLiteral("block")), QLatin1String("order"))) {
+    if (text(block, QLatin1String("pageId")) == text(page, QLatin1String("id"))) shown.append(text(block, QLatin1String("text")));
+  }
+  return shown;
+}
 
 // The MC's side of a page's agent: its thread is a row like any other, and how its run ends
 // is the scenario's.
@@ -686,17 +700,59 @@ Answer agentCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
   return {{{QStringLiteral("pageId"), pageId}}};
 }
 
+QJsonObject siteOfPage(FakeMc& mc, const QString& space, const QString& pageId) {
+  for (const QJsonObject& site : all(mc, streamOf(space), QStringLiteral("site"))) {
+    if (text(site, QLatin1String("pageId")) == pageId) return site;
+  }
+  return {};
+}
+
+Answer publishPage(FakeMc& mc, const QString& space, const QJsonObject& page, const QJsonObject& in) {
+  FakeSpaces& spaces = fake(mc);
+  const bool overTailscale = in.value(QLatin1String("tailscale")).toBool();
+  if (overTailscale && spaces.tailnet.isEmpty()) return refused(QStringLiteral("unavailable"), QStringLiteral("Tailscale is not running on this machine."));
+  const QString base = text(in, QLatin1String("baseUrl"));
+  const QString address = overTailscale ? QStringLiteral("https://") + spaces.tailnet : !base.isEmpty() ? base : spaces.address;
+  const bool localOnly = !overTailscale && base.isEmpty() && spaces.localOnly;
+  const QJsonObject before = siteOfPage(mc, space, text(page, QLatin1String("id")));
+  // Published again it keeps its token, and an address only this machine can open never replaces one others reach.
+  const QString id = before.isEmpty() ? newId(mc, QStringLiteral("token")) : text(before, QLatin1String("id"));
+  const bool keepsAddress = !before.isEmpty() && localOnly && !before.value(QLatin1String("localOnly")).toBool();
+  const QString url = keepsAddress ? text(before, QLatin1String("url")) : QStringLiteral("%1/sites/%2/%3").arg(address, space, id);
+  set(mc, streamOf(space), QStringLiteral("site"), id,
+      {{QStringLiteral("id"), id}, {QStringLiteral("spaceId"), space}, {QStringLiteral("pageId"), page.value(QLatin1String("id"))},
+       {QStringLiteral("url"), url}, {QStringLiteral("localOnly"), keepsAddress ? false : localOnly}, {QStringLiteral("publishedAt"), stamp(mc)},
+       {QStringLiteral("behind"), false}, {QStringLiteral("snapshot"), siteSnapshot(mc, space, page)}});
+  spaces.links.insert(text(page, QLatin1String("id")), url);
+  return {{{QStringLiteral("site"), one(mc, streamOf(space), QStringLiteral("site"), id)}}};
+}
+
+Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in);
+
+// A change, with what it means for the Space's sites: the site of a page gone or
+// in the trash comes down, and the others are behind when publishing would change them.
 Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
   if (method.endsWith(QLatin1String("Agent"))) return agentCall(mc, method, in);
-  if (method == QLatin1String("page.history") || method == QLatin1String("page.version") || method == QLatin1String("page.restoreVersion")) {
-    return historyCall(mc, method, in);
+  const bool history = method == QLatin1String("page.history") || method == QLatin1String("page.version") || method == QLatin1String("page.restoreVersion");
+  const Answer answer = history ? historyCall(mc, method, in) : decide(mc, method, in);
+  const QString space = text(in, QLatin1String("spaceId"));
+  if (space.isEmpty()) return answer;
+  if (!history && answer.error.isEmpty()) noteEdits(mc, space, kUser);
+  const QString stream = streamOf(space);
+  for (const QJsonObject& site : all(mc, stream, QStringLiteral("site"))) {
+    const QJsonObject page = one(mc, stream, QStringLiteral("page"), text(site, QLatin1String("pageId")));
+    const QString id = text(site, QLatin1String("id"));
+    if (page.isEmpty() || !live(mc, space, page)) {
+      remove(mc, stream, QStringLiteral("site"), id);
+      continue;
+    }
+    const bool behind = siteSnapshot(mc, space, page) != site.value(QLatin1String("snapshot")).toArray();
+    if (behind != site.value(QLatin1String("behind")).toBool()) set(mc, stream, QStringLiteral("site"), id, {{QStringLiteral("behind"), behind}});
   }
-  const Answer answer = written(mc, method, in);
-  if (answer.error.isEmpty() && in.contains(QLatin1String("spaceId"))) noteEdits(mc, text(in, QLatin1String("spaceId")), kUser);
   return answer;
 }
 
-Answer written(FakeMc& mc, const QString& method, const QJsonObject& in) {
+Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
   const QString space = text(in, QLatin1String("spaceId"));
   const QString stream = streamOf(space);
   const QString pageId = text(in, QLatin1String("pageId"));
@@ -787,7 +843,13 @@ Answer written(FakeMc& mc, const QString& method, const QJsonObject& in) {
       for (const QString& id : gone) remove(mc, stream, QStringLiteral("page"), id);
       return {{{QStringLiteral("deletedPageIds"), QJsonArray::fromStringList(gone)}}};
     }
+    if (method == QLatin1String("page.unpublish")) {
+      const QJsonObject site = siteOfPage(mc, space, pageId);
+      if (!site.isEmpty()) remove(mc, stream, QStringLiteral("site"), text(site, QLatin1String("id")));
+      return {{{QStringLiteral("pageId"), pageId}}};
+    }
     if (!live(mc, space, page)) return refused(QStringLiteral("trashed"), QStringLiteral("The page is in the trash."));
+    if (method == QLatin1String("page.publish")) return publishPage(mc, space, page, in);
     if (method == QLatin1String("page.rename")) {
       if (blank(in.value(QLatin1String("title")))) return refused(QStringLiteral("invalid"), QStringLiteral("A page needs a title."));
       set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("title"), text(in, QLatin1String("title")).trimmed()}, {QStringLiteral("updatedAt"), stamp(mc)}});
@@ -1256,6 +1318,27 @@ void trashMenu(World& world, const QString& title, const QString& choice) {
   choose(world, choice);
 }
 
+// The menu of the open page `id`, `choice` taken from it.
+void openPageMenu(World& world, const QString& id, const QString& choice) {
+  lookAtPage(world, id);
+  world.tap(S("spacePageActions"));
+  choose(world, choice);
+  settle(world);
+}
+
+// Waits for what the open page `title` shows of its site to be `wanted`.
+void expectSite(World& world, const QString& title, const std::function<bool(const QVariantMap&)>& shown, const QString& wanted) {
+  lookAtPage(world, idOfPage(world, title));
+  expectShown(world, [&] { return shown(viewOf(world)->page().value(S("site")).toMap()); }, S("%1 to %2").arg(title, wanted));
+}
+
+// The link the page was last published on, working or not.
+QString linkOf(World& world, const QString& title) {
+  const QString link = fake(world.mc).links.value(idOfPage(world, title));
+  expect(!link.isEmpty(), S("the page %1 was never published").arg(title));
+  return link;
+}
+
 // The menu of the block saying `said`, on its page, `choice` taken from it.
 void blockMenu(World& world, const QString& said, const QString& choice) {
   lookAtPage(world, text(blockSaying(world, said), QLatin1String("pageId")));
@@ -1547,8 +1630,10 @@ const Steps steps([] {
     // A page in the trash offers no way to write on it, and says why.
     const QString page = idOfPage(world, c[1]);
     lookAtPage(world, page);
-    world.item(S("spaceTrashedNotice"));
-    expect(world.find(S("spaceAddBlock")) == nullptr, S("a page in the trash offers to add a block"));
+    if (viewOf(world)->trash()->indexOf(page) >= 0) {
+      world.item(S("spaceTrashedNotice"));
+      expect(world.find(S("spaceAddBlock")) == nullptr, S("a page in the trash offers to add a block"));
+    }
     act(world, S("space.block.insert"), {{S("pageId"), page}, {S("kind"), S("paragraph")}, {S("text"), c[0]}});
   });
   step(S("the user deletes the page %1 for good").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -1890,6 +1975,78 @@ const Steps steps([] {
     act(world, S("space.history.restore"), {{S("version"), viewOf(world)->history()->versions()->get(1).value(S("version"))}});
     const FakeSpaces& spaces = fake(world.mc);
     expect(!spaces.last.error.isEmpty() && toldOf(world, spaces.last.error), S("the user is not told the restore was refused; toasts %1").arg(show(toasts(world))));
+  });
+  // Sites (features/space/sites.feature).
+  step(S("the user publishes the page %1 as a site").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString page = idOfPage(world, c[0]);
+    lookAtPage(world, page);
+    // A page in the trash offers no way to publish it.
+    if (viewOf(world)->page().value(S("trashed")).toBool()) {
+      act(world, S("space.page.publish"), {{S("pageId"), page}});
+    } else {
+      openPageMenu(world, page, S("publish"));
+    }
+  });
+  step(S("the user publishes the page %1 over Tailscale").arg(q), [](World& world, const Captures& c, const Table&) {
+    openPageMenu(world, idOfPage(world, c[0]), S("publishTailscale"));
+  });
+  step(S("the page %1 is published as a site").arg(q), [](World& world, const Captures& c, const Table&) {
+    given(world, S("page.publish"), {{S("pageId"), givenPage(world, c[0])}});
+    fake(world.mc).named.insert(S("link\n") + c[0], linkOf(world, c[0]));
+  });
+  step(S("the user unpublishes the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [](const QVariantMap& site) { return !site.isEmpty(); }, S("show it is published"));
+    world.tap(S("spaceSiteUnpublish"));
+    world.sync();
+  });
+  step(S("the user copies the site link of the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [](const QVariantMap& site) { return !site.isEmpty(); }, S("show it is published"));
+    world.clipboard.clear();
+    world.tap(S("spaceSiteCopy"));
+  });
+  step(S("the site link of the page %1 is on the clipboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString wanted = linkOf(world, c[0]);
+    world.waitFor([&] { return world.clipboard == wanted; }, [&] { return S("the clipboard to hold the link; it holds \"%1\"").arg(world.clipboard); });
+  });
+  step(S("the page %1 shows it is published with a link").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString link = linkOf(world, c[0]);
+    expectSite(world, c[0], [&](const QVariantMap& site) { return site.value(S("url")).toString() == link; }, S("show its link"));
+    world.item(S("spaceSiteLink"));
+  });
+  step(S("the page %1 shows it is not published").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [](const QVariantMap& site) { return site.isEmpty(); }, S("show it is not published"));
+  });
+  // The fake serves no pages, so what stops a link here is its site being gone from the MC.
+  step(S("the site link of the page %1 no longer opens").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(siteOfPage(world.mc, current(world), idOfPage(world, c[0])).isEmpty(), S("the MC still has the site of %1").arg(c[0]));
+  });
+  step(S("the second client sees the page %1 published").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(!second(world).siteOf(idOfPage(world, c[0])).isEmpty(), S("the second client does not show %1 published").arg(c[0]));
+  });
+  step(S("the page %1 shows its site is behind").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [](const QVariantMap& site) { return site.value(S("behind")).toBool(); }, S("show its site is behind"));
+  });
+  step(S("the page %1 shows its site is up to date").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [](const QVariantMap& site) { return !site.isEmpty() && !site.value(S("behind")).toBool(); }, S("show its site is up to date"));
+  });
+  step(S("the page %1 has the same site link").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString earlier = fake(world.mc).named.value(S("link\n") + c[0]);
+    expect(!earlier.isEmpty(), S("the page %1 had no link").arg(c[0]));
+    expectSite(world, c[0], [&](const QVariantMap& site) { return site.value(S("url")).toString() == earlier; }, S("keep the link %1").arg(earlier));
+  });
+  step(S("the MC listens only on this machine"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).address = world.mc.origin().toString();
+    fake(world.mc).localOnly = true;
+  });
+  step(S("the page %1 says only this machine can open its site link").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [](const QVariantMap& site) { return site.value(S("localOnly")).toBool(); }, S("say only this machine can open its link"));
+    world.item(S("spaceSiteLocalOnly"));
+  });
+  step(S("Tailscale names the MC's machine %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world.mc).tailnet = c[0];
+  });
+  step(S("the site link of the page %1 starts with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [&](const QVariantMap& site) { return site.value(S("url")).toString().startsWith(c[1]); }, S("have a link starting with %1").arg(c[1]));
   });
 
   // Comments.

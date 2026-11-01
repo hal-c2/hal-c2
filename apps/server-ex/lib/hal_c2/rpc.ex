@@ -379,6 +379,9 @@ defmodule HalC2.Rpc do
       else: required_scope("projects.writeFile")
   end
 
+  # Publishing over Tailscale opens the whole MC to the tailnet, as a pairing link there does.
+  def required_scope("space.page.publish", %{"tailscale" => true}), do: "access:write"
+
   def required_scope(method, _payload), do: required_scope(method)
 
   @doc "The session scope a client needs to call `method`, whatever it passes."
