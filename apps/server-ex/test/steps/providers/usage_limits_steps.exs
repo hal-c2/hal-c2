@@ -356,8 +356,6 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     consume(context, %{"instanceId" => "codex"})
   end
 
-  # Codex failing the redemption stands in for a timeout: the MC keeps the attempt's
-  # key after either.
   step "a second Codex instance has a banked reset credit", context do
     context = limits(context)
     second_codex_instance(context, true)
@@ -386,6 +384,8 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     context
   end
 
+  # Codex failing the redemption stands in for a timeout: the MC keeps the attempt's
+  # key after either.
   step "a reset credit redemption timed out", context do
     context = limits(context)
     flag = Path.join(context.fakes.dir, "consume-fails")
