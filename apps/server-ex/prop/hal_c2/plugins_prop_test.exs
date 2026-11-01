@@ -1028,26 +1028,31 @@ defmodule HalC2.PluginsPropTest do
 
   defp kill_until_down(_module, _sup, _ref, 0), do: raise("the plugin's supervisor never gave up")
 
+  # Only a kill counts. A missing worker proves nothing: its supervisor may not have seen
+  # the exit yet, and will restart it. The call exiting does prove the supervisor is gone,
+  # though its DOWN to this monitor can still be on the way.
   defp kill_until_down(module, sup, sup_ref, left) do
-    if worker = Process.whereis(module) do
-      ref = Process.monitor(worker)
-      Process.exit(worker, :kill)
+    worker = Process.whereis(module)
+    if worker, do: kill_and_wait(worker)
 
-      receive do
-        {:DOWN, ^ref, _, _, _} -> :ok
-      end
-
-      try do
-        :sys.get_state(sup)
-      catch
-        :exit, _ -> :ok
-      end
+    try do
+      :sys.get_state(sup, :infinity)
+    catch
+      :exit, _ ->
+        receive do
+          {:DOWN, ^sup_ref, _, _, _} -> :ok
+        end
+    else
+      _ -> kill_until_down(module, sup, sup_ref, if(worker, do: left - 1, else: left))
     end
+  end
+
+  defp kill_and_wait(worker) do
+    ref = Process.monitor(worker)
+    Process.exit(worker, :kill)
 
     receive do
-      {:DOWN, ^sup_ref, _, _, _} -> :ok
-    after
-      0 -> kill_until_down(module, sup, sup_ref, left - 1)
+      {:DOWN, ^ref, _, _, _} -> :ok
     end
   end
 
