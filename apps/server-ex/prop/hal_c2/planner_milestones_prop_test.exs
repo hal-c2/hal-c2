@@ -563,7 +563,12 @@ defmodule HalC2.PlannerMilestonesPropTest do
 
     HalC2.Prop.stop_services()
     # With no caller to go on, the moves GitHub still holds are answered so each gh ends.
-    for gate <- Process.get(:pl_held), do: File.write!(gate, "go\n", [:raw])
+    # Not File.write!: a gh already gone with its caller leaves a fifo with no reader, and
+    # opening that blocks for good.
+    for gate <- Process.get(:pl_held) do
+      System.cmd("timeout", ["5", "sh", "-c", "echo go > '#{gate}'"])
+    end
+
     {reader, notify} = Process.get(:pl_reader)
     File.write!(notify, "stop
 ", [:raw])
