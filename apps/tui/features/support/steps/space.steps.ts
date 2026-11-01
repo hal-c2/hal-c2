@@ -1135,8 +1135,6 @@ step("the images list shows the prompt {string}", (ctx: SpaceWorld, prompt: stri
   expect(listed(pane(ctx).rows, "image").map((text) => text.split("  · ")[1])).toContain(prompt);
 });
 
-step("the user opens the page {string}", (ctx: SpaceWorld, title: string) => openPage(ctx, title));
-
 step("the page shows the text {string}", (ctx: SpaceWorld, text: string) => {
   const rows = pane(ctx).rows.filter((row) => row.kind === "block" && row.first);
   expect(rows.map(blockText)).toContain(text);
