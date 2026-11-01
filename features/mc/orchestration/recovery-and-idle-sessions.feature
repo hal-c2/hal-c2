@@ -8,6 +8,7 @@
 #   apps/server-ex/lib/hal_c2/orchestration/idle_sessions.ex
 #   apps/server-ex/lib/hal_c2/subprocess/orphans.ex
 #   https://github.com/hal-c2/hal-c2/issues/254 (provider CLIs left running by an MC that died)
+#   https://github.com/hal-c2/hal-c2/issues/380 (commands a provider that already exited left in its group)
 #   https://github.com/hal-c2/hal-c2/issues/387 (commands in a session of their own outlive that kill)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (background subagents and commands, also between turns)
 #   https://github.com/hal-c2/hal-c2/issues/474 (a stop naming an earlier run ended what a later run left)
@@ -62,10 +63,9 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then the provider process and its background command have been killed
 
-  # The boot checks the group against its leader, so a provider that already
-  # exited (say, on its closed stdin) leaves its group's commands unsignalled:
-  # the other kill-reach limit HalC2.Subprocess.Orphans states.
-  @backlog @mc
+  # hal-c2/hal-c2#380: with no leader to check the group against, the boot goes by
+  # the mark in the commands' environment, which macOS gives it no way to read.
+  @mc
   Scenario: A command left in the group of a provider that already exited is killed at the next boot
     Given a provider process had exited leaving a command in its group when the MC died
     When the MC restarts

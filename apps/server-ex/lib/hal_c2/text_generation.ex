@@ -377,8 +377,7 @@ defmodule HalC2.TextGeneration do
   defp in_dir(dir, fun) when is_binary(dir), do: fun.(dir)
 
   defp in_dir(nil, fun) do
-    dir = Path.join(System.tmp_dir!(), "hal-c2-text-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
+    dir = HalC2.Scratch.dir("hal-c2-text")
 
     try do
       fun.(dir)

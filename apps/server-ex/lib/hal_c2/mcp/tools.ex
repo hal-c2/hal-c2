@@ -1112,5 +1112,8 @@ defmodule HalC2.Mcp.Tools do
   def orchestration({:error, message}) when is_binary(message),
     do: {:error, "orchestration_error", message}
 
+  def orchestration({:error, %{"message" => message}}) when is_binary(message),
+    do: {:error, "orchestration_error", message}
+
   def orchestration({:error, other}), do: {:error, "orchestration_error", inspect(other)}
 end

@@ -2430,6 +2430,8 @@ defmodule HalC2.Test.Mc.World do
       sessions = "FAKE_CODEX_SESSION_LOG=" <> Path.join(context.mc.home, "codex-sessions.jsonl")
       # The full requests and answers, as `codex_requests/2` reads them.
       full = "FAKE_CODEX_LOG=" <> Path.join(context.mc.home, "codex-requests.log")
+      # Steers wait while this file exists.
+      hold = "FAKE_CODEX_HOLD_STEER=" <> Path.join(context.mc.home, "hold-steer")
 
       Application.put_env(:hal_c2, :codex_command, [
         "env",
@@ -2437,6 +2439,7 @@ defmodule HalC2.Test.Mc.World do
         requests,
         sessions,
         full,
+        hold,
         "python3",
         "-u",
         @fake_codex

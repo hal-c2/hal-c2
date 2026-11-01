@@ -524,8 +524,7 @@ defmodule HalC2.Acp do
   # nothing, where other agents are still read from a throwaway session. A
   # manual `reload/1` reads with `:spawn`.
   defp read(id, generation, mode \\ :spawn) do
-    dir = Path.join(System.tmp_dir!(), "hal-c2-acp-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
+    dir = HalC2.Scratch.dir("hal-c2-acp")
 
     Process.put(staged_key(id), [])
     Process.put(:antigravity_disk_check, mode == :disk)

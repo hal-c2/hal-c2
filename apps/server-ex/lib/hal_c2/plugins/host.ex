@@ -175,6 +175,15 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
+  Stops a thread the plugin started, waiting for its agent to be gone
+  (`HalC2.Orchestration.stop_plugin_thread/3`).
+  """
+  def stop_thread(id, thread_id) do
+    with :ok <- permit(id, "threads:organize"),
+         do: HalC2.Orchestration.stop_plugin_thread(thread_id, id)
+  end
+
+  @doc """
   Calls `function` of the plugin's MC part with `args` on every other machine of
   the cluster connected now that runs the plugin, all at once:
   `[%{"machine" => label, "node" => node, "result" => result}]`. A machine that

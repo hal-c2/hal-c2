@@ -310,8 +310,9 @@ defmodule HalC2.Orchestration.Recovery do
                })
            )},
           {"message",
-           &if(&1["streaming"] == true,
-             do: Map.merge(&1, %{"streaming" => false, "updatedAt" => at})
+           &if(&1["streaming"] == true or Map.has_key?(&1, "steer"),
+             do:
+               &1 |> Map.delete("steer") |> Map.merge(%{"streaming" => false, "updatedAt" => at})
            )},
           # The provider that asked is gone, so nobody can answer the request now.
           {"runtime-request",
