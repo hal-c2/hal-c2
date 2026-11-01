@@ -52,24 +52,26 @@ defmodule HalC2.Usage.Aggregator do
 
       true ->
         acc = if key, do: %{acc | seen: MapSet.put(acc.seen, key)}, else: acc
-        {day, acc} = day(acc, ts)
 
         case acc.window do
-          _ when day == nil ->
-            {false, acc}
-
           {since, until} when ts < since or ts >= until ->
             {false, acc}
 
           {since, _} ->
             hour = since + div(ts - since, @hour_ms) * @hour_ms
+            # An hour sits on the day it starts in, even when a record in it is past
+            # midnight; one hour is one bucket.
+            {day, acc} = day(acc, hour)
             {true, put(acc, {day, iso(hour), provider, model}, session, totals, model, reported)}
 
-          nil when day < acc.since or day > acc.until ->
-            {false, acc}
-
           nil ->
-            {true, put(acc, {day, nil, provider, model}, session, totals, model, reported)}
+            case day(acc, ts) do
+              {day, acc} when day == nil or day < acc.since or day > acc.until ->
+                {false, acc}
+
+              {day, acc} ->
+                {true, put(acc, {day, nil, provider, model}, session, totals, model, reported)}
+            end
         end
     end
   end

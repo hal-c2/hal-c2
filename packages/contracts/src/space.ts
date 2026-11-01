@@ -4,18 +4,22 @@ import {
   IsoDateTime,
   SpaceBlockId,
   SpaceCommentId,
+  SpaceDeckId,
   SpaceId,
+  SpaceImageId,
   SpacePageId,
+  SpaceSlideId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
 /**
- * Spaces hold Pages that people and agents write together. Clients read them
- * from streams, the same subscribe/resume path as projects and threads:
+ * Spaces hold Pages that people and agents write together, and slide decks. Clients
+ * read them from streams, the same subscribe/resume path as projects and threads:
  * `SPACES_STREAM_ID` holds one `space` entity per Space, and `spaceStreamId(id)`
- * holds that Space's `page`, `block` and `comment` entities. The RPCs below
- * change them.
+ * holds that Space's `page`, `block`, `comment`, `image`, `site`, `deck` and `slide` entities.
+ * The RPCs below change them. An image's bytes are never on a stream: fetch them on
+ * demand from the address `assets.createUrl` signs for a `space-image`.
  */
 export const SPACES_STREAM_ID = "spaces";
 
@@ -56,8 +60,48 @@ export const SpaceBlockKind = Schema.Literals([
   "checklist",
   "callout",
   "subpage_link",
+  "chart",
+  "image",
 ]);
 export type SpaceBlockKind = typeof SpaceBlockKind.Type;
+
+/** The limits of a chart, in UTF-8 bytes for text. `HalC2.Space.Chart` enforces them. */
+export const SPACE_CHART_LIMITS = {
+  labels: 24,
+  series: 4,
+  titleBytes: 120,
+  labelBytes: 40,
+  requestBytes: 200,
+  sourceBytes: 160,
+  value: 1e15,
+} as const;
+
+/** Plain text a client shows as it is, and never interprets. */
+const SpaceChartText = (maxLength: number) => Schema.String.check(Schema.isMaxLength(maxLength));
+
+/**
+ * A chart our own drawing code draws: data only, with no URL, script, QML or formatting.
+ * The MC refuses anything else, and clients still treat every field as untrusted text.
+ * Values are from zero up, one per label.
+ */
+export const SpaceChart = Schema.Struct({
+  type: Schema.Literals(["bar", "line"]),
+  title: SpaceChartText(SPACE_CHART_LIMITS.titleBytes),
+  labels: Schema.Array(SpaceChartText(SPACE_CHART_LIMITS.labelBytes)).check(
+    Schema.isMaxLength(SPACE_CHART_LIMITS.labels),
+  ),
+  series: Schema.Array(
+    Schema.Struct({
+      name: SpaceChartText(SPACE_CHART_LIMITS.labelBytes),
+      values: Schema.Array(Schema.Finite).check(Schema.isMaxLength(SPACE_CHART_LIMITS.labels)),
+    }),
+  ).check(Schema.isMaxLength(SPACE_CHART_LIMITS.series)),
+  /** What was asked for, offered again when the user asks again. */
+  request: SpaceChartText(SPACE_CHART_LIMITS.requestBytes),
+  /** Where the numbers came from, written by the MC and not the model. */
+  source: SpaceChartText(SPACE_CHART_LIMITS.sourceBytes),
+});
+export type SpaceChart = typeof SpaceChart.Type;
 
 export const SpaceBlock = Schema.Struct({
   id: SpaceBlockId,
@@ -68,6 +112,10 @@ export const SpaceBlock = Schema.Struct({
   checked: Schema.Boolean,
   /** The page a `subpage_link` block points at. */
   linkedPageId: Schema.NullOr(SpacePageId),
+  /** What a `chart` block draws. Its `text` says what it is, for clients that do not draw it. */
+  chart: Schema.optional(SpaceChart),
+  /** The image an `image` block shows; its `text` is the caption. Only on image blocks. */
+  imageId: Schema.optional(SpaceImageId),
   /**
    * Sorts the page's blocks: compare as plain strings. A block inserted or moved
    * gets a key between its neighbours', so no other block changes.
@@ -93,6 +141,62 @@ export const SpaceComment = Schema.Struct({
 });
 export type SpaceComment = typeof SpaceComment.Type;
 
+export const SpaceDeck = Schema.Struct({
+  id: SpaceDeckId,
+  spaceId: SpaceId,
+  title: TrimmedNonEmptyString,
+  /** Set while the deck is in the trash. */
+  trashedAt: Schema.NullOr(IsoDateTime),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type SpaceDeck = typeof SpaceDeck.Type;
+
+export const SpaceSlide = Schema.Struct({
+  id: SpaceSlideId,
+  deckId: SpaceDeckId,
+  /** May be blank: a new slide starts that way. */
+  title: Schema.String,
+  /** Plain text, its lines apart by line breaks. */
+  body: Schema.String,
+  /** Sorts the deck's slides as `SpaceBlock.order` sorts a page's blocks. */
+  order: Schema.String,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type SpaceSlide = typeof SpaceSlide.Type;
+
+/** A provider and model, as chosen for anything else in HAL-C2. */
+const SpaceImageSelection = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  model: Schema.optional(Schema.String),
+});
+
+/**
+ * What is known about an image a Space keeps, not its bytes. Any number of blocks may
+ * show one image; a block whose image has left says so.
+ */
+export const SpaceImage = Schema.Struct({
+  id: SpaceImageId,
+  spaceId: SpaceId,
+  name: TrimmedNonEmptyString,
+  /** Read from the file's content: image/png, image/jpeg, image/gif or image/webp. */
+  mimeType: TrimmedNonEmptyString,
+  sizeBytes: Schema.Number,
+  width: Schema.Number,
+  height: Schema.Number,
+  /** What it was generated from; null for an image added from a file. */
+  prompt: Schema.NullOr(Schema.String),
+  /** The provider and model that made it; null for an image added from a file. */
+  generatedBy: Schema.NullOr(SpaceImageSelection),
+  /** Set while the image is in the trash. */
+  trashedAt: Schema.NullOr(IsoDateTime),
+  createdBy: SpaceAuthor,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type SpaceImage = typeof SpaceImage.Type;
+
 // Spaces
 
 /** Lists the Spaces, making the "Personal" Space first if there are none. */
@@ -106,7 +210,7 @@ export type SpaceCreateInput = typeof SpaceCreateInput.Type;
 export const SpaceRenameInput = Schema.Struct({ spaceId: SpaceId, name: TrimmedNonEmptyString });
 export type SpaceRenameInput = typeof SpaceRenameInput.Type;
 
-/** Deletes a Space that has no pages, in the trash or out of it. */
+/** Deletes a Space that has no pages, decks or images, in the trash or out of it. */
 export const SpaceDeleteInput = Schema.Struct({ spaceId: SpaceId });
 export type SpaceDeleteInput = typeof SpaceDeleteInput.Type;
 
@@ -148,6 +252,55 @@ export type SpacePageMoveInput = typeof SpacePageMoveInput.Type;
  */
 export const SpacePageRef = Schema.Struct({ spaceId: SpaceId, pageId: SpacePageId });
 export type SpacePageRef = typeof SpacePageRef.Type;
+
+/** A block as a published site shows it. A link to another page is only that page's title. */
+export const SpaceSiteBlock = Schema.Struct({
+  kind: SpaceBlockKind,
+  text: Schema.String,
+  checked: Schema.optional(Schema.Boolean),
+});
+export type SpaceSiteBlock = typeof SpaceSiteBlock.Type;
+
+/**
+ * A page published as a site, one per page, in the Space's stream. `id` is the secret in
+ * `url`: anyone holding the link reads `snapshot`, the page as it was at `publishedAt`,
+ * and nothing else. `behind` says the page has changed since. `localOnly` says only the
+ * MC's own machine can open `url`.
+ */
+export const SpaceSite = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  url: TrimmedNonEmptyString,
+  localOnly: Schema.Boolean,
+  publishedAt: IsoDateTime,
+  behind: Schema.Boolean,
+  snapshot: Schema.Struct({
+    title: TrimmedNonEmptyString,
+    blocks: Schema.Array(SpaceSiteBlock),
+  }),
+});
+export type SpaceSite = typeof SpaceSite.Type;
+
+/**
+ * Publishes a live page, or brings its site up to date under the same link. The link is
+ * on `baseUrl` when the caller knows an address others reach the MC at, over Tailscale
+ * with `tailscale` (which needs `access:write`), else on the address the MC listens on.
+ */
+export const SpacePagePublishInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  baseUrl: Schema.optional(TrimmedNonEmptyString),
+  tailscale: Schema.optional(Schema.Boolean),
+});
+export type SpacePagePublishInput = typeof SpacePagePublishInput.Type;
+
+export const SpacePagePublishResult = Schema.Struct({ site: SpaceSite });
+export type SpacePagePublishResult = typeof SpacePagePublishResult.Type;
+
+/** Takes the page's site down for good: publishing later makes a new link. */
+export const SpacePageUnpublishResult = Schema.Struct({ pageId: SpacePageId });
+export type SpacePageUnpublishResult = typeof SpacePageUnpublishResult.Type;
 
 export const SpacePageResult = Schema.Struct({ page: SpacePage });
 export type SpacePageResult = typeof SpacePageResult.Type;
@@ -193,6 +346,8 @@ export const SpaceBlockInsertInput = Schema.Struct({
   checked: Schema.optional(Schema.Boolean),
   /** Required for `subpage_link`, which shows that page's title. */
   linkedPageId: Schema.optional(SpacePageId),
+  /** Required for `image`: an image of this Space not in the trash. */
+  imageId: Schema.optional(SpaceImageId),
   afterBlockId: AfterBlockId,
 });
 export type SpaceBlockInsertInput = typeof SpaceBlockInsertInput.Type;
@@ -246,12 +401,171 @@ export type SpaceCommentRef = typeof SpaceCommentRef.Type;
 export const SpaceCommentResult = Schema.Struct({ comment: SpaceComment });
 export type SpaceCommentResult = typeof SpaceCommentResult.Type;
 
+// Decks
+
+/** A new deck with one blank slide. */
+export const SpaceDeckCreateInput = Schema.Struct({
+  spaceId: SpaceId,
+  title: TrimmedNonEmptyString,
+});
+export type SpaceDeckCreateInput = typeof SpaceDeckCreateInput.Type;
+
+/**
+ * A new deck copied from a live page, named after it: one slide per heading and what
+ * follows it, with anything before the first heading on a slide under the page's title.
+ * Later edits of the page do not reach the deck.
+ */
+export const SpaceDeckCreateFromPageInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+});
+export type SpaceDeckCreateFromPageInput = typeof SpaceDeckCreateFromPageInput.Type;
+
+export const SpaceDeckRenameInput = Schema.Struct({
+  spaceId: SpaceId,
+  deckId: SpaceDeckId,
+  title: TrimmedNonEmptyString,
+});
+export type SpaceDeckRenameInput = typeof SpaceDeckRenameInput.Type;
+
+/**
+ * Names one deck for `space.deck.trash`, `space.deck.restore` and `space.deck.delete`.
+ * Only a deck in the trash can be deleted; its slides go with it.
+ */
+export const SpaceDeckRef = Schema.Struct({ spaceId: SpaceId, deckId: SpaceDeckId });
+export type SpaceDeckRef = typeof SpaceDeckRef.Type;
+
+export const SpaceDeckResult = Schema.Struct({ deck: SpaceDeck });
+export type SpaceDeckResult = typeof SpaceDeckResult.Type;
+
+export const SpaceDeckDeleteResult = Schema.Struct({ deckId: SpaceDeckId });
+export type SpaceDeckDeleteResult = typeof SpaceDeckDeleteResult.Type;
+
+// Slides
+
+/**
+ * Where a slide goes in its deck: after `afterSlideId`, first with null, or last when
+ * it is left out.
+ */
+const AfterSlideId = Schema.optional(Schema.NullOr(SpaceSlideId));
+
+export const SpaceSlideInsertInput = Schema.Struct({
+  spaceId: SpaceId,
+  deckId: SpaceDeckId,
+  title: Schema.optional(Schema.String),
+  body: Schema.optional(Schema.String),
+  afterSlideId: AfterSlideId,
+});
+export type SpaceSlideInsertInput = typeof SpaceSlideInsertInput.Type;
+
+/** Changes what is given of a slide's title and body. */
+export const SpaceSlideUpdateInput = Schema.Struct({
+  spaceId: SpaceId,
+  slideId: SpaceSlideId,
+  title: Schema.optional(Schema.String),
+  body: Schema.optional(Schema.String),
+});
+export type SpaceSlideUpdateInput = typeof SpaceSlideUpdateInput.Type;
+
+export const SpaceSlideMoveInput = Schema.Struct({
+  spaceId: SpaceId,
+  slideId: SpaceSlideId,
+  afterSlideId: AfterSlideId,
+});
+export type SpaceSlideMoveInput = typeof SpaceSlideMoveInput.Type;
+
+export const SpaceSlideDeleteInput = Schema.Struct({ spaceId: SpaceId, slideId: SpaceSlideId });
+export type SpaceSlideDeleteInput = typeof SpaceSlideDeleteInput.Type;
+
+export const SpaceSlideResult = Schema.Struct({ slide: SpaceSlide });
+export type SpaceSlideResult = typeof SpaceSlideResult.Type;
+
+export const SpaceSlideDeleteResult = Schema.Struct({ slideId: SpaceSlideId });
+export type SpaceSlideDeleteResult = typeof SpaceSlideDeleteResult.Type;
+
+// Images
+
+/**
+ * Keeps an upload as an image, if its content is a PNG, JPEG, GIF or WebP. Upload with
+ * `attachments.createUploadUrl` first; the upload is used up whatever the answer.
+ */
+export const SpaceImageAddInput = Schema.Struct({
+  spaceId: SpaceId,
+  attachmentId: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+});
+export type SpaceImageAddInput = typeof SpaceImageAddInput.Type;
+
+/**
+ * An image from a prompt, made by the coding agent of `modelSelection`, or of the
+ * selection `space.image.providers` names when it is left out. Takes as long as the
+ * agent does, up to 5 minutes.
+ */
+export const SpaceImageGenerateInput = Schema.Struct({
+  spaceId: SpaceId,
+  prompt: TrimmedNonEmptyString,
+  modelSelection: Schema.optional(SpaceImageSelection),
+});
+export type SpaceImageGenerateInput = typeof SpaceImageGenerateInput.Type;
+
+/**
+ * Names one image for `space.image.trash`, `space.image.restore` and
+ * `space.image.delete`. Only an image in the trash can be deleted; its file goes with it.
+ */
+export const SpaceImageRef = Schema.Struct({ spaceId: SpaceId, imageId: SpaceImageId });
+export type SpaceImageRef = typeof SpaceImageRef.Type;
+
+export const SpaceImageResult = Schema.Struct({ image: SpaceImage });
+export type SpaceImageResult = typeof SpaceImageResult.Type;
+
+export const SpaceImageDeleteResult = Schema.Struct({ imageId: SpaceImageId });
+export type SpaceImageDeleteResult = typeof SpaceImageDeleteResult.Type;
+
+export const SpaceImageProvider = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  driver: TrimmedNonEmptyString,
+  status: Schema.Literals(["ready", "unavailable", "unsupported"]),
+  /** Why it cannot make an image; null when it can. */
+  message: Schema.NullOr(Schema.String),
+});
+export type SpaceImageProvider = typeof SpaceImageProvider.Type;
+
+/** Which providers can make an image, and which is used when the user does not choose. */
+export const SpaceImageProvidersResult = Schema.Struct({
+  providers: Schema.Array(SpaceImageProvider),
+  selection: Schema.NullOr(SpaceImageSelection),
+});
+export type SpaceImageProvidersResult = typeof SpaceImageProvidersResult.Type;
+
 // Errors
 
 /** A Space request the MC refused: something missing, a page in the trash, a move into itself. */
 export class SpaceError extends Schema.TaggedError<SpaceError>()("SpaceError", {
   message: Schema.String,
-  reason: Schema.Literals(["invalid", "notFound", "trashed", "notEmpty", "cycle"]),
+  reason: Schema.Literals(["invalid", "notFound", "trashed", "notEmpty", "cycle", "unavailable"]),
+}) {}
+
+/**
+ * A chart from `request` ("weekly turns"), drawn from what the MC counts or what the page
+ * says, or refused. A new block goes where `afterBlockId` says; with `blockId` the chart
+ * in that block is replaced where it is, and stays as it was if this fails.
+ */
+export const SpaceBlockVisualizeInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  request: Schema.String.check(Schema.isMaxLength(SPACE_CHART_LIMITS.requestBytes)),
+  blockId: Schema.optional(SpaceBlockId),
+  afterBlockId: AfterBlockId,
+});
+export type SpaceBlockVisualizeInput = typeof SpaceBlockVisualizeInput.Type;
+
+/**
+ * No chart was drawn: no text generation provider (`unavailable`), it failed or its answer
+ * was refused (`failed`), or real data cannot answer the request (`unanswerable`).
+ */
+export class SpaceChartError extends Schema.TaggedError<SpaceChartError>()("SpaceChartError", {
+  message: Schema.String,
+  reason: Schema.Literals(["unavailable", "failed", "unanswerable"]),
 }) {}
 
 /** A page could not be written from a thread: no text generation provider, or it failed. */
@@ -260,5 +574,17 @@ export class SpaceTextGenerationError extends Schema.TaggedError<SpaceTextGenera
   {
     message: Schema.String,
     reason: Schema.Literals(["unavailable", "failed"]),
+  },
+) {}
+
+/**
+ * An image could not be generated: this provider cannot, none is available, or the
+ * agent failed or left no image.
+ */
+export class SpaceImageGenerationError extends Schema.TaggedError<SpaceImageGenerationError>()(
+  "SpaceImageGenerationError",
+  {
+    message: Schema.String,
+    reason: Schema.Literals(["unsupported", "unavailable", "failed"]),
   },
 ) {}

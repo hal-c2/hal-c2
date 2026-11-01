@@ -3,8 +3,9 @@ import QtTest
 import "../qml/HalC2/Bricks"
 import HalC2.Shell
 
-// features/space/pages.feature: what the Space view asks of SpaceController
-// as the user writes a page, and what it shows of the Space it is given.
+// features/space/pages.feature, visualize.feature and slides.feature: what the Space view
+// asks of SpaceController as the user writes a page or a deck, and what it shows of the
+// Space it is given.
 Item {
     id: root
     width: 1200
@@ -19,11 +20,15 @@ Item {
     }
 
     function block(id, text, more) {
-        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0 }, more);
+        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more);
     }
 
     function pageRow(id, title, depth, parentPageId) {
         return { id: id, title: title, depth: depth, parentPageId: parentPageId, hasChildren: false, fromThread: false };
+    }
+
+    function imageRow(id, name, more) {
+        return Object.assign({ id: id, name: name, prompt: "", mimeType: "image/png", width: 4, height: 3, generatedBy: "", url: "" }, more);
     }
 
     // The Space "Research" with "Roadmap" (and its subpage "Q3") open.
@@ -54,6 +59,405 @@ Item {
             Spaces.reset();
         }
 
+        function chartBlock(type) {
+            return root.block("c1", "Signups (a chart; Numbers from this page)", {
+                kind: "chart",
+                chart: { type: type, title: "Signups", labels: ["May", "June"], series: [{ name: "Signups", values: [3, 5] }], request: "signups", source: "Numbers from this page" }
+            });
+        }
+
+        function test_a_chart_draws_its_bars_and_says_where_its_numbers_came_from() {
+            const view = root.research({ blocks: [chartBlock("bar")] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            compare(findChild(chart, "spaceChartTitle").text, "Signups");
+            compare(findChild(chart, "spaceChartSource").text, "Numbers from this page");
+            verify(findChild(chart, "spaceChartLabel:May") !== null);
+            verify(findChild(chart, "spaceChartBar") !== null);
+            verify(findChild(chart, "spaceChartLine") === null);
+            verify(!findChild(chart, "spaceChartUnmatched").visible);
+            verify(!findChild(chart, "spaceChartLegend").visible, "one series needs no legend");
+            verify(!findChild(view, "spaceBlockEditor:" + chartBlock("bar").text).visible, "a chart is not edited as text");
+        }
+
+        function test_a_chart_keeps_a_long_label_inside_the_plot() {
+            const row = chartBlock("line");
+            row.chart.labels = ["The first week of the year", "The last week"];
+            const view = root.research({ blocks: [row] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            const label = findChild(chart, "spaceChartLabel:The last week");
+            verify(label.x + label.width <= chart.width);
+            verify(findChild(chart, "spaceChartLabel:The first week of the year").x >= 0);
+        }
+
+        function test_a_chart_draws_its_line() {
+            const view = root.research({ blocks: [chartBlock("line")] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            verify(findChild(chart, "spaceChartLine") !== null);
+            verify(findChild(chart, "spaceChartBar") === null);
+        }
+
+        function test_a_chart_shows_the_numbers_behind_it_and_hides_them_again() {
+            const view = root.research({ blocks: [chartBlock("bar")] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            verify(findChild(chart, "spaceChartCell:May") === null);
+            mouseClick(findChild(chart, "spaceChartNumbers"));
+            tryVerify(() => findChild(chart, "spaceChartCell:May") !== null);
+            verify(findChild(chart, "spaceChartCell:5") !== null);
+            // In its own column: the empty corner holds the first one's place.
+            tryVerify(() => findChild(chart, "spaceChartCell:5").x > 0);
+            compare(findChild(chart, "spaceChartCell:May").x, 0);
+            compare(findChild(chart, "spaceChartCell:5").x, findChild(chart, "spaceChartCell:Signups").x);
+            mouseClick(findChild(chart, "spaceChartNumbers"));
+            tryVerify(() => !findChild(chart, "spaceChartTable").visible);
+        }
+
+        function test_a_chart_draws_nothing_when_its_numbers_do_not_match_its_labels() {
+            for (const values of [[3], [3, 5, 8], [3, "5"], [3, -5]]) {
+                const row = chartBlock("bar");
+                row.chart.series[0].values = values;
+                const view = root.research({ blocks: [row] });
+                const chart = findChild(view, "spaceChart");
+                tryVerify(() => chart !== null && chart.width > 0);
+                verify(findChild(chart, "spaceChartUnmatched").visible, JSON.stringify(values));
+                verify(findChild(chart, "spaceChartBar") === null);
+                verify(findChild(chart, "spaceChartLabel:May") === null);
+                verify(!findChild(chart, "spaceChartNumbers").visible);
+                compare(findChild(chart, "spaceChartTitle").text, "Signups");
+            }
+        }
+
+        function test_a_chart_shows_markup_as_plain_text() {
+            const row = chartBlock("bar");
+            row.chart.title = "<b>Signups</b>";
+            const view = root.research({ blocks: [row] });
+            const title = findChild(view, "spaceChartTitle");
+            tryVerify(() => title !== null);
+            compare(title.textFormat, Text.PlainText);
+            compare(title.text, "<b>Signups</b>");
+        }
+
+        function test_a_visualize_request_asks_the_mc_and_is_not_written_as_a_block() {
+            const view = root.research({});
+            const composer = findChild(view, "spaceComposer");
+            composer.forceActiveFocus();
+            composer.text = "/visualize weekly turns";
+            verify(!findChild(view, "spaceSlashMenu").visible);
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize weekly turns" }]);
+            compare(root.dispatched("space.block.insert").length, 0);
+            compare(composer.text, "");
+        }
+
+        function test_the_slash_menu_starts_a_visualize_request() {
+            const view = root.research({});
+            const composer = findChild(view, "spaceComposer");
+            composer.forceActiveFocus();
+            keyClick("/");
+            keyClick("v");
+            const slash = findChild(view, "spaceSlashMenu");
+            tryVerify(() => slash.visible);
+            compare(slash.shown.map(entry => entry.kind), ["chart"]);
+            keyClick(Qt.Key_Return);
+            tryVerify(() => !slash.visible);
+            compare(composer.text, "/visualize ");
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize").length, 0);
+        }
+
+        function test_asking_again_replaces_the_chart_and_can_be_dropped() {
+            const view = root.research({ blocks: [chartBlock("bar")] });
+            const again = findChild(view, "spaceAskAgain:" + chartBlock("bar").text);
+            tryVerify(() => again !== null);
+            again.clicked();
+            const composer = findChild(view, "spaceComposer");
+            compare(composer.text, "/visualize signups");
+            const hint = findChild(view, "spaceReplacing");
+            tryVerify(() => hint.visible);
+            mouseClick(hint);
+            tryVerify(() => !hint.visible);
+            compare(composer.text, "");
+            again.clicked();
+            composer.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", blockId: "c1" }]);
+        }
+
+        function test_writing_a_block_or_adding_below_ends_asking_again() {
+            const blocks = [chartBlock("bar"), root.block("b2", "Below", {})];
+            const view = root.research({ blocks: blocks });
+            const again = findChild(view, "spaceAskAgain:" + blocks[0].text);
+            tryVerify(() => again !== null);
+            const hint = findChild(view, "spaceReplacing");
+            const composer = findChild(view, "spaceComposer");
+            again.clicked();
+            tryVerify(() => hint.visible);
+            composer.text = "A plain paragraph";
+            composer.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            tryVerify(() => !hint.visible);
+            again.clicked();
+            tryVerify(() => hint.visible);
+            findChild(view, "spaceBlock:" + blocks[1].text).addBelowRequested("b2");
+            tryVerify(() => !hint.visible);
+            composer.text = "/visualize signups";
+            composer.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", afterBlockId: "b2" }]);
+        }
+
+        function pitch(more) {
+            const view = root.research(Object.assign({
+                deck: { id: "deck-1", title: "Pitch", trashed: false },
+                decks: [{ id: "deck-1", title: "Pitch" }],
+                slides: [{ id: "s1", title: "One", body: "" }, { id: "s2", title: "Two", body: "" }, { id: "s3", title: "Three", body: "" }]
+            }, more));
+            tryVerify(() => findChild(view, "spaceSlideTitle:2"));
+            return view;
+        }
+
+        function test_an_open_deck_shows_in_place_of_the_page() {
+            const view = pitch({});
+            verify(findChild(view, "spaceDeck").visible);
+            verify(!findChild(view, "spacePage").visible);
+            compare(findChild(view, "spaceDeckTitle").text, "Pitch");
+            compare(findChild(view, "spaceSlideTitle:1").text, "Two");
+        }
+
+        function test_the_images_give_way_to_a_deck_chosen_beside_them() {
+            const view = pitch({ images: [root.imageRow("i1", "cat.png")] });
+            mouseClick(findChild(view, "spaceImages"));
+            const browser = findChild(view, "spaceImagesBrowser");
+            tryVerify(() => browser.visible);
+            verify(!findChild(view, "spaceDeck").visible);
+            mouseClick(findChild(view, "spaceDeckRow:Pitch"));
+            tryVerify(() => !browser.visible);
+            verify(findChild(view, "spaceDeck").visible);
+        }
+
+        function test_slides_move_up_and_down_past_their_neighbours() {
+            const view = pitch({});
+            mouseClick(findChild(view, "spaceSlideUp:1"));
+            compare(root.dispatched("space.slide.move")[0].afterSlideId, "");
+            mouseClick(findChild(view, "spaceSlideUp:2"));
+            compare(root.dispatched("space.slide.move")[1].afterSlideId, "s1");
+            mouseClick(findChild(view, "spaceSlideDown:0"));
+            compare(root.dispatched("space.slide.move")[2].afterSlideId, "s2");
+        }
+
+        function test_a_slide_is_written_when_the_user_leaves_the_field() {
+            const view = pitch({});
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.text = "First";
+            title.focus = false;
+            compare(root.dispatched("space.slide.update")[0], { spaceId: "space-1", slideId: "s1", title: "First" });
+        }
+
+        function test_a_title_being_written_goes_to_its_own_deck() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            title.text = "Keynote";
+            Spaces.deck = { id: "deck-2", title: "Other", trashed: false };
+            compare(root.dispatched("space.deck.rename"), [{ spaceId: "space-1", deckId: "deck-1", title: "Keynote" }]);
+            compare(title.text, "Other");
+            title.focus = false;
+            compare(root.dispatched("space.deck.rename").length, 1);
+        }
+
+        function test_a_title_being_written_goes_to_the_space_its_deck_is_in() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            title.text = "Keynote";
+            Spaces.spaceId = "space-2";
+            Spaces.deck = {};
+            compare(root.dispatched("space.deck.rename"), [{ spaceId: "space-1", deckId: "deck-1", title: "Keynote" }]);
+        }
+
+        function test_picking_another_deck_renames_nothing_when_nothing_was_written() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            Spaces.deck = { id: "deck-2", title: "Other", trashed: false };
+            compare(title.text, "Other");
+            Spaces.deck = {};
+            title.focus = false;
+            compare(root.dispatched("space.deck.rename"), []);
+        }
+
+        function test_leaving_the_title_keeps_a_rename_from_another_client() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            Spaces.deck = { id: "deck-1", title: "Theirs", trashed: false };
+            title.focus = false;
+            compare(root.dispatched("space.deck.rename"), []);
+            compare(title.text, "Theirs");
+        }
+
+        function test_a_slide_being_written_goes_to_the_space_it_is_in() {
+            const view = pitch({});
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.text = "First";
+            Spaces.load({ spaceId: "space-2", spaceName: "Lab", spaces: [], pages: [], blocks: [], slides: [] });
+            tryVerify(() => root.dispatched("space.slide.update").length === 1);
+            compare(root.dispatched("space.slide.update")[0], { spaceId: "space-1", slideId: "s1", title: "First" });
+        }
+
+        function test_a_slide_being_written_survives_picking_a_deck_in_the_trash_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", write: { title: "First" } },
+                { tag: "body", field: "spaceSlideBody:0", write: { body: "First" } }
+            ];
+        }
+
+        function test_a_slide_being_written_survives_picking_a_deck_in_the_trash(data) {
+            const view = pitch({});
+            const field = findChild(view, data.field);
+            field.forceActiveFocus();
+            field.text = "First";
+            Spaces.load({
+                spaceId: "space-1",
+                spaceName: "Research",
+                deck: { id: "deck-9", title: "Old", trashed: true },
+                deckTrash: [{ id: "deck-9", title: "Old", trashedAt: "t" }],
+                slides: [{ id: "s9", title: "Gone", body: "" }]
+            });
+            tryVerify(() => root.dispatched("space.slide.update").length === 1);
+            compare(root.dispatched("space.slide.update")[0], Object.assign({ spaceId: "space-1", slideId: "s1" }, data.write));
+        }
+
+        function test_leaving_a_slide_keeps_an_edit_from_another_client_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", role: "title" },
+                { tag: "body", field: "spaceSlideBody:0", role: "body" }
+            ];
+        }
+
+        function test_leaving_a_slide_keeps_an_edit_from_another_client(data) {
+            const view = pitch({});
+            const field = findChild(view, data.field);
+            field.forceActiveFocus();
+            Spaces.slides.setProperty(0, data.role, "Theirs");
+            field.focus = false;
+            compare(root.dispatched("space.slide.update"), []);
+            compare(field.text, "Theirs");
+        }
+
+        function test_escape_on_a_slide_keeps_an_edit_from_another_client() {
+            const view = pitch({});
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.text = "Mine";
+            Spaces.slides.setProperty(0, "title", "Theirs");
+            keyClick(Qt.Key_Escape);
+            compare(root.dispatched("space.slide.update"), []);
+            compare(title.text, "Theirs");
+        }
+
+        function test_an_edit_from_another_client_does_not_replace_what_is_being_typed_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", role: "title" },
+                { tag: "body", field: "spaceSlideBody:0", role: "body" }
+            ];
+        }
+
+        function test_an_edit_from_another_client_does_not_replace_what_is_being_typed(data) {
+            const view = pitch({ slides: [{ id: "s1", title: "", body: "" }, { id: "s2", title: "Two", body: "" }, { id: "s3", title: "Three", body: "" }] });
+            const field = findChild(view, data.field);
+            field.forceActiveFocus();
+            keyClick(Qt.Key_M);
+            compare(field.text, "m");
+            Spaces.slides.setProperty(0, data.role, "Theirs");
+            compare(field.text, "m");
+        }
+
+        function test_writing_over_an_edit_from_another_client_is_the_users_to_make() {
+            const view = pitch({});
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.text = "Mine";
+            Spaces.slides.setProperty(0, "title", "Theirs");
+            title.focus = false;
+            compare(root.dispatched("space.slide.update"), [{ spaceId: "space-1", slideId: "s1", title: "Mine" }]);
+        }
+
+        function test_leaving_a_slide_of_a_trashed_deck_writes_nothing() {
+            const view = pitch({ deck: { id: "deck-1", title: "Pitch", trashed: true }, decks: [], deckTrash: [{ id: "deck-1", title: "Pitch", trashedAt: "t" }] });
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.focus = false;
+            const body = findChild(view, "spaceSlideBody:0");
+            body.forceActiveFocus();
+            body.focus = false;
+            compare(root.dispatched("space.slide.update"), []);
+        }
+
+        function test_a_slide_goes_below_the_one_the_user_added_from() {
+            const view = pitch({});
+            mouseClick(findChild(view, "spaceSlideAdd:0"));
+            compare(root.dispatched("space.slide.insert")[0].afterSlideId, "s1");
+            mouseClick(findChild(view, "spaceSlideDelete:1"));
+            compare(root.dispatched("space.slide.delete")[0].slideId, "s2");
+        }
+
+        function test_a_trashed_deck_is_read_only_with_the_way_back() {
+            const view = pitch({ deck: { id: "deck-1", title: "Pitch", trashed: true }, decks: [], deckTrash: [{ id: "deck-1", title: "Pitch", trashedAt: "t" }] });
+            verify(findChild(view, "spaceDeckTrashedBanner").visible);
+            verify(findChild(view, "spaceSlideTitle:0").readOnly);
+            verify(!findChild(view, "spaceDeckPresent").enabled);
+            mouseClick(findChild(view, "spaceDeckRestore"));
+            compare(root.dispatched("space.deck.restore")[0].deckId, "deck-1");
+        }
+
+        function test_the_trash_holds_decks_beside_pages() {
+            const view = root.research({
+                trash: [{ id: "page-9", title: "Old page", trashedAt: "t" }],
+                deckTrash: [{ id: "deck-9", title: "Old deck", trashedAt: "t" }]
+            });
+            mouseClick(findChild(view, "spaceTrash"));
+            compare(findChild(view, "spaceTrash").text, "Trash (2)");
+            mouseClick(findChild(view, "spaceRestoreDeck:Old deck"));
+            compare(root.dispatched("space.deck.restore")[0].deckId, "deck-9");
+            mouseClick(findChild(view, "spaceDeleteDeck:Old deck"));
+            compare(root.dispatched("space.deck.delete")[0].deckId, "deck-9");
+        }
+
+        function test_a_page_makes_a_deck_from_its_menu() {
+            const view = root.research({});
+            findChild(view, "spaceMakeDeck").triggered();
+            compare(root.dispatched("space.deck.createFromPage")[0].pageId, "page-1");
+        }
+
+        function test_the_presenter_steps_by_key_and_leaves_with_escape() {
+            const view = pitch({ presenting: true, slide: { id: "s2", title: "Two", body: "Words" }, slideNumber: 2, slideCount: 3 });
+            const keys = findChild(view, "spacePresenterKeys");
+            tryVerify(() => keys.activeFocus);
+            compare(findChild(view, "spacePresenterTitle").text, "Two");
+            compare(findChild(view, "spacePresenterCount").text, "2 / 3");
+            keyClick(Qt.Key_Right);
+            keyClick(Qt.Key_Space);
+            keyClick(Qt.Key_Left);
+            compare(root.dispatched("space.deck.step").map(entry => entry.by), [1, 1, -1]);
+            keyClick(Qt.Key_Escape);
+            compare(root.dispatched("space.deck.leave").length, 1);
+        }
+
+        function test_a_tap_on_the_left_goes_back_and_elsewhere_goes_on() {
+            const view = pitch({ presenting: true, slide: { id: "s1", title: "One", body: "" }, slideNumber: 1, slideCount: 3 });
+            const tap = findChild(view, "spacePresenterTap");
+            tryVerify(() => tap.visible && tap.width > 0);
+            mouseClick(tap, 10, 10);
+            mouseClick(tap, tap.width - 10, 10);
+            compare(root.dispatched("space.deck.step").map(entry => entry.by), [-1, 1]);
+        }
+
         function test_a_slash_picks_the_kind_of_the_next_block() {
             const view = root.research({});
             const composer = findChild(view, "spaceComposer");
@@ -61,6 +465,7 @@ Item {
             keyClick("/");
             keyClick("c");
             keyClick("h");
+            keyClick("e");
             const slash = findChild(view, "spaceSlashMenu");
             tryVerify(() => slash.visible);
             compare(slash.shown.map(entry => entry.kind), ["checklist"]);
@@ -163,6 +568,57 @@ Item {
             compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.restore", "space.page.delete"]);
         }
 
+        function site(more) {
+            return Object.assign({ id: "page-1", title: "Roadmap", parentPageId: "", trashed: false, sourceThreadId: "", sourceThreadTitle: "",
+                                   site: { url: "http://192.168.1.20:3773/sites/space-1/token", localOnly: false, behind: false, publishedAt: "" } }, more);
+        }
+
+        function test_an_unpublished_page_shows_no_site_and_offers_publishing() {
+            const view = root.research();
+            verify(!findChild(view, "spaceSiteBanner").visible);
+            mouseClick(findChild(view, "spacePageActions"));
+            const publish = findChild(view, "spacePublish");
+            verify(publish.visible);
+            compare(publish.text, "Publish as a site");
+            verify(!findChild(view, "spaceUnpublish").visible);
+            verify(!findChild(view, "spaceCopySiteLink").visible);
+            publish.triggered();
+            compare(dispatched("space.page.publish"), [{ pageId: "page-1" }]);
+        }
+
+        function test_a_published_page_shows_its_link_and_the_ways_on_and_back() {
+            const view = root.research({ page: site() });
+            verify(findChild(view, "spaceSiteBanner").visible);
+            compare(findChild(view, "spaceSiteLink").text, "http://192.168.1.20:3773/sites/space-1/token");
+            compare(findChild(view, "spacePublish").text, "Publish again");
+            verify(!findChild(view, "spaceSiteLocalOnly").visible);
+            mouseClick(findChild(view, "spaceSiteCopy"));
+            mouseClick(findChild(view, "spaceSiteRepublish"));
+            mouseClick(findChild(view, "spaceSiteUnpublish"));
+            compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.copySiteLink", "space.page.publish", "space.page.unpublish"]);
+        }
+
+        function test_the_page_says_when_its_site_is_behind() {
+            const view = root.research({ page: site() });
+            const upToDate = findChild(view, "spaceSiteStatus").text;
+            Spaces.page = site({ site: { url: "http://mc/sites/s/t", localOnly: false, behind: true, publishedAt: "" } });
+            verify(findChild(view, "spaceSiteStatus").text !== upToDate);
+        }
+
+        function test_a_link_only_this_machine_can_open_says_so_with_the_way_on() {
+            const view = root.research({ page: site({ site: { url: "http://127.0.0.1:3773/sites/s/t", localOnly: true, behind: false, publishedAt: "" } }) });
+            verify(findChild(view, "spaceSiteLocalOnly").visible);
+            mouseClick(findChild(view, "spaceSiteTailscale"));
+            compare(dispatched("space.page.publish"), [{ pageId: "page-1", tailscale: true }]);
+        }
+
+        function test_a_trashed_page_offers_no_publishing() {
+            const view = root.research({ page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: true, sourceThreadId: "", sourceThreadTitle: "" } });
+            mouseClick(findChild(view, "spacePageActions"));
+            verify(!findChild(view, "spacePublish").visible);
+            verify(findChild(view, "spaceCopyMarkdown").visible);
+        }
+
         function test_the_trash_restores_and_deletes_for_good() {
             const view = root.research({ trash: [{ id: "page-9", title: "Old", trashedAt: "2026-09-23T10:00:00.000Z" }] });
             const trash = findChild(view, "spaceTrash");
@@ -234,6 +690,107 @@ Item {
             keyClick("P");
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.page.rename"), [{ pageId: "page-1", title: "P" }]);
+        }
+
+        function test_an_image_block_is_placed_from_the_spaces_images() {
+            const view = root.research({ images: [root.imageRow("image-1", "cat.png")] });
+            findChild(view, "spaceComposer").forceActiveFocus();
+            keyClick("/");
+            keyClick("i");
+            keyClick("m");
+            keyClick(Qt.Key_Return);
+            const menu = findChild(view, "spaceImageMenu");
+            tryVerify(() => menu.opened);
+            mouseClick(findChild(view, "spaceImageMenu:cat.png"));
+            compare(root.dispatched("space.block.insert"), [{ pageId: "page-1", kind: "image", text: "cat.png", checked: false, imageId: "image-1" }]);
+        }
+
+        function test_an_image_block_says_what_became_of_its_image() {
+            const view = root.research({ blocks: [root.block("b1", "cat.png", { kind: "image", imageId: "i1", imageState: "trashed" }), root.block("b2", "dog.png", { kind: "image", imageId: "i2", imageState: "deleted" })] });
+            const trashed = findChild(view, "spaceBlockImage:cat.png");
+            compare(findChild(trashed, "spaceBlockImageSays").text, "This image is in the trash.");
+            mouseClick(findChild(trashed, "spaceBlockImageRestore"));
+            compare(root.dispatched("space.image.restore"), [{ imageId: "i1" }]);
+            tryVerify(() => findChild(view, "spaceBlockImage:dog.png") !== null);
+            const deleted = findChild(view, "spaceBlockImage:dog.png");
+            compare(findChild(deleted, "spaceBlockImageSays").text, "This image was deleted.");
+            verify(!findChild(deleted, "spaceBlockImageRestore").visible);
+        }
+
+        function test_an_image_that_will_not_decode_says_so() {
+            const view = root.research({ blocks: [root.block("b1", "cat.png", { kind: "image", imageId: "i1", imageState: "shown", imageUrl: "file:///nowhere/cat.png", imageWidth: 400, imageHeight: 200 })] });
+            const holder = findChild(view, "spaceBlockImage:cat.png");
+            tryCompare(findChild(holder, "spaceBlockImageSays"), "text", "This image could not be shown.");
+            verify(findChild(holder, "spaceBlockPicture").asynchronous);
+        }
+
+        function test_an_image_keeps_its_place_before_it_loads() {
+            const view = root.research({ blocks: [root.block("b1", "cat.png", { kind: "image", imageId: "i1", imageState: "shown", imageWidth: 400, imageHeight: 200 })] });
+            const holder = findChild(view, "spaceBlockImage:cat.png");
+            compare(holder.height, holder.width / 2);
+            compare(findChild(holder, "spaceBlockPicture").sourceSize.width, 1440);
+        }
+
+        function test_the_images_browser_trashes_restores_and_deletes() {
+            const view = root.research({ images: [root.imageRow("i1", "cat.png", { prompt: "a cat" })], imageTrash: [root.imageRow("i2", "dog.png")] });
+            mouseClick(findChild(view, "spaceImages"));
+            compare(root.dispatched("space.images.show"), [{ shown: true }]);
+            const browser = findChild(view, "spaceImagesBrowser");
+            tryVerify(() => browser.visible);
+            verify(!findChild(view, "spacePage").visible);
+            tryVerify(() => findChild(browser, "spaceImageTrash:cat.png") !== null);
+            const trash = findChild(browser, "spaceImageTrash:cat.png");
+            waitForItemPolished(findChild(browser, "spaceImageGrid").parent);
+            mouseClick(trash);
+            compare(root.dispatched("space.image.trash"), [{ imageId: "i1" }]);
+            mouseClick(findChild(browser, "spaceImagesTrash"));
+            tryVerify(() => findChild(browser, "spaceImageRestore:dog.png") !== null);
+            mouseClick(findChild(browser, "spaceImageRestore:dog.png"));
+            compare(root.dispatched("space.image.restore"), [{ imageId: "i2" }]);
+            mouseClick(findChild(browser, "spaceImageDelete:dog.png"));
+            compare(root.dispatched("space.image.delete"), [{ imageId: "i2" }]);
+            mouseClick(findChild(browser, "spaceImagesClose"));
+            tryVerify(() => !browser.visible);
+            compare(root.dispatched("space.images.show"), [{ shown: true }, { shown: false }]);
+        }
+
+        function test_cards_stay_level_with_or_without_a_prompt() {
+            const view = root.research({ images: [root.imageRow("i1", "cat.png", { prompt: "a cat" }), root.imageRow("i2", "dog.png")] });
+            mouseClick(findChild(view, "spaceImages"));
+            const browser = findChild(view, "spaceImagesBrowser");
+            tryVerify(() => findChild(browser, "spaceImage:dog.png") !== null);
+            waitForItemPolished(findChild(browser, "spaceImageGrid").contentItem);
+            const nameOf = card => findChild(findChild(browser, card), "spaceImageName");
+            tryCompare(nameOf("spaceImage:dog.png"), "y", nameOf("spaceImage:cat.png").y);
+        }
+
+        function test_the_generate_dialog_offers_only_who_can_generate() {
+            Shell.state = Object.assign({}, Shell.state, { space: { imageProviders: { providers: [{ instanceId: "codex", status: "ready" }, { instanceId: "claudeAgent", status: "unsupported" }], selection: { instanceId: "codex", model: "gpt-5" } } } });
+            const view = root.research({});
+            mouseClick(findChild(view, "spaceImages"));
+            mouseClick(findChild(view, "spaceImageGenerate"));
+            const dialog = findChild(view, "spaceImageDialog");
+            tryVerify(() => dialog.opened);
+            compare(root.dispatched("space.image.providers").length, 1);
+            compare(dialog.ready, ["codex"]);
+            compare(findChild(dialog.contentItem, "spaceImageModel").onlyInstances, ["codex"]);
+            compare(findChild(dialog.contentItem, "spaceImageNotHere").text, "Not supported here: claudeAgent");
+            verify(!findChild(dialog.contentItem, "spaceImageSubmit").enabled);
+            findChild(dialog.contentItem, "spaceImagePrompt").text = "a red fox";
+            mouseClick(findChild(dialog.contentItem, "spaceImageSubmit"));
+            compare(root.dispatched("space.image.generate"), [{ prompt: "a red fox", modelSelection: { instanceId: "codex", model: "gpt-5" } }]);
+        }
+
+        function test_the_generate_dialog_says_when_no_one_can_generate() {
+            Shell.state = Object.assign({}, Shell.state, { space: { imageProviders: { providers: [{ instanceId: "claudeAgent", status: "unsupported" }], selection: null } } });
+            const view = root.research({});
+            mouseClick(findChild(view, "spaceImages"));
+            mouseClick(findChild(view, "spaceImageGenerate"));
+            const dialog = findChild(view, "spaceImageDialog");
+            tryVerify(() => dialog.opened);
+            verify(findChild(dialog.contentItem, "spaceImageNoProvider").visible);
+            findChild(dialog.contentItem, "spaceImagePrompt").text = "a red fox";
+            verify(!findChild(dialog.contentItem, "spaceImageSubmit").enabled);
         }
 
         function test_a_page_from_a_thread_names_its_thread() {

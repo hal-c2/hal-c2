@@ -28,6 +28,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, TurnWatch}
   alias HalC2.JsonRpc.Connection
+  alias HalC2.Subprocess.Durable
 
   @state_version 3
 
@@ -203,6 +204,10 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  @doc "Goes on with the program an earlier MC left running (`HalC2.Subprocess.Durable`)."
+  def adopt(thread_id, survivor),
+    do: GenServer.call(ensure(thread_id), {:adopt, survivor}, 30_000)
+
   # --- server ------------------------------------------------------------------
 
   @impl true
@@ -265,6 +270,31 @@ defmodule HalC2.Codex.ThreadRuntime do
        # stopped: `%{item: failure item id}` while its reset is still unknown.
        usage_failure: nil
      }}
+  end
+
+  # A program an earlier MC left running: this runtime goes on from its checkpoint.
+  @impl true
+  def handle_call({:adopt, %{dir: dir, snapshot: snapshot}}, _from, state) do
+    Process.flag(:trap_exit, true)
+
+    with {:ok, conn} <-
+           Connection.start_link(
+             adopt: %{dir: dir, offset: snapshot.offset, channel: snapshot.channel},
+             handler: self(),
+             log: snapshot.state.thread_id,
+             program: "Codex App Server"
+           ),
+         {:ok, restored} <- code_change(nil, snapshot.state, nil) do
+      # A stop that was out when the MC went keeps its deadline.
+      if restored.interrupting do
+        deadline = Application.get_env(:hal_c2, :codex_interrupt_deadline_ms, 10_000)
+        Process.send_after(self(), {:interrupt_deadline, restored.interrupting}, deadline)
+      end
+
+      {:reply, :ok, Durable.restored(restored, :conn, conn, snapshot)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
@@ -521,6 +551,13 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  @impl true
+  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state),
+    do: {:noreply, Durable.checkpoint(checkpoint, __MODULE__, state, &flush(&1, :timer))}
+
+  def handle_info(:durable_save, state),
+    do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
+
   # What an app-server stopped for another instance's (`connect/2`) had already sent
   # belongs to no turn of this one.
   @impl true
@@ -703,7 +740,9 @@ defmodule HalC2.Codex.ThreadRuntime do
     {:noreply, end_background(state, "failed")}
   end
 
-  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
+  def handle_info(:flush, state),
+    do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
+
   def handle_info(_other, state), do: {:noreply, state}
 
   # The app-server, and the terminals it runs, stop with this process: released when
@@ -711,6 +750,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   # stopping; the next boot ends what is left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(_reason, state) do
+    Durable.leaving(state, &flush(&1, :timer))
+
     unless HalC2.Orchestration.Recovery.stopping?(),
       do: end_background(%{state | conn: nil}, "interrupted")
 
@@ -999,6 +1040,7 @@ defmodule HalC2.Codex.ThreadRuntime do
              cd: turn.cwd,
              env: env,
              log: turn.ids.thread,
+             durable: turn.ids.thread,
              program: "Codex App Server"
            ),
          {:ok, _} <-

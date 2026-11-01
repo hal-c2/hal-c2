@@ -327,8 +327,21 @@ import {
   SpaceBlockUpdateInput,
   SpaceCommentAddInput,
   SpaceCommentRef,
+  SpaceImageAddInput,
+  SpaceImageDeleteResult,
+  SpaceImageGenerateInput,
+  SpaceImageGenerationError,
+  SpaceImageProvidersResult,
+  SpaceImageRef,
+  SpaceImageResult,
   SpaceCommentResult,
   SpaceCreateInput,
+  SpaceDeckCreateFromPageInput,
+  SpaceDeckCreateInput,
+  SpaceDeckDeleteResult,
+  SpaceDeckRef,
+  SpaceDeckRenameInput,
+  SpaceDeckResult,
   SpaceDeleteInput,
   SpaceDeleteResult,
   SpaceError,
@@ -338,6 +351,9 @@ import {
   SpacePageCreateInput,
   SpacePageDeleteResult,
   SpacePageExportMarkdownResult,
+  SpacePagePublishInput,
+  SpacePagePublishResult,
+  SpacePageUnpublishResult,
   SpacePageImportMarkdownInput,
   SpacePageMoveInput,
   SpacePageRef,
@@ -345,6 +361,14 @@ import {
   SpacePageResult,
   SpaceRenameInput,
   SpaceResult,
+  SpaceBlockVisualizeInput,
+  SpaceChartError,
+  SpaceSlideDeleteInput,
+  SpaceSlideDeleteResult,
+  SpaceSlideInsertInput,
+  SpaceSlideMoveInput,
+  SpaceSlideResult,
+  SpaceSlideUpdateInput,
   SpaceTextGenerationError,
 } from "./space.ts";
 import {
@@ -516,6 +540,8 @@ export const WS_METHODS = {
   spacePageTrash: "space.page.trash",
   spacePageRestore: "space.page.restore",
   spacePageDelete: "space.page.delete",
+  spacePagePublish: "space.page.publish",
+  spacePageUnpublish: "space.page.unpublish",
   spacePageExportMarkdown: "space.page.exportMarkdown",
   spacePageImportMarkdown: "space.page.importMarkdown",
   spacePageCreateFromThread: "space.page.createFromThread",
@@ -524,9 +550,26 @@ export const WS_METHODS = {
   spaceBlockSetChecked: "space.block.setChecked",
   spaceBlockMove: "space.block.move",
   spaceBlockDelete: "space.block.delete",
+  spaceBlockVisualize: "space.block.visualize",
   spaceCommentAdd: "space.comment.add",
   spaceCommentResolve: "space.comment.resolve",
   spaceCommentReopen: "space.comment.reopen",
+  spaceDeckCreate: "space.deck.create",
+  spaceDeckCreateFromPage: "space.deck.createFromPage",
+  spaceDeckRename: "space.deck.rename",
+  spaceDeckTrash: "space.deck.trash",
+  spaceDeckRestore: "space.deck.restore",
+  spaceDeckDelete: "space.deck.delete",
+  spaceSlideInsert: "space.slide.insert",
+  spaceSlideUpdate: "space.slide.update",
+  spaceSlideMove: "space.slide.move",
+  spaceSlideDelete: "space.slide.delete",
+  spaceImageAdd: "space.image.add",
+  spaceImageGenerate: "space.image.generate",
+  spaceImageTrash: "space.image.trash",
+  spaceImageRestore: "space.image.restore",
+  spaceImageDelete: "space.image.delete",
+  spaceImageProviders: "space.image.providers",
 
   // The cluster of this person's machines (MCs only)
   clusterStatus: "cluster.status",
@@ -1813,6 +1856,18 @@ const WsSpacePageDeleteRpc = Rpc.make(WS_METHODS.spacePageDelete, {
   error: SpaceRpcError,
 });
 
+const WsSpacePagePublishRpc = Rpc.make(WS_METHODS.spacePagePublish, {
+  payload: SpacePagePublishInput,
+  success: SpacePagePublishResult,
+  error: SpaceError,
+});
+
+const WsSpacePageUnpublishRpc = Rpc.make(WS_METHODS.spacePageUnpublish, {
+  payload: SpacePageRef,
+  success: SpacePageUnpublishResult,
+  error: SpaceError,
+});
+
 const WsSpacePageExportMarkdownRpc = Rpc.make(WS_METHODS.spacePageExportMarkdown, {
   payload: SpacePageRef,
   success: SpacePageExportMarkdownResult,
@@ -1829,6 +1884,12 @@ const WsSpacePageCreateFromThreadRpc = Rpc.make(WS_METHODS.spacePageCreateFromTh
   payload: SpacePageCreateFromThreadInput,
   success: SpacePageResult,
   error: Schema.Union([SpaceError, SpaceTextGenerationError, EnvironmentAuthorizationError]),
+});
+
+const WsSpaceBlockVisualizeRpc = Rpc.make(WS_METHODS.spaceBlockVisualize, {
+  payload: SpaceBlockVisualizeInput,
+  success: SpaceBlockResult,
+  error: Schema.Union([SpaceError, SpaceChartError, EnvironmentAuthorizationError]),
 });
 
 const WsSpaceBlockInsertRpc = Rpc.make(WS_METHODS.spaceBlockInsert, {
@@ -1877,6 +1938,102 @@ const WsSpaceCommentReopenRpc = Rpc.make(WS_METHODS.spaceCommentReopen, {
   payload: SpaceCommentRef,
   success: SpaceCommentResult,
   error: SpaceRpcError,
+});
+
+const WsSpaceDeckCreateRpc = Rpc.make(WS_METHODS.spaceDeckCreate, {
+  payload: SpaceDeckCreateInput,
+  success: SpaceDeckResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceDeckCreateFromPageRpc = Rpc.make(WS_METHODS.spaceDeckCreateFromPage, {
+  payload: SpaceDeckCreateFromPageInput,
+  success: SpaceDeckResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceDeckRenameRpc = Rpc.make(WS_METHODS.spaceDeckRename, {
+  payload: SpaceDeckRenameInput,
+  success: SpaceDeckResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceDeckTrashRpc = Rpc.make(WS_METHODS.spaceDeckTrash, {
+  payload: SpaceDeckRef,
+  success: SpaceDeckResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceDeckRestoreRpc = Rpc.make(WS_METHODS.spaceDeckRestore, {
+  payload: SpaceDeckRef,
+  success: SpaceDeckResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceDeckDeleteRpc = Rpc.make(WS_METHODS.spaceDeckDelete, {
+  payload: SpaceDeckRef,
+  success: SpaceDeckDeleteResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceSlideInsertRpc = Rpc.make(WS_METHODS.spaceSlideInsert, {
+  payload: SpaceSlideInsertInput,
+  success: SpaceSlideResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceSlideUpdateRpc = Rpc.make(WS_METHODS.spaceSlideUpdate, {
+  payload: SpaceSlideUpdateInput,
+  success: SpaceSlideResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceSlideMoveRpc = Rpc.make(WS_METHODS.spaceSlideMove, {
+  payload: SpaceSlideMoveInput,
+  success: SpaceSlideResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceSlideDeleteRpc = Rpc.make(WS_METHODS.spaceSlideDelete, {
+  payload: SpaceSlideDeleteInput,
+  success: SpaceSlideDeleteResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageAddRpc = Rpc.make(WS_METHODS.spaceImageAdd, {
+  payload: SpaceImageAddInput,
+  success: SpaceImageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageGenerateRpc = Rpc.make(WS_METHODS.spaceImageGenerate, {
+  payload: SpaceImageGenerateInput,
+  success: SpaceImageResult,
+  error: Schema.Union([SpaceError, SpaceImageGenerationError, EnvironmentAuthorizationError]),
+});
+
+const WsSpaceImageTrashRpc = Rpc.make(WS_METHODS.spaceImageTrash, {
+  payload: SpaceImageRef,
+  success: SpaceImageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageRestoreRpc = Rpc.make(WS_METHODS.spaceImageRestore, {
+  payload: SpaceImageRef,
+  success: SpaceImageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageDeleteRpc = Rpc.make(WS_METHODS.spaceImageDelete, {
+  payload: SpaceImageRef,
+  success: SpaceImageDeleteResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageProvidersRpc = Rpc.make(WS_METHODS.spaceImageProviders, {
+  payload: Schema.Struct({}),
+  success: SpaceImageProvidersResult,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
@@ -1968,6 +2125,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageTrashRpc,
   WsSpacePageRestoreRpc,
   WsSpacePageDeleteRpc,
+  WsSpacePagePublishRpc,
+  WsSpacePageUnpublishRpc,
   WsSpacePageExportMarkdownRpc,
   WsSpacePageImportMarkdownRpc,
   WsSpacePageCreateFromThreadRpc,
@@ -1976,9 +2135,26 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpaceBlockSetCheckedRpc,
   WsSpaceBlockMoveRpc,
   WsSpaceBlockDeleteRpc,
+  WsSpaceBlockVisualizeRpc,
   WsSpaceCommentAddRpc,
   WsSpaceCommentResolveRpc,
   WsSpaceCommentReopenRpc,
+  WsSpaceDeckCreateRpc,
+  WsSpaceDeckCreateFromPageRpc,
+  WsSpaceDeckRenameRpc,
+  WsSpaceDeckTrashRpc,
+  WsSpaceDeckRestoreRpc,
+  WsSpaceDeckDeleteRpc,
+  WsSpaceSlideInsertRpc,
+  WsSpaceSlideUpdateRpc,
+  WsSpaceSlideMoveRpc,
+  WsSpaceSlideDeleteRpc,
+  WsSpaceImageAddRpc,
+  WsSpaceImageGenerateRpc,
+  WsSpaceImageTrashRpc,
+  WsSpaceImageRestoreRpc,
+  WsSpaceImageDeleteRpc,
+  WsSpaceImageProvidersRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerReportDesktopUpdateStatusRpc,

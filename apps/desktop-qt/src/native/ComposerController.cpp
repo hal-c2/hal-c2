@@ -1723,6 +1723,8 @@ void ComposerController::uploadFile(const QString& id, const QString& environmen
       return;
     }
     bytes = file.readAll();
+    attachment->captured = bytes.left(1024 * 1024);
+    attachment->capturedWhole = bytes.size() <= 1024 * 1024;
   }
   const QString mimeType = attachment->mimeType;
   publish();
@@ -2514,13 +2516,24 @@ QVariantMap ComposerController::attachmentPreview(const QString& id) {
     preview.insert(QStringLiteral("url"), found->dataUrl);
     return preview;
   }
-  // What was pasted, or the file where it was picked from, up to the megabyte the viewer shows.
-  QByteArray bytes = found->content;
+  // What was pasted or captured; a draft restored from disk has only the file where it was picked from.
+  QByteArray bytes = found->content.isEmpty() ? found->captured : found->content;
+  bool whole = found->content.isEmpty() ? found->capturedWhole : true;
   if (bytes.isEmpty() && !found->path.isEmpty()) {
     QFile file(found->path);
-    if (file.open(QIODevice::ReadOnly)) bytes = file.read(1024 * 1024);
+    if (file.open(QIODevice::ReadOnly)) {
+      bytes = file.read(1024 * 1024);
+      whole = file.atEnd();
+    }
   }
-  if (!bytes.contains('\0')) preview.insert(QStringLiteral("text"), QString::fromUtf8(bytes));
+  // A player or document view reads the whole file, not this preview's first part.
+  if (!found->path.isEmpty()) preview.insert(QStringLiteral("path"), found->path);
+  if (whole) preview.insert(QStringLiteral("bytes"), bytes);
+  bytes.truncate(1024 * 1024);
+  if (!bytes.contains('\0')) {
+    preview.insert(QStringLiteral("text"), QString::fromUtf8(bytes));
+    preview.insert(QStringLiteral("truncated"), !whole);
+  }
   return preview;
 }
 

@@ -72,6 +72,28 @@ describe("status row beside a pinned error", () => {
     expect(state.hint).not.toContain("^K to dismiss");
   });
 
+  it("promises no key when the palette has none", () => {
+    const state = row({
+      status: { kind: "error", text: "Offline" },
+      pinnedError: "Offline",
+      paletteKey: null,
+    });
+    expect(state.hint).toContain("click error to dismiss");
+    expect(state.hint).not.toContain("^K");
+    expect(state.hint).not.toContain("commands");
+  });
+
+  it("names the key the palette is bound to", () => {
+    const state = row({
+      status: { kind: "error", text: "Offline" },
+      pinnedError: "Offline",
+      paletteKey: "^T",
+    });
+    expect(state.hint).toContain("click error or ^T to dismiss");
+    expect(state.hint).toContain("^T commands");
+    expect(state.hint).not.toContain("^K");
+  });
+
   it("keeps the dismiss hint visible beside a long pinned error", () => {
     const state = row({
       mainWidth: 100,

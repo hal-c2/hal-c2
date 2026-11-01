@@ -38,15 +38,30 @@ sudo ln -sf "$VP_BIN_DIR/vp" /usr/local/bin/vp
 # today; the apt build deps below are only insurance for its kerl fallback,
 # for a future OTP 29 resolution with no precompiled build published yet
 # (mise.toml floats on "29" and there is no mise.lock).
-# The mise version is pinned so a new mise release cannot break every new
-# container (the installer script itself is whatever mise.run serves, the same
-# trust as the vp installer above); bump it with mise.toml when a tool needs a
-# newer mise. Its shims reach PATH through remoteEnv in devcontainer.json.
-installer=$(mktemp)
-curl -fsSL https://mise.run -o "$installer"
-MISE_VERSION=v2026.9.9 sh "$installer"
-rm -f "$installer"
-test -x "$HOME/.local/bin/mise"
+# mise comes from its release asset, pinned by version and checksum (not the
+# mise.run installer, which is whatever that site serves at the time), so a new
+# mise release cannot break every new container. Bump the version and checksums
+# (from the release's SHASUMS256.txt) with mise.toml when a tool needs a newer
+# mise. Its shims reach PATH through remoteEnv in devcontainer.json.
+mise_version=v2026.9.9
+case "$(dpkg --print-architecture)" in
+  amd64)
+    mise_arch=x64
+    mise_sha256=bd481434a65ede6b2ec6162b88f129e5c6b94cf9de808b8ee7c6f027b13b4589
+    ;;
+  arm64)
+    mise_arch=arm64
+    mise_sha256=e98b7644f8fe908c7b6b9086de215eaa422736d44f8a72d8bb39cb73f7477720
+    ;;
+  *)
+    echo "error: no pinned mise for $(dpkg --print-architecture)" >&2
+    exit 1
+    ;;
+esac
+mkdir -p "$HOME/.local/bin"
+curl -fsSL "https://github.com/jdx/mise/releases/download/$mise_version/mise-$mise_version-linux-$mise_arch" -o "$HOME/.local/bin/mise"
+echo "$mise_sha256  $HOME/.local/bin/mise" | sha256sum -c -
+chmod +x "$HOME/.local/bin/mise"
 sudo ln -sf "$HOME/.local/bin/mise" /usr/local/bin/mise
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends build-essential autoconf m4 libncurses-dev libssl-dev
