@@ -750,3 +750,13 @@ Feature: Pi
       | problem                                               | message                                      |
       | Pi reports no file for the session                    | get_state returned no persisted sessionFile  |
       | Pi reuses the previous thread's file for a new thread | Pi did not create a distinct session file    |
+
+  # HalC2.Plugins.Kinds: another instance runs with its own settings, home and account,
+  # so its turn needs its own process rather than the first instance's.
+  Scenario: A turn on another instance of Pi starts its own process
+    Given Pi is installed and enabled
+    And the user sends a message to Pi
+    And a second instance "pi-work" of it with a binary of its own
+    When the next message goes to "pi-work"
+    Then a process of "pi-work" runs that turn in place of the first instance's
+    And another message to "pi-work" stays in that process
