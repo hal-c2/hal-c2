@@ -524,6 +524,18 @@ QList<Row> project(const Model& model) {
   return rows;
 }
 
+// The number a user message's turn goes by while no checkpoint gives it one: its
+// place among the runs that started and were not rewound.
+int turnOf(const Thread& thread, const QString& id) {
+  const int ordinal = thread.runs.value(id).ordinal;
+  int turn = 0;
+  for (const Run& run : thread.runs) {
+    const bool neverStarted = run.status == QLatin1String("queued") || run.status == QLatin1String("cancelled");
+    if (run.ordinal <= ordinal && run.status != QLatin1String("rolled_back") && (run.id == id || !neverStarted)) ++turn;
+  }
+  return turn;
+}
+
 // --- The client ------------------------------------------------------------------
 
 int modelTestFailures = 0;
@@ -624,6 +636,11 @@ struct Sut {
     bool working = false;
     for (const Run& run : expected.held.runs) working = working || run.status == QLatin1String("running");
     RC_ASSERT(model->working() == working);
+    for (const Row& row : want) {
+      const Item item = expected.held.items.value(row.id);
+      if (item.type != QLatin1String("user_message") || !item.legacy.isEmpty()) continue;
+      RC_ASSERT(model->rewindPointOf(row.id).value(QStringLiteral("turn")).toInt() == turnOf(expected.held, item.run));
+    }
     for (int row = 0; row < model->rowCount(); ++row) {
       const QString id = model->data(model->index(row), TimelineModel::IdRole).toString();
       const auto was = before.constFind(id);
@@ -807,6 +824,42 @@ struct Hold : Change {
     commit(model, {event(model, QStringLiteral("run"), run.id, {{QStringLiteral("s"), json(run)}})});
   }
   void show(std::ostream& os) const override { os << "Hold"; }
+};
+
+// A message queued behind the active turn: numbered when it was sent, with nothing
+// shown yet. The model does not start one; a later StartRun passes it.
+struct Enqueue : Change {
+  explicit Enqueue(const Model&) {}
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.runs.size() < kMaxRuns); }
+  void apply(Model& model) const override {
+    const Run run{QStringLiteral("run-%1").arg(model.mc.runs.size() + 1), ++model.ordinal, QStringLiteral("queued")};
+    model.mc.runs.insert(run.id, run);
+    commit(model, {event(model, QStringLiteral("run"), run.id, {{QStringLiteral("s"), json(run)}})});
+  }
+  void show(std::ostream& os) const override { os << "Enqueue"; }
+};
+
+// The user cancels a message queued behind the active turn: it keeps its number
+// and never started.
+struct CancelQueued : Change {
+  QString run;
+  explicit CancelQueued(const Model& model) {
+    QStringList runs;
+    for (const Run& queued : model.mc.runs) {
+      if (!queued.held && queued.status == QLatin1String("queued")) runs.append(queued.id);
+    }
+    RC_PRE(!runs.isEmpty());
+    run = pick(runs);
+  }
+  void checkPreconditions(const Model& model) const override {
+    const Run found = model.mc.runs.value(run);
+    RC_PRE(!found.held && found.status == QLatin1String("queued"));
+  }
+  void apply(Model& model) const override {
+    model.mc.runs[run].status = QStringLiteral("cancelled");
+    commit(model, {event(model, QStringLiteral("run"), run, {{QStringLiteral("s"), QJsonObject{{QStringLiteral("status"), QStringLiteral("cancelled")}}}})});
+  }
+  void show(std::ostream& os) const override { os << "CancelQueued(" << run.toStdString() << ")"; }
 };
 
 // The user cancels a held message instead of resuming the queue: the run keeps
@@ -1315,7 +1368,7 @@ private slots:
       Model model;
       Sut sut;
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<StartRun, Hold, CancelHeld, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
+                       rc::state::gen::execOneOfWithArgs<StartRun, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
                                                          LoadEarlier, Toggle, Restart, AgentModel>());
     }));
