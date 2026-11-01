@@ -1257,6 +1257,20 @@ Feature: Planner
       When the user moves "Issue 9" from "Launch" to "Beta"
       Then GitHub has #7 in the milestone "Release" last
 
+    # The correction goes to whoever names the issue when it is sent, not to where the task
+    # that left the issue went, so GitHub is not asked again to take it out, as it refused.
+    @mc
+    Scenario: A correction GitHub refused follows its issue to the task that took it over
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta", #9 in "Launch" and #12 in "Release" on GitHub
+      And GitHub takes moving #7 to "Launch" late and to "Release" at once, but refuses the second move to it
+      And GitHub refuses moving #7 out of its milestone
+      And the user moves "Issue 7" from "Beta" to "Launch", then to "Release" before GitHub answers
+      And the user relinks #7's task to #8
+      And the user relinks #12's task to #7
+      When the user moves "Issue 9" from "Launch" to "Beta"
+      Then GitHub is asked last to move #7 to the milestone "Release"
+
     # A move between milestones is asked of GitHub by the milestone the task moved to, so
     # a task that leaves that one before it asks still leaves the one GitHub has it in.
     @mc
@@ -1309,6 +1323,17 @@ Feature: Planner
       And the plugin looks at GitHub
       Then #7's task is in the milestone "Launch" and not "Beta"
       And the milestone "Launch" is marked as not synced
+
+    # GitHub still has the issue in the milestone the task left, and that milestone has
+    # nothing left to ask once the task is gone.
+    @mc
+    Scenario: A task removed after GitHub refused to move it takes its issue out of the milestone GitHub has it in
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub refuses moving #7 to "Launch"
+      When the user moves "Issue 7" from "Beta" to "Launch"
+      And the user removes "Issue 7"
+      Then GitHub is asked last to move #7 out of its milestone
 
     @mc
     Scenario: A dependency on a task without an issue stays in the plan

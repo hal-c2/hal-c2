@@ -2722,6 +2722,26 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "GitHub refuses moving \#{int} to {string}", %{args: [number, title]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [~s("milestone":#{context.milestones[title]})],
+        "run" => "exit 1"
+      }
+    ])
+  end
+
+  step "GitHub refuses moving \#{int} out of its milestone", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [~s("milestone":null)],
+        "run" => "exit 1"
+      }
+    ])
+  end
+
   # GitHub takes moving #`number` to the milestone `title` once the scenario answers it,
   # through a gate of the move's own.
   step "GitHub takes moving \#{int} to {string} late", %{args: [number, title]} = context do
@@ -3116,6 +3136,16 @@ defmodule HalC2.Steps.Planning.Planner do
           do: patch["milestone"]
 
     assert moves == [nil]
+    context
+  end
+
+  step "GitHub is asked last to move \#{int} out of its milestone", %{args: [number]} = context do
+    moves =
+      for patch <- GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}"),
+          Map.has_key?(patch, "milestone"),
+          do: patch["milestone"]
+
+    assert List.last(moves, :none) == nil, inspect(moves)
     context
   end
 

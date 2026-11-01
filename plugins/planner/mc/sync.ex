@@ -163,8 +163,11 @@ defmodule HalC2Plugins.Planner.Sync do
             for {number, answer} <- read, reduce: {known ++ details, problems} do
               {details, problems} ->
                 case answer do
-                  {:ok, issue} -> {[issue | details], problems}
-                  {:error, error} -> {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
+                  {:ok, issue} ->
+                    {[issue | details], problems}
+
+                  {:error, error} ->
+                    {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
                 end
             end
 
@@ -1231,8 +1234,7 @@ defmodule HalC2Plugins.Planner.Sync do
       for {id, issue} <- to_correct do
         holder = linked(items, issue)
 
-        {id, issue,
-         holder && List.first(holders(items, ref["repository"], holder["id"])),
+        {id, issue, holder && List.first(holders(items, ref["repository"], holder["id"])),
          if(id in new["after"],
            do: &placed(&1, id, issue),
            else: &unrelate(&1, "after", id, issue)
@@ -1345,6 +1347,35 @@ defmodule HalC2Plugins.Planner.Sync do
         {issue_key(issue), %{"task" => id, "issue" => issue}}
       end
 
+    Map.put(synced, "misplaced", Map.merge(marks(synced), at))
+  end
+
+  @doc """
+  Milestone id → the marks (`misplaced/2`) of issues GitHub has in it that no push will
+  ask out: a task whose move GitHub refused no longer has its old milestone hold it, so
+  when the task leaves its issue, by a relink, an unlink or its removal, nothing in the
+  plan names the issue as in that milestone any more. A milestone that holds the task
+  asks by itself. `before` and `items` are the plan either side of a change.
+  """
+  def left(before, items) do
+    for {id, %{"issue" => %{"milestone" => number} = issue}} <- before,
+        is_integer(number),
+        not Plan.same_ref?(issue, get_in(items, [id, "issue"])),
+        {holder, %{"milestone" => %{"number" => ^number} = ref} = milestone} <- before,
+        same?(ref["repository"], issue["repository"]),
+        id not in milestone["after"],
+        reduce: %{} do
+      left ->
+        mark = %{"task" => id, "issue" => Map.take(issue, ~w(repository number))}
+        Map.update(left, holder, [mark], &(&1 ++ [mark]))
+    end
+  end
+
+  @doc "`synced` with the marks of `left/2`; nothing else when there are none."
+  def left_behind(synced, []), do: synced
+
+  def left_behind(synced, marks) do
+    at = Map.new(marks, &{issue_key(&1["issue"]), &1})
     Map.put(synced, "misplaced", Map.merge(marks(synced), at))
   end
 
