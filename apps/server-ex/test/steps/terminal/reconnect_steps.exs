@@ -51,7 +51,10 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     Map.put(context, :pages, pages)
   end
 
+  # The pages' wait for the last line ends before the prompt that follows it, and a
+  # command typed by then would print its line behind that prompt (`$ still here`).
   step "the terminal prints {string}", %{args: [text]} = context do
+    Terminal.await_prompt(context.terminal, "")
     {first, rest} = String.split_at(text, 1)
     Terminal.write(context, "default", "echo #{first}''\"#{rest}\"\n")
   end
