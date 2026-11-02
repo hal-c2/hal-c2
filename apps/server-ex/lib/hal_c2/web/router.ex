@@ -653,7 +653,8 @@ defmodule HalC2.Web.Router do
 
           {:error, reason} ->
             json(conn, 409, %{
-              "reason" => if(is_binary(reason), do: reason, else: inspect(reason))
+              "reason" =>
+                if(is_binary(reason), do: reason, else: HalC2.Hot.describe_error(reason))
             })
         end
     end

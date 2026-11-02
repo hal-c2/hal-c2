@@ -15,6 +15,17 @@ Only the socket that exchanged the desktop bootstrap token may hold that subscri
 the app's updater with `server.reportDesktopUpdateStatus`; reports name the run by its
 `requestId`, and a failed install after the commit becomes the outcome clients see in `ready`.
 
+## Loading in place
+
+[`HalC2.Hot`](../../apps/server-ex/lib/hal_c2/hot.ex) does the in-place load for both an update
+and `mise run mc:reload`. The VM holds at most two versions of a module, and a process leaves the
+old one only at a call by module name. OTP behaviours do that for their callbacks, but a plain
+process looping in `receive` with local calls stays on the version it started on, and once a
+newer load makes that version the one before last it can never be purged. The load after that is
+refused, naming the process, until it or the MC restarts. A long-lived loop must therefore
+recurse as `__MODULE__.loop(...)` (see the store's checkpointer); a short wait that returns is
+fine. Only BEAM code loads in place: a module that loads a NIF needs a restart.
+
 ## Restart and rollback
 
 `releases/start_erl.data` names the version the next boot runs. The previous file is kept beside
