@@ -20,6 +20,7 @@ defmodule HalC2Plugins.Planner.Sync do
   alias HalC2Plugins.Planner.Plan
 
   @id "planner"
+  @no_answer "GitHub did not answer in time."
 
   @doc """
   What GitHub holds for the plan: `issues` of the followed repositories (open, with
@@ -35,8 +36,9 @@ defmodule HalC2Plugins.Planner.Sync do
   only an issue neither has is read alone, or every one the listing lacks when it
   fails or is cut short. Without a `before` the look that reads issues is a full one,
   `full: true` in what it finds: every linked issue not among the open ones is read
-  alone, a call for each, four at a time. A look whose listing failed or was cut
-  short, so it read every such issue alone and none failed, counts as full too.
+  alone, a call for each, four at a time, each given up on as failed after a minute.
+  A look whose listing failed or was cut short, so it read every such issue alone and
+  none failed, counts as full too.
   A look without a `before` is full even where an alone-read failed: that issue
   is absent from `details`, so the next look reads it alone again (below), and
   the ones read stand for the day. A look that reads no issues (sync is off, or
@@ -148,16 +150,14 @@ defmodule HalC2Plugins.Planner.Sync do
 
           # The issues to read alone are read a few at a time.
           read =
-            alone
-            |> Task.async_stream(
+            read_alone(
+              alone,
               fn %{"number" => number} ->
                 input = %{"projectId" => project["id"], "repository" => repo, "number" => number}
                 {number, Host.issues(@id, "detail", input)}
               end,
-              max_concurrency: 4,
-              timeout: :infinity
+              &{&1["number"], {:error, @no_answer}}
             )
-            |> Enum.map(fn {:ok, answer} -> answer end)
 
           {details, problems} =
             for {number, answer} <- read, reduce: {known ++ details, problems} do
@@ -228,6 +228,26 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   defp skew_seconds, do: Application.get_env(:hal_c2, :planner_skew_seconds, 300)
+
+  # What `read` makes of each of `inputs`, a few at a time. One still going after
+  # `read_timeout/0` is killed and `late` makes its answer, so what hangs costs the look
+  # that one read. It has to outlast the 30 seconds `gh` itself gets, whose failure says
+  # more, and covers what `gh` does not: finding the project runs git in every checkout.
+  defp read_alone(inputs, read, late) do
+    inputs
+    |> Task.async_stream(read,
+      max_concurrency: 4,
+      timeout: read_timeout(),
+      on_timeout: :kill_task,
+      zip_input_on_exit: true
+    )
+    |> Enum.map(fn
+      {:ok, answer} -> answer
+      {:exit, {input, :timeout}} -> late.(input)
+    end)
+  end
+
+  defp read_timeout, do: Application.get_env(:hal_c2, :planner_read_timeout, 60_000)
 
   defp board(found, settings, github) do
     with {:ok, owner, number} <- board_name(settings["board"]),
@@ -384,9 +404,11 @@ defmodule HalC2Plugins.Planner.Sync do
 
   defp lone_prs(found, alone, github) do
     read =
-      alone
-      |> Task.async_stream(&lone_pr(&1, github), max_concurrency: 4, timeout: :infinity)
-      |> Enum.map(fn {:ok, read} -> read end)
+      read_alone(
+        alone,
+        &lone_pr(&1, github),
+        &{:error, "#{&1["repository"]}##{&1["number"]}: #{@no_answer}"}
+      )
 
     prs = for {:ok, key, state} <- read, into: found.prs, do: {key, state}
     problem(%{found | prs: prs}, for({:error, error} <- read, do: error))
@@ -1375,7 +1397,9 @@ defmodule HalC2Plugins.Planner.Sync do
   ask out: a task whose move GitHub refused no longer has its old milestone hold it, so
   when the task leaves its issue, by a relink, an unlink or its removal, nothing in the
   plan names the issue as in that milestone any more. A milestone that holds the task
-  asks by itself. `before` and `items` are the plan either side of a change.
+  asks by itself, but only for the issue it has the task under: another milestone's
+  correction can put the task's issue in it while its own push stands refused. `before`
+  and `items` are the plan either side of a change.
   """
   def left(before, items) do
     for {id, %{"issue" => %{"milestone" => number} = issue}} <- before,
@@ -1383,12 +1407,21 @@ defmodule HalC2Plugins.Planner.Sync do
         not Plan.same_ref?(issue, get_in(items, [id, "issue"])),
         {holder, %{"milestone" => %{"number" => ^number} = ref} = milestone} <- before,
         same?(ref["repository"], issue["repository"]),
-        id not in milestone["after"],
+        not asks_out?(milestone, id, issue, before),
         reduce: %{} do
       left ->
         mark = %{"task" => id, "issue" => Map.take(issue, ~w(repository number))}
         Map.update(left, holder, [mark], &(&1 ++ [mark]))
     end
+  end
+
+  # The next push of `milestone` asks `issue` out of it once the task `id` leaves that
+  # issue (`held_pushes/4`): it holds the task, and GitHub has it under that issue.
+  defp asks_out?(milestone, id, issue, items) do
+    synced = synced(milestone, milestone, items)
+
+    id in milestone["after"] and id in synced["after"] and
+      Plan.same_ref?(had(synced, items, id), issue)
   end
 
   @doc "`synced` with the marks of `left/2`; nothing else when there are none."

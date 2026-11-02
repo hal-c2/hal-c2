@@ -4,7 +4,7 @@
 // follows. One fake serves every client of a scenario, so a second client sees
 // the first one's edits as they land; `restart` sends each watcher a fresh
 // snapshot, as a reconnection after an MC restart does.
-import type { SpaceAuthor } from "@hal-c2/contracts";
+import type { SpaceAuthor, SpacePresenceViewer } from "@hal-c2/contracts";
 import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 
 import type { FakeSettingsMc } from "./fakeSettingsMc.ts";
@@ -95,6 +95,16 @@ export interface FakeSpaceMc {
   readonly restart: () => void;
   /** Longer than the pause that ends a version: the next edit starts another. */
   readonly aWhilePasses: () => void;
+  /** Another device comes to the page, and goes from wherever it is. */
+  readonly deviceOn: (pageId: string, device: string) => void;
+  readonly deviceGone: (device: string) => void;
+  /** Answers the followers of every page again, as a reconnect's subscribe does. */
+  readonly retellViewers: () => void;
+  /** An agent, by its thread's title, comes to the page, and goes from wherever it is. */
+  readonly agentOn: (pageId: string, title: string) => void;
+  readonly agentGone: (title: string) => void;
+  /** How many clients are on the page. */
+  readonly clientsOn: (pageId: string) => number;
 }
 
 /** One author's run of edits on a page, with what the page held at its end. */
@@ -240,6 +250,30 @@ export function fakeSpaceMc(options: {
   // What `attachments.createUploadUrl` signed, and the bytes sent to it; an upload is taken once.
   const uploads = new Map<string, { name: string; mimeType: string; bytes: Uint8Array | null }>();
   const watchers = new Map<string, Set<Watcher>>();
+  // Who is on each page, and the clients to tell.
+  const devicesOn = new Map<string, Set<string>>();
+  const agentsOn = new Map<string, Set<string>>();
+  const pageClients = new Map<string, Set<(viewers: ReadonlyArray<SpacePresenceViewer>) => void>>();
+  const viewersOf = (pageId: string) => {
+    const devices = [...(devicesOn.get(pageId) ?? [])].sort();
+    const agents = [...(agentsOn.get(pageId) ?? [])];
+    return [
+      ...(devices.length > 0 ? [{ type: "user", devices }] : []),
+      ...agents.map((title) => ({ type: "agent", threadId: `thread-${title}`, title })),
+    ] as ReadonlyArray<SpacePresenceViewer>;
+  };
+  const tellPage = (pageId: string) => {
+    for (const client of pageClients.get(pageId) ?? []) client(viewersOf(pageId));
+  };
+  const on = (who: Map<string, Set<string>>, pageId: string, name: string) => {
+    let names = who.get(pageId);
+    if (!names) who.set(pageId, (names = new Set()));
+    names.add(name);
+    tellPage(pageId);
+  };
+  const gone = (who: Map<string, Set<string>>, name: string) => {
+    for (const [pageId, names] of who) if (names.delete(name)) tellPage(pageId);
+  };
   let ids = 0;
   let clock = Date.parse("2026-07-15T12:00:00.000Z");
   const user: SpaceAuthor = { type: "user" };
@@ -1288,6 +1322,15 @@ export function fakeSpaceMc(options: {
           set.delete(watcher);
         };
       };
+      settings.presence = (pageId, onViewers) => {
+        let clients = pageClients.get(pageId);
+        if (!clients) pageClients.set(pageId, (clients = new Set()));
+        clients.add(onViewers);
+        onViewers(viewersOf(pageId));
+        return () => {
+          clients.delete(onViewers);
+        };
+      };
     },
     run: (method, payload, author = user) => {
       const handler = methods[method];
@@ -1344,6 +1387,14 @@ export function fakeSpaceMc(options: {
         }
       }
     },
+    deviceOn: (pageId, device) => on(devicesOn, pageId, device),
+    deviceGone: (device) => gone(devicesOn, device),
+    retellViewers: () => {
+      for (const pageId of pageClients.keys()) tellPage(pageId);
+    },
+    agentOn: (pageId, title) => on(agentsOn, pageId, title),
+    agentGone: (title) => gone(agentsOn, title),
+    clientsOn: (pageId) => pageClients.get(pageId)?.size ?? 0,
   };
   return mc;
 }

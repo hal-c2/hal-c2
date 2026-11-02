@@ -56,6 +56,13 @@ ColumnLayout {
         }
     }
 
+    SpaceViewers {
+        Layout.fillWidth: true
+        Layout.leftMargin: 16
+        Layout.rightMargin: 16
+        Layout.topMargin: 4
+    }
+
     ListView {
         id: blocks
 

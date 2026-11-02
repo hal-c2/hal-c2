@@ -79,6 +79,11 @@ struct FakeSpaces {
   // The folder the last summary was written in, and the thread it was of.
   QString cwd;
   QString summarised;
+  // Who is on each page: the other devices, and the agents by thread title.
+  QHash<QString, QStringList> devices;
+  QHash<QString, QStringList> agents;
+  // Whether a client asking who is on a page is turned down.
+  bool viewersRefused = false;
   // The chart text generation draws next; none when the request cannot be answered.
   QJsonObject chart;
   // The page the last chart was asked for on.
@@ -1162,7 +1167,36 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
   return refused(QStringLiteral("invalid"), QStringLiteral("space.%1 is missing a required field.").arg(method));
 }
 
+// The `spacePresence` frame of `page` for the subscription `id`.
+QJsonObject viewersFrame(FakeMc& mc, int id, const QString& page) {
+  QJsonArray viewers;
+  QStringList devices = fake(mc).devices.value(page);
+  devices.sort();
+  if (!devices.isEmpty()) viewers.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("user")}, {QStringLiteral("devices"), QJsonArray::fromStringList(devices)}});
+  for (const QString& title : fake(mc).agents.value(page)) {
+    viewers.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("agent")}, {QStringLiteral("threadId"), QStringLiteral("thread-") + title}, {QStringLiteral("title"), title}});
+  }
+  return {{QStringLiteral("t"), QStringLiteral("spacePresence")}, {QStringLiteral("id"), id}, {QStringLiteral("viewers"), viewers}};
+}
+
+// The MC cannot say who is on a page: it answers an error and keeps nothing.
+void refuseViewers(FakeMc& mc, int id) {
+  mc.send(QJsonObject{{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("MC unavailable: noconnection")}});
+  mc.forget(id);
+}
+
+// Whoever has `page` open hears who is on it now.
+void tellViewers(FakeMc& mc, const QString& page) {
+  for (const int id : mc.subscribers(QStringLiteral("spacePresence"))) {
+    if (mc.connected() && mc.shapeOf(id).value(QLatin1String("pageId")).toString() == page) mc.send(viewersFrame(mc, id, page));
+  }
+}
+
 const FakeMc::Extension spaceCalls([](FakeMc& mc) {
+  mc.onShape(QStringLiteral("spacePresence"), [&mc](int id, const QJsonObject& shape) {
+    if (fake(mc).viewersRefused) return refuseViewers(mc, id);
+    mc.send(viewersFrame(mc, id, shape.value(QLatin1String("pageId")).toString()));
+  });
   mc.onRpc(QStringLiteral("space."), [&mc](const FakeMc::Rpc& rpc) {
     const auto respond = [&mc, rpc] {
       const Answer answer = call(mc, rpc.method.mid(6), rpc.payload);
@@ -1302,10 +1336,10 @@ QVariantList tableOf(const Table& table) {
 
 QString describe(World& world) {
   SpaceController* view = viewOf(world);
-  return QStringLiteral("the Space view shows %1 (%2): spaces %3, pages %4, trash %5, blocks %6, comments %7; it says %8")
+  return QStringLiteral("the Space view shows %1 (%2): spaces %3, pages %4, trash %5, blocks %6, comments %7; it says %8; also here %9")
       .arg(view->spaceName(), view->status(), show(column(view->spaces(), QStringLiteral("name"))), show(column(view->pages(), QStringLiteral("title"))),
            show(column(view->trash(), QStringLiteral("title"))), show(listOf(view->blocks())),
-           show(listOf(view->comments())), show(world.state(QStringLiteral("space"))));
+           show(listOf(view->comments())), show(world.state(QStringLiteral("space"))), show(view->viewers()));
 }
 
 void expectShown(World& world, const std::function<bool()>& shown, const QString& wanted) {
@@ -1852,6 +1886,101 @@ const Steps steps([] {
   step(S("the Space %1 with the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
     givenSpace(world, c[0]);
     givenPage(world, c[1]);
+  });
+  // Who else is on the page.
+  // Opened, it holds whoever the MC has on the page, so a later change is one it sees.
+  step(S("the user opens the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString page = idOfPage(world, c[0]);
+    lookAtPage(world, page);
+    expectShown(world, [&] {
+      QStringList devices = fake(world.mc).devices.value(page);
+      devices.sort();
+      const QVariantMap got = viewOf(world)->viewers();
+      return got.value(S("devices")).toStringList() == devices && got.value(S("agents")).toStringList() == fake(world.mc).agents.value(page);
+    }, S("the page to hold who is on it"));
+  });
+  step(S("the Space's page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenPage(world, c[0]);
+  });
+  step(S("a thread %1").arg(q), [](World&, const Captures&, const Table&) {});
+  const auto arrive = [](World& world, const Captures& c) {
+    const QString page = idOfPage(world, c[1]);
+    fake(world.mc).devices[page].append(c[0]);
+    tellViewers(world.mc, page);
+  };
+  step(S("the page %1 is open on the device %1").arg(q), [arrive](World& world, const Captures& c, const Table&) {
+    arrive(world, {c[1], c[0]});
+  });
+  step(S("the device %1 opens the page %1").arg(q), [arrive](World& world, const Captures& c, const Table&) {
+    arrive(world, c);
+  });
+  const auto gone = [](World& world, const Captures& c, const Table&) {
+    FakeSpaces& spaces = fake(world.mc);
+    for (auto it = spaces.devices.begin(); it != spaces.devices.end(); ++it) {
+      if (it->removeAll(c[0])) tellViewers(world.mc, it.key());
+    }
+  };
+  step(S("the device %1 leaves the page %1").arg(q), gone);
+  step(S("the connection of the device %1 drops").arg(q), gone);
+  step(S("the agent in %1 is working on the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString page = idOfPage(world, c[1]);
+    fake(world.mc).agents[page].append(c[0]);
+    tellViewers(world.mc, page);
+  });
+  step(S("the turn of the agent in %1 ends").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeSpaces& spaces = fake(world.mc);
+    for (auto it = spaces.agents.begin(); it != spaces.agents.end(); ++it) {
+      if (it->removeAll(c[0])) tellViewers(world.mc, it.key());
+    }
+  });
+  // What the page's line says, on the screen the user has.
+  const auto shows = [](World& world, const QString& said) {
+    expectShown(world, [&] {
+      QQuickItem* line = world.find(S("spaceViewers"));
+      return said.isEmpty() ? !line || !line->isVisible() : line && line->isVisible() && line->property("text").toString() == said;
+    }, S("the page to say \"%1\"").arg(said));
+  };
+  step(S("the MC can say who is on a page"), [](World&, const Captures&, const Table&) {});
+  step(S("the MC can no longer say who is on a page"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).viewersRefused = true;
+    for (const int id : world.mc.subscribers(S("spacePresence"))) refuseViewers(world.mc, id);
+  });
+  step(S("the MC can say who is on a page again"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).viewersRefused = false;
+  });
+  step(S("the page shows nobody else"), [shows](World& world, const Captures&, const Table&) {
+    shows(world, {});
+  });
+  step(S("the page shows the user also on %1").arg(q), [shows](World& world, const Captures& c, const Table&) {
+    shows(world, S("Also here: %1").arg(c[0]));
+  });
+  step(S("the page shows one person, also on %1 and %1").arg(q), [shows](World& world, const Captures& c, const Table&) {
+    shows(world, S("Also here: %1, %2").arg(c[0], c[1]));
+  });
+  step(S("the page shows the agent of %1").arg(q), [shows](World& world, const Captures& c, const Table&) {
+    shows(world, S("Also here: the agent of “%1”").arg(c[0]));
+  });
+  step(S("the user leaves the page"), [](World& world, const Captures&, const Table&) {
+    backTo(world, S("pages"));
+  });
+  // In the wide layout the deck takes the page's place beside the sidebar.
+  step(S("the user opens the deck %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (world.find(S("desktopLayout"))) {
+      world.tap(S("spaceDeckRow:") + c[0]);
+      world.waitFor([&] { return viewOf(world)->deckId() == idOfDeck(world, c[0]); }, [&] { return S("the deck to open; %1").arg(describe(world)); });
+    } else {
+      lookAtDeck(world, idOfDeck(world, c[0]));
+    }
+  });
+  step(S("the user is no longer on the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    const QString page = idOfPage(world, c[0]);
+    expectShown(world, [&] {
+      for (const int id : world.mc.subscribers(S("spacePresence"))) {
+        if (world.mc.shapeOf(id).value(QLatin1String("pageId")).toString() == page) return false;
+      }
+      return true;
+    }, S("the client to stop following who is on the page"));
   });
   step(S("the user makes the Space %1").arg(q), [](World& world, const Captures& c, const Table&) {
     openSpaces(world);
@@ -3069,7 +3198,11 @@ const Steps steps([] {
     }
   });
   step(QStringLiteral("the user opens the images of %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    lookAtImages(world, idOfSpace(world, c[0]), false);
+    if (world.find(S("desktopLayout"))) {
+      world.tap(S("spaceImages"));
+    } else {
+      lookAtImages(world, idOfSpace(world, c[0]), false);
+    }
   });
   step(QStringLiteral("the user sees the image %1 with its name").arg(q), [](World& world, const Captures& c, const Table&) {
     expectShown(world, [&] {
@@ -3080,9 +3213,6 @@ const Steps steps([] {
   step(QStringLiteral("no address has been signed for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
     expect(!fake(world.mc).signedImages.contains(idOfImage(world, c[0])), QStringLiteral("the client signed an address for %1 before it was shown").arg(c[0]));
-  });
-  step(QStringLiteral("the user opens the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    lookAtPage(world, idOfPage(world, c[0]));
   });
   step(QStringLiteral("an address has been signed for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return fake(world.mc).signedImages.contains(idOfImage(world, c[0])); }, [&] { return QStringLiteral("an address to be signed for %1").arg(c[0]); });

@@ -21,12 +21,15 @@ import { step } from "../../steps.ts";
 import { env, projectNamed, threadNamed, ui } from "../environment.ts";
 import { fakeClient } from "../fakeClient.ts";
 import { fakeSpaceMc, type FakeSpaceMc } from "../fakeSpaceMc.ts";
+import { presenceOverSession, type PresenceOverSession } from "../presenceOverSession.ts";
 import { findObject, pressKey, settle, typeText, type World } from "../world.ts";
 
 interface SpaceWorld extends World {
   /** The site link each page had when the scenario first saw it. */
   siteLinks?: Map<string, string>;
   spaceMc?: FakeSpaceMc;
+  /** Set when the scenario's presence goes through the real settings client. */
+  presence?: PresenceOverSession;
   /** The Space the scenario's pages are in: the newest one a Given named. */
   spaceName?: string;
   /** Page ids by title, kept so a Then can name pages deleted for good. */
@@ -303,6 +306,90 @@ step("the user is told only a checklist item can be ticked", async (ctx: SpaceWo
 step("the Space {string} with the page {string}", (ctx: SpaceWorld, name: string, page) => {
   seedSpace(ctx, name);
   seedPage(ctx, page);
+});
+
+// --- who else is on the page ---
+
+step("the user opens the page {string}", (ctx: SpaceWorld, title: string) => openPage(ctx, title));
+
+step("the Space's page {string}", (ctx: SpaceWorld, title: string) => {
+  seedPage(ctx, title);
+});
+
+step("a thread {string}", () => {});
+
+step("the page {string} is open on the device {string}", (ctx: SpaceWorld, title, device) => {
+  mc(ctx).deviceOn(pageId(ctx, title), device);
+});
+
+step("the device {string} opens the page {string}", async (ctx: SpaceWorld, device, title) => {
+  mc(ctx).deviceOn(pageId(ctx, title), device);
+  await settle(ctx);
+});
+
+const deviceGone = async (ctx: SpaceWorld, device: string) => {
+  mc(ctx).deviceGone(device);
+  await settle(ctx);
+};
+step("the device {string} leaves the page {string}", deviceGone);
+step("the connection of the device {string} drops", deviceGone);
+
+step("the environment is connected again", async (ctx: SpaceWorld) => {
+  ctx.fake!.emitConnection("connected");
+  mc(ctx).retellViewers();
+  await settle(ctx);
+});
+
+step("the agent in {string} is working on the page {string}", (ctx: SpaceWorld, thread, title) => {
+  mc(ctx).agentOn(pageId(ctx, title), thread);
+});
+
+step("the turn of the agent in {string} ends", async (ctx: SpaceWorld, thread: string) => {
+  mc(ctx).agentGone(thread);
+  await settle(ctx);
+});
+
+step("the MC can say who is on a page", async (ctx: SpaceWorld) => {
+  await start(ctx);
+  ctx.presence = presenceOverSession(ctx.fake!.settings);
+});
+
+step("the MC can no longer say who is on a page", (ctx: SpaceWorld) => {
+  ctx.presence!.refuse();
+});
+
+step("the MC can say who is on a page again", (ctx: SpaceWorld) => {
+  ctx.presence!.answer();
+});
+
+/** What the page says, once presence that goes over a session has reached it. */
+async function viewersSay(ctx: SpaceWorld, said: string) {
+  await ctx.presence?.until(() => pane(ctx).viewers === said);
+  expect(pane(ctx).viewers).toBe(said);
+}
+
+step("the page shows nobody else", (ctx: SpaceWorld) => viewersSay(ctx, ""));
+
+step("the page shows the user also on {string}", (ctx: SpaceWorld, device: string) =>
+  viewersSay(ctx, `Also here: ${device}`),
+);
+
+step("the page shows one person, also on {string} and {string}", (ctx: World, a, b) => {
+  expect(pane(ctx).viewers).toBe(`Also here: ${a}, ${b}`);
+});
+
+step("the page shows the agent of {string}", (ctx: World, thread: string) => {
+  expect(pane(ctx).viewers).toBe(`Also here: the agent of “${thread}”`);
+});
+
+step("the user leaves the page", async (ctx: World) => {
+  await pressKey(ctx, "Esc");
+  await settle(ctx);
+  expect(pane(ctx).view).toBe("pages");
+});
+
+step("the user is no longer on the page {string}", (ctx: SpaceWorld, title: string) => {
+  expect(mc(ctx).clientsOn(pageId(ctx, title))).toBe(0);
 });
 
 // --- a second client ---
@@ -1471,6 +1558,8 @@ step("the user makes a deck from the page {string}", async (ctx: SpaceWorld, tit
   await press(ctx, "S");
 });
 
+step("the user opens the deck {string}", (ctx: SpaceWorld, title: string) => openDeck(ctx, title));
+
 step("the deck {string}", (ctx: SpaceWorld, title: string) => {
   seedDeck(ctx, title);
 });
@@ -1690,6 +1779,14 @@ step(
   (ctx: SpaceWorld, name: string, space: string) =>
     addFile(ctx, name, new TextEncoder().encode("only words"), space),
 );
+
+step("the user opens the images of {string}", async (ctx: SpaceWorld, space: string) => {
+  if (pane(ctx).view === "page") await press(ctx, "v");
+  else await openImages(ctx, space);
+  expect(pane(ctx).view).toBe("images");
+});
+
+step("the user closes the images", (ctx: World) => press(ctx, "Esc"));
 
 step("the images of {string} are {string}", async (ctx: SpaceWorld, space: string, names) => {
   await openImages(ctx, space);
@@ -1988,8 +2085,6 @@ step("another client moves the deck {string} to the trash", async (ctx: SpaceWor
 step("the images list shows the prompt {string}", (ctx: SpaceWorld, prompt: string) => {
   expect(listed(pane(ctx).rows, "image").map((text) => text.split("  · ")[1])).toContain(prompt);
 });
-
-step("the user opens the page {string}", (ctx: SpaceWorld, title: string) => openPage(ctx, title));
 
 step("the page shows the text {string}", (ctx: SpaceWorld, text: string) => {
   const rows = pane(ctx).rows.filter((row) => row.kind === "block" && row.first);

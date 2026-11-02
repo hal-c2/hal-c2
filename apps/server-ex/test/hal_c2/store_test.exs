@@ -313,6 +313,7 @@ defmodule HalC2.StoreTest do
     :ok =
       Sqlite3.execute(db, """
       DROP INDEX messages_typed;
+      DROP INDEX messages_untyped;
       ALTER TABLE messages DROP COLUMN typed;
       INSERT INTO messages (stream, id, role, text, created_at)
         SELECT key, 'm1', 'user', 'old', '2026-01-01T09:00:00Z' FROM streams;
@@ -323,10 +324,12 @@ defmodule HalC2.StoreTest do
 
     assert Store.typed_messages_since(path, "2026-01-01") == []
     assert [{"t1", "user", "old", _}] = Store.search_messages(path, "%old%", 10)
+    assert Store.untyped_messages?(path)
 
     Store.index_messages("t1", [{"m1", "user", "old", "2026-01-01T09:00:00Z", true}])
     _ = :sys.get_state(Store)
     assert Store.typed_messages_since(path, "2026-01-01") == [{"t1", "2026-01-01", 1}]
+    refute Store.untyped_messages?(path)
   end
 
   test "the meta entries under a prefix are read in one go, and only those", %{path: path} do
@@ -340,5 +343,50 @@ defmodule HalC2.StoreTest do
            }
 
     assert Store.metas(path, "import.none.") == %{}
+  end
+
+  describe "storing a thread with no stream to index it" do
+    defp message(id),
+      do:
+        {"message", id,
+         %{"s" => %{"id" => id, "role" => "user", "text" => id, "createdAt" => "2026-11-01"}}}
+
+    defp indexed_thread(ids) do
+      HalC2.Search.storing_thread("t1", fn ->
+        {:ok, _} = Store.append([{:thread, "t1", Enum.map(ids, &message/1)}])
+      end)
+    end
+
+    test "a write that fails leaves a count of what the thread holds, and the mark", %{path: path} do
+      indexed_thread(~w(m1 m2))
+      Store.put_meta("messages_typed", "1")
+
+      assert_raise RuntimeError, fn ->
+        HalC2.Search.storing_thread("t1", fn ->
+          {:ok, _} = Store.append([{:thread, "t1", [{"message", "m2", HalC2.Patch.delete()}]}])
+          raise "the disk is full"
+        end)
+      end
+
+      assert HalC2.Search.read?()
+      assert [{"t1", "2026-11-01", 1}] = Store.typed_messages_since(path, "2000-01-01")
+    end
+
+    test "a store not yet read stays unread, even when the write removes what said so",
+         %{path: path} do
+      indexed_thread(~w(m1))
+      {:ok, db} = Sqlite3.open(path)
+      :ok = Sqlite3.execute(db, "PRAGMA busy_timeout = 5000")
+      :ok = Sqlite3.execute(db, "UPDATE messages SET typed = NULL")
+      :ok = Sqlite3.close(db)
+      Store.put_meta("messages_typed", "1")
+      refute HalC2.Search.read?()
+
+      assert_raise RuntimeError, fn ->
+        HalC2.Search.storing_thread("t1", fn -> raise "the disk is full" end)
+      end
+
+      refute HalC2.Search.read?()
+    end
   end
 end

@@ -182,7 +182,8 @@ private:
 // the selected page, and it alone can be presented. Everything comes from the streams; the one thing it adds is an
 // edit the user made (a block's text, a tick) shown until the MC has answered
 // it and the stream has moved past what it was, after which the stream's
-// value is what shows.
+// value is what shows. Who else is on the open page comes from the
+// `spacePresence` shape, not a stream, and is gone with the page.
 //
 // Rows:
 //   spaces   {id, name}, in the order they were made
@@ -238,6 +239,8 @@ class SpacePages : public QObject {
   // loading, live or unreachable: the selected Space's stream (the index's
   // before a Space is selected).
   Q_PROPERTY(QString status READ status NOTIFY changed)
+  // Who else is on the open page: {devices: [label], agents: [thread title]}.
+  Q_PROPERTY(QVariantMap viewers READ viewers NOTIFY viewersChanged)
 
 public:
   explicit SpacePages(QObject* parent = nullptr);
@@ -261,6 +264,7 @@ public:
   // the page's update plus its `cadenceLabel`, empty when it has none.
   QVariantMap page() const;
   QString deckId() const { return m_deckId; }
+  bool imagesShown() const { return m_imagesShown; }
   QVariantMap deck() const;
   bool presenting() const { return m_presenting; }
   QVariantMap slide() const { return m_presenting ? m_slides->get(m_slideIndex) : QVariantMap(); }
@@ -268,6 +272,7 @@ public:
   int slideCount() const { return m_presenting ? m_slides->rowCount() : 0; }
   QVariantMap siteOf(const QString& pageId) const;
   QString status() const;
+  QVariantMap viewers() const { return m_viewers; }
   // "Every 2 hours", "Every day at 07:30", "Mon, Wed at 09:00".
   static QString cadenceLabel(const QJsonObject& cadence);
 
@@ -277,6 +282,10 @@ public:
   void receiveIndex(const QJsonObject& frame);
   void receiveSpace(const QJsonObject& frame);
   void setUnreachable(bool unreachable);
+  // A `spacePresence` frame of the page `pageId`; only the open page's shows,
+  // and whoever was on a page stops showing when another opens.
+  void receiveViewers(const QString& pageId, const QJsonObject& frame);
+  void clearViewers();
 
   // Shows the Space `id` (a new copy of its stream follows) or page `id`
   // of it; one the streams do not hold is not selected.
@@ -326,6 +335,7 @@ signals:
   void changed();
   // The selected Space changed: its stream is followed anew.
   void spaceSelected(const QString& id);
+  void viewersChanged();
   // These images should be shown and have no good address, nor one on its way.
   void imagesNeeded(const QStringList& imageIds);
 
@@ -362,6 +372,8 @@ private:
   QString m_pageId;
   QString m_awaitedSpace;
   QString m_awaitedPage;
+  QVariantMap m_viewers;
+  QString m_viewersPage;
   QString m_deckId;
   QString m_awaitedDeck;
   bool m_presenting = false;
@@ -456,12 +468,22 @@ public:
   bool handle(const QString& action, const QVariant& payload) override;
 
   QString error() const { return m_error; }
+  // The phone layout's Space screen selects a page before showing it: the user
+  // is on it only while the screen says so (`space.pageShown`). On the desktop
+  // and in the phone's wide layout the selected page is the one on show.
+  void setPageShownBySteps(bool bySteps);
+  // How long a page the MC could not say who is on waits to ask it again.
+  void setViewersRetryMs(int ms);
 
 private:
   void setOpen(bool open);
   void follow();
   void unfollow();
   void followSpace();
+  // Follows who else is on the open page, only while it is on show and the
+  // client connected: a new connection follows it anew.
+  void followViewers();
+  void subscribeViewers();
   // `space.<method>` with the selected Space's id unless the payload names
   // one. A refusal is said (refuse) in the MC's words, or in what `refused`
   // returns for its detail.
@@ -492,7 +514,12 @@ private:
   bool m_listed = false;
   int m_indexSubscription = 0;
   int m_spaceSubscription = 0;
+  int m_viewersSubscription = 0;
+  QTimer* m_viewersRetry = nullptr;
   QString m_followedSpace;
+  QString m_followedViewers;
+  bool m_pageShownBySteps = false;
+  bool m_pageShown = false;
   QString m_error;
   int m_writing = 0;
   int m_drawing = 0;

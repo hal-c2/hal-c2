@@ -134,7 +134,7 @@ qt_add_qml_module(hal_c2_bricks
     ThreadDetailsPanel.qml
     CommandPalette.qml
     PullRequestsPage.qml HomePage.qml UsagePage.qml UsageChart.qml
-    SpaceWorkspace.qml SpaceSidebar.qml SpacePage.qml SpaceBlock.qml SpaceSlashMenu.qml SpaceComments.qml SpaceBlockImage.qml SpaceImages.qml SpaceImageDialog.qml
+    SpaceWorkspace.qml SpaceSidebar.qml SpacePage.qml SpaceViewers.qml SpaceBlock.qml SpaceSlashMenu.qml SpaceComments.qml SpaceBlockImage.qml SpaceImages.qml SpaceImageDialog.qml
     SpaceDeck.qml SpacePresenter.qml
     ProvidersSettings.qml
     ProviderAuthTerminal.qml

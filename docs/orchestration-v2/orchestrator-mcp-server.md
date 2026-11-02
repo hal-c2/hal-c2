@@ -148,8 +148,8 @@ assembled in [`delegation.ex`](../../apps/server-ex/lib/hal_c2/orchestration/del
 
 ### `task_cancel`
 
-Interrupts the currently active task run through the normal `run.interrupt`
-command. Native background work between turns currently has no interruptible run. It is idempotent for terminal tasks and accepts an optional cancellation
+Cancels what the child thread has queued, including messages a user sent it, then
+interrupts the currently active task run through the normal `run.interrupt` command. Native background work between turns currently has no interruptible run. It is idempotent for terminal tasks and accepts an optional cancellation
 reason. Use `hal_c2_thread_interrupt` to interrupt a later follow-up run.
 
 ### `create_threads`
