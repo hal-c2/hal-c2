@@ -178,6 +178,9 @@ void embed(World& world) {
   browser->setStore(nullptr, nullptr);
   browser->setDevToolsDock(QStringLiteral("bottom"));
   browser->setDevToolsShare(0.4);
+  browser->setDevicesView(false);
+  browser->setDevicesPresetIds({QStringLiteral("iphone-12-pro"), QStringLiteral("ipad-air"), QStringLiteral("desktop")});
+  browser->setDevices3d(false);
   auto* settings = world.native().controller<SettingsController>();
   browser->setStore([settings](const QString& key) { return settings->deviceValue(key); },
                     [settings](const QString& key, const QVariant& value) { settings->writeDevice(key, value); });
@@ -546,6 +549,84 @@ const Steps steps([] {
     const int percent = qRound(view(world)->scale() * 100);
     expect(label == QStringLiteral("iPad Air · 820 × 1180 · %1%").arg(percent), label);
     saveGrab(world, QStringLiteral("browser-device"));
+  });
+
+  // The Devices view.
+  const auto devicesFrame = [](World& world, const QString& presetId) {
+    return find(world, QStringLiteral("browserDevicesFrame-") + presetId);
+  };
+  const auto openDevicesView = [devicesFrame](World& world) {
+    if (!Browser::instance()->devicesView()) world.brick->click(QStringLiteral("browserDevices"));
+    waitForEngine(world, [&] { QQuickItem* shown = find(world, QStringLiteral("browserDevicesView")); return shown && shown->isVisible(); },
+                  QStringLiteral("the Devices view to show"));
+  };
+  step(QStringLiteral("the user opens the Devices view"), [openDevicesView](World& world, const Captures&, const Table&) { openDevicesView(world); });
+  step(QStringLiteral("a browser tab showing the Devices view"), [openDevicesView](World& world, const Captures&, const Table&) {
+    showTab(world);
+    openDevicesView(world);
+  });
+  step(QStringLiteral("the page shows side by side at a phone, a tablet, and a desktop size"), [devicesFrame](World& world, const Captures&, const Table&) {
+    QQuickItem* phone = devicesFrame(world, QStringLiteral("iphone-12-pro"));
+    QQuickItem* tablet = devicesFrame(world, QStringLiteral("ipad-air"));
+    QQuickItem* desktop = devicesFrame(world, QStringLiteral("desktop"));
+    waitForEngine(world, [&] { return phone && tablet && desktop && phone->isVisible() && tablet->isVisible() && desktop->isVisible(); },
+                  QStringLiteral("a phone, a tablet, and a desktop frame to show"));
+    expect(phone->parentItem()->x() < tablet->parentItem()->x() && tablet->parentItem()->x() < desktop->parentItem()->x(),
+           QStringLiteral("the frames are not left to right: phone %1, tablet %2, desktop %3")
+               .arg(phone->parentItem()->x()).arg(tablet->parentItem()->x()).arg(desktop->parentItem()->x()));
+    waitForEngine(world, [&] { return phone->property("url").toUrl().toString() == viewUrl(world) && tablet->property("url").toUrl().toString() == viewUrl(world) &&
+                               desktop->property("url").toUrl().toString() == viewUrl(world); },
+                  [&] { return QStringLiteral("every frame to load %1; %2").arg(viewUrl(world), state(world)); });
+    saveGrab(world, QStringLiteral("browser-devices"));
+  });
+  step(QStringLiteral("the user navigates to another page"), [](World& world, const Captures&, const Table&) {
+    devServer(world).page(QStringLiteral("/other"), QStringLiteral("Other"));
+    evaluate(world, QStringLiteral("location.href = '/other'; true"));
+    waitForTitle(world, QStringLiteral("Other"));
+  });
+  step(QStringLiteral("every device in the view shows that page"), [](World& world, const Captures&, const Table&) {
+    const QString url = devServer(world).url(QStringLiteral("/other"));
+    for (const QString& presetId : {QStringLiteral("iphone-12-pro"), QStringLiteral("ipad-air"), QStringLiteral("desktop")}) {
+      QQuickItem* frame = find(world, QStringLiteral("browserDevicesFrame-") + presetId);
+      waitForEngine(world, [&] { return frame && frame->property("url").toUrl().toString() == url; },
+                    [&] { return QStringLiteral("the \"%1\" frame to show %2").arg(presetId, url); });
+    }
+  });
+  const auto toggleDevicesPreset = [](World& world, const QString& presetId) {
+    // The picker's own checkbox items only exist in the window's overlay
+    // (the Popup itself is not a QQuickItem to find) once it is open.
+    QQuickItem* entry = find(world, QStringLiteral("browserDevicesPreset-") + presetId);
+    if (!entry || !entry->isVisible()) {
+      world.brick->click(QStringLiteral("browserDevicesPick"));
+      waitForEngine(world, [&] { QQuickItem* opened = find(world, QStringLiteral("browserDevicesPreset-") + presetId); return opened && opened->isVisible(); },
+                    QStringLiteral("the devices picker to offer %1").arg(presetId));
+    }
+    // The list has more entries than the picker shows at once; bring the
+    // one the click targets into its scrolled viewport first.
+    entry = find(world, QStringLiteral("browserDevicesPreset-") + presetId);
+    if (QQuickItem* scroll = find(world, QStringLiteral("browserDevicesScroll"))) {
+      const double top = entry->mapToItem(scroll, QPointF(0, 0)).y();
+      if (top < 0 || top + entry->height() > scroll->height()) {
+        const double max = qMax(0.0, scroll->property("contentHeight").toDouble() - scroll->height());
+        scroll->setProperty("contentY", qBound(0.0, top + entry->height() / 2 - scroll->height() / 2, max));
+        world.sync();
+      }
+    }
+    world.brick->click(QStringLiteral("browserDevicesPreset-") + presetId);
+    world.sync();
+  };
+  step(QStringLiteral("the user adds the %1 device to the view").arg(q), [toggleDevicesPreset](World& world, const Captures& c, const Table&) {
+    toggleDevicesPreset(world, presetId(c[0]));
+  });
+  step(QStringLiteral("the user removes the %1 device from the view").arg(q), [toggleDevicesPreset](World& world, const Captures& c, const Table&) {
+    toggleDevicesPreset(world, presetId(c[0]));
+  });
+  step(QStringLiteral("the view also shows a %1 frame").arg(q), [devicesFrame](World& world, const Captures& c, const Table&) {
+    waitForEngine(world, [&] { QQuickItem* frame = devicesFrame(world, presetId(c[0])); return frame && frame->isVisible(); },
+                  QStringLiteral("a \"%1\" frame to show").arg(c[0]));
+  });
+  step(QStringLiteral("the view no longer shows a %1 frame").arg(q), [devicesFrame](World& world, const Captures& c, const Table&) {
+    waitForEngine(world, [&] { return devicesFrame(world, presetId(c[0])) == nullptr; }, QStringLiteral("the \"%1\" frame to go away").arg(c[0]));
   });
 
   // Mute.
