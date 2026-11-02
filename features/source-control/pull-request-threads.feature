@@ -282,7 +282,7 @@ Feature: Threads that work on or link pull requests
     When the user pastes "https://github.com/acme/shop/pull/42" to start a pull request thread
     Then the user sees the pull request's title and branches before choosing local or worktree
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A pull request can be pasted as its host's link or checkout command
     When the user pastes "<reference>" to start a pull request thread
     Then the pull request number is read as <number>
@@ -298,39 +298,39 @@ Feature: Threads that work on or link pull requests
       | tea pr checkout 7                                             | 7      |
       | az repos pr checkout --id 7                                   | 7      |
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request reference nobody can read is refused
     When the user types "see the tax change" to start a pull request thread
     Then the user is told "Use a pull request URL, checkout command, 123, or #123."
     And neither local nor worktree can be chosen
 
-  @backlog @desktop
+  @desktop
   Scenario: Clearing the reference asks for one
     Given the user typed "42" to start a pull request thread
     When the user clears the reference
     Then the user is told "Paste a pull request URL, checkout command, or enter 123 / #123."
 
-  @backlog @desktop
+  @desktop
   Scenario: Choosing waits until the pull request is resolved
     When the user types "42" to start a pull request thread
     Then the user is told "Resolving pull request..." until its title and branches arrive
     And neither local nor worktree can be chosen until then
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request that cannot be resolved says why
     Given the host answers that pull request 9999 does not exist
     When the user types "9999" to start a pull request thread
     Then the user is told the host's reason in the dialog
     And neither local nor worktree can be chosen
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request thread is not abandoned while it is prepared
     Given the user chose to start a thread on pull request 42 in a new worktree
     When the checkout is still being prepared
     Then the dialog says "Preparing worktree..." and cannot be cancelled
     And local and worktree cannot be chosen again
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A pull request thread that could not be prepared stays open with the reason
     Given the MC fails to prepare pull request 42 <how>
     When the user starts a thread on pull request 42 in a new worktree
@@ -359,7 +359,7 @@ Feature: Threads that work on or link pull requests
     When the user links "acme/shop" pull request 42 and "acme/api" pull request 7 to "Tax work"
     Then "Tax work" lists both pull requests
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Each linked pull request names its repository, even when two share a number
     Given "Tax work" links pull request 42 of "acme/shop" and pull request 42 of "acme/api"
     When the user looks at the thread's linked pull requests
@@ -451,26 +451,26 @@ Feature: Threads that work on or link pull requests
     When the user links that pull request from the mention
     Then "Tax work" lists pull request 42
 
-  @backlog @desktop
+  @desktop
   Scenario: Hovering a pull request link shows what it points to
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user rests the pointer on that link
     Then a card shows "acme/shop" #42, its state, its title, its author and when it was opened
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request link that cannot be read shows the address
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     And the MC cannot read pull request 42
     When the user rests the pointer on that link
     Then the card shows "https://github.com/acme/shop/pull/42"
 
-  @backlog @desktop
+  @desktop
   Scenario: Clicking a pull request link opens it in HAL-C2
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user clicks that link
     Then pull request 42 opens in HAL-C2
 
-  @backlog @desktop
+  @desktop
   Scenario: Clicking a pull request link the MC cannot resolve opens it in the browser
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     And the MC cannot read pull request 42
@@ -478,7 +478,7 @@ Feature: Threads that work on or link pull requests
     Then the browser opens "https://github.com/acme/shop/pull/42"
 
   # Legacy: apps/web/src/lib/openPullRequestLink.test.ts (shouldOpenPullRequestExternally)
-  @backlog @desktop
+  @desktop
   Scenario: A click with the modifier key opens a pull request link in the browser
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user clicks that link holding the modifier key
@@ -486,7 +486,7 @@ Feature: Threads that work on or link pull requests
     And pull request 42 does not open in HAL-C2
 
   # Legacy: apps/web/src/lib/openPullRequestLink.test.ts (findProjectForChangeRequest keeps two hosts apart, claims nothing for a lookalike host)
-  @backlog @desktop
+  @desktop
   Scenario Outline: A link on a host no project is checked out from goes to the browser
     Given a message in "Tax work" mentions "<link>"
     And no project is checked out from that host
@@ -500,7 +500,7 @@ Feature: Threads that work on or link pull requests
       | https://github.com.evil.test/acme/shop/pull/42 |
 
   # Legacy: apps/web/src/lib/openPullRequestLink.test.ts (parseChangeRequestUrl claims nothing it cannot be sure of)
-  @backlog @desktop
+  @desktop
   Scenario Outline: A link that is not a pull request is left to the browser
     Given a message in "Tax work" mentions "<link>"
     When the user clicks that link
@@ -515,7 +515,7 @@ Feature: Threads that work on or link pull requests
       | https://blog.example.test/2026/updates/pull/3   |
 
   # Legacy: apps/web/src/lib/openPullRequestLink.ts (pullRequestCandidateUrlFromReferenceAutolink), apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx (confirmBeforeOpen)
-  @backlog @desktop
+  @desktop
   Scenario: A written number that is a pull request opens as one
     Given a message in "Tax work" mentions "#42" of "acme/shop", which the message links to GitHub's page for issue 42
     And the host knows 42 as a pull request
@@ -523,14 +523,14 @@ Feature: Threads that work on or link pull requests
     Then pull request 42 opens in HAL-C2
 
   # Legacy: apps/web/src/lib/openPullRequestLink.ts (pullRequestCandidateUrlFromReferenceAutolink), apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx (onOpenFallback)
-  @backlog @desktop
+  @desktop
   Scenario: A written number that is an issue opens in the browser
     Given a message in "Tax work" mentions "#42" of "acme/shop", which the message links to GitHub's page for issue 42
     And the host knows 42 as an issue
     When the user clicks that link
     Then the browser opens "https://github.com/acme/shop/issues/42"
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A pull request number can be copied or opened where it lives
     When the user opens the menu of the number of a pull request of <host>
     Then the menu offers "Copy link" and "<open>"
@@ -543,7 +543,7 @@ Feature: Threads that work on or link pull requests
       | Bitbucket    | Open on Bitbucket    |
       | Azure DevOps | Open on Azure DevOps |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The pull request number's menu says when it could not act
     Given the clipboard cannot be written and the browser cannot be opened
     When the user chooses "<choice>" from the menu of a pull request number
@@ -585,7 +585,7 @@ Feature: Threads that work on or link pull requests
     Then the user is told pull request 42 could not be linked
     And "Tax work" lists no pull requests
 
-  @backlog @desktop
+  @desktop
   Scenario: The link dialog asks for a reference before it links
     Given the user is linking a pull request to "Tax work"
     When the user types "tax" as the pull request to link
@@ -594,21 +594,21 @@ Feature: Threads that work on or link pull requests
     When the user clears the pull request to link
     Then the user is told "Paste a pull request URL or enter 123 / #123."
 
-  @backlog @desktop
+  @desktop
   Scenario: A bare number needs the thread's own project to be understood
     Given "Tax work" is not in a project
     When the user links "42" to "Tax work"
     Then the user is told "Paste a full URL to link a pull request from another repository."
     And the pull request cannot be linked
 
-  @backlog @desktop
+  @desktop
   Scenario: A bare number on a host with no pull request address
     Given the project of "Tax work" is on a host whose pull request addresses are not known
     When the user links "42" to "Tax work"
     Then the user is told "Paste a full URL; this project's host has no known pull request URL."
     And the pull request cannot be linked
 
-  @backlog @desktop
+  @desktop
   Scenario: Linking shows it is working and says why it failed
     Given the MC takes a while to link pull requests to "Tax work"
     When the user links pull request 42 to "Tax work"
@@ -617,7 +617,7 @@ Feature: Threads that work on or link pull requests
     When the user links pull request 42 to "Tax work" again
     Then the link dialog says the pull request could not be linked and stays open
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A linked pull request says how it came to be linked
     Given pull request 42 was <how> to "Tax work"
     When the user opens the pull requests of "Tax work"
@@ -631,66 +631,66 @@ Feature: Threads that work on or link pull requests
       | found in the stack of another layer  | Found in the stack        |
       | dismissed from the stack             | Dismissed                 |
 
-  @backlog @desktop
+  @desktop
   Scenario: A stack layer is dismissed from the thread rather than unlinked
     Given pull request 43 is a layer found in the stack of "Tax work"
     When the user opens the actions of pull request 43 in "Tax work"
     Then the action is "Dismiss from thread"
     And a pull request the user linked is offered "Unlink from thread" instead
 
-  @backlog @desktop
+  @desktop
   Scenario: A stack the thread's pull request belongs to says what merging does
     Given pull request 42 is a layer of a GitHub stack of 3
     When the user opens the pull requests of "Tax work"
     Then the user is told "GitHub stack of 3: merging a layer lands the ones below it."
 
-  @backlog @desktop
+  @desktop
   Scenario: Pull requests chained only by their base branches say so
     Given pull requests 42, 43 and 44 are chained by their base branches on a host with no stacks of its own
     When the user opens the pull requests of "Tax work"
     Then the user is told "3 pull requests chained by base branch."
 
-  @backlog @desktop
+  @desktop
   Scenario: A link the host has not been asked about yet shows what is known
     Given pull request 42 was just linked to "Tax work" and the host has not answered
     When the user opens the pull requests of "Tax work"
     Then pull request 42 is listed with its repository and "Waiting for host state"
 
-  @backlog @desktop
+  @desktop
   Scenario: A linked pull request says how and when it was linked
     Given pull request 42 was linked to "Tax work" by the user an hour ago
     When the user rests the pointer on the number of pull request 42
     Then the user is told "Linked by you" and how long ago
 
-  @backlog @desktop
+  @desktop
   Scenario: A linked pull request's link can be copied or opened from its row
     Given pull request 42 is linked to "Tax work"
     When the user opens the actions of pull request 42 in "Tax work"
     Then the user can copy its link
     And the user can open it
 
-  @backlog @desktop
+  @desktop
   Scenario: An environment without several links per thread says so
     Given the environment does not support several linked pull requests per thread
     When the user opens the pull requests of "Tax work"
     Then the user is told "Linked pull requests unavailable"
     And the user is told "This environment does not support multiple linked pull requests."
 
-  @backlog @desktop
+  @desktop
   Scenario: A thread without pull requests says so
     Given "Tax work" has no linked pull request
     When the user opens the pull requests of "Tax work"
     Then the user is told "No linked pull requests"
     And the user can link one
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request says how many threads work on it
     Given pull request 42 is linked to "Tax work" and to "Tax review"
     When the user reads pull request 42
     Then it says "Linked from 2 threads"
     And choosing it searches the threads for pull request 42
 
-  @backlog @desktop
+  @desktop
   Scenario: Linking a pull request to a thread chosen from a list
     Given pull request 42 is linked to no thread
     When the user chooses to link pull request 42 to a thread
@@ -699,14 +699,14 @@ Feature: Threads that work on or link pull requests
     When the user chooses "Tax work"
     Then "Tax work" lists pull request 42
 
-  @backlog @desktop
+  @desktop
   Scenario: A thread that already has the pull request cannot be chosen again
     Given pull request 42 is linked to "Tax work"
     When the user chooses to link pull request 42 to a thread
     Then "Tax work" is shown as "Linked" and cannot be chosen
     And the menu offers to unlink pull request 42 from this thread
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A link that could not be changed is reported
     Given the MC refuses to <change> pull request 42 <direction> "Tax work"
     When the user tries to <change> pull request 42 <direction> "Tax work"
