@@ -30,6 +30,9 @@ Rectangle {
     // Lines can be commented on for the prompt (a thread's diff; a pull
     // request's code has the host's own review).
     readonly property bool canComment: source?.reviewing !== undefined
+    // A tap on a stacked line comments on it, for a screen with no pointer
+    // to show the line's own button (the phone's).
+    property bool touchLines: false
     // The branch is what is reviewed, against `source.comparedBase`.
     readonly property bool comparing: (source?.reviewing ?? false) && source.selection === -3
     // Whether the changed files are listed as a tree beside the diff.
@@ -521,6 +524,7 @@ Rectangle {
         Rectangle {
             id: stackedRow
             readonly property var row: parent
+            objectName: "diffLine"
             implicitHeight: Math.max(18, lineText.implicitHeight)
             height: implicitHeight
             color: root.tint(row.sign)
@@ -553,6 +557,10 @@ Rectangle {
             // A note on this line (and the ones after it) for the prompt.
             HoverHandler {
                 id: lineHover
+            }
+            TapHandler {
+                enabled: root.touchLines && root.canComment && stackedRow.row.sign !== "\\"
+                onTapped: commentPopup.ask(root.model.path(stackedRow.row.file), stackedRow.row.sign === "-" ? "old" : "new", stackedRow.row.sign === "-" ? stackedRow.row.oldLine : stackedRow.row.newLine)
             }
             ShellButton {
                 readonly property var row: parent.row
@@ -652,7 +660,7 @@ Rectangle {
         transformOrigin: Item.TopLeft
         x: Math.round((parent.width - width * scale) / 2)
         y: Math.round((parent.height - height * scale) / 2)
-        width: 380
+        width: Math.min(380, parent.width / scale - 24)
         modal: true
         padding: 14
 
