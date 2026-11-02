@@ -1,12 +1,15 @@
 // Which page SpaceController says it is on (the `spacePresence` shape), as a state
 // machine over what moves it: the Space route opening and closing, the page
 // selected, a deck or the image browser taking its place, the connection going and
-// coming back, the phone's layout folding, and its Space screen saying a page is shown.
+// coming back, the phone's layout folding, its Space screen saying a page is shown, and
+// the MC turning the page down.
 //
 // After each step the MC has exactly one subscription, to the page on show, or none
 // when there is none: the route is open, the client connected, no deck or image browser
 // in the page's place, and in the phone's layout (steps) the screen says so. What the
-// client shows is who the MC has on that page, and nobody with no page on show.
+// client shows is who the MC has on that page, and nobody with no page on show. An MC
+// that cannot say keeps no subscription and the client shows nobody; once it can, the
+// client is back on the page on show without anything else moving.
 
 #include "Prop.h"
 
@@ -43,11 +46,14 @@ struct Model {
   bool deckThere = true;
   bool deckOpen = false;
   bool images = false;
+  bool refusing = false;
   QString page = kPages.first();
   // Who the MC has on each page.
   QHash<QString, QStringList> devices;
 
   QString followed() const { return open && ready && !deckOpen && !images && (!bySteps || shown) ? page : QString(); }
+  // The page the MC has the client on.
+  QString heard() const { return refusing ? QString() : followed(); }
 };
 
 QJsonObject viewersFrame(const Model& model, int id, const QString& page) {
@@ -60,6 +66,10 @@ QJsonObject viewersFrame(const Model& model, int id, const QString& page) {
   return {{QStringLiteral("t"), QStringLiteral("spacePresence")}, {QStringLiteral("id"), id}, {QStringLiteral("viewers"), viewers}};
 }
 
+QJsonObject refusalFrame(int id) {
+  return {{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("MC unavailable: noconnection")}};
+}
+
 struct Shell {
   QTemporaryDir home;
   FakeMc mc;
@@ -70,6 +80,11 @@ struct Shell {
 
   Shell() {
     mc.onShape(QStringLiteral("spacePresence"), [this](int id, const QJsonObject& shape) {
+      if (told.refusing) {
+        mc.send(refusalFrame(id));
+        mc.forget(id);
+        return;
+      }
       mc.send(viewersFrame(told, id, shape.value(QLatin1String("pageId")).toString()));
     });
     native.client()->setRetryDelays({20});
@@ -78,6 +93,7 @@ struct Shell {
     native.restoreWindows();
     native.open(mc.origin(), QStringLiteral("mc-token"));
     if (!prop::until([this] { return native.isActive() && native.client()->isReady(); })) qFatal("the shell did not connect");
+    space()->setViewersRetryMs(5);
     feedPages();
   }
 
@@ -119,7 +135,7 @@ struct Shell {
 
   // Waits for the client to settle on what the model says, then holds it to that.
   void check(const Model& model) {
-    const QString followed = model.followed();
+    const QString followed = model.heard();
     const QStringList pages = followed.isEmpty() ? QStringList() : QStringList{followed};
     QStringList devices = followed.isEmpty() ? QStringList() : model.devices.value(followed);
     devices.sort();
@@ -287,6 +303,26 @@ struct DeviceMoves : Command {
   void show(std::ostream& os) const override { os << "DeviceMoves(" << device.toStdString() << ", " << page.toStdString() << ")"; }
 };
 
+// The MC can no longer say who is on a page, and drops who it was telling; or it can again.
+struct Refusing : Command {
+  bool refusing = *rc::gen::arbitrary<bool>();
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.ready); }
+  void apply(Model& model) const override { model.refusing = refusing; }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    shell.told = expected;
+    if (refusing) {
+      for (const int id : shell.mc.subscribers(QStringLiteral("spacePresence"))) {
+        shell.mc.send(refusalFrame(id));
+        shell.mc.forget(id);
+      }
+    }
+    shell.check(expected);
+  }
+  void show(std::ostream& os) const override { os << "Refusing(" << refusing << ")"; }
+};
+
 }  // namespace
 
 class SpaceViewersProp : public QObject {
@@ -296,7 +332,7 @@ private slots:
   void followsThePageOnShow() {
     QVERIFY(rc::check("the client is on the page on show, and only that page, whatever moved", [] {
       Shell shell;
-      rc::state::check(Model{}, shell, rc::state::gen::execOneOfWithArgs<SetRoute, SetRoute, SelectPage, SelectDeck, DeckThere, ImagesShown, Fold, PageShown, PageShown, GoOffline, GoOnline, DeviceMoves>());
+      rc::state::check(Model{}, shell, rc::state::gen::execOneOfWithArgs<SetRoute, SetRoute, SelectPage, SelectDeck, DeckThere, ImagesShown, Fold, PageShown, PageShown, GoOffline, GoOnline, DeviceMoves, Refusing>());
     }));
   }
 };

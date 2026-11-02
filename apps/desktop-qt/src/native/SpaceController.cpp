@@ -43,6 +43,8 @@ const int kAddressRetryMs = 30'000;
 // Long enough to take in the signed addresses of one batch, which arrive over
 // several turns of the event loop.
 const int kRebuildSoonMs = 50;
+// How long a page the MC could not say who is on waits to ask it again.
+const int kViewersRetryMs = 1000;
 
 // HalC2.Patch: `s` sets, `u` unsets, `a` appends to strings, `d` deletes
 // (alone) or replaces (with `s`/`a`). nullopt when the entity is gone.
@@ -774,6 +776,13 @@ void SpacePages::clearViewers() {
 
 SpaceController::SpaceController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
     : SpacePages(parent), m_bridge(bridge), m_client(client), m_store(store) {
+  m_viewersRetry = new QTimer(this);
+  m_viewersRetry->setObjectName(QStringLiteral("spaceViewersRetry"));
+  m_viewersRetry->setSingleShot(true);
+  m_viewersRetry->setInterval(kViewersRetryMs);
+  connect(m_viewersRetry, &QTimer::timeout, this, [this] {
+    if (!m_viewersSubscription && !m_followedViewers.isEmpty()) subscribeViewers();
+  });
   setThreadTitles([this](const QString& threadId) {
     const auto thread = m_store->thread(m_client->environment() + QLatin1Char(':') + threadId);
     return thread ? thread->title : QString();
@@ -898,13 +907,32 @@ void SpaceController::followViewers() {
   m_followedViewers = page;
   clearViewers();
   if (page.isEmpty()) return;
+  subscribeViewers();
+}
+
+void SpaceController::setViewersRetryMs(int ms) {
+  m_viewersRetry->setInterval(ms);
+}
+
+void SpaceController::subscribeViewers() {
+  const QString page = m_followedViewers;
   m_viewersSubscription = m_client->subscribe(
       this,
       {{QStringLiteral("type"), QStringLiteral("spacePresence")},
        {QStringLiteral("environment"), m_client->environment()},
        {QStringLiteral("spaceId"), spaceId()},
        {QStringLiteral("pageId"), page}},
-      [this, page](const QJsonObject& frame) { receiveViewers(page, frame); });
+      [this, page](const QJsonObject& frame) {
+        if (frame.value(QLatin1String("t")).toString() == QLatin1String("error")) {
+          // The MC could not say (its presence service is down, or the page's MC out of
+          // reach) and keeps nothing of this subscription: nobody is shown until it can.
+          m_client->unsubscribe(std::exchange(m_viewersSubscription, 0));
+          clearViewers();
+          m_viewersRetry->start();
+          return;
+        }
+        receiveViewers(page, frame);
+      });
 }
 
 void SpaceController::unfollow() {

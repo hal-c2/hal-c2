@@ -1008,6 +1008,7 @@ export function makeV3Session(input: {
         { type: "spacePresence", mc, spaceId: request.spaceId, pageId: request.pageId },
         (frame) =>
           frame.t === "spacePresence" ? [decodeSpacePresence({ viewers: frame.viewers })] : [],
+        (frame) => new ClusterRpcError(String(frame.reason ?? "Presence is unavailable."), frame),
       );
 
     // A new thread's worktree is prepared on its MC.

@@ -266,6 +266,20 @@ Feature: Who else is on a page
       When the presence service starts again
       Then the client is told to follow the page's viewers again
 
+  @desktop @mobile @tui
+  Rule: A client the MC cannot tell says nobody and asks again
+
+    # The presence service is down, or the MC that serves the page is out of reach.
+    Scenario: Who else is on the page comes back when the MC can say again
+      Given the MC can say who is on a page
+      And the page "Roadmap" is open on the device "Phone"
+      And the user opens the page "Roadmap"
+      And the page shows the user also on "Phone"
+      When the MC can no longer say who is on a page
+      Then the page shows nobody else
+      When the MC can say who is on a page again
+      Then the page shows the user also on "Phone"
+
   @backlog @mc @desktop @mobile @tui
   Rule: Still to come
 

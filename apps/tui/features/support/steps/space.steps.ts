@@ -21,12 +21,15 @@ import { step } from "../../steps.ts";
 import { env, projectNamed, threadNamed, ui } from "../environment.ts";
 import { fakeClient } from "../fakeClient.ts";
 import { fakeSpaceMc, type FakeSpaceMc } from "../fakeSpaceMc.ts";
+import { presenceOverSession, type PresenceOverSession } from "../presenceOverSession.ts";
 import { findObject, pressKey, settle, typeText, type World } from "../world.ts";
 
 interface SpaceWorld extends World {
   /** The site link each page had when the scenario first saw it. */
   siteLinks?: Map<string, string>;
   spaceMc?: FakeSpaceMc;
+  /** Set when the scenario's presence goes through the real settings client. */
+  presence?: PresenceOverSession;
   /** The Space the scenario's pages are in: the newest one a Given named. */
   spaceName?: string;
   /** Page ids by title, kept so a Then can name pages deleted for good. */
@@ -342,13 +345,30 @@ step("the turn of the agent in {string} ends", async (ctx: SpaceWorld, thread: s
   await settle(ctx);
 });
 
-step("the page shows nobody else", (ctx: World) => {
-  expect(pane(ctx).viewers).toBe("");
+step("the MC can say who is on a page", async (ctx: SpaceWorld) => {
+  await start(ctx);
+  ctx.presence = presenceOverSession(ctx.fake!.settings);
 });
 
-step("the page shows the user also on {string}", (ctx: World, device: string) => {
-  expect(pane(ctx).viewers).toBe(`Also here: ${device}`);
+step("the MC can no longer say who is on a page", (ctx: SpaceWorld) => {
+  ctx.presence!.refuse();
 });
+
+step("the MC can say who is on a page again", (ctx: SpaceWorld) => {
+  ctx.presence!.answer();
+});
+
+/** What the page says, once presence that goes over a session has reached it. */
+async function viewersSay(ctx: SpaceWorld, said: string) {
+  await ctx.presence?.until(() => pane(ctx).viewers === said);
+  expect(pane(ctx).viewers).toBe(said);
+}
+
+step("the page shows nobody else", (ctx: SpaceWorld) => viewersSay(ctx, ""));
+
+step("the page shows the user also on {string}", (ctx: SpaceWorld, device: string) =>
+  viewersSay(ctx, `Also here: ${device}`),
+);
 
 step("the page shows one person, also on {string} and {string}", (ctx: World, a, b) => {
   expect(pane(ctx).viewers).toBe(`Also here: ${a}, ${b}`);

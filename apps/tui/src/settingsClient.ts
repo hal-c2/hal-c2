@@ -90,6 +90,7 @@ export interface TuiSettingsClient {
   /**
    * Puts this client on a page of a Space until the returned function is called, and
    * says who else is on it: at once, on every change, and anew after a reconnection.
+   * An MC that cannot say makes that nobody, and is asked again each second.
    */
   readonly subscribeSpacePresence: (
     spaceId: SpaceId,
@@ -207,9 +208,14 @@ export function makeTuiSettingsClient(
       ),
     subscribeSpacePresence: (spaceId, pageId, onViewers) =>
       drain(
-        subscribe(WS_METHODS.subscribeSpacePresence, { spaceId, pageId }).pipe(
-          Stream.tap((event) => Effect.sync(() => onViewers(event.viewers))),
-        ),
+        subscribe(
+          WS_METHODS.subscribeSpacePresence,
+          { spaceId, pageId },
+          {
+            onExpectedFailure: () => Effect.sync(() => onViewers([])),
+            retryExpectedFailureAfter: "1 second",
+          },
+        ).pipe(Stream.tap((event) => Effect.sync(() => onViewers(event.viewers)))),
       ),
     subscribeMcStream: (stream, onFrame, onError) =>
       drain(

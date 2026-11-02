@@ -356,6 +356,8 @@ public:
   // is on it only while the screen says so (`space.pageShown`). On the desktop
   // and in the phone's wide layout the selected page is the one on show.
   void setPageShownBySteps(bool bySteps);
+  // How long a page the MC could not say who is on waits to ask it again.
+  void setViewersRetryMs(int ms);
 
 private:
   void setOpen(bool open);
@@ -365,6 +367,7 @@ private:
   // Follows who else is on the open page, only while it is on show and the
   // client connected: a new connection follows it anew.
   void followViewers();
+  void subscribeViewers();
   // `space.<method>` with the selected Space's id unless the payload names
   // one. A refusal is said (refuse) in the MC's words, or in what `refused`
   // returns for its detail.
@@ -390,6 +393,7 @@ private:
   int m_indexSubscription = 0;
   int m_spaceSubscription = 0;
   int m_viewersSubscription = 0;
+  QTimer* m_viewersRetry = nullptr;
   QString m_followedSpace;
   QString m_followedViewers;
   bool m_pageShownBySteps = false;

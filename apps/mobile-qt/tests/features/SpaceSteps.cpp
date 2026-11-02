@@ -67,6 +67,8 @@ struct FakeSpaces {
   // Who is on each page: the other devices, and the agents by thread title.
   QHash<QString, QStringList> devices;
   QHash<QString, QStringList> agents;
+  // Whether a client asking who is on a page is turned down.
+  bool viewersRefused = false;
   // The chart text generation draws next; none when the request cannot be answered.
   QJsonObject chart;
   // The page the last chart was asked for on.
@@ -982,6 +984,12 @@ QJsonObject viewersFrame(FakeMc& mc, int id, const QString& page) {
   return {{QStringLiteral("t"), QStringLiteral("spacePresence")}, {QStringLiteral("id"), id}, {QStringLiteral("viewers"), viewers}};
 }
 
+// The MC cannot say who is on a page: it answers an error and keeps nothing.
+void refuseViewers(FakeMc& mc, int id) {
+  mc.send(QJsonObject{{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("MC unavailable: noconnection")}});
+  mc.forget(id);
+}
+
 // Whoever has `page` open hears who is on it now.
 void tellViewers(FakeMc& mc, const QString& page) {
   for (const int id : mc.subscribers(QStringLiteral("spacePresence"))) {
@@ -991,6 +999,7 @@ void tellViewers(FakeMc& mc, const QString& page) {
 
 const FakeMc::Extension spaceCalls([](FakeMc& mc) {
   mc.onShape(QStringLiteral("spacePresence"), [&mc](int id, const QJsonObject& shape) {
+    if (fake(mc).viewersRefused) return refuseViewers(mc, id);
     mc.send(viewersFrame(mc, id, shape.value(QLatin1String("pageId")).toString()));
   });
   mc.onRpc(QStringLiteral("space."), [&mc](const FakeMc::Rpc& rpc) {
@@ -1649,6 +1658,14 @@ const Steps steps([] {
       return said.isEmpty() ? !line || !line->isVisible() : line && line->isVisible() && line->property("text").toString() == said;
     }, S("the page to say \"%1\"").arg(said));
   };
+  step(S("the MC can say who is on a page"), [](World&, const Captures&, const Table&) {});
+  step(S("the MC can no longer say who is on a page"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).viewersRefused = true;
+    for (const int id : world.mc.subscribers(S("spacePresence"))) refuseViewers(world.mc, id);
+  });
+  step(S("the MC can say who is on a page again"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).viewersRefused = false;
+  });
   step(S("the page shows nobody else"), [shows](World& world, const Captures&, const Table&) {
     shows(world, {});
   });
