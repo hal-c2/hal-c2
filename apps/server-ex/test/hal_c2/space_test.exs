@@ -152,6 +152,28 @@ defmodule HalC2.SpaceTest do
       assert Enum.map(released, & &1["kind"]) == ~w(paragraph heading paragraph)
     end
 
+    # A block the user wrote is theirs whatever it says: a restore does not take it, and
+    # its comment, for a run's words.
+    test "a restore takes back what release left, not a block the user wrote with its words",
+         %{space: space} do
+      page_id = page!(space, "Roadmap")
+      block!(space, page_id, "Final")
+      ref = %{"spaceId" => space, "pageId" => page_id}
+      :ok = Space.Schedule.show(ref, %{"instruction" => "Summarise", "enabled" => true})
+      {:ok, _} = Space.Schedule.write(space, page_id, "## Moves\n\nThree threads moved forward")
+      {:ok, %{versions: [%{version: version} | _]}} = Space.page_versions(space, page_id)
+      remove_update!(space, page_id)
+      {:ok, state} = Space.state(space)
+      released = Space.Blocks.of_page(state, page_id) |> Enum.map(& &1["id"])
+      hand = block!(space, page_id, "Three threads moved forward", "paragraph", nil)
+      {:ok, _} = Space.add_comment(space, page_id, hand, "Mine")
+
+      assert {:ok, _} = Space.restore_page_version(space, page_id, version)
+      {:ok, state} = Space.state(space)
+      assert Enum.map(Space.Blocks.of_page(state, page_id), & &1["id"]) == released
+      assert texts(space, page_id) == ["Final", "Moves", "Three threads moved forward"]
+    end
+
     test "a restore while the page updates itself leaves the generated part alone",
          %{space: space} do
       page_id = page!(space, "Roadmap")

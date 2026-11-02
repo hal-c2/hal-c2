@@ -133,8 +133,9 @@ defmodule HalC2.Space.History do
   # A restore never writes a generated part: the page's own, left out of `current`, stays
   # as it is. A page that updates itself takes none of a version's. Any other gets a
   # version's back as the blocks it reads as, as when the update is removed
-  # (`HalC2.Space.Blocks.release_generated/4`), in blocks that already read so where the
-  # page has them, so a version from before the removal is the page as it is.
+  # (`HalC2.Space.Blocks.release_generated/4`), in blocks that release left and nobody
+  # has written since where the page has them, so a version from before the removal is
+  # the page as it is. A block someone wrote is theirs, with its comments, whatever it says.
   defp ours(blocks, _state, %{"schedule" => %{}}, _current, _new),
     do: Enum.reject(blocks, &(&1["kind"] == "generated"))
 
@@ -142,7 +143,10 @@ defmodule HalC2.Space.History do
     ids = MapSet.new(blocks, & &1["id"])
 
     spare =
-      current |> Map.values() |> Enum.reject(&(&1["id"] in ids)) |> Enum.sort_by(& &1["order"])
+      current
+      |> Map.values()
+      |> Enum.filter(&(&1["id"] not in ids and &1["updatedBy"] == Space.Schedule.author()))
+      |> Enum.sort_by(& &1["order"])
 
     blocks
     |> Enum.zip(Enum.drop(blocks, 1) ++ [nil])

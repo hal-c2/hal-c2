@@ -20,6 +20,9 @@ defmodule HalC2.Space.Schedule do
   @thread_chars 1_500
   @page_chars 8_000
 
+  @doc "Who a run's writes, and what removing the update releases, are by."
+  def author, do: @author
+
   @doc "Gives a live page its instruction and cadence, or changes them."
   def set(space_id, page_id, instruction, cadence) do
     with {:ok, instruction} <- instruction(instruction),

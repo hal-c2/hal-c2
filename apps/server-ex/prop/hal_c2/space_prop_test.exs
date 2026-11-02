@@ -24,9 +24,11 @@ defmodule HalC2.SpacePropTest do
     the same value, or resolving a resolved comment (reopening an open one) writes none;
   - a restore makes a live page look as it did, keeps every comment, moves no page, and
     writes nothing when the page already looks like it;
-  - a page's update is not content: each run writes the page's one generated part, a
-    restore keeps the update, and brings a version's generated part back as one only to
-    a page that updates itself, as the ordinary block it reads as to any other;
+  - a page's update is not content: each run writes the page's one generated part,
+    removing the update leaves it as the ordinary block it reads as, and a restore keeps
+    the update and never writes a generated part: it leaves the page's as it is, takes
+    none of a version's while the page updates itself, and brings a version's back as
+    the ordinary block it reads as to a page that no longer does;
   - reading a page's history writes nothing, its versions go strictly back in time, and
     the newest of them reads as the page does now;
   - deleting a page for good is its deleter's edit of a page that linked to it, whoever
@@ -125,7 +127,8 @@ defmodule HalC2.SpacePropTest do
   # decks: name => %{title, trashed}; deck_order: deck => its slide names in order;
   # slides: name => %{deck, title, body}. A slide a deck is made with is "<deck>.<n>".
   # sites: page => %{shown, behind}, `shown` being what `view/2` said when it published.
-  # images: name => %{trashed}.
+  # images: name => %{trashed}. ran: the blocks a page's update has written, which a
+  # delete may first stamp as its deleter's (the model does not hold who wrote last).
   def initial_state do
     %{
       pages: %{},
@@ -138,7 +141,8 @@ defmodule HalC2.SpacePropTest do
       deck_order: %{},
       slides: %{},
       sites: %{},
-      images: %{}
+      images: %{},
+      ran: []
     }
   end
 
@@ -284,10 +288,9 @@ defmodule HalC2.SpacePropTest do
   def precondition(s, {:call, _, :create_page, [name, parent]}),
     do: not Map.has_key?(s.pages, name) and (parent == nil or Map.has_key?(s.pages, parent))
 
-  # An update is only removed with what it wrote, which `HalC2.Space.Schedule.remove/2`
-  # releases; the model ends one only when it wrote nothing that stands.
+  # `HalC2.Space.Schedule.remove/2` releases what an update wrote, and only on a live page.
   def precondition(s, {:call, _, :set_update, [page, on]}),
-    do: is_map_key(s.pages, page) and (on or generated_of(s, page) == nil)
+    do: is_map_key(s.pages, page) and (on or generated_of(s, page) == nil or live?(s, page))
 
   def precondition(s, {:call, _, :run_update, [{name, page}, _]}),
     do: is_map_key(s.pages, page) and s.pages[page].update and {name, page} in runs(s)
@@ -593,7 +596,8 @@ defmodule HalC2.SpacePropTest do
           comments: Map.drop(s.comments, comments)
       }
 
-      {:ok, next, 1 + length(comments)}
+      writes = if name in s.ran, do: [1, 2], else: [1]
+      {:ok, next, Enum.map(writes, &(&1 + length(comments)))}
     else
       {:trashed, s, 0}
     end
@@ -626,13 +630,23 @@ defmodule HalC2.SpacePropTest do
   defp step(s, :read_history, [_page]), do: {:ok, s, 0}
 
   # The events it takes are two or three on the page and one a block that changes, and
-  # any block can differ by its order key alone, which the model does not hold.
+  # any block can differ by its order key alone, which the model does not hold. The
+  # page's generated part stays as it is, and is then moved last (`restore_version/1`),
+  # which may be one more.
   defp step(s, :restore_version, [save]) do
     %{page: page, order: order, blocks: blocks} = s.saves[save]
-    blocks = if s.pages[page].update, do: blocks, else: Map.new(blocks, &released/1)
+    kept = generated_of(s, page)
+
+    {order, blocks} =
+      if s.pages[page].update do
+        order = Enum.reject(order, &(blocks[&1].kind == "generated"))
+        {order, Map.take(blocks, order)}
+      else
+        {order, Map.new(blocks, &released/1)}
+      end
 
     if live?(s, page) do
-      now = s.order[page]
+      now = s.order[page] -- List.wrap(kept)
       gone = now -- order
       changed = for name <- order, s.blocks[name] != blocks[name], do: name
       moved = if now -- gone == order -- (order -- now), do: 0, else: 1
@@ -642,7 +656,7 @@ defmodule HalC2.SpacePropTest do
       next = %{
         s
         | blocks: s.blocks |> Map.drop(gone) |> Map.merge(blocks),
-          order: %{s.order | page => order}
+          order: %{s.order | page => order ++ List.wrap(kept)}
       }
 
       writes =
@@ -650,16 +664,26 @@ defmodule HalC2.SpacePropTest do
           do: [0 | Enum.to_list(3..(3 + most))],
           else: Enum.to_list((2 + least + moved)..(3 + most))
 
+      writes = if kept, do: Enum.uniq(Enum.flat_map(writes, &[&1, &1 + 1])), else: writes
       {:ok, next, writes}
     else
       {:trashed, s, 0}
     end
   end
 
+  # Removing it releases the generated part in the same step: one more event.
   defp step(s, :set_update, [page, on]) do
-    if s.pages[page].update == on,
-      do: {:ok, s, 0},
-      else: {:ok, put_in(s.pages[page].update, on), 1}
+    cond do
+      s.pages[page].update == on ->
+        {:ok, s, 0}
+
+      on or generated_of(s, page) == nil ->
+        {:ok, put_in(s.pages[page].update, on), 1}
+
+      true ->
+        {name, block} = released({generated_of(s, page), s.blocks[generated_of(s, page)]})
+        {:ok, %{put_in(s.pages[page].update, false) | blocks: %{s.blocks | name => block}}, 2}
+    end
   end
 
   # The page's `writtenAt`, and its generated part: a new one, or the one it has, which
@@ -670,7 +694,7 @@ defmodule HalC2.SpacePropTest do
         {:trashed, s, 0}
 
       Map.has_key?(s.blocks, name) ->
-        {:ok, put_in(s.blocks[name].text, text), [0, 1, 2]}
+        {:ok, %{put_in(s.blocks[name].text, text) | ran: [name | s.ran]}, [0, 1, 2]}
 
       true ->
         block = %{page: page, kind: "generated", checked: false, text: text, chart: nil}
@@ -680,7 +704,8 @@ defmodule HalC2.SpacePropTest do
            s
            | blocks: Map.put(s.blocks, name, block),
              order: %{s.order | page => s.order[page] ++ [name]},
-             used: [name | s.used]
+             used: [name | s.used],
+             ran: [name | s.ran]
          }, [1, 2]}
     end
   end
@@ -947,20 +972,43 @@ defmodule HalC2.SpacePropTest do
 
   def move_page(name, parent), do: act(&Space.move_page(&1, id(name), id(parent)))
 
-  # The page's view of an update as the scheduler shows it, or none; the scheduler
-  # itself is not running.
-  def set_update(name, on) do
-    view =
-      if on,
-        do: %{
-          "instruction" => "Summarise",
-          "cadence" => %{"type" => "interval", "everyMs" => 3_600_000},
-          "enabled" => true
-        }
+  # The page's view of an update as the scheduler shows it; the scheduler itself is not
+  # running, so ending one is what `HalC2.Space.Schedule.remove/2` writes to the page.
+  def set_update(name, true) do
+    view = %{
+      "instruction" => "Summarise",
+      "cadence" => %{"type" => "interval", "everyMs" => 3_600_000},
+      "enabled" => true
+    }
 
     act(fn space ->
       :ok = Schedule.show(%{"spaceId" => space, "pageId" => id(name)}, view)
       {:ok, nil}
+    end)
+  end
+
+  def set_update(name, false) do
+    page_id = id(name)
+
+    act(fn space ->
+      Space.transact(space, fn state ->
+        page = Space.Pages.get(state, page_id)
+
+        if page["schedule"] == nil do
+          {[], {:ok, nil}}
+        else
+          specs =
+            case generated(state, page_id) do
+              nil -> []
+              block -> Space.written(state, block["text"])
+            end
+
+          released = Blocks.release_generated(state, page_id, specs, %{"type" => "schedule"})
+
+          {[{"page", page_id, %{"s" => %{"schedule" => nil, "writtenAt" => nil}}} | released],
+           {:ok, nil}}
+        end
+      end)
     end)
   end
 
@@ -1019,10 +1067,31 @@ defmodule HalC2.SpacePropTest do
     act(fn _ -> {:ok, nil} end)
   end
 
+  # A restore that writes the page's generated part is a failure. The model holds no
+  # order keys, so the part is then moved last for it to know where it is.
   def restore_version(save) do
     %{version: version, page: page} = Map.fetch!(Process.get(:saves), save)
-    act(&Space.restore_page_version(&1, page, version))
+
+    act(fn space ->
+      kept = generated(Streams.state(stream()), page)
+      reply = Space.restore_page_version(space, page, version)
+
+      cond do
+        kept == nil or elem(reply, 0) != :ok ->
+          reply
+
+        generated(Streams.state(stream()), page) != kept ->
+          {:error, :generated_written, nil}
+
+        true ->
+          {:ok, _} = Space.move_block(space, kept["id"], :last)
+          reply
+      end
+    end)
   end
+
+  defp generated(state, page_id),
+    do: Enum.find(Blocks.of_page(state, page_id), &(&1["kind"] == "generated"))
 
   # Replies :ok when the versions go back in time and the newest reads as the page does.
   def read_history(page) do
