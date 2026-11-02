@@ -1366,7 +1366,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
   step "the continuation names the background command the restart ended", context do
     text = context.continuation_message["text"]
-    assert text =~ "restarted"
+    assert text =~ "The server stopped, which ended the background command"
     assert text =~ "`npm run dev`"
 
     # The command itself was ended as interrupted, and Codex was sent the message.

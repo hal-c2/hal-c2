@@ -29,9 +29,16 @@ defmodule HalC2.Orchestration.Wake do
   """
   def deliver(thread_id, message, opts \\ []) do
     message_id = Entities.new_id("message")
-    message = Map.put(message, :instance, opts[:instance])
-    on_dropped = Keyword.get(opts, :on_dropped, fn -> :ok end)
-    run = fn -> send_wake(thread_id, message_id, message, on_dropped, 0) end
+
+    wake = %{
+      thread_id: thread_id,
+      message_id: message_id,
+      message: message,
+      instance: opts[:instance],
+      on_dropped: Keyword.get(opts, :on_dropped, fn -> :ok end)
+    }
+
+    run = fn -> send_wake(wake, 0) end
 
     if Process.whereis(__MODULE__),
       do: Task.Supervisor.start_child(__MODULE__, run),
@@ -56,14 +63,16 @@ defmodule HalC2.Orchestration.Wake do
     :ok
   end
 
-  defp send_wake(thread_id, message_id, message, on_dropped, attempt) do
+  defp send_wake(
+         %{thread_id: thread_id, message_id: message_id, instance: instance} = wake,
+         attempt
+       ) do
     stream = HalC2.Streams.state(thread_id)
     thread = StreamState.get(stream, "thread")[thread_id] || %{}
 
     if thread["archivedAt"] != nil or thread["deletedAt"] != nil do
-      on_dropped.()
+      wake.on_dropped.()
     else
-      {instance, message} = Map.pop(message, :instance)
       runs = StreamState.list(stream, "run")
       own = Enum.filter(runs, &(get_in(&1, ["modelSelection", "instanceId"]) == instance))
 
@@ -84,27 +93,26 @@ defmodule HalC2.Orchestration.Wake do
             "createdBy" => "agent",
             "creationSource" => "provider"
           },
-          message
+          wake.message
         )
 
       case dispatch(command) do
         {:ok, _} -> :ok
-        {:error, reason} -> retry(thread_id, message_id, message, on_dropped, attempt, reason)
+        {:error, reason} -> retry(wake, attempt, reason)
       end
     end
   catch
-    kind, reason ->
-      retry(thread_id, message_id, message, on_dropped, attempt, {kind, reason})
+    kind, reason -> retry(wake, attempt, {kind, reason})
   end
 
-  defp retry(thread_id, message_id, message, on_dropped, attempt, reason) do
+  defp retry(wake, attempt, reason) do
     if attempt + 1 < @tries do
-      Logger.warning("wake of #{thread_id} not taken, trying again: #{inspect(reason)}")
+      Logger.warning("wake of #{wake.thread_id} not taken, trying again: #{inspect(reason)}")
       Process.sleep(pause(attempt))
-      send_wake(thread_id, message_id, message, on_dropped, attempt + 1)
+      send_wake(wake, attempt + 1)
     else
-      Logger.warning("wake of #{thread_id} dropped: #{inspect(reason)}")
-      on_dropped.()
+      Logger.warning("wake of #{wake.thread_id} dropped: #{inspect(reason)}")
+      wake.on_dropped.()
     end
   end
 

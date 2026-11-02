@@ -24,6 +24,7 @@ defmodule HalC2.WakePropTest do
   @moduletag capture_log: true
 
   @threads ["t1", "t2"]
+  @instances ["codex", "claude"]
   @tries 10
 
   property "a wake is sent once, unless its thread was put away or every try failed",
@@ -83,25 +84,32 @@ defmodule HalC2.WakePropTest do
   # --- model ----------------------------------------------------------------------
 
   # `away`: the threads archived or deleted; `deleted`: those deleted, for good.
-  # `next`: the number of the next wake.
-  def initial_state, do: %{away: MapSet.new(), deleted: MapSet.new(), next: 0}
+  # `next`: the number of the next wake, and of the next run. `runs`: each thread's
+  # runs, newest first, as `{ordinal, instance}`.
+  def initial_state,
+    do: %{away: MapSet.new(), deleted: MapSet.new(), next: 0, runs: Map.new(@threads, &{&1, []})}
 
   def command(state) do
     live = Enum.reject(@threads, &(&1 in state.deleted))
 
     frequency(
       [
-        {5, {:call, __MODULE__, :wake, [state.next, oneof(@threads), refusals()]}},
+        {5,
+         {:call, __MODULE__, :wake, [state.next, oneof(@threads), oneof(@instances), refusals()]}},
         {2,
          {:call, __MODULE__, :wakes,
-          [state.next, resize(3, non_empty(list({oneof(@threads), refusals()})))]}}
+          [
+            state.next,
+            resize(3, non_empty(list({oneof(@threads), oneof(@instances), refusals()})))
+          ]}}
       ] ++
         if(live == [],
           do: [],
           else: [
             {2, {:call, __MODULE__, :archive, [oneof(live)]}},
             {2, {:call, __MODULE__, :unarchive, [oneof(live)]}},
-            {1, {:call, __MODULE__, :delete, [oneof(live)]}}
+            {1, {:call, __MODULE__, :delete, [oneof(live)]}},
+            {3, {:call, __MODULE__, :ran, [state.next, oneof(live), oneof(@instances)]}}
           ]
         )
     )
@@ -124,12 +132,19 @@ defmodule HalC2.WakePropTest do
   def precondition(state, {:call, _, :delete, [thread]}), do: thread not in state.deleted
   def precondition(state, {:call, _, :wake, [n | _]}), do: n == state.next
   def precondition(state, {:call, _, :wakes, [n | _]}), do: n == state.next
+
+  def precondition(state, {:call, _, :ran, [n, thread, _]}),
+    do: n == state.next and thread not in state.deleted
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :wake, _}), do: %{state | next: state.next + 1}
 
   def next_state(state, _result, {:call, _, :wakes, [_, wakes]}),
     do: %{state | next: state.next + length(wakes)}
+
+  def next_state(state, _result, {:call, _, :ran, [n, thread, instance]}),
+    do: %{state | next: n + 1, runs: Map.update!(state.runs, thread, &[{n, instance} | &1])}
 
   def next_state(state, _result, {:call, _, :archive, [thread]}),
     do: %{state | away: MapSet.put(state.away, thread)}
@@ -144,11 +159,14 @@ defmodule HalC2.WakePropTest do
         deleted: MapSet.put(state.deleted, thread)
     }
 
-  def postcondition(state, {:call, _, :wake, [n, thread, refusals]}, [outcome]),
-    do: kept?(state, {n, thread, refusals}, outcome)
+  def postcondition(state, {:call, _, :wake, [n, thread, instance, refusals]}, [outcome]),
+    do: kept?(state, {n, thread, instance, refusals}, outcome)
 
   def postcondition(state, {:call, _, :wakes, [n, wakes]}, outcomes) do
-    expected = Enum.with_index(wakes, fn {thread, refusals}, i -> {n + i, thread, refusals} end)
+    expected =
+      Enum.with_index(wakes, fn {thread, instance, refusals}, i ->
+        {n + i, thread, instance, refusals}
+      end)
 
     length(outcomes) == length(expected) and
       Enum.all?(Enum.zip(expected, outcomes), fn {w, o} -> kept?(state, w, o) end)
@@ -156,23 +174,40 @@ defmodule HalC2.WakePropTest do
 
   def postcondition(_state, _call, result), do: result == :ok
 
-  defp kept?(state, {_n, thread, refusals}, %{tries: tries, pauses: pauses, dropped: dropped}) do
+  defp kept?(state, {_n, thread, instance, refusals}, %{
+         tries: tries,
+         pauses: pauses,
+         dropped: dropped
+       }) do
+    # Its run is on the model of the latest run on the instance that woke, or of the
+    # latest run when that instance has none.
+    runs = state.runs[thread]
+
+    selection =
+      case Enum.find(runs, &match?({_, ^instance}, &1)) || List.first(runs) do
+        nil -> nil
+        {ordinal, on} -> selection(on, ordinal)
+      end
+
     cond do
       thread in state.away ->
         tries == [] and dropped
 
       length(refusals) >= @tries ->
-        length(tries) == @tries and one_wake?(tries, thread) and dropped and
+        length(tries) == @tries and one_wake?(tries, thread, selection) and dropped and
           pauses == Enum.to_list(0..(@tries - 2))
 
       true ->
-        length(tries) == length(refusals) + 1 and one_wake?(tries, thread) and not dropped and
-          pauses == Enum.to_list(0..(length(refusals) - 1)//1)
+        length(tries) == length(refusals) + 1 and one_wake?(tries, thread, selection) and
+          not dropped and pauses == Enum.to_list(0..(length(refusals) - 1)//1)
     end
   end
 
-  defp one_wake?([first | _] = tries, thread) do
-    Enum.all?(tries, &(&1 == first)) and
+  defp selection(instance, ordinal),
+    do: %{"instanceId" => instance, "model" => "model-#{ordinal}"}
+
+  defp one_wake?([first | _] = tries, thread, selection) do
+    Enum.all?(tries, &(&1 == first)) and first["modelSelection"] == selection and
       match?(
         %{
           "type" => "message.dispatch",
@@ -187,18 +222,19 @@ defmodule HalC2.WakePropTest do
 
   # --- commands -------------------------------------------------------------------
 
-  def wake(n, thread, refusals), do: wakes(n, [{thread, refusals}])
+  def wake(n, thread, instance, refusals), do: wakes(n, [{thread, instance, refusals}])
 
   # Sends each wake at once and waits on the drain; each wake's tries and waits are
   # told apart by its text.
   def wakes(n, wakes) do
     parent = self()
 
-    for {{thread, refusals}, i} <- Enum.with_index(wakes) do
+    for {{thread, instance, refusals}, i} <- Enum.with_index(wakes) do
       text = "wake #{n + i}"
       :ets.insert(__MODULE__, {{:script, text}, refusals})
 
       Wake.deliver(thread, %{"text" => text},
+        instance: instance,
         on_dropped: fn -> send(parent, {:dropped, text}) end
       )
     end
@@ -221,6 +257,23 @@ defmodule HalC2.WakePropTest do
           end
       }
     end
+  end
+
+  # A run that ended on `instance`, numbered `n`.
+  def ran(n, thread, instance) do
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [
+        {"run", "run:#{n}",
+         HalC2.Patch.diff(nil, %{
+           "id" => "run:#{n}",
+           "threadId" => thread,
+           "ordinal" => n,
+           "status" => "completed",
+           "modelSelection" => selection(instance, n)
+         })}
+      ])
+
+    :ok
   end
 
   def archive(thread), do: put_away(thread, "thread.archive")

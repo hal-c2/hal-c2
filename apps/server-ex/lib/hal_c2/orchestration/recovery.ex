@@ -433,12 +433,12 @@ defmodule HalC2.Orchestration.Recovery do
 
   defp background_text([command]),
     do:
-      "The server restarted, which stopped the background command `#{command}`. " <>
+      "The server stopped, which ended the background command `#{command}`. " <>
         "Start it again if you still need it, then continue where you left off."
 
   defp background_text(commands),
     do:
-      "The server restarted, which stopped these background commands: " <>
+      "The server stopped, which ended these background commands: " <>
         Enum.map_join(commands, ", ", &"`#{&1}`") <>
         ". Start them again if you still need them, then continue where you left off."
 
