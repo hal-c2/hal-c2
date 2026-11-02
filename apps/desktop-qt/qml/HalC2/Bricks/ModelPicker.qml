@@ -273,8 +273,6 @@ AbstractButton {
     Popup {
         id: popup
 
-        Accessible.name: qsTr("Models")
-
         // Above the trigger, and
         // flipped below it when the window has no room above.
         property bool below: false
@@ -339,6 +337,9 @@ AbstractButton {
 
         contentItem: Item {
             clip: true
+            // A Popup is no Item, so its name is on its content.
+            Accessible.role: Accessible.Pane
+            Accessible.name: qsTr("Models")
 
             // The provider rail: favourites, then one button per enabled
             // instance. Hidden while searching, since search spans them all.

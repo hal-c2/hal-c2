@@ -1550,7 +1550,6 @@ Rectangle {
                     Popup {
                         id: branchPicker
                         objectName: "branchPicker"
-                        Accessible.name: qsTr("Branches")
 
                         scale: Shell.state.layout?.zoom ?? 1
                         transformOrigin: Item.TopLeft
@@ -1599,6 +1598,9 @@ Rectangle {
                         ColumnLayout {
                             id: branchColumn
 
+                            // A Popup is no Item, so its name is on its content.
+                            Accessible.role: Accessible.Pane
+                            Accessible.name: qsTr("Branches")
                             anchors.fill: parent
                             spacing: 4
 

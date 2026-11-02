@@ -16,7 +16,6 @@ Popup {
 
     objectName: "commandPalette"
     parent: Overlay.overlay
-    Accessible.name: qsTr("Command palette")
     // Not modal, so the window's shortcuts (mod+k among them) still reach it.
     modal: false
     scale: Shell.state.layout?.zoom ?? 1
@@ -60,8 +59,11 @@ Popup {
         radius: Math.min(Theme.radius, 16)
     }
 
+    // A Popup is no Item, so its name is on its content.
     contentItem: ColumnLayout {
         spacing: 8
+        Accessible.role: Accessible.Pane
+        Accessible.name: qsTr("Command palette")
 
         Text {
             objectName: "commandPaletteSubmenu"
