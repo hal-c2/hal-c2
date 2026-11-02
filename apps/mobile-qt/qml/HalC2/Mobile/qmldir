@@ -18,4 +18,6 @@ SpacePagesView 1.0 SpacePagesView.qml
 SpaceScreen 1.0 SpaceScreen.qml
 SpaceSheet 1.0 SpaceSheet.qml
 SpaceTextDialog 1.0 SpaceTextDialog.qml
+TerminalContextSheet 1.0 TerminalContextSheet.qml
+TerminalScreen 1.0 TerminalScreen.qml
 ThreadScreen 1.0 ThreadScreen.qml

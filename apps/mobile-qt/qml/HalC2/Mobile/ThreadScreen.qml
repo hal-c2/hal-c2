@@ -35,6 +35,16 @@ ColumnLayout {
             onClicked: Shell.dispatch("alerts.setMuted", { key: screen.threadKey, muted: !screen.muted })
         }
 
+        // A tap opens the terminal; held, its menu of terminals and scripts.
+        MobileIconButton {
+            objectName: "threadTerminal"
+            visible: Terminals.available
+            iconName: "terminal"
+            label: qsTr("Open the terminal: %1").arg((Shell.state.mobileTerminal ?? {}).label ?? "")
+            onClicked: Shell.dispatch("terminal.toggle")
+            onPressAndHold: Shell.dispatch("mobileTerminal.menu", {})
+        }
+
         MobileIconButton {
             objectName: "threadMenu"
             iconName: "ellipsis"

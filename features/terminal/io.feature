@@ -563,7 +563,7 @@ Feature: Terminal input and output
       Given the terminal's shell exits after the user types "exit"
       Then the terminal closes without a confirmation
 
-    @backlog @mobile
+    @mobile
     Scenario: The user types into a terminal from the phone
       Given the phone shows a thread's terminal
       When the user types "git status" and sends it

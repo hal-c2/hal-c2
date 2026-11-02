@@ -108,8 +108,8 @@ desktop already has:
   desktop's layout shows: the root says which with `layout.desktop`, which `MobileApp` hands to
   `DraftController::setLandsOnDraft`.
 - `MobileApp` turns `HAL_C2_HAS_TERMINAL` into `Terminals.supported`, the one thing the bricks
-  and controllers ask before they offer or draw a terminal; a build without it offers none. Only
-  the desktop's layout draws one, and opens one: the terminal wants a keyboard.
+  and controllers ask before they offer or draw a terminal; a build without it offers none. The
+  phone layout shows one at a time on a screen of its own, and the desktop's layout in its drawer.
 - The first APK build downloads Gradle and the Android Gradle plugin into `~/.gradle`, about
   600 MB.
 - TLS on Android is the OpenSSL in the APK, 6.6 MB of it, built from the release pinned by version

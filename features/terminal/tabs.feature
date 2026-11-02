@@ -204,7 +204,7 @@ Feature: Terminal tabs and splits
       When the user returns to one of them
       Then its terminals show their live output without replaying history
 
-    @backlog @mobile
+    @mobile
     Scenario: The user switches between a thread's terminals on the phone
       Given a thread with two terminals
       When the user picks the second terminal on the phone

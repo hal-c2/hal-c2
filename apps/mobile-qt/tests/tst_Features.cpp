@@ -32,6 +32,8 @@ const QStringList kDefaultGlobs{
     QStringLiteral("mobile/tablet-and-hardware-keyboard.feature"),
     QStringLiteral("mobile/notifications.feature"),
     QStringLiteral("mobile/spaces.feature"),
+    QStringLiteral("mobile/terminal.feature"),
+    QStringLiteral("terminal/*.feature"),
     QStringLiteral("space/pages.feature"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
     QStringLiteral("threads/sidebar-list.feature:*plugin*"),

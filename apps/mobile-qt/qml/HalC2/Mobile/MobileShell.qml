@@ -48,7 +48,15 @@ ShellWindow {
     // beside its thread is 736 wide (LayoutController's 256 and 480, inside
     // Android's medium window width class), and under 480 tall is that
     // platform's compact height class, a phone on its side.
-    readonly property bool roomy: width / zoom >= 736 && fullHeight / zoom >= 480
+    property bool roomy: width / zoom >= 736 && fullHeight / zoom >= 480
+    // A turned phone hears its new width before its new height, and for that
+    // moment is square: the layouts, and a terminal, must not be built for it.
+    Binding {
+        target: root
+        property: "roomy"
+        value: root.width / root.zoom >= 736 && root.fullHeight / root.zoom >= 480
+        delayed: true
+    }
     // What the window shows: `pairing`, or the layout it has room for.
     readonly property string layout: !paired || adding ? "pairing" : roomy ? "desktop" : "phone"
 
@@ -75,6 +83,7 @@ ShellWindow {
     // The step the phone's Space screen is on, kept while a wide layout replaces it.
     property var spaceStep: null
     onScreenChanged: {
+        Shell.dispatch("mobileTerminal.covered", { covered: screen !== "thread" });
         if (screen !== "space")
             spaceStep = null;
     }
@@ -98,6 +107,8 @@ ShellWindow {
             Shell.dispatch("settings.navigate", { to: "/settings" });
         else if (layout === "phone" && spaceScreen !== null && spaceScreen.stepBack())
             return;
+        else if (layout === "phone" && screen === "thread" && Terminals.open)
+            Shell.dispatch("terminal.toggle");
         else
             Keybindings.commands.run("navigation.back");
     }
@@ -111,7 +122,7 @@ ShellWindow {
     // environment to set up), and menus as popups at the pointer rather than
     // the phone's sheet. The app is told which layout shows (MobileApp): a
     // window with no thread lands on a draft in the desktop layout and stays
-    // on the thread list in the phone's, which also draws no terminal.
+    // on the thread list in the phone's, which has its terminal on a screen.
     firstRunGate: layout === "desktop" && connected
     contextMenus: layout === "desktop"
     onLayoutChanged: {
@@ -245,7 +256,28 @@ ShellWindow {
                         anchors.fill: parent
                         active: root.screen === "thread"
                         sourceComponent: ThreadScreen {
+                            visible: !Terminals.open
                             onBackRequested: root.stepBack()
+                        }
+                    }
+
+                    // By its file, loaded only when shown: it draws with the
+                    // Ghostty module, which a build without the terminal lacks.
+                    Loader {
+                        id: terminalScreen
+
+                        readonly property bool wanted: Terminals.supported && Terminals.open && root.screen === "thread"
+
+                        anchors.fill: parent
+                        active: wanted
+                        source: wanted ? "TerminalScreen.qml" : ""
+
+                        Connections {
+                            target: terminalScreen.item
+                            ignoreUnknownSignals: true
+                            function onBackRequested() {
+                                root.stepBack();
+                            }
                         }
                     }
 

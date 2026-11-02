@@ -12,6 +12,8 @@
 #include <QQuickItem>
 #include <QUrl>
 
+#include <algorithm>
+
 #include "Harness.h"
 #include "McClient.h"
 #include "NativeShell.h"
@@ -30,6 +32,9 @@ void enterPairingLink(World& world, const QString& link) {
   expect(field->hasActiveFocus(), QStringLiteral("the pairing link field did not take the keyboard"));
   world.type(link);
   expect(field->property("text").toString() == link, QStringLiteral("the field reads %1").arg(field->property("text").toString()));
+  // A phone on its side scrolls down to the button.
+  QQuickItem* screen = world.item(QStringLiteral("pairingScreen"));
+  screen->setProperty("contentY", std::max(0.0, screen->property("contentHeight").toDouble() - screen->height()));
   world.tap(QStringLiteral("pairingPair"));
   world.waitFor([&] { return pairingPhase(world) != QLatin1String("pairing"); }, QStringLiteral("an answer to the pairing link"));
 }

@@ -27,6 +27,8 @@ qt_add_qml_module(hal_c2_mobile
     SpaceScreen.qml
     SpaceSheet.qml
     SpaceTextDialog.qml
+    TerminalContextSheet.qml
+    TerminalScreen.qml
     ThreadScreen.qml
   RESOURCES
     qmldir

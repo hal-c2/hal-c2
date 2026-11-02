@@ -66,6 +66,8 @@ add_executable(tst_Features
   ../src/MobileApp.h
   ../src/Maintenance.cpp
   ../src/Maintenance.h
+  ../src/MobileTerminal.cpp
+  ../src/MobileTerminal.h
   ../src/Pairing.cpp
   ../src/Pairing.h
   "${_harness}/FakeMc.cpp"

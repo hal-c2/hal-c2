@@ -97,7 +97,7 @@ Feature: Adding terminal output to a message
     When the user adds the selected output to the prompt
     Then the prompt gains a removable excerpt naming the terminal
 
-  @backlog @mobile
+  @mobile
   Scenario: The user adds terminal output to a message on the phone
     Given the phone shows a thread's terminal
     When the user selects output and adds it to the message
