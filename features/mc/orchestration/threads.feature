@@ -162,7 +162,7 @@ Feature: Thread lifecycle in the orchestration engine
   Scenario: An archived thread starts nothing from its queue until it is unarchived
     Given thread "t1" was archived with a running turn and a message queued after it
     When the user interrupts the run
-    And the user resumes the queue of "t1"
+    And a client tries to resume the queue of "t1"
     Then the queued message is still queued
     When a client unarchives "t1"
     And the user resumes the queue of "t1"

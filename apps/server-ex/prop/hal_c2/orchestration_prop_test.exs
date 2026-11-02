@@ -214,8 +214,10 @@ defmodule HalC2.OrchestrationPropTest do
            )},
           {2,
            let(
-             [{t, m} <- oneof(sent), k <- range(1, 3)],
-             do: {:call, __MODULE__, :edit, [t, m, "wait #{m} edit #{k}"]}
+             [{t, m} <- oneof(sent), k <- range(0, 3)],
+             do:
+               {:call, __MODULE__, :edit,
+                [t, m, if(k == 0, do: " ", else: "wait #{m} edit #{k}")]}
            )},
           {2,
            let(
@@ -467,7 +469,7 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   def next_state(state, _result, {:call, _, :resume, [tid]}) do
-    case refusal(state, tid, :queue) do
+    case refusal(state, tid, :resume) do
       nil ->
         update(state, tid, fn thread ->
           thread
@@ -500,7 +502,7 @@ defmodule HalC2.OrchestrationPropTest do
     case refusal(state, tid, :queue) do
       nil ->
         update(state, tid, fn thread ->
-          if msg in thread.queue and not thread.messages[msg].notice,
+          if msg in thread.queue and not thread.messages[msg].notice and not blank?(text),
             do: put_in(thread.messages[msg].text, text),
             else: thread
         end)
@@ -511,7 +513,7 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   def next_state(state, _result, {:call, _, :reorder, [tid, msg, before]}) do
-    case refusal(state, tid, :queue) do
+    case refusal(state, tid, :queue) || reorder_refusal(state, tid, msg, before) do
       nil ->
         update(state, tid, fn thread ->
           if msg in thread.queue do
@@ -605,6 +607,10 @@ defmodule HalC2.OrchestrationPropTest do
       thread when command == :interrupt ->
         if running(thread), do: nil, else: {:error, "no running turn"}
 
+      # An archived thread's queue waits until it is unarchived.
+      %{status: :archived} when command == :resume ->
+        {:error, "Thread #{tid} is not active."}
+
       _ ->
         nil
     end
@@ -634,6 +640,25 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
+  # A delegated task result keeps its place first in the queue: it is not moved, and
+  # no message is moved ahead of it.
+  defp reorder_refusal(state, tid, msg, before) do
+    %{queue: queue, messages: messages} = state.threads[tid]
+
+    cond do
+      msg in queue and messages[msg].notice -> {:error, :automatic_reorder}
+      before in queue and messages[before].notice -> {:error, :ahead_of_automatic}
+      true -> nil
+    end
+  end
+
+  # A queued message is not edited to nothing: it keeps its text.
+  defp emptied(state, tid, msg, text) do
+    if blank?(text) and msg in state.threads[tid].queue, do: {:error, :empty_edit}
+  end
+
+  defp blank?(text), do: String.trim(text) == ""
+
   defp expected_reply(state, :create, [tid]),
     do: if(state.threads[tid], do: {:error, "Thread #{tid} already exists."}, else: :ok)
 
@@ -656,11 +681,16 @@ defmodule HalC2.OrchestrationPropTest do
   defp expected_reply(state, :stop, [tid, _]),
     do: if(state.threads[tid], do: :ok, else: {:error, "unknown thread #{tid}"})
 
-  defp expected_reply(state, :edit, [tid, msg, _]),
-    do: refusal(state, tid, :queue) || agents_own(state, tid, msg) || :ok
+  defp expected_reply(state, :edit, [tid, msg, text]),
+    do:
+      refusal(state, tid, :queue) || agents_own(state, tid, msg) ||
+        emptied(state, tid, msg, text) || :ok
 
-  defp expected_reply(state, fun, [tid | _]) when fun in [:resume, :cancel, :reorder],
-    do: refusal(state, tid, :queue) || :ok
+  defp expected_reply(state, :reorder, [tid, msg, before]),
+    do: refusal(state, tid, :queue) || reorder_refusal(state, tid, msg, before) || :ok
+
+  defp expected_reply(state, fun, [tid | _]) when fun in [:resume, :cancel],
+    do: refusal(state, tid, fun) || :ok
 
   defp expected_reply(_state, :promote, [_tid, _msg, :archived]),
     do: {:error, :archived_meanwhile}
@@ -694,7 +724,16 @@ defmodule HalC2.OrchestrationPropTest do
     do: message =~ ~r/^Queued run \S+ is not queued\.$/
 
   defp reply_matches?({:error, :agents_own}, {:error, message}),
-    do: message =~ ~r/^Queued run \S+ is the agent's own message/
+    do: message =~ ~r/^Automatic completion deliveries cannot be (edited|promoted to Steer)\.$/
+
+  defp reply_matches?({:error, :automatic_reorder}, {:error, message}),
+    do: message == "Automatic completion deliveries cannot be reordered."
+
+  defp reply_matches?({:error, :ahead_of_automatic}, {:error, message}),
+    do: message == "Queued messages cannot be reordered ahead of automatic completion delivery."
+
+  defp reply_matches?({:error, :empty_edit}, {:error, message}),
+    do: message =~ ~r/^Queued run \S+ cannot be edited to an empty message\.$/
 
   defp reply_matches?({:error, :archived_meanwhile}, {:error, message}),
     do: message =~ ~r/not queued again: the thread was archived\.$/
@@ -847,8 +886,15 @@ defmodule HalC2.OrchestrationPropTest do
     text = if mode == :limit, do: "usage limit #{msg}", else: "wait #{msg}"
     message = %{text: text, run: msg, shown: false, notice: mode == :notice}
     run = %{msg: msg, status: :queued, held: false, instance: instance}
+    # A message queued behind a held queue is held with it, until the user resumes it.
+    held? = Enum.any?(thread.runs, &(&1.msg in thread.queue and &1.held))
 
     cond do
+      active == nil and held? and mode in [:queue, :limit, :notice] ->
+        %{thread | runs: thread.runs ++ [%{run | held: true}]}
+        |> put_in([:messages, msg], message)
+        |> enqueue(msg, mode == :notice)
+
       active == nil ->
         %{thread | runs: thread.runs ++ [run], instance: instance}
         |> put_in([:messages, msg], %{message | shown: true})
@@ -862,15 +908,25 @@ defmodule HalC2.OrchestrationPropTest do
         |> start_next()
 
       mode == :restart ->
-        %{thread | runs: thread.runs ++ [run], queue: [msg | thread.queue]}
+        %{thread | runs: thread.runs ++ [run]}
         |> put_in([:messages, msg], message)
+        |> enqueue(msg, true)
         |> end_running(:interrupted)
         |> start_next()
 
       true ->
-        %{thread | runs: thread.runs ++ [run], queue: thread.queue ++ [msg]}
+        %{thread | runs: thread.runs ++ [%{run | held: held?}]}
         |> put_in([:messages, msg], message)
+        |> enqueue(msg, mode == :notice)
     end
+  end
+
+  # A message joins the queue at its end, or, `first?`, ahead of the user's queued
+  # messages: behind the delegated task results (notices), which go first.
+  defp enqueue(thread, msg, first?) do
+    {notices, users} = Enum.split_with(thread.queue, &thread.messages[&1].notice)
+    queue = if first?, do: notices ++ [msg | users], else: thread.queue ++ [msg]
+    %{thread | queue: queue}
   end
 
   # A queued message steers the running turn, or goes first in the queue when no turn
@@ -881,10 +937,11 @@ defmodule HalC2.OrchestrationPropTest do
 
     case running(thread) do
       nil ->
-        %{thread | queue: [msg | List.delete(thread.queue, msg)]}
+        %{thread | queue: List.delete(thread.queue, msg)} |> enqueue(msg, true)
 
       %{instance: other} when other != instance or how == :refused ->
-        %{thread | queue: [msg | List.delete(thread.queue, msg)]}
+        %{thread | queue: List.delete(thread.queue, msg)}
+        |> enqueue(msg, true)
         |> end_running(:interrupted)
         |> start_next()
 
@@ -1029,6 +1086,7 @@ defmodule HalC2.OrchestrationPropTest do
             "dispatchMode" => %{"type" => "queue_after_active"},
             "createdBy" => "system",
             "creationSource" => "server",
+            "delegatedCompletion" => %{"taskIds" => ["task-#{msg}"]},
             "notification" => %{
               "source" => %{"kind" => "delegated_task", "taskIds" => ["task-#{msg}"]},
               "outcome" => "completed",

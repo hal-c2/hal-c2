@@ -2187,6 +2187,166 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # --- a delegated task result in the queue (queue-and-steering.feature) ---------------
+
+  step "a delegated task of {string} finished, so its result is queued after {string}",
+       %{args: [parent, text]} = context do
+    context = queued_result(context, parent, ["one"])
+    # It goes ahead of the message queued before it.
+    assert %{"queuePosition" => 1} = queue_run(context, context.wake_run)
+    assert %{"status" => "queued", "queuePosition" => 2} = queued_run_for(context, text)
+    context
+  end
+
+  step "{string} has a running turn and a queued delegated task result",
+       %{args: [parent]} = context do
+    context |> World.running_turn(parent) |> queued_result(parent, ["one"])
+  end
+
+  step "{string} has a queued delegated task result and a queued message {string}",
+       %{args: [parent, text]} = context do
+    context =
+      context
+      |> World.running_turn(parent)
+      |> queued_result(parent, ["one"])
+      |> World.queue_message(parent, text)
+
+    assert %{"queuePosition" => 2} = queued_run_for(context, text)
+    context
+  end
+
+  step "{string} has a running turn and a queued result for delegated tasks {string} and {string}",
+       %{args: [parent, one, two]} = context do
+    context |> World.running_turn(parent) |> queued_result(parent, [one, two])
+  end
+
+  step "the turn carrying the task result starts first", context do
+    id = context.wake_run
+
+    World.await_state(context, context.thread, fn state ->
+      state.entities["run"][id]["status"] in ~w(running completed)
+    end)
+
+    context
+  end
+
+  # The wake's turn ends by itself (its text asks for no wait), and then the message runs.
+  step "{string} starts after it", %{args: [text]} = context do
+    id = queued_run_for(context, text)["id"]
+
+    state =
+      World.await_state(context, context.thread, fn state ->
+        state.entities["run"][id]["status"] in ~w(running completed)
+      end)
+
+    wake = state.entities["run"][context.wake_run]
+    assert wake["status"] == "completed"
+    assert state.entities["run"][id]["ordinal"] > wake["ordinal"]
+    context
+  end
+
+  step ~r/^the user tries to (?<action>promote it to a steer|move it in the queue|edit) the queued result$/,
+       %{args: [action]} = context do
+    thread_id = World.thread_id(context, context.thread)
+
+    command =
+      case action do
+        "promote it to a steer" ->
+          %{
+            "type" => "queued-message.promote-to-steer",
+            "queuedRunId" => context.wake_run,
+            "targetRunId" => context.running
+          }
+
+        "move it in the queue" ->
+          %{"type" => "queued-run.reorder", "runId" => context.wake_run, "beforeRunId" => nil}
+
+        "edit" ->
+          %{"type" => "queued-run.edit", "runId" => context.wake_run, "text" => "Changed"}
+      end
+
+    World.command(context, Map.put(command, "threadId", thread_id))
+  end
+
+  step "the user moves {string} before the queued result", %{args: [text]} = context do
+    World.command(context, %{
+      "type" => "queued-run.reorder",
+      "threadId" => World.thread_id(context, context.thread),
+      "runId" => queued_run_for(context, text)["id"],
+      "beforeRunId" => context.wake_run
+    })
+  end
+
+  step "the user cancels the queued result", context do
+    context =
+      World.command(context, %{
+        "type" => "queued-run.cancel",
+        "threadId" => World.thread_id(context, context.thread),
+        "runId" => context.wake_run
+      })
+
+    assert {:ok, _} = context.reply, "queued-run.cancel failed: #{inspect(context.reply)}"
+    context
+  end
+
+  step "it leaves the queue", context do
+    assert %{"status" => "cancelled", "queuePosition" => nil} =
+             queue_run(context, context.wake_run)
+
+    context
+  end
+
+  step "the agent of {string} is not woken again for {string} or {string}",
+       %{args: [parent, one, two]} = context do
+    tasks = StreamState.get(World.state(context, parent), "subagent")
+
+    for name <- [one, two] do
+      assert get_in(tasks, [context.named_tasks[name], "completionDelivery", "state"]) ==
+               "disposed"
+    end
+
+    assert wake_messages(context, parent)
+           |> Enum.map(&queue_run(context, &1["runId"]))
+           |> Enum.all?(&(&1["status"] == "cancelled"))
+
+    assert queue_run(context, context.running)["status"] == "running"
+    context
+  end
+
+  step "their results can still be read from each task's status", context do
+    for {name, task_id} <- context.named_tasks do
+      assert {:ok, %{"status" => "completed", "summary" => summary}} =
+               status(%{context | task_id: task_id})
+
+      assert summary =~ "#{name} done"
+    end
+
+    context
+  end
+
+  # Tasks `names` of the running turn of `parent`, finished, with the wake for them queued.
+  defp queued_result(context, parent, names) do
+    context = named_tasks(context, parent, names)
+    context = Enum.reduce(names, context, &complete_named(&2, &1))
+    {run, message} = queued_wake!(context, parent)
+
+    assert MapSet.new(message["delegatedCompletion"]["taskIds"]) ==
+             MapSet.new(names, &context.named_tasks[&1])
+
+    Map.merge(context, %{thread: parent, wake_run: run["id"]})
+  end
+
+  defp queue_run(context, id),
+    do: StreamState.get(World.state(context, context.thread), "run")[id]
+
+  defp queued_run_for(context, text) do
+    message =
+      Enum.find(messages(context, context.thread), &(&1["role"] == "user" and &1["text"] == text)) ||
+        flunk("no message #{inspect(text)}")
+
+    queue_run(context, message["runId"])
+  end
+
   defp delivery_for(context, task_id, action) do
     [run | _] = World.runs(context, context.task_parent)
 

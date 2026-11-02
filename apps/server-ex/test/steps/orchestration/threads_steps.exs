@@ -414,8 +414,9 @@ defmodule HalC2.Steps.Orchestration.Threads do
     |> World.queue_message(thread, "after archiving")
   end
 
+  # The resume before it is refused while the thread is archived; the run it
+  # interrupted has ended either way.
   step "the queued message is still queued", context do
-    assert {:ok, _} = context.reply
     running = context.running
 
     World.await_thread(

@@ -634,12 +634,7 @@ defmodule HalC2.Orchestration.Delegation do
           (get_in(message, ["delegatedCompletion", "taskIds"]) || []) -- [task_id]
 
         if remaining == [] do
-          {:ok, _} =
-            Orchestration.dispatch(%{
-              "type" => "queued-run.cancel",
-              "threadId" => parent_id,
-              "runId" => run["id"]
-            })
+          {:ok, _} = Orchestration.cancel_queued_run(parent_id, run["id"])
 
           :ok
         else
@@ -737,12 +732,7 @@ defmodule HalC2.Orchestration.Delegation do
     for run <- StreamState.list(state, "run"),
         run["status"] == "queued",
         get_in(messages, [run["userMessageId"], "delegatedCompletion", "parentRunId"]) in cohorts do
-      _ =
-        Orchestration.dispatch(%{
-          "type" => "queued-run.cancel",
-          "threadId" => thread_id,
-          "runId" => run["id"]
-        })
+      _ = Orchestration.cancel_queued_run(thread_id, run["id"])
     end
 
     :ok

@@ -654,7 +654,8 @@ defmodule HalC2.Orchestration.TurnWriter do
           session_id(stream, ids),
           %{"lastError" => failure_message(failure), "updatedAt" => at}
         ),
-      is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
+      is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at),
+      is_binary(failure) && status == "failed" && queued_start_failure(stream, ids, failure, at)
     ] ++ held_queue(stream, status, failure)
   end
 
@@ -866,6 +867,38 @@ defmodule HalC2.Orchestration.TurnWriter do
         }
       )
     )
+  end
+
+  # A queued message whose provider could not start its turn says so in the timeline,
+  # since nobody may be watching when the queue reaches it. A run that started is one
+  # that failed later, which its turn tells.
+  defp queued_start_failure(stream, ids, failure, at) do
+    run = StreamState.get(stream, "run")[ids.run] || %{}
+    user_item = StreamState.get(stream, "turn-item")["turn-item:user:#{run["userMessageId"]}"]
+    item_id = item_id(ids, "queued-start-failure:#{ids.run}")
+
+    (run["startedAt"] == nil and user_item["inputIntent"] == "queued_turn") &&
+      Orchestration.create(
+        "turn-item",
+        item_id,
+        Entities.turn_item(
+          ids,
+          item_id,
+          "error",
+          Orchestration.next_ordinal(stream),
+          "failed",
+          at,
+          %{
+            "title" => "Queued provider could not start",
+            "failure" => %{
+              "class" => "provider_error",
+              "message" => failure,
+              "code" => nil,
+              "retryable" => nil
+            }
+          }
+        )
+      )
   end
 
   # "Run interrupted" in the transcript, under the user's request when there was one.
