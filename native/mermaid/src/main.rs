@@ -52,6 +52,38 @@ const TEXT: &[&str] = &[
     "classDiagram-v2",
 ];
 
+/// Mermaid's other types: real diagrams this does not draw yet. Any other first word is
+/// not a diagram at all.
+const KNOWN: &[&str] = &[
+    "architecture",
+    "architecture-beta",
+    "block",
+    "block-beta",
+    "C4Component",
+    "C4Container",
+    "C4Context",
+    "C4Deployment",
+    "C4Dynamic",
+    "gitGraph",
+    "info",
+    "journey",
+    "kanban",
+    "mindmap",
+    "packet",
+    "packet-beta",
+    "quadrantChart",
+    "radar-beta",
+    "requirementDiagram",
+    "sankey",
+    "sankey-beta",
+    "timeline",
+    "treemap",
+    "treemap-beta",
+    "xychart",
+    "xychart-beta",
+    "zenuml",
+];
+
 /// The types whose syntax mmdflux checks before mmdr draws them.
 const CHECKED: &[&str] = &["flowchart", "graph"];
 
@@ -98,6 +130,14 @@ fn draw(request: &Request) -> Value {
     let Some(kind) = kind(&request.source) else {
         return invalid(None, "There is no diagram here.", None, None);
     };
+    if !DRAWN.contains(&kind) && !KNOWN.contains(&kind) {
+        return invalid(
+            None,
+            "This does not start with a Mermaid diagram type.",
+            None,
+            None,
+        );
+    }
     if !DRAWN.contains(&kind) {
         return unsupported(kind, &format!("{kind} diagrams cannot be drawn yet."));
     }
@@ -126,8 +166,7 @@ fn draw_kind(request: &Request, kind: &str) -> Value {
     };
     match request.format {
         Format::Svg => {
-            let svg = one_line_texts(&plain_colours(&svg));
-            let (width, height) = size(&svg);
+            let (svg, width, height) = sized(&one_line_texts(&plain_colours(&svg)));
             json!({"status": "drawn", "kind": kind, "svg": svg, "width": width, "height": height})
         }
         Format::Text if TEXT.contains(&kind) => {
@@ -184,7 +223,9 @@ fn flux_mistake(source: &str) -> Option<Mistake> {
         .as_array()?
         .iter()
         .find(|d| d["severity"] == "error")?;
-    let message = diagnostic["message"].as_str().unwrap_or("This diagram has a mistake.");
+    let message = diagnostic["message"]
+        .as_str()
+        .unwrap_or("This diagram has a mistake.");
     Some(Mistake {
         reason: without_position(message),
         line: diagnostic["line"].as_u64(),
@@ -232,21 +273,49 @@ fn failed(kind: Option<&str>, reason: &str) -> Value {
 }
 
 /// The root element's `width` and `height`.
-fn size(svg: &str) -> (f64, f64) {
-    let root = svg.find("<svg").map_or("", |start| {
-        let rest = &svg[start..];
-        &rest[..rest.find('>').unwrap_or(rest.len())]
-    });
-    (attribute(root, "width"), attribute(root, "height"))
+/// The drawing with a width and height in pixels on its root, and those sizes. Some
+/// types (pie) are written `width="100%"` with only a `viewBox`, which leaves a client
+/// with no size to lay out; their size is the `viewBox`'s.
+fn sized(svg: &str) -> (String, f64, f64) {
+    let Some(start) = svg.find("<svg") else {
+        return (svg.to_owned(), 0.0, 0.0);
+    };
+    let end = start + svg[start..].find('>').unwrap_or(svg.len() - start);
+    let root = &svg[start..end];
+    let (width, height) = (attribute(root, "width"), attribute(root, "height"));
+    if width > 0.0 && height > 0.0 {
+        return (svg.to_owned(), width, height);
+    }
+    let view: Vec<f64> = text_attribute(root, "viewBox")
+        .unwrap_or_default()
+        .split([' ', ','])
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    let [_, _, width, height] = view[..] else {
+        return (svg.to_owned(), 0.0, 0.0);
+    };
+    let root = without_attributes(root, &["width", "height", "style"]);
+    let root = root.replacen(
+        "<svg",
+        &format!("<svg width=\"{width}\" height=\"{height}\""),
+        1,
+    );
+    (
+        format!("{}{root}{}", &svg[..start], &svg[end..]),
+        width,
+        height,
+    )
+}
+
+fn text_attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!(" {name}=\"");
+    let rest = &tag[tag.find(&key)? + key.len()..];
+    Some(&rest[..rest.find('"')?])
 }
 
 fn attribute(tag: &str, name: &str) -> f64 {
-    let key = format!(" {name}=\"");
-    tag.find(&key)
-        .and_then(|start| {
-            let rest = &tag[start + key.len()..];
-            rest[..rest.find('"')?].parse().ok()
-        })
+    text_attribute(tag, name)
+        .and_then(|v| v.parse().ok())
         .unwrap_or(0.0)
 }
 
@@ -258,7 +327,10 @@ fn plain_colours(svg: &str) -> String {
     while let Some(start) = rest.find("hsl(") {
         out.push_str(&rest[..start]);
         let after = &rest[start + 4..];
-        match after.find(')').and_then(|end| Some((hsl_hex(&after[..end])?, end))) {
+        match after
+            .find(')')
+            .and_then(|end| Some((hsl_hex(&after[..end])?, end)))
+        {
             Some((hex, end)) => {
                 out.push_str(&hex);
                 rest = &after[end + 1..];
@@ -282,7 +354,9 @@ fn one_line_texts(svg: &str) -> String {
     while let Some(start) = rest.find("<text ") {
         out.push_str(&rest[..start]);
         let element = &rest[start..];
-        let Some(end) = element.find("</text>") else { break };
+        let Some(end) = element.find("</text>") else {
+            break;
+        };
         let whole = &element[..end + "</text>".len()];
         match split_lines(&element[..end]) {
             Some(lines) => out.push_str(&lines),
@@ -323,7 +397,9 @@ fn split_lines(element: &str) -> Option<String> {
         }
         y += attribute(tag, "dy");
         let extra = without_attributes(&tag["<tspan".len()..], &["x", "dy"]);
-        out.push_str(&format!("{base} x=\"{x:.2}\" y=\"{y:.2}\"{extra}>{content}</text>"));
+        out.push_str(&format!(
+            "{base} x=\"{x:.2}\" y=\"{y:.2}\"{extra}>{content}</text>"
+        ));
         body = &body[close + "</tspan>".len()..];
     }
     body.trim().is_empty().then_some(out)
@@ -371,7 +447,11 @@ mod tests {
     use super::*;
 
     fn request(source: &str, format: Format) -> Value {
-        draw(&Request { source: source.into(), format, theme: Theme::Light })
+        draw(&Request {
+            source: source.into(),
+            format,
+            theme: Theme::Light,
+        })
     }
 
     #[test]
@@ -385,26 +465,43 @@ mod tests {
     }
 
     #[test]
-    fn every_corpus_type_is_drawn() {
+    fn every_type_drawn_has_its_size() {
         for (kind, source) in [
             ("graph", "graph TD;\n  A-->B\n"),
-            ("sequenceDiagram", "sequenceDiagram\n  A->>B: hi\n  B-->>A: hello\n"),
-            ("stateDiagram-v2", "stateDiagram-v2\n  [*] --> Idle\n  Idle --> [*]\n"),
+            (
+                "sequenceDiagram",
+                "sequenceDiagram\n  A->>B: hi\n  B-->>A: hello\n",
+            ),
+            (
+                "stateDiagram-v2",
+                "stateDiagram-v2\n  [*] --> Idle\n  Idle --> [*]\n",
+            ),
             (
                 "gantt",
                 "gantt\n  dateFormat YYYY-MM-DD\n  section Build\n  Draw :a1, 2026-01-01, 3d\n",
             ),
+            ("classDiagram", "classDiagram\n  Animal <|-- Dog\n"),
+            ("erDiagram", "erDiagram\n  CUSTOMER ||--o{ ORDER : places\n"),
+            ("pie", "pie title Pets\n  \"Dogs\" : 9\n  \"Cats\" : 2\n"),
         ] {
             let result = request(source, Format::Svg);
             assert_eq!(result["status"], "drawn", "{kind}: {result}");
             assert_eq!(result["kind"], kind);
             assert!(!result["svg"].as_str().unwrap().contains("hsl("), "{kind}");
+            assert!(result["width"].as_f64() > Some(0.0), "{kind} has no width");
+            assert!(
+                result["height"].as_f64() > Some(0.0),
+                "{kind} has no height"
+            );
         }
     }
 
     #[test]
     fn an_unclosed_bracket_is_a_mistake_with_its_place() {
-        let result = request("flowchart TD\n    A[Start --> B\n    B --> C\n", Format::Svg);
+        let result = request(
+            "flowchart TD\n    A[Start --> B\n    B --> C\n",
+            Format::Svg,
+        );
         assert_eq!(result["status"], "invalid");
         assert_eq!(result["kind"], "flowchart");
         assert_eq!(result["line"], 2);
@@ -418,6 +515,28 @@ mod tests {
         assert_eq!(result["status"], "unsupported");
         assert_eq!(result["kind"], "block-beta");
         assert_eq!(result["reason"], "block-beta diagrams cannot be drawn yet.");
+    }
+
+    #[test]
+    fn a_drawing_sized_only_by_its_view_box_gets_its_size() {
+        let (svg, width, height) = sized(
+            r#"<svg xmlns="x" width="100%" viewBox="0 0 409.5 360" style="max-width: 409.5px;"><rect/></svg>"#,
+        );
+        assert_eq!((width, height), (409.5, 360.0));
+        assert_eq!(
+            svg,
+            r#"<svg width="409.5" height="360" xmlns="x" viewBox="0 0 409.5 360"><rect/></svg>"#
+        );
+
+        let fixed = r#"<svg width="10" height="20"><rect/></svg>"#;
+        assert_eq!(sized(fixed), (fixed.to_owned(), 10.0, 20.0));
+    }
+
+    #[test]
+    fn words_that_are_no_diagram_are_a_mistake() {
+        let result = request("just some words\n", Format::Svg);
+        assert_eq!(result["status"], "invalid");
+        assert_eq!(result["kind"], Value::Null);
     }
 
     #[test]
@@ -439,7 +558,10 @@ mod tests {
 
     #[test]
     fn the_type_comes_after_front_matter_and_comments() {
-        assert_eq!(kind("---\ntitle: x\n---\n%%{init: {}}%%\n\ngraph LR\n"), Some("graph"));
+        assert_eq!(
+            kind("---\ntitle: x\n---\n%%{init: {}}%%\n\ngraph LR\n"),
+            Some("graph")
+        );
         assert_eq!(kind("  sequenceDiagram\n"), Some("sequenceDiagram"));
         assert_eq!(kind(""), None);
     }
