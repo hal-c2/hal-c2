@@ -91,8 +91,10 @@ struct Shell {
   QMap<QString, int> arrived;
   QStringList syncs;
   QStringList written;
-  // How the MC answers the next `space.page.openFile`: the page, or "" to refuse it.
+  // How the MC answers the next `space.page.openFile`: the page, or "" to refuse it;
+  // and how many it answered.
   QString opens;
+  int answeredOpens = 0;
 
   Shell() {
     QObject::connect(&bridge, &ShellBridge::stateEntryChanged, &bridge, [this](const QString& key, const QVariant& value) {
@@ -101,6 +103,7 @@ struct Shell {
       if (now != (written.isEmpty() ? QString() : written.last())) written.append(now);
     });
     mc.onRpc(QStringLiteral("space.page.openFile"), [this](const FakeMc::Rpc& rpc) {
+      ++answeredOpens;
       if (opens.isEmpty()) return mc.refuse(rpc, QStringLiteral("There is no such file."));
       mc.reply(rpc, QJsonObject{{QStringLiteral("spaceId"), kSpaceId},
                                 {QStringLiteral("page"), QJsonObject{{QStringLiteral("id"), opens}}},
@@ -307,8 +310,11 @@ struct OpenFile : Command {
     Model expected = model;
     apply(expected);
     shell.opens = page;
+    const int answered = shell.answeredOpens;
     RC_ASSERT(shell.space()->handle(QStringLiteral("space.openFile"),
                                     QVariantMap{{QStringLiteral("projectId"), project}, {QStringLiteral("relativePath"), QStringLiteral("guide.md")}}));
+    // Answered as this command says, not as the next one does.
+    RC_ASSERT(prop::until([&] { return shell.answeredOpens > answered; }));
     shell.check(expected);
   }
   void show(std::ostream& os) const override { os << "OpenFile(" << project.toStdString() << ", " << (page.isEmpty() ? "refused" : page.toStdString()) << ")"; }
