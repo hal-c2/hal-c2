@@ -75,7 +75,8 @@ defmodule HalC2.Terminal.History do
         {{:value, first}, rest} = :queue.out(history.chunks)
         in_first = count_newlines(first)
 
-        if in_first <= drop do
+        # Dropped whole only if that ends on a line break, so no line is left torn.
+        if in_first < drop or (in_first == drop and :binary.last(first) == ?\n) do
           trim_lines(%{
             history
             | chunks: rest,

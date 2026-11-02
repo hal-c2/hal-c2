@@ -7,6 +7,13 @@ in HAL-C2.
 
 It runs on an MC, like any [plugin that runs on your MC](plugins.md#plugins-that-run-on-your-mc).
 Each machine reviews the repositories of its own projects, with its own agents.
+When several of your machines are in one cluster and watch the same repository,
+one of them reviews each commit of a pull request; the others show the review
+with the machine it runs on, and take it over if that machine leaves before
+starting it. If that machine leaves in the middle of a review, the others show it
+as out of reach, and you can review the commit on one of them. Machines that cannot reach each other each review on their own, and
+a commit another machine already posted a review of is not posted again, and shows
+as published.
 
 ## Start
 
@@ -40,6 +47,10 @@ later take its repository out of the watched list. Discarding its review stops
 following it. A re-review is told the previous review's findings, so it can say
 which of them the new commits address instead of raising them again.
 
+A new review of a pull request stops the agent of the one before it if that agent
+is still working, and removes its checkout. Whatever that agent had not reported
+stays in its thread only; the new review covers the whole change again.
+
 If the reviewing agent runs into its provider's usage limit, reviews pause
 until the limit resets: the review it stopped and the ones behind it wait in
 the queue instead of failing one by one, and the Reviews page says so.
@@ -62,8 +73,17 @@ your changes to it. Each repository can have instructions of its own, and with
 
 ## What happens with the findings
 
-The agent reports a verdict, a summary and comments on lines. A comment on a
-line the pull request does not change goes into the summary instead. Each
+The agent reports a verdict, a summary, comments on lines, and what it checked.
+A comment on a line the pull request does not change goes into the summary
+instead. A posted review opens with the count of its findings, such as "No
+findings." or "2 findings: 1 high, 1 medium". It counts the comments you kept
+and those moved into the summary, which cannot be dismissed. What the agent
+checked follows the summary: what it left out and why, and what this machine
+kept it from running, are listed in plain view, and the commands it ran are
+folded away. A check this machine kept it from running,
+such as a missing tool or credential, is a setup problem: the Reviews page
+shows it apart from the verdict, so you can fix it on the machine and review
+again. Each
 comment can say how much it matters (high, medium or low, marked 🔴 🟡 🔵 when posted, with the findings listed at a glance at the end of the review) and carry a
 suggested fix, which is posted as a GitHub suggestion you can apply from the
 pull request. The agent also reads the pull request's description and the

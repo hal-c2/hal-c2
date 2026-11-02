@@ -619,7 +619,12 @@ defmodule HalC2.Steps.Orchestration.Projections do
 
   step ~r/^"(?<thread>[^"]+)" has a very long history$/, %{args: [thread]} = context do
     {:ok, _} = HalC2.Streams.commit(thread, :thread, Enum.flat_map(1..6, &turn/1))
-    context
+
+    # The commands scenarios use the same words for the thread itself: give it
+    # a history to not read, and trace the reads from here on.
+    if (context[:threads] || %{})[thread],
+      do: HalC2.Steps.Orchestration.Commands.long_history(context, thread),
+      else: context
   end
 
   step ~r/^a client subscribes to "(?<thread>[^"]+)" with a window$/,

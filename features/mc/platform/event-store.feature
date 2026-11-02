@@ -2,7 +2,10 @@
 #   apps/server-ex/lib/hal_c2/store.ex (event log, snapshots, compression, read-only readers, WAL checkpoints)
 #   apps/server-ex/lib/hal_c2/patch.ex (set, append, unset, delete, quiet)
 #   apps/server-ex/lib/hal_c2/stream_state.ex (folded state, snapshot migration)
-#   apps/server-ex/lib/hal_c2/streams/server.ex (snapshot every 500 events, sidebar debounce)
+#   apps/server-ex/lib/hal_c2/streams/server.ex (snapshot every 500 events, sidebar debounce,
+#     calls that wait for the store however long it takes)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_watch.ex (a run whose runtime exits is abandoned)
+#   hal-c2/hal-c2#644 (a slow disk abandoned running turns)
 #   apps/server-ex/lib/hal_c2/shell.ex (cluster-wide sidebar rows)
 #   apps/server-ex/lib/hal_c2/search.ex (message index backfill)
 #   apps/server-ex/lib/hal_c2/projection.ex
@@ -69,6 +72,24 @@ Feature: The MC's event store and projections
     Given the store's writer is busy
     When a thread is used for the first time
     Then it starts without waiting for the writer
+
+  # A write that waited a minute for a busy disk exited the runtime making it, and
+  # the run was abandoned as one whose session had ended.
+  @mc
+  Scenario: A slow store slows a running turn instead of ending it
+    Given a turn is running in the thread, about to answer
+    And the store's writer is stalled
+    When the agent answers and ends its turn
+    Then the MC logs that the store is slow
+    And the turn completes once the store catches up
+
+  @mc
+  Scenario: A turn can be stopped while the store is slow
+    Given a turn is running in the thread
+    And the store's writer is stalled
+    When the user asks to stop the turn
+    Then the MC logs that the store is slow
+    And the turn is interrupted once the store catches up
 
   @mc
   Scenario: The MC snapshots a stream every 500 events

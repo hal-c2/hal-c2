@@ -768,10 +768,12 @@ defmodule HalC2.OrchestrationTest do
     }
 
     # Both calls run at once, as when the first is still in the dropped socket's process.
+    # A launch answers once the provider has started the turn, so how long that takes is
+    # the machine's; ExUnit's own timeout bounds the wait.
     [first, second] =
       [input, input]
       |> Enum.map(&Task.async(fn -> Orchestration.launch_thread(&1) end))
-      |> Task.await_many()
+      |> Task.await_many(:infinity)
 
     assert {:ok, %{"threadId" => ^thread_id}} = first
     assert {:ok, %{"threadId" => ^thread_id}} = second
@@ -886,6 +888,36 @@ defmodule HalC2.OrchestrationTest do
              } = StreamState.get(current(thread_id), "thread")[thread_id]
 
       assert is_binary(pinned) and is_binary(archived)
+    end
+
+    test "an access change names the version of the rows that holds it" do
+      thread_id = launch("list the files")
+      _ = await_run(thread_id, "completed")
+
+      assert {:ok, %{"shell" => %{"mc" => mc, "epoch" => epoch, "rev" => rev}}} =
+               Orchestration.dispatch(%{
+                 "type" => "thread.runtime-mode.set",
+                 "threadId" => thread_id,
+                 "runtimeMode" => "approval-required"
+               })
+
+      # The row is in the shell by the answer, so a client at that version has it.
+      assert mc == to_string(node())
+
+      assert {"thread", %{"runtimeMode" => "approval-required"}} =
+               HalC2.Shell.row(node(), thread_id)
+
+      assert {^epoch, now} = HalC2.Shell.version()
+      assert now >= rev
+
+      assert {:ok, answer} =
+               Orchestration.dispatch(%{
+                 "type" => "thread.interaction-mode.set",
+                 "threadId" => thread_id,
+                 "interactionMode" => "plan"
+               })
+
+      refute Map.has_key?(answer, "shell")
     end
 
     test "regenerating a title marks it in flight until the attempt ends" do
@@ -1590,10 +1622,23 @@ defmodule HalC2.OrchestrationTest do
            } =
              call.("task_status", %{"taskId" => task_id})
 
-    # Once the parent is free the result starts a run. The transcript says the task
+    # Once the parent's turn ends the result starts a run. (Interrupting it would
+    # instead stop the task from waking it.) The transcript says the task
     # finished; the envelope is the agent's to read, not a message from the user.
-    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => parent_id})
-    state = await_statuses(parent_id, ["interrupted", "running"])
+    [parent_run | _] = runs(state)
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => parent_id,
+        "messageId" => "msg-carry-on",
+        "text" => "say Carrying on",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "steer_active", "targetRunId" => parent_run["id"]}
+      })
+
+    state = await_statuses(parent_id, ["completed", "running"])
     [_, woken] = runs(state)
     item = StreamState.get(state, "turn-item")["turn-item:user:#{woken["userMessageId"]}"]
 
@@ -1755,7 +1800,8 @@ defmodule HalC2.OrchestrationTest do
       end
     end
 
-    # #98: the steer is recorded before Codex is asked, so the repeat finds it sent.
+    # #98: the steer is recorded before Codex is asked, so the repeat finds it. #384: it
+    # hears it was sent only once Codex took it.
     test "the same steer sent twice at once reaches the provider once", %{tmp_dir: dir} do
       log = Path.join(dir, "codex-requests.log")
       gates = held_steers(dir, ["FAKE_CODEX_LOG=#{log}"])
@@ -1772,9 +1818,11 @@ defmodule HalC2.OrchestrationTest do
       # The repeat is decided while Codex holds the first.
       first = Task.async(steer)
       :ok = await_turn_item(thread_id, "turn-item:user:m2")
-      assert {:ok, _} = steer.()
+      assert {:error, %{"message" => still}} = steer.()
+      assert still =~ "still being sent"
       File.touch!(Path.join(gates, "steer"))
       assert {:ok, _} = Task.await(first)
+      assert {:ok, _} = steer.()
 
       state = await_statuses(thread_id, ["completed"])
 
@@ -1788,6 +1836,125 @@ defmodule HalC2.OrchestrationTest do
 
       assert [%{"id" => "m2"}] =
                Enum.filter(StreamState.list(state, "message"), &(&1["id"] == "m2"))
+    end
+
+    # #384: the repeat of a steer Codex goes on to refuse never heard it was sent, its
+    # answer leaves no receipt to replay, and a send after the refusal goes through.
+    test "a repeat of a steer Codex refuses hears it is still being sent", %{tmp_dir: dir} do
+      hold = Path.join(dir, "hold-steer")
+      reject = Path.join(dir, "reject-steer")
+
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_HOLD_STEER=#{hold}",
+        "FAKE_CODEX_REJECT_STEER=#{reject}",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+
+      steer = fn ->
+        HalC2.Orchestration.dispatch_once(%{
+          "type" => "message.dispatch",
+          "commandId" => "command-m2",
+          "threadId" => thread_id,
+          "messageId" => "m2",
+          "text" => "say again",
+          "attachments" => [],
+          "dispatchMode" => %{"type" => "start_immediately"},
+          "deliveryIntent" => "steer"
+        })
+      end
+
+      File.touch!(hold)
+      File.touch!(reject)
+      first = Task.async(steer)
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+      assert {:error, %{"message" => still}} = steer.()
+      assert still =~ "still being sent"
+      assert HalC2.Store.meta(HalC2.Store.path(), "command-receipt:command-m2") == nil
+
+      File.rm!(hold)
+      assert {:error, refused} = Task.await(first)
+      assert refused =~ "did not take the message"
+      refute StreamState.get(current(thread_id), "message")["m2"]
+      assert {:error, ^refused} = steer.()
+
+      File.rm!(reject)
+      assert {:ok, _} = send_message(thread_id, "m2", "say again", %{"deliveryIntent" => "steer"})
+      state = await_statuses(thread_id, ["completed"])
+      refute Map.has_key?(StreamState.get(state, "message")["m2"], "steer")
+    end
+
+    # #384: a refusal can still drop the message once its turn ended, so the repeat has
+    # no more reason to call it sent than while the turn ran.
+    test "a repeat of a steer whose turn ended mid-ask is still being sent", %{tmp_dir: dir} do
+      hold = Path.join(dir, "hold-steer")
+
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_HOLD_STEER=#{hold}",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch("wait for it")
+      [%{"id" => run_id}] = await_run(thread_id, "running") |> StreamState.list("run")
+      command = %{"dispatchMode" => %{"type" => "start_immediately"}, "deliveryIntent" => "steer"}
+      File.touch!(hold)
+      first = Task.async(fn -> send_message(thread_id, "m2", "hold this", command) end)
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+
+      :ok =
+        HalC2.Streams.transact(thread_id, :thread, fn state ->
+          ended = Orchestration.upsert(state, "run", run_id, &Map.put(&1, "status", "completed"))
+          {[ended], :ok}
+        end)
+
+      assert {:error, %{"message" => still}} = send_message(thread_id, "m2", "hold this", command)
+      assert still =~ "still being sent"
+
+      File.rm!(hold)
+      assert {:ok, _} = Task.await(first)
+      assert {:ok, _} = send_message(thread_id, "m2", "hold this", command)
+    end
+
+    # #384: boot recovery clears the mark, since no send is left to answer for the steer.
+    test "a steer an MC restart cut off reads as sent", %{tmp_dir: dir} do
+      hold = Path.join(dir, "hold-steer")
+
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_HOLD_STEER=#{hold}",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      :ok = HalC2.Shell.subscribe(self())
+      await_shell_row(thread_id, &(&1["activeRunId"] != nil))
+      command = %{"dispatchMode" => %{"type" => "start_immediately"}, "deliveryIntent" => "steer"}
+      File.touch!(hold)
+      first = Task.async(fn -> send_message(thread_id, "m2", "hold this", command) end)
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+
+      Task.shutdown(first, :brutal_kill)
+
+      for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
+          do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
+
+      File.rm!(hold)
+      assert thread_id in HalC2.Orchestration.Recovery.run()
+      state = await_statuses(thread_id, ["interrupted"])
+      refute Map.has_key?(StreamState.get(state, "message")["m2"], "steer")
+
+      assert {:ok, _} = send_message(thread_id, "m2", "hold this", command)
     end
 
     # The message is in the turn before Codex is asked, so a runtime that stops as it
@@ -2187,6 +2354,24 @@ defmodule HalC2.OrchestrationTest do
       assert {:ok, _} = Orchestration.dispatch(pinned.(run_id))
       await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
       assert [%{"status" => "interrupted"}] = commands(thread_id)
+    end
+
+    # The completed-stop grace is for a live thread whose turn ended as the stop
+    # arrived; a deleted thread refuses the stop (the orchestration property's
+    # delete-then-interrupt_run counterexample).
+    test "an interrupt pinned to a deleted thread's completed run is refused" do
+      thread_id = launch("start the dev server in the background")
+      [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread_id})
+
+      assert {:error, "no running turn"} =
+               Orchestration.dispatch(%{
+                 "type" => "run.interrupt",
+                 "threadId" => thread_id,
+                 "runId" => run_id
+               })
     end
 
     # The latest run went to another provider; the command an earlier Codex run left
@@ -3083,13 +3268,22 @@ defmodule HalC2.OrchestrationTest do
   end
 
   describe "approvals" do
-    for {instance, answer_text} <- [{"codex", nil}, {"claudeAgent", "allowed"}] do
+    for {instance, answer_text, prompt} <- [
+          {"codex", nil, "touch x"},
+          {"claudeAgent", "allowed", "Bash: touch x"}
+        ] do
       test "#{instance}: a prompt becomes a pending request, and accepting it lets the turn go on" do
         thread_id = launch("approve this", unquote(instance))
         request = await_request(thread_id)
         assert %{"status" => "pending", "kind" => "command"} = request
 
-        assert [%{"type" => "approval_request", "status" => "waiting", "prompt" => "touch x"}] =
+        assert [
+                 %{
+                   "type" => "approval_request",
+                   "status" => "waiting",
+                   "prompt" => unquote(prompt)
+                 }
+               ] =
                  thread_id
                  |> current()
                  |> StreamState.list("turn-item")
@@ -3512,6 +3706,30 @@ defmodule HalC2.OrchestrationTest do
                StreamState.list(current(thread_id), "provider-thread")
     end
 
+    # Picking another provider in the composer moves the selection, not the
+    # conversation: a rewind asked for after the pick still rewinds the
+    # conversation that is active, in either selection shape.
+    test "a provider picked before the rewind was asked for does not block it", %{work: work} do
+      for selection <- [
+            %{"instanceId" => "opencode", "model" => "sonnet"},
+            %{"model" => "sonnet"}
+          ] do
+        thread_id = launch_in(work, "write a.txt", "codex")
+        await_statuses(thread_id, ["completed"])
+        {:ok, _} = send_message(thread_id, "msg-user-2", "write b.txt")
+        await_statuses(thread_id, ["completed", "completed"])
+
+        {:ok, _} =
+          HalC2.Streams.commit(thread_id, :thread, [
+            {"thread", thread_id, %{"s" => %{"modelSelection" => selection}}}
+          ])
+
+        # Both iterations share `work`, so only the conversation rewinds.
+        assert {:ok, _} = rollback(thread_id, 1, %{"restoreFiles" => false})
+        assert ["completed", "rolled_back"] = Enum.map(runs(current(thread_id)), & &1["status"])
+      end
+    end
+
     # The session stops as it is asked to drop the turns: a Codex rewind fails and
     # changes nothing; a Claude one needs no session, as when none was running.
     test "a rewind whose Codex session stops as it is asked fails", %{work: work} do
@@ -3797,8 +4015,24 @@ defmodule HalC2.OrchestrationTest do
       :ok = HalC2.Shell.subscribe(self())
       await_shell_row(thread_id, &(&1["activeRunId"] == nil))
 
-      assert HalC2.Orchestration.IdleSessions.check() == [thread_id]
-      assert Registry.lookup(HalC2.Codex.Registry, thread_id) == []
+      # The next message reads this registry, so a released session is gone from it when
+      # the check returns. Its partitions held back, the registry's own asynchronous
+      # cleanup of the dead pid cannot make the lookup pass, nor missing it fail it now
+      # and then (#436).
+      partitions =
+        for {_id, partition, :worker, _} <-
+              Supervisor.which_children(HalC2.Codex.Registry),
+            do: partition
+
+      assert partitions != []
+      Enum.each(partitions, &:sys.suspend/1)
+
+      try do
+        assert HalC2.Orchestration.IdleSessions.check() == [thread_id]
+        assert Registry.lookup(HalC2.Codex.Registry, thread_id) == []
+      after
+        Enum.each(partitions, &:sys.resume/1)
+      end
 
       assert [%{"status" => "stopped"}] =
                StreamState.list(current(thread_id), "provider-session")
@@ -4070,6 +4304,50 @@ defmodule HalC2.OrchestrationTest do
           )
       end
     end
+  end
+
+  test "a provider diff never replaces a captured checkpoint and must name a checkpoint ref" do
+    {thread_id, run_id} = recorded_run("completed")
+    scope = HalC2.Checkpoint.scope_id(thread_id)
+    checkpoint_id = HalC2.Checkpoint.checkpoint_id(scope, 1)
+
+    command = fn ref, status ->
+      %{
+        "type" => "thread.turn.diff.complete",
+        "threadId" => thread_id,
+        "turnId" => run_id,
+        "completedAt" => HalC2.Orchestration.Entities.now(),
+        "checkpointRef" => ref,
+        "status" => status,
+        "files" => [],
+        "checkpointTurnCount" => 1
+      }
+    end
+
+    # A placeholder for a run with no checkpoint is recorded; a captured
+    # checkpoint may then replace the placeholder.
+    assert {:ok, _} = Orchestration.dispatch(command.("provider-diff:event-1", "missing"))
+
+    assert {:ok, _} =
+             Orchestration.dispatch(command.(HalC2.Checkpoint.ref(scope, 1), "ready"))
+
+    checkpoint = current(thread_id) |> StreamState.get("checkpoint") |> Map.fetch!(checkpoint_id)
+    assert checkpoint["status"] == "ready"
+
+    # Nothing replaces what was captured, in either direction.
+    assert {:error, already} =
+             Orchestration.dispatch(command.(HalC2.Checkpoint.ref(scope, 1), "ready"))
+
+    assert already =~ "already has a captured checkpoint"
+
+    assert {:error, _} = Orchestration.dispatch(command.("provider-diff:event-2", "missing"))
+
+    # A ready checkpoint's ref reaches git, so only checkpoint refs are accepted.
+    assert {:error, not_ref} = Orchestration.dispatch(command.("config", "ready"))
+    assert not_ref =~ "is not under refs/hal-c2/ or refs/t3/"
+
+    assert current(thread_id) |> StreamState.get("checkpoint") |> Map.fetch!(checkpoint_id) ==
+             checkpoint
   end
 
   defp await_request(thread_id) do

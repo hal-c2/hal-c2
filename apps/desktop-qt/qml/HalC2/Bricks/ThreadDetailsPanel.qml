@@ -216,10 +216,12 @@ Rectangle {
                 readonly property var editor: (Shell.state.workspace?.editors ?? []).find(candidate => candidate.id === Shell.state.workspace?.preferredEditorId) ?? null
 
                 objectName: "threadDetailsOpenEditor"
-                visible: root.details !== null && editor !== null
+                readonly property string noRoute: Shell.state.workspace?.noSshRoute ?? ""
+
+                visible: root.details !== null && (editor !== null || noRoute !== "")
                 subtle: true
                 iconName: "external-link"
-                text: qsTr("Open in %1").arg(editor?.label ?? "")
+                text: noRoute !== "" ? noRoute : qsTr("Open in %1").arg(editor?.label ?? "")
                 onClicked: Shell.dispatch("workspace.openInEditor", {})
             }
 

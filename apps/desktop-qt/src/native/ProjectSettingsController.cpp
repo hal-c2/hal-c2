@@ -1,8 +1,8 @@
 // Settings → Project: the picked logical project's name and icon, which
 // every checkout in the scope takes (`project.update` on each, in turn), its
 // checkouts and removing them (ProjectController asks first), and how new
-// threads start: the model, permissions, workspace and worktree submodules,
-// as the project's overrides or, with no project picked, the environments'
+// threads start: the model, permissions, workspace, worktree submodules and
+// where sessions load the project's environment from, as the project's overrides or, with no project picked, the environments'
 // defaults (kept off General, whose page holds
 // only this device's settings).
 //
@@ -12,17 +12,19 @@
 // (listed when there are several), note (where its other settings are), removal:
 // {title, description, button},
 // available (an environment is connected), and each default (model,
-// permissions, workspace, submodules): {value, label, mixed, resettable},
+// permissions, workspace, submodules, environment): {value, label, mixed, resettable},
 // the model's also {automatic, none (no providers), models: [{key, label}],
 // inheritance (while inspected): {layers: [{key, label, value, effective}],
 // overridingProjects: [{projectId, environmentId, title, value}]}},
-// and the others' {options: [{value, label, description}]}}.
+// and the others' {options: [{value, label, description}]}, the environment's
+// also {file} (the dotenv file, relative to the checkout)}.
 //
 // Actions (`projectSettings.`): `rename {title}`, `icon {emoji | icon |
 // faviconPath}` (without one, back to automatic), `remove {key}` (one checkout, else every
 // checkout in the scope), `model {key}` ("" for automatic), `permissions
-// {value}`, `workspace {value}`, `submodules {value}`, `reset {key}` (model |
-// permissions | workspace | submodules), `inspect {key}` ("model" shows where
+// {value}`, `workspace {value}`, `submodules {value}`, `environment {value}`,
+// `environmentFile {file}` ("" for .env), `reset {key}` (model | permissions |
+// workspace | submodules | environment), `inspect {key}` ("model" shows where
 // the default model comes from, anything else hides it), `clearOverride
 // {environmentId, projectId}` (a project's model override, from the
 // environment's view).
@@ -50,6 +52,8 @@ namespace {
 const QString kKey = QStringLiteral("projectSettings");
 const QString kSection = QStringLiteral("/settings/projects");
 const QString kModel = QStringLiteral("defaultModelSelection");
+const QString kEnvironmentFile = QStringLiteral("projectEnvironmentFile");
+const QString kDefaultEnvironmentFile = QStringLiteral(".env");
 
 QString at(const QJsonObject& object, const char* key) {
   return object.value(QLatin1String(key)).toString();
@@ -60,11 +64,14 @@ struct Option {
 };
 
 // A default a row edits: its settings key, its choices, and what applies
-// when the environment leaves it unset (null for the file-backed ones).
+// when the environment leaves it unset. A file-backed one's unset defers to the
+// checkout's hal-c2.json, so resetting the environment's value clears it rather
+// than writing the built-in.
 struct Choice {
   QString key;
   QString builtIn;
   QList<Option> options;
+  bool fileBacked = true;
 };
 
 const QHash<QString, Choice>& choices() {
@@ -75,7 +82,8 @@ const QHash<QString, Choice>& choices() {
         {{QStringLiteral("approval-required"), QStringLiteral("Supervised"), QStringLiteral("Ask before commands and file changes.")},
          {QStringLiteral("auto-accept-edits"), QStringLiteral("Auto-accept edits"), QStringLiteral("Auto-approve edits, ask before other actions.")},
          {QStringLiteral("auto"), QStringLiteral("Auto"), QStringLiteral("Supported providers approve routine actions; others still ask.")},
-         {QStringLiteral("full-access"), QStringLiteral("Full access"), QStringLiteral("Allow commands and edits without prompts.")}}}},
+         {QStringLiteral("full-access"), QStringLiteral("Full access"), QStringLiteral("Allow commands and edits without prompts.")}},
+        false}},
       {QStringLiteral("workspace"),
        {QStringLiteral("defaultThreadEnvMode"),
         QStringLiteral("local"),
@@ -86,6 +94,14 @@ const QHash<QString, Choice>& choices() {
         {{QStringLiteral("recursive"), QStringLiteral("Recursive"), {}},
          {QStringLiteral("top-level"), QStringLiteral("Top level only"), {}},
          {QStringLiteral("none"), QStringLiteral("Skip"), {}}}}},
+      // Never file-backed: a checkout must not turn on running its own configuration.
+      {QStringLiteral("environment"),
+       {QStringLiteral("projectEnvironment"),
+        QStringLiteral("off"),
+        {{QStringLiteral("off"), QStringLiteral("Off"), QStringLiteral("Agents get only the environment's own variables.")},
+         {QStringLiteral("auto"), QStringLiteral("mise and direnv"), QStringLiteral("What mise and an allowed .envrc set in the thread's checkout.")},
+         {QStringLiteral("dotenv"), QStringLiteral("A dotenv file"), QStringLiteral("The variables of one file in the thread's checkout.")}},
+        false}},
   };
   return map;
 }
@@ -191,6 +207,9 @@ public:
       remove(input.value(QStringLiteral("key")).toString());
     } else if (name == QLatin1String("model")) {
       setModel(input.value(QStringLiteral("key")).toString());
+    } else if (name == QLatin1String("environmentFile")) {
+      const QString file = input.value(QStringLiteral("file")).toString().trimmed();
+      set(kEnvironmentFile, file.isEmpty() ? kDefaultEnvironmentFile : file);
     } else if (choices().contains(name)) {
       const Choice& choice = choices().value(name);
       const QString value = input.value(QStringLiteral("value")).toString();
@@ -343,10 +362,9 @@ private:
     if (name == QLatin1String("model")) {
       key = kModel;
     } else if (choices().contains(name)) {
-      key = choices().value(name).key;
-      // The permissions have a default of their own; the others defer to the
-      // checkout's hal-c2.json when unset.
-      if (name == QLatin1String("permissions")) value = choices().value(name).builtIn;
+      const Choice& choice = choices().value(name);
+      key = choice.key;
+      if (!choice.fileBacked) value = choice.builtIn;
     } else {
       return;
     }
@@ -386,8 +404,7 @@ private:
     return {{QStringLiteral("value"), value},
             {QStringLiteral("label"), label},
             {QStringLiteral("mixed"), reading.mixed},
-            {QStringLiteral("resettable"), resettable(choice.key, name == QLatin1String("permissions") ? QJsonValue(choice.builtIn)
-                                                                                                        : QJsonValue(QJsonValue::Null))},
+            {QStringLiteral("resettable"), resettable(choice.key, choice.fileBacked ? QJsonValue(QJsonValue::Null) : QJsonValue(choice.builtIn))},
             {QStringLiteral("options"), options}};
   }
 
@@ -499,9 +516,16 @@ private:
                           {QStringLiteral("message"), message},
                           {QStringLiteral("available"), !scope()->targets().isEmpty()},
                           {QStringLiteral("model"), modelRow()}};
-    for (const QString& name : {QStringLiteral("permissions"), QStringLiteral("workspace"), QStringLiteral("submodules")}) {
+    for (const QString& name : {QStringLiteral("permissions"), QStringLiteral("workspace"), QStringLiteral("submodules"), QStringLiteral("environment")}) {
       published.insert(name, choiceRow(name));
     }
+    QVariantMap environment = published.value(QStringLiteral("environment")).toMap();
+    const auto file = scope()->read([](const QJsonObject& settings, const QString& projectId) {
+      const QString value = effective(settings, projectId, kEnvironmentFile).toString().trimmed();
+      return QJsonValue(value.isEmpty() ? kDefaultEnvironmentFile : value);
+    });
+    environment.insert(QStringLiteral("file"), file.mixed ? QString() : file.value.toString());
+    published.insert(QStringLiteral("environment"), environment);
     if (state == QLatin1String("ready")) {
       published.insert(QStringLiteral("note"), QStringLiteral("Can't find a setting? Keep this project picked above and hop to any other settings page."));
       // The icon of the first checkout whose environment is connected.

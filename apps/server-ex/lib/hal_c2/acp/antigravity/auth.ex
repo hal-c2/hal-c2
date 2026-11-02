@@ -54,6 +54,8 @@ defmodule HalC2.Acp.Antigravity.Auth do
            ),
          {:ok, _init} <-
            Connection.call(conn, "initialize", HalC2.Acp.initialize_params(), 60_000) do
+      Process.put(:antigravity_login_tmp, Antigravity.runtime_tmp(env))
+
       task =
         Task.async(fn ->
           Connection.call(conn, "authenticate", %{"methodId" => method}, @login_timeout)
@@ -116,6 +118,17 @@ defmodule HalC2.Acp.Antigravity.Auth do
     case Connection.call(conn, "session/new", %{"cwd" => cwd, "mcpServers" => []}, 120_000) do
       {:ok, %{} = session} ->
         Connection.stop(conn)
+
+        # The checking session is disposable: its conversation files and
+        # runtime temp directory go with it.
+        Antigravity.SessionFiles.remove_session_files(
+          Antigravity.profile(instance),
+          session["sessionId"],
+          cwd
+        )
+
+        Antigravity.SessionFiles.release(Process.get(:antigravity_login_tmp))
+
         # No bare erase of `:unauthenticated` here: `put_account/2` forgets
         # the instance under the ACP lock, which erases the same key.
         Antigravity.put_account(instance, HalC2.Acp.session_models(session))

@@ -1,5 +1,7 @@
 #include "World.h"
 
+#include "FileActionsController.h"
+
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
@@ -9,12 +11,14 @@
 #include <QPointingDevice>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QSet>
 #include <QTest>
 #include <QThread>
 #include <qpa/qwindowsysteminterface.h>
 
 #include "ConnectionHealthController.h"
 #include "Harness.h"
+#include "Maintenance.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
@@ -46,24 +50,32 @@ QQuickItem* search(QQuickItem* item, const std::function<bool(QQuickItem*)>& mat
 // The object named `objectName` among what `object` owns and, for an item,
 // draws: an item or not. A Popup is a QObject, owned by the window, the item
 // or the content of the popup it was declared in, and a closed popup's
-// content is in no window.
-QObject* searchObjects(QObject* object, const QString& objectName) {
+// content is in no window. A popup's content can lead back to the popup, so
+// `seen` keeps the walk from going round.
+QObject* searchObjects(QObject* object, const QString& objectName, QSet<QObject*>& seen) {
+  if (seen.contains(object)) return nullptr;
+  seen.insert(object);
   if (object->objectName() == objectName) return object;
   const auto* item = qobject_cast<QQuickItem*>(object);
   const QObjectList owned = object->children();
   for (QObject* child : owned) {
     if (qobject_cast<QQuickItem*>(child)) continue;
-    if (QObject* found = searchObjects(child, objectName)) return found;
+    if (QObject* found = searchObjects(child, objectName, seen)) return found;
   }
   if (item) {
     const QList<QQuickItem*> children = item->childItems();
     for (QQuickItem* child : children) {
-      if (QObject* found = searchObjects(child, objectName)) return found;
+      if (QObject* found = searchObjects(child, objectName, seen)) return found;
     }
   } else if (auto* content = object->property("contentItem").value<QQuickItem*>()) {
-    if (QObject* found = searchObjects(content, objectName)) return found;
+    if (QObject* found = searchObjects(content, objectName, seen)) return found;
   }
   return nullptr;
+}
+
+QObject* searchObjects(QObject* object, const QString& objectName) {
+  QSet<QObject*> seen;
+  return searchObjects(object, objectName, seen);
 }
 
 void collectTexts(QQuickItem* item, QStringList& texts) {
@@ -77,6 +89,7 @@ void collectTexts(QQuickItem* item, QStringList& texts) {
 }  // namespace
 
 World::World() : environment(QStringLiteral("a"), QStringLiteral("My MacBook")), mc(environment.mc) {
+  push = std::make_shared<FakePushSystem>(QDir(m_home.path()).filePath(QStringLiteral("data")));
   mc.projects.clear();
   mc.threads.clear();
   mc.projects.insert(QStringLiteral("shop"), {{QStringLiteral("id"), QStringLiteral("shop")},
@@ -107,13 +120,25 @@ void World::fillStorage() {
 void World::open() {
   if (m_app) return;
   QWindowSystemInterface::handleApplicationStateChanged<QWindowSystemInterface::SynchronousDelivery>(Qt::ApplicationActive);
+  push->opened();
   m_app = std::make_unique<MobileApp>(
-      MobileApp::Options{m_home.path(), QStringLiteral(HAL_C2_QML_DIR), QStringLiteral(HAL_C2_MOBILE_QML_DIR), kTestPhone, camera});
+      MobileApp::Options{m_home.path(), QStringLiteral(HAL_C2_QML_DIR), QStringLiteral(HAL_C2_MOBILE_QML_DIR), kTestPhone, camera, push});
   // The scenarios' seams: a dropped connection is tried again at once, and
   // nothing leaves the test for the system's browser or clipboard.
   m_app->native().client()->setRetryDelays({20});
   m_app->bridge().setUrlOpener([this](const QUrl& url) { openedUrls.append(url); });
   m_app->native().shared<ConnectionHealthController>()->setClipboardWriter([this](const QString& text) {
+    clipboard = text;
+    return true;
+  });
+  m_app->maintenance().setClipboardWriter([this](const QString& text) {
+    clipboard = text;
+    return true;
+  });
+  // Releases are the environment's fake index, never GitHub's.
+  m_app->maintenance().setReleaseIndex(mc.origin().toString() + QStringLiteral("/releases?page=%1"));
+  m_app->bridge().setClipboardWriter([this](const QString& text) { clipboard = text; });
+  m_app->native().controller<FileActionsController>()->setClipboardWriter([this](const QString& text) {
     clipboard = text;
     return true;
   });
@@ -153,6 +178,8 @@ void World::followLink(const QString& link) {
 
 void World::close() {
   m_app.reset();
+  // The process went with it; a receiver the system starts is in a new one.
+  push::setForeground(false);
 }
 
 PairableMc& World::another(const QString& label) {

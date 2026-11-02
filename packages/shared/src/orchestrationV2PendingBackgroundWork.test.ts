@@ -81,6 +81,48 @@ describe("derivePendingBackgroundWork", () => {
     expect(tasks).toEqual([]);
   });
 
+  it("lists a settled run's work while the next run runs, when listing", () => {
+    const tasks = derivePendingBackgroundWork({
+      latestRun: { id: "run-2" as never, ordinal: 2, status: "running" },
+      providerThreads: [
+        {
+          id: "pt-1" as never,
+          pendingBackgroundTasks: [{ taskId: "bg-1", description: "sleep 20" }],
+        },
+      ],
+      runs: [
+        { id: "run-1" as never, ordinal: 1, status: "completed" },
+        { id: "run-2" as never, ordinal: 2, status: "running" },
+      ],
+      turnItems: [
+        {
+          id: "item-old" as never,
+          type: "dynamic_tool",
+          status: "running",
+          title: null,
+          runId: "run-1",
+          nativeItemRef: { nativeId: "mon-1" },
+        },
+        {
+          id: "item-new" as never,
+          type: "command_execution",
+          status: "running",
+          title: "npm test",
+          runId: "run-2",
+          nativeItemRef: { nativeId: "cmd-1" },
+          input: "npm test",
+        },
+      ],
+      listDuringActiveRun: true,
+    });
+    // The roster and the settled run's monitor stay; the running run's own
+    // command is foreground work, not background.
+    expect(tasks).toEqual([
+      { taskId: "bg-1", description: "sleep 20" },
+      { taskId: "mon-1", taskType: "dynamic_tool" },
+    ]);
+  });
+
   it("excludes rolled_back items when the latest run is waiting", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-2" as never, ordinal: 2, status: "waiting" },

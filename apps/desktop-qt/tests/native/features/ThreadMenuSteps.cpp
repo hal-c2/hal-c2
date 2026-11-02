@@ -237,6 +237,7 @@ QString itemId(const QString& phrase) {
       {QStringLiteral("mark unread"), QStringLiteral("mark-unread")},
       {QStringLiteral("copy"), QStringLiteral("copy")},
       {QStringLiteral("project settings"), QStringLiteral("project-settings")},
+      {QStringLiteral("create page from thread"), QStringLiteral("page-from-thread")},
       {QStringLiteral("archive"), QStringLiteral("archive")},
       {QStringLiteral("delete"), QStringLiteral("delete")},
   };

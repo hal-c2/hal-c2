@@ -61,6 +61,11 @@ defmodule HalC2.Test.Mc do
   then the core; `restart/1` brings them all back.
   """
   def stop(mc) do
+    # The watch goes first: a runtime killed for not stopping in time, because it holds a
+    # request, must leave its turn for `HalC2.Orchestration.Recovery`, not end it in a
+    # race with the streams stopping.
+    ExUnit.Callbacks.stop_supervised(HalC2.Orchestration.TurnWatch)
+
     # Provider processes die with the MC.
     if Process.whereis(HalC2.Codex.Supervisor) do
       for {_, pid, _, _} <- DynamicSupervisor.which_children(HalC2.Codex.Supervisor),
@@ -219,6 +224,16 @@ defmodule HalC2.Test.Mc do
   @doc "The first frame matching `fun`, skipping others. Raises after `timeout`."
   def await(client, fun, timeout \\ 30_000) do
     {frame, _skipped, client} = WsClient.recv_until(client, fun, timeout)
+    {frame, client}
+  end
+
+  @doc """
+  The config frame of the subscription `id`. A config the MC could not build comes as an
+  error frame saying why, and waiting on past it would only report a missing frame.
+  """
+  def await_config(client, id) do
+    {frame, client} = await(client, &(&1["t"] in ["config", "error"] and &1["id"] == id))
+    if frame["t"] == "error", do: flunk("the MC sent no config: #{frame["reason"]}")
     {frame, client}
   end
 
@@ -1428,6 +1443,21 @@ defmodule HalC2.Test.Mc.World do
   end
 
   @doc """
+  The pull request listings the fake `gh` was sent so far (`HalC2.PullRequests.GitHub.list/2`),
+  a GraphQL request (`query`, `variables`) per page, oldest first; `first_pages/1` keeps
+  the first page of each.
+  """
+  def pull_listings(context) do
+    for call <- cli_calls(context, "api graphql"),
+        request = JSON.decode!(call["stdin"]),
+        request["query"] =~ "PullRequestList",
+        do: request
+  end
+
+  @doc "Of `pull_listings/1`, the first page of each listing."
+  def first_pages(listings), do: Enum.filter(listings, &(&1["variables"]["after"] == nil))
+
+  @doc """
   Makes `tool` impossible to find: its fake goes, `gh` is looked up under a name
   that does not exist (`:gh_command`), and other tools lose the PATH entries
   outside the system directories that hold them.
@@ -2430,6 +2460,8 @@ defmodule HalC2.Test.Mc.World do
       sessions = "FAKE_CODEX_SESSION_LOG=" <> Path.join(context.mc.home, "codex-sessions.jsonl")
       # The full requests and answers, as `codex_requests/2` reads them.
       full = "FAKE_CODEX_LOG=" <> Path.join(context.mc.home, "codex-requests.log")
+      # Steers wait while this file exists.
+      hold = "FAKE_CODEX_HOLD_STEER=" <> Path.join(context.mc.home, "hold-steer")
 
       Application.put_env(:hal_c2, :codex_command, [
         "env",
@@ -2437,6 +2469,7 @@ defmodule HalC2.Test.Mc.World do
         requests,
         sessions,
         full,
+        hold,
         "python3",
         "-u",
         @fake_codex
@@ -2480,7 +2513,8 @@ defmodule HalC2.Test.Mc.World do
             id: HalC2.Codex.Supervisor
           ),
           HalC2.Mcp,
-          HalC2.Orchestration.TurnWatch
+          HalC2.Orchestration.TurnWatch,
+          HalC2.Orchestration.Effects
         ],
         do: Mc.ensure(child)
 
@@ -3445,9 +3479,12 @@ defmodule HalC2.Test.Mc.World do
   def reset_provider_caches do
     for key <- [
           {HalC2.Codex.Provider, :models},
+          {HalC2.Codex.Provider, :status},
           {HalC2.Codex.Provider, :version},
           {HalC2.Claude.Provider, :version},
           {HalC2.Claude.Provider, :models},
+          {HalC2.Claude.Provider, :capabilities},
+          {HalC2.Claude.Provider, :health},
           {HalC2.ProviderUpdates, "codex"},
           {HalC2.ProviderUpdates, "claudeAgent"},
           # The update a scenario was offered, and how its last update went.
@@ -4298,6 +4335,9 @@ defmodule HalC2.Test.Mc.Terminal do
       await_output(context, name, pattern, timeout)
     end
   end
+
+  @doc "Whether `output` ends at the shell's prompt; true when its prompt is not known."
+  def at_prompt?(output), do: not prompt_known?() or prompt_tail(output) =~ @prompt
 
   @doc "Waits until an OS process has ended (a shell ignores SIGTERM, so up to a second)."
   def await_exit(os_pid) do

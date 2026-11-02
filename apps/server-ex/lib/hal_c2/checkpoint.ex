@@ -18,6 +18,12 @@ defmodule HalC2.Checkpoint do
   # Checkpoints written under the earlier `t3` ref prefix; recorded refs name them directly.
   @legacy_refs_prefix "refs/t3/orchestration-v2/checkpoints"
   @diff_max_bytes 10_000_000
+  # Staging a workspace that holds a repository with no commit yet fails; naming
+  # those repositories and staging again recovers it, within limits: past them the
+  # capture fails instead of spending unbounded work on probing.
+  @recovery_max_candidates 64
+  @recovery_timeout_ms 5_000
+  @recovery_listing_max_bytes 16 * 1024 * 1024
   @identity [
     {"GIT_AUTHOR_NAME", "HAL-C2"},
     {"GIT_AUTHOR_EMAIL", "hal-c2@users.noreply.github.com"},
@@ -89,21 +95,11 @@ defmodule HalC2.Checkpoint do
         not repo?(cwd) ->
           {"missing", []}
 
-        capture(cwd, ref) != :ok ->
-          {"error", []}
-
-        previous = existing(cwd, ref(scope_id, max(ordinal - 1, 0))) ->
-          case git(
-                 cwd,
-                 ~w(diff --numstat -z --no-color --no-ext-diff --no-textconv) ++
-                   ["#{previous}^{commit}", "#{ref}^{commit}"]
-               ) do
-            {:ok, numstat} -> {"ready", numstat_files(numstat)}
-            {:error, _} -> {"ready", []}
-          end
-
         true ->
-          {"ready", []}
+          case capture(cwd, ref) do
+            :ok -> {"ready", changed_files(cwd, scope_id, ordinal, ref)}
+            {:error, reason} -> capture_failed(cwd, ref, reason)
+          end
       end
 
     %{
@@ -120,6 +116,30 @@ defmodule HalC2.Checkpoint do
       "files" => files,
       "capturedAt" => at || Entities.now()
     }
+  end
+
+  # The files changed since the previous checkpoint. A summary that cannot be
+  # worked out leaves the checkpoint ready with none listed: the capture itself
+  # is what a rewind needs.
+  defp changed_files(cwd, scope_id, ordinal, ref) do
+    with previous when is_binary(previous) <-
+           existing(cwd, ref(scope_id, max(ordinal - 1, 0))),
+         {:ok, numstat} <-
+           git(
+             cwd,
+             ~w(diff --numstat -z --no-color --no-ext-diff --no-textconv) ++
+               ["#{previous}^{commit}", "#{ref}^{commit}"]
+           ) do
+      numstat_files(numstat)
+    else
+      _ -> []
+    end
+  end
+
+  defp capture_failed(cwd, ref, reason) do
+    require Logger
+    Logger.warning("checkpoint capture failed in #{cwd} for #{ref}: #{inspect(reason)}")
+    {"error", []}
   end
 
   @doc """
@@ -167,26 +187,36 @@ defmodule HalC2.Checkpoint do
           into: MapSet.new(),
           do: run["id"]
 
+    # Turn counts name the completed runs still standing, in order: a run that
+    # was rewound no longer counts, so the run after a rewind takes the number
+    # the rewound run held.
     ready =
-      for checkpoint <- HalC2.StreamState.list(state, "checkpoint"),
-          checkpoint["status"] == "ready",
-          is_integer(checkpoint["appRunOrdinal"]),
-          MapSet.member?(completed, checkpoint["runId"]),
-          into: %{},
-          do: {checkpoint["appRunOrdinal"], checkpoint}
+      state
+      |> HalC2.StreamState.list("checkpoint")
+      |> Enum.filter(
+        &(&1["status"] == "ready" and is_integer(&1["appRunOrdinal"]) and
+            MapSet.member?(completed, &1["runId"]))
+      )
+      |> Enum.sort_by(& &1["appRunOrdinal"])
+      |> Enum.with_index(1)
+      |> Map.new(fn {checkpoint, turn} -> {turn, checkpoint} end)
 
     scopes = HalC2.StreamState.get(state, "checkpoint-scope")
 
     with {:to, %{} = to_checkpoint} <- {:to, ready[to]},
          {:scope, %{"cwd" => cwd}} <- {:scope, scopes[to_checkpoint["scopeId"]]},
          {:from, from_ref} when is_binary(from_ref) <-
-           {:from, if(from == 0, do: start_ref(state, cwd), else: ready[from]["ref"])},
+           {:from,
+            if(from == 0,
+              do: start_ref(state, cwd),
+              else: ready[from] && resolved(cwd, ready[from]["ref"])
+            )},
          {:ok, diff} <-
            diff_git(
              cwd,
              ~w(diff --patch --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/) ++
                if(ignore_whitespace, do: ["--ignore-all-space"], else: []) ++
-               ["#{from_ref}^{commit}", "#{to_checkpoint["ref"]}^{commit}"],
+               ["#{from_ref}^{commit}", "#{resolved(cwd, to_checkpoint["ref"])}^{commit}"],
              max_bytes: @diff_max_bytes
            ) do
       {:ok, diff_result(thread_id, from, to, diff)}
@@ -219,10 +249,20 @@ defmodule HalC2.Checkpoint do
   end
 
   # A derived checkpoint ref as it exists in `cwd`, taken before the rename or since.
+  # Checkpoints written before the rename live under `refs/t3/…`; reads of a
+  # `refs/hal-c2/…` ref fall back to that namespace, writes only use the new one.
   defp existing(cwd, ref) do
-    legacy = String.replace_prefix(ref, @refs_prefix, @legacy_refs_prefix)
-    Enum.find([ref, legacy], &exists?(cwd, &1))
+    Enum.find([ref, legacy_ref(ref)], &ref_commit?(cwd, &1))
   end
+
+  # The ref as it can be read in `cwd`: the old namespace's when only it exists.
+  defp resolved(cwd, ref), do: existing(cwd, ref) || ref
+
+  defp legacy_ref(ref),
+    do: String.replace_prefix(ref, @refs_prefix <> "/", @legacy_refs_prefix <> "/")
+
+  defp ref_commit?(cwd, ref),
+    do: match?({:ok, _}, git(cwd, ["rev-parse", "--verify", "--quiet", "#{ref}^{commit}"]))
 
   defp diff_result(thread_id, from, to, diff),
     do: %{"threadId" => thread_id, "fromTurnCount" => from, "toTurnCount" => to, "diff" => diff}
@@ -232,6 +272,8 @@ defmodule HalC2.Checkpoint do
   files the checkpoint lacks removed (ignored ones kept), the index left at HEAD.
   """
   def restore(cwd, ref) do
+    ref = resolved(cwd, ref)
+
     with {:ok, commit} <- git(cwd, ["rev-parse", "--verify", "--quiet", "#{ref}^{commit}"]),
          commit = String.trim(commit),
          {:ok, tracked} <-
@@ -267,9 +309,11 @@ defmodule HalC2.Checkpoint do
     end
   end
 
-  @doc "Deletes a checkpoint ref; a missing one is fine."
+  @doc "Deletes a checkpoint ref in both the current and the old namespace; a missing one is fine."
   def delete_ref(cwd, ref) do
-    git(cwd, ["update-ref", "-d", ref])
+    for target <- Enum.uniq([ref, legacy_ref(ref)]),
+        do: git(cwd, ["update-ref", "-d", target])
+
     :ok
   end
 
@@ -277,19 +321,19 @@ defmodule HalC2.Checkpoint do
   def repo?(cwd),
     do: File.dir?(cwd) and git(cwd, ~w(rev-parse --is-inside-work-tree)) == {:ok, "true\n"}
 
-  @doc "Whether a checkpoint ref resolves to a commit."
-  def exists?(cwd, ref),
-    do: match?({:ok, _}, git(cwd, ["rev-parse", "--verify", "--quiet", "#{ref}^{commit}"]))
+  @doc "Whether a checkpoint ref resolves to a commit, under either namespace."
+  def exists?(cwd, ref), do: existing(cwd, ref) != nil
 
   @doc "Commits the whole worktree (tracked and untracked, minus ignored) to `ref`."
   def capture(cwd, ref) do
     with {:ok, common} <- git(cwd, ~w(rev-parse --path-format=absolute --git-common-dir)) do
       index = Path.join(String.trim(common), "hal-c2-checkpoint-index-#{Entities.new_id("i")}")
       env = [{"GIT_INDEX_FILE", index} | @identity]
+      sparse = sparse_checkout?(cwd)
 
       try do
-        with :ok <- seed_index(cwd, index, env),
-             {:ok, _} <- git(cwd, @index_config ++ @durable ++ ~w(add -A -- .), env: env),
+        with :ok <- seed_index(cwd, index, env, sparse),
+             :ok <- stage(cwd, env, sparse),
              {:ok, tree} <- git(cwd, @index_config ++ @durable ++ ["write-tree"], env: env),
              {:ok, commit} <-
                git(
@@ -308,32 +352,113 @@ defmodule HalC2.Checkpoint do
     end
   end
 
+  # Whether the worktree is a sparse checkout this git can stage sparsely
+  # (`git add --sparse`); a git without it stages the checkout as it stands.
+  defp sparse_checkout?(cwd) do
+    with {:ok, "true\n"} <- git(cwd, ~w(config --bool core.sparseCheckout)),
+         {:ok, %{out: out, err: err}} <- HalC2.Git.run(cwd, ~w(add -h)) do
+      Regex.match?(~r/--(\[no-\])?sparse\b/, out <> err)
+    else
+      _ -> false
+    end
+  end
+
+  # Stages the whole worktree into the private index. Preserve absent skipped
+  # entries in a sparse checkout, but capture present nonignored files outside
+  # the cone. A repository inside the workspace with no commit yet cannot be
+  # staged; when staging fails for one, name and leave out each such
+  # repository and stage again (within the recovery limits above).
+  defp stage(cwd, env, sparse) do
+    case add_all(cwd, env, sparse, []) do
+      {:ok, _} -> :ok
+      {:error, _} = error -> recover_stage(cwd, env, sparse, error)
+    end
+  end
+
+  defp add_all(cwd, env, sparse, exclusions) do
+    git(
+      cwd,
+      @index_config ++
+        @durable ++
+        ["add"] ++
+        if(sparse, do: ["--sparse"], else: []) ++ ["-A", "--", "." | exclusions],
+      env: env
+    )
+  end
+
+  # One budget covers discovery, the probes of each candidate, and the retry.
+  defp recover_stage(cwd, env, sparse, error) do
+    case HalC2.Git.within(@recovery_timeout_ms, fn ->
+           stage_without_unborn(cwd, env, sparse, error)
+         end) do
+      {:ok, result} -> result
+      _ -> error
+    end
+  end
+
+  defp stage_without_unborn(cwd, env, sparse, error) do
+    with {:ok, %{status: 0, out: untracked, truncated: false}} <-
+           HalC2.Git.run(cwd, ~w(ls-files --others --exclude-standard -z -- .),
+             env: env,
+             max_bytes: @recovery_listing_max_bytes
+           ) do
+      # An untracked folder git will not descend into is listed as one entry
+      # ending in `/`: a repository of its own inside the workspace.
+      candidates =
+        untracked
+        |> String.split(<<0>>, trim: true)
+        |> Enum.filter(&String.ends_with?(&1, "/"))
+
+      exclusions =
+        if length(candidates) <= @recovery_max_candidates do
+          for entry <- candidates,
+              File.exists?(Path.join([cwd, entry, ".git"])),
+              not match?(
+                {:ok, _},
+                git(Path.join(cwd, entry), ~w(rev-parse --verify --quiet HEAD^{commit}))
+              ),
+              do: ":(exclude,literal)#{entry}"
+        end
+
+      case exclusions do
+        [_ | _] -> add_all(cwd, env, sparse, exclusions) |> ok()
+        _ -> error
+      end
+    else
+      _ -> error
+    end
+  end
+
   # Starts the private index at HEAD. Copying the repository's own index keeps its
   # stat data, so `git add` rehashes only changed files instead of the whole tree.
-  defp seed_index(cwd, index, env) do
+  defp seed_index(cwd, index, env, sparse) do
     cond do
       not match?({:ok, _}, git(cwd, ~w(rev-parse --verify --quiet HEAD^{commit}))) ->
         :ok
 
-      git(cwd, ~w(config --bool core.sparseCheckout)) == {:ok, "true\n"} ->
-        # Rebuilding a non-cone sparse index would record exclusions as deletions.
-        if git(cwd, ~w(config --bool core.sparseCheckoutCone)) == {:ok, "true\n"},
+      reuse_index(cwd, index, env, sparse) ->
+        :ok
+
+      # Rebuilding a non-cone sparse index loses its exclusions and would
+      # publish them as deletions; fail instead.
+      sparse and git(cwd, ~w(config --bool core.sparseCheckoutCone)) != {:ok, "true\n"} ->
+        {:error, "Cannot rebuild a checkpoint index for non-cone sparse checkout."}
+
+      true ->
+        File.rm(index)
+
+        # A fresh sparse index represents excluded directories without
+        # marking them deleted.
+        if sparse,
           do:
             ok(
               git(cwd, @index_config ++ ~w(-c index.sparse=true read-tree --reset HEAD), env: env)
             ),
-          else: {:error, :non_cone_sparse_checkout}
-
-      reuse_index(cwd, index, env) ->
-        :ok
-
-      true ->
-        File.rm(index)
-        ok(git(cwd, ~w(read-tree HEAD), env: env))
+          else: ok(git(cwd, ~w(read-tree HEAD), env: env))
     end
   end
 
-  defp reuse_index(cwd, index, env) do
+  defp reuse_index(cwd, index, env, sparse) do
     with {:ok, path} <- git(cwd, ~w(rev-parse --path-format=absolute --git-path index)),
          path = String.trim(path),
          {:ok, %{mtime: mtime}} <- File.stat(path, time: :posix),
@@ -342,13 +467,39 @@ defmodule HalC2.Checkpoint do
          :ok <- File.cp(path, index),
          {:ok, _} <- git(cwd, @index_config ++ ~w(read-tree --reset HEAD), env: env),
          :ok <- File.touch(index, time),
-         {:ok, listing} <- git(cwd, @index_config ++ ~w(ls-files -v -z), env: env) do
-      # Assume-unchanged (lowercase tag) or skip-worktree (S) entries would hide real
-      # changes from `git add`; those need a fresh index.
-      listing
-      |> String.split(<<0>>, trim: true)
-      |> Enum.all?(fn <<tag, _::binary>> -> tag not in ?a..?z and tag != ?S end)
+         {:ok, listing} <-
+           git(cwd, @index_config ++ ~w(ls-files --full-name --sparse -v -z), env: env) do
+      records =
+        for <<tag, _space, name::binary>> <-
+              String.split(listing, <<0>>, trim: true),
+            do: {tag, name}
+
+      # Assume-unchanged (lowercase tag) entries would hide real changes from
+      # `git add`. Skip-worktree (S) entries are a sparse checkout's own
+      # exclusions, but a manually skipped file the sparse rules select needs
+      # a fresh index too.
+      skipped =
+        for {?S, name} <- records,
+            not String.ends_with?(name, "/"),
+            do: name
+
+      not Enum.any?(records, fn {tag, _} -> tag in ?a..?z or (tag == ?S and not sparse) end) and
+        (skipped == [] or
+           (Enum.all?(skipped, &String.valid?/1) and
+              not_sparse_selected?(cwd, env, skipped)))
     else
+      _ -> false
+    end
+  end
+
+  # Whether none of the skipped files is selected by the sparse-checkout rules:
+  # any selected one carries a manual skip-worktree flag, not an exclusion.
+  defp not_sparse_selected?(cwd, env, skipped) do
+    case git(cwd, @index_config ++ ~w(sparse-checkout check-rules -z),
+           env: env,
+           input: Enum.join(skipped, <<0>>) <> <<0>>
+         ) do
+      {:ok, ""} -> true
       _ -> false
     end
   end

@@ -79,7 +79,7 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
     And reading project "nowhere" fails with "The project was not found."
 
   # Legacy: apps/server/src/mcp/toolkits/project/tools.ts and handlers.ts (hal_c2_project_list)
-  @backlog @mc
+  @mc
   Scenario Outline: A page of the project list holds 20 projects unless the agent asks for more
     Given this MC has 120 projects that are not deleted
     When the agent of "caller" lists the projects <asking>
@@ -90,7 +90,7 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
       | without a limit     | 20    |
       | with a limit of 100 | 100   |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A page size outside 1 to 100 is refused
     When the agent of "caller" lists the projects with a limit of <limit>
     Then the tool refuses the input as invalid
@@ -220,7 +220,7 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
       | only a repository                                   |
       | a repository and number in a project with no remote |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A pull request linked by number gets its URL in the host's own shape
     Given the project of "caller" is hosted on <host kind>
     When the agent of "caller" links pull request 42 of its repository by number
@@ -232,14 +232,14 @@ Feature: Agents managing queues, projects, worktrees and pull requests through M
       | Forgejo served from a port and a path prefix      | http://forge.example:3000/git/owner/repo/pulls/42        |
       | GitHub                                            | https://github.com/owner/repo/pull/42                    |
 
-  @backlog @mc
+  @mc
   Scenario: A pull request on another host than the project's gets a default URL
     Given the project of "caller" is hosted on GitLab
     When the agent of "caller" links pull request 42 of "owner/repo" on "other.example"
     Then the pull request is linked with the URL "https://other.example/owner/repo/pull/42"
     And the project's own host is not used to guess its shape
 
-  @backlog @mc
+  @mc
   Scenario: A Forgejo link made without its port is listed with the port from its URL
     Given "caller" has a Forgejo pull request linked as host "forge.example" with the URL "http://forge.example:3000/hal-c2/hal-c2/pulls/42"
     When the agent of "caller" lists its pull requests

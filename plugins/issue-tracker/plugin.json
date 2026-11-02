@@ -1,0 +1,135 @@
+{
+  "id": "issue-tracker",
+  "name": "Issue Tracker",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "The triage queue in front of your GitHub issues. Agents you pick prioritise the queue, draft follow-up questions for reporters and summarise issues; what they want to change waits as a proposal until you apply it. Implementing an issue starts an agent on it in a worktree of its own, asked to open a pull request that closes it.",
+  "author": { "name": "HAL-C2", "url": "https://github.com/hal-c2/hal-c2" },
+  "homepage": "https://github.com/hal-c2/hal-c2/tree/main/plugins/issue-tracker",
+  "license": "MIT",
+  "icon": "assets/icon.svg",
+  "permissions": [
+    {
+      "id": "projects:read",
+      "reason": "To find the project of each repository it follows, and run its agents in that project."
+    },
+    {
+      "id": "issues:read",
+      "reason": "To list and read the open issues of the repositories it follows."
+    },
+    {
+      "id": "issues:write",
+      "reason": "Only when you apply a proposal: to set an issue's priority labels and post its follow-up or summary comment. Nothing is written before you apply."
+    },
+    {
+      "id": "threads:create",
+      "reason": "Each triage action, and each piece of implementing work, is a thread of the agent you chose for it."
+    },
+    {
+      "id": "agentTools",
+      "reason": "Its triage agents read the queue and report their proposals through tools of this plugin."
+    }
+  ],
+  "settings": [
+    {
+      "key": "repositories",
+      "label": "Repositories",
+      "type": "list",
+      "default": [],
+      "description": "owner/name of each repository whose issues are the queue. Empty follows every GitHub project on this MC. Implementing needs a checkout of the repository as a project."
+    },
+    {
+      "key": "issueLabel",
+      "label": "Only issues labelled",
+      "type": "text",
+      "default": "",
+      "description": "Empty to follow every open issue."
+    },
+    {
+      "key": "pollMinutes",
+      "label": "Look at GitHub every (minutes)",
+      "type": "number",
+      "default": 10
+    },
+    {
+      "key": "prioritising",
+      "label": "Agent that prioritises",
+      "type": "object",
+      "default": {
+        "provider": "claudeAgent",
+        "model": "",
+        "modelOptions": {},
+        "runtimeMode": "approval-required"
+      },
+      "description": "{\"provider\", \"model\", \"modelOptions\", \"runtimeMode\"}: the agent instance, its model (empty for its default), the model's options such as {\"effort\": \"high\"}, and its access. It only reads and reports."
+    },
+    {
+      "key": "prioritisePrompt",
+      "label": "Prioritising prompt",
+      "type": "longText",
+      "default": "Prioritise the open issues of {{repository}}. The queue, newest activity first:\n\n{{issues}}\n\nRank them in the order they should be worked on. Give each a priority (critical, high, medium or low) and a one-line reason: who it blocks, what it unblocks, how stale it is, and how much is known about it. Read an issue's body with the issue_tracker_read tool when its title is not enough to judge it. Today is {{today}}.",
+      "description": "{{repository}}, {{issues}}, {{count}} and {{today}} are filled in. How to report is added after it."
+    },
+    {
+      "key": "followingUp",
+      "label": "Agent that asks for follow-up",
+      "type": "object",
+      "default": {
+        "provider": "claudeAgent",
+        "model": "",
+        "modelOptions": {},
+        "runtimeMode": "approval-required"
+      },
+      "description": "As the prioritising agent, for the threads that draft a follow-up comment on one issue."
+    },
+    {
+      "key": "followUpPrompt",
+      "label": "Follow-up prompt",
+      "type": "longText",
+      "default": "Issue #{{number}} of {{repository}}, \"{{title}}\", reported by {{author}}:\n\n{{body}}\n\nWork out what is missing before anyone could act on this: the actual problem or want, how to reproduce it or an example, versions and environment, and what done would look like. Draft one short, friendly comment to {{author}} asking only for what is genuinely missing, in the project's voice. If nothing is missing, say so in your summary and draft no comment. Today is {{today}}.",
+      "description": "{{repository}}, {{number}}, {{title}}, {{author}}, {{body}}, {{labels}}, {{url}} and {{today}} are filled in. How to report is added after it."
+    },
+    {
+      "key": "summarising",
+      "label": "Agent that summarises",
+      "type": "object",
+      "default": {
+        "provider": "claudeAgent",
+        "model": "",
+        "modelOptions": {},
+        "runtimeMode": "approval-required"
+      },
+      "description": "As the prioritising agent, for the threads that summarise one issue."
+    },
+    {
+      "key": "summarisePrompt",
+      "label": "Summarising prompt",
+      "type": "longText",
+      "default": "Summarise issue #{{number}} of {{repository}}, \"{{title}}\", reported by {{author}}:\n\n{{body}}\n\nSay what is being asked for, what is known and unknown, and what the likely size of the work is. These open issues might be the same thing said again:\n\n{{others}}\n\nName any of them that duplicates this one, and why. Draft the summary as a comment suitable for the issue itself. Today is {{today}}.",
+      "description": "{{repository}}, {{number}}, {{title}}, {{author}}, {{body}}, {{labels}}, {{url}}, {{others}} and {{today}} are filled in. How to report is added after it."
+    },
+    {
+      "key": "implementing",
+      "label": "Agent that implements",
+      "type": "object",
+      "default": {
+        "provider": "claudeAgent",
+        "model": "",
+        "modelOptions": {},
+        "runtimeMode": "auto-accept-edits"
+      },
+      "description": "As the prioritising agent, for the threads that implement an issue. It works in a new worktree of the issue's project."
+    },
+    {
+      "key": "implementPrompt",
+      "label": "Implementing prompt",
+      "type": "longText",
+      "default": "Implement issue #{{number}} of {{repository}}, \"{{title}}\" ({{url}}):\n\n{{body}}\n\nLabels: {{labels}}. Read the project's own guidance first. When it is ready, commit and push your branch and open a pull request that closes #{{number}}.",
+      "description": "{{repository}}, {{number}}, {{title}}, {{author}}, {{body}}, {{labels}}, {{url}} and {{today}} are filled in."
+    }
+  ],
+  "contributes": {
+    "pages": [{ "id": "issue-tracker", "title": "Issues", "qml": "ui/IssuesPage.qml" }],
+    "settingsPage": "ui/IssueTrackerSettings.qml"
+  }
+}

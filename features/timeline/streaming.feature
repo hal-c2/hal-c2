@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13060 (Run a shell command from a reply in the thread terminal)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (paragraph and turn streaming, flush interval, next queued message)
 #   apps/server-ex/lib/hal_c2/projection/timeline.ex (hidden items)
 #   packages/contracts/src/orchestrationV2.ts (message.updated, run.created, run.updated, ResponseStreamingMode)
@@ -172,6 +173,29 @@ Feature: Streaming the agent's reply
     And the clipboard refuses the copy
     When the user copies the reply
     Then the user sees a "Failed to copy" message beside the copy button with the reason
+
+  # The Run action sits beside Copy on a shell block the agent wrote. It sends the command to
+  # the thread's terminal, the same path a project script takes, and leaves the project's
+  # selected script alone.
+  @backlog @shared
+  Scenario: A complete shell command in a reply runs in the thread's terminal
+    Given the agent's reply has a single-line shell command in a code block
+    When the user runs the command from its code block
+    Then the command runs in the thread's terminal in the thread's folder
+    And the project's selected script is not changed
+
+  @backlog @shared
+  Scenario Outline: A code block that is not one complete shell command offers no run
+    Given the agent's reply has <block> in a code block
+    Then the code block offers no run action
+
+    Examples:
+      | block                                             |
+      | a shell command still streaming                   |
+      | a shell command that spans several lines          |
+      | an empty shell block                              |
+      | a shell command ending in a backslash             |
+      | a Python snippet                                  |
 
   @backlog @desktop
   Scenario: A reply that finished with no text says so

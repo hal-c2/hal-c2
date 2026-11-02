@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13355
 #   apps/server-ex/lib/hal_c2/diagnostics.ex (ps sampler, process list, telemetry, signalProcess, traces)
 #   apps/server-ex/lib/hal_c2/environment.ex (server config observability, logs directory)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (resourceTelemetry shape)
@@ -274,6 +275,29 @@ Feature: MC diagnostics
     Given an OTLP collector is configured on the MC
     When client spans arrive
     Then the MC forwards them to the collector
+
+  # The standard OpenTelemetry switch turns export off without losing the local trace file.
+  @backlog @mc
+  Scenario Outline: The standard telemetry switch stops forwarding to a collector
+    Given an OTLP collector is configured on the MC
+    And tracing is enabled on the MC
+    And the MC's environment sets the standard telemetry switch to "<value>"
+    When client spans arrive
+    Then the MC does not forward them to the collector
+    And the spans are still written to the MC's trace file
+
+    Examples:
+      | value |
+      | true  |
+      | TRUE  |
+
+  @backlog @mc
+  Scenario: A standard telemetry switch that is not true is warned about and leaves export on
+    Given an OTLP collector is configured on the MC
+    And the MC's environment sets the standard telemetry switch to "1"
+    When the MC starts
+    Then the MC warns that the switch's value is not recognised
+    And client spans are still forwarded to the collector
 
   # The MC's own spans and metrics are not exported to a collector yet; only client spans are forwarded.
   @backlog @mc

@@ -23,7 +23,8 @@ defmodule HalC2.Orchestration.Fork do
     with %{} <- thread || {:error, "Thread #{source_id} was not found."},
          {:ok, run} <- source_run(source, command["sourcePoint"]),
          # A run its provider finished ("waiting": not settled yet) is as good a point.
-         :ok <- completed(run, ["completed", "waiting"]) do
+         :ok <- completed(run, ["completed", "waiting"]),
+         :ok <- native_fork_policy(thread, command) do
       at = command["createdAt"] || Entities.now()
 
       target =
@@ -66,6 +67,21 @@ defmodule HalC2.Orchestration.Fork do
       end)
     end
   end
+
+  # A fork usually starts from a transcript where the provider cannot fork its
+  # own conversation. A caller that requires a native fork (`forkStrategy:
+  # "native_fork"`, as thread tooling that continues the provider session does)
+  # is refused in the provider's name instead of silently getting a transcript.
+  defp native_fork_policy(thread, %{"forkStrategy" => "native_fork"} = command) do
+    instance =
+      thread["providerInstanceId"] || get_in(thread, ["modelSelection", "instanceId"]) ||
+        "codex"
+
+    from_specific = get_in(command, ["sourcePoint", "type"]) in ["run", "checkpoint"]
+    HalC2.Orchestration.CommandPolicy.ensure_native_fork(instance, from_specific)
+  end
+
+  defp native_fork_policy(_thread, _command), do: :ok
 
   @spec merge_back(map) :: :ok | {:error, String.t()}
   def merge_back(%{"sourceThreadId" => fork_id, "targetThreadId" => parent_id} = command) do

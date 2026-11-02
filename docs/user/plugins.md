@@ -60,7 +60,8 @@ app does not have is listed as loaded and shows nothing.
 ## Plugins that run on your MC
 
 Some plugins do work on a machine rather than in one app, such as
-[agent code review](code-review.md) and the [planner](planner.md). They are
+[agent code review](code-review.md), the [planner](planner.md) and the
+[issue tracker](issue-tracker.md). They are
 folders with a `plugin.json`, and each MC runs its own: put the folder in
 `plugins` under the MC's data directory
 (`~/.local/share/hal-c2/elixir/plugins/` on Linux). **Settings → Plugins** lists
@@ -75,6 +76,12 @@ again. Plugins that run code on the MC say so: they can do anything the MC can.
 What a plugin asks for limits what it may do on the MC, not in the app: its
 pages and other parts run in the app with the app's access, like any UI plugin,
 so install only plugins you trust.
+
+To see whether a plugin's code compiles without turning it on, use **Check that
+it compiles** on its entry; the entry then says where the code fails, until the
+plugin changes or you turn it on. The check grants nothing and leaves nothing
+running, but compiling still runs some of the plugin's code, so check only
+plugins you would consider running.
 
 What a running plugin adds reaches every app connected to that machine:
 

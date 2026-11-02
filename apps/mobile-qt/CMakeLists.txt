@@ -33,6 +33,8 @@ qt_add_executable(hal-c2-mobile
   src/main.cpp
   src/MobileApp.cpp
   src/MobileApp.h
+  src/Maintenance.cpp
+  src/Maintenance.h
   src/Pairing.cpp
   src/Pairing.h
   "${HAL_C2_DESKTOP_DIR}/src/LocalFolderModel.cpp"
@@ -55,6 +57,8 @@ include(cmake/Terminal.cmake)
 hal_c2_target_terminal(hal-c2-mobile)
 include(cmake/Scanner.cmake)
 hal_c2_target_scanner(hal-c2-mobile)
+include(cmake/Push.cmake)
+hal_c2_target_push(hal-c2-mobile)
 
 target_compile_definitions(hal-c2-mobile PRIVATE
   HAL_C2_QML_SOURCE_DIR="${_hal_c2_bricks_dir}"

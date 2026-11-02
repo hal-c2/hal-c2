@@ -25,11 +25,23 @@ defmodule HalC2.Acp.Antigravity.Session do
     attachments = Map.get(turn, :attachments, [])
 
     cond do
-      not antigravity?(turn.ids.driver) -> :ok
-      attachments == [] and String.trim(turn.text || "") == "/logout" -> :logout
-      true -> Antigravity.check_attachments(attachments)
+      not antigravity?(turn.ids.driver) ->
+        :ok
+
+      attachments == [] and String.trim(turn.text || "") == "/logout" ->
+        :logout
+
+      String.trim(turn.text || "") == "" and
+          Enum.all?(attachments, &pasted_only?/1) ->
+        {:error, "A turn requires text or supported attachments."}
+
+      true ->
+        Antigravity.check_attachments(attachments)
     end
   end
+
+  defp pasted_only?(attachment),
+    do: get_in(attachment, [Access.key(:source), "_tag"]) == "pasted-text"
 
   # Antigravity reports a spent quota as the turn's whole reply, not as an error.
   @reply_limit 1024
@@ -163,6 +175,9 @@ defmodule HalC2.Acp.Antigravity.Session do
     key
   end
 
+  @doc "The aliases that mean the account's default model, not a model of their own."
+  def default_alias?(model), do: model in [nil, "", "default", "antigravity-default"]
+
   @doc """
   Checks the thread's model against the models the account's session lists:
   `:ok` or `{:error, message}`.
@@ -170,12 +185,24 @@ defmodule HalC2.Acp.Antigravity.Session do
   def check_model(instance, model, models) do
     slugs = for %{"slug" => slug} <- models || [], do: slug
 
-    if antigravity?(instance) and is_binary(model) and model not in ["", "default"] and
+    if antigravity?(instance) and is_binary(model) and not default_alias?(model) and
          slugs != [] and model not in slugs,
        do:
          {:error,
           "Antigravity model '#{model}' is unavailable for this Google account. Select an available model."},
        else: :ok
+  end
+
+  @doc """
+  The model a turn on the default alias runs on: HAL-C2's preferred model
+  when the account offers it, else the model Antigravity has selected
+  (`current`). Nil when there is nothing to ask for.
+  """
+  def default_model(models, current) do
+    preferred = Antigravity.preferred_model()
+    slugs = for %{"slug" => slug} <- models || [], do: slug
+
+    if preferred && preferred in slugs, do: preferred, else: current
   end
 
   @doc "A session's start failure, as the thread shows it."

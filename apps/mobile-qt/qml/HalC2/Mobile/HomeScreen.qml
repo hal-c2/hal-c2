@@ -6,7 +6,7 @@ import HalC2.Bricks
 
 // The phone layout's home: every thread of the environment, grouped as the
 // desktop's sidebar groups them (the Sidebar brick over `sidebar`), under a
-// bar with the environment, settings and a new thread.
+// bar with the Spaces, the environment, settings and a new thread.
 ColumnLayout {
     id: screen
 
@@ -25,6 +25,14 @@ ColumnLayout {
     MobileBar {
         Layout.fillWidth: true
         title: qsTr("Threads")
+
+        MobileIconButton {
+            objectName: "spaces"
+            iconName: "book"
+            label: qsTr("Spaces")
+            enabled: (Shell.state.route ?? null) !== null
+            onClicked: Shell.dispatch("space.open")
+        }
 
         MobileIconButton {
             objectName: "environment"
@@ -88,6 +96,8 @@ ColumnLayout {
         // desktop's; the bar above has what a phone starts from here.
         showScope: false
         showFooter: false
+        // The phone does not mark the build's stage yet (features/navigation/appearance.feature).
+        showStage: false
         touchRows: true
 
         // Projects are added where their folders are.

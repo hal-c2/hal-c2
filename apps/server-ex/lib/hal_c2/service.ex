@@ -421,7 +421,8 @@ defmodule HalC2.Service do
         "Environment=PATH=#{quote_value(System.get_env("PATH", ""))}",
         "Environment=HAL_C2_WAIT_FOR_HOME=1",
         "ExecStart=#{Enum.map_join(argv, " ", &quote_value/1)}",
-        "KillMode=mixed",
+        # The provider programs outlive a restart (`HalC2.Subprocess.Durable`).
+        "KillMode=process",
         "OOMPolicy=continue",
         "Restart=always",
         "RestartSec=5",
@@ -471,6 +472,8 @@ defmodule HalC2.Service do
       <key>WorkingDirectory</key>
       <string>#{x.(cwd)}</string>
       <key>RunAtLoad</key>
+      <true/>
+      <key>AbandonProcessGroup</key>
       <true/>
       <key>KeepAlive</key>
       <true/>

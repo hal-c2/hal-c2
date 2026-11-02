@@ -11,7 +11,15 @@ defmodule HalC2.Plugins.Kind do
     * `validate_settings/1` (optional): `:ok`, or `{:error, message}` shown to the
       user when they save settings the plugin cannot use.
     * `start_link/1` (optional): the plugin's process, started with its settings
-      under the plugin's own supervisor while the plugin is enabled.
+      under the plugin's own supervisor while the plugin is enabled. A restart after
+      a crash starts it with the settings saved last.
+    * `settings_changed/3` (optional): `settings_changed(pid, settings, old)` hands
+      the process `start_link/1` started (`pid`) the settings the user just saved, in
+      the shape `start_link/1` takes, and answers `:ok` once it runs with them. It is
+      called from the MC's plugin host while the save waits, so it answers promptly
+      and never calls back into `HalC2.Plugins`. A plugin without it, or one that
+      answers anything else, raises or exits, is restarted with the new settings,
+      which stops the work its process was doing.
   """
 
   defmacro __using__(_opts) do
@@ -19,13 +27,14 @@ defmodule HalC2.Plugins.Kind do
       @callback manifest() :: map
       @callback validate_settings(settings :: map) :: :ok | {:error, String.t()}
       @callback start_link(settings :: map) :: GenServer.on_start()
-      @optional_callbacks manifest: 0, validate_settings: 1, start_link: 1
+      @callback settings_changed(pid, settings :: map, old :: map) :: :ok | {:error, term}
+      @optional_callbacks manifest: 0, validate_settings: 1, start_link: 1, settings_changed: 3
     end
   end
 end
 
 defmodule HalC2.Plugins.ProviderAdapter do
-  @capabilities ~w(interrupt active_steering fork rollback approvals plan_updates model_switching interaction_mode text_generation native_sessions usage_limits sign_in)a
+  @capabilities ~w(interrupt active_steering interrupt_restart_steering queued_messages fork fork_from_turn rollback rollback_snapshot context_handoff strong_terminal_status approvals plan_updates model_switching interaction_mode text_generation native_sessions usage_limits sign_in)a
   @moduledoc """
   An agent provider. The orchestration runs every turn through the adapter behind
   the thread's provider instance (`HalC2.Plugins.provider/1`); Codex, Claude and the
@@ -195,19 +204,50 @@ defmodule HalC2.Plugins.ProviderAdapter do
   A provider session's capabilities (`HalC2.Orchestration.Entities`) narrowed to what
   a plugin declares, so the core offers only what works.
   """
+  # The finer capability atoms (`HalC2.Orchestration.CommandPolicy` cares
+  # about them). A manifest that declares none of them predates them, so its
+  # capabilities keep the defaults it shipped with: queueing is the MC's own,
+  # a run's end is taken as reliable, steering by interrupt is the fallback
+  # for a provider that cannot steer, a fork can come from a turn, and a
+  # context can be handed over.
+  @finer_capabilities ~w(queued_messages interrupt_restart_steering fork_from_turn
+                         rollback_snapshot context_handoff strong_terminal_status)a
+
   def session_capabilities(base, provider) do
     can = declared(provider)
     approvals = :approvals in can
     plans = :plan_updates in can
+    earlier = not Enum.any?(@finer_capabilities, &(&1 in can))
+    handoff = earlier or :context_handoff in can
 
     base
     |> put_in(["turns", "supportsInterrupt"], :interrupt in can)
     |> put_in(["turns", "supportsActiveSteering"], :active_steering in can)
-    |> put_in(["turns", "supportsSteeringByInterruptRestart"], :active_steering not in can)
+    |> put_in(
+      ["turns", "supportsSteeringByInterruptRestart"],
+      if(earlier, do: :active_steering not in can, else: :interrupt_restart_steering in can)
+    )
+    |> put_in(["turns", "supportsQueuedMessages"], earlier or :queued_messages in can)
+    |> put_in(
+      ["turns", "terminalStatusQuality"],
+      if(earlier or :strong_terminal_status in can, do: "strong", else: "weak")
+    )
     |> put_in(["threads", "canForkThread"], :fork in can)
-    |> put_in(["threads", "canForkFromTurn"], :fork in can)
+    |> put_in(
+      ["threads", "canForkFromTurn"],
+      if(earlier, do: :fork in can, else: :fork_from_turn in can)
+    )
     |> put_in(["threads", "canRollbackThread"], :rollback in can)
     |> put_in(["checkpointing", "providerCanRollbackConversation"], :rollback in can)
+    |> put_in(
+      ["checkpointing", "providerRollbackReturnsSnapshot"],
+      not earlier and :rollback_snapshot in can
+    )
+    |> put_in(["context", "canConsumeHandoffSummaries"], handoff)
+    |> put_in(["context", "acceptsSyntheticUserContext"], handoff)
+    |> put_in(["context", "supportsDeltaHandoff"], handoff)
+    |> put_in(["context", "supportsFullThreadHandoff"], handoff)
+    |> put_in(["sessions", "supportsProviderSwitchingViaHandoff"], handoff)
     |> put_in(["sessions", "supportsModelSwitchInSession"], :model_switching in can)
     |> put_in(["approvals", "supportsCommandApproval"], approvals)
     |> put_in(["approvals", "supportsFileChangeApproval"], approvals)

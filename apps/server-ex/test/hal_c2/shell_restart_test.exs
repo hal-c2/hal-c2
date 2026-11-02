@@ -34,6 +34,18 @@ defmodule HalC2.ShellRestartTest do
 
   defp start_shell, do: {:ok, _} = Supervisor.restart_child(HalC2.Shell.Supervisor, Shell)
 
+  # Tools and tests without the shell at all (its whole supervision tree, heir
+  # included, gone) read no rows instead of raising on the missing table.
+  test "rows read as absent when there is no shell" do
+    :ok = ExUnit.Callbacks.stop_supervised(Shell)
+    assert :ets.whereis(Shell) == :undefined
+    assert Shell.rows() == []
+    assert Shell.row(node(), "th-1") == nil
+
+    start_supervised!(Shell)
+    assert {"thread", %{"title" => "stored"}} = Shell.row(node(), "th-1")
+  end
+
   test "the sidebar stays readable while the shell starts again" do
     stop_shell()
 

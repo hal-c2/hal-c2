@@ -94,6 +94,10 @@ target_compile_definitions(hal-c2-qt PRIVATE
   HAL_C2_HOST_ENTRY="${HAL_C2_HOST_ENTRY}"
   HAL_C2_NODE_ENTRY="${HAL_C2_NODE_ENTRY}"
   HAL_C2_APP_VERSION="${PROJECT_VERSION}"
+  # Any build but Release is a development shell (main.cpp). Its icon is read
+  # from the checkout, so release binaries do not carry it.
+  HAL_C2_DEV_BUILD=$<IF:$<CONFIG:Release>,false,true>
+  HAL_C2_DEV_ICON="${CMAKE_CURRENT_SOURCE_DIR}/../../assets/dev/blueprint-universal-1024.png"
 )
 
 include(cmake/PlatformWindow.cmake)
@@ -143,3 +147,13 @@ install(TARGETS hal-c2-qt
   BUNDLE DESTINATION .
   RUNTIME DESTINATION bin
 )
+
+# Snap Shot's KDE Plasma and Hyprland capture helpers (native/*-snap-shot),
+# which setup copies into the user's data directory. Built by cargo before
+# packaging (mise run desktop:helpers); a build without them says so in setup.
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+  foreach(_hal_c2_helper kde hyprland)
+    install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/../../native/${_hal_c2_helper}-snap-shot/target/release/hal-c2-${_hal_c2_helper}-snap-shot"
+            DESTINATION "share/hal-c2/${_hal_c2_helper}-capture" OPTIONAL)
+  endforeach()
+endif()

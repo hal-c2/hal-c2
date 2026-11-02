@@ -16,6 +16,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   alias HalC2.Steps.Plugins.Fixtures
   alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.Test.Machines
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
@@ -80,8 +81,11 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> World.cli_rules([
       %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
       %{"args" => ["pr list"], "stdout" => []},
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestList"], "pulls" => []},
       Shared.permissions_rule("WRITE"),
-      %{"args" => ["--method POST", "pulls/"], "stdout" => "{}"}
+      %{"args" => ["--method POST", "pulls/"], "stdout" => "{}"},
+      # The pull request's reviews, read before a post: none yet.
+      activity_rule([])
     ])
     |> Map.merge(%{
       repository: repository,
@@ -358,6 +362,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "all four reviews run", context do
+    {{:ok, snapshot}, context} = plugin(context, "reviews", %{})
+    assert Enum.map(snapshot["reviews"], & &1["status"]) == List.duplicate("running", 4)
+    context
+  end
+
   # --- the agent and its prompt ----------------------------------------------------------------
 
   step "{string} reviews with Claude on {string} in the {string} mode",
@@ -627,6 +637,54 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     await_review!(context, number, &(&1["status"] == "published"))
   end
 
+  step "the agent reports the verdict {string} with only a summary",
+       %{args: [verdict]} = context do
+    report(context, %{
+      "verdict" => @verdicts[verdict],
+      "summary" => "Reads well.",
+      "comments" => []
+    })
+  end
+
+  step "the agent reports that it ran {string}, left out the full suite and was blocked by a missing credential",
+       %{args: [command]} = context do
+    report(context, %{
+      "verdict" => "comment",
+      "summary" => "Bumps the HTTP client.",
+      "validation" => %{
+        "ran" => [%{"command" => command, "result" => "412 passed"}],
+        "notRun" => [%{"check" => "the full suite", "reason" => "it needs the staging database"}],
+        "blocked" => [%{"check" => "the e2e tests", "error" => "STRIPE_KEY is not set"}]
+      }
+    })
+  end
+
+  step "the review posted to \#{int} opens with {string}", %{args: [number, first]} = context do
+    [_, body | _] = posted_review(context, number)
+    assert String.starts_with?(body, first <> "\n\n"), body
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
+  step "the review posted to \#{int} lists the check left out and the blocked one in plain view",
+       %{args: [number]} = context do
+    [_, body | _] = posted_review(context, number)
+    [visible | _] = String.split(body, "<details>")
+    assert visible =~ "**Not run**\n\n- the full suite: it needs the staging database"
+    assert visible =~ ~r/\*\*Blocked[^\n]*\n\n- the e2e tests: STRIPE_KEY is not set/
+    assert String.starts_with?(body, "No findings.\n\nBumps the HTTP client.\n\n"), body
+    context
+  end
+
+  step "the review posted to \#{int} folds away the commands that ran",
+       %{args: [number]} = context do
+    [_, body | _] = posted_review(context, number)
+
+    assert body =~
+             "<details><summary>Ran 1 check</summary>\n\n- `mix test`: 412 passed\n\n</details>"
+
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
   step "the agent reports a low finding starting with bold text on {string}",
        %{args: [path]} = context do
     context =
@@ -720,6 +778,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "{string} is restarted", %{args: [id]} = context do
     {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
     context
+  end
+
+  step "the user changes how often {string} looks for pull requests", %{args: [@id]} = context do
+    save(context, %{"pollMinutes" => 15})
   end
 
   step "the review of \#{int} is failed saying the plugin stopped while it ran",
@@ -901,6 +963,174 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     Map.put(context, :pushed, head)
   end
 
+  step "\#{int} has a new head commit", %{args: [number]} = context do
+    head =
+      push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
+
+    context
+    |> put_in([:heads, number], head)
+    |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
+  end
+
+  # The review failed on hearing a turn end, as it does when the plugin restarts under
+  # a run, while the agent goes on: the provider's turn is still open.
+  step "the review's agent is still working after its review failed", context do
+    event = %{"type" => "turn.finished", "threadId" => context.thread, "status" => "failed"}
+    :ok = apply(HalC2Plugins.CodeReview, :handle_event, [event, %{}])
+    {_, context} = await_review(context, 12, &(&1["status"] == "failed"))
+
+    context
+    |> Map.put(:replaced_thread, context.thread)
+    |> Map.put(:replaced_checkout, context.review["checkout"])
+  end
+
+  step "a message waits in the queue of the review's thread", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => context.thread,
+        "messageId" => "queued-message",
+        "text" => "and another thing",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "queue_after_active"}
+      })
+
+    World.await_stream(context.thread, fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "queued"))
+    end)
+
+    context
+  end
+
+  step "the replaced thread's queued message never starts", context do
+    runs = HalC2.StreamState.list(HalC2.Streams.state(context.replaced_thread), "run")
+
+    assert length(runs) == 2 and Enum.count(runs, &(&1["status"] == "cancelled")) == 1,
+           inspect(runs)
+
+    context
+  end
+
+  step "the review's agent delegated a task that delegated another, and its turn ended",
+       context do
+    {:ok, %{"taskId" => task, "childThreadId" => child}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => context.thread}, "codex", %{
+        "task" => "wait"
+      })
+
+    {:ok, %{"taskId" => nested, "childThreadId" => nested_thread}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => child}, "codex", %{"task" => "wait"})
+
+    context = end_turns(context)
+
+    World.await_stream(context.thread, fn state ->
+      not Enum.any?(
+        HalC2.StreamState.list(state, "run"),
+        &(&1["status"] in ~w(preparing starting running waiting))
+      )
+    end)
+
+    event = %{"type" => "turn.finished", "threadId" => context.thread, "status" => "failed"}
+    :ok = apply(HalC2Plugins.CodeReview, :handle_event, [event, %{}])
+    {_, context} = await_review(context, 12, &(&1["status"] == "failed"))
+
+    context
+    |> Map.put(:delegated_task, task)
+    |> Map.put(:delegated_child, child)
+    |> Map.put(:nested_task, nested)
+    |> Map.put(:nested_thread, nested_thread)
+    |> Map.put(:replaced_thread, context.thread)
+    |> Map.put(:replaced_checkout, context.review["checkout"])
+  end
+
+  step "the task that task delegated is cancelled and its agent is gone", context do
+    assert {:ok, %{"status" => "cancelled"}} =
+             HalC2.Orchestration.Delegation.task_status(
+               context.delegated_child,
+               context.nested_task
+             )
+
+    state = HalC2.Streams.state(context.nested_thread)
+
+    refute Enum.any?(
+             HalC2.StreamState.list(state, "run"),
+             &(&1["status"] in ~w(preparing starting running waiting))
+           )
+
+    assert Enum.all?(
+             HalC2.StreamState.list(state, "provider-session"),
+             &(&1["status"] == "stopped")
+           )
+
+    context
+  end
+
+  step "the delegated task is cancelled", context do
+    assert {:ok, %{"status" => "cancelled"}} =
+             HalC2.Orchestration.Delegation.task_status(
+               context.replaced_thread,
+               context.delegated_task
+             )
+
+    context
+  end
+
+  step "the replaced thread is not woken", context do
+    assert [%{"status" => status}] =
+             HalC2.StreamState.list(HalC2.Streams.state(context.replaced_thread), "run")
+
+    refute status in ~w(queued preparing starting running waiting)
+    context
+  end
+
+  step "the replaced thread has no running turn", context do
+    runs = HalC2.StreamState.list(HalC2.Streams.state(context.replaced_thread), "run")
+    assert runs != []
+
+    refute Enum.any?(runs, &(&1["status"] in ~w(preparing starting running waiting))),
+           inspect(runs)
+
+    context
+  end
+
+  step "the replaced thread's checkout is removed", context do
+    refute File.exists?(context.replaced_checkout)
+    context
+  end
+
+  step "the replaced thread's agent reports late", context do
+    result = call_report(%{context | thread: context.replaced_thread}, findings("approve", 1))
+    Map.put(context, :report_result, result)
+  end
+
+  step "the report is refused saying it was replaced by a run of the new head commit", context do
+    assert %{"isError" => true, "content" => [%{"text" => text}]} = context.report_result
+    assert text =~ "replaced by a newer run for #{String.slice(context.heads[12], 0, 7)}"
+    assert text =~ "your report was not recorded"
+    refute text =~ "capability_denied"
+    context
+  end
+
+  step "the new review of \#{int} has no findings from the replaced thread",
+       %{args: [number]} = context do
+    {reply, context} = plugin(context, "reviews", %{})
+    assert {:ok, snapshot} = reply
+    review = review(snapshot, number)
+    assert review["threadId"] != context.replaced_thread
+    assert review["verdict"] == nil
+    context
+  end
+
+  step "the agent reports again", context do
+    Map.put(context, :report_result, call_report(context, findings("approve", 1)))
+  end
+
+  step "the report is refused saying {string}", %{args: [message]} = context do
+    assert %{"isError" => true, "content" => [%{"text" => text}]} = context.report_result
+    assert text =~ message
+    context
+  end
+
   step "\#{int} gets a review of the commit that was reviewed", %{args: [number]} = context do
     {review, context} = await_review(context, number, &(&1["status"] == "published"))
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
@@ -1052,6 +1282,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the user changes how often {string} looks for pull requests while the review of \#{int} is being posted",
+       %{args: [@id, number]} = context do
+    context = await_review!(context, number, &(&1["status"] == "publishing"))
+    save(context, %{"pollMinutes" => 15})
+  end
+
   step "the post to GitHub is called off", context do
     pid = context.github_gate |> Kernel.<>(".pid") |> File.read!() |> String.trim()
     # `tail --pid` returns once the process is gone.
@@ -1141,7 +1377,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     World.cli_rules(context, [
       Map.put(signed_out, "args", ["api user"]),
-      Map.put(signed_out, "args", ["pr list"])
+      Map.merge(signed_out, %{"args" => ["api graphql"], "stdin" => ["PullRequestList"]})
     ])
   end
 
@@ -1150,14 +1386,386 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  # --- several machines --------------------------------------------------------------------
+  #
+  # This VM is the machine "desk"; the other is a peer MC in the cluster, with the
+  # plugin installed and a checkout of the same repository as a project of its own.
+  # It shares this VM's fake GitHub and fake Codex gate. Its `reviews` topic is
+  # watched from this process (`await_peer/3`).
+
+  step "the user's machine {string} in the cluster watches {string} automatically too",
+       %{args: [label, repo]} = context do
+    join(context, label, %{"repositories" => [repo], "activation" => "automatic"})
+  end
+
+  step "the user's machine {string} in the cluster watches {string} automatically too, one review at a time",
+       %{args: [label, repo]} = context do
+    join(context, label, %{
+      "repositories" => [repo],
+      "activation" => "automatic",
+      "concurrency" => 1
+    })
+  end
+
+  step "the pull request \#{int} is opened and both machines look at {string} at once",
+       %{args: [number, _repo]} = context do
+    context = open(context, number)
+
+    looks =
+      for label <- ["desk", context.peer],
+          do: Task.async(fn -> on_plugin(context, label, "refresh") end)
+
+    for reply <- Task.await_many(looks, 60_000), do: assert({:ok, _} = reply)
+    context
+  end
+
+  step "one machine reviews \#{int}", %{args: [number]} = context do
+    settled = &(&1["checkout"] || &1["elsewhere"])
+    {here, context} = await_review(context, number, settled)
+    {there, context} = await_peer(context, number, settled)
+
+    {winner, loser, other} =
+      case {here["checkout"], there["checkout"]} do
+        {nil, _} -> {context.peer, here, "desk"}
+        {_, nil} -> {"desk", there, context.peer}
+        _ -> flunk("both machines review ##{number}: #{inspect({here, there})}")
+      end
+
+    assert loser["threadId"] == nil and loser["status"] != "queued", inspect(loser)
+    assert loser["elsewhere"]["machine"] == winner, inspect(loser)
+    Map.merge(context, %{winner: winner, loser: other})
+  end
+
+  step "the other shows \#{int} reviewing on that machine", %{args: [number]} = context do
+    winner = context.winner
+    running = &match?(%{"elsewhere" => %{"machine" => ^winner, "status" => "running"}}, &1)
+
+    if context.loser == "desk",
+      do: await_review!(context, number, running),
+      else: context |> await_peer(number, running) |> elem(1)
+  end
+
+  step "{string} goes offline", %{args: [label]} = context do
+    :ok = Machines.stop(Machines.machine(context, label))
+    context
+  end
+
+  step "\#{int} is reviewed on this machine", %{args: [number]} = context do
+    {review, context} =
+      await_review(context, number, &(&1["checkout"] && &1["status"] == "running"))
+
+    assert review["elsewhere"] == nil, inspect(review)
+    context
+  end
+
+  step "{string} is reviewing \#{int} and has \#{int} queued",
+       %{args: [label, running, queued]} = context do
+    context = context |> open(running) |> open(queued)
+    assert {:ok, _} = on_plugin(context, label, "refresh")
+
+    {review, context} =
+      await_peer(context, running, &(&1["checkout"] && &1["status"] == "running"))
+
+    {_, context} = await_peer(context, queued, &(&1["status"] == "queued"))
+    Map.put(context, :peer_thread, review["threadId"])
+  end
+
+  step "the agent on {string} reaches its usage limit", %{args: [label]} = context do
+    reset = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+
+    event = %{
+      "type" => "turn.finished",
+      "threadId" => context.peer_thread,
+      "status" => "failed",
+      "errorClass" => "usage_limit",
+      "error" => "Subscription quota exhausted.",
+      "resetAt" => reset
+    }
+
+    Machines.on(context, label, HalC2Plugins.CodeReview, :handle_event, [event, %{}])
+    context
+  end
+
+  step "{string} is reviewing \#{int}", %{args: [label, number]} = context do
+    context = open(context, number)
+    assert {:ok, _} = on_plugin(context, label, "refresh")
+    {_, context} = await_peer(context, number, &(&1["checkout"] && &1["status"] == "running"))
+    context
+  end
+
+  step "this machine shows \#{int} reviewing on {string}", %{args: [number, label]} = context do
+    context = refresh(context)
+
+    reviewing =
+      &match?(
+        %{
+          "elsewhere" => %{
+            "machine" => ^label,
+            "status" => "running",
+            "claimed" => true,
+            "away" => false
+          }
+        },
+        &1
+      )
+
+    {review, context} = await_review(context, number, reviewing)
+    assert review["status"] == "ready" and review["threadId"] == nil, inspect(review)
+    context
+  end
+
+  step "this machine shows \#{int} reviewing on {string}, which is out of reach",
+       %{args: [number, label]} = context do
+    away =
+      &match?(%{"elsewhere" => %{"machine" => ^label, "status" => "running", "away" => true}}, &1)
+
+    {_, context} = await_review(context, number, away)
+    context
+  end
+
+  step "{string} reviewed \#{int}", %{args: [label, number]} = context do
+    context = open(context, number)
+    assert {:ok, _} = on_plugin(context, label, "refresh")
+
+    {review, context} =
+      await_peer(context, number, &(&1["checkout"] && &1["status"] == "running"))
+
+    result = peer_report(context, label, review["threadId"], findings("approve", 1))
+    assert result["isError"] != true, inspect(result)
+    {_, context} = await_peer(context, number, &(&1["status"] == "waiting"))
+    context
+  end
+
+  step "this machine shows \#{int} reviewed on {string}", %{args: [number, label]} = context do
+    context = refresh(context)
+    reviewed = &match?(%{"elsewhere" => %{"machine" => ^label, "claimed" => true}}, &1)
+    {review, context} = await_review(context, number, reviewed)
+    assert review["status"] == "ready" and review["threadId"] == nil, inspect(review)
+    context
+  end
+
+  step("this machine looks at {string} again", %{args: [_repo]} = context, do: refresh(context))
+
+  step "\#{int} is not reviewed on this machine and still shows it reviewed on {string}",
+       %{args: [number, label]} = context do
+    review = review(context.snapshot, number)
+    assert review["status"] == "ready" and review["threadId"] == nil, inspect(review)
+    assert %{"machine" => ^label, "claimed" => true} = review["elsewhere"]
+    context
+  end
+
+  step "this machine shows \#{int} queued on {string}", %{args: [number, label]} = context do
+    context = refresh(context)
+    queued = &match?(%{"elsewhere" => %{"machine" => ^label, "status" => "queued"}}, &1)
+    {review, context} = await_review(context, number, queued)
+    assert review["status"] == "ready" and review["threadId"] == nil, inspect(review)
+    context
+  end
+
+  # Apart is out of this machine's reach: it is not connected, as one offline is not.
+  step "{string} is apart from this machine", %{args: [label]} = context do
+    data = Machines.on(context, label, HalC2.Plugins.Host, :data_dir, [@id])
+    :ok = Machines.stop(Machines.machine(context, label))
+    Map.put(context, :peer_data, data)
+  end
+
+  # This machine's review is its own; the other's, made and posted while apart, is
+  # what that machine saved of it.
+  step "both machines reviewed \#{int} and {string} posted its review",
+       %{args: [number, _label]} = context do
+    {review, context} = reviewed_apart(context, number)
+
+    peer_saved(context, review, %{
+      "status" => "published",
+      "publishedAt" => DateTime.utc_now() |> DateTime.to_iso8601()
+    })
+  end
+
+  # The other machine stopped mid-post: it saved the review as being published, and
+  # GitHub has it, marked as the plugin marks its posts.
+  step "both machines reviewed \#{int} and {string} posted its review but restarted before saving so",
+       %{args: [number, _label]} = context do
+    {review, context} = reviewed_apart(context, number)
+
+    context
+    |> World.cli_rules([
+      activity_rule([
+        %{
+          "id" => "PRR_1",
+          "author" => %{"login" => "monalisa"},
+          "state" => "APPROVED",
+          "body" =>
+            "Looks good.\n\n<!-- hal-c2-code-review:#{review["key"]}@#{review["reviewedSha"]} -->",
+          "submittedAt" => "2026-09-01T00:00:00Z"
+        }
+      ])
+    ])
+    |> peer_saved(review, %{"status" => "publishing"})
+  end
+
+  step "{string} is back in the cluster", %{args: [label]} = context do
+    home = Machines.home(context, label)
+    context = put_in(context, [:machines, label], Machines.start(context, label, :cluster, home))
+    context = peer_ready(context, label)
+    {_, context} = await_peer(context, 12, &(&1["status"] in ~w(published waiting)))
+    context
+  end
+
+  step "it is published without posting it again, as {string} already posted its review of this commit",
+       %{args: [label]} = context do
+    published_unposted(context, "#{label} already posted its review of this commit.")
+  end
+
+  # The plugin's server is gone and its supervisor held, so the plugin runs without
+  # what it holds until the scenario ends.
+  step "code review on {string} is restarting", %{args: [label]} = context do
+    pid = Machines.on(context, label, Process, :whereis, [HalC2Plugins.CodeReview])
+    {:parent, sup} = Machines.on(context, label, Process, :info, [pid, :parent])
+    :ok = Machines.on(context, label, :sys, :suspend, [sup])
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 5_000
+    context
+  end
+
+  step "it is published without posting it again, as the pull request already has the review of this commit",
+       context do
+    published_unposted(context, "The review of this commit is already on the pull request.")
+  end
+
+  step "it is not posted, as {string} is restarting code review", %{args: [label]} = context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "#{label} is restarting code review; try again."
+    assert World.cli_calls(context, "pulls/12/reviews") == []
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------------
 
-  # Saves `patch` over the plugin's settings, which restarts it.
+  # The review of #12 is published, saying `note` of why this machine posted nothing.
+  defp published_unposted(context, note) do
+    assert {:ok, _} = context.reply
+    {review, context} = await_review(context, 12, &(&1["status"] == "published"))
+    assert review["publishNote"] == note, inspect(review)
+    assert World.cli_calls(context, "pulls/12/reviews") == []
+    context
+  end
+
+  # The reviews `gh pr view` gives #12's activity.
+  defp activity_rule(reviews) do
+    %{
+      "args" => ["pr view", "author,comments,reviews,commits"],
+      "stdout" => %{
+        "author" => %{"login" => "octocat"},
+        "comments" => [],
+        "reviews" => reviews,
+        "commits" => []
+      }
+    }
+  end
+
+  # This machine's review of #12, made while the other machine was apart.
+  defp reviewed_apart(context, number) do
+    context
+    |> started(number)
+    |> report(findings("approve", 1))
+    |> await_review!(number, &(&1["status"] == "waiting"))
+    |> await_review(number, &(&1["status"] == "waiting"))
+  end
+
+  # Saves `review` with `fields` as the other machine's own.
+  defp peer_saved(context, review, fields) do
+    saved =
+      review
+      |> Map.merge(%{
+        "projectId" => "#{context.peer}-api",
+        "threadId" => nil,
+        "checkout" => nil
+      })
+      |> Map.merge(fields)
+
+    File.write!(
+      Path.join(context.peer_data, "reviews.json"),
+      JSON.encode!(%{"reviews" => %{review["key"] => saved}})
+    )
+
+    context
+  end
+
+  # Saves `patch` over the plugin's settings; the running plugin takes them.
   defp save(context, patch) do
     {_, context} =
       World.call!(context, "plugins.saveSettings", %{"id" => @id, "settings" => patch})
 
     context
+  end
+
+  # Makes this VM "desk" in a cluster with `label`, which runs the plugin with
+  # `settings` and has the repository as a project.
+  defp join(context, label, settings) do
+    context =
+      context
+      |> Machines.cluster("desk", [label])
+      # The cluster restarted this MC: the sockets are opened again.
+      |> Map.put(:clients, %{})
+      |> watch()
+
+    dir = Path.join([Machines.home(context, label), "plugins", @id])
+    File.mkdir_p!(Path.dirname(dir))
+    File.cp_r!(@package, dir)
+    {:ok, _} = Machines.on(context, label, HalC2.Plugins, :handle, ["rescan", %{}])
+    accepted = Enum.map(Fixtures.entry(@id)["permissions"], & &1["id"])
+    enable = %{"id" => @id, "acceptPermissions" => accepted}
+    {:ok, _} = Machines.on(context, label, HalC2.Plugins, :handle, ["enable", enable])
+
+    settings =
+      Map.merge(
+        %{"provider" => "codex", "model" => "fake/one", "prompt" => @prompt, "pollMinutes" => 60},
+        settings
+      )
+
+    save = %{"id" => @id, "settings" => settings}
+    {:ok, _} = Machines.on(context, label, HalC2.Plugins, :handle, ["saveSettings", save])
+
+    root = Path.join(Mc.tmp_dir(context.mc, "#{label}-api"), "repo")
+    remote = "git@github.com:#{context.repository}.git"
+    World.git!(Path.dirname(root), ["clone", "-q", remote, root])
+    Machines.on(context, label, Machines, :create_project, ["#{label}-api", "api", root])
+    peer_ready(context, label)
+  end
+
+  # The peer `label` reads the fake GitHub, and its `reviews` topic is watched.
+  defp peer_ready(context, label) do
+    :ok = Machines.on(context, label, Application, :put_env, [:hal_c2, :gh_command, "gh"])
+
+    {:ok, last} =
+      Machines.on(context, label, HalC2.Plugins, :subscribe_topic, [self(), @id, "reviews"])
+
+    Map.merge(context, %{peer: label, peer_reviews: last})
+  end
+
+  defp on_plugin(context, label, method, input \\ %{}) do
+    call = %{"id" => @id, "method" => method, "input" => input}
+    Machines.on(context, label, HalC2.Plugins, :handle, ["call", call])
+  end
+
+  # `await_review/3` on the peer's `reviews` topic.
+  defp await_peer(context, number, fun) do
+    review = context.peer_reviews && review(context.peer_reviews, number)
+
+    if review && fun.(review) do
+      {review, context}
+    else
+      mc = Machines.mc_of(context, context.peer)
+
+      receive do
+        {:hal_c2_plugin_topic, ^mc, @id, "reviews", value} ->
+          await_peer(%{context | peer_reviews: value}, number, fun)
+      after
+        15_000 ->
+          flunk("#{context.peer}'s review of ##{number} never came to it: #{inspect(review)}")
+      end
+    end
   end
 
   defp plugin(context, method, input) do
@@ -1246,10 +1854,16 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     listed =
       if context[:unlisted],
-        do: %{"args" => ["pr list"], "stderr" => "HTTP 502: Bad Gateway\n", "exit" => 1},
+        do: %{
+          "args" => ["api graphql"],
+          "stdin" => ["PullRequestList"],
+          "stderr" => "HTTP 502: Bad Gateway\n",
+          "exit" => 1
+        },
         else: %{
-          "args" => ["pr list"],
-          "stdout" => prs |> Map.values() |> Enum.sort_by(& &1["number"])
+          "args" => ["api graphql"],
+          "stdin" => ["PullRequestList"],
+          "pulls" => prs |> Map.values() |> Enum.sort_by(& &1["number"])
         }
 
     context
@@ -1257,7 +1871,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> Map.put(:prs, prs)
   end
 
-  # GitHub's answer when pull request `pr` (as `gh pr list` gives it) is read on its own.
+  # GitHub's answer when pull request `pr` (as `gh pr list --json` gives it) is read on its own.
   defp detail_rule(pr) do
     graphql =
       Map.merge(pr, %{
@@ -1357,6 +1971,24 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     result
   end
 
+  # The tool result the report tool on machine `label` gives `thread`'s agent.
+  defp peer_report(context, label, thread, arguments) do
+    %{authorization: auth} = Machines.on(context, label, HalC2.Mcp, :server, [thread, "codex"])
+
+    request =
+      JSON.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => 1,
+        "method" => "tools/call",
+        "params" => %{"name" => "code_review_report", "arguments" => arguments}
+      })
+
+    {200, %{"result" => result}} =
+      Machines.on(context, label, HalC2.Mcp, :handle, [auth, request])
+
+    result
+  end
+
   defp findings(verdict, count) do
     %{
       "verdict" => verdict,
@@ -1366,6 +1998,19 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
           %{"path" => "src/limits.ts", "line" => i, "body" => "Finding #{i}."}
         end
     }
+  end
+
+  # The review posted to `number`: its event and its body, without a verdict line a
+  # verdict posted as a comment opens with.
+  defp posted_review(context, number) do
+    assert {:ok, _} = context.reply
+    assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
+    review = JSON.decode!(call["stdin"])
+
+    [
+      review["event"],
+      String.replace(review["body"], ~r/\A\*\*(Approved|Changes requested)\*\*\n\n/, "")
+    ]
   end
 
   defp publish(context, number) do

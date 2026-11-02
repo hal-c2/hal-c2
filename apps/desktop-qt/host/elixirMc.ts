@@ -340,6 +340,7 @@ export function startMc(input: {
     env: {
       ...input.env,
       HAL_C2_BOOTSTRAP_STDIN: "1",
+      HAL_C2_DESKTOP_HOST: "1",
       // JavaScript sidecars run on the Node that runs this host.
       HAL_C2_NODE_COMMAND: process.execPath,
       // An MC run from source is the development one, whatever MIX_ENV the desktop

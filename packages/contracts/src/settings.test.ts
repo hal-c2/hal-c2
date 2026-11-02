@@ -7,6 +7,8 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  McSettingsDocument,
+  type ProjectSettingsOverrides,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -19,6 +21,23 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeMcSettingsDocument = Schema.decodeUnknownSync(McSettingsDocument);
+
+describe("McSettingsDocument", () => {
+  it("reads the settings an MC shares across its cluster", () => {
+    const reply = decodeMcSettingsDocument({
+      settings: { defaultRuntimeMode: "full-access" },
+      version: 3,
+      shared: ["defaultRuntimeMode", "keybindings"],
+    });
+    expect(reply.shared).toEqual(["defaultRuntimeMode", "keybindings"]);
+  });
+
+  it("reads an MC from before shared settings", () => {
+    const reply = decodeMcSettingsDocument({ settings: {}, version: 0 });
+    expect(reply).toEqual({ settings: {}, version: 0 });
+  });
+});
 
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
@@ -75,6 +94,8 @@ describe("storage cleanup settings", () => {
       worktreeUnchanged: false,
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
+      threadTempAfterDays: 7,
+      temporaryFilesFolder: "",
     });
   });
 
@@ -901,6 +922,24 @@ describe("ServerSettings worktree defaults", () => {
     );
     expect(decodeServerSettings({ worktreeSubmodules: "shallow" }).worktreeSubmodules).toBeNull();
     expect(decodeServerSettingsPatch({ worktreeSubmodules: null }).worktreeSubmodules).toBeNull();
+  });
+
+  it("leaves the project environment off unless a project picks a source it knows", () => {
+    expect(decodeServerSettings({}).projectEnvironment).toBeNull();
+    expect(decodeServerSettings({}).projectEnvironmentFile).toBe(".env");
+    expect(decodeServerSettings({ projectEnvironment: "shell" }).projectEnvironment).toBeNull();
+
+    const overrides = decodeServerSettings({
+      projectSettingsOverrides: {
+        shop: { projectEnvironment: "dotenv", projectEnvironmentFile: ".env.dev" },
+        app: { projectEnvironment: "shell" },
+      },
+    }).projectSettingsOverrides as Readonly<Record<string, ProjectSettingsOverrides>>;
+    expect(overrides.shop).toEqual({
+      projectEnvironment: "dotenv",
+      projectEnvironmentFile: ".env.dev",
+    });
+    expect(overrides.app?.projectEnvironment).toBeUndefined();
   });
 });
 

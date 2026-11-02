@@ -1,4 +1,5 @@
 # Sources:
+#   apps/server-ex/lib/hal_c2/space/page_agent.ex (what a page says when its agent's thread moves)
 #   AGENTS.md (What the fork adds: threads move between machines, including the agent's own session)
 #   docs/user/thread-migration.md (Keeping a recovery copy: no whole-thread export command yet)
 #   docs/user/portable-handoffs.md (the fallback when a native session cannot be carried)
@@ -13,6 +14,8 @@
 #     off after that is settled by what the destination says)
 #   apps/server-ex/lib/hal_c2/thread_archive.ex (what the destination writes of a thread: a plugin's
 #     mark stays behind)
+#   apps/server-ex/lib/hal_c2/project_environment.ex (a session loads the environment of the project it
+#     runs in, on the machine it runs on)
 #   apps/server-ex/lib/hal_c2/shell.ex, apps/server-ex/lib/hal_c2/cluster.ex (cluster-wide sidebar keyed
 #     by MC, offline members keep their rows)
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (checkpoints are hidden commits under
@@ -252,6 +255,26 @@ Feature: Moving a thread and its agent to another machine
       And "Beta" still names "Alpha" as its parent
       And opening the parent of "Beta" opens "Alpha" on "desktop"
 
+  Rule: A page's agent whose thread moves
+
+    # Spaces stay on their MC, so the page ends its ask here rather than say "working" forever.
+    # The agent can go on in its thread on the destination, so this is no failure.
+    @mc
+    Scenario: The page says its agent's thread moved, and the thread forgets the page
+      Given the Space "Research" with the page "Roadmap"
+      And an agent asked on "Roadmap" whose page was not told its run ended
+      When the user moves "agent of Roadmap" to "desktop"
+      Then "Roadmap" says its agent stopped because "its thread moved to desktop"
+      And "agent of Roadmap" on "desktop" names no page
+
+    @mc
+    Scenario: A move that does not happen leaves the page to its thread
+      Given the Space "Research" with the page "Roadmap"
+      And an agent asked on "Roadmap" whose page was not told its run ended
+      And "agent of Roadmap" is moving to "desktop"
+      When the move of "agent of Roadmap" is given up
+      Then "Roadmap" says its agent finished without changing the page
+
   Rule: The agent continues on the destination
 
     @mc
@@ -295,6 +318,15 @@ Feature: Moving a thread and its agent to another machine
       And "Alpha" moved to "desktop"
       When the user sends the first message in "Alpha" since the move
       Then the agent is told the project moved from "~/code/shop" to "~/src/shop-app"
+
+    # A project's environment setting is its machine's (settings/project-environment.feature):
+    # the destination loads its own project's, from its own checkout.
+    @mc
+    Scenario: A moved thread's agent gets the destination project's environment
+      Given "shop" on "desktop" loads its environment from its checkout's ".env"
+      And "Alpha" moved to "desktop"
+      When the user sends the first message in "Alpha" since the move
+      Then the agent on "desktop" has the variables of the "desktop" checkout's ".env"
 
     @desktop
     Scenario: A fork and its source stay related across machines

@@ -36,6 +36,7 @@ defmodule HalC2.Steps.SourceControl.Shared do
     |> World.cli_rules([
       %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
       %{"args" => ["pr list"], "stdout" => []},
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestList"], "pulls" => []},
       %{"args" => ["pr create"], "stdout" => "https://github.com/#{repository}/pull/7\n"},
       %{
         "args" => ["repo view"],
@@ -133,7 +134,8 @@ defmodule HalC2.Steps.SourceControl.Shared do
   end
 
   @doc """
-  A pull request of `repository` as `gh pr list --json` / `gh pr view --json` give it,
+  A pull request of `repository` as `gh pr list --json` / `gh pr view --json` give it
+  (and as the fake `gh` lists it, `"pulls"`),
   open, by "octocat", with `fields` merged over it (GitHub's own names and casing).
   """
   def gh_pr(repository, number, fields \\ %{}) do

@@ -74,6 +74,8 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     )
 
     assert Acp.provider("codex")["versionAdvisory"]["status"] == "behind_latest"
+    # The check an MC runs at boot, here against the Homebrew fake just installed.
+    HalC2.Codex.Provider.load()
     ctx
   end
 

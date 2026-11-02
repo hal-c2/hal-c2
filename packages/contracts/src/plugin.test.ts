@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { PluginManifest, PluginSettingField } from "./plugin.ts";
+import { PluginCompileCheck, PluginEntry, PluginManifest, PluginSettingField } from "./plugin.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(PluginManifest);
 
@@ -78,5 +78,71 @@ describe("PluginManifest", () => {
     ).toMatchObject({
       default: "c",
     });
+  });
+});
+
+describe("PluginCompileCheck", () => {
+  const decode = Schema.decodeUnknownSync(PluginCompileCheck);
+
+  it("takes a failure the MC locates and one it cannot", () => {
+    const check = {
+      ok: false,
+      error: "mc/broken.ex:2: syntax error before: ')'",
+      diagnostics: [
+        { file: "mc/broken.ex", line: 2, message: "syntax error before: ')'", severity: "error" },
+        { file: null, line: null, message: "has two plugin modules", severity: "error" },
+      ],
+      checkedAt: "2026-10-29T12:00:00Z",
+    };
+    expect(decode(check)).toEqual(check);
+  });
+
+  it("refuses a severity the compiler does not give", () => {
+    expect(() =>
+      decode({
+        ok: true,
+        error: null,
+        diagnostics: [{ file: null, line: null, message: "x", severity: "fatal" }],
+        checkedAt: "2026-10-29T12:00:00Z",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("PluginEntry", () => {
+  const decode = Schema.decodeUnknownSync(PluginEntry);
+  const entry = {
+    id: "notes",
+    name: "Notes",
+    version: "1",
+    kind: null,
+    kinds: [],
+    apiVersion: 1,
+    source: "package",
+    file: null,
+    description: null,
+    author: null,
+    homepage: null,
+    license: null,
+    icon: null,
+    screenshots: [],
+    enabled: false,
+    status: "disabled",
+    error: null,
+    reloadError: null,
+    lastError: null,
+    restarts: 0,
+    runsCode: true,
+    settingsSchema: [],
+    settings: {},
+    permissions: [],
+    denied: [],
+    contributes: {},
+    revision: "1",
+  };
+
+  it("takes an entry from an MC older than the compile check", () => {
+    expect(decode(entry)).toEqual(entry);
+    expect(decode({ ...entry, compileCheck: null }).compileCheck).toBeNull();
   });
 });

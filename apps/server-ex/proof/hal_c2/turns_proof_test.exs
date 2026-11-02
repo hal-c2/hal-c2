@@ -32,12 +32,27 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.dispatch/1" =>
         ~w(dispatch begin-turn retry start-failed delete stop-runtimes interrupt-any
            interrupt-undriven),
+      # dispatch/1 behind a receipt: a repeated command id is answered from it, unchanged.
+      "HalC2.Orchestration.dispatch_once/1" =>
+        ~w(dispatch begin-turn retry start-failed delete stop-runtimes interrupt-any
+           interrupt-undriven),
       # dispatch/1's message path, split around a caller's own transaction (delegation).
       "HalC2.Orchestration.decide_dispatch/3" => "dispatch",
       "HalC2.Orchestration.dispatched/3" => ~w(begin-turn retry start-failed interrupt-any),
+      # The Effects worker's one try of the work dispatch set going: a turn start is
+      # begin-turn (or start-failed, through begin_turn_now's catch), an interrupt or
+      # restart is interrupt-any/undriven, a continue is dispatch again; its steer,
+      # respond, rollback, checkpoint, title and cleanup branches are the runtime and
+      # item steps abstracted below, or change no run.
+      "HalC2.Orchestration.execute_effect/3" =>
+        ~w(begin-turn retry start-failed interrupt-any interrupt-undriven dispatch),
       "HalC2.Orchestration.start_next/1" =>
         ~w(start-next decideNext begin-turn retry start-failed),
       "HalC2.Orchestration.release_session/1" => ~w(release-session release-idle keep-turn),
+      # cancel_queued/1, an interrupt of each active run, then release_session/1 once none is
+      # left and the queue is empty.
+      "HalC2.Orchestration.stop_plugin_thread/3" =>
+        ~w(interrupt-any interrupt-undriven release-session release-idle keep-turn),
       "HalC2.Orchestration.runtime/1" => "begin-turn",
       "HalC2.Orchestration.earlier_run?/3" => ~w(stale-pin stop-work),
       "HalC2.Orchestration.TurnWriter.started/1" => "started",
@@ -47,11 +62,23 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_call {:start_turn, _}" => ~w(take started refused),
       "HalC2.Codex.ThreadRuntime handle_call {:interrupt, _}" =>
         ~w(interrupted stale-pin no-turn stop-work),
+      # The same interrupt carrying the caller's stop id, so a stop its caller
+      # gave up waiting for (and recorded as cancelled) delivers nothing: when it
+      # is delivered it behaves as {:interrupt, _} does, and when it is not, the
+      # interrupt step is simply never taken.
+      "HalC2.Codex.ThreadRuntime handle_call {:interrupt, _, _}" =>
+        ~w(interrupted stale-pin no-turn stop-work),
+      # The deadline after an interrupt Codex never answered: the interrupted end
+      # of that same run, arriving without Codex acknowledging it.
+      "HalC2.Codex.ThreadRuntime handle_info {:interrupt_deadline, _}" => "interrupted",
       "HalC2.Codex.ThreadRuntime handle_call :interrupt" => ~w(interrupted no-turn stop-work),
       "HalC2.Codex.ThreadRuntime handle_call :release" => ~w(release-idle keep-turn),
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:notification, _, _}}" =>
         ~w(finish halt),
       "HalC2.Codex.ThreadRuntime handle_info {:EXIT, _, _}" => ~w(exit unwork),
+      # Output that is not the protocol at all: the app-server session is closed
+      # and the turn fails, as when the app-server exits under it.
+      "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:invalid, _}}" => ~w(exit unwork),
       "HalC2.Orchestration.TurnWatch.claim/2" => "started",
       "HalC2.Orchestration.TurnWatch.release/1" => "release",
       "HalC2.Orchestration.TurnWatch.driven?/1" => ~w(end-abandoned interrupt-undriven),
@@ -76,6 +103,11 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.release_prepared/2" => @preparing,
       "HalC2.Orchestration.progress_prepared/3" => @preparing,
       "HalC2.Orchestration.fail_prepared/4" => @preparing,
+      "HalC2.Orchestration.retry_prepared/2" => @preparing,
+      "HalC2.Orchestration.delegated?/1" => "reads a thread's lineage",
+      "HalC2.Orchestration.cancel_queued/1" =>
+        "the model has no cancel of one queued run: it only shortens the queue",
+      "HalC2.Orchestration.warn_prepared/4" => @items,
       "HalC2.Orchestration.upsert/4" => @changes,
       "HalC2.Orchestration.create/3" => @changes,
       "HalC2.Orchestration.next_ordinal/1" => @changes,
@@ -91,7 +123,7 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWriter.finish_item/4" => @items,
       "HalC2.Orchestration.TurnWriter.finish_plan/3" => @items,
       "HalC2.Orchestration.TurnWriter.write_todo/4" => @items,
-      "HalC2.Orchestration.TurnWriter.open_request/4" => @items,
+      "HalC2.Orchestration.TurnWriter.open_request/5" => @items,
       "HalC2.Orchestration.TurnWriter.open_question/3" => @items,
       "HalC2.Orchestration.TurnWriter.open_async_question/3" => @items,
       "HalC2.Orchestration.TurnWriter.resolve_request/4" => @items,
@@ -117,6 +149,16 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWatch.start_link/1" =>
         "starts the process TurnWatch's rules run in",
       "HalC2.Orchestration.IdleSessions.start_link/1" => "starts the timer the idle rules run on",
+      "HalC2.Orchestration.Recovery.leaving/1" =>
+        "stands in for :init stopping in a test; stopping?/0 is abstracted",
+      "HalC2.Orchestration.Recovery.start_reattach/0" =>
+        "connects to programs that outlive the MC, which here stop with it; Durable's own tests hold it",
+      "HalC2.Codex.ThreadRuntime handle_call {:adopt, %{dir: _, snapshot: _}}" =>
+        "programs here stop with the MC; a failed adoption settles as restart does",
+      "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:checkpoint, _}}" =>
+        "saves state to a file for a later boot; no run changes",
+      "HalC2.Codex.ThreadRuntime handle_info :durable_save" =>
+        "saves state to a file for a later boot; no run changes",
       "HalC2.Orchestration.Recovery.start_link/0" => "runs run/0 at boot, as restart does",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
         "a runtime stopping with the MC leaves its turn to Recovery, as restart's wipe does"

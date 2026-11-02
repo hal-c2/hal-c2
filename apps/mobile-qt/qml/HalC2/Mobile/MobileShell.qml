@@ -11,9 +11,9 @@ import HalC2.Bricks
 // the desktop's own (DefaultLayout) wherever its thread list and thread fit
 // side by side, and below that the phone layout, one screen at a time for
 // where the window is (`route`, NavigationController): the thread list at
-// home, a thread or a new thread's draft, or settings. Both follow the same
-// route and controllers, so a window that is resized, rotated or unfolded
-// stays where it was.
+// home, a thread or a new thread's draft, settings, or the Spaces. Both
+// follow the same route and controllers, so a window that is resized, rotated
+// or unfolded stays where it was.
 ShellWindow {
     id: root
 
@@ -54,7 +54,7 @@ ShellWindow {
 
     readonly property string routeKind: route !== null ? route.kind : "home"
     // The phone layout's screen for the route.
-    readonly property string screen: routeKind === "thread" || routeKind === "draft" ? "thread" : routeKind === "settings" ? "settings" : "home"
+    readonly property string screen: routeKind === "thread" || routeKind === "draft" ? "thread" : routeKind === "settings" ? "settings" : routeKind === "space" ? "space" : "home"
     // The settings section the route names; none on the bare settings route,
     // which is the list of them in the phone layout.
     readonly property string openSection: screen === "settings" && route.section && route.section !== "/settings" ? route.section : ""
@@ -65,9 +65,25 @@ ShellWindow {
     // layout has no such screen, and ends where the route has nothing before it.
     readonly property bool canStepBack: scanning || adding || (paired && (popupOpen || (roomy ? route !== null && route.canGoBack === true : routeKind !== "home")))
 
+    // The phone layout's Space screen while it shows, which has steps of its own.
+    property Item spaceScreen: null
+    // The page last written from a thread (`space.written`), which the phone's
+    // Space screen opens once it arrives. The wide layout opens it in its own view.
+    property string spacePageComing: ""
+    readonly property string spaceWritten: (Shell.state.space ?? {}).written ?? ""
+    onSpaceWrittenChanged: spacePageComing = layout === "phone" ? spaceWritten : ""
+    // The step the phone's Space screen is on, kept while a wide layout replaces it.
+    property var spaceStep: null
+    onScreenChanged: {
+        if (screen !== "space")
+            spaceStep = null;
+    }
+
     // One step back: out of the scanner, from pairing with another
     // environment to the one the device has, out of an open popup, in the
-    // phone layout from a settings section to the sections, and from anything
+    // phone layout from a settings section to the sections, from a thread's
+    // files to the thread and from a step of
+    // the Spaces to the one before it, and from anything
     // else to where the user was before (NavigationController's back stack,
     // home when it is empty).
     function stepBack() {
@@ -81,6 +97,10 @@ ShellWindow {
             Shell.dispatch("composer.modelPicker.toggle");
         else if (layout === "phone" && openSection.length > 0)
             Shell.dispatch("settings.navigate", { to: "/settings" });
+        else if (layout === "phone" && screen === "thread" && Shell.state.panel?.isOpen && Shell.state.panel.activeId === "files")
+            Shell.dispatch("rightPanel.close");
+        else if (layout === "phone" && spaceScreen !== null && spaceScreen.stepBack())
+            return;
         else
             Keybindings.commands.run("navigation.back");
     }
@@ -97,7 +117,11 @@ ShellWindow {
     // on the thread list in the phone's, which also draws no terminal.
     firstRunGate: layout === "desktop" && connected
     contextMenus: layout === "desktop"
-    onLayoutChanged: Shell.dispatch("layout.desktop", { shown: layout === "desktop" })
+    onLayoutChanged: {
+        Shell.dispatch("layout.desktop", { shown: layout === "desktop" });
+        if (layout !== "phone")
+            spacePageComing = "";
+    }
     Component.onCompleted: Shell.dispatch("layout.desktop", { shown: layout === "desktop" })
     // The notice is placed below, clear of the system's bars, in both layouts.
     connectionNotice: false
@@ -133,7 +157,7 @@ ShellWindow {
         // of an environment that does not come back is here too.
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: !notice.visible ? 0 : notice.height + 24 + (forget.visible ? forget.height + 4 : 0)
+            Layout.preferredHeight: !notice.visible ? 0 : notice.height + 24 + (forget.visible ? forget.height + 4 : 0) + (offer.visible ? offer.height + 4 : 0)
             visible: root.layout !== "pairing"
 
             ConnectionNotice {
@@ -152,6 +176,21 @@ ShellWindow {
                 tint: Theme.palette.color("error", "#ef4444")
                 text: qsTr("Forget this environment")
                 onClicked: Shell.dispatch("pairing.askToForget")
+            }
+
+            // A server behind this app is offered its update where the user is.
+            MobileButton {
+                id: offer
+
+                readonly property var machines: Shell.state.maintenance ? Shell.state.maintenance.machines : []
+
+                objectName: "connectionUpdate"
+                anchors.top: notice.bottom
+                anchors.topMargin: 4
+                anchors.right: notice.right
+                visible: notice.visible && !notice.troubled && notice.warning !== null
+                text: machines.length > 0 ? qsTr("Update %1").arg(machines[0].label) : qsTr("Update")
+                onClicked: Shell.dispatch("settings.navigate", { to: "/settings/maintenance" })
             }
         }
 
@@ -218,6 +257,20 @@ ShellWindow {
                         active: root.screen === "settings"
                         sourceComponent: SettingsScreen {
                             section: root.openSection
+                            onBackRequested: root.stepBack()
+                        }
+                    }
+
+                    Loader {
+                        anchors.fill: parent
+                        active: root.screen === "space"
+                        onItemChanged: root.spaceScreen = item
+                        sourceComponent: SpaceScreen {
+                            awaitedPageId: root.spacePageComing
+                            onPageArrived: root.spacePageComing = ""
+                            onAwaitDropped: root.spacePageComing = ""
+                            resumeStep: root.spaceStep
+                            onStepMoved: step => root.spaceStep = step
                             onBackRequested: root.stepBack()
                         }
                     }

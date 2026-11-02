@@ -115,7 +115,14 @@ const Steps steps([] {
     expectOnScreen(world, S("scanDenied"));
   });
 
+  // The scanner's, or Settings → Notifications' (features/mobile/notifications.feature).
   step(S("the user is offered to open the system settings"), [](World& world, const Captures&, const Table&) {
+    if (world.find(S("notificationsSettings")) != nullptr) {
+      const int before = world.push->settingsOpened;
+      world.tap(S("notificationsOpenSettings"));
+      world.waitFor([&] { return world.push->settingsOpened > before; }, S("the system's notification settings for the app"));
+      return;
+    }
     expectOnScreen(world, S("scanSettings"));
     world.tap(S("scanSettings"));
     world.waitFor([&] { return world.camera->settingsOpened == 1; }, S("the system's settings for the app"));

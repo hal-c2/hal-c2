@@ -1,13 +1,7 @@
 # Pure-QML bricks. The qmldir is hand-written (no `prefer` line) so the same
 # directory works both compiled into the binary and as a disk import path for
 # hot reload.
-qt_add_qml_module(hal_c2_bricks
-  URI HalC2.Bricks
-  VERSION 1.0
-  STATIC
-  NO_GENERATE_QMLDIR
-  NO_PLUGIN_OPTIONAL
-  QML_FILES
+set(hal_c2_bricks_qml_files
     ClusterSettings.qml
     ConnectionsSettings.qml
     LoadBalancingGroup.qml
@@ -33,6 +27,8 @@ qt_add_qml_module(hal_c2_bricks
     ProviderModelList.qml
     ComposerUsageLimits.qml
     ConnectionStatusRow.qml
+    ServerUpdateAction.qml
+    ServerUpdatesList.qml
     ShellButton.qml
     ShellCard.qml
     ShellChevron.qml
@@ -49,8 +45,11 @@ qt_add_qml_module(hal_c2_bricks
     ShellCheckBox.qml
     ShellWindow.qml
     Sidebar.qml
+    SidebarUpdateButton.qml
+    DesktopUpdateSettings.qml
     SidebarThreadRow.qml
     HalC2Wordmark.qml
+    StagePill.qml
     KeybindingsSettings.qml
     TerminalDrawer.qml
     TitleBar.qml
@@ -77,11 +76,15 @@ qt_add_qml_module(hal_c2_bricks
     EditFromHereDialog.qml
     WorktreeSetupCard.qml
     LimitRecoveryBanner.qml
+    ProviderUpdateNotice.qml
     ThreadLineage.qml
     DiffPanel.qml
     FilesPanel.qml
     FileEntryMenu.qml
     AttachmentViewer.qml
+    DocumentView.qml
+    MediaPlayerView.qml
+    ImageViewer.qml
     FilePathTrail.qml
     ProjectActionEditor.qml
     ProjectIcon.qml
@@ -100,6 +103,7 @@ qt_add_qml_module(hal_c2_bricks
     js/panelTabs.js
     js/terminalLinks.js
     js/scheduledTasks.js
+    js/spaceChart.js
     js/usageChart.js
     RevertDialog.qml
     TerminalSplits.qml
@@ -117,7 +121,9 @@ qt_add_qml_module(hal_c2_bricks
     PluginContext.qml
     PluginThreadPart.qml
     PluginSettings.qml
+    NotificationsSettings.qml
     PairingSettings.qml
+    MaintenanceSettings.qml
     TerminalPanel.qml
     PullRequestsPanel.qml
     PullRequestReviewPanel.qml
@@ -125,6 +131,9 @@ qt_add_qml_module(hal_c2_bricks
     ThreadDetailsPanel.qml
     CommandPalette.qml
     PullRequestsPage.qml HomePage.qml UsagePage.qml UsageChart.qml
+    SpaceWorkspace.qml SpaceSidebar.qml SpacePage.qml SpaceAgentStrip.qml SpaceViewers.qml SpaceBlock.qml SpaceSlashMenu.qml SpaceComments.qml SpaceBlockImage.qml SpaceImages.qml SpaceImageDialog.qml SpaceFilePicker.qml
+    SpaceDeck.qml SpacePresenter.qml
+    SpaceChart.qml SpaceHistoryPanel.qml SpacePageUpdate.qml SpaceUpdateDialog.qml SpaceVersionView.qml
     ProvidersSettings.qml
     ProviderAuthTerminal.qml
     ProviderCustomModels.qml
@@ -138,6 +147,10 @@ qt_add_qml_module(hal_c2_bricks
     StorageSettings.qml
     ProjectSettings.qml
     DevicePanel.qml
+    DeviceToolsPanel.qml
+    DeviceSetup.qml
+    DeviceBanners.qml
+    DeviceBody3D.qml
     OpenSourceLicenses.qml
     DiagnosticsSettings.qml
     WelcomeWizard.qml
@@ -145,8 +158,25 @@ qt_add_qml_module(hal_c2_bricks
     SnapShotSettings.qml
     Markdown.qml
     js/markdown.js
-  RESOURCES
+)
+set(hal_c2_bricks_resources
     qmldir
     plugin/Text.qml
     icons/antigravity.png
+    models/phone.glb
+    models/tablet.glb
+    models/tablet-keyboard.glb
+)
+include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/QmldirCheck.cmake")
+hal_c2_check_qmldir(${hal_c2_bricks_qml_files} ${hal_c2_bricks_resources})
+qt_add_qml_module(hal_c2_bricks
+  URI HalC2.Bricks
+  VERSION 1.0
+  STATIC
+  NO_GENERATE_QMLDIR
+  NO_PLUGIN_OPTIONAL
+  QML_FILES
+    ${hal_c2_bricks_qml_files}
+  RESOURCES
+    ${hal_c2_bricks_resources}
 )

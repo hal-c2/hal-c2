@@ -189,7 +189,7 @@ SettingsPage {
 
         Label {
             visible: (storage.settings?.artifacts ?? []).length > 0
-            text: qsTr("Artifacts and logs")
+            text: qsTr("Artifacts, logs and temporary files")
             color: storage.muted
             font.pixelSize: Math.round(12 * Theme.fontScale)
             font.weight: Font.DemiBold
@@ -198,6 +198,62 @@ SettingsPage {
         Repeater {
             model: storage.settings?.artifacts ?? []
             delegate: Rule {}
+        }
+
+        ColumnLayout {
+            id: temporaryFiles
+
+            readonly property var folder: storage.settings?.temporaryFilesFolder ?? null
+
+            objectName: "storageTemporaryFilesFolder"
+            Layout.fillWidth: true
+            visible: folder !== null
+            spacing: 4
+
+            Label {
+                text: qsTr("Temporary files folder")
+                color: Theme.palette.color("text", "#e4e4e7")
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.weight: Font.Medium
+            }
+
+            Label {
+                objectName: "mixed"
+                visible: temporaryFiles.folder?.mixed ?? false
+                text: qsTr("Mixed across selected machines")
+                color: Theme.palette.color("warning", "#fbbf24")
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Where agents' temporary files go on this machine, as an absolute path. Blank uses the cache directory. New agent sessions use it; anything in the old folder stays until you remove it.")
+                color: storage.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
+            ShellTextField {
+                id: folderField
+
+                readonly property string saved: temporaryFiles.folder?.mixed ? "" : temporaryFiles.folder?.value ?? ""
+
+                objectName: "control"
+                Layout.fillWidth: true
+                enabled: storage.editable
+                placeholderText: qsTr("Cache directory")
+                Accessible.name: qsTr("Temporary files folder")
+                onEditingFinished: {
+                    if (text.trim() !== saved)
+                        Shell.dispatch("storageSettings.temporaryFilesFolder", { folder: text });
+                }
+
+                Binding on text {
+                    when: !folderField.activeFocus
+                    value: folderField.saved
+                    restoreMode: Binding.RestoreNone
+                }
+            }
         }
     }
 }

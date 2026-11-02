@@ -1,9 +1,9 @@
 # Sources:
 #   plugins/code-review/plugin.json (settings, permissions, pages, thread kinds)
-#   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing)
+#   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing, claims across machines)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, submitReview through gh)
-#   apps/server-ex/lib/hal_c2/plugins/host.ex (providers with model options, organizing review threads)
+#   apps/server-ex/lib/hal_c2/plugins/host.ex (providers with model options, organizing review threads, peers)
 #   plugins/code-review/mc/checkout.ex (the plugin's own clone, a pull request's worktree of it)
 #   docs/user/code-review.md
 
@@ -97,6 +97,58 @@ Feature: Agent code review
       Then a new review of #12 starts for the new head commit
 
     @mc
+    Scenario: A new run stops the agent it replaces before removing its checkout
+      Given "code-review" reviews new pushes
+      And a review of #12 is running
+      And the review's agent is still working after its review failed
+      And #12 has a new head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the replaced thread has no running turn
+      And the replaced thread's checkout is removed
+
+    @mc
+    Scenario: A message queued on a replaced thread does not start in its removed checkout
+      Given "code-review" reviews new pushes
+      And a review of #12 is running
+      And a message waits in the queue of the review's thread
+      And the review's agent is still working after its review failed
+      And #12 has a new head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the replaced thread has no running turn
+      And the replaced thread's queued message never starts
+      And the replaced thread's checkout is removed
+
+    @mc
+    Scenario: Discarding a review stops the task its idle agent left working
+      Given a review of #12 is running
+      And the review's agent delegated a task that delegated another, and its turn ended
+      When the user discards the review of #12
+      Then the delegated task is cancelled
+      And the task that task delegated is cancelled and its agent is gone
+      And the replaced thread is not woken
+      And the replaced thread's checkout is removed
+
+    @mc
+    Scenario: A report from a replaced thread is refused with a reason that names the replacement
+      Given "code-review" reviews new pushes
+      And a review of #12 is running
+      And the review's agent is still working after its review failed
+      And #12 has a new head commit
+      When "code-review" looks at "acme/api" again
+      And the replaced thread's agent reports late
+      Then the report is refused saying it was replaced by a run of the new head commit
+      And the new review of #12 has no findings from the replaced thread
+
+    @mc
+    Scenario: A report from a thread whose review is published hears that it is published
+      Given the review of #12 is waiting to be published
+      When the user publishes the review of #12
+      And the agent reports again
+      Then the report is refused saying "This review is already published."
+
+    @mc
     Scenario: A new push is left alone when the user does not want re-reviews
       Given "code-review" does not review new pushes
       And #12 was reviewed at an older head commit
@@ -137,6 +189,13 @@ Feature: Agent code review
       Given "code-review" runs at most 2 reviews at once
       When four watched pull requests are opened
       Then two reviews run and two wait their turn
+
+    @mc
+    Scenario: Allowing more reviews at once starts ones waiting their turn
+      Given "code-review" runs at most 2 reviews at once
+      When four watched pull requests are opened
+      And "code-review" runs at most 4 reviews at once
+      Then all four reviews run
 
   Rule: The agent and its prompt are the user's to set
 
@@ -264,6 +323,28 @@ Feature: Agent code review
       Then #12 gets the finding badged high with the suggested fix and the findings at a glance
 
     @mc
+    Scenario: A published review opens with the count of its findings
+      Given a review of #12 is running
+      When the agent reports a high finding with a suggested fix on "src/limits.ts"
+      And the user publishes the review of #12
+      Then the review posted to #12 opens with "2 findings: 1 high, 1 unrated."
+
+    @mc
+    Scenario: A published review with nothing to fix says so first
+      Given a review of #12 is running
+      When the agent reports the verdict "approved" with only a summary
+      And the user publishes the review of #12
+      Then the review posted to #12 opens with "No findings."
+
+    @mc
+    Scenario: What the agent checked is reported apart from the summary
+      Given a review of #12 is running
+      When the agent reports that it ran "mix test", left out the full suite and was blocked by a missing credential
+      And the user publishes the review of #12
+      Then the review posted to #12 lists the check left out and the blocked one in plain view
+      And the review posted to #12 folds away the commands that ran
+
+    @mc
     Scenario: A finding that starts with bold text still gets its severity badge
       Given a review of #12 is running
       When the agent reports a low finding starting with bold text on "src/limits.ts"
@@ -304,6 +385,12 @@ Feature: Agent code review
       When "code-review" is restarted
       Then the review of #12 is failed saying the plugin stopped while it ran
       And its agent can still report what it found
+
+    @mc
+    Scenario: Saving the settings leaves a review under way running
+      Given a review of #12 is running
+      When the user changes how often "code-review" looks for pull requests
+      Then the review of #12 is still running in the same thread
 
     @mc
     Scenario: A review whose agent is not on the MC leaves no checkout behind
@@ -395,6 +482,14 @@ Feature: Agent code review
       And once GitHub has it, #12 has one review and it is marked as published
 
     @mc
+    Scenario: Saving the settings leaves a post under way to finish
+      Given the publishing mode for "acme/api" is "automatic"
+      And GitHub is slow to take reviews
+      When the review of #12 finishes with two comments
+      And the user changes how often "code-review" looks for pull requests while the review of #12 is being posted
+      Then once GitHub has it, #12 has one review and it is marked as published
+
+    @mc
     Scenario: A post that comes back after the review ran again leaves the new run alone
       Given the publishing mode for "acme/api" is "automatic"
       And GitHub is slow to take reviews
@@ -470,6 +565,12 @@ Feature: Agent code review
       And the user can publish it or dismiss comments
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page shows a check the machine blocked as a problem of the machine
+      Given the review of #13 is waiting with a check its machine blocked
+      When the user opens the review of #13 on the "Reviews" page
+      Then the blocked check is shown as something to fix on the MC's machine, apart from the verdict
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A review thread shows the pull request and the verdict above the conversation
       Given the review of #13 finished with the verdict "approved"
       When the user opens the review's thread
@@ -514,3 +615,118 @@ Feature: Agent code review
         | Forgejo      |
         | Bitbucket    |
         | Azure DevOps |
+
+  Rule: One of the user's machines reviews each commit
+
+    @mc
+    Scenario: Two machines watching the same repository review a pull request once
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      When the pull request #12 is opened and both machines look at "acme/api" at once
+      Then one machine reviews #12
+      And the other shows #12 reviewing on that machine
+
+    @mc
+    Scenario: A machine on its own reviews
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" goes offline
+      When the pull request #12 is opened on "acme/api"
+      Then #12 is reviewed on this machine
+
+    @mc
+    Scenario: The review moves to another machine when its machine leaves before starting it
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too, one review at a time
+      And "laptop" is reviewing #11 and has #12 queued
+      And this machine shows #12 queued on "laptop"
+      When "laptop" goes offline
+      Then #12 is reviewed on this machine
+
+    @mc
+    Scenario: The review moves to another machine when its machine's agent reaches its usage limit
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too, one review at a time
+      And "laptop" is reviewing #11 and has #12 queued
+      And this machine shows #12 queued on "laptop"
+      When the agent on "laptop" reaches its usage limit
+      Then #12 is reviewed on this machine
+
+    @mc
+    Scenario: A commit its machine reviewed stays that machine's when it leaves
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" reviewed #12
+      And this machine shows #12 reviewed on "laptop"
+      When "laptop" goes offline
+      And this machine looks at "acme/api" again
+      Then #12 is not reviewed on this machine and still shows it reviewed on "laptop"
+
+    @mc
+    Scenario: A review its machine left in the middle can be retried on this machine
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" is reviewing #12
+      And this machine shows #12 reviewing on "laptop"
+      When "laptop" goes offline
+      Then this machine shows #12 reviewing on "laptop", which is out of reach
+      When the user retries the review of #12
+      Then #12 is reviewed on this machine
+
+    @mc
+    Scenario: A comment asking for a review its machine left in the middle starts it on this machine
+      Given "code-review" watches "acme/api" selectively with the trigger "comment command"
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" is reviewing #12
+      And this machine shows #12 reviewing on "laptop"
+      When "laptop" goes offline
+      And someone comments "/review" on #12
+      Then #12 is reviewed on this machine
+
+    @mc
+    Scenario: A commit two machines reviewed while apart is posted once
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" is apart from this machine
+      And the pull request #12 is opened on "acme/api"
+      And both machines reviewed #12 and "laptop" posted its review
+      When "laptop" is back in the cluster
+      And the user publishes the review of #12
+      Then it is published without posting it again, as "laptop" already posted its review of this commit
+
+    @mc
+    Scenario: A commit is not posted while a machine that may have posted it restarts code review
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" is apart from this machine
+      And the pull request #12 is opened on "acme/api"
+      And both machines reviewed #12 and "laptop" posted its review
+      When "laptop" is back in the cluster
+      And code review on "laptop" is restarting
+      And the user publishes the review of #12
+      Then it is not posted, as "laptop" is restarting code review
+
+    @mc
+    Scenario: A commit a machine posted just before it restarted is published without posting it again
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" is apart from this machine
+      And the pull request #12 is opened on "acme/api"
+      And both machines reviewed #12 and "laptop" posted its review but restarted before saving so
+      When "laptop" is back in the cluster
+      And the user publishes the review of #12
+      Then it is published without posting it again, as the pull request already has the review of this commit
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page shows which machine reviews a pull request
+      Given the review of #12 is running on the user's machine "laptop"
+      When the user opens the review of #12 on the "Reviews" page
+      Then the review says "Reviewing on laptop"
+      And it cannot be reviewed again on this machine
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page lets the user review here what a machine out of reach had
+      Given the review of #12 is running on the user's machine "laptop", which is out of reach
+      When the user opens the review of #12 on the "Reviews" page
+      Then the review says "Reviewing on laptop, out of reach"
+      And it can be reviewed on this machine

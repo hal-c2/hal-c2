@@ -4,6 +4,7 @@
 #   packages/contracts/src/rpc.ts (pullRequests.list, pullRequests.listStats, pullRequests.summary, pullRequests.invalidate, pullRequests.subscribeRefreshes)
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, list_stats, summary, invalidate)
 #   apps/server-ex/lib/hal_c2/pull_requests/refreshes.ex
+#   apps/server-ex/lib/hal_c2/pull_requests/github.ex (list: paged reads that shrink when GitHub gives up)
 #   apps/web/src/hooks/useLiveRefresh.ts, apps/web/src/hooks/usePullRequestChecksRefresh.ts (when an open view reads again)
 #   apps/web/src/components/pullRequest/pullRequestList.logic.ts
 #   apps/web/src/state/pullRequests.ts (which snapshot of a pull request wins when views disagree)
@@ -152,6 +153,16 @@ Feature: Browsing pull requests
     When the user lists pull requests
     Then the pull requests of "acme/shop" are listed
     And "acme/api" reports its own error with the host's reason, phrased for the user
+
+  # GitHub answers 502 or 504 to a query it cannot finish in about ten seconds; a
+  # busy repository's pull requests with their checks can take that long.
+  @mc
+  Scenario: A repository too busy to list at once is read in smaller pages
+    Given "acme/shop" has 60 open pull requests
+    And GitHub gives up on reading more than 20 of them at once
+    When the user lists pull requests
+    Then all 60 open pull requests of "acme/shop" are listed
+    And no project reports an error
 
   @desktop @backlog-desktop
   Scenario: A project the host could not read is named once with a retry

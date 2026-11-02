@@ -9,11 +9,15 @@ defmodule HalC2.PluginsPropTest do
   whose code does not compile, updates that ask for more or fewer permissions), rescan,
   install one while a process is parked in the code now loaded (an update the host
   refuses must leave that version loaded), enable with whatever a client sends as accepted permissions, disable, restart, save
-  settings, call the running plugin, read its files, follow, publish and drop topics,
+  settings (version 2 of a package takes them live, so its process stays; version 1
+  is restarted with them), call the running plugin (whose process must run with the
+  settings saved last, after a crash too), read its files, follow, publish and drop topics,
   kill a client, crash a plugin's process once or until its supervisor gives up, crash
   a worker announced the way a host from before an update in place heard of them,
   install and turn on a package that hears Slack, hand the running plugins Slack events (`slack_event/2`, in one series, as the Slack
-  courier does) that each plugin holds until the test releases it, and kill the host
+  courier does) that each plugin holds until the test releases it, check that a
+  package's code compiles without enabling it (`plugins.compile`: what runs and is
+  loaded must be as it was, whatever the code does as it compiles), and kill the host
   itself. After every step the listing, the document, the code that is loaded and
   running, what the packages' code did at compile time, the host's monitors, and the
   events still waiting for a plugin must agree with the model: an event belongs to the
@@ -147,6 +151,7 @@ defmodule HalC2.PluginsPropTest do
         {1, {:call, __MODULE__, :restart, [held]}},
         {3, {:call, __MODULE__, :save_settings, [held, settings_input()]}},
         {3, {:call, __MODULE__, :call_plugin, [held]}},
+        {3, {:call, __MODULE__, :compile, [held]}},
         {2, {:call, __MODULE__, :file, [held, path()]}},
         {2, {:call, __MODULE__, :subscribe, [client(), topic_id(), topic()]}},
         {1, {:call, __MODULE__, :unsubscribe, [client(), topic_id(), topic()]}},
@@ -162,9 +167,13 @@ defmodule HalC2.PluginsPropTest do
         if workers == [] do
           []
         else
+          # A save to a running process, then a crash, then a call: it must run with
+          # what was saved.
           [
             {2, {:call, __MODULE__, :crash, [oneof(workers)]}},
-            {1, {:call, __MODULE__, :crash_hard, [oneof(workers)]}}
+            {1, {:call, __MODULE__, :crash_hard, [oneof(workers)]}},
+            {3, {:call, __MODULE__, :save_settings, [oneof(workers), accepted_settings()]}},
+            {3, {:call, __MODULE__, :call_plugin, [oneof(workers)]}}
           ]
         end
     )
@@ -232,6 +241,13 @@ defmodule HalC2.PluginsPropTest do
         [1]
       ])
 
+  # Settings every plugin takes.
+  defp accepted_settings do
+    let [count <- oneof([2, 5, 7]), mode <- oneof(["a", "b"]), token <- oneof(["s1", "s2"])] do
+      %{"count" => count, "mode" => mode, "token" => token}
+    end
+  end
+
   defp settings_input do
     let pairs <-
           resize(
@@ -285,7 +301,10 @@ defmodule HalC2.PluginsPropTest do
   # afterwards the model's next state.
   def postcondition(state, call, {reply, observed}) do
     {next, expect} = step(state, call)
-    problems = reply_problems(expect, reply) ++ problems(next, observed)
+
+    problems =
+      reply_problems(expect, reply) ++
+        problems(next, observed) ++ worker_problems(state, next, call, expect, observed)
 
     if problems != [], do: Process.put({__MODULE__, :problems}, problems)
     problems == []
@@ -303,6 +322,41 @@ defmodule HalC2.PluginsPropTest do
       |> Map.reject(fn {_id, queued} -> queued == [] end)
 
     {%{next | queue: queue}, expect}
+  end
+
+  # A save a running plugin takes live keeps its process, and one it cannot take
+  # replaces it; either way, as after a crash, the process runs with what was saved.
+  defp worker_problems(s, next, {:call, _, :save_settings, [id, _]}, :ok, observed) do
+    %{worker: {before, now}, worker_settings: settings} = observed
+
+    case s.held[id] do
+      %{running: true, st: :compiled, desc: {:ok, "2", _}} when before == nil or before != now ->
+        [{:worker_replaced, id, before, now}]
+
+      %{running: true, st: :compiled, desc: {:ok, "1", _}} when now == nil or before == now ->
+        [{:worker_not_restarted, id, before, now}]
+
+      _ ->
+        []
+    end ++ worker_settings(next, id, settings)
+  end
+
+  defp worker_problems(_s, next, {:call, _, :crash, [id]}, _expect, observed),
+    do: worker_settings(next, id, observed.worker_settings)
+
+  defp worker_problems(_s, _next, {:call, _, :compile, _}, _expect, observed) do
+    {before, now} = observed.running_code
+    if before == now, do: [], else: [{:check_changed_running_code, before, now}]
+  end
+
+  defp worker_problems(_s, _next, _call, _expect, _observed), do: []
+
+  defp worker_settings(s, id, settings) do
+    expected =
+      if match?(%{running: true, st: :compiled, desc: {:ok, _, _}}, s.held[id]),
+        do: effective(conf(s, id))
+
+    if settings == expected, do: [], else: [{:worker_settings, id, settings, expected}]
   end
 
   defp current_run?(s, id, run), do: match?(%{running: true, run: ^run}, s.held[id])
@@ -371,7 +425,7 @@ defmodule HalC2.PluginsPropTest do
             [:accepted],
             &Map.update(&1, id, accepted || [], fn a -> a ++ (accepted || []) end)
           )
-          |> put_in([:held, id], %{e | failed: false})
+          |> put_in([:held, id], %{e | failed: false, check: nil})
           |> reconcile()
 
         if s.held[id].st == :error_code,
@@ -451,6 +505,17 @@ defmodule HalC2.PluginsPropTest do
     end
   end
 
+  # The version held is checked, from the copy it loaded from: one whose manifest was
+  # refused has none. A check that ran is listed until another version is held or the
+  # package is enabled.
+  defp act(s, {:call, _, :compile, [id]}) do
+    case s.held[id] do
+      nil -> {s, {:tag, "PluginNotFound"}}
+      %{st: :error_manifest} -> {s, {:tag, "PluginUnavailable"}}
+      e -> {put_in(s.held[id], %{e | check: compiles?(e.desc)}), {:check, compiles?(e.desc)}}
+    end
+  end
+
   defp act(s, {:call, _, :subscribe, [c, id, topic]}),
     do:
       {update_in(s.subs[c], &MapSet.put(&1, {id, topic})), {:exactly, {:ok, s.last[{id, topic}]}}}
@@ -503,7 +568,8 @@ defmodule HalC2.PluginsPropTest do
       reload_error: false,
       crashes: 0,
       restarts: 0,
-      run: nil
+      run: nil,
+      check: nil
     }
 
   defp valid?(id, {variant, _, _}), do: id != "Gamma" and variant in @valid
@@ -625,8 +691,10 @@ defmodule HalC2.PluginsPropTest do
 
         s = put_conf(s, id, &%{&1 | stored: stored, secret: secret})
 
+        # Version 2 takes them live, and a package of UI parts only reads them per call:
+        # neither stops. Version 1 starts again with them.
         s =
-          if e.running,
+          if e.running and match?({:ok, "1", _}, e.desc),
             do: s |> put_in([:held, id], %{e | running: false, crashes: 0}) |> reconcile(),
             else: s
 
@@ -669,6 +737,7 @@ defmodule HalC2.PluginsPropTest do
        do: []
 
   defp reply_problems({:exactly, value}, value), do: []
+  defp reply_problems({:check, ok}, {:ok, %{"ok" => ok}}), do: []
   defp reply_problems({:file, content}, {:ok, %{"content" => content}}), do: []
   defp reply_problems(expect, reply), do: [{:reply, expect, reply}]
 
@@ -747,7 +816,8 @@ defmodule HalC2.PluginsPropTest do
         "permissions" => for(p <- perms(e), do: {p, p in c.granted}),
         "settings" =>
           if(e.st == :error_manifest, do: c.stored, else: Map.merge(@defaults, c.stored)),
-        "restarts" => e.restarts
+        "restarts" => e.restarts,
+        "compileCheck" => e.check
       }
     end
   end
@@ -851,11 +921,42 @@ defmodule HalC2.PluginsPropTest do
   def disable(id), do: {Plugins.handle("disable", %{"id" => id}), observe()}
   def restart(id), do: {Plugins.handle("restart", %{"id" => id}), observe()}
 
-  def save_settings(id, input),
-    do: {Plugins.handle("saveSettings", %{"id" => id, "settings" => input}), observe()}
+  def save_settings(id, input) do
+    before = Process.whereis(plugin_module(id))
+    reply = Plugins.handle("saveSettings", %{"id" => id, "settings" => input})
+    now = Process.whereis(plugin_module(id))
+
+    observed =
+      Map.merge(observe(), %{worker: {before, now}, worker_settings: running_settings(id)})
+
+    {reply, observed}
+  end
+
+  # What the plugin's process runs with, if one runs.
+  defp running_settings(id) do
+    GenServer.call(plugin_module(id), :settings)
+  catch
+    :exit, _ -> nil
+  end
 
   def call_plugin(id),
     do: {Plugins.handle("call", %{"id" => id, "method" => "about"}), observe()}
+
+  # A check runs the package's code in a VM of its own: the code loaded and the processes
+  # running here are compared before and after. What the code appends to the marks file
+  # as it compiles is not undone, and is not the host compiling it, so it is dropped.
+  def compile(id) do
+    before = Map.new(@code_ids, &{&1, running_code(&1)})
+    reply = Plugins.handle("compile", %{"id" => id})
+    new_marks()
+    now = Map.new(@code_ids, &{&1, running_code(&1)})
+    {reply, Map.put(observe(), :running_code, {before, now})}
+  end
+
+  defp running_code(id) do
+    module = plugin_module(id)
+    {:code.is_loaded(module) != false and module.module_info(:md5), Process.whereis(module)}
+  end
 
   def file(id, path), do: {Plugins.handle("file", %{"id" => id, "path" => path}), observe()}
 
@@ -897,9 +998,26 @@ defmodule HalC2.PluginsPropTest do
       {:DOWN, ^ref, _, _, _} -> :ok
     end
 
-    :sys.get_state(sup)
-    {:ok, observe()}
+    await_restart(plugin_module(id), sup)
+    {:ok, Map.put(observe(), :worker_settings, running_settings(id))}
   end
+
+  # A killed worker's `:DOWN` can reach the test before its exit reaches the supervisor,
+  # so a supervisor that answers may not have heard of the kill yet: ask until it restarted.
+  # The worker's name appears before its start returns and is announced to the host, so a
+  # last answer says the restart is over. The deadline only keeps a wrong host from hanging
+  # the run.
+  defp await_restart(module, sup, deadline \\ deadline()) do
+    if past?(deadline), do: raise("the plugin's supervisor never restarted its worker")
+    :sys.get_state(sup, 60_000)
+
+    if Process.whereis(module),
+      do: :sys.get_state(sup, 60_000),
+      else: await_restart(module, sup, deadline)
+  end
+
+  defp deadline, do: System.monotonic_time(:millisecond) + 60_000
+  defp past?(deadline), do: System.monotonic_time(:millisecond) > deadline
 
   # A worker announced in the form a host from before an update in place took, queued
   # across the update, crashes.
@@ -921,13 +1039,16 @@ defmodule HalC2.PluginsPropTest do
   def crash_hard(id) do
     sup = parent(Process.whereis(plugin_module(id)))
     ref = Process.monitor(sup)
-    kill_until_down(plugin_module(id), sup, ref, 10)
+    kill_until_down(plugin_module(id), sup, ref, deadline())
     {:ok, observe()}
   end
 
-  defp kill_until_down(_module, _sup, _ref, 0), do: raise("the plugin's supervisor never gave up")
+  # With no worker to kill, the supervisor has yet to hear of the last kill
+  # (`await_restart/3`), and it either restarts the worker or gives up. The deadline only
+  # keeps a wrong host from hanging the run.
+  defp kill_until_down(module, sup, sup_ref, deadline) do
+    if past?(deadline), do: raise("the plugin's supervisor never gave up")
 
-  defp kill_until_down(module, sup, sup_ref, left) do
     if worker = Process.whereis(module) do
       ref = Process.monitor(worker)
       Process.exit(worker, :kill)
@@ -935,18 +1056,18 @@ defmodule HalC2.PluginsPropTest do
       receive do
         {:DOWN, ^ref, _, _, _} -> :ok
       end
+    end
 
-      try do
-        :sys.get_state(sup)
-      catch
-        :exit, _ -> :ok
-      end
+    try do
+      :sys.get_state(sup)
+    catch
+      :exit, _ -> :ok
     end
 
     receive do
       {:DOWN, ^sup_ref, _, _, _} -> :ok
     after
-      0 -> kill_until_down(module, sup, sup_ref, left - 1)
+      0 -> kill_until_down(module, sup, sup_ref, deadline)
     end
   end
 
@@ -1062,7 +1183,8 @@ defmodule HalC2.PluginsPropTest do
       "reloadError" => entry["reloadError"] != nil,
       "permissions" => for(p <- entry["permissions"], do: {p["id"], p["granted"]}),
       "settings" => entry["settings"],
-      "restarts" => entry["restarts"]
+      "restarts" => entry["restarts"],
+      "compileCheck" => entry["compileCheck"] && entry["compileCheck"]["ok"]
     }
   end
 
@@ -1301,6 +1423,9 @@ defmodule HalC2.PluginsPropTest do
         def init(settings), do: {:ok, settings}
 
         def handle_call(:settings, _from, settings), do: {:reply, settings, settings}
+        def handle_call({:settings, settings}, _from, _old), do: {:reply, :ok, settings}
+
+        #{if version == "2", do: "def settings_changed(pid, settings, _old), do: GenServer.call(pid, {:settings, settings})"}
 
         def validate_settings(%{"count" => count}) when is_number(count) and count > 100,
           do: {:error, "count is at most 100"}

@@ -1,6 +1,8 @@
 # The OpenSSL the APK carries. AndroidPackage.cmake includes this, and it
 # leaves HAL_C2_ANDROID_OPENSSL_LIBRARIES naming libcrypto_3.so and
-# libssl_3.so for the ABI and API level being built.
+# libssl_3.so for the ABI and API level being built, and
+# HAL_C2_ANDROID_OPENSSL_INCLUDE_DIR their headers, which the push inbox's
+# decryption (Push.cmake) is built against.
 #
 # Qt for Android has no TLS of its own: its OpenSSL backend loads those two
 # from the APK at run time, by those names, and without them every https and
@@ -24,10 +26,13 @@
 # versions as well (OPENSSL_3_3.0.0), which only matters to code linked
 # against the libraries, and Qt looks every symbol up by name.
 #
-# The two libraries are kept in ~/.cache/qt-android-openssl, so another build
-# directory or worktree does not build them again (the tarball is 53 MB and
-# the build takes about 20 seconds here). VERSION there names what they were
-# built from and with; a change in any of it builds them again.
+# The two libraries and the headers are kept in ~/.cache/qt-android-openssl,
+# so another build directory or worktree does not build them again (the
+# tarball is 53 MB and the build takes about 20 seconds here). VERSION there
+# names what they were built from and with; a change in any of it builds
+# them again.
+
+include_guard(DIRECTORY)
 
 set(HAL_C2_ANDROID_OPENSSL_VERSION 3.5.9)
 set(HAL_C2_ANDROID_OPENSSL_SHA256 603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a)
@@ -54,15 +59,16 @@ else()
 endif()
 set(_openssl_prefix "${_openssl_cache}/openssl-${HAL_C2_ANDROID_OPENSSL_VERSION}-${_openssl_target}.${_openssl_api}")
 set(HAL_C2_ANDROID_OPENSSL_LIBRARIES "${_openssl_prefix}/libcrypto_3.so" "${_openssl_prefix}/libssl_3.so")
+set(HAL_C2_ANDROID_OPENSSL_INCLUDE_DIR "${_openssl_prefix}/include")
 set(_openssl_stamp
-  "openssl-${HAL_C2_ANDROID_OPENSSL_VERSION} ${HAL_C2_ANDROID_OPENSSL_SHA256} ${_openssl_target} ndk-${ANDROID_NDK_REVISION} ${_openssl_options}")
+  "openssl-${HAL_C2_ANDROID_OPENSSL_VERSION} ${HAL_C2_ANDROID_OPENSSL_SHA256} ${_openssl_target} ndk-${ANDROID_NDK_REVISION} ${_openssl_options} headers")
 set(_openssl_built "")
 if(EXISTS "${_openssl_prefix}/VERSION")
   file(READ "${_openssl_prefix}/VERSION" _openssl_built)
   string(STRIP "${_openssl_built}" _openssl_built)
 endif()
 set(_openssl_missing FALSE)
-foreach(_openssl_library IN LISTS HAL_C2_ANDROID_OPENSSL_LIBRARIES)
+foreach(_openssl_library IN LISTS HAL_C2_ANDROID_OPENSSL_LIBRARIES "${HAL_C2_ANDROID_OPENSSL_INCLUDE_DIR}/openssl/evp.h")
   if(NOT EXISTS "${_openssl_library}")
     set(_openssl_missing TRUE)
   endif()
@@ -128,8 +134,12 @@ if(_openssl_missing OR NOT _openssl_built STREQUAL _openssl_stamp)
       COMMAND_ERROR_IS_FATAL ANY
     )
   endforeach()
+  # The headers the build generated (configuration.h and the rest) beside
+  # the ones it ships.
+  file(COPY "${_openssl_source}/include/openssl" DESTINATION "${HAL_C2_ANDROID_OPENSSL_INCLUDE_DIR}")
   file(WRITE "${_openssl_prefix}/VERSION" "${_openssl_stamp}\n")
-  # 200 MB of sources and objects; only the two libraries are kept.
+  # 200 MB of sources and objects; only the two libraries and the headers
+  # are kept.
   file(REMOVE_RECURSE "${_openssl_work}")
   file(REMOVE "${_openssl_log}")
 endif()

@@ -1,0 +1,53 @@
+name: Set up the MC
+description: Elixir, the build mc_check caches, the deps, and a git identity for test repositories.
+
+outputs:
+  cache-key:
+    description: The key mc_check saves the build under.
+    value: ${{ steps.key.outputs.prefix }}${{ github.sha }}
+  cache-hit:
+    description: Whether the cache held exactly that key.
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Elixir
+      id: beam
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: "29"
+        elixir-version: "1.20.3"
+
+    - name: Cache key
+      id: key
+      shell: bash
+      run: echo "prefix=mc-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-" >> "$GITHUB_OUTPUT"
+
+    # By commit, so the newest build is what restores and each job compiles only what
+    # differs from it. Mix works out what that is from the files, not from this key.
+    - name: Restore deps, build and Maude
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          apps/server-ex/deps
+          apps/server-ex/_build
+        key: ${{ steps.key.outputs.prefix }}${{ github.sha }}
+        restore-keys: ${{ steps.key.outputs.prefix }}
+
+    # hex.pm answering slowly once shouldn't fail a job before any test has run.
+    - name: Fetch deps
+      shell: bash
+      working-directory: apps/server-ex
+      run: |
+        for delay in 15 45; do
+          mix deps.get && exit 0
+          echo "::warning::mix deps.get failed, retrying in ${delay}s"
+          sleep "$delay"
+        done
+        mix deps.get
+
+    - name: Git identity for test repositories
+      shell: bash
+      run: git config --global user.name CI && git config --global user.email ci@example.com

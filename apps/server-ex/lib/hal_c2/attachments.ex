@@ -74,6 +74,9 @@ defmodule HalC2.Attachments do
     end
   end
 
+  @doc "The largest image an upload may be, in bytes."
+  def max_image_bytes, do: @max_image_bytes
+
   @doc "Stores an upload's bytes on this MC, if its signed token is valid."
   def store(token, body) do
     with {:ok, %{"kind" => "attachment-upload"} = claims} <- verify(token),
@@ -104,6 +107,16 @@ defmodule HalC2.Attachments do
   end
 
   def delete(_input), do: {:ok, nil}
+
+  @doc "Removes every file a thread claimed or stored, when the thread is deleted."
+  def delete_thread(thread_id) do
+    dir()
+    |> Path.join(thread_segment(thread_id) <> "-*")
+    |> Path.wildcard()
+    |> Enum.each(&File.rm/1)
+
+    :ok
+  end
 
   @doc """
   Moves a message's pending uploads into its thread: each is copied under a
@@ -193,6 +206,9 @@ defmodule HalC2.Attachments do
   def path(%{"id" => id}),
     do: if(safe_id?(id), do: List.first(Path.wildcard(Path.join(dir(), id <> ".*"))))
 
+  @doc "Whether an attachment id can name a stored upload at all."
+  def valid_id?(id), do: safe_id?(id)
+
   @native_image_types ~w(image/gif image/jpeg image/png image/webp)
 
   @doc """
@@ -201,16 +217,21 @@ defmodule HalC2.Attachments do
   """
   def prompt_text(text, attachments) do
     Enum.reduce(attachments, text || "", fn attachment, text ->
-      note =
-        ~s([Attached #{attachment.type} "#{attachment.name}" is saved at: #{attachment.path}])
+      if is_binary(Map.get(attachment, :path)) do
+        note =
+          ~s([Attached #{attachment.type} "#{attachment.name}" is saved at: #{attachment.path}])
 
-      if text == "", do: note, else: text <> "\n\n" <> note
+        if text == "", do: note, else: text <> "\n\n" <> note
+      else
+        text
+      end
     end)
   end
 
   @doc "The images a model takes inline: `{mime_type, base64}` for each."
   def native_images(attachments) do
     for %{type: "image", mime_type: mime, path: path} <- attachments,
+        is_binary(path),
         String.downcase(mime || "") in @native_image_types,
         {:ok, bytes} <- [File.read(path)],
         do: {String.downcase(mime), Base.encode64(bytes)}
@@ -456,6 +477,13 @@ defmodule HalC2.Attachments do
       file ->
         {:ok, file, resource["mimeType"] || MIME.from_path(file),
          resource["fileName"] || Path.basename(file)}
+    end
+  end
+
+  defp resolve(%{"_tag" => "space-image", "spaceId" => space_id, "imageId" => id} = resource) do
+    case HalC2.Space.image_file(space_id, id) do
+      {:ok, file, mime, name} -> {:ok, file, mime, name}
+      :error -> error("AssetAttachmentNotFoundError", resource, "The image was not found.")
     end
   end
 

@@ -30,7 +30,14 @@ They act through calls: `settings` (with the MC's agents and the repositories of
 its projects), `start`, `retry`, `refresh`, `dismiss`, `publish` and `discard`.
 
 The agent reports through the `code_review_report` tool the plugin gives its
-threads.
+threads. A thread keeps the tool after its review is published or replaced, so a late
+report is told why it is refused.
+
+The MC parts of a cluster share which pull request commits they review through
+`HalC2.Plugins.Host.peers/4`: a review starts only once, under a cluster-wide lock,
+it finds no other machine has claimed that commit, and a peer's claim shows on the
+page as `elsewhere`. A machine whose plugin lacks this is left out and reviews
+on its own.
 
 ## Tests
 

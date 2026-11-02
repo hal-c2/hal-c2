@@ -108,6 +108,14 @@ public:
   bool holding(const QString& what) const { return m_holds.contains(what); }
   void defer(std::function<void()> answer) { m_held.append(std::move(answer)); }
   void answerHeld();
+  // Sends the oldest held answer alone, leaving the rest and every hold.
+  void answerOldestHeld() { m_held.takeFirst()(); }
+  qsizetype heldAnswers() const { return m_held.size(); }
+  // While set, row frames wait (versioned as they are made) until catchUp():
+  // an answer reaches the client before the rows it changed.
+  bool lagRows = false;
+  // Sends the first `frames` waiting (all of them, and stops lagging, by default).
+  void catchUp(qsizetype frames = -1);
   // Lifts every hold and forgets the held answers: what they answer never
   // reached the MC.
   void dropHeld() {
@@ -173,9 +181,17 @@ public:
   QHash<QString, QString> peers;
   // A member's label, when its environment has one.
   QHash<QString, QString> peerLabels;
+  // What else an environment's descriptor says (`serverVersion`, and
+  // `capabilities` added to the MC's), by environment, the MC's own
+  // included; announceEnvironment() or join() again says it.
+  QHash<QString, QJsonObject> descriptorFields;
   // A member's `platform` (its `machineId`), when it has one; join() again
   // announces a change.
   QHash<QString, QJsonObject> peerPlatforms;
+  // More of an environment's descriptor, the MC's own or a member's, by
+  // environment: its `serverVersion`, or `capabilities` of its own. Announced
+  // with the environment.
+  QHash<QString, QJsonObject> descriptors;
   // Members whose MC is down: their rows stay, and requests for them fail.
   QSet<QString> offline;
   // Each member's rows, by environment then id: [id, kind, row].
@@ -217,6 +233,8 @@ private:
   void answerHttp(QTcpSocket* socket, const QByteArray& request);
   void onMessage(QWebSocket* socket, const QString& text);
   void dispatchCommand(const Rpc& rpc);
+  // An environment's id, the MC's capabilities and its descriptorFields.
+  QJsonObject describe(const QString& environment) const;
   QJsonObject peerEnvironment(const QString& environment) const;
   QJsonObject ownEnvironment() const;
   // The MC's rows as they are now, by id: [id, kind, row].
@@ -236,6 +254,8 @@ private:
   int m_shellSubscription = -1;
   // The `have` of the shell subscription being answered.
   QJsonObject m_have;
+  // Row frames waiting for catchUp().
+  QList<QJsonObject> m_lagged;
   // What the client was last told of each MC's rows, and the rev that made.
   struct Told {
     int rev = 0;

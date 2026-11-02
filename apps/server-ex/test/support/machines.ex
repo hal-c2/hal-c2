@@ -158,6 +158,8 @@ defmodule HalC2.Test.Machines do
   def user_home(home) when is_binary(home), do: home <> "-user"
 
   # The fake agents keep sessions the way the real ones do, in the machine's own homes.
+  # gh's config is the machine's too: a peer boots as an MC, and one that found the
+  # developer's gh sign-in would send the fake GitHub's remotes to the real one.
   defp sessions(home) do
     user = user_home(home)
 
@@ -165,7 +167,8 @@ defmodule HalC2.Test.Machines do
       {"FAKE_SESSIONS", "1"},
       {"CLAUDE_CONFIG_DIR", Path.join(user, ".claude")},
       {"CODEX_HOME", Path.join(user, ".codex")},
-      {"PI_CODING_AGENT_DIR", Path.join(user, ".pi/agent")}
+      {"PI_CODING_AGENT_DIR", Path.join(user, ".pi/agent")},
+      {"GH_CONFIG_DIR", Path.join(user, ".config/gh")}
     ]
   end
 
@@ -252,15 +255,18 @@ defmodule HalC2.Test.Machines do
   returns the run.
   """
   def send_message(id, text, selection \\ %{"instanceId" => "codex", "model" => "gpt-5.4"}) do
+    # This runs on the machine, and a moved thread keeps the ids other machines sent it.
+    # `System.unique_integer/1` only differs within one VM, and a thread takes a message
+    # id it already has as sent, so a repeated one would start no run.
     :ok = HalC2.Streams.subscribe(id, self(), nil)
     ordinal = length(entities(id, "run")) + 1
 
     {:ok, _} =
       HalC2.Orchestration.dispatch(%{
         "type" => "message.dispatch",
-        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "commandId" => HalC2.Orchestration.Entities.new_id("cmd"),
         "threadId" => id,
-        "messageId" => "msg-#{System.unique_integer([:positive])}",
+        "messageId" => HalC2.Orchestration.Entities.new_id("msg"),
         "text" => text,
         "attachments" => [],
         "modelSelection" => selection,

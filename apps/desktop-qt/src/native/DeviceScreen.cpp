@@ -112,8 +112,10 @@ void DeviceScreen::take() {
 }
 
 void DeviceScreen::limit() {
-  if (!m_stream) return;
-  const qreal ratio = window() ? window()->effectiveDevicePixelRatio() : 1.0;
+  // The screens of a stream share its decoder: the one showing decides. A
+  // screen taken out of the window (the 3D body's, going) counts as visible.
+  if (!m_stream || !isVisible() || !window()) return;
+  const qreal ratio = window()->effectiveDevicePixelRatio();
   // A turned picture turns the item with it: its size is the picture's.
   m_stream->decoder()->setMaximumSize((boundingRect().size() * ratio).toSize());
 }
@@ -128,7 +130,7 @@ void DeviceScreen::geometryChange(const QRectF& next, const QRectF& previous) {
 
 void DeviceScreen::itemChange(ItemChange change, const ItemChangeData& value) {
   QQuickItem::itemChange(change, value);
-  if (change == ItemDevicePixelRatioHasChanged || change == ItemSceneChange) limit();
+  if (change == ItemDevicePixelRatioHasChanged || change == ItemSceneChange || change == ItemVisibleHasChanged) limit();
 }
 
 QSGNode* DeviceScreen::updatePaintNode(QSGNode* old, UpdatePaintNodeData*) {

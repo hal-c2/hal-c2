@@ -78,15 +78,17 @@ defmodule HalC2.Mcp.Tools.PullRequests do
 
   defp links(thread_id), do: PullRequests.of(thread(thread_id) || %{})
 
-  defp same?(link, target),
-    do: key(link) == key(target)
+  # Links are compared by their normalized identity (`HalC2.Projection.
+  # PullRequests.normalize/1`): lowercased host and repository, with a Forgejo
+  # port recovered from the link's URL when the stored host has none.
+  defp same?(link, target), do: key(link) == key(target)
 
-  defp key(link),
-    do:
-      "#{String.downcase(link["host"] || "")}/#{String.downcase(link["repository"] || "")}##{link["number"]}"
+  defp key(link), do: PullRequests.key(link)
 
-  defp repository_key(link),
-    do: "#{String.downcase(link["host"] || "")}/#{String.downcase(link["repository"] || "")}"
+  defp repository_key(link) do
+    %{"host" => host, "repository" => repository} = PullRequests.normalize(link)
+    "#{host}/#{repository}"
+  end
 
   # Whichever shape the agent passed, as one host-level identity. A URL wins;
   # otherwise the repository is taken to be on the project's host.
@@ -98,20 +100,22 @@ defmodule HalC2.Mcp.Tools.PullRequests do
 
       parsed ->
         {:ok,
-         %{
-           "host" => Map.get(parsed, :authority, parsed.host),
+         PullRequests.normalize(%{
+           "host" => parsed.host,
+           "authority" => parsed[:authority],
            "repository" => parsed.repository,
            "number" => parsed.number,
            "url" => url
-         }}
+         })
+         |> Map.put("url", url)}
     end
   end
 
   defp target(%{"repository" => repository, "number" => number} = args, me)
        when is_binary(repository) and is_integer(number) do
-    remote = project_remote(me["projectId"])
+    project = project_host(me["projectId"])
 
-    case args["host"] || (remote && remote.host) do
+    case args["host"] || (project && project.host) do
       nil ->
         {:error, "invalid_request",
          "This thread's project has no recognised remote. Pass host or url."}
@@ -119,42 +123,112 @@ defmodule HalC2.Mcp.Tools.PullRequests do
       host ->
         host = String.downcase(host)
         repository = String.downcase(repository)
-        kind = if remote && remote.host == host, do: remote.kind
+        # The project's kind only describes its own host; another host gets
+        # no URL guess and falls back to the `/pull/` shape.
+        own = project && host == project.host
+        url = url(own && project.kind, host, repository, number, own && project.remote_url)
 
         {:ok,
-         %{
+         PullRequests.normalize(%{
            "host" => host,
            "repository" => repository,
            "number" => number,
-           "url" => url(kind, host, repository, number)
-         }}
+           "url" => url
+         })
+         |> Map.put("url", url)}
     end
   end
 
   defp target(_args, _me),
     do: {:error, "invalid_request", "Pass either url, or both repository and number."}
 
-  defp project_remote(project_id) do
-    with %{"workspaceRoot" => root} <- project_row(project_id),
-         {:ok, url} <- HalC2.Git.ok(root, ~w(remote get-url origin)),
-         do: HalC2.PullRequests.parse_remote(url),
-         else: (_ -> nil)
+  # The project's host, its provider kind and its remote's URL, as the Node
+  # server read them from the project's `repositoryIdentity` (a Forgejo
+  # project's host keeps its web port). An identity without a provider (one
+  # this MC recorded itself, a remote added after the project) falls back to
+  # reading the checkout's origin.
+  defp project_host(project_id) do
+    case project_row(project_id) do
+      %{"repositoryIdentity" => %{"provider" => kind} = identity} when is_binary(kind) ->
+        remote_url = get_in(identity, ["locator", "remoteUrl"])
+
+        %{
+          host: identity_host(identity, kind, remote_url),
+          kind: kind,
+          remote_url: remote_url
+        }
+
+      %{"workspaceRoot" => root} ->
+        with {:ok, url} <- HalC2.Git.ok(root, ~w(remote get-url origin)),
+             %{host: host, kind: kind} <- HalC2.PullRequests.parse_remote(url) do
+          %{host: host, kind: kind, remote_url: String.trim(url)}
+        else
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
   end
 
-  defp url("gitlab", host, repository, number),
+  # `pullRequestHostOf` in the contracts: a Forgejo host is its remote's web
+  # authority (port included); every other host is the canonical key's first
+  # segment, or the kind itself when there is no key to read.
+  defp identity_host(identity, "forgejo", remote_url) do
+    case remote_url && URI.new(remote_url) do
+      {:ok, %URI{scheme: scheme} = uri} when scheme in ["http", "https"] ->
+        authority(uri)
+
+      _ ->
+        identity_host(identity, "unknown", remote_url)
+    end
+  end
+
+  defp identity_host(identity, kind, _remote_url) do
+    case identity["canonicalKey"] |> to_string() |> String.split("/", parts: 2) do
+      [host | _] when host != "" -> String.downcase(String.trim(host))
+      _ -> kind
+    end
+  end
+
+  # The web URL a host writes for a change request (`changeRequestUrlFor` in
+  # the shared package); a kind this does not know gets the `/pull/` shape.
+  defp url("gitlab", host, repository, number, _remote_url),
     do: "https://#{host}/#{repository}/-/merge_requests/#{number}"
 
-  defp url("forgejo", host, repository, number),
-    do: "https://#{host}/#{repository}/pulls/#{number}"
+  defp url("forgejo", host, repository, number, remote_url),
+    do: "#{forgejo_origin(host, remote_url)}/#{repository}/pulls/#{number}"
 
-  defp url("bitbucket", host, repository, number),
+  defp url("bitbucket", host, repository, number, _remote_url),
     do: "https://#{host}/#{repository}/pull-requests/#{number}"
 
-  defp url("azure-devops", host, repository, number),
+  defp url("azure-devops", host, repository, number, _remote_url),
     do: "https://#{host}/#{repository}/pullrequest/#{number}"
 
-  defp url(_kind, host, repository, number),
+  defp url(_kind, host, repository, number, _remote_url),
     do: "https://#{host}/#{repository}/pull/#{number}"
+
+  # A Forgejo server's web origin is its remote's, when the remote is on the
+  # host being linked: the scheme and port the clone URL carries are the
+  # server's own. SSH remotes name no web origin, so https on the host.
+  defp forgejo_origin(host, remote_url) do
+    case remote_url && URI.new(remote_url) do
+      {:ok, %URI{scheme: scheme, host: remote_host} = uri}
+      when scheme in ["http", "https"] and is_binary(remote_host) ->
+        if String.downcase(remote_host) == host or authority(uri) == host,
+          do: "#{scheme}://#{authority(uri)}",
+          else: "https://#{host}"
+
+      _ ->
+        "https://#{host}"
+    end
+  end
+
+  # URL#host: the port only when it is not the scheme's default.
+  defp authority(%URI{host: host, port: port, scheme: scheme}) do
+    host = String.downcase(host)
+    if port == nil or port == URI.default_port(scheme), do: host, else: "#{host}:#{port}"
+  end
 
   defp entry(link, chains) do
     snapshot = link["snapshot"] || %{}
@@ -168,7 +242,7 @@ defmodule HalC2.Mcp.Tools.PullRequests do
       end)
 
     %{
-      "host" => String.downcase(link["host"] || ""),
+      "host" => PullRequests.normalize(link)["host"],
       "repository" => link["repository"],
       "number" => link["number"],
       "url" => link["url"],

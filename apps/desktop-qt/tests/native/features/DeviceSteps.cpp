@@ -27,7 +27,9 @@
 #include <memory>
 
 #include "Brick.h"
+#include "DevicePanelSteps.h"
 #include "DeviceStream.h"
+#include "DeviceTools.h"
 #include "FFmpeg.h"
 #include "Harness.h"
 #include "RightPanelController.h"
@@ -128,10 +130,69 @@ struct FakeHub {
   QJsonArray devices;
   QJsonArray sessions;
   QString hostStatus = QStringLiteral("ready");
+  // The local host's own status and detail, when they differ from the whole.
+  QString localStatus;
+  QString bannerDetail;
+  QString hostLabel = QStringLiteral("This Mac");
+  QString hostDetail;
+  // A second machine offering devices, when the scenario has one.
+  QString secondHostId;
+  QString secondLabel;
+  bool onboarding = true;
+  bool agentAccess = false;
+  bool agentInstalled = true;
+  bool supportsRetry = false;
+  // Platform availability by platform, when a scenario sets it.
+  QHash<QString, QJsonObject> availability;
+  QJsonArray booting;
   int revision = 0;
   // Why the MC fails `device.open`, when it does.
   QString refuseOpen;
+  QString refuseClose;
   QList<QJsonObject> closes;
+  QList<QJsonObject> configures;
+  QList<QJsonObject> lists;
+  // The tools' device: its settings, foreground app, and what it was asked.
+  QJsonObject settings{{QStringLiteral("appearance"), QStringLiteral("light")},
+                       {QStringLiteral("textSize"), QStringLiteral("default")},
+                       {QStringLiteral("liquidGlass"), QStringLiteral("clear")},
+                       {QStringLiteral("colorFilter"), QStringLiteral("none")},
+                       {QStringLiteral("reduceMotion"), false},
+                       {QStringLiteral("increaseContrast"), false},
+                       {QStringLiteral("reduceTransparency"), false},
+                       {QStringLiteral("showBorders"), false},
+                       {QStringLiteral("voiceOver"), false},
+                       {QStringLiteral("networkEnabled"), true}};
+  QJsonValue foregroundApp = QJsonValue::Null;
+  QList<QJsonObject> actions;
+  QString refuseAction;
+  // The stream's access expired: only a fresh ticket is let through.
+  bool expired = false;
+  int ticketRequests = 0;
+  // The one ticket an expired stream may use: the latest given out.
+  QString acceptedTicket;
+  // Ticket requests kept unanswered, while holdTickets.
+  bool holdTickets = false;
+  QList<QPair<QPointer<QTcpSocket>, QString>> heldTickets;
+  // The accessibility requests served, and whether they get an answer.
+  int axRequests = 0;
+  bool stallAx = false;
+  QJsonObject androidAx;
+  // Input sockets are closed as soon as they connect.
+  bool dropInputs = false;
+  // The accessibility tree the hub answers, and its event feeds.
+  QJsonArray axTree;
+  QList<QPair<QString, QPointer<QTcpSocket>>> feeds;
+  int feedRequests = 0;
+  int eventFeedRequests = 0;
+  // What the tools steps typed last, and where they mean to place the device.
+  QString lastField;
+  QPair<double, double> wantedLocation{0, 0};
+  double draggedYaw = 0;
+  // The devices shape is not answered yet.
+  bool holdState = false;
+  // No hub base path: the client was given no device access.
+  bool noAccess = false;
   // The proxy's status for every hub request (401: a refused credential), when not 200.
   int refuse = 0;
   // The device has sent no picture yet.
@@ -155,24 +216,51 @@ struct FakeHub {
   }
 };
 
+void answerTicket(FakeHub& hub, QTcpSocket* socket, const QString& ticket) {
+  hub.acceptedTicket = ticket;
+  const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("ticket"), ticket}}).toJson(QJsonDocument::Compact);
+  socket->write(QStringLiteral("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %1\r\nConnection: close\r\n\r\n").arg(json.size()).toUtf8() + json);
+  socket->disconnectFromHost();
+}
+
 QJsonObject stateOf(FakeMc& mc) {
   FakeHub& hub = mc.part<FakeHub>();
-  const QJsonArray platforms{QJsonObject{{QStringLiteral("platform"), QStringLiteral("ios")}, {QStringLiteral("available"), true}},
-                             QJsonObject{{QStringLiteral("platform"), QStringLiteral("android")}, {QStringLiteral("available"), true}}};
-  return {{QStringLiteral("hosts"), QJsonArray{QJsonObject{{QStringLiteral("id"), kHost},
-                                                            {QStringLiteral("kind"), QStringLiteral("local")},
-                                                            {QStringLiteral("label"), QStringLiteral("This Mac")},
-                                                            {QStringLiteral("platforms"), platforms},
-                                                            {QStringLiteral("hubInstalled"), true},
-                                                            {QStringLiteral("agentDeviceInstalled"), true}}}},
-          {QStringLiteral("hostStatus"), hub.hostStatus},
-          {QStringLiteral("hostStatuses"), QJsonObject{{kHost, QJsonObject{{QStringLiteral("status"), hub.hostStatus}}}}},
-          {QStringLiteral("devices"), hub.devices},
-          {QStringLiteral("sessions"), hub.sessions},
-          {QStringLiteral("onboardingCompleted"), hub.hostStatus != QLatin1String("disabled")},
-          {QStringLiteral("agentAccessEnabled"), false},
-          {QStringLiteral("hubBasePath"), QStringLiteral("/api/device-hub/mcs/") + QString::fromLatin1(QUrl::toPercentEncoding(mc.name))},
-          {QStringLiteral("revision"), hub.revision}};
+  const auto availability = [&hub](const QString& platform) {
+    if (hub.availability.contains(platform)) return hub.availability.value(platform);
+    return QJsonObject{{QStringLiteral("platform"), platform}, {QStringLiteral("available"), true}};
+  };
+  const QJsonArray platforms{availability(QStringLiteral("ios")), availability(QStringLiteral("android"))};
+  const auto host = [&hub, &platforms](const QString& id, const QString& kind, const QString& label) {
+    return QJsonObject{{QStringLiteral("id"), id},
+                       {QStringLiteral("kind"), kind},
+                       {QStringLiteral("label"), label},
+                       {QStringLiteral("platforms"), platforms},
+                       {QStringLiteral("hubInstalled"), true},
+                       {QStringLiteral("agentDeviceInstalled"), hub.agentInstalled}};
+  };
+  QJsonArray hosts{host(kHost, QStringLiteral("local"), hub.hostLabel)};
+  const QString local = hub.localStatus.isEmpty() ? hub.hostStatus : hub.localStatus;
+  QJsonObject localStatus{{QStringLiteral("status"), local}};
+  if (!hub.bannerDetail.isEmpty()) localStatus.insert(QStringLiteral("detail"), hub.bannerDetail);
+  QJsonObject statuses{{kHost, localStatus}};
+  if (!hub.secondHostId.isEmpty()) {
+    hosts.append(host(hub.secondHostId, QStringLiteral("ssh"), hub.secondLabel));
+    statuses.insert(hub.secondHostId, QJsonObject{{QStringLiteral("status"), QStringLiteral("ready")}});
+  }
+  QJsonObject state{{QStringLiteral("hosts"), hosts},
+                    {QStringLiteral("hostStatus"), hub.hostStatus},
+                    {QStringLiteral("hostStatuses"), statuses},
+                    {QStringLiteral("devices"), hub.devices},
+                    {QStringLiteral("sessions"), hub.sessions},
+                    {QStringLiteral("bootingDevices"), hub.booting},
+                    {QStringLiteral("onboardingCompleted"), hub.onboarding},
+                    {QStringLiteral("agentAccessEnabled"), hub.agentAccess},
+                    {QStringLiteral("supportsHostRetry"), hub.supportsRetry},
+                    {QStringLiteral("hubBasePath"),
+                     hub.noAccess ? QString() : QStringLiteral("/api/device-hub/mcs/") + QString::fromLatin1(QUrl::toPercentEncoding(mc.name))},
+                    {QStringLiteral("revision"), hub.revision}};
+  if (!hub.hostDetail.isEmpty()) state.insert(QStringLiteral("hostStatusDetail"), hub.hostDetail);
+  return state;
 }
 
 // The MC tells every watcher, as devices.ex does on each change.
@@ -182,10 +270,12 @@ void announce(FakeMc& mc) {
     mc.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), stateOf(mc)}});
 }
 
-int sessionOf(const FakeHub& hub, const QString& deviceId, const QString& thread = kThread) {
+int sessionOf(const FakeHub& hub, const QString& deviceId, const QString& thread = kThread, const QString& host = {}) {
   for (qsizetype n = 0; n < hub.sessions.size(); ++n) {
     const QJsonObject session = hub.sessions.at(n).toObject();
-    if (session.value(QLatin1String("threadId")) == thread && session.value(QLatin1String("deviceId")) == deviceId) return int(n);
+    if (session.value(QLatin1String("threadId")) == thread && session.value(QLatin1String("deviceId")) == deviceId &&
+        (host.isEmpty() || session.value(QLatin1String("hostId")) == host))
+      return int(n);
   }
   return -1;
 }
@@ -206,9 +296,9 @@ void openSession(FakeMc& mc, const QJsonObject& device, const QString& thread = 
       hub.devices.replace(n, listed);
     }
   }
-  if (sessionOf(hub, device.value(QLatin1String("id")).toString(), thread) < 0)
+  if (sessionOf(hub, device.value(QLatin1String("id")).toString(), thread, device.value(QLatin1String("hostId")).toString(kHost)) < 0)
     hub.sessions.append(QJsonObject{{QStringLiteral("threadId"), thread},
-                                    {QStringLiteral("hostId"), kHost},
+                                    {QStringLiteral("hostId"), device.value(QLatin1String("hostId")).toString(kHost)},
                                     {QStringLiteral("deviceId"), device.value(QLatin1String("id"))},
                                     {QStringLiteral("platform"), device.value(QLatin1String("platform"))},
                                     {QStringLiteral("openedAt"), QStringLiteral("2026-09-23T10:00:00Z")}});
@@ -238,6 +328,10 @@ QWebSocketServer& hubSockets(FakeMc& mc) {
     while (QWebSocket* socket = server->nextPendingConnection()) {
       socket->setParent(server);
       FakeHub& hub = mc.part<FakeHub>();
+      if (hub.dropInputs) {
+        socket->close(QWebSocketProtocol::CloseCodeNormal, QStringLiteral("socket closed"));
+        continue;
+      }
       hub.inputs.append(socket);
       const bool android = socket->requestUrl().path().endsWith(QLatin1String("/serve-emu/ws"));
       QObject::connect(socket, &QWebSocket::binaryMessageReceived, server, [&mc](const QByteArray& message) {
@@ -271,25 +365,109 @@ FakeHub& fakeHub(World& world) {
   // As an MC is named (`name@host`), which its hubBasePath carries encoded.
   mc.name = QStringLiteral("hal-c2@studio");
   mc.onShape(QStringLiteral("devices"), [&mc](int id, const QJsonObject&) {
+    if (mc.part<FakeHub>().holdState) return;
     mc.send({{QStringLiteral("t"), QStringLiteral("devices")}, {QStringLiteral("id"), id}, {QStringLiteral("state"), stateOf(mc)}});
   });
-  mc.onRpc(QStringLiteral("device.list"), [&mc](const FakeMc::Rpc& rpc) { mc.reply(rpc, stateOf(mc)); });
-  mc.onRpc(QStringLiteral("device.open"), [&mc](const FakeMc::Rpc& rpc) {
+  mc.onRpc(QStringLiteral("device.list"), [&mc](const FakeMc::Rpc& rpc) {
+    mc.part<FakeHub>().lists.append(rpc.payload);
+    const auto answer = [&mc, rpc] { mc.reply(rpc, stateOf(mc)); };
+    if (mc.holding(QStringLiteral("device.list"))) return mc.defer(answer);
+    answer();
+  });
+  mc.onRpc(QStringLiteral("device.configure"), [&mc](const FakeMc::Rpc& rpc) {
+    const auto answer = [&mc, rpc] {
+      FakeHub& hub = mc.part<FakeHub>();
+      hub.configures.append(rpc.payload);
+      if (rpc.payload.contains(QLatin1String("enabled"))) {
+        if (rpc.payload.value(QLatin1String("enabled")).toBool()) {
+          if (hub.hostStatus == QLatin1String("disabled")) hub.hostStatus = QStringLiteral("installing");
+        } else {
+          hub.hostStatus = QStringLiteral("disabled");
+        }
+      }
+      if (rpc.payload.contains(QLatin1String("agentAccessEnabled"))) hub.agentAccess = rpc.payload.value(QLatin1String("agentAccessEnabled")).toBool();
+      if (rpc.payload.contains(QLatin1String("onboardingCompleted"))) hub.onboarding = rpc.payload.value(QLatin1String("onboardingCompleted")).toBool();
+      announce(mc);
+      mc.reply(rpc, stateOf(mc));
+    };
+    if (mc.holding(QStringLiteral("device.configure"))) return mc.defer(answer);
+    answer();
+  });
+  mc.onRpc(QStringLiteral("device.detail"), [&mc](const FakeMc::Rpc& rpc) {
+    const auto answer = [&mc, rpc] {
+      FakeHub& hub = mc.part<FakeHub>();
+      mc.reply(rpc, QJsonObject{{QStringLiteral("hostId"), rpc.payload.value(QLatin1String("hostId")).toString(kHost)},
+                                {QStringLiteral("deviceId"), rpc.payload.value(QLatin1String("deviceId"))},
+                                {QStringLiteral("settings"), hub.settings},
+                                {QStringLiteral("foregroundApp"), hub.foregroundApp},
+                                {QStringLiteral("readAt"), QStringLiteral("2026-09-23T10:00:00Z")}});
+    };
+    if (mc.holding(QStringLiteral("device.detail"))) return mc.defer(answer);
+    answer();
+  });
+  mc.onRpc(QStringLiteral("device.action"), [&mc](const FakeMc::Rpc& rpc) {
+    const auto answer = [&mc, rpc] {
+      FakeHub& hub = mc.part<FakeHub>();
+      hub.actions.append(rpc.payload);
+      if (!hub.refuseAction.isEmpty()) return mc.refuse(rpc, hub.refuseAction);
+      const QString type = rpc.payload.value(QLatin1String("type")).toString();
+      if (type == QLatin1String("setAppearance")) hub.settings.insert(QStringLiteral("appearance"), rpc.payload.value(QLatin1String("value")));
+      if (type == QLatin1String("setTextSize")) hub.settings.insert(QStringLiteral("textSize"), rpc.payload.value(QLatin1String("value")));
+      if (type == QLatin1String("setLiquidGlass")) hub.settings.insert(QStringLiteral("liquidGlass"), rpc.payload.value(QLatin1String("value")));
+      if (type == QLatin1String("setColorFilter")) hub.settings.insert(QStringLiteral("colorFilter"), rpc.payload.value(QLatin1String("value")));
+      if (type == QLatin1String("setToggle")) hub.settings.insert(rpc.payload.value(QLatin1String("setting")).toString(), rpc.payload.value(QLatin1String("value")));
+      if (type == QLatin1String("setLocation"))
+        hub.settings.insert(QStringLiteral("location"), QJsonObject{{QStringLiteral("latitude"), rpc.payload.value(QLatin1String("latitude"))},
+                                                                    {QStringLiteral("longitude"), rpc.payload.value(QLatin1String("longitude"))}});
+      if (type == QLatin1String("clearLocation")) hub.settings.insert(QStringLiteral("location"), QJsonValue::Null);
+      if (type == QLatin1String("terminateApp")) hub.foregroundApp = QJsonValue::Null;
+      if (type == QLatin1String("launchApp"))
+        hub.foregroundApp = QJsonObject{{QStringLiteral("id"), rpc.payload.value(QLatin1String("appId"))}};
+      mc.reply(rpc, QJsonObject{{QStringLiteral("hostId"), rpc.payload.value(QLatin1String("hostId")).toString(kHost)},
+                                {QStringLiteral("deviceId"), rpc.payload.value(QLatin1String("deviceId"))},
+                                {QStringLiteral("settings"), hub.settings},
+                                {QStringLiteral("foregroundApp"), hub.foregroundApp},
+                                {QStringLiteral("readAt"), QStringLiteral("2026-09-23T10:00:00Z")}});
+    };
+    if (mc.holding(QStringLiteral("device.action"))) return mc.defer(answer);
+    answer();
+  });
+  // Raw, like the connection-health fake's: FakeMc answers HTTP POSTs
+  // through its raw handlers first.
+  mc.onRaw(QStringLiteral("/api/auth/websocket-ticket"), [&mc](QTcpSocket* socket, const QByteArray& head) {
     FakeHub& hub = mc.part<FakeHub>();
-    if (!hub.refuseOpen.isEmpty()) return mc.refuse(rpc, hub.refuseOpen);
-    QJsonObject device;
-    for (const QJsonValue& listed : std::as_const(hub.devices)) {
-      if (listed.toObject().value(QLatin1String("id")) == rpc.payload.value(QLatin1String("deviceId"))) device = listed.toObject();
+    const QString ticket = QStringLiteral("fresh%1").arg(++hub.ticketRequests);
+    socket->read(head.size());
+    if (hub.holdTickets) {
+      hub.heldTickets.append({socket, ticket});
+      return;
     }
-    if (device.isEmpty()) return mc.refuse(rpc, QStringLiteral("Device not found"));
-    const QString thread = rpc.payload.value(QLatin1String("threadId")).toString();
-    openSession(mc, device, thread);
-    announce(mc);
-    mc.reply(rpc, hub.sessions.at(sessionOf(hub, device.value(QLatin1String("id")).toString(), thread)));
+    answerTicket(hub, socket, ticket);
+  });
+  mc.onRpc(QStringLiteral("device.open"), [&mc](const FakeMc::Rpc& rpc) {
+    const auto answer = [&mc, rpc] {
+      FakeHub& hub = mc.part<FakeHub>();
+      if (!hub.refuseOpen.isEmpty()) return mc.refuse(rpc, hub.refuseOpen);
+      QJsonObject device;
+      for (const QJsonValue& listed : std::as_const(hub.devices)) {
+        const QJsonObject candidate = listed.toObject();
+        if (candidate.value(QLatin1String("id")) == rpc.payload.value(QLatin1String("deviceId")) &&
+            (!rpc.payload.contains(QLatin1String("hostId")) || candidate.value(QLatin1String("hostId")) == rpc.payload.value(QLatin1String("hostId"))))
+          device = candidate;
+      }
+      if (device.isEmpty()) return mc.refuse(rpc, QStringLiteral("Device not found"));
+      const QString thread = rpc.payload.value(QLatin1String("threadId")).toString();
+      openSession(mc, device, thread);
+      announce(mc);
+      mc.reply(rpc, hub.sessions.at(sessionOf(hub, device.value(QLatin1String("id")).toString(), thread, device.value(QLatin1String("hostId")).toString(kHost))));
+    };
+    if (mc.holding(QStringLiteral("device.open"))) return mc.defer(answer);
+    answer();
   });
   mc.onRpc(QStringLiteral("device.close"), [&mc](const FakeMc::Rpc& rpc) {
     const auto close = [&mc, rpc] {
       FakeHub& hub = mc.part<FakeHub>();
+      if (!hub.refuseClose.isEmpty()) return mc.refuse(rpc, hub.refuseClose);
       hub.closes.append(rpc.payload);
       const int at = sessionOf(hub, rpc.payload.value(QLatin1String("deviceId")).toString(), rpc.payload.value(QLatin1String("threadId")).toString());
       if (at >= 0) hub.sessions.removeAt(at);
@@ -316,6 +494,10 @@ const FakeMc::Extension proxy([](FakeMc& mc) {
       if (lower.startsWith("upgrade:")) upgrade = true;
     }
     hub.requests.append(target + QLatin1Char(' ') + authorization);
+    if (hub.expired && (hub.acceptedTicket.isEmpty() || !target.contains(QStringLiteral("wsTicket=") + hub.acceptedTicket))) {
+      socket->read(head.size());
+      return respond(socket, 401);
+    }
     if (hub.refuse) {
       socket->read(head.size());
       return respond(socket, hub.refuse);
@@ -331,6 +513,21 @@ const FakeMc::Extension proxy([](FakeMc& mc) {
       socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n");
       hub.videos.append(socket);
       if (!hub.silent) socket->write(iosVideo(hub.undecodable));
+      return;
+    }
+    // The tools' read-only feeds: server-sent events, held open.
+    if (path.endsWith(QLatin1String("/appstate")) || path.endsWith(QLatin1String("/api/event-log/events"))) {
+      socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n");
+      hub.feeds.append({path, socket});
+      ++hub.feedRequests;
+      return;
+    }
+    if (path.endsWith(QLatin1String("/ax")) || path.endsWith(QLatin1String("/api/accessibility"))) {
+      ++hub.axRequests;
+      if (hub.stallAx) return;
+      const QByteArray json = hub.androidAx.isEmpty() ? QJsonDocument(hub.axTree).toJson(QJsonDocument::Compact) : QJsonDocument(hub.androidAx).toJson(QJsonDocument::Compact);
+      socket->write(QStringLiteral("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %1\r\nConnection: close\r\n\r\n").arg(json.size()).toUtf8() + json);
+      socket->disconnectFromHost();
       return;
     }
     respond(socket, 404);
@@ -361,10 +558,12 @@ QString describe(World& world) {
            fakeHub(world).requests.join(QStringLiteral(", ")));
 }
 
-void addDevice(World& world, const QString& platform, const QString& name, bool booted) {
-  const QString id = platform == QLatin1String("ios") ? QStringLiteral("UDID-") + QString(name).replace(QLatin1Char(' '), QLatin1Char('-')).toUpper()
-                                                      : QStringLiteral("emulator-5554");
-  fakeHub(world).devices.append(QJsonObject{{QStringLiteral("hostId"), kHost},
+void addDevice(World& world, const QString& platform, const QString& name, bool booted, const QString& host = kHost, const QString& wantedId = {}) {
+  const QString id = !wantedId.isEmpty() ? wantedId
+                     : platform == QLatin1String("ios")
+                         ? QStringLiteral("UDID-") + QString(name).replace(QLatin1Char(' '), QLatin1Char('-')).toUpper() + (host == kHost ? QString() : QLatin1Char('-') + host.toUpper())
+                         : QStringLiteral("emulator-5554");
+  fakeHub(world).devices.append(QJsonObject{{QStringLiteral("hostId"), host},
                                                         {QStringLiteral("id"), id},
                                                         {QStringLiteral("name"), name},
                                                         {QStringLiteral("platform"), platform},
@@ -409,7 +608,8 @@ QStringList tabTitles(World& world) {
 }
 
 QString tabOf(World& world, const QString& name) {
-  return ThreadDevices::tabIdOf(kHost, deviceNamed(fakeHub(world), name).value(QLatin1String("id")).toString());
+  const QJsonObject device = deviceNamed(fakeHub(world), name);
+  return ThreadDevices::tabIdOf(device.value(QLatin1String("hostId")).toString(kHost), device.value(QLatin1String("id")).toString());
 }
 
 void addDeviceTab(World& world) {
@@ -433,7 +633,7 @@ QVariantMap rowOf(World& world, const QString& name, const QString& group = {}) 
 
 void openFromPicker(World& world, const QString& name) {
   world.waitFor([&] { return !rowOf(world, name).isEmpty(); }, [&] { return describe(world); });
-  const QString row = QStringLiteral("deviceRow-") + rowOf(world, name).value(QStringLiteral("id")).toString();
+  const QString row = QStringLiteral("deviceRow-") + rowOf(world, name).value(QStringLiteral("tab")).toString();
   Brick& panel = devicePanel(world);
   world.waitFor([&] { return panel.item(row)->isVisible() && panel.item(row)->isEnabled(); }, [&] { return describe(world); });
   panel.click(row);
@@ -445,6 +645,8 @@ void openFromPicker(World& world, const QString& name) {
 void showDeviceTab(World& world, const QString& name) {
   look(world);
   const QString tab = tabOf(world, name);
+  // An announcement in flight may not have added the tab yet.
+  world.waitFor([&] { return tabTitles(world).contains(name) || !rowOf(world, name).isEmpty(); }, [&] { return describe(world); });
   if (tabTitles(world).contains(name)) {
     world.bridge().dispatch(QStringLiteral("rightPanel.activate"), QVariantMap{{QStringLiteral("id"), tab}});
   } else {
@@ -551,6 +753,71 @@ void press(World& world, Qt::Key key, char text = 0) {
 // Within a pixel of the screen as shown: clicks land on whole pixels.
 bool near(double value, double wanted) {
   return std::abs(value - wanted) < 0.01;
+}
+
+DeviceTools& tools(World& world) {
+  return *devices(world).tools();
+}
+
+QVariantMap toolsView(World& world) {
+  return tools(world).view();
+}
+
+QVariantMap wizardViewOf(World& world) {
+  return view(world).value(QStringLiteral("wizard")).toMap();
+}
+
+// The hub's state changes and every watcher is told, as devices.ex does.
+void setHubStatus(World& world, const QString& status) {
+  fakeHub(world).hostStatus = status;
+  announce(world.mc);
+  world.sync();
+}
+
+// The words the Device tab shows anywhere: its view's notes.
+QStringList tabWords(World& world) {
+  const QVariantMap shown = view(world);
+  QStringList words;
+  for (const QString& field : {QStringLiteral("loading"), QStringLiteral("empty"), QStringLiteral("error"),
+                               QStringLiteral("hostDetail"), QStringLiteral("starting")}) {
+    const QString value = shown.value(field).toString();
+    if (!value.isEmpty()) words.append(value);
+  }
+  for (const QVariant& banner : shown.value(QStringLiteral("banners")).toList()) {
+    words.append(at(banner, QStringLiteral("message")).toString());
+    words.append(at(banner, QStringLiteral("advice")).toString());
+  }
+  const QVariantMap wizard = wizardViewOf(world);
+  words.append(wizard.value(QStringLiteral("hubStatus")).toString());
+  words.append(wizard.value(QStringLiteral("agentStatus")).toString());
+  words.append(wizard.value(QStringLiteral("error")).toString());
+  return words;
+}
+
+bool tabSays(World& world, const QString& words) {
+  return tabWords(world).contains(words) || devicePanel(world).shows(words);
+}
+
+// The drawer is open; wait for its settings to have landed.
+void openToolsReady(World& world) {
+  world.waitFor([&] { return toolsView(world).value(QStringLiteral("open")).toBool() && toolsView(world).value(QStringLiteral("loaded")).toBool(); },
+                [&] { return describe(world) + QStringLiteral("; the tools are %1").arg(show(toolsView(world))); });
+}
+
+// Opens the Tools drawer for the device shown and waits for its settings.
+void openTools(World& world) {
+  if (!toolsView(world).value(QStringLiteral("open")).toBool()) devicePanel(world).click(QStringLiteral("deviceTools"));
+  world.waitFor([&] { return toolsView(world).value(QStringLiteral("open")).toBool() && toolsView(world).value(QStringLiteral("loaded")).toBool(); },
+                [&] { return describe(world) + QStringLiteral("; the tools are %1").arg(show(toolsView(world))); });
+}
+
+// Types into a tools field the way a user does: click it, then keys.
+void typeInto(World& world, const QString& objectName, const QString& text) {
+  Brick& panel = devicePanel(world);
+  panel.click(objectName);
+  world.sync();
+  for (const QChar ch : text) QTest::keyClick(&panel.window(), ch.toLatin1());
+  world.sync();
 }
 
 const Steps steps([] {
@@ -660,11 +927,9 @@ const Steps steps([] {
   });
   step(QStringLiteral("the tab says %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] {
-      const QVariantMap shown = view(world);
       const DeviceStream& stream = deviceStream(world);
-      return shown.value(QStringLiteral("empty")) == c[0] || shown.value(QStringLiteral("error")) == c[0] ||
-             (stream.status() == QLatin1String("error") && stream.detail() == c[0]);
-    }, [&] { return describe(world); });
+      return tabSays(world, c[0]) || (stream.status() == QLatin1String("error") && stream.detail() == c[0]);
+    }, [&] { return tabWords(world).join(QStringLiteral(" | ")) + QLatin1Char('\n') + describe(world); });
   });
   step(QStringLiteral("the user dismisses the error"), [](World& world, const Captures&, const Table&) {
     devicePanel(world).click(QStringLiteral("deviceDismissError"));
@@ -677,6 +942,9 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user follows the tab to its settings"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return view(world).value(QStringLiteral("setup")).toBool(); }, [&] { return describe(world); });
+    // The setup wizard sits in front of the tab; putting it away leaves the
+    // tab's own pointer to the settings.
+    if (view(world).value(QStringLiteral("wizard")).isValid()) devicePanel(world).click(QStringLiteral("wizardCancel"));
     devicePanel(world).click(QStringLiteral("deviceOpenSettings"));
     world.sync();
   });
@@ -933,4 +1201,1905 @@ const Steps steps([] {
   });
 });
 
+// The backlog steps: renaming and floating, the picker's ordering and
+// messages, the stream's recovery, the setup wizard and its banners, and
+// the Tools drawer.
+struct PanelBrickPart {
+  std::unique_ptr<Brick> brick;
+};
+
+Brick& panelBrick(World& world) {
+  PanelBrickPart& part = world.mc.part<PanelBrickPart>();
+  if (!part.brick) part.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nRightPanel {}\n", QSize(900, 600));
+  return *part.brick;
+}
+
+const Steps backlogSteps([] {
+  const QString q = kQuoted;
+
+  // --- Tab names -----------------------------------------------------------
+  step(QStringLiteral("the thread has %1 open in a tab").arg(q), [](World& world, const Captures& c, const Table&) {
+    addDevice(world, QStringLiteral("ios"), c[0], true);
+    openSession(world.mc, deviceNamed(fakeHub(world), c[0]));
+    look(world);
+    world.bridge().dispatch(QStringLiteral("rightPanel.activate"), QVariantMap{{QStringLiteral("id"), tabOf(world, c[0])}});
+    world.sync();
+    world.waitFor([&] { return tabTitles(world).contains(c[0]); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user renames the tab to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    Brick& brick = panelBrick(world);
+    const QString tab = tabOf(world, QStringLiteral("iPhone 17"));
+    QQuickItem* item = brick.item(QStringLiteral("panelTab-") + tab);
+    QTest::mouseDClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(item, 0.4, 0.5));
+    world.waitFor([&] { return brick.item(QStringLiteral("panelRename-") + tab)->isVisible(); }, [&] { return describe(world); });
+    for (const QChar ch : c[0]) QTest::keyClick(&brick.window(), ch.toLatin1());
+    QTest::keyClick(&brick.window(), Qt::Key_Return);
+    world.sync();
+  });
+  step(QStringLiteral("the tab is named %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return tabTitles(world).contains(c[0]); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the tab keeps that name when the device list is read again"), [](World& world, const Captures&, const Table&) {
+    const QStringList before = tabTitles(world);
+    announce(world.mc);
+    world.sync();
+    devices(world).refresh();
+    world.sync();
+    expect(tabTitles(world) == before, describe(world));
+  });
+  step(QStringLiteral("the user is renaming the tab %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    addDevice(world, QStringLiteral("ios"), c[0], true);
+    openSession(world.mc, deviceNamed(fakeHub(world), c[0]));
+    look(world);
+    world.bridge().dispatch(QStringLiteral("rightPanel.activate"), QVariantMap{{QStringLiteral("id"), tabOf(world, c[0])}});
+    world.sync();
+    Brick& brick = panelBrick(world);
+    const QString tab = tabOf(world, c[0]);
+    QQuickItem* item = brick.item(QStringLiteral("panelTab-") + tab);
+    QTest::mouseDClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(item, 0.4, 0.5));
+    world.waitFor([&] { return brick.item(QStringLiteral("panelRename-") + tab)->isVisible(); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user types %1 and presses Escape").arg(q), [](World& world, const Captures& c, const Table&) {
+    Brick& brick = panelBrick(world);
+    for (const QChar ch : c[0]) QTest::keyClick(&brick.window(), ch.toLatin1());
+    QTest::keyClick(&brick.window(), Qt::Key_Escape);
+    world.sync();
+  });
+  step(QStringLiteral("the tab is still named %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(tabTitles(world).contains(c[0]) && !tabTitles(world).contains(QStringLiteral("Checkout flow")), describe(world));
+  });
+
+  // --- Two machines, one device id -----------------------------------------
+  step(QStringLiteral("two connected machines each offer a simulator with the same device id"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.secondHostId = QStringLiteral("remote");
+    hub.secondLabel = QStringLiteral("laptop");
+    addDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"), true, kHost, QStringLiteral("UDID-SHARED"));
+    addDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"), true, QStringLiteral("remote"), QStringLiteral("UDID-SHARED"));
+  });
+  step(QStringLiteral("the user opens both"), [](World& world, const Captures&, const Table&) {
+    addDeviceTab(world);
+    for (const QString& host : {QString(kHost), QStringLiteral("remote")}) {
+      if (activeTab(world) != QLatin1String("device")) addDeviceTab(world);
+      QVariantMap row;
+      for (const QVariant& listed : view(world).value(QStringLiteral("groups")).toList())
+        for (const QVariant& candidate : at(listed, QStringLiteral("devices")).toList())
+          if (at(candidate, QStringLiteral("hostId")) == host) row = candidate.toMap();
+      world.waitFor([&] { return !row.isEmpty(); }, [&] { return describe(world); });
+      devicePanel(world).click(QStringLiteral("deviceRow-") + row.value(QStringLiteral("tab")).toString());
+      world.sync();
+      world.waitFor([&] { return activeTab(world) == ThreadDevices::tabIdOf(host, QStringLiteral("UDID-SHARED")); },
+                    [&] { return describe(world); });
+    }
+  });
+  step(QStringLiteral("each has its own tab"), [](World& world, const Captures&, const Table&) {
+    const QVariantList tabs = at(world.state(QStringLiteral("panel")), QStringLiteral("tabs")).toList();
+    QStringList ids;
+    for (const QVariant& tab : tabs) ids.append(at(tab, QStringLiteral("id")).toString());
+    expect(ids.contains(ThreadDevices::tabIdOf(kHost, QStringLiteral("UDID-SHARED"))) &&
+               ids.contains(ThreadDevices::tabIdOf(QStringLiteral("remote"), QStringLiteral("UDID-SHARED"))),
+           describe(world));
+  });
+  step(QStringLiteral("closing one leaves the other open"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.close"),
+                            QVariantMap{{QStringLiteral("id"), ThreadDevices::tabIdOf(kHost, QStringLiteral("UDID-SHARED"))}});
+    world.sync();
+    const QVariantList tabs = at(world.state(QStringLiteral("panel")), QStringLiteral("tabs")).toList();
+    QStringList ids;
+    for (const QVariant& tab : tabs) ids.append(at(tab, QStringLiteral("id")).toString());
+    expect(!ids.contains(ThreadDevices::tabIdOf(kHost, QStringLiteral("UDID-SHARED"))) &&
+               ids.contains(ThreadDevices::tabIdOf(QStringLiteral("remote"), QStringLiteral("UDID-SHARED"))),
+           describe(world));
+  });
+
+  // --- The picker's order and words ----------------------------------------
+  step(QStringLiteral("the thread's environment has the iOS Simulators %1 stopped and %1 running").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         addDevice(world, QStringLiteral("ios"), c[0], false);
+         addDevice(world, QStringLiteral("ios"), c[1], true);
+       });
+  step(QStringLiteral("the thread's environment has the Android Emulators %1 and %1, both running").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         addDevice(world, QStringLiteral("android"), c[0], true);
+         addDevice(world, QStringLiteral("android"), c[1], true);
+       });
+  step(QStringLiteral("the thread's environment has the iOS Simulators %1 and %1 running").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         addDevice(world, QStringLiteral("ios"), c[0], true);
+         addDevice(world, QStringLiteral("ios"), c[1], true);
+         // The open that follows stays in flight, so the picker can show
+         // that only one device opens at a time.
+         world.mc.hold(QStringLiteral("device.open"));
+         addDeviceTab(world);
+       });
+  step(QStringLiteral("%1 is listed before %1 under %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QStringList names;
+    for (const QVariant& listed : view(world).value(QStringLiteral("groups")).toList()) {
+      if (at(listed, QStringLiteral("title")) != c[2]) continue;
+      for (const QVariant& row : at(listed, QStringLiteral("devices")).toList()) names.append(at(row, QStringLiteral("name")).toString());
+    }
+    expect(names.indexOf(c[0]) >= 0 && names.indexOf(c[0]) < names.indexOf(c[1]),
+           QStringLiteral("the order is %1").arg(names.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("the machine %1 has the iOS Simulator %1 on iOS 26.0, (running|stopped)").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         fakeHub(world).hostLabel = c[0];
+         addDevice(world, QStringLiteral("ios"), c[1], c[2] == QLatin1String("running"));
+       });
+  step(QStringLiteral("the row for %1 reads \"([^\"]* · [^\"]*)\"").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return rowOf(world, c[0]).value(QStringLiteral("detail")) == c[1]; }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the row offers %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    bool offered = false;
+    for (const QVariant& listed : view(world).value(QStringLiteral("groups")).toList())
+      for (const QVariant& row : at(listed, QStringLiteral("devices")).toList())
+        offered = offered || at(row, QStringLiteral("action")) == c[0];
+    expect(offered, describe(world));
+  });
+  step(QStringLiteral("%1 cannot be chosen until %1 is open").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The first open is in flight (the Given held it); the other row must
+    // be disabled while it is.
+    expect(!view(world).value(QStringLiteral("pendingKey")).toString().isEmpty(), describe(world));
+    const QVariantMap row = rowOf(world, c[0]);
+    QQuickItem* item = devicePanel(world).item(QStringLiteral("deviceRow-") + row.value(QStringLiteral("tab")).toString());
+    expect(!item->isEnabled(), describe(world));
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("the Device tab says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return tabSays(world, c[0]); }, [&] { return tabWords(world).join(QStringLiteral(" | ")) + QLatin1Char('\n') + describe(world); });
+  });
+  step(QStringLiteral("the user opened %1, which is already running").arg(q), [](World& world, const Captures& c, const Table&) {
+    addDevice(world, QStringLiteral("ios"), c[0], true);
+    world.mc.hold(QStringLiteral("device.open"));
+    addDeviceTab(world);
+    openFromPicker(world, c[0]);
+  });
+  step(QStringLiteral("the user opened %1, which is stopped").arg(q), [](World& world, const Captures& c, const Table&) {
+    addDevice(world, QStringLiteral("ios"), c[0], false);
+    world.mc.hold(QStringLiteral("device.open"));
+    addDeviceTab(world);
+    openFromPicker(world, c[0]);
+  });
+  step(QStringLiteral("the device tools are still being installed"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).hostStatus = QStringLiteral("installing");
+    addDeviceTab(world);
+  });
+  step(QStringLiteral("the device tools are being installed on the thread's environment"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).hostStatus = QStringLiteral("installing");
+  });
+  step(QStringLiteral("the list of devices has not arrived yet"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.holdState = true;
+    hub.looking = true;
+    world.mc.projects.insert(kProject, {{QStringLiteral("id"), kProject}, {QStringLiteral("title"), kProject},
+                                        {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + kProject}, {QStringLiteral("scripts"), QJsonArray()}});
+    world.connect();
+    world.sync();
+    lookAtThread(world, kProject);
+    world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("device")}});
+    world.sync();
+  });
+  step(QStringLiteral("the thread has %1 starting").arg(q), [](World& world, const Captures& c, const Table&) {
+    addDevice(world, QStringLiteral("ios"), c[0], false);
+    FakeHub& hub = fakeHub(world);
+    hub.booting.append(QJsonObject{{QStringLiteral("name"), c[0]}, {QStringLiteral("threadId"), kThread}});
+    look(world);
+  });
+  step(QStringLiteral("%1 is running").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    for (qsizetype n = hub.booting.size() - 1; n >= 0; --n) {
+      if (hub.booting.at(n).toObject().value(QLatin1String("name")) == c[0]) hub.booting.removeAt(n);
+    }
+    announce(world.mc);
+    world.sync();
+  });
+  step(QStringLiteral("that message goes away"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return view(world).value(QStringLiteral("starting")).toString().isEmpty(); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the device hub is installing on the thread's environment and reports %1").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         FakeHub& hub = fakeHub(world);
+         hub.hostStatus = QStringLiteral("installing");
+         hub.hostDetail = c[0];
+       });
+  step(QStringLiteral("the device hub failed to start on the thread's environment and says %1").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         FakeHub& hub = fakeHub(world);
+         hub.hostStatus = QStringLiteral("failed");
+         hub.hostDetail = c[0];
+       });
+  step(QStringLiteral("the device hub failed to start on the thread's environment without saying why"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).hostStatus = QStringLiteral("failed");
+  });
+  step(QStringLiteral("it has no simulators or emulators"), [](World& world, const Captures&, const Table&) { fakeHub(world); });
+  step(QStringLiteral("the device hub is ready and reports %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeHub(world).hostDetail = c[0];
+    addDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"), true);
+  });
+  step(QStringLiteral("the tab shows %1 above the list of devices").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return view(world).value(QStringLiteral("hostDetail")) == c[0] && devicePanel(world).shows(c[0]); },
+                  [&] { return describe(world); });
+  });
+  step(QStringLiteral("the thread's environment has the Android SDK"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).availability.insert(QStringLiteral("android"),
+                                       QJsonObject{{QStringLiteral("platform"), QStringLiteral("android")}, {QStringLiteral("available"), true}});
+  });
+  step(QStringLiteral("it has no Android virtual devices"), [](World& world, const Captures&, const Table&) { fakeHub(world); });
+  step(QStringLiteral("the user added a Device tab on an environment with no simulators"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world);
+    addDeviceTab(world);
+  });
+  step(QStringLiteral("the machine gains the iOS Simulator %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    addDevice(world, QStringLiteral("ios"), c[0], true);
+  });
+{}
+  step(QStringLiteral("the tab does not offer \"Refresh devices\""), [](World& world, const Captures&, const Table&) {
+    expect(!view(world).value(QStringLiteral("canRefresh")).toBool() && !devicePanel(world).item(QStringLiteral("deviceRefresh"))->isVisible(),
+           describe(world));
+  });
+  step(QStringLiteral("device support is on and %1 was added since the list was last read").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         look(world);
+         addDeviceTab(world);
+         addDevice(world, QStringLiteral("ios"), c[0], true);
+         world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("diff")}});
+         world.sync();
+       });
+  step(QStringLiteral("the user shows the Device tab"), [](World& world, const Captures&, const Table&) {
+    look(world);
+    world.bridge().dispatch(QStringLiteral("rightPanel.activate"), QVariantMap{{QStringLiteral("id"), QStringLiteral("device")}});
+    world.sync();
+  });
+{}
+  step(QStringLiteral("device support is off"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.hostStatus = QStringLiteral("disabled");
+    announce(world.mc);
+    world.sync();
+  });
+  step(QStringLiteral("nothing is installed or started on the environment"), [](World& world, const Captures&, const Table&) {
+    const auto lists = fakeHub(world).lists.size();
+    const auto configures = fakeHub(world).configures.size();
+    world.sync();
+    expect(fakeHub(world).configures.size() == configures && fakeHub(world).lists.size() == lists, describe(world));
+  });
+  step(QStringLiteral("the thread has %1 on iOS 26.0 open on the machine %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeHub(world).hostLabel = c[1];
+    addDevice(world, QStringLiteral("ios"), c[0], true);
+    openSession(world.mc, deviceNamed(fakeHub(world), c[0]));
+    look(world);
+    world.bridge().dispatch(QStringLiteral("rightPanel.activate"), QVariantMap{{QStringLiteral("id"), tabOf(world, c[0])}});
+    world.sync();
+  });
+  step(QStringLiteral("the tab's header reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return at(view(world).value(QStringLiteral("screen")), QStringLiteral("description")) == c[0] && devicePanel(world).shows(c[0]); },
+                  [&] { return describe(world); });
+  });
+
+  // --- Watching ------------------------------------------------------------
+  step(QStringLiteral("the thread has the iOS Simulator %1 opening").arg(q), [](World& world, const Captures& c, const Table&) {
+    addDevice(world, QStringLiteral("ios"), c[0], true);
+    fakeHub(world).silent = true;
+    world.mc.hold(QStringLiteral("device.open"));
+    addDeviceTab(world);
+    openFromPicker(world, c[0]);
+  });
+  step(QStringLiteral("the tab shows its progress as %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return devicePanel(world).shows(c[0]); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the device is open and no picture has arrived yet"), [](World& world, const Captures&, const Table&) {
+    world.mc.answerHeld();
+    world.sync();
+    world.waitFor([&] { return deviceStream(world).status() == QLatin1String("connecting"); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the MC refuses the stream because its access has expired"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.expired = true;
+    hub.acceptedTicket.clear();
+    // The stream in flight ends; its next request is the refused one.
+    for (const QPointer<QTcpSocket>& video : std::as_const(hub.videos)) {
+      if (video) video->disconnectFromHost();
+    }
+    world.sync();
+  });
+  step(QStringLiteral("the tab asks the MC for fresh access"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return fakeHub(world).ticketRequests > 0; }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the tab asks the MC for fresh access again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return fakeHub(world).ticketRequests > 1; }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the MC is slow to give fresh access"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).holdTickets = true;
+  });
+  step(QStringLiteral("the user reconnects before the MC answers"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    world.waitFor([&] { return hub.ticketRequests == 1; }, [&] { return describe(world); });
+    deviceStream(world).reconnect();
+    // Refused again, the new connection asks for its own ticket.
+    world.waitFor([&] { return hub.ticketRequests == 2; }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the MC answers the earlier request"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    const auto first = hub.heldTickets.takeFirst();
+    answerTicket(hub, first.first, first.second);
+    expect(QTest::qWaitFor([&] { return !first.first || first.first->state() == QAbstractSocket::UnconnectedState; }, 5000), QStringLiteral("the answer was not delivered"));
+    // That the tab ignores it takes a moment to show.
+    QTest::qWait(200);
+  });
+  step(QStringLiteral("the tab does not use that answer"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    for (const QString& request : std::as_const(hub.requests)) {
+      expect(!request.contains(QLatin1String("wsTicket=fresh1")), request);
+    }
+    expect(deviceStream(world).status() == QLatin1String("connecting"), describe(world));
+  });
+  step(QStringLiteral("the MC answers the later request"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.holdTickets = false;
+    const auto last = hub.heldTickets.takeFirst();
+    answerTicket(hub, last.first, last.second);
+  });
+  step(QStringLiteral("the tab %1 shows the device's screen again").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForScreen(world, c[0]);
+  });
+  step(QStringLiteral("the device's input connection drops with the reason %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.dropInputs = true;
+    for (const QPointer<QWebSocket>& socket : std::as_const(hub.inputs)) {
+      if (socket) socket->close(QWebSocketProtocol::CloseCodeNormal, c[0]);
+    }
+    world.sync();
+    world.waitFor([&] { return !deviceStream(world).inputConnected(); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the picture stays and the tab says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* screen = screenItem(world);
+    world.waitFor([&] { return devicePanel(world).shows(c[0]) && screen->property("hasFrame").toBool() && screen->isVisible(); },
+                  [&] { return describeScreen(world); });
+    expect(red(drawnAtScreen(world)), describeScreen(world));
+  });
+  step(QStringLiteral("the device's buttons cannot be used"), [](World& world, const Captures&, const Table&) {
+    expect(!devicePanel(world).item(QStringLiteral("deviceHome"))->isEnabled(), describe(world));
+  });
+  step(QStringLiteral("the input connection returns"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).dropInputs = false;
+    world.waitFor([&] { return deviceStream(world).inputConnected(); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the message goes away and the buttons work again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return !devicePanel(world).item(QStringLiteral("deviceInputStatus"))->isVisible() &&
+             devicePanel(world).item(QStringLiteral("deviceHome"))->isEnabled();
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user makes the panel narrower than the device is wide"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).window().resize(220, 900);
+    devicePanel(world).root()->setSize(QSizeF(220, 900));
+    world.sync();
+  });
+  step(QStringLiteral("the device is shown smaller with its own proportions"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* screen = screenItem(world);
+    world.waitFor([&] {
+      const double aspect = deviceStream(world).aspect();
+      return screen->width() > 0 && std::abs(screen->width() / screen->height() - aspect) < 0.02 && screen->width() <= 224;
+    }, [&] { return describeScreen(world); });
+    expect(red(drawnAtScreen(world)), describeScreen(world));
+  });
+  step(QStringLiteral("a touch at the middle of the shown screen is sent as the middle of the device"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).binary.clear();
+    tap(world, 0.5, 0.5);
+    world.waitFor([&] {
+      const QList<QJsonObject> touches = iosInput(world, 0x03);
+      return touches.size() == 2 && near(touches[0].value(QLatin1String("x")).toDouble(), 0.5) &&
+             near(touches[0].value(QLatin1String("y")).toDouble(), 0.5);
+    }, [&] { return describeInput(world); });
+  });
+
+  // --- Driving -------------------------------------------------------------
+  step(QStringLiteral("the tab offers (.+)"), [](World& world, const Captures& c, const Table&) {
+    // The Given opened the device; showing its tab is what offers buttons.
+    FakeHub& hub = fakeHub(world);
+    const QJsonObject session = hub.sessions.isEmpty() ? QJsonObject() : hub.sessions.last().toObject();
+    QString name;
+    for (const QJsonValue& device : std::as_const(hub.devices)) {
+      if (device.toObject().value(QLatin1String("id")) == session.value(QLatin1String("deviceId")))
+        name = device.toObject().value(QLatin1String("name")).toString();
+    }
+    showDeviceTab(world, name);
+    Brick& panel = devicePanel(world);
+    const QHash<QString, QString> buttons{{QStringLiteral("Home"), QStringLiteral("deviceHome")},
+                                          {QStringLiteral("Back"), QStringLiteral("deviceBack")},
+                                          {QStringLiteral("Recents"), QStringLiteral("deviceRecents")},
+                                          {QStringLiteral("Rotate"), QStringLiteral("deviceRotate")}};
+    const QStringList wanted = c[0].split(QStringLiteral(", "));
+    QStringList flat;
+    for (const QString& part : wanted) flat += part.split(QStringLiteral(" and "));
+    for (auto it = buttons.begin(); it != buttons.end(); ++it) {
+      QQuickItem* item = panel.item(it.value());
+      expect(item->isVisible() == flat.contains(it.key()),
+             QStringLiteral("%1 offered: %2, wanted among %3").arg(it.key()).arg(item->isVisible()).arg(flat.join(QStringLiteral(", "))));
+    }
+  });
+  step(QStringLiteral("the user types %1 in the tab's tools instead of on the screen").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         fakeHub(world).settings = {{QStringLiteral("appearance"), QStringLiteral("light")}};
+         // Wide enough that the tools sit beside the screen, not over it.
+         devicePanel(world).window().resize(900, 900);
+         devicePanel(world).root()->setSize(QSizeF(900, 900));
+         openTools(world);
+         fakeHub(world).binary.clear();
+         typeInto(world, QStringLiteral("toolsField-url"), c[0]);
+       });
+  step(QStringLiteral("the device receives no key"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(iosInput(world, 0x06).isEmpty() && fakeHub(world).text.isEmpty(), describeInput(world));
+  });
+  step(QStringLiteral("the user clicks the device's screen and types %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeHub(world).binary.clear();
+    tap(world, 0.5, 0.5);
+    fakeHub(world).binary.clear();
+    press(world, Qt::Key_unknown, c[0].at(0).toLatin1());
+  });
+  step(QStringLiteral("the user clicked the device's screen"), [](World& world, const Captures&, const Table&) {
+    watch(world, QStringLiteral("iPhone 17"));
+    tap(world, 0.5, 0.5);
+    fakeHub(world).binary.clear();
+  });
+  step(QStringLiteral("the user presses Command with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    Brick& panel = devicePanel(world);
+    const Qt::Key key = c[0] == QLatin1String("K") ? Qt::Key_K : Qt::Key_R;
+    QTest::keyClick(&panel.window(), key, Qt::MetaModifier);
+    world.sync();
+  });
+  step(QStringLiteral("the user holds Command with %1").arg(q), [](World& world, const Captures&, const Table&) {
+    QTest::keyPress(&devicePanel(world).window(), Qt::Key_R, Qt::MetaModifier);
+    world.sync();
+  });
+  step(QStringLiteral("the user presses Command with %1 again").arg(q), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).binary.clear();
+    QTest::keyClick(&devicePanel(world).window(), Qt::Key_R, Qt::MetaModifier);
+    world.sync();
+  });
+  step(QStringLiteral("the user holds Command with %1 and lets go of Command first").arg(q), [](World& world, const Captures&, const Table&) {
+    Brick& panel = devicePanel(world);
+    QTest::keyPress(&panel.window(), Qt::Key_R, Qt::MetaModifier);
+    QTest::keyRelease(&panel.window(), Qt::Key_Meta, Qt::NoModifier);
+    world.sync();
+  });
+  step(QStringLiteral("the device has both keys up"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      int downs = 0;
+      for (const QJsonObject& key : iosInput(world, 0x06)) downs += key.value(QLatin1String("type")) == QLatin1String("down") ? 1 : -1;
+      return !iosInput(world, 0x06).isEmpty() && downs == 0;
+    }, [&] { return describeInput(world); });
+  });
+  step(QStringLiteral("on a Mac the app keeps every Command chord but Command with \"R\""), [](World& world, const Captures&, const Table&) {
+    QQuickItem* stage = devicePanel(world).item(QStringLiteral("deviceStage"));
+    QVariant command;
+    QMetaObject::invokeMethod(stage, "commandModifierOn", Q_RETURN_ARG(QVariant, command), Q_ARG(QVariant, QStringLiteral("osx")));
+    expect(command.toInt() == int(Qt::ControlModifier), QStringLiteral("on a Mac Qt calls Command Control"));
+    const auto appOwns = [&](int key, int modifiers) {
+      QVariant owns;
+      QMetaObject::invokeMethod(stage, "appOwns", Q_RETURN_ARG(QVariant, owns),
+                                Q_ARG(QVariant, QVariantMap({{QStringLiteral("key"), key}, {QStringLiteral("modifiers"), modifiers}})), Q_ARG(QVariant, command));
+      return owns.toBool();
+    };
+    expect(appOwns(Qt::Key_K, Qt::ControlModifier), QStringLiteral("Command+K went to the device"));
+    expect(!appOwns(Qt::Key_R, Qt::ControlModifier), QStringLiteral("Command+R stayed with the app"));
+    expect(appOwns(Qt::Key_R, Qt::MetaModifier), QStringLiteral("Control+R went to the device"));
+    expect(!appOwns(Qt::Key_A, Qt::NoModifier), QStringLiteral("a plain key stayed with the app"));
+  });
+  step(QStringLiteral("the app handles the shortcut"), [](World& world, const Captures&, const Table&) {
+    // The stage turns the key away: an event it is sent comes back unaccepted,
+    // so the window's own shortcut handling sees it.
+    QQuickItem* stage = devicePanel(world).item(QStringLiteral("deviceStage"));
+    QKeyEvent event(QEvent::KeyPress, Qt::Key_K, Qt::MetaModifier, QStringLiteral("k"));
+    QCoreApplication::sendEvent(stage, &event);
+    expect(!event.isAccepted(), QStringLiteral("the stage took Command+K"));
+  });
+  step(QStringLiteral("the device receives the key %1 with Command").arg(q), [](World& world, const Captures& c, const Table&) {
+    const int usage = 0x04 + (c[0].at(0).toLower().unicode() - 'a');
+    world.waitFor([&] {
+      const QList<QJsonObject> keys = iosInput(world, 0x06);
+      bool metaDown = false, keyDown = false;
+      for (const QJsonObject& key : keys) {
+        if (key.value(QLatin1String("usage")).toInt() == 0xe3 && key.value(QLatin1String("type")) == QLatin1String("down")) metaDown = true;
+        if (metaDown && key.value(QLatin1String("usage")).toInt() == usage && key.value(QLatin1String("type")) == QLatin1String("down")) keyDown = true;
+      }
+      return keyDown;
+    }, [&] { return describeInput(world); });
+  });
+
+  // --- Closing -------------------------------------------------------------
+  step(QStringLiteral("the MC cannot shut the device down because %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeHub(world).refuseClose = c[0];
+  });
+  step(QStringLiteral("the right panel still has the %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return tabTitles(world).contains(c[0]); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user floats the device over the chat"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("deviceFloat"));
+    world.sync();
+  });
+  step(QStringLiteral("the device floats over the conversation"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return at(world.state(QStringLiteral("panel")), QStringLiteral("floatingDevice")).toString() == tabOf(world, QStringLiteral("iPhone 17")) &&
+             deviceStream(world).status() == QLatin1String("streaming");
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user opens the right panel"), [](World& world, const Captures&, const Table&) {
+    panel(world).setOpen(true);
+    world.sync();
+  });
+  step(QStringLiteral("the device no longer floats"), [](World& world, const Captures&, const Table&) {
+    const QVariant floating = at(world.state(QStringLiteral("panel")), QStringLiteral("floatingDevice"));
+    expect(floating.isNull() || floating.toString().isEmpty(), describe(world));
+    expect(panel(world).isOpen(), describe(world));
+  });
+  step(QStringLiteral("the right panel closes"), [](World& world, const Captures&, const Table&) {
+    expect(!panel(world).isOpen(), describe(world));
+  });
+
+  // --- The setup wizard ------------------------------------------------------
+  const auto wizardAt = [](World& world, int step) {
+    QQuickItem* wizard = devicePanel(world).item(QStringLiteral("deviceWizard"));
+    wizard->setProperty("step", step);
+    wizard->setProperty("furthest", step);
+    world.sync();
+  };
+  const auto openWizard = [&wizardAt](World& world, int step = 0) {
+    world.waitFor([&] { return view(world).value(QStringLiteral("wizard")).isValid(); }, [&] { return describe(world); });
+    if (step > 0) wizardAt(world, step);
+  };
+  step(QStringLiteral("device support has never been set up on the thread's environment"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.onboarding = false;
+    hub.hostStatus = QStringLiteral("disabled");
+  });
+  step(QStringLiteral("a \"Set up devices\" wizard opens with the steps \"Device hub\", \"Simulators\" and \"Agent access\""),
+       [](World& world, const Captures&, const Table&) {
+         world.waitFor([&] {
+           Brick& panel = devicePanel(world);
+           return view(world).value(QStringLiteral("wizard")).isValid() && panel.item(QStringLiteral("deviceWizard"))->isVisible() &&
+                  panel.shows(QStringLiteral("Set up devices")) && panel.shows(QStringLiteral("Device hub")) &&
+                  panel.shows(QStringLiteral("Simulators")) && panel.shows(QStringLiteral("Agent access"));
+         }, [&] { return describe(world); });
+       });
+{}  step(QStringLiteral("the user finished setting devices up"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).onboarding = true;
+  });
+  step(QStringLiteral("later turned device support off"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).hostStatus = QStringLiteral("disabled");
+  });
+  step(QStringLiteral("the wizard opens at its first step"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return view(world).value(QStringLiteral("wizard")).isValid() &&
+             devicePanel(world).item(QStringLiteral("deviceWizard"))->property("step").toInt() == 0 &&
+             devicePanel(world).item(QStringLiteral("deviceWizard"))->isVisible();
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the wizard is at \"Device hub\" with the hub off"), [openWizard](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.onboarding = false;
+    hub.hostStatus = QStringLiteral("disabled");
+    addDeviceTab(world);
+    openWizard(world);
+  });
+  step(QStringLiteral("the wizard is at \"Device hub\" and the hub is off"), [openWizard](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.onboarding = false;
+    hub.hostStatus = QStringLiteral("disabled");
+    addDeviceTab(world);
+    openWizard(world);
+  });
+  step(QStringLiteral("the wizard is at \"Device hub\" with the hub ready"), [openWizard](World& world, const Captures&, const Table&) {
+    fakeHub(world).onboarding = false;
+    addDeviceTab(world);
+    openWizard(world);
+  });
+  step(QStringLiteral("the wizard is at its first step"), [openWizard](World& world, const Captures&, const Table&) {
+    fakeHub(world).onboarding = false;
+    addDeviceTab(world);
+    openWizard(world);
+  });
+  step(QStringLiteral("the wizard is at the \"Simulators\" step"), [openWizard](World& world, const Captures&, const Table&) {
+    fakeHub(world).onboarding = false;
+    addDeviceTab(world);
+    openWizard(world, 1);
+  });
+  step(QStringLiteral("the user is at the \"Simulators\" step"), [openWizard](World& world, const Captures&, const Table&) {
+    fakeHub(world).onboarding = false;
+    addDeviceTab(world);
+    openWizard(world, 1);
+  });
+  step(QStringLiteral("the user is at the \"Agent access\" step"), [openWizard](World& world, const Captures&, const Table&) {
+    fakeHub(world).onboarding = false;
+    addDeviceTab(world);
+    openWizard(world, 2);
+  });
+  step(QStringLiteral("the user is at the \"Agent access\" step with the hub ready"), [openWizard](World& world, const Captures&, const Table&) {
+    fakeHub(world).onboarding = false;
+    addDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"), true);
+    addDeviceTab(world);
+    openWizard(world, 2);
+  });
+  step(QStringLiteral("the user turns on \"Enable device hub\""), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("wizardHubSwitch"));
+    world.sync();
+  });
+  step(QStringLiteral("the user turned on \"Enable device hub\""), [openWizard](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.onboarding = false;
+    hub.hostStatus = QStringLiteral("disabled");
+    addDeviceTab(world);
+    openWizard(world);
+    devicePanel(world).click(QStringLiteral("wizardHubSwitch"));
+    world.sync();
+  });
+  step(QStringLiteral("the wizard says \"Installing device hub…\", then \"Starting device hub…\""), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return wizardViewOf(world).value(QStringLiteral("hubStatus")) == QStringLiteral("Installing device hub…"); },
+                  [&] { return describe(world) + show(wizardViewOf(world)); });
+    setHubStatus(world, QStringLiteral("starting"));
+    world.waitFor([&] { return wizardViewOf(world).value(QStringLiteral("hubStatus")) == QStringLiteral("Starting device hub…"); },
+                  [&] { return describe(world) + show(wizardViewOf(world)); });
+    setHubStatus(world, QStringLiteral("ready"));
+  });
+  step(QStringLiteral("when the hub is up it says \"Device hub is ready.\""), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return wizardViewOf(world).value(QStringLiteral("hubStatus")) == QStringLiteral("Device hub is ready."); },
+                  [&] { return describe(world) + show(wizardViewOf(world)); });
+  });
+  step(QStringLiteral("the user can continue to the next step"), [](World& world, const Captures&, const Table&) {
+    expect(devicePanel(world).item(QStringLiteral("wizardContinue"))->isEnabled(), describe(world));
+  });
+  step(QStringLiteral("the user cannot continue"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* next = devicePanel(world).item(QStringLiteral("wizardContinue"));
+    QQuickItem* done = devicePanel(world).item(QStringLiteral("wizardDone"));
+    expect(!next->isEnabled() && (!done->isVisible() || !done->isEnabled()), describe(world));
+  });
+  step(QStringLiteral("the hub is on and agents may control devices"), [openWizard](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.onboarding = false;
+    hub.agentAccess = true;
+    addDeviceTab(world);
+    openWizard(world);
+  });
+  step(QStringLiteral("the user turns off \"Enable device hub\" in the wizard"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("wizardHubSwitch"));
+    world.sync();
+  });
+  step(QStringLiteral("agent access is off as well"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QList<QJsonObject> configures = fakeHub(world).configures;
+      return !configures.isEmpty() && configures.last().value(QLatin1String("enabled")) == false &&
+             configures.last().value(QLatin1String("agentAccessEnabled")) == false && !wizardViewOf(world).value(QStringLiteral("agentOn")).toBool();
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the device hub is installing"), [openWizard](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.onboarding = false;
+    hub.hostStatus = QStringLiteral("installing");
+    addDeviceTab(world);
+    openWizard(world);
+  });
+  step(QStringLiteral("\"Enable device hub\" cannot be changed"), [](World& world, const Captures&, const Table&) {
+    expect(!devicePanel(world).item(QStringLiteral("wizardHubSwitch"))->isEnabled(), describe(world));
+  });
+  step(QStringLiteral("the user cannot go back or choose another step until it is done"), [](World& world, const Captures&, const Table&) {
+    Brick& panel = devicePanel(world);
+    expect(!panel.item(QStringLiteral("wizardStep-Simulators"))->isEnabled() && !panel.item(QStringLiteral("wizardBack"))->isEnabled(),
+           describe(world));
+  });
+  step(QStringLiteral("the user chooses the step \"Agent access\" directly"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* step = devicePanel(world).item(QStringLiteral("wizardStep-Agent access"));
+    expect(!step->isEnabled(), describe(world));
+  });
+  step(QStringLiteral("the wizard stays at \"Device hub\""), [](World& world, const Captures&, const Table&) {
+    expect(devicePanel(world).item(QStringLiteral("deviceWizard"))->property("step").toInt() == 0, describe(world));
+  });
+  step(QStringLiteral("the user continues twice and then chooses \"Device hub\""), [](World& world, const Captures&, const Table&) {
+    Brick& panel = devicePanel(world);
+    panel.click(QStringLiteral("wizardContinue"));
+    panel.click(QStringLiteral("wizardContinue"));
+    panel.click(QStringLiteral("wizardStep-Device hub"));
+    world.sync();
+  });
+  step(QStringLiteral("the wizard returns to \"Device hub\""), [](World& world, const Captures&, const Table&) {
+    expect(devicePanel(world).item(QStringLiteral("deviceWizard"))->property("step").toInt() == 0, describe(world));
+  });
+  // The Simulators step's platform situations.
+  const auto hubReadyWith = [](World& world, const std::function<void(FakeHub&)>& set) {
+    FakeHub& hub = fakeHub(world);
+    hub.onboarding = false;
+    set(hub);
+  };
+  step(QStringLiteral("the hub is ready and iOS is not detected and the machine gives no reason"), [hubReadyWith](World& world, const Captures&, const Table&) {
+    hubReadyWith(world, [](FakeHub& hub) {
+      hub.availability.insert(QStringLiteral("ios"), QJsonObject{{QStringLiteral("platform"), QStringLiteral("ios")}, {QStringLiteral("available"), false}});
+    });
+  });
+  step(QStringLiteral("the hub is ready and Android is not detected and the machine gives no reason"), [hubReadyWith](World& world, const Captures&, const Table&) {
+    hubReadyWith(world, [](FakeHub& hub) {
+      hub.availability.insert(QStringLiteral("android"),
+                              QJsonObject{{QStringLiteral("platform"), QStringLiteral("android")}, {QStringLiteral("available"), false}});
+    });
+  });
+  step(QStringLiteral("the hub is ready and iOS is unavailable because %1").arg(q), [hubReadyWith](World& world, const Captures& c, const Table&) {
+    hubReadyWith(world, [&c](FakeHub& hub) {
+      hub.availability.insert(QStringLiteral("ios"), QJsonObject{{QStringLiteral("platform"), QStringLiteral("ios")},
+                                                                 {QStringLiteral("available"), false},
+                                                                 {QStringLiteral("reason"), c[0]}});
+    });
+  });
+  step(QStringLiteral("the hub is ready and Xcode is installed with no iOS Simulator runtime"), [hubReadyWith](World& world, const Captures&, const Table&) {
+    hubReadyWith(world, [](FakeHub&) {});
+  });
+  step(QStringLiteral("the hub is ready and the Android SDK is installed with no virtual device"), [hubReadyWith](World& world, const Captures&, const Table&) {
+    hubReadyWith(world, [](FakeHub&) {});
+  });
+  step(QStringLiteral("the hub is ready and Xcode has an iOS Simulator"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).onboarding = false;
+    addDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"), true);
+  });
+  step(QStringLiteral("the hub is ready and the Android SDK has an emulator"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).onboarding = false;
+    addDevice(world, QStringLiteral("android"), QStringLiteral("Pixel 9"), true);
+  });
+  step(QStringLiteral("the hub is ready and only Android has an emulator"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).onboarding = false;
+    addDevice(world, QStringLiteral("android"), QStringLiteral("Pixel 9"), true);
+  });
+  step(QStringLiteral("(iOS|Android) reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      for (const QVariant& platform : wizardViewOf(world).value(QStringLiteral("platforms")).toList()) {
+        if (at(platform, QStringLiteral("platform")) == c[0]) return at(platform, QStringLiteral("message")) == c[1];
+      }
+      return false;
+    }, [&] { return show(wizardViewOf(world)); });
+  });
+{}  step(QStringLiteral("the wizard says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return tabWords(world).contains(c[0]) || devicePanel(world).shows(c[0]); },
+                  [&] { return tabWords(world).join(QStringLiteral(" | ")); });
+  });
+{}
+  step(QStringLiteral("the user is at the \"Simulators\" step and iOS has no simulator runtime"), [openWizard](World& world, const Captures&, const Table&) {
+    fakeHub(world).onboarding = false;
+    addDeviceTab(world);
+    openWizard(world, 1);
+  });
+  step(QStringLiteral("the user installs a runtime and chooses \"Check again\""), [](World& world, const Captures&, const Table&) {
+    addDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"), true);
+    world.mc.hold(QStringLiteral("device.list"));
+    devicePanel(world).click(QStringLiteral("wizardCheckAgain"));
+    world.sync();
+  });
+  step(QStringLiteral("the button says \"Checking…\" until the answer arrives"), [](World& world, const Captures&, const Table&) {
+    expect(wizardViewOf(world).value(QStringLiteral("pending")) == QStringLiteral("check") &&
+               devicePanel(world).item(QStringLiteral("wizardCheckAgain"))->property("text") == QStringLiteral("Checking…"),
+           describe(world));
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("the user turns on \"Allow agents to control devices\" and the hub is (installing agent tools|starting agent tools|updating|ready with agent tools)"),
+       [](World& world, const Captures& c, const Table&) {
+         // The switch is turned while the hub is ready; installing the
+         // agent tools is what the hub then reports, held mid-answer.
+         if (c[0] != QLatin1String("ready with agent tools")) world.mc.hold(QStringLiteral("device.configure"));
+         devicePanel(world).click(QStringLiteral("wizardAgentSwitch"));
+         world.sync();
+         FakeHub& hub = fakeHub(world);
+         if (c[0] == QLatin1String("installing agent tools")) hub.hostStatus = QStringLiteral("installing");
+         if (c[0] == QLatin1String("starting agent tools")) hub.hostStatus = QStringLiteral("starting");
+         if (c[0] == QLatin1String("installing agent tools") || c[0] == QLatin1String("starting agent tools")) {
+           announce(world.mc);
+           world.sync();
+         }
+       });
+  step(QStringLiteral("\"Allow agents to control devices\" cannot be turned on while the hub is off"), [](World& world, const Captures&, const Table&) {
+    setHubStatus(world, QStringLiteral("disabled"));
+    expect(!devicePanel(world).item(QStringLiteral("wizardAgentSwitch"))->isEnabled(), describe(world));
+  });
+{}
+  step(QStringLiteral("the button says \"Saving…\" until the answer arrives"), [](World& world, const Captures&, const Table&) {
+    expect(devicePanel(world).item(QStringLiteral("wizardDone"))->property("text") == QStringLiteral("Saving…"), describe(world));
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("the wizard closes"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !view(world).value(QStringLiteral("wizard")).isValid(); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the Device tab lists the environment's devices"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !rowOf(world, QStringLiteral("iPhone 17")).isEmpty(); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user shows the Device tab in another thread"), [](World& world, const Captures&, const Table&) {
+    const QString other = QStringLiteral("thread-2");
+    world.mc.threads.insert(other, {{QStringLiteral("id"), other}, {QStringLiteral("title"), QStringLiteral("Other")}, {QStringLiteral("projectId"), kProject},
+                                      {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
+    world.mc.sendRow(other, world.mc.threads.value(other));
+    world.sync();
+    stream::look(world, world.mc.environmentId + QLatin1Char(':') + other);
+    world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("device")}});
+    world.sync();
+  });
+  step(QStringLiteral("no wizard opens"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(!view(world).value(QStringLiteral("wizard")).isValid(), describe(world));
+  });
+{}
+  step(QStringLiteral("device support stays as the user left it"), [](World& world, const Captures&, const Table&) {
+    expect(fakeHub(world).configures.isEmpty(), describe(world));
+  });
+{}
+  step(QStringLiteral("the wizard shows the \"Device hub\" step"), [](World& world, const Captures&, const Table&) {
+    expect(devicePanel(world).item(QStringLiteral("deviceWizard"))->property("step").toInt() == 0, describe(world));
+  });
+  step(QStringLiteral("the hub fails with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.hostStatus = QStringLiteral("failed");
+    hub.hostDetail = c[0];
+    announce(world.mc);
+    world.sync();
+  });
+  step(QStringLiteral("the wizard shows %1 as an error").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return wizardViewOf(world).value(QStringLiteral("error")) == c[0] && devicePanel(world).shows(c[0]); },
+                  [&] { return describe(world); });
+  });
+
+  // --- Banners -------------------------------------------------------------
+  const auto setMachine = [](World& world, const QString& label, const QString& status, const QString& detail = {}) {
+    FakeHub& hub = fakeHub(world);
+    hub.hostLabel = label;
+    hub.localStatus = status;
+    hub.hostStatus = status;
+    hub.bannerDetail = detail;
+  };
+  step(QStringLiteral("the machine %1 is installing its device tools").arg(q), [setMachine](World& world, const Captures& c, const Table&) {
+    setMachine(world, c[0], QStringLiteral("installing"));
+  });
+  step(QStringLiteral("the machine %1 is starting its device tools").arg(q), [setMachine](World& world, const Captures& c, const Table&) {
+    setMachine(world, c[0], QStringLiteral("starting"));
+  });
+  step(QStringLiteral("the machine %1 is installing and says %1").arg(q), [setMachine](World& world, const Captures& c, const Table&) {
+    setMachine(world, c[0], QStringLiteral("installing"), c[1]);
+  });
+  step(QStringLiteral("the machine %1 failed to start its device tools without saying why").arg(q),
+       [setMachine](World& world, const Captures& c, const Table&) { setMachine(world, c[0], QStringLiteral("failed")); });
+  step(QStringLiteral("the machine %1 failed to start its device tools").arg(q),
+       [setMachine](World& world, const Captures& c, const Table&) { setMachine(world, c[0], QStringLiteral("failed")); });
+  step(QStringLiteral("the tab shows a banner for %1 saying %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      for (const QVariant& banner : view(world).value(QStringLiteral("banners")).toList()) {
+        if (at(banner, QStringLiteral("label")) == c[0] && at(banner, QStringLiteral("message")) == c[1]) return devicePanel(world).shows(c[1]);
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the banner for %1 says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      for (const QVariant& banner : view(world).value(QStringLiteral("banners")).toList()) {
+        if (at(banner, QStringLiteral("label")) == c[0]) return at(banner, QStringLiteral("message")) == c[1] && devicePanel(world).shows(c[1]);
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("it says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return devicePanel(world).shows(c[0]); }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the MC can retry a single machine"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).supportsRetry = true;
+  });
+  step(QStringLiteral("the MC cannot retry a single machine"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).supportsRetry = false;
+  });
+  step(QStringLiteral("the user chooses \"Retry\" on its banner"), [](World& world, const Captures&, const Table&) {
+    addDeviceTab(world);
+    world.mc.hold(QStringLiteral("device.list"));
+    devicePanel(world).click(QStringLiteral("deviceBannerRetry-") + QString(kHost));
+    world.sync();
+  });
+  step(QStringLiteral("the banner for %1 offers no \"Retry\"").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !view(world).value(QStringLiteral("banners")).toList().isEmpty(); }, [&] { return describe(world); });
+    expect(!devicePanel(world).item(QStringLiteral("deviceBannerRetry-") + QString(kHost))->isVisible(), describe(world));
+  });
+  step(QStringLiteral("the button says \"Retrying…\" until the answer arrives"), [](World& world, const Captures&, const Table&) {
+    expect(devicePanel(world).item(QStringLiteral("deviceBannerRetry-") + QString(kHost))->property("text") == QStringLiteral("Retrying…"),
+           describe(world));
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("only %1 is retried").arg(q), [](World& world, const Captures& c, const Table&) {
+    Q_UNUSED(c);
+    const QList<QJsonObject> lists = fakeHub(world).lists;
+    expect(!lists.isEmpty() && lists.last().value(QLatin1String("retryHostId")).toString() == kHost, describe(world));
+  });
+  step(QStringLiteral("device support is off and the machine %1 failed earlier").arg(q), [setMachine](World& world, const Captures& c, const Table&) {
+    setMachine(world, c[0], QStringLiteral("failed"));
+    fakeHub(world).hostStatus = QStringLiteral("disabled");
+    look(world);
+  });
+  step(QStringLiteral("no banner is shown for %1").arg(q), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(view(world).value(QStringLiteral("banners")).toList().isEmpty(), describe(world));
+  });
+  step(QStringLiteral("the setup wizard shows the banner for %1").arg(q), [openWizard](World& world, const Captures& c, const Table&) {
+    fakeHub(world).onboarding = false;
+    addDeviceTab(world);
+    openWizard(world);
+    world.waitFor([&] {
+      for (const QVariant& banner : view(world).value(QStringLiteral("banners")).toList()) {
+        if (at(banner, QStringLiteral("label")) == c[0]) return devicePanel(world).shows(at(banner, QStringLiteral("message")).toString());
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("so does the Device tab once setup is done"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("wizardCancel"));
+    world.sync();
+    const QVariantList banners = view(world).value(QStringLiteral("banners")).toList();
+    expect(!banners.isEmpty() && devicePanel(world).shows(at(banners.first(), QStringLiteral("message")).toString()), describe(world));
+  });
+
+  // --- The Tools drawer ------------------------------------------------------
+  // A device with a full set of reported settings, open on its tab.
+  const auto toolDevice = [](World& world, const QString& platform, const QString& name) {
+    FakeHub& hub = fakeHub(world);
+    if (platform == QLatin1String("ios")) {
+      hub.settings = {{QStringLiteral("appearance"), QStringLiteral("light")},
+                      {QStringLiteral("textSize"), QStringLiteral("default")},
+                      {QStringLiteral("liquidGlass"), QStringLiteral("clear")},
+                      {QStringLiteral("colorFilter"), QStringLiteral("none")},
+                      {QStringLiteral("reduceMotion"), false},
+                      {QStringLiteral("increaseContrast"), false},
+                      {QStringLiteral("reduceTransparency"), false},
+                      {QStringLiteral("showBorders"), false},
+                      {QStringLiteral("voiceOver"), false}};
+    } else {
+      hub.settings = {{QStringLiteral("appearance"), QStringLiteral("light")},
+                      {QStringLiteral("textSize"), QStringLiteral("default")},
+                      {QStringLiteral("reduceMotion"), false},
+                      {QStringLiteral("networkEnabled"), true}};
+    }
+    hub.foregroundApp = QJsonObject{{QStringLiteral("id"), QStringLiteral("com.example.shop")}};
+    addDevice(world, platform, name, true);
+    openSession(world.mc, deviceNamed(fakeHub(world), name));
+    announce(world.mc);
+    showDeviceTab(world, name);
+  };
+
+  step(QStringLiteral("the user has the tools open for the (iOS Simulator|Android Emulator) %1").arg(q),
+       [toolDevice](World& world, const Captures& c, const Table&) {
+         toolDevice(world, c[0] == QLatin1String("iOS Simulator") ? QStringLiteral("ios") : QStringLiteral("android"), c[1]);
+         // On the wide panel the drawer sits beside the screen, and every
+         // control below can be clicked.
+         devicePanel(world).window().resize(900, 1100);
+         devicePanel(world).root()->setSize(QSizeF(900, 1100));
+         openTools(world);
+       });
+
+  step(QStringLiteral("the tools say %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return toolsView(world).value(QStringLiteral("error")) == c[0] || devicePanel(world).shows(c[0]); },
+                  [&] { return show(toolsView(world)); });
+  });
+
+  step(QStringLiteral("the tools have no \"(.+)\""), [](World& world, const Captures& c, const Table&) {
+    expect(!devicePanel(world).shows(c[0]), QStringLiteral("the tools show %1").arg(c[0]));
+  });
+
+  const auto axScreen = [](World& world) {
+    fakeHub(world).axTree = {QJsonObject{{QStringLiteral("AXLabel"), QString()},
+                                         {QStringLiteral("frame"), QJsonObject{{QStringLiteral("x"), 0}, {QStringLiteral("y"), 0}, {QStringLiteral("width"), 390}, {QStringLiteral("height"), 844}}},
+                                         {QStringLiteral("children"), QJsonArray{QJsonObject{{QStringLiteral("AXLabel"), QStringLiteral("Buy")},
+                                                                                            {QStringLiteral("frame"), QJsonObject{{QStringLiteral("x"), 39}, {QStringLiteral("y"), 84}, {QStringLiteral("width"), 78}, {QStringLiteral("height"), 42}}}}}}}};
+  };
+
+  step(QStringLiteral("the MC has given the client no device access yet"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.noAccess = true;
+    announce(world.mc);
+    world.sync();
+    // The tools read their target again from the announcement.
+    world.waitFor([&] { return !toolsView(world).value(QStringLiteral("axOffered")).toBool(); }, [&] { return show(toolsView(world)); });
+  });
+
+  step(QStringLiteral("\"Overlay element frames\" cannot be turned on"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+    if (!toolsView(world).value(QStringLiteral("open")).toBool()) openTools(world);
+    expect(!devicePanel(world).item(QStringLiteral("toolsAxOverlay"))->isEnabled(), describe(world));
+  });
+
+  // --- The Tools drawer as the ledger words it ------------------------------
+  const auto widePanel = [](World& world) {
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+  };
+  const auto narrowPanel = [](World& world) {
+    devicePanel(world).window().resize(420, 900);
+    devicePanel(world).root()->setSize(QSizeF(420, 900));
+  };
+{}
+{}
+  step(QStringLiteral("the tools open beside the screen when the panel is wide enough"), [widePanel](World& world, const Captures&, const Table&) {
+    widePanel(world);
+    world.waitFor([&] { return toolsView(world).value(QStringLiteral("open")).toBool(); }, [&] { return describe(world); });
+    QQuickItem* drawer = devicePanel(world).item(QStringLiteral("deviceToolsPanel"));
+    QQuickItem* screen = screenItem(world);
+    const QPointF drawerAt = drawer->mapToScene(QPointF(0, 0));
+    const QPointF screenAt = screen->mapToScene(QPointF(0, 0));
+    expect(drawer->isVisible() && screen->isVisible() && screenAt.x() + screen->width() <= drawerAt.x() + 1, describeScreen(world));
+    world.mc.answerHeld();
+  });
+  step(QStringLiteral("over the screen when it is narrow"), [narrowPanel](World& world, const Captures&, const Table&) {
+    narrowPanel(world);
+    world.sync();
+    QQuickItem* drawer = devicePanel(world).item(QStringLiteral("deviceToolsPanel"));
+    QQuickItem* screen = screenItem(world);
+    const QPointF drawerAt = drawer->mapToScene(QPointF(0, 0));
+    const QPointF screenAt = screen->mapToScene(QPointF(0, 0));
+    expect(drawer->isVisible() && drawerAt.x() < screenAt.x() + screen->width(), describeScreen(world));
+  });
+  step(QStringLiteral("the tools close"), [](World& world, const Captures&, const Table&) {
+    expect(!toolsView(world).value(QStringLiteral("open")).toBool(), describe(world));
+  });
+  step(QStringLiteral("the tools say \"Reading device settings…\" and no control can be changed"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return !toolsView(world).value(QStringLiteral("loaded")).toBool() && devicePanel(world).shows(QStringLiteral("Reading device settings…")) &&
+             !devicePanel(world).item(QStringLiteral("toolsChoice-Appearance-Dark"))->isEnabled();
+    }, [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the device's settings arrive"), [](World& world, const Captures&, const Table&) {
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("the controls show what the device reports"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return toolsView(world).value(QStringLiteral("loaded")).toBool() &&
+             toolsView(world).value(QStringLiteral("settings")).toMap().value(QStringLiteral("appearance")) == QStringLiteral("light") &&
+             devicePanel(world).item(QStringLiteral("toolsChoice-Appearance-Dark"))->isEnabled();
+    }, [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the thread has the iOS Simulator %1 open in light appearance").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         fakeHub(world).settings.insert(QStringLiteral("appearance"), QStringLiteral("light"));
+         addDevice(world, QStringLiteral("ios"), c[0], true);
+         openSession(world.mc, deviceNamed(fakeHub(world), c[0]));
+         showDeviceTab(world, c[0]);
+       });
+  step(QStringLiteral("the user has the tools open"), [](World& world, const Captures&, const Table&) {
+    bool hasDevice = false;
+    for (const QJsonValue& device : std::as_const(fakeHub(world).devices)) hasDevice = hasDevice || device.toObject().value(QLatin1String("name")) == QStringLiteral("iPhone 17");
+    if (!hasDevice) {
+      addDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"), true);
+      openSession(world.mc, deviceNamed(fakeHub(world), QStringLiteral("iPhone 17")));
+      showDeviceTab(world, QStringLiteral("iPhone 17"));
+    }
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+    openTools(world);
+  });
+  step(QStringLiteral("the device refuses to change appearance because %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeHub(world).refuseAction = c[0];
+  });
+  step(QStringLiteral("the tools show %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return toolsView(world).value(QStringLiteral("error")) == c[0] && devicePanel(world).shows(c[0]); },
+                  [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the appearance still reads \"Light\""), [](World& world, const Captures&, const Table&) {
+    expect(toolsView(world).value(QStringLiteral("settings")).toMap().value(QStringLiteral("appearance")) == QStringLiteral("light"),
+           show(toolsView(world)));
+  });
+  step(QStringLiteral("the user changes a setting and the device is slow to answer"), [](World& world, const Captures&, const Table&) {
+    world.mc.hold(QStringLiteral("device.action"));
+    devicePanel(world).click(QStringLiteral("toolsChoice-Appearance-Dark"));
+    world.sync();
+  });
+  step(QStringLiteral("a spinner shows beside \"Tools\""), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return toolsView(world).value(QStringLiteral("pending")).toBool() && devicePanel(world).item(QStringLiteral("toolsSpinner"))->isVisible();
+    }, [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("no other control can be changed until it answers"), [](World& world, const Captures&, const Table&) {
+    expect(!devicePanel(world).item(QStringLiteral("toolsSwitch-Reduce Motion"))->isEnabled(), describe(world));
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(QStringLiteral("the user changed the location of %1 in the tools").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeHub(world).foregroundApp = QJsonObject{{QStringLiteral("id"), QStringLiteral("com.example.shop")}};
+    addDevice(world, QStringLiteral("ios"), c[0], true);
+    openSession(world.mc, deviceNamed(fakeHub(world), c[0]));
+    showDeviceTab(world, c[0]);
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+    openTools(world);
+    typeInto(world, QStringLiteral("toolsLatitude"), QStringLiteral("59.33"));
+    typeInto(world, QStringLiteral("toolsLongitude"), QStringLiteral("18.07"));
+    devicePanel(world).click(QStringLiteral("toolsLocationSet"));
+    world.sync();
+    // The other device, with its own settings.
+    addDevice(world, QStringLiteral("android"), QStringLiteral("Pixel 9"), true);
+    openSession(world.mc, deviceNamed(fakeHub(world), QStringLiteral("Pixel 9")));
+    announce(world.mc);
+    fakeHub(world).settings = {{QStringLiteral("appearance"), QStringLiteral("dark")},
+                               {QStringLiteral("textSize"), QStringLiteral("large")},
+                               {QStringLiteral("reduceMotion"), true},
+                               {QStringLiteral("networkEnabled"), false}};
+    world.sync();
+  });
+  step(QStringLiteral("the user shows the tab of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.activate"), QVariantMap{{QStringLiteral("id"), tabOf(world, c[0])}});
+    world.sync();
+  });
+  step(QStringLiteral("its tools show its own settings and an empty location"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return toolsView(world).value(QStringLiteral("loaded")).toBool() &&
+             toolsView(world).value(QStringLiteral("settings")).toMap().value(QStringLiteral("appearance")) == QStringLiteral("dark") &&
+             devicePanel(world).item(QStringLiteral("toolsLatitude"))->property("text").toString().isEmpty() &&
+             devicePanel(world).item(QStringLiteral("toolsLongitude"))->property("text").toString().isEmpty();
+    }, [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the tools list (.+) under %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.answerHeld();
+    openToolsReady(world);
+    Brick& panel = devicePanel(world);
+    expect(panel.shows(c[1]), describe(world));
+    QStringList wanted;
+    for (const QString& part : c[0].split(QStringLiteral(", "))) wanted += part.split(QStringLiteral(" and "));
+    for (const QString& label : wanted) expect(panel.shows(label.trimmed()), QStringLiteral("no setting named %1").arg(label));
+  });
+  step(QStringLiteral("the user chooses %1 for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (c[1] == QLatin1String("Appearance") || c[1] == QLatin1String("Liquid Glass")) {
+      devicePanel(world).click(QStringLiteral("toolsChoice-") + c[1] + QLatin1Char('-') + c[0]);
+    } else {
+      QQuickItem* combo = devicePanel(world).item(QStringLiteral("toolsChoice-") + c[1]);
+      const QStringList model = combo->property("model").toStringList();
+      const int index = int(model.indexOf(c[0]));
+      expect(index >= 0, QStringLiteral("no choice %1 among %2").arg(c[0], model.join(QStringLiteral(", "))));
+      QMetaObject::invokeMethod(combo, "activated", Q_ARG(int, index));
+    }
+    world.sync();
+  });
+  step(QStringLiteral("the device is asked to apply %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    static const QHash<QString, QString> values{{QStringLiteral("Dark"), QStringLiteral("dark")},
+                                                {QStringLiteral("Extra large"), QStringLiteral("extra-large")},
+                                                {QStringLiteral("Tinted"), QStringLiteral("tinted")},
+                                                {QStringLiteral("Red / green (protanopia)"), QStringLiteral("red-green")},
+                                                {QStringLiteral("Landscape left"), QStringLiteral("landscape_left")}};
+    world.waitFor([&] {
+      for (const QJsonObject& action : fakeHub(world).actions) {
+        if (action.value(QLatin1String("value")).toString() == values.value(c[0])) return true;
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the control then shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    static const QHash<QString, QString> values{{QStringLiteral("Dark"), QStringLiteral("dark")},
+                                                {QStringLiteral("Extra large"), QStringLiteral("extra-large")},
+                                                {QStringLiteral("Tinted"), QStringLiteral("tinted")},
+                                                {QStringLiteral("Red / green (protanopia)"), QStringLiteral("red-green")}};
+    world.waitFor([&] {
+      const QVariantMap settings = toolsView(world).value(QStringLiteral("settings")).toMap();
+      if (c[0] == QLatin1String("Landscape left")) return !toolsView(world).value(QStringLiteral("pending")).toBool();
+      for (const QVariant& value : settings.values()) {
+        if (value.toString() == values.value(c[0])) return true;
+      }
+      return false;
+    }, [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the user has the tools open for the iOS Simulator %1 with Reduce Motion off").arg(q),
+       [toolDevice](World& world, const Captures& c, const Table&) {
+         toolDevice(world, QStringLiteral("ios"), c[0]);
+         devicePanel(world).window().resize(900, 1100);
+         devicePanel(world).root()->setSize(QSizeF(900, 1100));
+         openTools(world);
+       });
+  step(QStringLiteral("the user turns on \"Reduce Motion\""), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("toolsSwitch-Reduce Motion"));
+    world.sync();
+  });
+  step(QStringLiteral("the device is asked to turn it on"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      for (const QJsonObject& action : fakeHub(world).actions) {
+        if (action.value(QLatin1String("type")) == QLatin1String("setToggle") &&
+            action.value(QLatin1String("setting")) == QStringLiteral("reduceMotion") && action.value(QLatin1String("value")).toBool())
+          return true;
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the switch then reads on"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return toolsView(world).value(QStringLiteral("settings")).toMap().value(QStringLiteral("reduceMotion")).toBool(); },
+                  [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the device reports no value for %1").arg(q), [toolDevice](World& world, const Captures& c, const Table&) {
+    toolDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"));
+    fakeHub(world).settings.remove(QStringLiteral("liquidGlass"));
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+    // The device named here is the one whose setting is missing.
+    Q_UNUSED(c);
+    openTools(world);
+  });
+  step(QStringLiteral("\"Liquid Glass\" cannot be changed"), [](World& world, const Captures&, const Table&) {
+    expect(!devicePanel(world).item(QStringLiteral("toolsChoice-Liquid Glass-Tinted"))->isEnabled(), describe(world));
+  });
+  step(QStringLiteral("the iOS Simulator %1 has %1 in front").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeHub(world).foregroundApp = QJsonObject{{QStringLiteral("id"), c[1]}};
+    addDevice(world, QStringLiteral("ios"), c[0], true);
+    openSession(world.mc, deviceNamed(fakeHub(world), c[0]));
+    showDeviceTab(world, c[0]);
+  });
+  step(QStringLiteral("%1 reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.answerHeld();
+    world.waitFor([&] { return toolsView(world).value(QStringLiteral("foreground")) == c[1] && devicePanel(world).shows(c[1]); },
+                  [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the app is stopped"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      for (const QJsonObject& action : fakeHub(world).actions) {
+        if (action.value(QLatin1String("type")) == QLatin1String("terminateApp")) return true;
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the app is started again"), [](World& world, const Captures&, const Table&) {
+    // Relaunch after a terminate names the app that was in front.
+    world.waitFor([&] {
+      for (const QJsonObject& action : fakeHub(world).actions) {
+        if (action.value(QLatin1String("type")) == QLatin1String("launchApp")) return true;
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user has the tools open for %1 with %1 in front").arg(q), [toolDevice](World& world, const Captures& c, const Table&) {
+    fakeHub(world).foregroundApp = QJsonObject{{QStringLiteral("id"), c[1]}};
+    toolDevice(world, QStringLiteral("ios"), c[0]);
+    fakeHub(world).foregroundApp = QJsonObject{{QStringLiteral("id"), c[1]}};
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+    openTools(world);
+  });
+  step(QStringLiteral("the user opens another app on the device"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    world.waitFor([&] {
+      for (const auto& feed : std::as_const(hub.feeds)) {
+        if (feed.first.endsWith(QLatin1String("/appstate")) && feed.second) return true;
+      }
+      return false;
+    }, [&] { return QStringLiteral("no foreground feed; %1").arg(describe(world)); });
+    for (const auto& feed : std::as_const(hub.feeds)) {
+      if (feed.first.endsWith(QLatin1String("/appstate")) && feed.second) {
+        feed.second->write("data: {\"bundleId\":\"com.example.other\"}\n\n");
+        feed.second->flush();
+      }
+    }
+    world.sync();
+  });
+  step(QStringLiteral("the foreground feed ends with %1 in front").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.foregroundApp = QJsonObject{{QStringLiteral("id"), c[0]}};
+    const int before = hub.feedRequests;
+    for (const auto& feed : std::as_const(hub.feeds)) {
+      if (feed.first.endsWith(QLatin1String("/appstate")) && feed.second) feed.second->disconnectFromHost();
+    }
+    world.waitFor([&] { return hub.feedRequests > before; }, [&] { return QStringLiteral("the feed was not followed again; %1").arg(describe(world)); });
+  });
+  step(QStringLiteral("\"Foreground\" reads the other app's id"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return toolsView(world).value(QStringLiteral("foreground")) == QStringLiteral("com.example.other"); },
+                  [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the device has no app in front"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).foregroundApp = QJsonValue::Null;
+    addDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"), true);
+    openSession(world.mc, deviceNamed(fakeHub(world), QStringLiteral("iPhone 17")));
+    showDeviceTab(world, QStringLiteral("iPhone 17"));
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+    openTools(world);
+  });
+  step(QStringLiteral("\"Terminate\" and \"Relaunch\" are not offered"), [](World& world, const Captures&, const Table&) {
+    expect(!devicePanel(world).item(QStringLiteral("toolsTerminate"))->isVisible() &&
+               !devicePanel(world).item(QStringLiteral("toolsRelaunch"))->isVisible(),
+           describe(world));
+  });
+  step(QStringLiteral("the user types %1 into %1 and chooses %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString field = c[2] == QLatin1String("Open") ? QStringLiteral("url") : QStringLiteral("launch");
+    typeInto(world, QStringLiteral("toolsField-") + field, c[0]);
+    devicePanel(world).click(QStringLiteral("toolsSubmit-") + field);
+    world.sync();
+    // The field's name, for its emptiness to be checked against.
+    fakeHub(world).lastField = field;
+  });
+  step(QStringLiteral("the device is asked to (open|launch) %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      for (const QJsonObject& action : fakeHub(world).actions) {
+        if (c[0] == QLatin1String("open") && action.value(QLatin1String("type")) == QLatin1String("openUrl") &&
+            action.value(QLatin1String("url")).toString() == c[1])
+          return true;
+        if (c[0] == QLatin1String("launch") && action.value(QLatin1String("type")) == QLatin1String("launchApp") &&
+            action.value(QLatin1String("appId")).toString() == c[1])
+          return true;
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the field is empty again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return devicePanel(world).item(QStringLiteral("toolsField-") + fakeHub(world).lastField)->property("text").toString().isEmpty();
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("\"Open\" and \"Launch\" cannot be chosen while their fields are empty"), [](World& world, const Captures&, const Table&) {
+    expect(!devicePanel(world).item(QStringLiteral("toolsSubmit-url"))->isEnabled() &&
+               !devicePanel(world).item(QStringLiteral("toolsSubmit-launch"))->isEnabled(),
+           describe(world));
+  });
+  step(QStringLiteral("the user types latitude %1 and longitude %1 and chooses \"Set\"").arg(q), [](World& world, const Captures& c, const Table&) {
+    typeInto(world, QStringLiteral("toolsLatitude"), c[0]);
+    typeInto(world, QStringLiteral("toolsLongitude"), c[1]);
+    fakeHub(world).wantedLocation = {c[0].toDouble(), c[1].toDouble()};
+    QQuickItem* set = devicePanel(world).item(QStringLiteral("toolsLocationSet"));
+    if (set->isEnabled()) {
+      devicePanel(world).click(QStringLiteral("toolsLocationSet"));
+      world.sync();
+    }
+  });
+  step(QStringLiteral("the device is placed there"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      for (const QJsonObject& action : fakeHub(world).actions) {
+        if (action.value(QLatin1String("type")) == QLatin1String("setLocation") &&
+            near(action.value(QLatin1String("latitude")).toDouble(), fakeHub(world).wantedLocation.first) &&
+            near(action.value(QLatin1String("longitude")).toDouble(), fakeHub(world).wantedLocation.second))
+          return true;
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("\"Set\" could not be chosen"), [](World& world, const Captures&, const Table&) {
+    expect(!devicePanel(world).item(QStringLiteral("toolsLocationSet"))->isEnabled(), describe(world));
+  });
+  step(QStringLiteral("the user chooses the preset %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    static const QHash<QString, QPair<double, double>> presets{{QStringLiteral("San Francisco"), {37.7749, -122.4194}},
+                                                               {QStringLiteral("New York"), {40.7128, -74.006}},
+                                                               {QStringLiteral("London"), {51.5074, -0.1278}},
+                                                               {QStringLiteral("Stockholm"), {59.3293, 18.0686}},
+                                                               {QStringLiteral("Tokyo"), {35.6762, 139.6503}}};
+    fakeHub(world).wantedLocation = presets.value(c[0]);
+    QQuickItem* combo = devicePanel(world).item(QStringLiteral("toolsLocationPreset"));
+    const QStringList model = combo->property("model").toStringList();
+    const int index = int(model.indexOf(c[0]));
+    expect(index >= 0, QStringLiteral("no preset %1").arg(c[0]));
+    QMetaObject::invokeMethod(combo, "activated", Q_ARG(int, index));
+    world.sync();
+  });
+  step(QStringLiteral("the fields show the preset's latitude and longitude"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return devicePanel(world).item(QStringLiteral("toolsLatitude"))->property("text").toString() == QString::number(fakeHub(world).wantedLocation.first) &&
+             devicePanel(world).item(QStringLiteral("toolsLongitude"))->property("text").toString() == QString::number(fakeHub(world).wantedLocation.second);
+    }, [&] {
+      return QStringLiteral("the fields read %1, %2").arg(devicePanel(world).item(QStringLiteral("toolsLatitude"))->property("text").toString(),
+                                                          devicePanel(world).item(QStringLiteral("toolsLongitude"))->property("text").toString());
+    });
+  });
+  step(QStringLiteral("the user has the tools open for the iOS Simulator %1 placed in Tokyo").arg(q), [toolDevice](World& world, const Captures& c, const Table&) {
+    toolDevice(world, QStringLiteral("ios"), c[0]);
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+    openTools(world);
+    QQuickItem* combo = devicePanel(world).item(QStringLiteral("toolsLocationPreset"));
+    QMetaObject::invokeMethod(combo, "activated", Q_ARG(int, int(combo->property("model").toStringList().indexOf(QStringLiteral("Tokyo")))));
+    world.sync();
+  });
+  step(QStringLiteral("the user chooses \"Clear\" under \"Location\""), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("toolsLocationClear"));
+    world.sync();
+  });
+  step(QStringLiteral("the fields are empty and the simulator has no location"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      bool cleared = false;
+      for (const QJsonObject& action : fakeHub(world).actions) cleared = cleared || action.value(QLatin1String("type")) == QLatin1String("clearLocation");
+      return cleared && devicePanel(world).item(QStringLiteral("toolsLatitude"))->property("text").toString().isEmpty() &&
+             devicePanel(world).item(QStringLiteral("toolsLongitude"))->property("text").toString().isEmpty();
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("\"Clear\" is not offered under \"Location\""), [](World& world, const Captures&, const Table&) {
+    expect(!devicePanel(world).item(QStringLiteral("toolsLocationClear"))->isVisible(), describe(world));
+  });
+  step(QStringLiteral("the user has the tools open for the (iOS Simulator|Android Emulator) %1 with \"com.example.shop\" in front").arg(q),
+       [toolDevice](World& world, const Captures& c, const Table&) {
+         toolDevice(world, c[0] == QLatin1String("iOS Simulator") ? QStringLiteral("ios") : QStringLiteral("android"), c[1]);
+         devicePanel(world).window().resize(900, 1100);
+         devicePanel(world).root()->setSize(QSizeF(900, 1100));
+         openTools(world);
+       });
+  step(QStringLiteral("the user chooses the permission %1 and then %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString label = c[0] == QLatin1String("Motion") && toolsView(world).value(QStringLiteral("platform")) == QStringLiteral("android")
+                              ? QStringLiteral("Physical activity")
+                              : c[0];
+    // The decision is its button here; the label map above is the Android name.
+    const QString button = c[1] == QLatin1String("grant") ? QStringLiteral("Grant") : c[1] == QLatin1String("revoke") ? QStringLiteral("Revoke") : QStringLiteral("Reset");
+    QQuickItem* combo = devicePanel(world).item(QStringLiteral("toolsPermission"));
+    const QStringList model = combo->property("model").toStringList();
+    const int index = int(model.indexOf(label));
+    expect(index >= 0, QStringLiteral("no permission %1 among %2").arg(label, model.join(QStringLiteral(", "))));
+    combo->setProperty("currentIndex", index);
+    devicePanel(world).click(QStringLiteral("toolsPermission") + button);
+    world.sync();
+  });
+  step(QStringLiteral("the device is asked to (grant|revoke|reset) %1 for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    static const QHash<QString, QString> values{{QStringLiteral("Camera"), QStringLiteral("camera")},
+                                                {QStringLiteral("Face ID"), QStringLiteral("faceid")},
+                                                {QStringLiteral("Photos"), QStringLiteral("photos")},
+                                                {QStringLiteral("Motion"), QStringLiteral("motion")}};
+    world.waitFor([&] {
+      for (const QJsonObject& action : fakeHub(world).actions) {
+        if (action.value(QLatin1String("type")) == QLatin1String("setPermission") && action.value(QLatin1String("decision")).toString() == c[0] &&
+            action.value(QLatin1String("permission")).toString() == values.value(c[1]) && action.value(QLatin1String("appId")).toString() == c[2])
+          return true;
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user has the tools open with \"com.example.shop\" in front"), [toolDevice](World& world, const Captures&, const Table&) {
+    toolDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"));
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+    openTools(world);
+  });
+  step(QStringLiteral("the user types %1 as the app and chooses \"Grant\" for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    typeInto(world, QStringLiteral("toolsPermissionApp"), c[0]);
+    QQuickItem* combo = devicePanel(world).item(QStringLiteral("toolsPermission"));
+    combo->setProperty("currentIndex", int(combo->property("model").toStringList().indexOf(c[1])));
+    devicePanel(world).click(QStringLiteral("toolsPermissionGrant"));
+    world.sync();
+  });
+  step(QStringLiteral("the device has no app in front and the user typed no app"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).foregroundApp = QJsonValue::Null;
+    addDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"), true);
+    openSession(world.mc, deviceNamed(fakeHub(world), QStringLiteral("iPhone 17")));
+    showDeviceTab(world, QStringLiteral("iPhone 17"));
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+    openTools(world);
+  });
+  step(QStringLiteral("\"Grant\", \"Revoke\" and \"Reset\" cannot be chosen"), [](World& world, const Captures&, const Table&) {
+    expect(!devicePanel(world).item(QStringLiteral("toolsPermissionGrant"))->isEnabled() &&
+               !devicePanel(world).item(QStringLiteral("toolsPermissionRevoke"))->isEnabled() &&
+               !devicePanel(world).item(QStringLiteral("toolsPermissionReset"))->isEnabled(),
+           describe(world));
+  });
+  step(QStringLiteral("the permission list (.+)"), [](World& world, const Captures& c, const Table&) {
+    const QStringList model = devicePanel(world).item(QStringLiteral("toolsPermission"))->property("model").toStringList();
+    if (c[0].contains(QLatin1String("includes"))) {
+      expect(model.contains(QStringLiteral("Reminders")) && model.contains(QStringLiteral("Media library")) && model.contains(QStringLiteral("Face ID")) &&
+                 devicePanel(world).item(QStringLiteral("toolsPermissionReset"))->isVisible(),
+             model.join(QStringLiteral(", ")));
+    } else {
+      expect(!model.contains(QStringLiteral("Reminders")) && !model.contains(QStringLiteral("Media library")) && !model.contains(QStringLiteral("Face ID")) &&
+                 model.contains(QStringLiteral("Physical activity")) && !devicePanel(world).item(QStringLiteral("toolsPermissionReset"))->isVisible(),
+             model.join(QStringLiteral(", ")));
+    }
+  });
+  step(QStringLiteral("the user types %1 under \"Push notification\" and chooses \"Send\"").arg(q), [](World& world, const Captures& c, const Table&) {
+    typeInto(world, QStringLiteral("toolsPushField"), c[0]);
+    devicePanel(world).click(QStringLiteral("toolsPushSend"));
+    world.sync();
+  });
+  step(QStringLiteral("the simulator is sent the notification for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      for (const QJsonObject& action : fakeHub(world).actions) {
+        if (action.value(QLatin1String("type")) == QLatin1String("sendPush") && action.value(QLatin1String("appId")).toString() == c[0] &&
+            action.value(QLatin1String("payload")) == QStringLiteral("Order shipped"))
+          return true;
+      }
+      return false;
+    }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user has the tools open for the iOS Simulator %1 with no app in front").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeHub(world).foregroundApp = QJsonValue::Null;
+    addDevice(world, QStringLiteral("ios"), c[0], true);
+    openSession(world.mc, deviceNamed(fakeHub(world), c[0]));
+    showDeviceTab(world, c[0]);
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+    openTools(world);
+  });
+{}
+  step(QStringLiteral("the tools have no \"Push notification\" section"), [](World& world, const Captures&, const Table&) {
+    expect(!devicePanel(world).shows(QStringLiteral("Push notification")), describe(world));
+  });
+{}
+  step(QStringLiteral("it says \"No events yet.\" until the simulator reports something"), [](World& world, const Captures&, const Table&) {
+    expect(devicePanel(world).shows(QStringLiteral("No events yet.")), describe(world));
+  });
+  step(QStringLiteral("the simulator reports events"), [](World& world, const Captures&, const Table&) {
+    QJsonArray events;
+    for (int id = 1; id <= 105; ++id) {
+      events.append(QJsonObject{{QStringLiteral("id"), id},
+                                {QStringLiteral("timestamp"), QStringLiteral("2026-09-23T10:00:%1Z").arg(id % 60, 2, 10, QLatin1Char('0'))},
+                                {QStringLiteral("summary"), QStringLiteral("Event %1").arg(id)}});
+    }
+    for (const auto& feed : std::as_const(fakeHub(world).feeds)) {
+      if (feed.first.endsWith(QLatin1String("/api/event-log/events")) && feed.second) {
+        feed.second->write("data: " + QJsonDocument(QJsonObject{{QStringLiteral("events"), events}}).toJson(QJsonDocument::Compact) + "\n\n");
+        feed.second->flush();
+      }
+    }
+    world.sync();
+  });
+  step(QStringLiteral("each is listed with its time and summary"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QVariantList events = toolsView(world).value(QStringLiteral("events")).toList();
+      return events.size() == 100 && devicePanel(world).shows(at(events.first(), QStringLiteral("time")).toString() + QStringLiteral("  ") +
+                                                              at(events.first(), QStringLiteral("summary")).toString());
+    }, [&] { return show(toolsView(world).value(QStringLiteral("events")).toList().size()); });
+  });
+  step(QStringLiteral("only the latest 100 are kept"), [](World& world, const Captures&, const Table&) {
+    const QVariantList events = toolsView(world).value(QStringLiteral("events")).toList();
+    expect(events.size() == 100 && at(events.first(), QStringLiteral("summary")) == QStringLiteral("Event 6"), show(events.size()));
+  });
+  step(QStringLiteral("the event log is open with entries"), [toolDevice](World& world, const Captures&, const Table&) {
+    toolDevice(world, QStringLiteral("ios"), QStringLiteral("iPhone 17"));
+    devicePanel(world).window().resize(900, 1100);
+    devicePanel(world).root()->setSize(QSizeF(900, 1100));
+    openTools(world);
+    devicePanel(world).click(QStringLiteral("toolsEventLogToggle"));
+    world.sync();
+    world.waitFor([&] { return toolsView(world).value(QStringLiteral("eventLogOpen")).toBool(); }, [&] { return show(toolsView(world)); });
+    for (const auto& feed : std::as_const(fakeHub(world).feeds)) {
+      if (feed.first.endsWith(QLatin1String("/api/event-log/events")) && feed.second) {
+        feed.second->write("data: {\"events\":[{\"id\":1,\"timestamp\":\"2026-09-23T10:00:01Z\",\"summary\":\"Event 1\"}]}\n\n");
+        feed.second->flush();
+      }
+    }
+    world.waitFor([&] { return toolsView(world).value(QStringLiteral("events")).toList().size() == 1; }, [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the user closes \"Event log\""), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).eventFeedRequests = fakeHub(world).feedRequests;
+    devicePanel(world).click(QStringLiteral("toolsEventLogToggle"));
+    world.sync();
+  });
+  step(QStringLiteral("the simulator's events are no longer read"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return toolsView(world).value(QStringLiteral("events")).toList().isEmpty() && !toolsView(world).value(QStringLiteral("eventLogOpen")).toBool(); },
+                  [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the user opens \"Event log\" again"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("toolsEventLogToggle"));
+    world.sync();
+  });
+  step(QStringLiteral("it starts empty"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return toolsView(world).value(QStringLiteral("eventLogOpen")).toBool() && toolsView(world).value(QStringLiteral("events")).toList().isEmpty() &&
+             devicePanel(world).shows(QStringLiteral("No events yet."));
+    }, [&] { return show(toolsView(world)); });
+  });
+
+  // --- The 3D body and the accessibility overlay -----------------------------
+  const auto bodyItem = [](World& world) {
+    QQuickItem* loader = devicePanel(world).item(QStringLiteral("deviceBodyLoader"));
+    return qobject_cast<QQuickItem*>(loader->property("item").value<QObject*>());
+  };
+  const auto showIn3d = [bodyItem](World& world) {
+    // The device's own tab first, when the Given only opened it.
+    if (!view(world).value(QStringLiteral("screen")).isValid()) {
+      FakeHub& hub = fakeHub(world);
+      if (!hub.sessions.isEmpty()) {
+        const QString id = hub.sessions.last().toObject().value(QLatin1String("deviceId")).toString();
+        for (const QJsonValue& device : std::as_const(hub.devices)) {
+          if (device.toObject().value(QLatin1String("id")) == id) showDeviceTab(world, device.toObject().value(QLatin1String("name")).toString());
+        }
+      }
+    }
+    if (!devicePanel(world).root()->property("show3d").toBool()) devicePanel(world).click(QStringLiteral("device3dToggle"));
+    world.waitFor([&] { return bodyItem(world) != nullptr; }, [&] { return describe(world); });
+  };
+  step(QStringLiteral("the user shows the device in 3D and drags across it"), [showIn3d, bodyItem](World& world, const Captures&, const Table&) {
+    showIn3d(world);
+    QQuickItem* body = bodyItem(world);
+    Brick& panel = devicePanel(world);
+    const QPoint from = panel.at(body, 0.3, 0.5);
+    const QPoint to = panel.at(body, 0.75, 0.5);
+    QTest::mousePress(&panel.window(), Qt::LeftButton, Qt::NoModifier, from);
+    QTest::mouseMove(&panel.window(), to);
+    world.sync();
+    // The drag's turn is read before its release settles it.
+    fakeHub(world).draggedYaw = body->property("yaw").toDouble();
+    QTest::mouseRelease(&panel.window(), Qt::LeftButton, Qt::NoModifier, to);
+    world.sync();
+  });
+  step(QStringLiteral("the body turns with the drag"), [](World& world, const Captures&, const Table&) {
+    expect(std::abs(fakeHub(world).draggedYaw) > 5, QStringLiteral("the drag turned %1").arg(fakeHub(world).draggedYaw));
+  });
+  step(QStringLiteral("when the drag ends the body settles on the nearest view that faces its screen"), [bodyItem](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return bodyItem(world)->property("settled").toBool(); }, [&] { return describeScreen(world); });
+  });
+  step(QStringLiteral("the 3D screen stands upright on its body"), [bodyItem](World& world, const Captures&, const Table&) {
+    QQuickItem* screen = bodyItem(world)->findChild<QQuickItem*>(QStringLiteral("deviceBodyScreen"));
+    expect(screen, QStringLiteral("no screen on the body"));
+    world.waitFor([&] { return screen->rotation() != 0; }, [&] { return describe(world); });
+    expect(screen->rotation() == deviceStream(world).rotation(), describe(world));
+    QQuickItem* texture = screen->parentItem();
+    expect(texture->width() > texture->height() && screen->height() == texture->width(), describe(world));
+  });
+  step(QStringLiteral("the picture is decoded for the flat view's size"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* screen = devicePanel(world).item(QStringLiteral("deviceScreen"));
+    world.waitFor([&] {
+      return screen->isVisible() && deviceStream(world).decoder()->maximumSize() == (screen->boundingRect().size() * screen->window()->effectiveDevicePixelRatio()).toSize();
+    }, [&] {
+      const QSize limit = deviceStream(world).decoder()->maximumSize();
+      return QStringLiteral("a limit of %1x%2 for a screen of %3x%4, %5").arg(limit.width()).arg(limit.height()).arg(screen->width()).arg(screen->height()).arg(screen->isVisible() ? QStringLiteral("shown") : QStringLiteral("hidden"));
+    });
+  });
+  step(QStringLiteral("the accessibility requests stall"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).stallAx = true;
+  });
+  step(QStringLiteral("no second accessibility request is out"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    world.waitFor([&] { return hub.axRequests > 0; }, [&] { return describe(world); });
+    const int asked = hub.axRequests;
+    // That nothing follows takes time to show: a few of the tools' refreshes.
+    QTest::qWait(1600);
+    expect(hub.axRequests == asked, QStringLiteral("%1 requests out").arg(hub.axRequests));
+  });
+  step(QStringLiteral("the device's screen has more elements than the overlay shows"), [](World& world, const Captures&, const Table&) {
+    QJsonArray nodes{QJsonObject{{QStringLiteral("bounds"), QJsonObject{{QStringLiteral("right"), 1000}, {QStringLiteral("bottom"), 2000}}}}};
+    for (int n = 0; n < 600; ++n) {
+      nodes.append(QJsonObject{{QStringLiteral("text"), QStringLiteral("Item %1").arg(n)},
+                               {QStringLiteral("bounds"), QJsonObject{{QStringLiteral("left"), 0}, {QStringLiteral("top"), n}, {QStringLiteral("right"), 100}, {QStringLiteral("bottom"), n + 1}}}});
+    }
+    fakeHub(world).androidAx = QJsonObject{{QStringLiteral("nodes"), nodes}};
+  });
+  step(QStringLiteral("the overlay outlines the first %1 of them").arg(QStringLiteral("(\\d+)")), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return toolsView(world).value(QStringLiteral("axElements")).toList().size() == c[0].toInt(); },
+                  [&] { return QString::number(toolsView(world).value(QStringLiteral("axElements")).toList().size()); });
+  });
+  step(QStringLiteral("the user shows the device in 3D"), [showIn3d](World& world, const Captures&, const Table&) { showIn3d(world); });
+  step(QStringLiteral("the device has no 3D model"), [](World& world, const Captures&, const Table&) { look(world); });
+  step(QStringLiteral("the 3D model cannot be downloaded"), [showIn3d, bodyItem](World& world, const Captures&, const Table&) {
+    showIn3d(world);
+    bodyItem(world)->setProperty("modelOverride", QStringLiteral("models/no-such-model.glb"));
+  });
+  step(QStringLiteral("the 3D model file is not a valid model"), [showIn3d, bodyItem](World& world, const Captures&, const Table&) {
+    QFile file(QStringLiteral("/tmp/hal-c2-not-a-model.glb"));
+    if (file.open(QIODevice::WriteOnly)) file.write("this is not a glTF model");
+    file.close();
+    showIn3d(world);
+    bodyItem(world)->setProperty("modelOverride", QStringLiteral("file:///tmp/hal-c2-not-a-model.glb"));
+  });
+  step(QStringLiteral("a plain body of the device's family is shown instead of an error"), [bodyItem](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      QQuickItem* body = bodyItem(world);
+      return body && body->property("plain").toBool() && deviceStream(world).status() != QLatin1String("error");
+    }, [&] { return describeScreen(world); });
+  });
+  step(QStringLiteral("the device's screen is still live on it"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return deviceStream(world).status() == QLatin1String("streaming") && screenItem(world)->property("hasFrame").toBool(); },
+                  [&] { return describeScreen(world); });
+  });
+  const auto viewingIpad = [showIn3d](World& world, bool in3d, bool attached) {
+    fakeHub(world).foregroundApp = QJsonObject{{QStringLiteral("id"), QStringLiteral("com.example.shop")}};
+    addDevice(world, QStringLiteral("ios"), QStringLiteral("iPad Pro 13-inch"), true);
+    openSession(world.mc, deviceNamed(fakeHub(world), QStringLiteral("iPad Pro 13-inch")));
+    showDeviceTab(world, QStringLiteral("iPad Pro 13-inch"));
+    waitForScreen(world, QStringLiteral("iPad Pro 13-inch"));
+    if (attached) devicePanel(world).root()->setProperty("keyboardAttached", true);
+    if (in3d) showIn3d(world);
+    world.sync();
+  };
+  step(QStringLiteral("the user is viewing the iOS Simulator \"iPad Pro 13-inch\" in 3D with the Magic Keyboard attached"),
+       [viewingIpad](World& world, const Captures&, const Table&) { viewingIpad(world, true, true); });
+  step(QStringLiteral("the user is viewing the iOS Simulator \"iPad Pro 13-inch\" in the flat view with the Magic Keyboard attached"),
+       [viewingIpad](World& world, const Captures&, const Table&) { viewingIpad(world, false, true); });
+  step(QStringLiteral("the user is viewing the iOS Simulator \"iPad Pro 13-inch\" in 3D with no keyboard attached"),
+       [viewingIpad](World& world, const Captures&, const Table&) { viewingIpad(world, true, false); });
+  step(QStringLiteral("the user is viewing the iOS Simulator \"iPad Pro 13-inch\" in portrait with no keyboard attached"),
+       [viewingIpad](World& world, const Captures&, const Table&) { viewingIpad(world, false, false); });
+  step(QStringLiteral("the user switches to the flat view"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("device3dToggle"));
+    world.sync();
+  });
+  step(QStringLiteral("the user switches to the 3D view"), [showIn3d](World& world, const Captures&, const Table&) { showIn3d(world); });
+  step(QStringLiteral("the user attaches the Magic Keyboard"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("deviceKeyboardToggle"));
+    world.sync();
+  });
+  step(QStringLiteral("the user detaches the Magic Keyboard"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("deviceKeyboardToggle"));
+    world.sync();
+  });
+  step(QStringLiteral("the live screen fills the panel"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return screenItem(world)->isVisible() && red(drawnAtScreen(world)); }, [&] { return describeScreen(world); });
+  });
+  step(QStringLiteral("the Magic Keyboard is not shown"), [bodyItem](World& world, const Captures&, const Table&) {
+    expect(!devicePanel(world).root()->property("show3d").toBool() || bodyItem(world) == nullptr, describeScreen(world));
+  });
+  step(QStringLiteral("the Magic Keyboard is shown attached to the iPad"), [bodyItem](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      QQuickItem* body = bodyItem(world);
+      if (!body) return false;
+      QQuickItem* marker = body->findChild<QQuickItem*>(QStringLiteral("deviceMagicKeyboard"));
+      return marker && marker->isVisible() && body->property("keyboardAttached").toBool();
+    }, [&] { return describeScreen(world); });
+  });
+  step(QStringLiteral("the Magic Keyboard is no longer shown"), [bodyItem](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      QQuickItem* body = bodyItem(world);
+      if (!body) return false;
+      QQuickItem* marker = body->findChild<QQuickItem*>(QStringLiteral("deviceMagicKeyboard"));
+      return marker && !marker->isVisible() && !body->property("keyboardAttached").toBool();
+    }, [&] { return describeScreen(world); });
+  });
+  step(QStringLiteral("the device is asked to turn to landscape"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      for (const QJsonObject& input : iosInput(world, 0x07)) {
+        if (input.value(QLatin1String("orientation")).toString().startsWith(QLatin1String("landscape"))) return true;
+      }
+      return false;
+    }, [&] { return describeInput(world); });
+  });
+  step(QStringLiteral("the user turns on \"Overlay element frames\" in the tools"), [axScreen](World& world, const Captures&, const Table&) {
+    axScreen(world);
+    openTools(world);
+    devicePanel(world).click(QStringLiteral("toolsAxOverlay"));
+    world.sync();
+  });
+  step(QStringLiteral("each accessibility element on the device is outlined over the screen with its label"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      return toolsView(world).value(QStringLiteral("axElements")).toList().size() == 1 &&
+             devicePanel(world).item(QStringLiteral("deviceAxOverlay"))->isVisible() && devicePanel(world).shows(QStringLiteral("Buy"));
+    }, [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the outlines follow the device as its screen changes"), [](World& world, const Captures&, const Table&) {
+    QJsonObject root = fakeHub(world).axTree.at(0).toObject();
+    QJsonArray children = root.value(QLatin1String("children")).toArray();
+    QJsonObject child = children.at(0).toObject();
+    QJsonObject frame = child.value(QLatin1String("frame")).toObject();
+    frame.insert(QStringLiteral("x"), 195);
+    frame.insert(QStringLiteral("y"), 422);
+    child.insert(QStringLiteral("frame"), frame);
+    children[0] = child;
+    root.insert(QStringLiteral("children"), children);
+    fakeHub(world).axTree = {root};
+    world.waitFor([&] {
+      const QVariantList elements = toolsView(world).value(QStringLiteral("axElements")).toList();
+      return elements.size() == 1 && std::abs(at(elements.first(), QStringLiteral("x")).toDouble() - 0.5) < 0.01;
+    }, [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the user turns it off or shows another tab"), [](World& world, const Captures&, const Table&) {
+    devicePanel(world).click(QStringLiteral("toolsAxOverlay"));
+    world.sync();
+  });
+  step(QStringLiteral("the outlines go away"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !devicePanel(world).item(QStringLiteral("deviceAxOverlay"))->isVisible(); }, [&] { return show(toolsView(world)); });
+  });
+  step(QStringLiteral("the thread has %1 open and the MC has given the client no device access yet").arg(q),
+       [toolDevice](World& world, const Captures& c, const Table&) {
+         toolDevice(world, QStringLiteral("ios"), c[0]);
+         FakeHub& hub = fakeHub(world);
+         hub.noAccess = true;
+         announce(world.mc);
+         world.sync();
+         world.waitFor([&] { return !toolsView(world).value(QStringLiteral("axOffered")).toBool(); }, [&] { return show(toolsView(world)); });
+       });
+});
+
 }  // namespace
+
+bool deviceChooses(World& world, const QString& what) {
+  if (!world.brick) return false;
+  if (what == QLatin1String("Refresh devices")) {
+    devicePanel(world).click(QStringLiteral("deviceRefresh"));
+  } else if (what == QLatin1String("Done")) {
+    // The wizard's finish, held so its Saving… can be seen.
+    if (!devices(world).view().value(QStringLiteral("wizard")).isValid()) return false;
+    world.mc.hold(QStringLiteral("device.configure"));
+    devicePanel(world).click(QStringLiteral("wizardDone"));
+  } else if (what == QLatin1String("Cancel")) {
+    if (!devices(world).view().value(QStringLiteral("wizard")).isValid()) return false;
+    devicePanel(world).click(QStringLiteral("wizardCancel"));
+  } else if (what == QLatin1String("Back")) {
+    if (!devices(world).view().value(QStringLiteral("wizard")).isValid()) return false;
+    devicePanel(world).click(QStringLiteral("wizardBack"));
+  } else if (what == QLatin1String("Dark") || what == QLatin1String("Light") || what == QLatin1String("Clear") || what == QLatin1String("Tinted")) {
+    if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+    const QString control = what == QLatin1String("Dark") || what == QLatin1String("Light") ? QStringLiteral("Appearance") : QStringLiteral("Liquid Glass");
+    devicePanel(world).click(QStringLiteral("toolsChoice-") + control + QLatin1Char('-') + what);
+  } else if (what == QLatin1String("Close tools")) {
+    if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+    devicePanel(world).click(QStringLiteral("toolsClose"));
+  } else if (what == QLatin1String("Terminate") || what == QLatin1String("Relaunch") || what == QLatin1String("Set") || what == QLatin1String("Clear")) {
+    if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+    devicePanel(world).click(what == QLatin1String("Terminate")   ? QStringLiteral("toolsTerminate")
+                             : what == QLatin1String("Relaunch") ? QStringLiteral("toolsRelaunch")
+                             : what == QLatin1String("Set")      ? QStringLiteral("toolsLocationSet")
+                                                                 : QStringLiteral("toolsLocationClear"));
+  } else {
+    return false;
+  }
+  world.sync();
+  return true;
+}
+
+bool deviceOpens(World& world, const QString& what) {
+  auto* controller = world.native().controller<RightPanelController>();
+  if (!controller) return false;
+  // Only a world with a device open has Tools to open; a thread merely
+  // named "Tools" has no session in the fake hub. The hub is only looked
+  // at: fakeHub() would set one up (and rename the MC) in every world.
+  const FakeHub& hub = world.mc.part<FakeHub>();
+  const bool showing = controller->device()->view().value(QStringLiteral("screen")).isValid();
+  if (!showing && (!hub.used || hub.sessions.isEmpty())) return false;
+  // The device's own tab first, when the scenario only opened the device.
+  if (!showing) {
+    const QString id = hub.sessions.last().toObject().value(QLatin1String("deviceId")).toString();
+    bool shown = false;
+    for (const QJsonValue& device : std::as_const(hub.devices)) {
+      if (device.toObject().value(QLatin1String("id")) == id) {
+        showDeviceTab(world, device.toObject().value(QLatin1String("name")).toString());
+        shown = true;
+      }
+    }
+    if (!shown) return false;
+  }
+  if (what == QLatin1String("Tools")) {
+    // The read is held, so a scenario can watch it land; the others'
+    // settings arrive when their next step answers the held call.
+    world.mc.hold(QStringLiteral("device.detail"));
+    devicePanel(world).click(QStringLiteral("deviceTools"));
+  } else if (what == QLatin1String("Event log")) {
+    devicePanel(world).click(QStringLiteral("toolsEventLogToggle"));
+    world.sync();
+    world.waitFor([&] {
+      for (const auto& feed : std::as_const(fakeHub(world).feeds)) {
+        if (feed.first.endsWith(QLatin1String("/api/event-log/events")) && feed.second) return true;
+      }
+      return false;
+    }, [&] { return QStringLiteral("no event feed; %1").arg(describe(world)); });
+    return true;
+  } else {
+    return false;
+  }
+  world.sync();
+  return true;
+}
+
+bool checkDeviceCannotChoose(World& world, const QString& what) {
+  if (!world.brick || what != QLatin1String("Send")) return false;
+  if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+  expect(!devicePanel(world).item(QStringLiteral("toolsPushSend"))->isEnabled(), describe(world));
+  return true;
+}
+
+bool checkDeviceCanContinue(World& world) {
+  if (!world.brick || !devices(world).view().value(QStringLiteral("wizard")).isValid()) return false;
+  expect(devicePanel(world).item(QStringLiteral("wizardContinue"))->isEnabled(), describe(world));
+  return true;
+}
+
+bool checkDeviceOffered(World& world, const QString& name) {
+  auto* controller = world.native().controller<RightPanelController>();
+  if (!controller || !controller->device()) return false;
+  // Only where the Device tab is the panel in play: its picker has loaded
+  // and lists devices (a thread-move world has none).
+  const QVariantMap deviceView = controller->device()->view();
+  if (!deviceView.value(QStringLiteral("loaded")).toBool() || deviceView.value(QStringLiteral("groups")).toList().isEmpty()) return false;
+  world.waitFor([&] { return !rowOf(world, name).isEmpty(); }, [&] { return describe(world); });
+  return true;
+}

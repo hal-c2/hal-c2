@@ -104,6 +104,60 @@ defmodule HalC2.ClaudeSubagentTest do
     assert [%{}] = StreamState.list(World.stream(context, @thread), "run")
   end
 
+  # Claude sends a complete message one block per event, all under the message's id.
+  # Regression: a subagent's thinking then its text under one id crashed the runtime,
+  # and with it the CLI and every background agent in it.
+  test "each block of a message Claude sends one at a time is its own item",
+       %{context: context} do
+    side = &Map.put(&1, "parent_tool_use_id", "agent-1")
+    pid = runtime(context)
+
+    for message <- [
+          stream("p1", {:start, "p1"}),
+          event(%{
+            "type" => "content_block_start",
+            "index" => 0,
+            "content_block" => %{"type" => "thinking", "thinking" => ""}
+          }),
+          assistant("p1", [%{"type" => "thinking", "thinking" => "Ask a subagent"}]),
+          stream("p1", {:block, 1}),
+          stream("p1", {:delta, 1, "Asking"}),
+          assistant("p1", [%{"type" => "text", "text" => "Asking"}]),
+          assistant("p1", [tool_use("agent-1", "Agent", %{"prompt" => "Check the tests"})]),
+          side.(user("Check the tests")),
+          side.(assistant("s1", [%{"type" => "thinking", "thinking" => "Which tests?"}])),
+          side.(assistant("s1", [%{"type" => "text", "text" => "The tests pass"}])),
+          user([result("agent-1", "The tests pass")]),
+          %{"type" => "result", "subtype" => "success"}
+        ],
+        do: claude_says(context, message)
+
+    World.await_runs(context, @thread, ["completed"])
+    assert runtime(context) == pid
+
+    texts = fn items ->
+      items
+      |> Enum.filter(&(&1["type"] in ["reasoning", "assistant_message"]))
+      |> Enum.sort_by(& &1["ordinal"])
+      |> Enum.map(&{&1["type"], &1["text"], &1["status"]})
+    end
+
+    state = World.stream(context, @thread)
+
+    assert [
+             {"reasoning", "Ask a subagent", "completed"},
+             {"assistant_message", "Asking", "completed"}
+           ] = texts.(StreamState.list(state, "turn-item"))
+
+    [%{"childThreadId" => child}] = StreamState.list(state, "subagent")
+    child = child |> HalC2.Streams.ensure() |> HalC2.Streams.Server.state()
+
+    assert [
+             {"reasoning", "Which tests?", "completed"},
+             {"assistant_message", "The tests pass", "completed"}
+           ] = texts.(StreamState.list(child, "turn-item"))
+  end
+
   test "a subagent's answer shows once though Claude's tool result adds its agent id",
        %{context: context} do
     side = &Map.put(&1, "parent_tool_use_id", "agent-1")

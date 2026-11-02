@@ -126,6 +126,41 @@ const Steps steps([] {
         {{QStringLiteral("status"), QStringLiteral("completed")}, {QStringLiteral("exitCode"), 0}});
   });
 
+  // A Claude monitor, as the adapter writes it: a `dynamic_tool` item that stays
+  // running after its turn settles (never a `command_execution`).
+  step(QStringLiteral("Claude starts a monitor in the thread"), [](World& world, const Captures&, const Table&) {
+    lookAtThread(world, kProject);
+    startRun(world);
+    world.mc.part<FakeAgents>().command = addItem(
+        world, QStringLiteral("dynamic_tool"),
+        {{QStringLiteral("toolName"), QStringLiteral("Monitor")},
+         {QStringLiteral("input"), QJsonObject{{QStringLiteral("command"), QStringLiteral("tail -f log/dev.log")},
+                                                {QStringLiteral("description"), QStringLiteral("Watch the dev log")}}},
+         {QStringLiteral("status"), QStringLiteral("running")},
+         {QStringLiteral("startedAt"), iso(now())}});
+    settleRun(world, QStringLiteral("completed"), 5);
+  });
+  step(QStringLiteral("the user sends another message and its turn is running"), [](World& world, const Captures&, const Table&) {
+    startRun(world);
+    world.sync();
+  });
+  step(QStringLiteral("the thread lists the monitor as background work"), [](World& world, const Captures&, const Table&) {
+    AgentsModel& model = agents(world);
+    for (int row = 0; row < model.rowCount(); ++row) {
+      if (model.value(row, AgentsModel::KindRole) == QStringLiteral("background") &&
+          model.value(row, AgentsModel::TitleRole) == QStringLiteral("Monitor") && model.value(row, AgentsModel::RunningRole).toBool()) {
+        return;
+      }
+    }
+    fail(describeAgents(world));
+  });
+  step(QStringLiteral("the monitor is not shown as a command"), [](World& world, const Captures&, const Table&) {
+    AgentsModel& model = agents(world);
+    for (int row = 0; row < model.rowCount(); ++row) {
+      expect(model.value(row, AgentsModel::KindRole) != QStringLiteral("command"), describeAgents(world));
+    }
+  });
+
   step(QStringLiteral("the user opens the Agents tab"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("rightPanel.add"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("agents")}});
     world.sync();

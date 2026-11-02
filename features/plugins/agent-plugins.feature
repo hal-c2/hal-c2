@@ -10,6 +10,7 @@
 #   apps/server/src/provider/Drivers (one driver per provider)
 #   packages/contracts/src/providerInstance.ts (ProviderInstanceMutation, availability unavailable)
 #   packages/contracts/src/server.ts (ServerProvider capability flags)
+#   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.providers: driverKind and provider status, no settings)
 
 Feature: Agent providers are plugins
   Every agent provider is a plugin. The core knows how to run a turn against the
@@ -108,6 +109,17 @@ Feature: Agent providers are plugins
     Then "acme_work" works with the same settings
 
   @mc
+  Scenario: A plugin is told which driver runs each agent instance
+    Given the instance "acme_work" has custom settings
+    And the instance "acme_work" has an API key in its environment
+    When a plugin lists the agents threads can run on
+    Then it sees "acme_work" as an "acme" agent that can run threads
+    And it sees none of the instance's settings or environment
+    When its plugin is removed
+    And a plugin lists the agents threads can run on
+    Then it sees "acme_work" as an "acme" agent that is unavailable
+
+  @mc
   Scenario: A thread from a removed provider can continue on another provider
     Given a thread that ran on a provider whose plugin was removed
     When the user switches the thread to Claude and sends a message
@@ -133,6 +145,12 @@ Feature: Agent providers are plugins
       | native sessions     | there is nothing to import from this provider                                  |
       | usage limits        | the limits view does not list this provider                                   |
       | sign-in             | the user is pointed to the provider's documentation to sign in                |
+
+  @mc
+  Scenario: A provider plugin declared before the finer capabilities keeps its defaults
+    Given a provider plugin that declares only the earlier capabilities
+    When a message is queued behind its running turn
+    Then the message runs once that turn is interrupted
 
   @mc
   Scenario: A plugin that declares a capability it does not honour is reported

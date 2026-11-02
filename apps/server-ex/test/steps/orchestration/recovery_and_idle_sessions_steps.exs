@@ -179,6 +179,13 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     assert state.entities["run"][run_id]["queuePosition"] == nil
 
+    # "starting" is decided before the provider is asked; running is its answer.
+    World.await_state(
+      context,
+      context.thread,
+      &(&1.entities["run"][run_id]["status"] in ~w(running waiting completed))
+    )
+
     assert Enum.any?(
              World.codex_requests(context, "turn/start"),
              &match?(%{"input" => [%{"text" => @continuation} | _]}, &1)
@@ -207,6 +214,57 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     {:ok, sub} =
       HalC2.Subprocess.start(["sh", "-c", ~s(sleep 60 & while read l; do echo "$l"; done)])
 
+    mc_died(sub)
+    Map.put(context, :orphan, sub)
+  end
+
+  # The provider stops on the MC's death, as on a closed stdin, and answers with the
+  # pid of the command it leaves running in its group.
+  step "a provider process had exited leaving a command in its group when the MC died",
+       context do
+    {:ok, sub} =
+      HalC2.Subprocess.start(["sh", "-c", ~s(sleep 60 & while read l; do echo $!; exit 0; done)])
+
+    pid = HalC2.Subprocess.os_pid(sub)
+    mc_died(sub)
+    :ok = HalC2.Subprocess.write_line(sub, "stop")
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
+    await_exit(pid)
+    Map.put(context, :left_command, String.to_integer(line))
+  end
+
+  # Only this service restarts, into a file where the state dir goes (the dir set aside
+  # beside it), so the rest of the MC keeps a state dir it read at its own start.
+  step "the MC restarted unable to make the directory of its program records", context do
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.Subprocess.Orphans)
+    state = Path.dirname(HalC2.Subprocess.Orphans.dir())
+    File.rename!(state, state <> ".aside")
+    File.write!(state, "")
+    ExUnit.Callbacks.start_supervised!(HalC2.Subprocess.Orphans)
+    context
+  end
+
+  step "a program start is refused", context do
+    assert {:error, {:untracked, :no_records_dir}} =
+             HalC2.Subprocess.start(["sh", "-c", "exit 0"])
+
+    context
+  end
+
+  step "the directory of program records can be made again", context do
+    state = Path.dirname(HalC2.Subprocess.Orphans.dir())
+    File.rm!(state)
+    File.rename!(state <> ".aside", state)
+    context
+  end
+
+  step "a program starts", context do
+    assert {:ok, sub} = HalC2.Subprocess.start(["sh", "-c", "exit 0"])
+    HalC2.Subprocess.stop(sub)
+    context
+  end
+
+  defp mc_died(sub) do
     pid = HalC2.Subprocess.os_pid(sub)
     dir = HalC2.Subprocess.Orphans.dir()
 
@@ -219,15 +277,35 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     record = JSON.decode!(File.read!(path))
     gone = Map.put(record["mc"], "started", "an earlier boot")
     File.write!(path, JSON.encode!(%{record | "mc" => gone}))
-    Map.put(context, :orphan, sub)
+  end
+
+  # Nothing tells this test an outside process exited; the bound is how long a failure waits.
+  defp await_exit(pid, tries \\ 500) do
+    cond do
+      HalC2.Subprocess.Orphans.gone?(pid) ->
+        :ok
+
+      tries == 0 ->
+        flunk("#{pid} did not exit")
+
+      true ->
+        Process.sleep(10)
+        await_exit(pid, tries - 1)
+    end
   end
 
   step "the provider process and its background command have been killed", context do
-    sub = context.orphan
-    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
-    exit_ref = sub.proc.exit_ref
-    # Killed by SIGKILL.
-    assert_receive {^exit_ref, {:ok, 137}}
+    case context do
+      %{left_command: command} ->
+        assert HalC2.Subprocess.Orphans.gone?(command)
+
+      %{orphan: sub} ->
+        assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+        exit_ref = sub.proc.exit_ref
+        # Killed by SIGKILL.
+        assert_receive {^exit_ref, {:ok, 137}}
+    end
+
     context
   end
 
@@ -687,6 +765,12 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     assert text =~ "`npm run dev`"
 
     # The command itself was ended as interrupted, and Codex was sent the message.
+    World.await_state(
+      context,
+      context.thread,
+      &(&1.entities["run"][context.continuation_message["runId"]]["status"] in ~w(running waiting completed))
+    )
+
     assert %{"status" => "interrupted"} =
              World.state(context, context.thread).entities["turn-item"]["turn-item:codex:cmd-bg"]
 

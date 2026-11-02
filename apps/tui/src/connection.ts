@@ -55,6 +55,7 @@ import {
   type VcsStatusRemoteResult,
   type VcsStatusResult,
   type VcsSwitchRefResult,
+  McSettingsDocument,
   WS_METHODS,
 } from "@hal-c2/contracts";
 import {
@@ -720,12 +721,8 @@ const decodeMoveResult = Schema.decodeUnknownSync(ThreadMoveResult);
 const decodePlacement = Schema.decodeUnknownSync(ThreadPlacement);
 
 /** The MC's settings document as stored: a client edits the keys it knows and keeps the rest. */
-const McSettings = Schema.Struct({
-  settings: Schema.Record(Schema.String, Schema.Unknown),
-  version: Schema.Int,
-});
-export type McSettings = typeof McSettings.Type;
-const decodeSettings = Schema.decodeUnknownSync(McSettings);
+export type McSettings = McSettingsDocument;
+const decodeSettings = Schema.decodeUnknownSync(McSettingsDocument);
 
 /** The MC refused a settings write because another client wrote first. */
 const isStaleSettings = (error: unknown): boolean =>
@@ -907,7 +904,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
 
   return {
     ...makeFeatureClient(runtime),
-    ...makeTuiSettingsClient(runtime),
+    ...makeTuiSettingsClient(runtime, origin),
     hostPlatform,
     browseFilesystem: (partialPath, cwd) =>
       runtime.runPromise(

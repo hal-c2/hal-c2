@@ -24,14 +24,30 @@
 namespace {
 
 const QStringList kDefaultGlobs{
+    QStringLiteral("files/file-viewer-and-editing.feature"),
     QStringLiteral("mobile/pairing-and-environments.feature"),
     QStringLiteral("mobile/home-and-thread-list.feature"),
     QStringLiteral("mobile/composer.feature"),
     QStringLiteral("mobile/navigation-and-deep-links.feature"),
     QStringLiteral("mobile/offline-and-lifecycle.feature"),
     QStringLiteral("mobile/tablet-and-hardware-keyboard.feature"),
+    QStringLiteral("mobile/notifications.feature"),
+    QStringLiteral("mobile/spaces.feature"),
+    QStringLiteral("space/pages.feature"),
+    QStringLiteral("space/page-history.feature"),
+    QStringLiteral("space/agent-in-page.feature"),
+    QStringLiteral("space/self-updating-pages.feature"),
+    QStringLiteral("space/visualize.feature"),
+    QStringLiteral("space/slides.feature"),
+    QStringLiteral("space/sites.feature"),
+    QStringLiteral("space/images.feature"),
+    QStringLiteral("space/presence.feature"),
+    QStringLiteral("space/markdown.feature"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
     QStringLiteral("threads/sidebar-list.feature:*plugin*"),
+    QStringLiteral("providers/codex.feature:A plan Codex marked finished*"),
+    QStringLiteral("settings/updates.feature"),
+    QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

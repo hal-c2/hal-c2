@@ -1,8 +1,9 @@
 defmodule HalC2.Steps.Files.ProjectFile do
   @moduledoc """
   Steps for `features/files/project-file.feature`: how deep `vcs.createWorktree`
-  fills submodules (the checkout's hal-c2.json against the project's settings), and
-  the icon hal-c2.json names. The checkout gets a submodule "middle" that has its own
+  fills submodules (the checkout's hal-c2.json against the project's settings), which
+  setup script a thread's new worktree runs (`HalC2.WorktreeSetup`, each script writing
+  its name to `ran.txt` in the worktree), and the icon hal-c2.json names. The checkout gets a submodule "middle" that has its own
   submodule "inner", each holding a README.md.
   """
   use Cucumber.StepDefinition
@@ -63,6 +64,118 @@ defmodule HalC2.Steps.Files.ProjectFile do
   step "its submodules are filled at every level", context do
     assert filled?(context, "middle")
     assert filled?(context, "middle/inner")
+    context
+  end
+
+  # --- the setup script -----------------------------------------------------------------
+
+  step "the checkout's hal-c2.json marks {string} to run on new worktrees",
+       %{args: [name]} = context do
+    commit_hal_c2_json(context, project_file([setup(name)]))
+  end
+
+  step "the checkout's hal-c2.json marks {string} and then {string} to run on new worktrees",
+       %{args: [first, second]} = context do
+    windows = %{
+      setup(second)
+      | "command" => "New-Item -ItemType File -Path ran.txt -Value '#{second}'"
+    }
+
+    commit_hal_c2_json(context, project_file([setup(first), Map.delete(windows, "async")]))
+  end
+
+  step "the checkout's hal-c2.json marks {string} to run on new worktrees with an unknown icon",
+       %{args: [name]} = context do
+    context
+    |> World.capture_log()
+    |> commit_hal_c2_json(project_file([Map.put(setup(name), "icon", "rocket")]))
+  end
+
+  step "the project folder of {string} has an uncommitted hal-c2.json marking {string} to run on new worktrees",
+       %{args: [project, name]} = context do
+    File.write!(
+      Path.join(World.project(context, project).root, "hal-c2.json"),
+      project_file([setup(name)])
+    )
+
+    context
+  end
+
+  step "{string} has no saved actions", %{args: [project]} = context do
+    World.await_row(World.project(context, project).id, &(&1["scripts"] in [nil, []]))
+    context
+  end
+
+  step "{string} has the saved action {string} marked to run on new worktrees",
+       %{args: [project, name]} = context do
+    id = World.project(context, project).id
+    scripts = [Map.put(setup(name), "id", World.slug(name))]
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.update",
+        "projectId" => id,
+        "scripts" => scripts
+      })
+
+    World.await_row(id, &(&1["scripts"] == scripts))
+    context
+  end
+
+  step "the branch {string} changes the command of {string}", %{args: [branch, name]} = context do
+    changed = %{setup(name) | "command" => "echo 'changed' > ran.txt"}
+    commit_on_branch(context, branch, project_file([changed]))
+  end
+
+  step "the branch {string} adds a hal-c2.json marking {string} to run on new worktrees",
+       %{args: [branch, name]} = context do
+    commit_on_branch(context, branch, project_file([setup(name)]))
+  end
+
+  step "a thread starts in a new worktree of {string}", %{args: [project]} = context do
+    context |> World.agents() |> World.launch_in_worktree(project)
+  end
+
+  step "a thread starts in a new worktree of {string} from {string}",
+       %{args: [project, branch]} = context do
+    context
+    |> World.agents()
+    |> World.launch_in_worktree(project, "list the files", %{"baseRef" => branch})
+  end
+
+  step "the new worktree skips the setup script because it differs from the main checkout's",
+       context do
+    {snapshot, context} = setup_done(context)
+
+    assert %{
+             "status" => "skipped",
+             "detail" =>
+               "this branch's hal-c2.json setup script differs from the main checkout's, so it was not run"
+           } = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+
+    assert World.setup_stage(snapshot, "agent") == "done"
+    refute File.exists?(Path.join(snapshot["worktreePath"], "ran.txt"))
+    context
+  end
+
+  step "{string} runs in the new worktree", %{args: [name]} = context do
+    {snapshot, context} = setup_done(context)
+    assert World.setup_stage(snapshot, "setup-script") == "done"
+    assert %{"name" => ^name} = snapshot["setupScript"]
+    assert File.read!(Path.join(snapshot["worktreePath"], "ran.txt")) == name <> "\n"
+    context
+  end
+
+  step "the new worktree runs no setup script", context do
+    {snapshot, context} = setup_done(context)
+    assert World.setup_stage(snapshot, "setup-script") == "skipped"
+    assert World.setup_stage(snapshot, "agent") == "done"
+    refute File.exists?(Path.join(snapshot["worktreePath"], "ran.txt"))
+    context
+  end
+
+  step "a warning is logged that the project file was ignored", context do
+    assert World.logged(context) =~ "ignoring the project file in"
     context
   end
 
@@ -137,6 +250,29 @@ defmodule HalC2.Steps.Files.ProjectFile do
     World.git!(root, ~w(commit -q -m hal-c2.json))
     context
   end
+
+  # Commits hal-c2.json on a new `branch`, leaving the checkout where it was.
+  defp commit_on_branch(context, branch, text) do
+    root = World.project(context).root
+    World.git!(root, ["checkout", "-q", "-b", branch])
+    commit_hal_c2_json(context, text)
+    World.git!(root, ["checkout", "-q", "-"])
+    context
+  end
+
+  defp project_file(scripts), do: JSON.encode!(%{"scripts" => scripts})
+
+  # A script that blocks the agent until it has written its name to ran.txt.
+  defp setup(name),
+    do: %{
+      "name" => name,
+      "command" => "echo '#{name}' > ran.txt",
+      "icon" => "configure",
+      "runOnWorktreeCreate" => true,
+      "async" => false
+    }
+
+  defp setup_done(context), do: World.await_setup(context, &(&1["phase"] != "running"))
 
   defp project_setting(context, mode) do
     {settings, version} = HalC2.Settings.get()

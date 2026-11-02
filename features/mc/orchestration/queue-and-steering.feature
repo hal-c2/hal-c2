@@ -146,9 +146,38 @@ Feature: Queueing, steering and restarting
   Scenario: A steer sent twice at once reaches the provider once
     Given "t1" has a running turn on "codex"
     When the user's client sends the steer "Also" to "t1" twice at once
-    Then both sends succeed
+    Then the first send succeeds
+    And the repeat is told "Also" is still being sent
     And Codex is asked to take "Also" once
     And "Also" is in the running turn once
+    And sending "Also" again now succeeds
+
+  # Nobody hears a message was sent while the provider can still refuse it.
+  @mc
+  Scenario: A steer sent twice at once that the provider refuses is reported to both sends
+    Given "t1" has a running turn on "codex"
+    And the provider refuses the steer
+    When the user's client sends the steer "Also" to "t1" twice at once
+    Then the first send fails saying Codex did not take the message into its running turn
+    And the repeat is told "Also" is still being sent
+    And "Also" is neither queued nor added to the running turn
+
+  # A refusal can still drop the message once its turn ended.
+  @mc
+  Scenario: A repeat of a steer whose turn ended while the provider was asked is still being sent
+    Given "t1" has a running turn on "codex"
+    And the provider is holding the steer "Also" sent to "t1"
+    And the running turn of "t1" ends
+    When the user's client sends the steer "Also" again
+    Then the repeat is told "Also" is still being sent
+
+  # No send is left to answer for it, so a retry does not wait for one.
+  @mc
+  Scenario: A steer an MC restart cut off reads as sent
+    Given "t1" has a running turn on "codex"
+    And the provider is holding the steer "Also" sent to "t1"
+    When the MC restarts while its runtime for "t1" is stuck on the provider
+    Then sending "Also" again now succeeds
 
   @mc
   Scenario: A steer the provider takes as its turn ends is shown before its answer

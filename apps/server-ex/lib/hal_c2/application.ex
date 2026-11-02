@@ -50,6 +50,9 @@ defmodule HalC2.Application do
       # Turns this MC was running when it stopped end as interrupted.
       %{id: :recovery, start: {HalC2.Orchestration.Recovery, :start_link, []}},
       HalC2.Orchestration.TurnWatch,
+      # The recorded side effects of accepted commands, replayed or cancelled
+      # for what the last boot left unfinished.
+      HalC2.Orchestration.Effects,
       Supervisor.child_spec({Task, &HalC2.Search.backfill/0}, id: :search_backfill),
       {Registry, keys: :unique, name: HalC2.Codex.Registry},
       {Registry, keys: :unique, name: HalC2.Claude.Registry},
@@ -62,7 +65,12 @@ defmodule HalC2.Application do
       {Registry, keys: :unique, name: HalC2.Vcs.Registry},
       HalC2.Workspace,
       HalC2.WorktreeSetup,
+      HalC2.Space.Presence,
+      # Draws Mermaid diagrams for every client, and keeps what it drew.
+      HalC2.Mermaid,
       HalC2.ScheduledTasks,
+      # Pages that are project files follow them, from what changed while it was stopped.
+      HalC2.Space.Files,
       HalC2.ProjectClones,
       HalC2.Preview,
       # Dev servers on another MC, reached from this machine's browser.
@@ -76,6 +84,8 @@ defmodule HalC2.Application do
       HalC2.PullRequests.Sync,
       HalC2.PullRequests.Wakes,
       HalC2.Orchestration.Settlement,
+      # Agent alerts to the phones, through their UnifiedPush distributors.
+      HalC2.Push,
       # Threads stopped on a usage limit resume at the reset, where the user asked.
       HalC2.Orchestration.LimitRecovery,
       HalC2.Usage,
@@ -84,6 +94,7 @@ defmodule HalC2.Application do
       # The Slack connection plugins borrow, made again from the stored tokens.
       HalC2.Slack,
       HalC2.Upgrade,
+      HalC2.DesktopUpdate,
       HalC2.BackgroundPolicy,
       HalC2.EnvironmentThemes,
       HalC2.ProviderUsageLimits,
@@ -93,7 +104,7 @@ defmodule HalC2.Application do
       {Registry, keys: :unique, name: HalC2.ProviderAuth.Registry},
       {DynamicSupervisor, name: HalC2.ProviderAuth.Supervisor, strategy: :one_for_one},
       {DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one},
-      Supervisor.child_spec({Task, &HalC2.Codex.Provider.load/0}, id: :codex_models),
+      Supervisor.child_spec({Task, &HalC2.Codex.Provider.boot/0}, id: :codex_models),
       Supervisor.child_spec({Task, &HalC2.Claude.Provider.load/0}, id: :claude_models),
       Supervisor.child_spec({Task, &HalC2.ModelManifest.refresh/0}, id: :model_manifest),
       {Registry, keys: :unique, name: HalC2.Acp.Registry},
@@ -101,7 +112,11 @@ defmodule HalC2.Application do
       {Registry, keys: :unique, name: HalC2.Muse.Registry},
       HalC2.Acp.UrlAuth,
       HalC2.Acp.Antigravity.Installation,
+      # Owns the table of live Antigravity runtime temp directories.
+      HalC2.Acp.Antigravity.SessionFiles,
       Supervisor.child_spec({Task, &HalC2.Acp.load/0}, id: :acp_models),
+      # Before the listener: a message reaching a thread first would start a second program.
+      %{id: :reattach, start: {HalC2.Orchestration.Recovery, :start_reattach, []}},
       HalC2.Web,
       # server-runtime.json, once the listener is bound; removed first on the way down.
       HalC2.RuntimeRecord,

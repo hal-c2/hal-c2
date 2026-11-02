@@ -161,12 +161,14 @@ public:
   // Whether `target`'s draft has files still on their way to the MC, or a
   // send in flight that carries the draft's attachments.
   bool attachmentsPending(const QString& target) const;
+  // More than one model is chosen for the draft, each to get a thread of its own.
+  bool choseSeveralModels(const QString& draftId) const { return m_drafts.value(draftId).multipleModels.has_value(); }
   // Adds `text` after the route's draft, a space apart from what is there
   // (the Files tab's Add to chat); false with no thread or draft open.
   bool insertAtEnd(const QString& text);
   // A draft's attachment as this machine holds it, for a viewer: {id, name,
-  // mimeType, url (an image's bytes as a data URL), text (a file's, when it
-  // is text this machine can read)}; empty when it is gone.
+  // mimeType, url (an image's bytes as a data URL), text (a file's as captured,
+  // when it is text this machine can read), truncated}; empty when it is gone.
   QVariantMap attachmentPreview(const QString& id);
 
 private:
@@ -184,6 +186,10 @@ private:
     // Where a file's bytes are: a path on this machine, or a pasted text.
     QString path;
     QByteArray content;
+    // A picked file as it was when added, up to what a viewer shows: the file
+    // on disk may have changed since.
+    QByteArray captured;
+    bool capturedWhole = false;
     bool pastedText = false;
     // A file's upload: "uploading", "failed" (why, in `error`), or empty once
     // the MC has it as `remoteId` on `environmentId`.
@@ -405,6 +411,8 @@ private:
   QList<composer::Suggestion> suggestions(const QString& target, const std::optional<composer::Trigger>& trigger) const;
   // Searches the workspace for an @ query the menu has no answer for yet.
   void searchPaths(const QString& target);
+  bool canSearchPaths(const QString& target) const;
+  void refreshPathSearch();
 
   // The catalogue of the route's environment.
   void refreshCatalogue();
@@ -414,6 +422,8 @@ private:
   QJsonObject selection(const QString& target) const;
   // Plan mode needs the setting and a provider that has it.
   bool planModeOn(const composer::Instance* instance) const;
+  void setThreadRuntimeMode(const QString& target, const QString& mode);
+  void settleRuntimeModes();
   QString runtimeModeOf(const QString& target) const;
   QString interactionModeOf(const QString& target) const;
   QVariant setting(const QString& key) const;
@@ -480,6 +490,17 @@ private:
   // Requests answered and waiting for the MC, and ones it said are gone.
   QSet<QString> m_responding;
   QSet<QString> m_closed;
+  // An access change sent to the MC, until the thread's row holds it: once the
+  // MC took it, the version of its rows that does.
+  struct SettingMode {
+    QString mode;
+    bool accepted = false;
+    QString mc;
+    QString epoch;  // none from an MC that names no version
+    qint64 rev = 0;
+  };
+  // By draft target.
+  QHash<QString, SettingMode> m_settingMode;
   // Drafts whose first send is on the way.
   QSet<QString> m_launching;
   // The thumbnails of the draft images the composer has shown, by attachment id.
@@ -491,11 +512,14 @@ private:
   // This window's stash list is open.
   bool m_stashOpen = false;
   QList<composer::Instance> m_catalogue;
-  // The @ search the menu shows: its target and query, and what came back.
+  // The @ search the menu shows: its target, query and checkout, and what came back.
   struct PathSearch {
     QString target;
     QString query;
+    QString environmentId;
+    QString cwd;
     bool done = false;
+    bool failed = false;
     QList<std::pair<QString, bool>> entries;
     int request = 0;
   };

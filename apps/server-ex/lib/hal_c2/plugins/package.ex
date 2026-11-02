@@ -21,7 +21,8 @@ defmodule HalC2.Plugins.Package do
     "slack:write" => "Post in Slack as the bot",
     "threads:read" => "Read threads",
     "threads:create" => "Start threads that run agents",
-    "threads:organize" => "Settle threads it started and show or hide them in the thread list",
+    "threads:organize" =>
+      "Settle and stop threads it started, and show or hide them in the thread list",
     "agentTools" => "Offer tools to agents"
   }
 

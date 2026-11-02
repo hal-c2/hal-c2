@@ -221,6 +221,18 @@ void ComposerController::activate() {
   connect(m_store, &ShellStore::changed, this, [this] {
     carryDrafts();
     reconcileUnsent();
+    settleRuntimeModes();
+    refreshPathSearch();
+    publish();
+  });
+  // A dropped connection fails its calls while the store still says online.
+  connect(m_client, &McClient::readyChanged, this, [this] {
+    refreshPathSearch();
+    publish();
+  });
+  // The route's checkout arrived or moved, so an @ word can now be searched.
+  connect(shell->controller<WorkspaceController>(), &WorkspaceController::placeChanged, this, [this] {
+    refreshPathSearch();
     publish();
   });
   // The route environment's providers are the picker's catalogue.
@@ -329,6 +341,7 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     m_drafts[target].runtimeMode = mode;
     save();
     publish();
+    setThreadRuntimeMode(target, mode);
     return true;
   }
   if (action == QLatin1String("composer.interactionMode.set")) {
@@ -688,7 +701,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   if (planFollowUp) interactionMode = implement ? QStringLiteral("default") : QStringLiteral("plan");
   if (thread->interactionMode.isEmpty() && interactionMode == QLatin1String("default")) interactionMode.clear();
   QList<QJsonObject> commands;
-  if (!runtimeMode.isEmpty() && runtimeMode != thread->runtimeMode) {
+  if (!runtimeMode.isEmpty() && runtimeMode != thread->runtimeMode && m_settingMode.value(target).mode != runtimeMode) {
     commands.append({
         {QStringLiteral("type"), QStringLiteral("thread.runtime-mode.set")},
         {QStringLiteral("threadId"), thread->id},
@@ -990,6 +1003,7 @@ bool ComposerController::toggleMultipleModel(const QString& target, const QStrin
         QStringLiteral("warning"), QStringLiteral("Only one model can be chosen"),
         QStringLiteral("Multiple models need a new thread in a Git project. Each gets its own worktree."));
     m_drafts[target].multipleModels.reset();
+    NativeShell::of(this)->controller<WorkspaceController>()->publish();
     return selectModel(target, instanceId, model);
   }
   Draft& kept = m_drafts[target];
@@ -1007,6 +1021,7 @@ bool ComposerController::toggleMultipleModel(const QString& target, const QStrin
     if (!kept.multipleModels) m_bridge->dispatch(QStringLiteral("workspace.envMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("worktree")}});
     m_drafts[target].multipleModels = models;
   }
+  NativeShell::of(this)->controller<WorkspaceController>()->publish();
   save();
   publish();
   return true;
@@ -1708,6 +1723,8 @@ void ComposerController::uploadFile(const QString& id, const QString& environmen
       return;
     }
     bytes = file.readAll();
+    attachment->captured = bytes.left(1024 * 1024);
+    attachment->capturedWhole = bytes.size() <= 1024 * 1024;
   }
   const QString mimeType = attachment->mimeType;
   publish();
@@ -2272,6 +2289,7 @@ void ComposerController::follow() {
     }
   }
   reconcileUnsent();
+  refreshPathSearch();
   publish();
 }
 
@@ -2498,13 +2516,24 @@ QVariantMap ComposerController::attachmentPreview(const QString& id) {
     preview.insert(QStringLiteral("url"), found->dataUrl);
     return preview;
   }
-  // What was pasted, or the file where it was picked from, up to the megabyte the viewer shows.
-  QByteArray bytes = found->content;
+  // What was pasted or captured; a draft restored from disk has only the file where it was picked from.
+  QByteArray bytes = found->content.isEmpty() ? found->captured : found->content;
+  bool whole = found->content.isEmpty() ? found->capturedWhole : true;
   if (bytes.isEmpty() && !found->path.isEmpty()) {
     QFile file(found->path);
-    if (file.open(QIODevice::ReadOnly)) bytes = file.read(1024 * 1024);
+    if (file.open(QIODevice::ReadOnly)) {
+      bytes = file.read(1024 * 1024);
+      whole = file.atEnd();
+    }
   }
-  if (!bytes.contains('\0')) preview.insert(QStringLiteral("text"), QString::fromUtf8(bytes));
+  // A player or document view reads the whole file, not this preview's first part.
+  if (!found->path.isEmpty()) preview.insert(QStringLiteral("path"), found->path);
+  if (whole) preview.insert(QStringLiteral("bytes"), bytes);
+  bytes.truncate(1024 * 1024);
+  if (!bytes.contains('\0')) {
+    preview.insert(QStringLiteral("text"), QString::fromUtf8(bytes));
+    preview.insert(QStringLiteral("truncated"), !whole);
+  }
   return preview;
 }
 
@@ -2579,6 +2608,66 @@ bool ComposerController::slashUsageLimits(const QString& target, const QString& 
   return true;
 }
 
+// An existing thread takes a new access mode at once, as the TUI's does: a turn
+// waiting on approvals blocks the composer, so the next send may never come, and
+// the provider can apply it to the running turn. The draft shows it meanwhile, and
+// goes once the MC holds it; a refused change goes too, so the picker shows the
+// mode the thread really has. A pick back to the thread's mode still goes while
+// another is on its way, which would otherwise land after it.
+void ComposerController::setThreadRuntimeMode(const QString& target, const QString& mode) {
+  const auto thread = m_store->thread(target);
+  if (!thread || (thread->runtimeMode == mode && !m_settingMode.contains(target))) return;
+  m_settingMode.insert(target, {mode});
+  m_client->dispatchCommand(this, thread->environmentId,
+                            {
+                                {QStringLiteral("type"), QStringLiteral("thread.runtime-mode.set")},
+                                {QStringLiteral("threadId"), thread->id},
+                                {QStringLiteral("runtimeMode"), mode},
+                            },
+                            [this, target, mode](const QJsonValue& result, const std::optional<QString>& error) {
+                              if (m_settingMode.value(target).mode != mode) return;
+                              if (!error) {
+                                const QJsonObject shell = result.toObject().value(QLatin1String("shell")).toObject();
+                                SettingMode& setting = m_settingMode[target];
+                                setting.accepted = true;
+                                setting.mc = shell.value(QLatin1String("mc")).toString();
+                                setting.epoch = shell.value(QLatin1String("epoch")).toString();
+                                setting.rev = qint64(shell.value(QLatin1String("rev")).toDouble());
+                                return settleRuntimeModes();
+                              }
+                              m_settingMode.remove(target);
+                              toast(QStringLiteral("Failed to change the thread's access."), *error);
+                              if (m_drafts.value(target).runtimeMode != mode) return;
+                              m_drafts[target].runtimeMode.clear();
+                              save();
+                              publish();
+                            });
+}
+
+// Drops the drafts of access changes the threads' rows now hold, whatever mode
+// they show: the row and the MC's answer travel apart, and another device's
+// change can land with ours or after it.
+void ComposerController::settleRuntimeModes() {
+  bool changed = false;
+  for (auto it = m_settingMode.begin(); it != m_settingMode.end();) {
+    const auto thread = m_store->thread(it.key());
+    // From an MC that names no version, the row is as good as it gets.
+    const bool landed = it->accepted && (it->epoch.isEmpty() || m_store->reached(it->mc, it->epoch, it->rev));
+    if (thread && !landed) {
+      ++it;
+      continue;
+    }
+    if (m_drafts.contains(it.key()) && m_drafts[it.key()].runtimeMode == it->mode) {
+      m_drafts[it.key()].runtimeMode.clear();
+      changed = true;
+    }
+    it = m_settingMode.erase(it);
+  }
+  if (!changed) return;
+  save();
+  publish();
+}
+
 void ComposerController::setInteractionMode(const QString& target, const QString& mode) {
   if (mode != QLatin1String("plan") && mode != QLatin1String("default")) return;
   if (mode == QLatin1String("plan") && !planModeOn(instanceOf(selection(target)))) return;
@@ -2620,6 +2709,7 @@ bool ComposerController::selectModel(const QString& target, const QString& insta
   }
   kept.modelSelection = chosen;
   kept.multipleModels.reset();
+  NativeShell::of(this)->controller<WorkspaceController>()->publish();
   save();
   publish();
   return true;
@@ -2704,20 +2794,43 @@ void ComposerController::searchPaths(const QString& target) {
   const std::optional<composer::Trigger> trigger = composer::trigger(draft(target), m_drafts.value(target).cursor);
   if (!trigger || trigger->kind != QLatin1String("path") || trigger->query.isEmpty()) return;
   if (m_paths.target == target && m_paths.query == trigger->query) return;
+  if (!canSearchPaths(target)) return;
   const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
-  if (!place || place->cwd().isEmpty() || !m_store->environmentOnline(place->environmentId)) return;
-  m_paths = {target, trigger->query, false, {}, m_paths.request + 1};
+  m_paths = {target, trigger->query, place->environmentId, place->cwd(), false, false, {}, m_paths.request + 1};
   const int request = m_paths.request;
   WorkspaceFiles::searchEntries(m_client, this, place->environmentId, place->cwd(), trigger->query, 80,
                                 [this, request](const QList<FileTreeModel::Entry>& entries, bool,
-                                                const std::optional<QString>&) {
+                                                const std::optional<QString>& error) {
                                   if (request != m_paths.request) return;
                                   m_paths.done = true;
+                                  m_paths.failed = error.has_value();
                                   for (const FileTreeModel::Entry& entry : entries) {
                                     m_paths.entries.append({entry.path, entry.directory});
                                   }
                                   publish();
                                 });
+}
+
+// Whether the route's own checkout is known and its environment reachable.
+bool ComposerController::canSearchPaths(const QString& target) const {
+  const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
+  if (!m_client->isReady() || !place || place->cwd().isEmpty() || !m_store->environmentOnline(place->environmentId)) return false;
+  return (place->draftId.isEmpty() ? place->threadKey() : place->draftId) == target;
+}
+
+// A search the environment took down with it (unanswered, or failed) is
+// forgotten, as is one of a checkout the route has left, so the same word is
+// asked again once it can be.
+void ComposerController::refreshPathSearch() {
+  const QString target = this->target();
+  if (target.isEmpty()) return;
+  bool stale = (!m_paths.done || m_paths.failed) && !canSearchPaths(m_paths.target);
+  if (m_paths.target == target && canSearchPaths(target)) {
+    const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
+    stale = stale || m_paths.environmentId != place->environmentId || m_paths.cwd != place->cwd();
+  }
+  if (stale && !m_paths.query.isEmpty()) m_paths = {{}, {}, {}, {}, false, false, {}, m_paths.request + 1};
+  searchPaths(target);
 }
 
 void ComposerController::refreshCatalogue() {
@@ -2799,11 +2912,16 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   }
   QVariant emptyText = QVariant::fromValue(nullptr);
   if (trigger && suggestionList.isEmpty()) {
-    // A path search says nothing until it has answered. A bare `@` is not
-    // searched, so it says so at once, as the web's menu did.
-    const bool waiting = trigger->kind == QLatin1String("path") && !trigger->query.isEmpty() &&
-                         (m_paths.target != target || m_paths.query != trigger->query || !m_paths.done);
-    if (!waiting && !composer::emptyText(trigger->kind).isEmpty()) emptyText = composer::emptyText(trigger->kind);
+    // A path search says nothing until it has answered, and that it could not
+    // search when it cannot or failed. A bare `@` is not searched, so it says
+    // nothing matches at once, as the web's menu did.
+    const bool searched = trigger->kind == QLatin1String("path") && !trigger->query.isEmpty();
+    const bool answered = m_paths.target == target && m_paths.query == trigger->query && m_paths.done;
+    if (searched && (answered ? m_paths.failed : !canSearchPaths(target))) {
+      emptyText = composer::pathSearchUnavailableText();
+    } else if ((!searched || answered) && !composer::emptyText(trigger->kind).isEmpty()) {
+      emptyText = composer::emptyText(trigger->kind);
+    }
   }
 
   const QVariantList attachments = shownAttachments(kept.attachments, true);

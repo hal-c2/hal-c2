@@ -142,7 +142,8 @@ defmodule HalC2.Steps.Timeline.ApprovalsAndQuestions do
 
     assert Enum.any?(
              StreamState.list(state, "turn-item"),
-             &(&1["requestId"] == context.request_id and &1["prompt"] == context.command)
+             &(&1["requestId"] == context.request_id and
+                 &1["prompt"] == "Bash: " <> context.command)
            )
 
     # Asked by a new Claude process continuing the same conversation.

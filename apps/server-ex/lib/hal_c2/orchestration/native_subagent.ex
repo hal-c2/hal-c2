@@ -30,7 +30,9 @@ defmodule HalC2.Orchestration.NativeSubagent do
     item_id = "turn-item:subagent:#{id}"
     ref = Entities.provider_ref(native, driver)
     prompt = task["prompt"] || ""
-    parent = stream(ids.thread) |> StreamState.get("thread") |> Map.get(ids.thread, %{})
+    parent_state = stream(ids.thread)
+    parent = parent_state |> StreamState.get("thread") |> Map.get(ids.thread, %{})
+    ordinal = length(StreamState.list(parent_state, "subagent")) + 1
 
     HalC2.Streams.transact(ids.thread, :thread, fn state ->
       item =
@@ -94,7 +96,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
         %{
           "threadId" => child_id,
           "projectId" => parent["projectId"],
-          "title" => task["title"] || title(prompt),
+          "title" => title(parent["title"] || "", task["title"], prompt, ordinal),
           "modelSelection" =>
             if(task["model"],
               do: Map.put(parent["modelSelection"] || %{}, "model", task["model"]),
@@ -108,6 +110,14 @@ defmodule HalC2.Orchestration.NativeSubagent do
         at
       )
       |> Map.merge(%{
+        # A subagent starts awake, whatever state its parent is in.
+        "archivedAt" => nil,
+        "settledOverride" => nil,
+        "settledAt" => nil,
+        "snoozedUntil" => nil,
+        "snoozedAt" => nil,
+        "lastVisitedAt" => nil,
+        "deletedAt" => nil,
         "worktreePath" => parent["worktreePath"],
         "branch" => parent["branch"],
         "lineage" => %{
@@ -271,6 +281,23 @@ defmodule HalC2.Orchestration.NativeSubagent do
     sub
   end
 
+  @doc "Shows the subagent as `status` while it runs: its entity, node and turn item."
+  def show(sub, status) do
+    at = Entities.now()
+    put = &Map.merge(&1, %{"status" => status, "updatedAt" => at})
+
+    HalC2.Streams.transact(sub.thread, :thread, fn state ->
+      {[
+         Orchestration.upsert(state, "subagent", sub.id, put),
+         Orchestration.upsert(state, "node", sub.id, put),
+         Orchestration.upsert(state, "turn-item", sub.item, put)
+       ]
+       |> Enum.filter(&is_tuple/1), :ok}
+    end)
+
+    sub
+  end
+
   @doc "Shows what the running subagent is doing now, on its entity and its turn item."
   def progress(sub, text, opts \\ []) do
     at = Entities.now()
@@ -319,29 +346,38 @@ defmodule HalC2.Orchestration.NativeSubagent do
       |> then(&if(status in @terminal, do: Map.put(&1, "completedAt", at), else: &1))
 
     HalC2.Streams.transact(sub.child, :thread, fn state ->
+      # An item can become a message after it was created as something else (a block
+      # Claude reported under another's id), so the message is created when missing.
+      message =
+        cond do
+          message_id == nil ->
+            nil
+
+          StreamState.get(state, "message")[message_id] ->
+            Orchestration.upsert(
+              state,
+              "message",
+              message_id,
+              &Map.merge(&1, %{"text" => fields["text"], "updatedAt" => at})
+            )
+
+          true ->
+            Orchestration.create(
+              "message",
+              message_id,
+              Entities.message(ids, message_id, "assistant", fields["text"] || "", false, at, %{
+                "createdBy" => "agent",
+                "creationSource" => "provider"
+              })
+            )
+        end
+
       changes =
         if StreamState.get(state, "turn-item")[item_id] do
-          [
-            Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)),
-            message_id &&
-              Orchestration.upsert(
-                state,
-                "message",
-                message_id,
-                &Map.merge(&1, %{"text" => fields["text"], "updatedAt" => at})
-              )
-          ]
+          [Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)), message]
         else
           [
-            message_id &&
-              Orchestration.create(
-                "message",
-                message_id,
-                Entities.message(ids, message_id, "assistant", fields["text"] || "", false, at, %{
-                  "createdBy" => "agent",
-                  "creationSource" => "provider"
-                })
-              ),
+            message,
             Orchestration.create(
               "turn-item",
               item_id,
@@ -492,7 +528,28 @@ defmodule HalC2.Orchestration.NativeSubagent do
     [{"message", message_id, message}, {"turn-item", item_id, item}]
   end
 
-  defp title(prompt), do: prompt |> String.split("\n") |> hd() |> String.slice(0, 80)
+  # The child's title (upstream `subagentThreadTitle`): its given title, else its
+  # prompt, cut to 72 characters; with neither, it is named after its parent.
+  defp title(parent_title, given, prompt, ordinal) do
+    case trimmed(given) || trimmed(prompt) do
+      nil ->
+        "#{parent_title} subagent #{ordinal}"
+
+      detail ->
+        if String.length(detail) > 72,
+          do: String.slice(detail, 0, 69) <> "...",
+          else: detail
+    end
+  end
+
+  defp trimmed(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      text -> text
+    end
+  end
+
+  defp trimmed(_value), do: nil
 
   defp nilify(""), do: nil
   defp nilify(text), do: text

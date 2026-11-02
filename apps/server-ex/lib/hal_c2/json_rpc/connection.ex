@@ -5,10 +5,19 @@ defmodule HalC2.JsonRpc.Connection do
   Callers use `call/4`, `request/5` and `notify/3`. Incoming notifications and server-to-client
   requests go to the `:handler` pid as `{:json_rpc, conn, message}`; the handler
   answers requests with `respond/3`. If the subprocess exits, pending calls fail with
-  `{:error, :closed}` and the connection stops. With `:log` (a thread id), every
+  `{:error, :closed}` and the connection stops; with `:program` (the subprocess's
+  name, as its user knows it) they fail with the exit instead, in the words that
+  program's own client used (`"Codex App Server process exited with code 1"`). With `:log` (a thread id), every
   line the subprocess sends also goes to `HalC2.ProviderLog`. With `:stderr_prefix`,
   stderr lines starting with it reach the handler as `{:invalid, line}`, like a
   non-JSON stdout line, and are not logged; the rest of stderr is discarded.
+
+  With `:durable` (a thread id) the subprocess outlives the MC. After each batch of
+  output the handler then gets `{:json_rpc, conn, {:checkpoint, checkpoint}}` to save
+  with its state (`HalC2.Subprocess.Durable.save/3`), and `:adopt` starts a connection
+  on a program an earlier MC saved so. A call that was out when that MC went has no
+  caller any more: its reply reaches the handler as
+  `{:json_rpc, conn, {:response_after_restart, method, reply}}`.
 
   The state is versioned so a hot upgrade can migrate it in `code_change/3`.
   """
@@ -27,6 +36,9 @@ defmodule HalC2.JsonRpc.Connection do
           | {:env, [{String.t(), String.t()}]}
           | {:log, String.t() | nil}
           | {:stderr_prefix, String.t() | nil}
+          | {:program, String.t() | nil}
+          | {:durable, String.t() | nil}
+          | {:adopt, %{dir: String.t(), offset: non_neg_integer, channel: map}}
 
   @spec start_link([option]) :: GenServer.on_start()
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, hibernate_after: 15_000)
@@ -62,10 +74,9 @@ defmodule HalC2.JsonRpc.Connection do
   @impl true
   def init(opts) do
     Process.flag(:trap_exit, true)
-    cmd = Keyword.fetch!(opts, :cmd)
-    spawn_opts = Keyword.take(opts, [:cd, :env, :stderr_prefix])
+    adopt = opts[:adopt]
 
-    case Subprocess.start(cmd, spawn_opts) do
+    case subprocess(opts) do
       {:ok, sub} ->
         {:ok,
          %{
@@ -73,13 +84,29 @@ defmodule HalC2.JsonRpc.Connection do
            sub: sub,
            handler: Keyword.fetch!(opts, :handler),
            dialect: Keyword.get(opts, :dialect, :bare),
-           next_id: 1,
+           next_id: if(adopt, do: adopt.channel.next_id, else: 1),
            pending: %{},
-           log: Keyword.get(opts, :log)
+           methods: %{},
+           offset: if(adopt, do: adopt.offset, else: 0),
+           earlier: if(adopt, do: adopt.channel.methods, else: %{}),
+           log: Keyword.get(opts, :log),
+           program: Keyword.get(opts, :program),
+           exit_status: nil
          }}
 
       {:error, reason} ->
         {:stop, reason}
+    end
+  end
+
+  defp subprocess(opts) do
+    case opts[:adopt] do
+      %{dir: dir, offset: offset} ->
+        Subprocess.adopt(dir, offset, opts[:stderr_prefix])
+
+      nil ->
+        cmd = Keyword.fetch!(opts, :cmd)
+        Subprocess.start(cmd, Keyword.take(opts, [:cd, :env, :stderr_prefix, :durable]))
     end
   end
 
@@ -89,7 +116,13 @@ defmodule HalC2.JsonRpc.Connection do
 
     case Subprocess.write_line(state.sub, JsonRpc.request(state.dialect, id, method, params)) do
       :ok ->
-        {:noreply, %{state | next_id: id + 1, pending: Map.put(state.pending, id, from)}}
+        {:noreply,
+         checkpoint(%{
+           state
+           | next_id: id + 1,
+             pending: Map.put(state.pending, id, from),
+             methods: Map.put(state.methods, id, method)
+         })}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -101,12 +134,12 @@ defmodule HalC2.JsonRpc.Connection do
   @impl true
   def handle_cast({:notify, method, params}, state) do
     Subprocess.write_line(state.sub, JsonRpc.notification(state.dialect, method, params))
-    {:noreply, state}
+    {:noreply, checkpoint(state)}
   end
 
   def handle_cast({:respond, id, reply}, state) do
     Subprocess.write_line(state.sub, JsonRpc.response(state.dialect, id, reply))
-    {:noreply, state}
+    {:noreply, checkpoint(state)}
   end
 
   @impl true
@@ -116,27 +149,89 @@ defmodule HalC2.JsonRpc.Connection do
     {:noreply, state}
   end
 
+  def handle_info({:subprocess_offset, _reader, offset}, state),
+    do: {:noreply, checkpoint(%{state | offset: offset}, false)}
+
   def handle_info({:subprocess_stderr, _reader, lines}, state) do
     for line <- lines, do: send(state.handler, {:json_rpc, self(), {:invalid, line}})
     {:noreply, state}
   end
 
-  def handle_info({:subprocess_eof, _reader}, state), do: {:stop, :normal, state}
+  def handle_info({:subprocess_eof, _reader}, state) do
+    # The exit status is read here, while the subprocess can still be asked, so a
+    # call left open fails with the exit rather than a bare close.
+    state =
+      if state.program && state.exit_status == nil do
+        status =
+          case Subprocess.stop(state.sub, 1_000) do
+            {:ok, status} -> status
+            _ -> nil
+          end
+
+        %{state | exit_status: status}
+      else
+        state
+      end
+
+    {:stop, :normal, state}
+  catch
+    :exit, _ -> {:stop, :normal, state}
+  end
+
   def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
   def handle_info(_other, state), do: {:noreply, state}
 
   @impl true
   def terminate(_reason, state) do
-    for {_id, from} <- state.pending, do: GenServer.reply(from, {:error, :closed})
-    Subprocess.stop(state.sub)
+    error =
+      case {state.program, state.exit_status} do
+        {program, status} when is_binary(program) and is_integer(status) ->
+          %{"message" => "#{program} process exited with code #{status}"}
+
+        _ ->
+          :closed
+      end
+
+    for {_id, from} <- state.pending, do: GenServer.reply(from, {:error, error})
+    # The subprocess may already be gone (its exit is why this connection stops).
+    try do
+      Subprocess.stop(state.sub)
+    catch
+      :exit, _ -> :ok
+    end
   end
 
   @impl true
   def code_change(_old_vsn, state, _extra), do: {:ok, migrate(state)}
 
   # Every older state shape migrates forward here; new fields get defaults.
-  defp migrate(%{v: @state_version} = state), do: state
-  defp migrate(state), do: Map.put(state, :v, @state_version)
+  defp migrate(state),
+    do:
+      state
+      |> Map.put_new(:program, nil)
+      |> Map.put_new(:exit_status, nil)
+      |> Map.put_new(:methods, %{})
+      |> Map.put_new(:earlier, %{})
+      |> Map.put_new(:offset, 0)
+      |> Map.put(:v, @state_version)
+
+  # After what the program wrote and after what it was sent: one that goes quiet on a
+  # request (a long tool run) would otherwise leave a checkpoint that never heard of it.
+  defp checkpoint(state, wrote \\ true)
+
+  defp checkpoint(%{sub: %{durable: %{dir: dir}}} = state, wrote) do
+    checkpoint = %{
+      dir: dir,
+      wrote: wrote,
+      offset: state.offset,
+      channel: %{next_id: state.next_id, methods: Map.merge(state.earlier, state.methods)}
+    }
+
+    send(state.handler, {:json_rpc, self(), {:checkpoint, checkpoint}})
+    state
+  end
+
+  defp checkpoint(state, _wrote), do: state
 
   defp handle_line(line, state) do
     HalC2.ProviderLog.native(Map.get(state, :log), line)
@@ -145,7 +240,12 @@ defmodule HalC2.JsonRpc.Connection do
       {:response, id, reply} ->
         {from, pending} = Map.pop(state.pending, id)
         if from, do: GenServer.reply(from, reply)
-        %{state | pending: pending}
+        {method, earlier} = Map.pop(state.earlier, id)
+
+        if method,
+          do: send(state.handler, {:json_rpc, self(), {:response_after_restart, method, reply}})
+
+        %{state | pending: pending, earlier: earlier, methods: Map.delete(state.methods, id)}
 
       message ->
         send(state.handler, {:json_rpc, self(), message})

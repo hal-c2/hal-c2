@@ -343,6 +343,11 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "server.reportHostPowerState" ->
         {%{"onBattery" => false, "lowPowerMode" => false}, context}
 
+      # A paired client is not the desktop app, so this is refused as the contract says.
+      "server.reportDesktopUpdateStatus" ->
+        state = %{"enabled" => true, "status" => "idle", "currentVersion" => "1.2.3"}
+        {%{"version" => 1, "type" => "desktopUpdateStatus", "state" => state}, context}
+
       "pullRequests.list" ->
         {%{}, context}
 
@@ -460,7 +465,7 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "vcs." <> _ ->
         {%{"cwd" => f.root}, context}
 
-      "worktreeSetup.cancel" ->
+      "worktreeSetup." <> _ ->
         {%{"threadId" => f.thread}, context}
 
       "git.resolvePullRequest" ->
@@ -698,6 +703,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
 
         "cluster." <> _ ->
           [HalC2.Cluster]
+
+        push when push in ~w(hal-c2.registerPush hal-c2.unregisterPush) ->
+          [HalC2.Push]
 
         _ ->
           []

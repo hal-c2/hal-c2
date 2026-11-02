@@ -8,7 +8,10 @@ import type {
   ResourceTelemetrySnapshot,
   ScheduledTask,
   ServerSettings,
+  SpacePresenceViewer,
 } from "@hal-c2/contracts";
+
+import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 
 import type { TuiSettingsClient, UsageLimitsSnapshot } from "../../src/settingsClient.ts";
 
@@ -48,6 +51,24 @@ export interface FakeSettingsMc {
   /** Called when a client starts following the access list (send it the snapshot). */
   onAuthAccessSubscribe: (() => void) | null;
   readonly authAccessWatchers: () => number;
+  /** Serves `subscribeSpacePresence`: returns the leaving of the page. Unset, nobody else is on it. */
+  presence:
+    | ((
+        pageId: string,
+        onViewers: (viewers: ReadonlyArray<SpacePresenceViewer>) => void,
+      ) => () => void)
+    | null;
+  /**
+   * Serves `subscribeMcStream` (a Space's stream, the Spaces index): returns the
+   * unsubscribe. Unset, a stream sends nothing.
+   */
+  streams:
+    | ((
+        stream: string,
+        onFrame: (frame: EntityStreamFrame) => void,
+        onError?: (message: string) => void,
+      ) => () => void)
+    | null;
 }
 
 export function fakeSettingsMc(): FakeSettingsMc {
@@ -86,12 +107,25 @@ export function fakeSettingsMc(): FakeSettingsMc {
     },
     telemetryWatchers: () => telemetryWatchers.size,
     onTelemetrySubscribe: null,
+    presence: null,
+    streams: null,
     client: {
       mcCall: async <T>(method: string, payload: unknown, environmentId?: string) => {
         calls.push({ method, payload, environmentId });
         const handler = handlers.get(method);
         if (!handler) throw new Error("unsupported");
         return (await handler(payload, environmentId)) as T;
+      },
+      // An upload is a call as far as a fake MC goes; `upload` answers it if it keeps the bytes.
+      uploadToMc: async (relativeUrl, bytes, mimeType) => {
+        calls.push({
+          method: "upload",
+          payload: { relativeUrl, mimeType },
+          environmentId: undefined,
+        });
+        const handler = handlers.get("upload");
+        if (!handler) throw new Error("unsupported");
+        await handler({ relativeUrl, bytes, mimeType }, undefined);
       },
       subscribeScheduledTasks: (onTasks) => {
         taskWatchers.add(onTasks);
@@ -129,6 +163,10 @@ export function fakeSettingsMc(): FakeSettingsMc {
           telemetryWatchers.delete(onSnapshot);
         };
       },
+      subscribeMcStream: (stream, onFrame, onError) =>
+        fake.streams?.(stream, onFrame, onError) ?? (() => {}),
+      subscribeSpacePresence: (_spaceId, pageId, onViewers) =>
+        fake.presence?.(pageId, onViewers) ?? (() => {}),
     },
   };
   return fake;

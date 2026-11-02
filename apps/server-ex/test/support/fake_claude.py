@@ -36,7 +36,7 @@ session = "fake-session-1"
 # transcript's path, and --fork-session continues it as a new session; a missing
 # transcript, or one written by a newer version than FAKE_CLAUDE_VERSION, ends the
 # process as Claude Code does.
-SESSIONS = os.environ.get("CLAUDE_CONFIG_DIR") if os.environ.get("FAKE_SESSIONS") else None
+SESSIONS = (os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")) if os.environ.get("FAKE_SESSIONS") else None
 VERSION = os.environ.get("FAKE_CLAUDE_VERSION", "2.1.0")
 if sys.argv[1:] and sys.argv[-1] == "--version":
     print(f"{VERSION} (Claude Code)")
@@ -99,12 +99,16 @@ try:
 except (OSError, ValueError, KeyError):
     pass
 # The start also traces where it was pointed: its config directory, its account and any router.
-trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k == "CLAUDE_CONFIG_DIR"}})
+trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME")}})
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
     if msg.get("type") == "control_response":
         reply = msg["response"]["response"]
+        # A cancelled approval interrupts the turn (the reply's interrupt flag).
+        if reply.get("interrupt"):
+            send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_tools", "session_id": session})
+            continue
         if reply["behavior"] in ("completed", "cancelled"):
             send({"type": "assistant", "session_id": session, "message": {"id": "m-dialog", "role": "assistant", "content": [{"type": "text", "text": "resume " + reply.get("result", "cancelled")}]}})
             send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
@@ -156,8 +160,13 @@ for line in sys.stdin:
         # reply has no models, as a Claude Code too old to list them answers.
         if sub == "initialize" and os.environ.get("FAKE_CLAUDE_MODELS"):
             reply["models"] = json.loads(os.environ["FAKE_CLAUDE_MODELS"])
+        # FAKE_CLAUDE_NO_ACCOUNT: an initialize that reports no sign-in.
+        if sub == "initialize" and os.environ.get("FAKE_CLAUDE_NO_ACCOUNT"):
+            reply.pop("account", None)
         send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": reply}})
-        if sub == "interrupt":
+        # FAKE_CLAUDE_HOLD_INTERRUPT: an interrupt the CLI never answers, so the
+        # host has to settle the turn itself.
+        if sub == "interrupt" and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
         continue
     if msg.get("type") != "user":
@@ -329,10 +338,41 @@ for line in sys.stdin:
     if "plan" in text:
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "ExitPlanMode", "input": {"plan": "# Plan\n- do it"}}})
         continue
+    if "todo twice" in text:
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}ta", "role": "assistant", "content": [{"type": "tool_use", "id": f"todo-a-{turn}", "name": "TodoWrite", "input": {"todos": [
+            {"content": "Read the code", "status": "in_progress", "activeForm": "Reading"}, {"content": "Fix it", "status": "pending", "activeForm": "Fixing"}, {"content": "Ship it", "status": "pending", "activeForm": "Shipping"}]}}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}tb", "role": "assistant", "content": [{"type": "tool_use", "id": f"todo-b-{turn}", "name": "TodoWrite", "input": {"todos": [
+            {"content": "Read the code", "status": "completed", "activeForm": "Reading"}, {"content": "Fix it", "status": "completed", "activeForm": "Fixing"}, {"content": "Ship it", "status": "in_progress", "activeForm": "Shipping"}]}}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    if "todo three" in text:
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}t", "role": "assistant", "content": [{"type": "tool_use", "id": f"todo-{turn}", "name": "TodoWrite", "input": {"todos": [
+            {"content": "Read the code", "status": "completed", "activeForm": "Reading"}, {"content": "Fix it", "status": "in_progress", "activeForm": "Fixing"}, {"content": "Ship it", "status": "pending", "activeForm": "Shipping"}]}}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    if "todo done" in text:
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}t", "role": "assistant", "content": [{"type": "tool_use", "id": f"todo-{turn}", "name": "TodoWrite", "input": {"todos": [
+            {"content": "Read the code", "status": "completed", "activeForm": "Reading"}, {"content": "Fix it", "status": "completed", "activeForm": "Fixing"}]}}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
     if "todo" in text:
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}t", "role": "assistant", "content": [{"type": "tool_use", "id": f"todo-{turn}", "name": "TodoWrite", "input": {"todos": [
             {"content": "Read the code", "status": "completed", "activeForm": "Reading"}, {"content": "Fix it", "status": "in_progress", "activeForm": "Fixing"}]}}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    # "ask two": two questions, the second without a heading of its own.
+    if text.startswith("ask two"):
+        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
+            {"question": "Which color?", "header": "Color", "multiSelect": False,
+             "options": [{"label": "Red", "description": "Warm"}, {"label": "Blue", "description": ""}]},
+            {"question": "How big?", "multiSelect": False,
+             "options": [{"label": "Small", "description": ""}, {"label": "Large", "description": ""}]}]}}})
+        continue
+    # "ask multi": one question that takes several answers.
+    if text.startswith("ask multi"):
+        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
+            {"question": "What should we add?", "header": "Scope", "multiSelect": True,
+             "options": [{"label": "Unit tests", "description": ""}, {"label": "Docs", "description": ""}, {"label": "Benchmarks", "description": ""}]}]}}})
         continue
     if "ask" in text:
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [

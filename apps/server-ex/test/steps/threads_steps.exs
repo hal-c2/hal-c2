@@ -181,14 +181,19 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "the user un-settles {string}", %{args: [thread]} = context do
-    {{:ok, _}, context} =
-      World.dispatch(context, %{
-        "type" => "thread.unsettle",
-        "threadId" => World.thread_id(context, thread)
-      })
+    if String.contains?(context[:file] || "", "pull-request-links") do
+      # Discovery watches for this un-settle; its steps arrange that first.
+      HalC2.Steps.Orchestration.PullRequestLinks.un_settle_trigger(context, thread)
+    else
+      {{:ok, _}, context} =
+        World.dispatch(context, %{
+          "type" => "thread.unsettle",
+          "threadId" => World.thread_id(context, thread)
+        })
 
-    World.await_row(World.thread_id(context, thread), &(&1["settledOverride"] == "active"))
-    context
+      World.await_row(World.thread_id(context, thread), &(&1["settledOverride"] == "active"))
+      context
+    end
   end
 
   step "the settle sweep runs", context do
@@ -687,6 +692,8 @@ defmodule HalC2.Steps.Threads do
              &(&1["status"] in ~w(queued preparing starting running waiting))
            )
 
+    # Deleting stops the runtime without a release, so its entry outlives it briefly.
+    Mc.settle_registry(HalC2.Codex.Registry)
     assert Registry.lookup(HalC2.Codex.Registry, id) == []
     context
   end
@@ -786,7 +793,7 @@ defmodule HalC2.Steps.Threads do
     :ok =
       Exqlite.Sqlite3.execute(
         db,
-        "DELETE FROM messages; DELETE FROM meta WHERE key = 'messages_indexed'"
+        "DELETE FROM messages; DELETE FROM meta WHERE key = 'messages_typed'"
       )
 
     :ok = Exqlite.Sqlite3.close(db)
@@ -803,7 +810,7 @@ defmodule HalC2.Steps.Threads do
   step "the old threads are indexed once and can be searched", context do
     context = search(context, "invoices table")
     assert [_] = matches(context, "Old work")
-    assert HalC2.Store.meta(HalC2.Store.path(), "messages_indexed") == "1"
+    assert HalC2.Store.meta(HalC2.Store.path(), "messages_typed") == "1"
     context
   end
 
@@ -2404,6 +2411,18 @@ defmodule HalC2.Steps.Threads do
       end
 
     World.put_client(context, client)
+  end
+
+  step "the setup script records {string} and {string}", %{args: [first, second]} = context do
+    put_in(context, [:setup_script, "command"], ~s(echo "$#{first} $#{second}" > seen.txt))
+  end
+
+  step "the setup script saw the project folder and the new worktree", context do
+    {final, context} = await_setup(context, &(&1["phase"] != "running"))
+    path = final["worktreePath"]
+    root = World.project(context).root
+    assert File.read!(Path.join(path, "seen.txt")) == "#{root} #{path}\n"
+    context
   end
 
   step "the setup script must finish before the agent starts", context do

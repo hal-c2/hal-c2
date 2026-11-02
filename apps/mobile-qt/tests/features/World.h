@@ -12,6 +12,7 @@
 #include <memory>
 
 #include "FakeCamera.h"
+#include "FakePushSystem.h"
 #include "MobileApp.h"
 #include "PairableMc.h"
 
@@ -42,6 +43,9 @@ public:
   // The device's camera, and what the user said when asked to let the app
   // use it: kept across restarts, as the system keeps it.
   std::shared_ptr<FakeCamera> camera = std::make_shared<FakeCamera>();
+  // Its notifications, what reaches it through a push distributor, and the
+  // user's word on them: kept across restarts too.
+  std::shared_ptr<FakePushSystem> push;
   bool checking = false;  // the running step is an outcome (Step::outcome)
   // The pairing link the scenario is about: what the user enters.
   QString link;

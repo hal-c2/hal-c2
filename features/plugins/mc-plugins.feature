@@ -6,6 +6,7 @@
 #   apps/server-ex/lib/hal_c2/mcp.ex (HAL-C2 MCP server)
 #   apps/server-ex/lib/hal_c2/text_generation.ex (text generation backends by instance)
 #   apps/server-ex/lib/hal_c2/settings.ex (providerInstances, provider_enabled?)
+#   apps/server-ex/lib/hal_c2/plugins.ex, apps/server-ex/lib/hal_c2/plugins/kinds.ex (settings_changed: settings live, else a restart)
 #   apps/server-ex/lib/hal_c2/pull_requests.ex, apps/server-ex/lib/hal_c2/vcs.ex (git hosts)
 #   docs/orchestration-v2/provider-capability-system.md (adapter contract)
 #   docs/internals/providers.md (route by instance, setup never as a health-check side effect)
@@ -141,6 +142,20 @@ Feature: MC plugins
     Given two clients are connected to the same environment
     When the user changes a setting of "gitea" on the first client
     Then the second client shows the new setting
+
+  @mc
+  Scenario: Saving a plugin's settings applies them without stopping its work
+    Given the notification channel "ntfy" takes new settings while it runs
+    And "ntfy" holds a notification it has not delivered yet
+    When the user saves a new topic for "ntfy"
+    Then "ntfy" is not restarted
+    And it delivers the held notification to the new topic
+
+  @mc
+  Scenario: A plugin that cannot take new settings while it runs is restarted with them
+    Given the notification channel "ntfy" is enabled
+    When the user saves a new topic for "ntfy"
+    Then "ntfy" is restarted with the new topic
 
   @mc
   Scenario: A hot upgrade that only changes code keeps provider sessions running

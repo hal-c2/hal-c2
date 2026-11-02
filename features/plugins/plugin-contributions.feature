@@ -5,7 +5,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/PluginPart.qml, PluginThreadPart.qml (a UI part, a plugin thread's look)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellTabs.qml (the top-level tabs), PluginPages.qml, PluginPage.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml, ThreadView.qml, Sidebar.qml (marks, headers, sidebar sections)
-#   apps/desktop-qt/qml/HalC2/Bricks/PluginsSettings.qml, PluginSettings.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/PluginsSettings.qml, PluginSettings.qml (the list, its compile check)
 #   apps/desktop-qt/src/native/NavigationController.cpp (the route's tab), SidebarModel.cpp (unlisted plugin threads)
 #   docs/user/plugins.md
 
@@ -228,6 +228,22 @@ Feature: What plugins add to the clients
       Given "code-review" is listed as failed with its last error
       When the user restarts "code-review"
       Then "code-review" runs again
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A disabled package can be checked to compile without enabling it
+      Given "code-review" is disabled
+      And the code of "code-review" does not compile at line 3 of "mc/review.ex" because "undefined function fetch/0"
+      When the user checks that "code-review" compiles
+      Then the card of "code-review" says of its code "Its code does not compile: mc/review.ex:3: undefined function fetch/0"
+      And "code-review" stays disabled
+      When the code of "code-review" is fixed
+      And the user checks that "code-review" compiles
+      Then the card of "code-review" says of its code "Its code compiles."
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A running plugin is not checked from the plugin list
+      When the user opens the plugin list
+      Then the card of "code-review" offers no compile check
 
   Rule: A plugin fills the shell's named places
 

@@ -35,7 +35,8 @@ class ShellStore;
 // (maximized) lasts until the panel closes or the app quits.
 //
 // Publishes `panel` for the RightPanel brick, null away from a thread:
-//   {threadKey, isOpen, activeId, tabs: [{id, kind, title}], width,
+//   {threadKey, spaceProjectId (whose Space files it offers; this MC's only),
+//    onWorktree, isOpen, activeId, tabs: [{id, kind, title}], width,
 //    maximized, detailsOpen, details,
 //    canAdd: {diff, files, agents, terminal, pullRequests, pullRequest,
 //             previews, device},
@@ -49,7 +50,8 @@ class ShellStore;
 // (its parent, and the forks and subagents it started).
 //
 // Actions: `rightPanel.toggle`, `rightPanel.activate {id}`,
-// `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.resize
+// `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.rename
+// {id, title}`, `rightPanel.unfloat`, `rightPanel.resize
 // {width?}` (no width: the default), `rightPanel.toggleMaximized`,
 // `threadPanel.toggle`, `rightPanel.reviewProject {key}` (a pull request of
 // the thread's project, from the Pull requests tab), `rightPanel.linkPullRequest {url}` (a message's
@@ -97,6 +99,9 @@ public:
 
   ThreadDiff* diff() { return &m_diff; }
   WorkspaceFiles* files() { return &m_files; }
+  // The thread whose files the panel shows: its environment and project.
+  QString environmentId() const { return m_thread.left(m_thread.indexOf(QLatin1Char(':'))); }
+  QString projectId() const { return m_projectId; }
   AgentsModel* agents() { return &m_agents; }
   ThreadPullRequests* pullRequests() { return &m_pullRequests; }
   ThreadPreviews* previews() { return &m_previews; }
@@ -157,6 +162,10 @@ private:
     // Device tabs the user closed: an agent opening the device again does not
     // bring them back.
     QStringList dismissed;
+    // Names the user gave tabs of their own, by tab id.
+    QHash<QString, QString> titles;
+    // The device tab floating over the chat, while the panel is closed.
+    QString floating;
   };
 
   Panel& panel() { return m_panels[m_thread]; }
@@ -175,6 +184,12 @@ private:
   void save();
   // A device's tab, in place of the picker (ThreadDevices::opened).
   void openDevice(const QString& id, bool automatic);
+  // Floats a device tab over the chat and closes the panel
+  // (ThreadDevices::floated); `rightPanel.unfloat` brings it back.
+  void floatDevice(const QString& id);
+  void unfloat();
+  // Gives a tab the user's own name (`rightPanel.rename`); empty clears it.
+  void renameTab(const QString& id, const QString& title);
   static bool removeTab(Panel& state, const QString& id);
   // Closes `id` in `threadKey`'s panel, shown or not (ThreadDevices::closed).
   void closeTabIn(const QString& threadKey, const QString& id);
@@ -195,6 +210,12 @@ private:
   // The thread the panel shows; kept while the route is elsewhere (settings)
   // so coming back finds the tabs as they were.
   QString m_thread;
+  QString m_projectId;
+  // Whose files were last asked for (environment, project, the Space's MC): the
+  // store changes on every row frame, and the list only with the project.
+  QString m_listedFiles;
+  // The thread is on a worktree of its project, not the project folder.
+  bool m_onWorktree = false;
   bool m_onThread = false;
   QHash<QString, Panel> m_panels;
   // What was last opened proactively for each thread, so a panel the user

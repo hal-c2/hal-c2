@@ -312,11 +312,100 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     File.rm!(hold)
     replies = [Task.await(first, 15_000), second]
 
-    context |> Map.put(:thread, thread) |> Map.put(:replies, replies) |> Map.put(:sent, text)
+    context
+    |> Map.put(:thread, thread)
+    |> Map.put(:replies, replies)
+    |> Map.put(:repeat_command, command)
+    |> Map.put(:sent, text)
   end
 
-  step "both sends succeed", context do
-    assert [{:ok, _}, {:ok, _}] = context.replies
+  # The first send is not linked to the test: an MC restart ends it, as it ends a real one.
+  step "the provider is holding the steer {string} sent to {string}",
+       %{args: [text, thread]} = context do
+    message_id = "msg-#{System.unique_integer([:positive])}"
+
+    command = %{
+      "type" => "message.dispatch",
+      "threadId" => World.thread_id(context, thread),
+      "messageId" => message_id,
+      "text" => text,
+      "attachments" => [],
+      "deliveryIntent" => "steer"
+    }
+
+    hold = Path.join(context.mc.home, "hold-steer")
+    File.touch!(hold)
+    spawn(fn -> HalC2.Orchestration.dispatch(command) end)
+
+    World.await_state(context, thread, fn state ->
+      StreamState.get(state, "turn-item")["turn-item:user:#{message_id}"] != nil
+    end)
+
+    # The restart kills the runtime stuck holding the steer. Were the run still watched,
+    # that could end it before the stream stops, and recovery would skip the thread (#704).
+    HalC2.Orchestration.TurnWatch.release(context.running)
+    false = HalC2.Orchestration.TurnWatch.driven?(context.running)
+
+    context |> Map.put(:thread, thread) |> Map.put(:repeat_command, command)
+  end
+
+  # As a real stop goes: `Recovery.stopping?/0` holds, and the runtime, which cannot read
+  # its shutdown while it waits on the provider, is killed at the limit. The next boot's
+  # `Recovery.run/0` ends the stop.
+  step "the MC restarts while its runtime for {string} is stuck on the provider",
+       %{args: [thread]} = context do
+    HalC2.Orchestration.Recovery.leaving(true)
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Orchestration.Recovery.leaving(false) end)
+
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, thread))
+    gone = Process.monitor(runtime)
+    Process.exit(runtime, :kill)
+    assert_receive {:DOWN, ^gone, :process, _, _}, 5_000
+    _ = :sys.get_state(HalC2.Orchestration.TurnWatch)
+
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
+  end
+
+  step "the running turn of {string} ends", %{args: [thread]} = context do
+    thread_id = World.thread_id(context, thread)
+
+    :ok =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        ended =
+          HalC2.Orchestration.upsert(state, "run", context.running, fn run ->
+            Map.put(run, "status", "completed")
+          end)
+
+        {[ended], :ok}
+      end)
+
+    context
+  end
+
+  step "the user's client sends the steer {string} again", context do
+    Map.put(context, :replies, [nil, HalC2.Orchestration.dispatch(context.repeat_command)])
+  end
+
+  step "the first send succeeds", context do
+    assert [{:ok, _}, _] = context.replies
+    context
+  end
+
+  step "the first send fails saying Codex did not take the message into its running turn",
+       context do
+    assert [{:error, message}, _] = context.replies
+    assert message =~ "Codex did not take the message into its running turn"
+    context
+  end
+
+  step "the repeat is told {string} is still being sent", context do
+    assert [_, {:error, %{"message" => message}}] = context.replies
+    assert message =~ "still being sent"
+    context
+  end
+
+  step "sending {string} again now succeeds", context do
+    assert {:ok, _} = HalC2.Orchestration.dispatch(context.repeat_command)
     context
   end
 

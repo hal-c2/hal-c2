@@ -347,8 +347,10 @@ defmodule HalC2.Steps.Providers.Usage do
   step "the user saved a custom price for {string} of {int} USD input and {int} USD output per million tokens",
        %{args: [model, input, output]} = context do
     # One turn today, and one yesterday that carried the provider's own cost.
+    # Both at noon of their day, and their days remembered: a run in the first
+    # minute after midnight would otherwise put both turns in yesterday's bucket.
     claude(context.usage_dirs.claude, "custom", [
-      claude_line("custom-1", now() - 60_000, model: model, input: 1000, output: 2000),
+      claude_line("custom-1", noon(0), model: model, input: 1000, output: 2000),
       claude_line("custom-2", noon(1), model: model, input: 1000, output: 2000, cost: 0.5)
     ])
 
@@ -356,14 +358,16 @@ defmodule HalC2.Steps.Providers.Usage do
     |> save_prices(%{
       model => %{"inputCostPerMillionTokens" => input, "outputCostPerMillionTokens" => output}
     })
-    |> Map.put(:custom_cost, 1000 * input / 1.0e6 + 2000 * output / 1.0e6)
+    |> Map.merge(%{
+      custom_cost: 1000 * input / 1.0e6 + 2000 * output / 1.0e6,
+      custom_today: day(noon(0)),
+      custom_yesterday: day(noon(1))
+    })
   end
 
   step "{string} is priced with the custom rates", %{args: [model]} = context do
-    today = day(now() - 60_000)
-
     assert [%{"costSource" => "modelPriced", "costUsd" => cost}] =
-             buckets(context.usage, "claude", model, today)
+             buckets(context.usage, "claude", model, context.custom_today)
 
     assert_in_delta cost, context.custom_cost, 1.0e-12
     context
@@ -372,7 +376,7 @@ defmodule HalC2.Steps.Providers.Usage do
   step "a provider-reported cost for {string} is replaced by the custom price",
        %{args: [model]} = context do
     assert [%{"costSource" => "modelPriced", "costUsd" => cost}] =
-             buckets(context.usage, "claude", model, day(noon(1)))
+             buckets(context.usage, "claude", model, context.custom_yesterday)
 
     assert_in_delta cost, context.custom_cost, 1.0e-12
     context

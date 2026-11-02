@@ -91,6 +91,82 @@ defmodule HalC2.McpTest do
     assert text =~ "invalid_request"
   end
 
+  # Reading a credential never rotates it; preparing a session does, and a
+  # revoked credential's sessions go with it. A mid-session access flip must
+  # not strand the token a live session still carries.
+  test "a flipped access setting rotates at preparation, never on a read" do
+    start_supervised!(HalC2.Settings)
+    {thread_id, _tool} = caller("wait for it")
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
+    assert HalC2.Mcp.prepared?(thread_id, "codex")
+    assert HalC2.Mcp.current(thread_id, "codex").authorization == auth
+
+    initialize =
+      JSON.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => 1,
+        "method" => "initialize",
+        "params" => %{"protocolVersion" => "2025-06-18"}
+      })
+
+    {200, %{"mcp-session-id" => session_id}, _} = HalC2.Mcp.handle_request(auth, %{}, initialize)
+    assert HalC2.Mcp.session?(session_id)
+
+    {settings, version} = HalC2.Settings.get()
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        Map.put(settings, "projectSettingsOverrides", %{
+          @project => %{"enableAgentBrowserAccess" => false}
+        }),
+        version
+      )
+
+    # Reads keep the live credential and its session.
+    assert HalC2.Mcp.server(thread_id, "codex").authorization == auth
+    assert HalC2.Mcp.current(thread_id, "codex").authorization == auth
+    assert HalC2.Mcp.session?(session_id)
+    refute HalC2.Mcp.prepared?(thread_id, "codex")
+
+    # Preparation rotates: the old token and its sessions are gone.
+    assert HalC2.Mcp.for_agent(thread_id, "codex") == nil
+    assert {401, _} = HalC2.Mcp.handle(auth, initialize)
+    refute HalC2.Mcp.session?(session_id)
+    assert HalC2.Mcp.current(thread_id, "codex") == nil
+    assert HalC2.Mcp.prepared?(thread_id, "codex")
+  end
+
+  # New code loaded over a running server (`HalC2.Hot`) migrates it through
+  # code_change, never init. A server started before MCP sessions were kept
+  # has no sessions table; its initialize raised, the endpoint answered 500,
+  # and no provider's MCP client could connect — so no agent tool, such as
+  # code_review_report, was ever offered. The handshake must not depend on
+  # the table, and the migration must make it.
+  test "initialize survives code loaded over a server without a sessions table" do
+    {thread_id, _tool} = caller("wait for it")
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
+
+    initialize =
+      JSON.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => 1,
+        "method" => "initialize",
+        "params" => %{"protocolVersion" => "2025-06-18"}
+      })
+
+    :ets.delete(HalC2.Mcp.Sessions)
+    assert {200, %{"mcp-session-id" => _}, _} = HalC2.Mcp.handle_request(auth, %{}, initialize)
+
+    pid = Process.whereis(HalC2.Mcp)
+    :sys.suspend(pid)
+    :ok = :sys.change_code(pid, HalC2.Mcp, nil, :hot)
+    :sys.resume(pid)
+
+    {200, %{"mcp-session-id" => session_id}, _} = HalC2.Mcp.handle_request(auth, %{}, initialize)
+    assert HalC2.Mcp.session?(session_id)
+    assert {200, _} = HalC2.Mcp.handle(auth, initialize)
+  end
+
   test "an agent answers a pending question through MCP" do
     {caller, tool} = caller("ask me")
     request = await_request(caller)
@@ -205,6 +281,46 @@ defmodule HalC2.McpTest do
     assert {:error, text} = tool.("hal_c2_thread_launch", %{"title" => "Nope"})
     assert text =~ "parent_not_active"
   end
+
+  # Two delegate_task calls with one request key, the second let through while
+  # the first is held just before recording its task: the claim in the record's
+  # transaction is what keeps it to one task and one child.
+  test "two delegations with one request key racing start one task" do
+    {caller, tool} = caller("wait for it")
+    test_pid = self()
+    Application.put_env(:hal_c2, :delegation_hook, {__MODULE__, :starting_gate, [test_pid]})
+    on_exit(fn -> Application.delete_env(:hal_c2, :delegation_hook) end)
+
+    args = %{"task" => "hello", "mode" => "async", "clientRequestId" => "race-1"}
+    first = Task.async(fn -> tool.("delegate_task", args) end)
+    assert_receive {:starting, first_pid}, 5_000
+    second = Task.async(fn -> tool.("delegate_task", args) end)
+    assert_receive {:starting, second_pid}, 5_000
+    send(first_pid, :go)
+    send(second_pid, :go)
+
+    assert {:ok, %{"taskId" => task_id, "childThreadId" => child_id}} =
+             Task.await(first, 10_000)
+
+    assert {:ok, %{"taskId" => ^task_id, "childThreadId" => ^child_id}} =
+             Task.await(second, 10_000)
+
+    assert [%{"id" => ^task_id, "childThreadId" => ^child_id}] =
+             StreamState.list(current(caller), "subagent")
+  end
+
+  @doc false
+  def starting_gate(test_pid, :starting, _id) do
+    send(test_pid, {:starting, self()})
+
+    receive do
+      :go -> :ok
+    after
+      10_000 -> :ok
+    end
+  end
+
+  def starting_gate(_test_pid, _stage, _id), do: :ok
 
   # --- helpers ----------------------------------------------------------------------------
 

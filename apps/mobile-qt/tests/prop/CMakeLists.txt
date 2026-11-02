@@ -17,6 +17,7 @@ hal_c2_add_native_library()
 include("${_desktop}/cmake/RapidCheck.cmake")
 include("${_desktop}/cmake/GlobTests.cmake")
 include(../../cmake/Scanner.cmake)
+include(../../cmake/Push.cmake)
 hal_c2_add_glob_tests(PATTERN "tst_*Prop.cpp" LABEL prop
   INCLUDES ../../src .. "${_desktop}/tests/prop" "${_desktop}/tests/native/features"
   LIBRARIES hal_c2_native rapidcheck
@@ -32,3 +33,7 @@ foreach(_target tst_ScannerProp tst_ScannerRegression)
     hal_c2_target_scanner(${_target})
   endif()
 endforeach()
+# The push inbox decrypts with OpenSSL.
+if(TARGET tst_PushInboxProp)
+  hal_c2_target_push_inbox(tst_PushInboxProp)
+endif()

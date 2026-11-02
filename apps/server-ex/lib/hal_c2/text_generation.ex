@@ -2,7 +2,8 @@ defmodule HalC2.TextGeneration do
   @moduledoc """
   Short structured text from a coding agent: commit messages and pull request
   content for `HalC2.GitActions`, branch names for `HalC2.WorktreeSetup`, and thread
-  titles for `HalC2.Orchestration`. The prompts live in `HalC2.TextGeneration.Prompts`.
+  titles for `HalC2.Orchestration`, and pages from threads for `HalC2.Space`. The
+  prompts live in `HalC2.TextGeneration.Prompts`.
 
   Commits, pull requests, and branch names are written by the project's source
   control writer model when its provider is usable, otherwise by its text
@@ -135,6 +136,67 @@ defmodule HalC2.TextGeneration do
     end
   end
 
+  @doc """
+  A Space page summarising a thread from its context (`Prompts.thread_context/1`),
+  written in the thread's checkout: `%{"title", "markdown"}`. `{:error,
+  {:unavailable, message}}` when no provider can write it.
+  """
+  def page_from_thread(cwd, context) do
+    case usable_selection(cwd, :text) do
+      {:ok, selection} ->
+        run(
+          selection,
+          cwd,
+          Prompts.page_from_thread(context),
+          %{"title" => :string, "markdown" => :string},
+          []
+        )
+
+      {:error, message} ->
+        {:error, {:unavailable, message}}
+    end
+  end
+
+  @doc """
+  What a run of a page's update writes into the page (`HalC2.Space.Schedule`), from
+  the global settings and in no checkout: `%{"markdown"}`. `{:error, {:unavailable,
+  message}}` when no provider can write it.
+  """
+  def page_update(title, instruction, page, threads) do
+    case usable_selection(nil, :text) do
+      {:ok, selection} ->
+        prompt = Prompts.page_update(title, instruction, page, threads)
+        schema = %{"markdown" => :string}
+        in_dir(nil, &run(selection, &1, prompt, schema, isolate: true))
+
+      {:error, message} ->
+        {:error, {:unavailable, message}}
+    end
+  end
+
+  @doc """
+  How to draw a chart for `request`, given the page's text and the counts on offer
+  (`HalC2.Space.Visualize`): `%{"source", "type", "title", "chart"}`, as strings. Asked
+  in an empty directory, with the global text model, so all it reads is the prompt.
+  """
+  def chart(request, page_text, datasets) do
+    in_dir(nil, fn dir ->
+      case usable_selection(dir, :text) do
+        {:ok, selection} ->
+          run(
+            selection,
+            dir,
+            Prompts.chart(request, page_text, datasets),
+            %{"source" => :string, "type" => :string, "title" => :string, "chart" => :string},
+            isolate: true
+          )
+
+        {:error, message} ->
+          {:error, {:unavailable, message}}
+      end
+    end)
+  end
+
   # --- model selection ---------------------------------------------------------------
 
   @doc "The settings that apply to `cwd`: its project's, when it is in one."
@@ -170,7 +232,11 @@ defmodule HalC2.TextGeneration do
   def driver(id),
     do: get_in(HalC2.Settings.settings(), ["providerInstances", id, "driver"]) || id
 
-  defp usable?(settings, %{"instanceId" => id}) when is_binary(id) do
+  @doc "A provider's default model for writing text."
+  def default_model(driver), do: @default_models[driver]
+
+  @doc "Whether a selection's provider is enabled and installed under `settings`."
+  def usable?(settings, %{"instanceId" => id}) when is_binary(id) do
     case driver(id) do
       "codex" -> enabled?(settings, id) and executable?(codex_command(id))
       "claudeAgent" -> enabled?(settings, id) and executable?(claude_command(id))
@@ -181,7 +247,7 @@ defmodule HalC2.TextGeneration do
     end
   end
 
-  defp usable?(_settings, _selection), do: false
+  def usable?(_settings, _selection), do: false
 
   # Codex and Claude are on unless turned off.
   defp enabled?(settings, id) do
@@ -351,8 +417,7 @@ defmodule HalC2.TextGeneration do
   defp in_dir(dir, fun) when is_binary(dir), do: fun.(dir)
 
   defp in_dir(nil, fun) do
-    dir = Path.join(System.tmp_dir!(), "hal-c2-text-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(dir)
+    dir = HalC2.Scratch.dir("hal-c2-text")
 
     try do
       fun.(dir)
@@ -724,11 +789,21 @@ defmodule HalC2.TextGeneration do
   defp scan(text, start, _index, _depth, _in_string, _escaping),
     do: binary_part(text, start, byte_size(text) - start)
 
-  defp run_cli([command | args], cwd, input) do
+  @doc """
+  Runs a provider CLI in `cwd` with `input` on stdin: `{:ok, stdout}` or `{:error,
+  message}`. Options: `:timeout` (default `timeout/0`), `:env`.
+  """
+  def run_cli([command | args], cwd, input, opts \\ []) do
     task =
       Task.async(fn ->
         [command | args]
-        |> Exile.stream(cd: cwd, input: [input], stderr: :consume, ignore_epipe: true)
+        |> Exile.stream(
+          cd: cwd,
+          input: if(input == "", do: [], else: [input]),
+          stderr: :consume,
+          ignore_epipe: true,
+          env: opts[:env] || []
+        )
         |> Enum.reduce({[], [], nil}, fn
           {:stdout, data}, {out, err, status} -> {[out, data], err, status}
           {:stderr, data}, {out, err, status} -> {out, [err, data], status}
@@ -736,7 +811,7 @@ defmodule HalC2.TextGeneration do
         end)
       end)
 
-    case Task.yield(task, timeout()) || Task.shutdown(task, :brutal_kill) do
+    case Task.yield(task, opts[:timeout] || timeout()) || Task.shutdown(task, :brutal_kill) do
       {:ok, {out, _err, {:status, 0}}} ->
         {:ok, IO.iodata_to_binary(out)}
 
@@ -762,7 +837,8 @@ defmodule HalC2.TextGeneration do
 
   # The CLI an instance writes text with: its binary path in settings, else the one on PATH.
   defp claude_command(instance), do: cli(instance, :text_claude_command, "claude")
-  defp codex_command(instance), do: cli(instance, :text_codex_command, "codex")
+  @doc false
+  def codex_command(instance), do: cli(instance, :text_codex_command, "codex")
 
   defp cli(instance, key, default),
     do:

@@ -75,6 +75,7 @@ QList<Rule> buildDefaults() {
       rule(QStringLiteral("mod+shift+c"), QStringLiteral("thread.copyReference"), notTerminal),
       rule(QStringLiteral("mod+shift+s"), QStringLiteral("thread.settle"), notTerminal),
       rule(QStringLiteral("mod+shift+p"), QStringLiteral("thread.pin"), notTerminal),
+      rule(QStringLiteral("mod+alt+p"), QStringLiteral("space.open"), notTerminal),
       rule(QStringLiteral("mod+z"), QStringLiteral("thread.undo"), QStringLiteral("!terminalFocus && !editableFocus")),
   };
   for (int n = 1; n <= 9; ++n) {
@@ -334,7 +335,7 @@ const QStringList& commands() {
     list.append({QStringLiteral("thread.stop"), QStringLiteral("thread.steerQueuedMessage"),
                  QStringLiteral("thread.editQueuedMessage"), QStringLiteral("thread.previous"),
                  QStringLiteral("thread.next"), QStringLiteral("thread.copyReference"), QStringLiteral("thread.settle"),
-                 QStringLiteral("thread.pin"), QStringLiteral("thread.undo")});
+                 QStringLiteral("thread.pin"), QStringLiteral("thread.undo"), QStringLiteral("space.open")});
     for (int n = 1; n <= 9; ++n) list.append(QStringLiteral("thread.jump.%1").arg(n));
     return list;
   }();
@@ -458,6 +459,7 @@ QString commandLabel(const QString& command) {
       {QStringLiteral("thread.steerQueuedMessage"), QStringLiteral("Queue: Send First Queued Message as Steer")},
       {QStringLiteral("thread.editQueuedMessage"), QStringLiteral("Queue: Edit Last Queued Message")},
       {QStringLiteral("thread.copyReference"), QStringLiteral("Pull Request: Copy Link or Thread ID")},
+      {QStringLiteral("space.open"), QStringLiteral("Space: Open")},
   };
   if (const auto label = special.constFind(command); label != special.cend()) return *label;
   if (command.startsWith(QLatin1String("script.")) && command.endsWith(QLatin1String(".run"))) {

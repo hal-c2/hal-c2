@@ -43,6 +43,10 @@ defmodule HalC2.Hot do
     end)
   end
 
+  @doc """
+  Loads `beams` on this MC. Processes of a module in `opts[:unmigrated]` keep running
+  as they are: a supervisor's new functions load, but its tree only changes at restart.
+  """
   @spec reload([beam], keyword) :: {:ok, report} | {:error, term}
   def reload(beams, opts \\ []) do
     changed = Enum.reject(beams, fn {mod, bin} -> loaded_md5(mod) == beam_md5(bin) end)
@@ -52,7 +56,7 @@ defmodule HalC2.Hot do
     case purge_old(mods) do
       [] ->
         procs =
-          mods
+          (mods -- Keyword.get(opts, :unmigrated, []))
           |> processes_using()
           |> suspend(Keyword.get(opts, :suspend_timeout, @suspend_timeout))
 

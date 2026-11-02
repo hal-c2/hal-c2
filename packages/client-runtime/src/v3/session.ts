@@ -52,6 +52,7 @@ import {
   DiscoveredLocalServerList,
   PreviewError,
   ResourceTelemetrySnapshot,
+  SpacePresenceStreamEvent,
   PreviewEvent,
   PreviewInvalidUrlError,
   PreviewSessionLookupError,
@@ -87,6 +88,7 @@ import {
   ServerSelfUpdateProgressEvent,
   ProviderUploadFeedbackError,
   type PreviewAutomationHost,
+  type McSettingsDocument,
 } from "@hal-c2/contracts";
 import {
   compileResolvedKeybindingsConfig,
@@ -112,6 +114,7 @@ import {
   type PreparedConnection,
 } from "../connection/model.ts";
 import { EarlierTurnsUnavailableError, type RpcSession } from "../rpc/session.ts";
+import type { EntityStreamFrame } from "../state/streamEntities.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   ClusterRpcError,
@@ -176,6 +179,7 @@ const decodeDeviceState = Schema.decodeUnknownSync(Schema.toCodecJson(DeviceServ
 const decodeDeviceError = Schema.decodeUnknownOption(DeviceError);
 const decodeClusterError = Schema.decodeUnknownOption(ClusterError);
 const decodeTelemetry = Schema.decodeUnknownSync(Schema.toCodecJson(ResourceTelemetrySnapshot));
+const decodeSpacePresence = Schema.decodeUnknownSync(Schema.toCodecJson(SpacePresenceStreamEvent));
 const decodeAuthAccess = Schema.decodeUnknownSync(Schema.toCodecJson(AuthAccessStreamEvent));
 const decodeSetupError = Schema.decodeUnknownOption(ProviderSetupError);
 const decodeTerminalError = Schema.decodeUnknownOption(TerminalError);
@@ -307,6 +311,28 @@ function foldThreadFrame(
       return fold.events(frame.events as ReadonlyArray<ShapeEvent>);
     case "live":
       return [{ kind: "synchronized" as const }];
+    default:
+      return [];
+  }
+}
+
+/** A stream shape's frame as an entity stream frame; frames it does not fold are dropped. */
+function entityStreamFrame(frame: ShapeFrame): ReadonlyArray<EntityStreamFrame> {
+  switch (frame.t) {
+    case "snapshot":
+      return [
+        {
+          type: "snapshot",
+          part: Number(frame.part ?? 0),
+          done: frame.done === true,
+          offset: Number(frame.offset ?? 0),
+          rows: frame.rows as ReadonlyArray<ShapeRow>,
+        },
+      ];
+    case "events":
+      return [{ type: "events", events: frame.events as ReadonlyArray<ShapeEvent> }];
+    case "live":
+      return [{ type: "live" }];
     default:
       return [];
   }
@@ -477,6 +503,15 @@ export function makeV3Session(input: {
         ),
       );
     };
+
+    // One of the MC's entity streams (a Space, the Spaces index) as its frames.
+    const subscribeStream = (stream: string) =>
+      shapeStream(
+        socket,
+        { type: "stream", mc, stream },
+        entityStreamFrame,
+        (frame) => new ClusterRpcError(String(frame.reason ?? "The stream is unavailable."), frame),
+      );
 
     // Asks the MC for the turns before the open thread's window. They arrive as
     // a snapshot of the longer thread on the thread's stream.
@@ -967,6 +1002,15 @@ export function makeV3Session(input: {
       (_request: object, message) => new ClusterRpcError(message, undefined),
     );
 
+    const spacePresence = (request: { readonly spaceId: string; readonly pageId: string }) =>
+      shapeStream(
+        socket,
+        { type: "spacePresence", mc, spaceId: request.spaceId, pageId: request.pageId },
+        (frame) =>
+          frame.t === "spacePresence" ? [decodeSpacePresence({ viewers: frame.viewers })] : [],
+        (frame) => new ClusterRpcError(String(frame.reason ?? "Presence is unavailable."), frame),
+      );
+
     // A new thread's worktree is prepared on its MC.
     const worktreeSetup = (request: { readonly threadId: string }) =>
       shapeStream(socket, { type: "worktreeSetup", mc, threadId: request.threadId }, (frame) =>
@@ -1157,10 +1201,7 @@ export function makeV3Session(input: {
       readonly providerInstanceMutation?: ProviderInstanceMutation;
     }) =>
       Effect.gen(function* () {
-        const current = (yield* mcCall("hal-c2.readSettings", {})) as {
-          readonly settings: unknown;
-          readonly version: number;
-        };
+        const current = (yield* mcCall("hal-c2.readSettings", {})) as McSettingsDocument;
         const settings = yield* decodeSettings(current.settings);
         const mutation = request.providerInstanceMutation;
         if (
@@ -1275,6 +1316,7 @@ export function makeV3Session(input: {
         ].map((tag) => [tag, forward(tag, (_request: object, _message, cause) => cause)]),
       ),
       [WS_METHODS.subscribeResourceTelemetry]: resourceTelemetry,
+      [WS_METHODS.subscribeSpacePresence]: spacePresence,
       [WS_METHODS.subscribeAuthAccess]: authAccess,
       [WS_METHODS.serverGetBackgroundPolicy]: backgroundPolicy,
       // MCs have no client-driven policy, so it never changes after the first read.
@@ -1535,6 +1577,7 @@ export function makeV3Session(input: {
               : new ClusterRpcError(String(cause), undefined),
         }),
       mcMembers,
+      subscribeStream,
     } satisfies RpcSession;
   });
 }

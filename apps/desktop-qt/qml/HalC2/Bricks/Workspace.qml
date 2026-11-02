@@ -381,6 +381,15 @@ Rectangle {
             }
         }
 
+        ShellButton {
+            objectName: "noSshRoute"
+            visible: strip.ready && (strip.model.noSshRoute ?? "") !== "" && !strip.tight
+            subtle: true
+            iconName: "external-link"
+            text: strip.ready ? strip.model.noSshRoute ?? "" : ""
+            onClicked: Shell.dispatch("workspace.openInEditor", {})
+        }
+
         ShellSplitButton {
             objectName: "openEditorButton"
             visible: strip.ready && strip.model.editors.length > 0 && !strip.tight
@@ -411,6 +420,15 @@ Rectangle {
 
                     onObjectAdded: (index, object) => editorsMenu.insertItem(index, object)
                     onObjectRemoved: (index, object) => editorsMenu.removeItem(object)
+                }
+
+                ShellMenuItem {
+                    readonly property string note: strip.ready ? strip.model.openOverSsh ?? "" : ""
+
+                    visible: note !== ""
+                    height: visible ? implicitHeight : 0
+                    enabled: false
+                    text: note
                 }
             }
         }

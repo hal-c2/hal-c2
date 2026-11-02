@@ -1105,6 +1105,14 @@ export const WorktreeCleanup = Schema.NullOr(
 );
 export type WorktreeCleanup = typeof WorktreeCleanup.Type;
 
+/**
+ * Where a project's agent sessions get the variables a terminal in its checkout
+ * would have: mise and direnv (`auto`), or one dotenv file. Loading runs the
+ * checkout's own configuration, so it is off unless the user trusts the project.
+ */
+export const ProjectEnvironmentSource = Schema.Literals(["off", "auto", "dotenv"]);
+export type ProjectEnvironmentSource = typeof ProjectEnvironmentSource.Type;
+
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "worktreeCleanup",
   "defaultModelSelection",
@@ -1124,6 +1132,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleAfterDays",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
+  "projectEnvironment",
+  "projectEnvironmentFile",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1151,6 +1161,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
+  projectEnvironment: ForwardCompatibleOptional(ProjectEnvironmentSource),
+  projectEnvironmentFile: Schema.optionalKey(TrimmedString),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
@@ -1183,6 +1195,8 @@ export const StorageCleanupSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  threadTempAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(7))),
+  temporaryFilesFolder: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
@@ -1258,6 +1272,16 @@ export const ServerSettings = Schema.Struct({
    * unaffected.
    */
   enableAgentDeviceAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Where sessions load the project's environment from, set per project. Null,
+   * or a source this build does not know, is off. The variables never reach a
+   * client; `projectEnvironmentFile` is the dotenv file, relative to the
+   * thread's checkout.
+   */
+  projectEnvironment: ForwardCompatibleNullable(ProjectEnvironmentSource).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  projectEnvironmentFile: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(".env"))),
   /**
    * Whether this server may install and run HAL-C2's device helper processes.
    * Kept separate from agent access so enabling the user's Device panel does
@@ -1590,6 +1614,8 @@ export const ServerSettingsPatch = Schema.Struct({
       worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
       browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
+      threadTempAfterDays: Schema.optionalKey(StorageRetentionDays),
+      temporaryFilesFolder: Schema.optionalKey(Schema.String),
     }),
   ),
   // Server settings
@@ -1622,6 +1648,8 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(ProjectSettingsOverrides)),
   ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
+  projectEnvironment: Schema.optionalKey(Schema.NullOr(ProjectEnvironmentSource)),
+  projectEnvironmentFile: Schema.optionalKey(TrimmedString),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
@@ -1692,6 +1720,19 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
+
+/**
+ * The MC's `hal-c2.readSettings` reply: its settings document as stored, and the
+ * version a `hal-c2.writeSettings` must name. `shared` lists the settings that follow
+ * the person to every cluster member (document keys, and `"keybindings"`); an MC from
+ * before shared settings leaves it out.
+ */
+export const McSettingsDocument = Schema.Struct({
+  settings: Schema.Record(Schema.String, Schema.Unknown),
+  version: Schema.Int,
+  shared: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export type McSettingsDocument = typeof McSettingsDocument.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),

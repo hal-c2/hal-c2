@@ -28,6 +28,9 @@ Scan the QR code on your phone or paste the pairing URL into the receiving app's
 pairing field. A loopback address such as `127.0.0.1` reaches only the device opening
 the link, so Settings shows no QR code for one.
 
+An MC listening on every interface (`HAL_C2_MC_HOST=0.0.0.0`) puts this machine's network
+address in a link made in Settings, passing over bridges for local containers and VMs.
+
 When your machines are [clustered](#cluster-your-machines), **Settings →
 Connections** asks which machine the link is for. A phone reaches the whole
 cluster through the machine it paired with, and loses it when that machine
@@ -68,6 +71,20 @@ entry of that name) has each of them update to the version of the machine you ar
 which hands them its release. Removing a machine from the
 Cluster page stops every member from admitting it, and its projects and threads leave
 the sidebar.
+
+### Settings that follow you
+
+Settings about how you work are the same on every machine of a cluster: change one on any
+machine and the others take it, including machines that were asleep, once they are back.
+These are the default runtime and worktree modes, starting worktrees from origin, worktree
+submodules and cleanup, how responses stream, sidebar settling, what happens to
+usage-limited threads, the writing style and merge method for pull requests, price
+overrides, and your keybindings. If two machines change the same setting while apart, the
+later change wins.
+
+Everything else stays on its machine: providers and their keys, usage limit sources,
+projects, devices, storage, background activity, the environment icon, the theme, model
+choices and plugin settings.
 
 ### Move a thread to another machine
 
@@ -148,12 +165,16 @@ hal-c2-service pair --tailscale   # the installed MC file
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
-The mapping created for it persists across restarts. Remove its
+The mapping created for it persists across restarts, and publishing a page
+[over Tailscale](sites.md#who-can-open-the-link) creates the same one. Remove its
 default-port mapping with:
 
 ```bash
 tailscale serve --https=443 off
 ```
+
+When something else held port 443, the mapping is on the MC's own port instead:
+`tailscale serve --https=<port> off`, with the port shown in the link.
 
 If that port is already in use, choose another with
 `--tailscale-serve-port` (`pair --tailscale --tailscale-serve-port 8443`).

@@ -11,7 +11,7 @@
 # in FAKE_CODEX_GATE (see stream_reply); "answer from gate" waits for the gate file
 # "answer" and replies with its contents, or with no message when it is empty; a steer
 # with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
-import glob, json, os, re, sys, time, uuid
+import glob, json, os, re, sys, threading, time, uuid
 
 # With FAKE_CODEX_TRACE set, every message read is appended to it as a JSON line.
 # FAKE_CODEX_MODELS is the JSON `data` model/list answers with.
@@ -30,9 +30,41 @@ def trace(entry):
 # The arguments the app-server was started with, first in the trace.
 trace({"argv": sys.argv[1:], "home": os.environ.get("CODEX_HOME")})
 
+send_lock = threading.Lock()
+# The turns turn/interrupt stopped, which an "answer from gate" turn no longer answers.
+interrupted_turns = set()
+
 def send(msg):
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
+    with send_lock:
+        write(msg)
+
+def write(msg):
+    # FAKE_CODEX_FRAMING plays the wire's shapes: "split" writes a message in two
+    # flushes, "crlf" ends lines as Windows does, "blank" pads them with blank
+    # lines, and "batch" flushes only when a turn or a reply ends, so several
+    # messages arrive in one read.
+    framing = os.environ.get("FAKE_CODEX_FRAMING")
+    line = json.dumps(msg)
+    if framing == "split":
+        half = len(line) // 2
+        sys.stdout.write(line[:half])
+        sys.stdout.flush()
+        time.sleep(0.05)
+        sys.stdout.write(line[half:] + "\n")
+        sys.stdout.flush()
+    elif framing == "crlf":
+        sys.stdout.write(line + "\r\n")
+        sys.stdout.flush()
+    elif framing == "blank":
+        sys.stdout.write("\n" + line + "\n\n")
+        sys.stdout.flush()
+    elif framing == "batch":
+        sys.stdout.write(line + "\n")
+        if msg.get("method") == "turn/completed" or "result" in msg or "error" in msg:
+            sys.stdout.flush()
+    else:
+        sys.stdout.write(line + "\n")
+        sys.stdout.flush()
 
 # Waits until the test creates the file NAME in FAKE_CODEX_GATE: the test's cue that it
 # saw what the reply so far wrote.
@@ -40,6 +72,20 @@ def gate(name):
     path = os.path.join(os.environ["FAKE_CODEX_GATE"], name)
     while not os.path.exists(path):
         time.sleep(0.01)
+
+# Ends an "answer from gate" turn once the gate file "answer" exists. It runs beside the
+# read loop, so a stop reaches the turn while it waits, as it does a real one.
+def answer_from_gate(ctx, turn_id):
+    path = os.path.join(os.environ["FAKE_CODEX_GATE"], "answer")
+    while not os.path.exists(path):
+        if turn_id in interrupted_turns:
+            return
+        time.sleep(0.01)
+    answer = open(path).read()
+    if answer:
+        send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": ""}}})
+        send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": answer}}})
+    send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
 
 # "stream paragraphs" writes three paragraphs and a code block in pieces; "stream a reply"
 # writes text while a command runs and the plan changes. Each waits at gates in between.
@@ -139,6 +185,21 @@ for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
+    # Wire test hooks: "test/hang" is a request that is never answered,
+    # "test/exit" leaves with code 1, and "test/garbage" writes a line that is
+    # not a protocol message at all.
+    if method == "test/hang":
+        continue
+    if method == "test/exit":
+        sys.exit(1)
+    if method == "test/garbage":
+        sys.stdout.write("this is not a protocol message\n")
+        sys.stdout.flush()
+        continue
+    if method == "test/flood":
+        sys.stderr.write("x" * 300_000 + "\n")
+        sys.stderr.flush()
+        continue
     if os.environ.get("FAKE_CODEX_LOG") and method:
         with open(os.environ["FAKE_CODEX_LOG"], "a") as f:
             f.write(json.dumps({"method": method, "params": params}) + "\n")
@@ -184,14 +245,30 @@ for line in sys.stdin:
             send({"method": "item/completed", "params": {**ctx, "item": {**item, "text": text}}})
         continue
     if method == "initialize":
+        # FAKE_CODEX_PROBE_ERROR is answered as the initialize call's error, and
+        # FAKE_CODEX_PROBE_HANG leaves it unanswered: a status check's two failures.
+        if os.environ.get("FAKE_CODEX_PROBE_HANG"):
+            continue
+        if os.environ.get("FAKE_CODEX_PROBE_ERROR"):
+            send({"id": mid, "error": {"code": -32000, "message": os.environ["FAKE_CODEX_PROBE_ERROR"]}})
+            continue
         send({"id": mid, "result": {"userAgent": "fake", "platformOs": "test"}})
     elif method == "model/list":
         # FAKE_CODEX_MODELS replaces the default catalogue.
         send({"id": mid, "result": {"data": json.loads(os.environ.get("FAKE_CODEX_MODELS") or "null") or [
             {"id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "GPT-6 Luna", "isDefault": True},
             {"id": "gpt-5.5", "model": "gpt-5.5", "displayName": "GPT-5.5", "isDefault": False}]}})
+    elif method == "skills/list":
+        # FAKE_CODEX_SKILLS_HANG never answers; FAKE_CODEX_SKILLS is the JSON skill list.
+        if os.environ.get("FAKE_CODEX_SKILLS_HANG"):
+            continue
+        skills = json.loads(os.environ.get("FAKE_CODEX_SKILLS") or "null") or [
+            {"name": "tidy", "path": "/skills/tidy/SKILL.md", "enabled": True, "description": "Tidy up"}]
+        send({"id": mid, "result": {"data": [{"cwd": cwds, "skills": skills} for cwds in params.get("cwds", [])]}})
     elif method == "feedback/upload":
         send({"id": mid, "result": {"threadId": f"feedback-for-{params['threadId']}"}})
+    elif method == "thread/resume" and os.environ.get("FAKE_CODEX_RESUME_ERROR"):
+        send({"id": mid, "error": {"code": -32600, "message": os.environ["FAKE_CODEX_RESUME_ERROR"]}})
     elif method in ("thread/start", "thread/resume"):
         # FAKE_CODEX_SESSION_LOG collects each thread/start and thread/resume's params.
         if os.environ.get("FAKE_CODEX_SESSION_LOG"):
@@ -233,6 +310,10 @@ for line in sys.stdin:
         rollout_append({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": prompt}]}})
         if "exit before starting" in text:
             sys.exit(1)
+        # With FAKE_CODEX_HOLD_TURN_START set, the turn is not started (and its
+        # result not sent) until the test creates the gate file "turn-start".
+        if os.environ.get("FAKE_CODEX_HOLD_TURN_START"):
+            gate("turn-start")
         send({"id": mid, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
         ctx = {"threadId": thread_id, "turnId": turn_id}
         send({"method": "turn/started", "params": {**ctx, "turn": {"id": turn_id, "status": "inProgress"}}})
@@ -240,12 +321,7 @@ for line in sys.stdin:
             stream_reply(ctx, text)
             continue
         if "answer from gate" in text:
-            gate("answer")
-            answer = open(os.path.join(os.environ["FAKE_CODEX_GATE"], "answer")).read()
-            if answer:
-                send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": ""}}})
-                send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-gate", "text": answer}}})
-            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            threading.Thread(target=answer_from_gate, args=(ctx, turn_id), daemon=True).start()
             continue
         # "in the background" starts a dev server in a unified exec terminal and ends the
         # turn with it running (or, with "wait", keeps the turn open); Codex reports it
@@ -258,7 +334,19 @@ for line in sys.stdin:
                 send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-bg", "text": "The dev server is running."}}})
                 send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
                 continue
+        # "say and wait TEXT" writes partial.txt, answers TEXT, then stays running
+        # like "wait", so a test can stop a turn that already said something.
+        if text.startswith("say and wait "):
+            open("partial.txt", "w").write("partial\n")
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-partial-{turn_id}", "text": ""}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-partial-{turn_id}", "text": text[len("say and wait "):]}}})
+            waiting_ctx = ctx
+            continue
         if "wait" in text or "finishing" in text or "closing" in text:
+            # FAKE_CODEX_STDERR_FLOOD writes far more than a pipe buffer holds.
+            if os.environ.get("FAKE_CODEX_STDERR_FLOOD"):
+                sys.stderr.write("x" * 300_000 + "\n")
+                sys.stderr.flush()
             waiting_ctx = ctx
             finishing = "finishing" in text
             closing = "closing" in text
@@ -301,6 +389,28 @@ for line in sys.stdin:
             open(name, "w").write("".join("  " + line for line in lines))
         if text.startswith("fill "):
             open(text.split()[1], "w").write(("x" * 99 + "\n") * 110_000)
+        # Checkpoint file-list shapes: renames, binaries, empty files, names the
+        # plain "write NAME" split cannot carry, and several files in one turn.
+        if text.startswith("rename "):
+            _, old, new = text.split()
+            os.makedirs(os.path.dirname(new) or ".", exist_ok=True)
+            os.rename(old, new)
+        if text.startswith("write-image "):
+            open(text.split()[1], "wb").write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        if text.startswith("write-empty "):
+            open(text.split()[1], "w").close()
+        if text.startswith("write-named "):
+            open(text[len("write-named "):], "w").write("edited content\n")
+        if text.startswith("write-all "):
+            for name in text.split()[1:]:
+                open(name, "w").write(text + "\n")
+        # 'put NAME "text"' writes exactly the JSON string given to NAME; "remove NAME" deletes it.
+        if text.startswith("put "):
+            _, name, contents = text.split(" ", 2)
+            os.makedirs(os.path.dirname(name) or ".", exist_ok=True)
+            open(name, "w", newline="").write(json.loads(contents))
+        if text.startswith("remove "):
+            os.remove(text.split()[1])
         # "fail" ends the turn as failed.
         if text.startswith("fail"):
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "failed", "error": {"message": "the turn failed"}}}})
@@ -471,6 +581,9 @@ for line in sys.stdin:
     elif method == "thread/fork":
         thread_id = f"forked-{params['threadId']}-at-{params.get('lastTurnId')}"
         send({"id": mid, "result": {"thread": {"id": thread_id}}})
+    elif method == "thread/revert" and os.environ.get("FAKE_CODEX_NO_REVERT"):
+        # FAKE_CODEX_NO_REVERT: cutting paginated history before a turn is refused.
+        send({"id": mid, "error": {"code": -32600, "message": "thread/revert is not available"}})
     elif method == "thread/revert" and paginated and page_size and int(params["beforeTurnId"].rsplit("-", 1)[1]) <= turns - page_size:
         send({"id": mid, "error": {"code": -32600, "message": f"{params['beforeTurnId']} is not on the latest history page"}})
     elif method == "thread/revert" and paginated:
@@ -526,7 +639,18 @@ for line in sys.stdin:
     elif method == "thread/backgroundTerminals/terminate":
         send({"id": mid, "result": {"terminated": True}})
     elif method == "turn/interrupt":
+        if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
+            interrupted_turns.add(params["turnId"])
+        # While the file FAKE_CODEX_HOLD_INTERRUPT names exists, a stop waits, bounded as a
+        # held steer is.
+        hold_deadline = time.time() + 120
+        while os.path.exists(os.environ.get("FAKE_CODEX_HOLD_INTERRUPT", "/nonexistent")):
+            if time.time() > hold_deadline:
+                sys.exit("fake Codex: interrupt held past 120s (stuck hold-interrupt gate)")
+            time.sleep(0.01)
         send({"id": mid, "result": {}})
-        send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})
+        # FAKE_CODEX_IGNORE_INTERRUPT acknowledges the stop and never ends the turn.
+        if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
+            send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})
     else:
         send({"id": mid, "error": {"code": -32601, "message": method}})

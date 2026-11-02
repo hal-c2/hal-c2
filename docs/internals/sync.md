@@ -79,12 +79,32 @@ older MCs must refuse to open.
 A row deleted from the sidebar stays a row (`deletedAt`), so "the rows after rev" needs no
 separate record of deletions.
 
-## What the cluster does not do
+## What the cluster shares
 
 Threads are not replicated between MCs. A thread lives on one machine and is read through
 whichever MC the client reached. The slow link is client to MC, not MC to MC, so a second copy
 would add a consistency problem to save little. Moving a thread is a different operation
 (`features/threads/moving-between-machines.feature`).
+
+Settings that belong to the person are. The list in
+[`HalC2.Settings.Shared`](../../apps/server-ex/lib/hal_c2/settings/shared.ex) is an allowlist:
+a key that names this machine's paths, binaries, provider instances, projects, devices or
+secrets stays on its MC, as do plugin settings and any key nobody has classified. The keys
+whose secrets the MC seals can never be on it; a compile-time check refuses them.
+
+Each shared key carries a record (time, writer, value) in `settings-shared.json` beside
+`settings.json`, and members keep the newest per key, the way the member table merges entries.
+It rides the member table's gossip (on connect, on change, every half minute) and nothing
+else: no Mnesia or Khepri, whose quorum and schema would make one person's few machines,
+often asleep, wait on each other for a preference. A reset is a stamped unset, so nothing
+older brings a value back. An MC from before shared settings ignores the message and never
+reads the records file, so mixing versions or going back loses nothing.
+
+Two traps. The document is written before the record that stamps it: a crash in between
+then reads at the next start as an edit of the new value, stamped at the file's time, never
+as a member's older value winning. And a document that is missing or cannot be read is not a
+reset to tell the members: a missing one forgets its records and learns them back, and an
+unreadable one takes nothing from the members until it is mended.
 
 ## Clients
 

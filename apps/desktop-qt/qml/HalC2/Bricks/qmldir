@@ -24,6 +24,8 @@ UsageModelPrices 1.0 UsageModelPrices.qml
 ProviderModelList 1.0 ProviderModelList.qml
 ComposerUsageLimits 1.0 ComposerUsageLimits.qml
 ConnectionStatusRow 1.0 ConnectionStatusRow.qml
+ServerUpdateAction 1.0 ServerUpdateAction.qml
+ServerUpdatesList 1.0 ServerUpdatesList.qml
 ShellTextField 1.0 ShellTextField.qml
 ShellSwitch 1.0 ShellSwitch.qml
 ShellSpinBox 1.0 ShellSpinBox.qml
@@ -42,6 +44,7 @@ ShellChevron 1.0 ShellChevron.qml
 Sidebar 1.0 Sidebar.qml
 SidebarThreadRow 1.0 SidebarThreadRow.qml
 HalC2Wordmark 1.0 HalC2Wordmark.qml
+StagePill 1.0 StagePill.qml
 TerminalDrawer 1.0 TerminalDrawer.qml
 TitleBar 1.0 TitleBar.qml
 WindowControls 1.0 WindowControls.qml
@@ -68,6 +71,7 @@ PullRequestThreadDialog 1.0 PullRequestThreadDialog.qml
 EditFromHereDialog 1.0 EditFromHereDialog.qml
 WorktreeSetupCard 1.0 WorktreeSetupCard.qml
 LimitRecoveryBanner 1.0 LimitRecoveryBanner.qml
+ProviderUpdateNotice 1.0 ProviderUpdateNotice.qml
 ThreadLineage 1.0 ThreadLineage.qml
 CentreHost 1.0 CentreHost.qml
 ThreadView 1.0 ThreadView.qml
@@ -75,6 +79,7 @@ DiffPanel 1.0 DiffPanel.qml
 FilesPanel 1.0 FilesPanel.qml
 FileEntryMenu 1.0 FileEntryMenu.qml
 AttachmentViewer 1.0 AttachmentViewer.qml
+ImageViewer 1.0 ImageViewer.qml
 FilePathTrail 1.0 FilePathTrail.qml
 ProjectActionEditor 1.0 ProjectActionEditor.qml
 ProjectIcon 1.0 ProjectIcon.qml
@@ -94,6 +99,25 @@ CommandPalette 1.0 CommandPalette.qml
 PullRequestsPage 1.0 PullRequestsPage.qml
 HomePage 1.0 HomePage.qml
 UsagePage 1.0 UsagePage.qml
+SpaceWorkspace 1.0 SpaceWorkspace.qml
+SpaceSidebar 1.0 SpaceSidebar.qml
+SpaceDeck 1.0 SpaceDeck.qml
+SpacePage 1.0 SpacePage.qml
+SpaceAgentStrip 1.0 SpaceAgentStrip.qml
+SpaceViewers 1.0 SpaceViewers.qml
+SpacePageUpdate 1.0 SpacePageUpdate.qml
+SpaceUpdateDialog 1.0 SpaceUpdateDialog.qml
+SpacePresenter 1.0 SpacePresenter.qml
+SpaceBlock 1.0 SpaceBlock.qml
+SpaceChart 1.0 SpaceChart.qml
+SpaceSlashMenu 1.0 SpaceSlashMenu.qml
+SpaceBlockImage 1.0 SpaceBlockImage.qml
+SpaceImages 1.0 SpaceImages.qml
+SpaceImageDialog 1.0 SpaceImageDialog.qml
+SpaceFilePicker 1.0 SpaceFilePicker.qml
+SpaceComments 1.0 SpaceComments.qml
+SpaceHistoryPanel 1.0 SpaceHistoryPanel.qml
+SpaceVersionView 1.0 SpaceVersionView.qml
 UsageChart 1.0 UsageChart.qml
 ProvidersSettings 1.0 ProvidersSettings.qml
 ArchivedThreads 1.0 ArchivedThreads.qml
@@ -108,6 +132,10 @@ SettingsScopeSentence 1.0 SettingsScopeSentence.qml
 StorageSettings 1.0 StorageSettings.qml
 ProjectSettings 1.0 ProjectSettings.qml
 DevicePanel 1.0 DevicePanel.qml
+DeviceToolsPanel 1.0 DeviceToolsPanel.qml
+DeviceSetup 1.0 DeviceSetup.qml
+DeviceBanners 1.0 DeviceBanners.qml
+DeviceBody3D 1.0 DeviceBody3D.qml
 OpenSourceLicenses 1.0 OpenSourceLicenses.qml
 DiagnosticsSettings 1.0 DiagnosticsSettings.qml
 WelcomeWizard 1.0 WelcomeWizard.qml
@@ -126,4 +154,6 @@ PluginPart 1.0 PluginPart.qml
 PluginContext 1.0 PluginContext.qml
 PluginThreadPart 1.0 PluginThreadPart.qml
 PluginSettings 1.0 PluginSettings.qml
+NotificationsSettings 1.0 NotificationsSettings.qml
 PairingSettings 1.0 PairingSettings.qml
+MaintenanceSettings 1.0 MaintenanceSettings.qml

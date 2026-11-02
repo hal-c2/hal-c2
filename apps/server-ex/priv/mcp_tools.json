@@ -2086,7 +2086,7 @@
           ]
         }
       },
-      "required": ["title", "workspaceRoot"],
+      "required": ["workspaceRoot"],
       "additionalProperties": true
     }
   },
@@ -3098,7 +3098,7 @@
   },
   {
     "name": "hal_c2_thread_list",
-    "description": "List HAL-C2 threads in the calling thread's project, newest first. Filter by durable run status or title and paginate with the returned cursor. Threads from other projects are never exposed.",
+    "description": "List HAL-C2 threads in the calling thread's project, newest first. Filter by durable run status, title, or settled state (settled=true lists threads the user or auto-settlement moved out of the active list) and paginate with the returned cursor. Threads from other projects are never exposed.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3140,6 +3140,16 @@
           ]
         },
         "includeSubagents": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "settled": {
           "anyOf": [
             {
               "type": "boolean"
@@ -3817,7 +3827,7 @@
   },
   {
     "name": "task_cancel",
-    "description": "Interrupt a running delegated task and drop its pending result message. Fails with task_not_cancellable if the task already finished; use task_status for its result.",
+    "description": "Interrupt a running delegated task, drop its pending result message, and cancel what its child thread has queued, including messages a user sent it. Fails with task_not_cancellable if the task already finished; use task_status for its result.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -4045,6 +4055,173 @@
         }
       },
       "required": ["scheduledTaskId"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_page_list",
+    "description": "List the Spaces of this environment and the pages in each, outside the trash. Pages are shared documents the user and agents write together.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "spaceId": { "type": "string", "description": "Only this Space." } },
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_page_read",
+    "description": "Read a page of a Space: its blocks in order, its comments, and the page as Markdown.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
+        "pageId": { "type": "string" }
+      },
+      "required": ["spaceId", "pageId"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_page_block_insert",
+    "description": "Add a block to a page, written as this thread. Placed at the end unless afterBlockId is given; afterBlockId null puts it first. A page in the trash cannot be written.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
+        "pageId": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "paragraph",
+            "heading",
+            "checklist",
+            "callout",
+            "subpage_link",
+            "image",
+            "table",
+            "code",
+            "raw"
+          ],
+          "description": "A code block's text is the code. raw is Markdown the page does not model (a list, a quote), kept and shown as written."
+        },
+        "text": { "type": "string" },
+        "table": {
+          "type": "object",
+          "description": "For a table: rows of cells, the header row first, each a line of inline Markdown; align is left, center, right or null for each column. Its text is written from it.",
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": { "type": "array", "items": { "type": "string" } }
+            },
+            "align": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  { "type": "string", "enum": ["left", "center", "right"] },
+                  { "type": "null" }
+                ]
+              }
+            }
+          },
+          "required": ["rows"]
+        },
+        "language": {
+          "type": "string",
+          "description": "For a code block: its language, one word such as elixir or mermaid."
+        },
+        "checked": { "type": "boolean", "description": "For a checklist item." },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6,
+          "description": "For a heading: 1 to 6, as the number of # in Markdown. 2 when left out."
+        },
+        "linkedPageId": {
+          "type": "string",
+          "description": "For a subpage_link: the page it links to."
+        },
+        "imageId": {
+          "type": "string",
+          "description": "For an image: an image of this Space, named in a page's Markdown as space-image:<id>."
+        },
+        "afterBlockId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+      },
+      "required": ["spaceId", "pageId", "kind"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_page_block_update",
+    "description": "Change a block's text, tick or untick a checklist item, set a heading's level or a code block's language, written as this thread. What is given changes together. A table's text is its Markdown: give the whole table to change it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
+        "blockId": { "type": "string" },
+        "text": { "type": "string" },
+        "checked": { "type": "boolean" },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6,
+          "description": "For a heading: 1 to 6, as the number of # in Markdown."
+        },
+        "language": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "description": "For a code block: one word, or null for none."
+        }
+      },
+      "required": ["spaceId", "blockId"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_page_block_delete",
+    "description": "Delete a block from a page, with its comments.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
+        "blockId": { "type": "string" }
+      },
+      "required": ["spaceId", "blockId"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_page_open_file",
+    "description": "Open a Markdown file of a project as a page of a Space. The page is the file: edits to the page are written to it, and changes to the file show on the page. A file that is a page already is that page, wherever it is. Only files the project's hal-c2.json spaces section counts can be opened (see hal_c2_space_files_scan).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
+        "projectId": {
+          "type": "string",
+          "description": "The project; this thread's when left out."
+        },
+        "relativePath": {
+          "type": "string",
+          "description": "The file's path in the project's own folder."
+        }
+      },
+      "required": ["spaceId", "relativePath"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_space_files_scan",
+    "description": "Propose which of a project's files are Space pages from the Markdown it has, and write that as the spaces section of its hal-c2.json, keeping the rest of the file. A section someone already wrote is kept unless replace is true.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "description": "The project; this thread's when left out."
+        },
+        "replace": {
+          "type": "boolean",
+          "description": "Write over a spaces section that is already there."
+        }
+      },
       "additionalProperties": true
     }
   }

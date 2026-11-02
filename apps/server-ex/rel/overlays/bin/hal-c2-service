@@ -6,12 +6,15 @@
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 
-# `hal-c2-service install|status|restart|uninstall` manages this release with the user's
+# `hal-c2-service acp-mcp-bridge|acp-mcp-call` is the MCP bridge and one-shot
+# tool call an ACP agent runs (`HalC2.Mcp.BridgeCli`); `hal-c2-service
+# install|status|restart|uninstall` manages this release with the user's
 # service manager (`HalC2.Service.main/1`); `hal-c2-service cluster ...` the running
 # MC's cluster (`HalC2.Cluster.Command`); `hal-c2-service pair` prints a link a client
 # pairs with (`HalC2.Pair`); `hal-c2-service threads import` picks threads
 # of T3 Code or an older HAL-C2 on this machine to import (`HalC2.Import.Picker`).
 case "${1:-}" in
+  acp-mcp-bridge | acp-mcp-call) exec "$here/hal_c2" eval "HalC2.Mcp.BridgeCli.main(System.argv())" "$@" ;;
   install | status | restart | uninstall) exec "$here/hal_c2" eval "HalC2.Service.main([\"$1\"])" ;;
   cluster) shift && exec "$here/hal_c2" eval "HalC2.Cluster.Command.main(System.argv())" "$@" ;;
   pair) shift && exec "$here/hal_c2" eval "HalC2.Pair.main(System.argv())" "$@" ;;

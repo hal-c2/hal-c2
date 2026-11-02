@@ -8,7 +8,7 @@ import HalC2.Shell
 // from a WorkspaceFiles (Panel.files). The tree loads a folder when it is
 // expanded; typing searches the whole workspace. A file opens beside the
 // tree, one row per line, to read, edit or copy whole; an image shows as
-// itself, and other media open in the browser.
+// itself, and other media play in it, or open in the browser where they cannot.
 //
 //   FilesPanel { anchors.fill: parent; source: Panel.files }
 Rectangle {
@@ -24,10 +24,21 @@ Rectangle {
     // Hiding it is a preference, kept while this panel lives (the next file opens
     // with the tree still hidden), not a state of the file that was open.
     property bool explorerOpen: true
+    // What the file's header takes with all its buttons out: its margins, then each
+    // button and the gap before it. The path gives way to them, so it counts for nothing.
+    readonly property real headerFullWidth: 14 + [renderButton, editButton, copyButton, openInEditorButton, openPreviewButton, openInSpaceButton, wrapButton, fileExplorerToggleButton, closeButton].reduce((sum, button) => sum + (button.wanted ? button.implicitWidth + 4 : 0), 0)
+    // The text buttons grow with the user's font scale and can outgrow any tab, while
+    // the icon buttons cannot, so the text buttons move into a menu when they would
+    // not fit. The toggle and Close, the way out of the file, stay on the header.
+    readonly property bool headerFits: width >= headerFullWidth
+    // Follows headerFits by hand: focus has to move before the buttons trade places,
+    // because a hidden button has already lost it.
+    property bool headerCollapsed: false
     // What the tree takes beside an open file: at most 352px or 46% of the tab, and
-    // never so much that the file (whose header buttons are its minimum width) is
-    // pushed under it. A row layout does not shrink a fixed-size column on its own.
-    readonly property real explorerShare: Math.max(0, Math.min(352, width * 0.46, width - 1 - fileViewer.Layout.minimumWidth))
+    // never so much that the file's header buttons are collapsed or pushed under it.
+    // Reserving the full header keeps widening the tab from ever taking the tree away.
+    // A row layout does not shrink a fixed-size column on its own.
+    readonly property real explorerShare: Math.max(0, Math.min(352, width * 0.46, width - 1 - headerFullWidth))
     // Below this width the tree has no room for a row to be read, so a file that
     // leaves it less is open without the tree rather than beside a sliver of it that
     // still takes focus. A row needs its indent, icon and gap (8 + 13 + 6), about ten
@@ -36,7 +47,8 @@ Rectangle {
     // search field of 26px. Longer names elide in the middle and say the rest in a
     // tooltip and the entry's accessible description.
     readonly property real explorerMinimum: Math.ceil(8 + 13 + 6 + rowSample.advanceWidth + 8)
-    readonly property bool explorerShown: !fileOpen || (explorerOpen && explorerShare >= explorerMinimum)
+    // A file outside the project has no place in the project's tree.
+    readonly property bool explorerShown: !fileOpen || (explorerOpen && explorerShare >= explorerMinimum && !(source?.outsideProject ?? false))
     // True while keyboard focus sits inside the given item.
     function focusInside(item: Item): bool {
         let focused = root.Window.activeFocusItem;
@@ -54,6 +66,26 @@ Rectangle {
         if (!explorerShown && fileOpen && focusInside(filesExplorerColumn))
             fileExplorerToggleButton.forceActiveFocus();
     }
+
+    // Where focus goes when the ⋯ button leaves: the toggle, or Close for a file
+    // outside the project, which has no toggle.
+    function focusHeaderHome() {
+        (fileExplorerToggleButton.wanted ? fileExplorerToggleButton : closeButton).forceActiveFocus();
+    }
+
+    // The buttons trading places under the focused item would clear focus to
+    // nowhere, and an open menu has no business outliving its button.
+    onHeaderFitsChanged: {
+        headerMenu.close();
+        const focusOnText = renderButton.activeFocus || editButton.activeFocus || wrapButton.activeFocus;
+        const focusOnMenu = headerMenuButton.activeFocus;
+        headerCollapsed = !headerFits;
+        if (headerCollapsed && focusOnText)
+            headerMenuButton.forceActiveFocus();
+        else if (!headerCollapsed && focusOnMenu)
+            focusHeaderHome();
+    }
+    Component.onCompleted: headerCollapsed = !headerFits
 
     // The reverse case: closing the file hides the viewer holding the
     // toggle or close button, so give focus to the tree that remains.
@@ -113,8 +145,8 @@ Rectangle {
             id: fileViewer
 
             objectName: "fileViewer"
-            // A file whose header is wider than the tab overflows this column;
-            // clip here so the tree column does not pay for an offscreen pass.
+            // Content wider than the tab overflows this column; clip here so the
+            // tree column does not pay for an offscreen pass.
             clip: true
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -137,17 +169,25 @@ Rectangle {
                     source: root.source
                 }
                 ShellButton {
+                    id: renderButton
+
+                    readonly property bool wanted: (root.source?.renderKind ?? "").length > 0 && !(root.source?.editing ?? false)
+
                     objectName: "fileRender"
                     subtle: true
-                    visible: (root.source?.renderKind ?? "").length > 0 && !(root.source?.editing ?? false)
+                    visible: wanted && !root.headerCollapsed
                     text: root.source?.rendered ? qsTr("Source") : qsTr("Rendered")
                     implicitHeight: 26
                     onClicked: root.source.rendered = !root.source.rendered
                 }
                 ShellButton {
+                    id: editButton
+
+                    readonly property bool wanted: root.source?.fileStatus === "ready" && root.mediaKind.length === 0
+
                     objectName: "fileEdit"
                     subtle: true
-                    visible: root.source?.fileStatus === "ready" && root.mediaKind.length === 0
+                    visible: wanted && !root.headerCollapsed
                     enabled: root.source?.editable ?? false
                     text: root.source?.editing ? qsTr("Done") : qsTr("Edit")
                     implicitHeight: 26
@@ -155,9 +195,13 @@ Rectangle {
                     onClicked: root.source.editing = !root.source.editing
                 }
                 ShellButton {
+                    id: copyButton
+
+                    readonly property bool wanted: root.source?.fileStatus === "ready" && root.mediaKind.length === 0
+
                     objectName: "fileCopy"
                     subtle: true
-                    visible: root.source?.fileStatus === "ready" && root.mediaKind.length === 0
+                    visible: wanted
                     iconName: "copy"
                     iconSize: 13
                     iconTint: root.muted
@@ -167,9 +211,13 @@ Rectangle {
                     onClicked: Shell.dispatch("files.copyContents", {})
                 }
                 ShellButton {
+                    id: openInEditorButton
+
+                    readonly property bool wanted: (Shell.state.workspace?.editors ?? []).some(editor => editor.id !== "file-manager")
+
                     objectName: "fileOpenInEditor"
                     subtle: true
-                    visible: (Shell.state.workspace?.editors ?? []).some(editor => editor.id !== "file-manager")
+                    visible: wanted
                     iconName: "external-link"
                     iconSize: 13
                     iconTint: root.muted
@@ -179,18 +227,109 @@ Rectangle {
                     onClicked: Shell.dispatch("files.openInEditor", {path: root.source.openPath})
                 }
                 ShellButton {
+                    id: openPreviewButton
+
+                    readonly property bool wanted: (root.source?.openPath ?? "").match(/\.(html?|pdf)$/i) !== null
+
+                    objectName: "fileOpenPreview"
+                    subtle: true
+                    visible: wanted
+                    iconName: "globe"
+                    iconSize: 13
+                    iconTint: root.muted
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    Accessible.name: qsTr("Open in the browser tab")
+                    onClicked: root.source.openInPreview()
+                }
+                ShellButton {
+                    id: openInSpaceButton
+
+                    // Only a file the project's spaces section covers (SpaceController's `files`).
+                    readonly property bool wanted: Shell.state.space?.files?.[Shell.state.panel?.spaceProjectId ?? ""]?.paths?.[root.source?.openPath ?? ""] !== undefined
+
+                    objectName: "fileOpenInSpace"
+                    subtle: true
+                    visible: wanted
+                    iconName: "book"
+                    iconSize: 13
+                    iconTint: root.muted
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    Accessible.name: Shell.state.panel?.onWorktree ? qsTr("Open the project's copy in a Space") : qsTr("Open in a Space")
+                    onClicked: Shell.dispatch("files.openInSpace", {path: root.source.openPath})
+                }
+                ShellButton {
+                    id: wrapButton
+
+                    readonly property bool wanted: root.mediaKind.length === 0
+
                     objectName: "fileWrap"
                     subtle: true
-                    visible: root.mediaKind.length === 0
+                    visible: wanted && !root.headerCollapsed
                     text: root.source?.wrap ? qsTr("No wrap") : qsTr("Wrap")
                     implicitHeight: 26
                     onClicked: root.source.wrap = !root.source.wrap
                 }
+                // Where the text buttons go when the header has no room for them.
+                ShellButton {
+                    id: headerMenuButton
+
+                    objectName: "fileHeaderMenu"
+                    subtle: true
+                    visible: root.headerCollapsed && (renderButton.wanted || editButton.wanted || wrapButton.wanted)
+                    iconName: "ellipsis"
+                    iconSize: 13
+                    iconTint: root.muted
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    Accessible.name: qsTr("File options")
+                    onClicked: headerMenu.open()
+
+                    ShellMenu {
+                        id: headerMenu
+
+                        y: parent.height
+                        // A popup gives focus back to its button when it has closed,
+                        // even a button the header no longer shows.
+                        onClosed: {
+                            if (root.fileOpen && !root.headerCollapsed)
+                                root.focusHeaderHome();
+                        }
+
+                        ShellMenuItem {
+                            objectName: "fileRenderItem"
+                            visible: renderButton.wanted
+                            height: visible ? implicitHeight : 0
+                            text: renderButton.text
+                            onTriggered: renderButton.clicked()
+                        }
+                        ShellMenuItem {
+                            objectName: "fileEditItem"
+                            visible: editButton.wanted
+                            height: visible ? implicitHeight : 0
+                            enabled: editButton.enabled
+                            text: editButton.text
+                            Accessible.description: editButton.Accessible.description
+                            onTriggered: editButton.clicked()
+                        }
+                        ShellMenuItem {
+                            objectName: "fileWrapItem"
+                            visible: wrapButton.wanted
+                            height: visible ? implicitHeight : 0
+                            text: wrapButton.text
+                            onTriggered: wrapButton.clicked()
+                        }
+                    }
+                }
                 ShellButton {
                     id: fileExplorerToggleButton
 
+                    readonly property bool wanted: !(root.source?.outsideProject ?? false)
+
                     objectName: "fileExplorerToggle"
                     subtle: true
+                    visible: wanted
                     // The button owns the flip; the panel copies it into the
                     // explorerOpen preference. checked presents what is on
                     // screen (explorerShown), so an auto-hidden tree does not
@@ -226,6 +365,10 @@ Rectangle {
                     }
                 }
                 ShellButton {
+                    id: closeButton
+
+                    readonly property bool wanted: true
+
                     objectName: "fileClose"
                     subtle: true
                     iconName: "x"
@@ -397,7 +540,7 @@ Rectangle {
                     anchors.fill: parent
                     anchors.margins: 10
                     active: root.visible && root.source?.fileStatus === "ready" && root.mediaKind.length > 0
-                    sourceComponent: root.mediaKind === "image" ? mediaImage : mediaElsewhere
+                    sourceComponent: root.mediaKind === "image" ? mediaImage : mediaPlayer
                 }
                 Component {
                     id: mediaImage
@@ -427,6 +570,39 @@ Rectangle {
                             text: qsTr("Loading...")
                             color: root.muted
                             font.pixelSize: Math.round(13 * Theme.fontScale)
+                        }
+                    }
+                }
+                // Played or paged here. Its own file behind a Loader, so a machine
+                // without the Qt module offers the browser instead.
+                Component {
+                    id: mediaPlayer
+
+                    Item {
+                        Loader {
+                            id: player
+
+                            anchors.fill: parent
+                            Component.onCompleted: {
+                                const document = root.mediaKind === "pdf";
+                                setSource(document ? "DocumentView.qml" : "MediaPlayerView.qml", document ? {
+                                    source: root.source.mediaDocument
+                                } : {
+                                    source: root.source.mediaUrl,
+                                    video: root.mediaKind === "video"
+                                });
+                            }
+                        }
+                        Connections {
+                            target: player.item
+                            function onFailed() {
+                                root.source.mediaFailed(root.source.mediaUrl);
+                            }
+                        }
+                        Loader {
+                            anchors.fill: parent
+                            active: player.status === Loader.Error
+                            sourceComponent: mediaElsewhere
                         }
                     }
                 }
@@ -507,6 +683,21 @@ Rectangle {
                     boundsBehavior: Flickable.StopAtBounds
                     readonly property bool wrap: root.source?.wrap ?? false
                     readonly property real gutter: glyph.advanceWidth * 6 + 12
+                    // The lines chosen in the gutter, for a comment; 0 for none.
+                    property string selectionPath: ""
+                    property int selectionStart: 0
+                    property int selectionEnd: 0
+                    readonly property int selectionFirst: Math.min(selectionStart, selectionEnd)
+                    readonly property int selectionLast: Math.max(selectionStart, selectionEnd)
+
+                    function clearSelection() {
+                        selectionStart = selectionEnd = 0;
+                    }
+
+                    Keys.onEscapePressed: event => {
+                        event.accepted = selectionStart > 0 && !fileCommentForm.visible;
+                        clearSelection();
+                    }
                     flickableDirection: wrap ? Flickable.VerticalFlick : Flickable.HorizontalAndVerticalFlick
                     contentWidth: wrap ? width : Math.max(width, gutter + glyph.advanceWidth * Math.min(model?.maxColumns ?? 0, root.maxLineColumns) + 16)
                     ScrollBar.vertical: ScrollBar {
@@ -516,8 +707,32 @@ Rectangle {
                         Accessible.name: qsTr("Scroll file sideways")
                     }
 
+                    // Let go of when the pointer goes down outside the file, unless a comment is
+                    // being written. Lies over the window only while there is a selection, and
+                    // passes every press on.
+                    MouseArea {
+                        parent: root.Window.contentItem
+                        anchors.fill: parent
+                        z: 1000
+                        enabled: lines.selectionStart > 0 && !fileCommentForm.visible
+                        acceptedButtons: Qt.AllButtons
+                        onPressed: mouse => {
+                            mouse.accepted = false;
+                            const at = mapToItem(fileViewer, mouse.x, mouse.y);
+                            if (!fileViewer.contains(at))
+                                lines.clearSelection();
+                        }
+                    }
+
                     Connections {
                         target: root.source
+                        function onFileChanged() {
+                            if (lines.selectionPath !== root.source.openPath) {
+                                lines.selectionPath = root.source.openPath;
+                                lines.clearSelection();
+                                fileCommentForm.visible = false;
+                            }
+                        }
                         function onRevealRequested() {
                             if (root.source.revealLine > 0)
                                 Qt.callLater(() => lines.positionViewAtIndex(root.source.revealLine - 1, ListView.Center));
@@ -536,8 +751,19 @@ Rectangle {
 
                         Rectangle {
                             anchors.fill: parent
-                            visible: line.revealed
+                            visible: line.revealed || (line.number >= lines.selectionFirst && line.number <= lines.selectionLast)
                             color: Qt.alpha(Theme.palette.color("accent", "#3b82f6"), 0.15)
+                        }
+                        MouseArea {
+                            objectName: "fileLineGutter-" + line.number
+                            width: lines.gutter
+                            height: line.height
+                            onClicked: mouse => {
+                                lines.forceActiveFocus();
+                                if (!(mouse.modifiers & Qt.ShiftModifier) || lines.selectionStart === 0)
+                                    lines.selectionStart = line.number;
+                                lines.selectionEnd = line.number;
+                            }
                         }
                         Text {
                             width: glyph.advanceWidth * 6
@@ -562,6 +788,72 @@ Rectangle {
                             wrapMode: lines.wrap ? Text.WrapAnywhere : Text.NoWrap
                             topPadding: 1
                             bottomPadding: 1
+                        }
+                    }
+                }
+
+                ShellButton {
+                    objectName: "fileLineComment"
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.margins: 8
+                    visible: lines.visible && lines.selectionStart > 0 && !fileCommentForm.visible
+                    text: qsTr("Comment")
+                    onClicked: fileCommentForm.visible = true
+                }
+                Rectangle {
+                    id: fileCommentForm
+
+                    objectName: "fileCommentForm"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    implicitHeight: commentColumn.implicitHeight + 16
+                    visible: false
+                    color: Theme.palette.color("surfaceOverlay", "#18181b")
+                    border.color: root.borderColor
+                    onVisibleChanged: {
+                        if (visible)
+                            fileCommentText.forceActiveFocus();
+                        else
+                            fileCommentText.clear();
+                    }
+
+                    ColumnLayout {
+                        id: commentColumn
+
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        spacing: 6
+
+                        ShellTextField {
+                            id: fileCommentText
+
+                            objectName: "fileCommentText"
+                            Layout.fillWidth: true
+                            placeholderText: qsTr("Comment on lines %1 to %2").arg(lines.selectionFirst).arg(lines.selectionLast)
+                            Keys.onEscapePressed: fileCommentForm.visible = false
+                        }
+                        RowLayout {
+                            Layout.alignment: Qt.AlignRight
+                            spacing: 4
+
+                            ShellButton {
+                                objectName: "fileCommentCancel"
+                                subtle: true
+                                text: qsTr("Cancel")
+                                onClicked: fileCommentForm.visible = false
+                            }
+                            ShellButton {
+                                objectName: "fileCommentAdd"
+                                text: qsTr("Add to prompt")
+                                enabled: fileCommentText.text.trim().length > 0
+                                onClicked: {
+                                    root.source.commentOnLines(lines.selectionFirst, lines.selectionLast, fileCommentText.text);
+                                    fileCommentForm.visible = false;
+                                    lines.clearSelection();
+                                }
+                            }
                         }
                     }
                 }

@@ -36,7 +36,8 @@ defmodule HalC2.Orchestration.TurnWriter do
   @doc """
   Creates the turn item (and its node) for a native item the first time it is seen.
   `kind` is `:assistant`, `:reasoning`, `:command`, `:file`, `:search`, `:web`, `:tool`,
-  `:compaction`, or `:error` (a provider failure, such as a retry);
+  `:compaction`, `:notice` (a message the provider itself announced), or `:error`
+  (a provider failure, such as a retry);
   `fields` are the item type's own fields.
   """
   def ensure_item(state, native, kind, fields \\ %{}) do
@@ -115,6 +116,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   defp shape(:subagent, _, fields), do: {"subagent", "subagent", fields}
   defp shape(:plan, _, _), do: {"plan", "proposed_plan", %{"markdown" => "", "streaming" => true}}
   defp shape(:compaction, _, fields), do: {"system", "compaction", fields}
+  defp shape(:notice, _, fields), do: {"system", "system_notice", fields}
   defp shape(:error, _, fields), do: {"system", "error", fields}
 
   defp plan(ids, plan_id, node_id, kind, status, fields) do
@@ -206,40 +208,48 @@ defmodule HalC2.Orchestration.TurnWriter do
       else
         item_ids = Map.put(ids, :node, node_id)
 
-        [
-          Orchestration.create(
-            "node",
-            node_id,
-            Entities.node(ids, node_id, "todo_list", "completed", at, %{
-              "nativeItemRef" => Entities.provider_ref(native, driver)
-            })
-          ),
-          Orchestration.create(
-            "plan",
-            plan_id,
-            plan(
-              ids,
-              plan_id,
+        # A newer list replaces the thread's unfinished one; a completed list
+        # stays completed.
+        superseded =
+          for {id, plan} <- stream.entities["plan"] || %{},
+              plan["kind"] == "todo_list" and plan["status"] == "active",
+              do: Orchestration.upsert(stream, "plan", id, &Map.put(&1, "status", "superseded"))
+
+        superseded ++
+          [
+            Orchestration.create(
+              "node",
               node_id,
-              "todo_list",
-              if(done, do: "completed", else: "active"),
-              fields
-            )
-          ),
-          Orchestration.create(
-            "turn-item",
-            item_id,
-            Entities.turn_item(
-              item_ids,
+              Entities.node(ids, node_id, "todo_list", "completed", at, %{
+                "nativeItemRef" => Entities.provider_ref(native, driver)
+              })
+            ),
+            Orchestration.create(
+              "plan",
+              plan_id,
+              plan(
+                ids,
+                plan_id,
+                node_id,
+                "todo_list",
+                if(done, do: "completed", else: "active"),
+                fields
+              )
+            ),
+            Orchestration.create(
+              "turn-item",
               item_id,
-              "todo_list",
-              Orchestration.next_ordinal(stream),
-              item_status,
-              at,
-              Map.put(fields, "planId", plan_id)
+              Entities.turn_item(
+                item_ids,
+                item_id,
+                "todo_list",
+                Orchestration.next_ordinal(stream),
+                item_status,
+                at,
+                Map.put(fields, "planId", plan_id)
+              )
             )
-          )
-        ]
+          ]
       end
     end)
 
@@ -299,8 +309,8 @@ defmodule HalC2.Orchestration.TurnWriter do
   "file-read", "permission"). Returns `{state, request_id}`; the runtime keeps what
   it needs to answer the provider under that id.
   """
-  def open_request(state, native, request_kind, prompt),
-    do: open(state, native, {:approval, request_kind, prompt})
+  def open_request(state, native, request_kind, prompt, options \\ nil),
+    do: open(state, native, {:approval, request_kind, prompt, options})
 
   @doc """
   Opens questions for the user (`OrchestrationV2UserInputQuestion`s): a pending
@@ -332,14 +342,17 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     {node_kind, request_kind, item_fields} =
       case what do
-        {:approval, kind, prompt} ->
+        {:approval, kind, prompt, options} ->
           fields = %{"requestId" => request_id, "requestKind" => kind}
 
+          fields =
+            if(is_binary(prompt) and prompt != "",
+              do: Map.put(fields, "prompt", prompt),
+              else: fields
+            )
+
           {"approval_request", kind,
-           if(is_binary(prompt) and prompt != "",
-             do: Map.put(fields, "prompt", prompt),
-             else: fields
-           )}
+           if(is_list(options), do: Map.put(fields, "options", options), else: fields)}
 
         {tag, questions} when tag in [:questions, :async_questions] ->
           {"user_input_request", "user_input",
@@ -560,6 +573,20 @@ defmodule HalC2.Orchestration.TurnWriter do
   def finish(state, status, failure) do
     at = Entities.now()
 
+    # Ending a run is at-least-once (a restart can ask again): a run that has
+    # already ended keeps the checkpoint its first ending captured, so the
+    # repeat must not capture over it.
+    run_id = state.turn && get_in(state.turn, [Access.key(:ids), Access.key(:run)])
+
+    if run_id && not active?(HalC2.Streams.state(state.thread_id), run_id) do
+      TurnWatch.release(run_id)
+      :ok
+    else
+      finish_active(state, status, failure, at)
+    end
+  end
+
+  defp finish_active(state, status, failure, at) do
     checkpoint =
       if status == "completed",
         do:
@@ -673,9 +700,13 @@ defmodule HalC2.Orchestration.TurnWriter do
       HalC2.Plugins.turn_finished(thread_id, status, failure)
     end)
 
+    HalC2.Space.Presence.agent_done(thread_id)
+
     # A delegated task reports back to the thread that asked for it, apart from the
     # rest so their failures cannot lose the report.
     Task.start(fn -> HalC2.Orchestration.Delegation.report(thread_id, ids.run, status) end)
+    # So does an agent asked from a page, to the page.
+    Task.start(fn -> HalC2.Space.PageAgent.report(thread_id) end)
 
     :ok
   end
@@ -707,8 +738,14 @@ defmodule HalC2.Orchestration.TurnWriter do
       end)
 
     case abandoned do
-      {state, queue?} -> finished(state, status, failure, queue?)
-      nil -> :ok
+      {state, queue?} ->
+        # A start still in flight for the run (its runtime stopped answering)
+        # must not hold the thread's work behind it.
+        HalC2.Orchestration.Effects.cancel_pending(thread_id, "provider-turn.start", run_id)
+        finished(state, status, failure, queue?)
+
+      nil ->
+        :ok
     end
   end
 
@@ -856,15 +893,25 @@ defmodule HalC2.Orchestration.TurnWriter do
   end
 
   defp capture_checkpoint(%{scope_id: scope_id} = turn, at) do
-    HalC2.Checkpoint.capture_run(
-      turn.cwd,
-      scope_id,
-      turn.run_ordinal,
-      turn.ids.run,
-      turn.ids.root_node,
-      turn.ids.thread,
-      at
-    )
+    # Its own lane: a finish can run inside the turn's own start (a wake
+    # replayed to its end), where the provider lane is the start itself.
+    case HalC2.Orchestration.Effects.run_now(
+           turn.ids.thread,
+           "checkpoint.capture",
+           %{
+             "cwd" => turn.cwd,
+             "scopeId" => scope_id,
+             "runOrdinal" => turn.run_ordinal,
+             "runId" => turn.ids.run,
+             "rootNodeId" => turn.ids.root_node,
+             "at" => at
+           },
+           nil,
+           "checkpoint"
+         ) do
+      {:ok, checkpoint} -> checkpoint
+      _ -> nil
+    end
   end
 
   defp capture_checkpoint(_turn, _at), do: nil

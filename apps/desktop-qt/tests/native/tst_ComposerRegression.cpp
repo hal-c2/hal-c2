@@ -125,6 +125,8 @@ struct Shell {
     });
   }
 
+  QVariantMap composerState() const { return bridge->state()->value(QStringLiteral("composer")).toMap(); }
+
   ComposerController* composer() const { return native->controller<ComposerController>(); }
 
   QVariantMap edit() { return {{QStringLiteral("clientId"), QStringLiteral("qml")}, {QStringLiteral("revision"), ++revision}}; }
@@ -210,6 +212,104 @@ private slots:
     QVERIFY(shown().value(QStringLiteral("suggestionsEmptyText")).isNull());
     shell.mc.answerHeld();
     QTRY_COMPARE(shown().value(QStringLiteral("suggestionsEmptyText")).toString(), QStringLiteral("No matching files or folders."));
+  }
+
+  // The @ menu said nothing at all for a word it could not search, and never
+  // asked again when the environment returned.
+  void theAtMenuSaysItCannotSearchAndAsksAgainOnReturn() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto emptyText = [&shell] {
+      return shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("suggestionsEmptyText"));
+    };
+    FakeFiles& files = fakeFiles(shell.mc);
+    const QString environment = shell.mc.environmentId;
+
+    shell.mc.setOnline(environment, false);
+    QTRY_VERIFY(!shell.native->store()->environmentOnline(environment));
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(emptyText().toString(), QStringLiteral("Can't search files right now."));
+    QCOMPARE(files.searches, 0);
+
+    shell.mc.setOnline(environment, true);
+    QTRY_COMPARE(files.searches, 1);
+    QTRY_COMPARE(emptyText().toString(), QStringLiteral("No matching files or folders."));
+  }
+
+  // A dropped connection failed the search, which then claimed nothing matched
+  // and was not asked again after the reconnect.
+  void aSearchLostWithTheConnectionIsAskedAgain() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto emptyText = [&shell] {
+      return shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("suggestionsEmptyText"));
+    };
+    FakeFiles& files = fakeFiles(shell.mc);
+    shell.mc.hold(QStringLiteral("search"));
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(files.searches, 1);
+    shell.mc.dropHeld();
+
+    shell.mc.drop();
+    QTRY_COMPARE(files.searches, 2);
+    QTRY_COMPARE(emptyText().toString(), QStringLiteral("No matching files or folders."));
+  }
+
+  // A search the MC refuses says so rather than that nothing matched, though
+  // the connection and the environment stayed up.
+  void aRefusedSearchSaysItCannotSearch() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    shell.mc.onRpc(QStringLiteral("projects.searchEntries"), [&shell](const FakeMc::Rpc& rpc) {
+      shell.mc.refuse(rpc, QStringLiteral("no such folder"));
+    });
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("suggestionsEmptyText")).toString(),
+                 QStringLiteral("Can't search files right now."));
+  }
+
+  // A route with no workspace says it cannot search, and answers once the
+  // project's folder is known.
+  void aRouteWithNoWorkspaceSaysItCannotSearch() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QJsonObject project = shell.mc.projects.value(QStringLiteral("p1"));
+    shell.mc.projects[QStringLiteral("p1")].remove(QStringLiteral("workspaceRoot"));
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    FakeFiles& files = fakeFiles(shell.mc);
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("suggestionsEmptyText")).toString(),
+                 QStringLiteral("Can't search files right now."));
+    QCOMPARE(files.searches, 0);
+
+    shell.mc.sendRow(QStringLiteral("p1"), project, QStringLiteral("project"));
+    QTRY_COMPARE(files.searches, 1);
+    QTRY_COMPARE(shell.composerState().value(QStringLiteral("suggestionsEmptyText")).toString(),
+                 QStringLiteral("No matching files or folders."));
+  }
+
+  // The same word stayed on the checkout it was first searched in after the
+  // route moved to another.
+  void aMovedCheckoutAsksTheSameWordAgain() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    FakeFiles& files = fakeFiles(shell.mc);
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(files.searches, 1);
+
+    QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+    row.insert(QStringLiteral("worktreePath"), QStringLiteral("/work/worktrees/other"));
+    shell.mc.sendRow(QStringLiteral("t1"), row);
+    QTRY_COMPARE(files.searches, 2);
   }
 
   // A queued run that arrived before its message was listed as a blank row;
@@ -408,6 +508,102 @@ private slots:
 
     QVERIFY(shell.restart(false));
     QTRY_COMPARE(shell.composer()->draft(draftId), QStringLiteral("start here"));
+  }
+
+  // A pick back to the thread's access while another change is on its way goes
+  // too: else that change lands after it and the composer shows the pick back.
+  void aPickBackWhileAnAccessChangeIsOnItsWayStillGoes() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    shell.mc.effects.append([&shell](const QJsonObject& command) {
+      if (command.value(QLatin1String("type")) != QLatin1String("thread.runtime-mode.set")) return;
+      QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+      row.insert(QStringLiteral("runtimeMode"), command.value(QLatin1String("runtimeMode")));
+      shell.mc.threads.insert(QStringLiteral("t1"), row);
+      shell.mc.sendRow(QStringLiteral("t1"), row);
+    });
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto pick = [&shell](const QString& mode) {
+      shell.bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), mode}});
+    };
+    const auto shown = [&shell] {
+      return shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("runtimeMode")).toString();
+    };
+    pick(QStringLiteral("approval-required"));
+    QTRY_COMPARE(shell.native->store()->thread(shell.key)->runtimeMode, QStringLiteral("approval-required"));
+
+    shell.mc.hold(QStringLiteral("answers"));
+    pick(QStringLiteral("full-access"));
+    pick(QStringLiteral("approval-required"));
+    QTRY_COMPARE(shell.mc.commands.size(), 3);
+    shell.mc.answerHeld();
+
+    QTRY_COMPARE(shell.native->store()->thread(shell.key)->runtimeMode, QStringLiteral("approval-required"));
+    QCOMPARE(shown(), QStringLiteral("approval-required"));
+  }
+
+  // An access change the MC took settles when the row shows another client's
+  // change that came right after it: the composer shows what the thread has.
+  void anAccessChangeOverwrittenElsewhereSettles() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto shown = [&shell] {
+      return shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("runtimeMode")).toString();
+    };
+    shell.mc.hold(QStringLiteral("answers"));
+    shell.bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("approval-required")}});
+    QTRY_COMPARE(shell.mc.commands.size(), 1);
+    QCOMPARE(shown(), QStringLiteral("approval-required"));
+
+    // Ours and the phone's reach the row as one update: only the phone's shows.
+    QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+    row.insert(QStringLiteral("runtimeMode"), QStringLiteral("auto-accept-edits"));
+    shell.mc.threads.insert(QStringLiteral("t1"), row);
+    shell.mc.sendRow(QStringLiteral("t1"), row);
+    QTRY_COMPARE(shell.native->store()->thread(shell.key)->runtimeMode, QStringLiteral("auto-accept-edits"));
+    QCOMPARE(shown(), QStringLiteral("approval-required"));
+    shell.mc.answerHeld();
+
+    QTRY_COMPARE(shown(), QStringLiteral("auto-accept-edits"));
+  }
+
+  // The MC's answers can beat the rows they changed: a second pick the MC took
+  // still shows while the row holds the first, or neither.
+  void anAccessChangeAnsweredBeforeItsRowStillShows() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    shell.mc.effects.append([&shell](const QJsonObject& command) {
+      if (command.value(QLatin1String("type")) != QLatin1String("thread.runtime-mode.set")) return;
+      QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+      row.insert(QStringLiteral("runtimeMode"), command.value(QLatin1String("runtimeMode")));
+      shell.mc.threads.insert(QStringLiteral("t1"), row);
+      shell.mc.sendRow(QStringLiteral("t1"), row);
+    });
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto pick = [&shell](const QString& mode) {
+      shell.bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), mode}});
+    };
+    const auto shown = [&shell] {
+      return shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("runtimeMode")).toString();
+    };
+    shell.mc.lagRows = true;
+    shell.mc.hold(QStringLiteral("answers"));
+    pick(QStringLiteral("approval-required"));
+    pick(QStringLiteral("auto-accept-edits"));
+    QTRY_COMPARE(shell.mc.commands.size(), 2);
+    shell.mc.answerHeld();
+    // The answers went first: the row with the first pick comes after them.
+    shell.mc.catchUp(1);
+    QTRY_COMPARE(shell.native->store()->thread(shell.key)->runtimeMode, QStringLiteral("approval-required"));
+    QCOMPARE(shown(), QStringLiteral("auto-accept-edits"));
+
+    shell.mc.catchUp();
+    QTRY_COMPARE(shell.native->store()->thread(shell.key)->runtimeMode, QStringLiteral("auto-accept-edits"));
+    QCOMPARE(shown(), QStringLiteral("auto-accept-edits"));
   }
 };
 

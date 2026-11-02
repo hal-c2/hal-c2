@@ -29,6 +29,11 @@ import "js/changedFilesTree.js" as ChangedFilesTree
 Item {
     id: root
 
+    ImageViewer {
+        id: largeImage
+        model: root.model
+    }
+
     property var model: null
     // Whether the agent is working and what the indicator says; the model's
     // own when it has them.
@@ -771,7 +776,13 @@ Item {
                                 id: attachment
 
                                 required property var modelData
+                                required property int index
                                 readonly property bool pictured: picture.status === Image.Ready
+
+                                function openLarge() {
+                                    forceActiveFocus();
+                                    largeImage.showImages(root.list(row.attachments), index, attachment);
+                                }
 
                                 objectName: "attachment-" + modelData.id
                                 Accessible.role: Accessible.Graphic
@@ -781,7 +792,18 @@ Item {
                                 height: 200
                                 radius: 2
                                 color: root.messageColor
-                                border.color: root.borderColor
+                                border.color: activeFocus ? root.iconColor : root.borderColor
+                                activeFocusOnTab: true
+                                Keys.onReturnPressed: openLarge()
+                                Keys.onEnterPressed: openLarge()
+                                Keys.onSpacePressed: openLarge()
+
+                                MouseArea {
+                                    objectName: "attachmentOpenLarge-" + attachment.modelData.id
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: attachment.openLarge()
+                                }
 
                                 Component.onCompleted: if (root.model !== null && typeof root.model.loadAttachment === "function")
                                     root.model.loadAttachment(modelData.id)
@@ -842,7 +864,21 @@ Item {
                                 height: 32
                                 radius: 8
                                 color: root.messageColor
-                                border.color: root.borderColor
+                                border.color: activeFocus ? root.iconColor : root.borderColor
+                                activeFocusOnTab: true
+                                function openViewer() {
+                                    Shell.dispatch("attachment.sent.view", { id: modelData.id, name: modelData.name, mimeType: modelData.mimeType ?? "" });
+                                }
+                                Keys.onReturnPressed: openViewer()
+                                Keys.onEnterPressed: openViewer()
+                                Keys.onSpacePressed: openViewer()
+
+                                MouseArea {
+                                    objectName: "sentFileOpen-" + sentFile.modelData.id
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: sentFile.openViewer()
+                                }
 
                                 Row {
                                     id: fileRow

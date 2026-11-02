@@ -599,6 +599,56 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
     World.put_client(context, "second", second)
   end
 
+  step ~r/^the notification channel "(?<id>[^"]+)" takes new settings while it runs$/,
+       %{args: [id]} = context do
+    context
+    |> Fixtures.install(id, live_source(id))
+    |> configure(id, %{"topic" => "builds"})
+    |> Fixtures.enable(id)
+  end
+
+  step ~r/^"(?<id>[^"]+)" holds a notification it has not delivered yet$/,
+       %{args: [id]} = context do
+    pid = Process.whereis(Fixtures.module(id))
+    GenServer.cast(pid, {:hold, "Turn finished"})
+    assert %{held: ["Turn finished"]} = :sys.get_state(pid)
+    context
+  end
+
+  step "the user saves a new topic for {string}", %{args: [id]} = context do
+    Fixtures.probe()
+    before = Process.whereis(Fixtures.module(id))
+
+    {_, context} =
+      World.call!(context, "plugins.saveSettings", %{
+        "id" => id,
+        "settings" => %{"topic" => "deploys"}
+      })
+
+    Map.merge(context, %{plugin: id, before: before})
+  end
+
+  step ~r/^"(?<id>[^"]+)" is not restarted$/, %{args: [id]} = context do
+    # A restart starts the plugin before the save answers.
+    refute_received {:plugin_started, ^id, _}
+    assert Process.whereis(Fixtures.module(id)) == context.before
+    assert %{"status" => "running", "restarts" => 0} = Fixtures.entry(id)
+    context
+  end
+
+  step "it delivers the held notification to the new topic", context do
+    send(context.before, :deliver)
+    assert_receive {:delivered, "Turn finished", "deploys"}, 2_000
+    context
+  end
+
+  step ~r/^"(?<id>[^"]+)" is restarted with the new topic$/, %{args: [id]} = context do
+    assert_received {:plugin_started, ^id, pid}
+    assert pid != context.before and Process.whereis(Fixtures.module(id)) == pid
+    assert %{"topic" => "deploys"} = :sys.get_state(pid)
+    context
+  end
+
   # --- reloading -------------------------------------------------------------------------
 
   step ~r/^a new version of "(?<id>[^"]+)" is placed in the plugins directory and the MC reloads$/,
@@ -878,6 +928,40 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
   end
 
   # --- helpers ---------------------------------------------------------------------------
+
+  # Notification channel `id` that takes saved settings while it runs: it holds
+  # notifications until told to deliver them, to the topic it has then.
+  defp live_source(id) do
+    """
+    defmodule #{inspect(Fixtures.module(id))} do
+      @behaviour HalC2.Plugins.NotificationChannel
+      use GenServer
+
+      def manifest do
+        %{id: #{inspect(id)}, name: "Ntfy", version: "1.0.0", api_version: 1,
+          settings: [%{key: "topic", label: "Topic"}], permissions: []}
+      end
+
+      def start_link(settings), do: GenServer.start_link(__MODULE__, settings, name: __MODULE__)
+      def settings_changed(pid, settings, _old), do: GenServer.call(pid, {:settings, settings})
+      def notify(_notification, _settings), do: :ok
+
+      def init(settings) do
+        if probe = Process.whereis(:hal_c2_plugin_probe), do: send(probe, {:plugin_started, #{inspect(id)}, self()})
+        {:ok, %{settings: settings, held: []}}
+      end
+
+      def handle_call({:settings, settings}, _from, state), do: {:reply, :ok, %{state | settings: settings}}
+      def handle_cast({:hold, notification}, state), do: {:noreply, %{state | held: [notification | state.held]}}
+
+      def handle_info(:deliver, state) do
+        probe = Process.whereis(:hal_c2_plugin_probe)
+        for notification <- state.held, do: send(probe, {:delivered, notification, state.settings["topic"]})
+        {:noreply, %{state | held: []}}
+      end
+    end
+    """
+  end
 
   defp configure(context, id, settings \\ nil) do
     settings =

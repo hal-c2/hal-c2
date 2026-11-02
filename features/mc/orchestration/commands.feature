@@ -71,20 +71,20 @@ Feature: How the engine accepts commands
     When the MC restarts
     Then the pending provider work runs once after the restart
 
-  @mc @backlog
+  @mc
   Scenario: A command that fails while it is recorded leaves nothing behind
     When recording a command on "t1" fails part way through
     Then "t1" has none of its events, no receipt for it and none of its side effects
     And the same command can be dispatched again
 
-  @mc @backlog
+  @mc
   Scenario: A side effect that fails is retried with growing delays and then given up
     Given a command was accepted and its side effect keeps failing
     Then the side effect is tried 5 times in all
     And the waits between tries double from 100 milliseconds, never more than 30 seconds
     And after the last try it is recorded as failed with its error
 
-  @mc @backlog
+  @mc
   Scenario Outline: After the server process is lost, unfinished work tied to the old provider process is cancelled
     Given <work> was pending or under way when the server process ended
     When the MC starts again
@@ -99,7 +99,7 @@ Feature: How the engine accepts commands
       | restarting a provider turn     |
       | answering a provider's request |
 
-  @mc @backlog
+  @mc
   Scenario Outline: After the server process is lost, work that is safe to repeat is run again
     Given <work> was under way when the server process ended
     When the MC starts again
@@ -115,41 +115,41 @@ Feature: How the engine accepts commands
       | removing a thread's attached files   |
       | generating a thread title            |
 
-  @mc @backlog
+  @mc
   Scenario: Side effects of one thread run in order while other threads proceed
     Given "t1" has two side effects waiting and thread "t2" has one
     When the first side effect of "t1" is slow
     Then the second side effect of "t1" waits for it
     And the side effect of "t2" runs without waiting
 
-  @mc @backlog
+  @mc
   Scenario: Generating a title neither waits for nor delays a thread's provider work
     Given "t1" is generating its title
     When the user sends a message to "t1"
     Then the provider turn starts without waiting for the title
     And a slow provider turn does not hold back the title
 
-  @mc @backlog
+  @mc
   Scenario: Work cancelled before it starts never reaches the provider
     Given a message to "t1" was accepted and its provider turn has not started
     When the user interrupts "t1"
     Then the provider turn is never started
 
-  @mc @backlog
+  @mc
   Scenario: Work cancelled while it runs is stopped and not retried
     Given a side effect of "t1" is running
     When a later command cancels it
     Then it stops and is not tried again
     And the next side effect of "t1" runs
 
-  @mc @backlog
+  @mc
   Scenario: Interrupting a turn the provider says has already stopped counts as done
     Given the user interrupted "t1" just as its provider turn ended
     When the provider answers that the turn is not active
     Then the interrupt is treated as done
     And it is not retried
 
-  @mc @backlog
+  @mc
   Scenario Outline: A command refused for something the provider cannot do names the provider and what it cannot do
     Given "t1" runs on "Codex", which cannot <ability>
     When a client dispatches a command that needs it
@@ -168,19 +168,19 @@ Feature: How the engine accepts commands
       | receive a context handoff                      | Codex cannot receive the context handoff needed for this switch.                                |
       | say reliably when its runs finish              | Codex cannot confirm when its runs finish reliably enough for this.                             |
 
-  @mc @backlog
+  @mc
   Scenario: A delivery the provider cannot make at all is refused in the provider's name
     Given "t1" runs on "Codex" and has a turn running
     When a client sends a message in a way the provider supports no form of
     Then the client is told "Codex cannot deliver a message that way right now."
 
-  @mc @backlog
+  @mc
   Scenario: A provider the MC has no display name for is named after its instance
     Given "t1" runs on a provider instance called "acmeAgent" that cannot queue messages
     When a client queues a message behind the running turn of "t1"
     Then the client is told "Acme cannot queue messages behind an active run."
 
-  @mc @backlog
+  @mc
   Scenario: A refused command is reported with its most specific reason
     Given a command on "t1" fails inside the provider with "The sandbox denied the write."
     When the failure reaches the client wrapped in the engine's general dispatch errors
@@ -189,7 +189,7 @@ Feature: How the engine accepts commands
 
   # Legacy: Orchestrator.control-reads.test.ts, RunCompletionReads.test.ts. Visits fire on
   # every activity bump of an open thread, so their cost must not grow with the thread.
-  @mc @backlog
+  @mc
   Scenario Outline: A small command on a long thread is decided without reading its history
     Given "t1" has a very long history
     When a client <command>

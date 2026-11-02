@@ -36,6 +36,8 @@ Window {
     readonly property real zoom: Shell.state.layout ? (Shell.state.layout.zoom ?? 1) : 1
     // Where the window is (NavigationController).
     readonly property var route: Shell.state.route ?? null
+    // "HAL-C2 (Dev)" or "HAL-C2 (Nightly)" for a build that is not a release (StageController).
+    readonly property string appName: Shell.state.stage && Shell.state.stage.label ? qsTr("HAL-C2 (%1)").arg(Shell.state.stage.label) : qsTr("HAL-C2")
     readonly property bool settingsActive: route !== null && route.kind === "settings"
     // The settings section showing (js/settingsPages.js): layouts show
     // SettingsHost and hide the composer while settingsActive, and CentreHost
@@ -73,7 +75,7 @@ Window {
     minimumWidth: 640
     minimumHeight: 400
     visible: true
-    title: route !== null && route.title ? qsTr("%1 — HAL-C2").arg(route.title) : qsTr("HAL-C2")
+    title: route !== null && route.title ? qsTr("%1 — %2").arg(route.title, appName) : appName
     color: Theme.windowTransparent ? "transparent" : Theme.palette.color("chrome", "#0b0b0d")
     opacity: Theme.windowOpacity
     flags: Theme.frameless ? Qt.Window | Qt.FramelessWindowHint : Qt.Window

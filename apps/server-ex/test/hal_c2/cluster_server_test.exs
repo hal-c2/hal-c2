@@ -70,6 +70,66 @@ defmodule HalC2.ClusterServerTest do
     refute_received {:sent, ^stranger, _}
   end
 
+  test "shared settings go to members and are taken up from members, until one is removed" do
+    Application.put_env(:hal_c2, :settings_check_ms, nil)
+    on_exit(fn -> Application.delete_env(:hal_c2, :settings_check_ms) end)
+    start_supervised!(HalC2.Settings)
+    own = HalC2.Environment.id()
+
+    fp = String.duplicate("a", 64)
+    entry = %{"id" => "m1", "fingerprint" => fp, "version" => HalC2.Upgrade.version()}
+    {:ok, _} = Cluster.admit(entry)
+    member = Cluster.mc_name("m1")
+    stranger = Cluster.mc_name("stranger")
+    Application.put_env(:hal_c2, :fake_connected, [member, stranger])
+
+    # A change here goes out at once, then with the rest of the gossip and on connect.
+    {:ok, 1} = HalC2.Settings.put(%{"defaultRuntimeMode" => "full-access"}, 0)
+    _ = :sys.get_state(Cluster)
+    assert_received {:sent, ^member, {:settings, ^own, %{"defaultRuntimeMode" => %{"at" => at}}}}
+
+    send(Cluster, :gossip)
+    send(Cluster, {:nodeup, member})
+    _ = :sys.get_state(Cluster)
+    assert_received {:sent, ^member, {:settings, ^own, _}}
+    assert_received {:sent, ^member, {:settings, ^own, _}}
+    refute_received {:sent, ^stranger, {:settings, _, _}}
+
+    newer = %{"defaultRuntimeMode" => %{"at" => at + 1, "by" => "m1", "value" => "auto"}}
+    GenServer.cast(Cluster, {:settings, "stranger", newer})
+    _ = :sys.get_state(Cluster)
+    _ = :sys.get_state(HalC2.Settings)
+    assert {%{"defaultRuntimeMode" => "full-access"}, 1} = HalC2.Settings.get()
+
+    GenServer.cast(Cluster, {:settings, "m1", newer})
+    _ = :sys.get_state(Cluster)
+    _ = :sys.get_state(HalC2.Settings)
+    assert {%{"defaultRuntimeMode" => "auto"}, 2} = HalC2.Settings.get()
+
+    # Removing it cuts it off, as it did the stranger.
+    :ok = Cluster.remove("m1")
+    assert Transport.connected() == []
+    flush_sent()
+
+    newest = %{"defaultRuntimeMode" => %{"at" => at + 2, "by" => "m1", "value" => "full-access"}}
+    GenServer.cast(Cluster, {:settings, "m1", newest})
+    {:ok, _} = HalC2.Settings.put(%{"defaultRuntimeMode" => "approval-required"}, 2)
+    send(Cluster, :gossip)
+    _ = :sys.get_state(Cluster)
+    _ = :sys.get_state(HalC2.Settings)
+
+    assert {%{"defaultRuntimeMode" => "approval-required"}, 3} = HalC2.Settings.get()
+    refute_received {:sent, _, {:settings, _, _}}
+  end
+
+  defp flush_sent do
+    receive do
+      {:sent, _, _} -> flush_sent()
+    after
+      0 -> :ok
+    end
+  end
+
   test "a cluster process that restarts still reports the port distribution listens on" do
     on_exit(fn -> :persistent_term.erase({HalC2.Cluster.Epmd, :listen_port}) end)
     # What distribution does as it starts, once per VM: the cluster process does not.

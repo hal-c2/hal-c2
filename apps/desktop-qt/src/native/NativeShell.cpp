@@ -1,6 +1,8 @@
 #include "NativeShell.h"
 
+#include <QCoreApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -9,6 +11,7 @@
 #include <QRegularExpression>
 #include <QPointer>
 #include <QSaveFile>
+#include <QTimer>
 #include <QUuid>
 #include <QtLogging>
 
@@ -181,10 +184,13 @@ NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
   m_windows.push_back(std::make_unique<NativeWindow>(this, NativeWindow::kMain, bridge));
   m_store.setCache(&m_cache);
   connect(&m_store, &ShellStore::changed, this, &NativeShell::update);
+  // Connected before main() connects stopping the MC it started, so runs first.
+  connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, [this] { finishWrites(quitWriteWaitMs); });
 }
 
 NativeShell::~NativeShell() {
   // Windows (and their controllers) before the shared controllers they use.
+  m_closingWindows.clear();
   m_windows.clear();
   m_shared.clear();
   m_sharedBridge->setMcHere({});
@@ -269,16 +275,54 @@ void NativeShell::closeWindow(const QString& id) {
   m_windows.erase(it);
   if (m_activeWindow == window) m_activeWindow = nullptr;
   saveWindows();
-  // Its route and panels; the drafts are every window's.
-  if (!m_stateDir.isEmpty() && id == NativeWindow::kMain) {
-    QFile::remove(QDir(m_stateDir).filePath(QStringLiteral("shell-route.json")));
-    QFile::remove(QDir(m_stateDir).filePath(QStringLiteral("shell-panel.json")));
-    QFile::remove(QDir(m_stateDir).filePath(QStringLiteral("shell-terminals.json")));
-  } else if (!m_stateDir.isEmpty()) {
-    QDir(windowDir(id)).removeRecursively();
-  }
+  // Its route and panels go when it does, as it saves them until then; the
+  // drafts are every window's.
+  connect(window, &QObject::destroyed, [stateDir = m_stateDir, dir = windowDir(id), main = id == NativeWindow::kMain] {
+    if (stateDir.isEmpty()) return;
+    if (!main) {
+      QDir(dir).removeRecursively();
+      return;
+    }
+    QFile::remove(QDir(stateDir).filePath(QStringLiteral("shell-route.json")));
+    QFile::remove(QDir(stateDir).filePath(QStringLiteral("shell-panel.json")));
+    QFile::remove(QDir(stateDir).filePath(QStringLiteral("shell-terminals.json")));
+  });
   emit windowClosing(window);
-  window->deleteLater();
+  auto* panel = window->controller<RightPanelController>();
+  WorkspaceFiles* files = panel ? panel->files() : nullptr;
+  if (files) files->finishWrites();
+  if (!files || !files->writing()) {
+    window->deleteLater();
+    return;
+  }
+  m_closingWindows.emplace_back(window);
+  connect(files, &WorkspaceFiles::writesFinished, this, [this, window] {
+    const auto closing = std::find_if(m_closingWindows.begin(), m_closingWindows.end(), [&](const auto& kept) { return kept.get() == window; });
+    if (closing == m_closingWindows.end()) return;
+    closing->release()->deleteLater();
+    m_closingWindows.erase(closing);
+  });
+}
+
+void NativeShell::finishWrites(int waitMs) {
+  // A closed window goes once its writes are answered, maybe while this waits.
+  QList<QPointer<WorkspaceFiles>> viewers;
+  for (const auto* windows : {&m_windows, &m_closingWindows}) {
+    for (const auto& window : *windows) {
+      if (auto* panel = window->controller<RightPanelController>()) viewers.append(panel->files());
+    }
+  }
+  QEventLoop loop;
+  const auto writing = [&viewers] { return std::any_of(viewers.cbegin(), viewers.cend(), [](const QPointer<WorkspaceFiles>& files) { return files && files->writing(); }); };
+  for (const QPointer<WorkspaceFiles>& files : std::as_const(viewers)) {
+    files->finishWrites();
+    connect(files.data(), &WorkspaceFiles::writesFinished, &loop, [&] {
+      if (!writing()) loop.quit();
+    });
+  }
+  if (!writing()) return;
+  QTimer::singleShot(waitMs, &loop, &QEventLoop::quit);
+  loop.exec(QEventLoop::ExcludeUserInputEvents);
 }
 
 void NativeShell::setStoreDirs(const QString& state, const QString& data, const QString& cache) {

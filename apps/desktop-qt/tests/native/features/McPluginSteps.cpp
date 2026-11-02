@@ -42,6 +42,8 @@ struct FakeMcPlugins {
   QHash<QString, FakePluginPart> parts;
   // The page a scenario keeps an eye on, to tell a reload from an update.
   QPointer<QQuickItem> page;
+  // What `plugins.compile` finds, by plugin; a check passes when none is set.
+  QHash<QString, QJsonObject> checks;
 };
 
 QString environmentOf(const FakeMc& mc, const QString& environment) {
@@ -177,7 +179,14 @@ const FakeMc::Extension extension([](FakeMc& mc) {
                                 {QStringLiteral("content"), binary ? QString::fromLatin1(bytes.toBase64()) : QString::fromUtf8(bytes)},
                                 {QStringLiteral("revision"), revision}});
     } else if (rpc.method == QLatin1String("plugins.enable") || rpc.method == QLatin1String("plugins.restart")) {
+      if (rpc.method == QLatin1String("plugins.enable")) entry->insert(QStringLiteral("compileCheck"), QJsonValue::Null);
       changed(QStringLiteral("running"));
+    } else if (rpc.method == QLatin1String("plugins.compile")) {
+      const QJsonObject check = fake.checks.value(id, {{QStringLiteral("ok"), true}, {QStringLiteral("error"), QJsonValue::Null},
+                                                      {QStringLiteral("diagnostics"), QJsonArray{}}, {QStringLiteral("checkedAt"), QStringLiteral("2026-10-29T12:00:00Z")}});
+      entry->insert(QStringLiteral("compileCheck"), check);
+      mc.reply(rpc, check);
+      push();
     } else if (rpc.method == QLatin1String("plugins.disable")) {
       changed(QStringLiteral("disabled"));
     } else if (rpc.method == QLatin1String("plugins.saveSettings")) {
@@ -214,7 +223,9 @@ QJsonObject codeReview() {
       {QStringLiteral("error"), QJsonValue::Null},
       {QStringLiteral("lastError"), QJsonValue::Null},
       {QStringLiteral("revision"), QStringLiteral("1")},
+      {QStringLiteral("source"), QStringLiteral("package")},
       {QStringLiteral("runsCode"), true},
+      {QStringLiteral("compileCheck"), QJsonValue::Null},
       {QStringLiteral("permissions"),
        QJsonArray{object({{QStringLiteral("id"), QStringLiteral("pullRequests:write")},
                           {QStringLiteral("label"), QStringLiteral("Comment on pull requests")},
@@ -882,6 +893,46 @@ const Steps steps([] {
   step(QStringLiteral("the settings offer no restart"), [](World& world, const Captures&, const Table&) {
     QQuickItem* restart = findNamed(waitNamed(world, QStringLiteral("pluginSettingsFailure"))->parentItem(), QStringLiteral("pluginSettingsRestart"));
     expect(restart && !restart->isVisible(), QStringLiteral("the settings offer a restart"));
+  });
+
+  // Checking that a package's code compiles.
+  step(QStringLiteral("the code of %1 does not compile at line (\\d+) of %1 because %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString error = QStringLiteral("%1:%2: %3").arg(c[2], c[1], c[3]);
+    fake(world).checks.insert(c[0], {{QStringLiteral("ok"), false}, {QStringLiteral("error"), error},
+                                     {QStringLiteral("diagnostics"), QJsonArray{QJsonObject{{QStringLiteral("file"), c[2]}, {QStringLiteral("line"), c[1].toInt()},
+                                                                                            {QStringLiteral("message"), c[3]}, {QStringLiteral("severity"), QStringLiteral("error")}}}},
+                                     {QStringLiteral("checkedAt"), QStringLiteral("2026-10-29T12:00:00Z")}});
+  });
+  step(QStringLiteral("the code of %1 is fixed").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).checks.remove(c[0]); });
+  step(QStringLiteral("the user checks that %1 compiles").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* list = showPluginList(world);
+    QQuickItem* button = nullptr;
+    world.waitFor([&] {
+      QQuickItem* card = findNamed(list, QStringLiteral("mcPlugin:%1/%2").arg(world.mc.environmentId, c[0]));
+      button = card ? findNamed(card, QStringLiteral("mcPluginCompile")) : nullptr;
+      return button && button->isVisible() && button->isEnabled();
+    }, [&] { return QStringLiteral("the card to offer a check; %1").arg(describe(world)); });
+    const qsizetype before = callsOf(world, QStringLiteral("plugins.compile")).size();
+    clickItem(world, button);
+    world.waitFor([&] { return callsOf(world, QStringLiteral("plugins.compile")).size() > before; }, QStringLiteral("the check to be asked for"));
+  });
+  step(QStringLiteral("the card of %1 says of its code %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* list = showPluginList(world);
+    QString says;
+    world.waitFor([&] {
+      QQuickItem* card = findNamed(list, QStringLiteral("mcPlugin:%1/%2").arg(world.mc.environmentId, c[0]));
+      QQuickItem* result = card ? findNamed(card, QStringLiteral("mcPluginCompileResult")) : nullptr;
+      says = result && result->isVisible() ? result->property("text").toString() : QString();
+      return says == c[1];
+    }, [&] { return QStringLiteral("the card says \"%1\" of its code").arg(says); });
+  });
+  step(QStringLiteral("the card of %1 offers no compile check").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* list = showPluginList(world);
+    QQuickItem* card = nullptr;
+    world.waitFor([&] { return (card = findNamed(list, QStringLiteral("mcPlugin:%1/%2").arg(world.mc.environmentId, c[0]))) != nullptr; },
+                  [&] { return describe(world); });
+    QQuickItem* check = findNamed(card, QStringLiteral("mcPluginCompile"));
+    expect(check && !check->isVisible(), QStringLiteral("a running plugin's card offers a compile check"));
   });
   step(QStringLiteral("the settings say %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* failure = waitNamed(world, QStringLiteral("pluginSettingsFailure"));

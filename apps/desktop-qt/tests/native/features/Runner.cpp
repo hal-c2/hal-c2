@@ -42,7 +42,9 @@ QRegularExpression wildcard(const QString& glob) {
 namespace runner {
 
 // Enough Gherkin for this repo: tags, Feature, Rule, Background, Scenario,
-// Scenario Outline with Examples, and data tables. Doc strings are not used.
+// Scenario Outline with Examples, data tables, and doc strings (`"""`), which a
+// step is given as a table of one cell: the lines between the marks, less the
+// opening mark's indent.
 QList<Scenario> parseFeature(const QString& path) {
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) qFatal("cannot read %s", qPrintable(path));
@@ -100,6 +102,18 @@ QList<Scenario> parseFeature(const QString& path) {
   static const QRegularExpression stepKeyword(QStringLiteral("^(Given|When|Then|And|But|\\*)\\s+(.*)$"));
   for (qsizetype index = 0; index < lines.size(); ++index) {
     const QString line = lines.at(index).trimmed();
+    if (line == QLatin1String("\"\"\"")) {
+      const qsizetype indent = lines.at(index).indexOf(QLatin1Char('"'));
+      QStringList doc;
+      while (++index < lines.size() && lines.at(index).trimmed() != QLatin1String("\"\"\"")) {
+        const QString& raw = lines.at(index);
+        qsizetype cut = 0;
+        while (cut < indent && cut < raw.size() && raw.at(cut).isSpace()) ++cut;
+        doc.append(raw.mid(cut));
+      }
+      if (steps && !steps->isEmpty()) steps->last().table.append({doc.join(QLatin1Char('\n'))});
+      continue;
+    }
     if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) continue;
     if (line.startsWith(QLatin1Char('@'))) {
       pendingTags += line.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);

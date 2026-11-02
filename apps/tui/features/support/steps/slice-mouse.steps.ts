@@ -79,6 +79,7 @@ const KEY: Record<string, string> = {
   "project.add.select": "project.add.activate",
   "select.choose": "select.confirm",
   "sidebar.scroll": "thread.next",
+  "space.select": "space.next",
   "terminal.scroll": "terminal.scroll.lineUp",
 };
 /** A palette entry: a command that dispatches this action is defined. */

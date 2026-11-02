@@ -165,6 +165,7 @@ void ConnectionHealthController::attach(NativeWindow* window) {
 void ConnectionHealthController::setClientVersion(const QString& version) {
   m_clientVersion = version;
   update();
+  emit clientVersionChanged();
 }
 
 bool ConnectionHealthController::handle(const QString& action, const QVariant& payload) {
@@ -245,12 +246,14 @@ QStringList ConnectionHealthController::dismissed() const {
 }
 
 QVariant ConnectionHealthController::versionWarning() const {
-  QString server = m_store->environment(m_store->environmentOf(m_client->mc())).value(QLatin1String("serverVersion")).toString();
+  const QString served = m_store->environmentOf(m_client->mc());
+  QString server = m_store->environment(served).value(QLatin1String("serverVersion")).toString();
   if (server.isEmpty()) server = m_client->descriptor().value(QLatin1String("serverVersion")).toString();
   if (!serverBehind(m_clientVersion, server)) return QVariant::fromValue(nullptr);
   const QString key = m_client->environment() + u':' + m_clientVersion.trimmed() + u':' + server.trimmed();
   if (dismissed().contains(key)) return QVariant::fromValue(nullptr);
   return QVariantMap{{QStringLiteral("key"), key},
+                     {QStringLiteral("environmentId"), served.isEmpty() ? m_client->environment() : served},
                      {QStringLiteral("clientVersion"), m_clientVersion.trimmed()},
                      {QStringLiteral("serverVersion"), server.trimmed()},
                      {QStringLiteral("text"), tr("Version mismatch: %1 runs HAL-C2 %2, older than this app (%3). Update it to stay in sync.")

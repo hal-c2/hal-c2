@@ -497,9 +497,14 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   end
 
   step "the sync sweep runs", context do
-    reads = summary_reads(context)
-    :ok = HalC2.PullRequests.Sync.sweep()
-    Map.put(context, :reads_before, reads)
+    if String.contains?(context[:file] || "", "pull-request-links") do
+      # Those steps start the sweep and count its reads their own way.
+      HalC2.Steps.Orchestration.PullRequestLinks.sync_sweep_now(context)
+    else
+      reads = summary_reads(context)
+      :ok = HalC2.PullRequests.Sync.sweep()
+      Map.put(context, :reads_before, reads)
+    end
   end
 
   step "pull request {int} is not read again", %{args: [42]} = context do

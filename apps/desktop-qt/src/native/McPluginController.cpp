@@ -235,6 +235,7 @@ void McPluginController::publish() {
       }
       shown.insert(QStringLiteral("screenshotUrls"), shots);
       shown.insert(QStringLiteral("settingsPageUrl"), url(str(contributes(entry).value(QLatin1String("settingsPage")))));
+      shown.insert(QStringLiteral("checking"), m_checking.contains(environment + QLatin1Char('/') + id));
       plugins.append(shown);
       if (!running(entry)) continue;
 
@@ -346,6 +347,20 @@ bool McPluginController::handle(const QString& action, const QVariant& payload) 
     request(environment, QStringLiteral("plugins.disable"), input, QStringLiteral("The plugin could not be disabled"));
   } else if (action == QLatin1String("mcPlugins.restart")) {
     request(environment, QStringLiteral("plugins.restart"), input, QStringLiteral("The plugin could not be restarted"));
+  } else if (action == QLatin1String("mcPlugins.compile")) {
+    const QString key = environment + QLatin1Char('/') + id;
+    if (m_checking.contains(key)) return true;
+    m_checking.insert(key);
+    publish();
+    // A check that ran answers with what it found, which the `plugins` shape also brings.
+    m_client->call(this, environment, QStringLiteral("plugins.compile"), input,
+                   [this, key](const QJsonValue&, const std::optional<QString>& error) {
+                     m_checking.remove(key);
+                     publish();
+                     if (!error) return;
+                     if (auto* toasts = NativeShell::of(this)->controller<ToastController>())
+                       toasts->error(QStringLiteral("The plugin's code could not be checked"), *error);
+                   });
   } else {
     return false;
   }

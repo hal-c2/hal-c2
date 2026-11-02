@@ -679,3 +679,13 @@ Feature: OpenCode
     Given the subagents setting is HAL-C2 workers
     When an OpenCode session is started
     Then its task permission is denied, through the config OpenCode is started with
+
+  # HalC2.Plugins.Kinds: another instance runs with its own settings, home and account,
+  # so its turn needs its own agent rather than the first instance's.
+  Scenario: A turn on another instance of OpenCode starts its own agent
+    Given OpenCode is installed and enabled
+    And the user sends a message to OpenCode
+    And a second instance "opencode-work" of it with a binary of its own
+    When the next message goes to "opencode-work"
+    Then a process of "opencode-work" runs that turn in place of the first instance's
+    And another message to "opencode-work" stays in that process

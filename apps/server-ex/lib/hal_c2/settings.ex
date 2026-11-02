@@ -21,9 +21,21 @@ defmodule HalC2.Settings do
   Hub management keys and sensitive provider variables never stay in the document:
   `HalC2.UsageLimitSources.seal_keys/2` and `HalC2.ProviderSecrets.seal/2` move them to
   the secret store on every write, so nothing a client reads carries one.
+
+  The settings that belong to the person rather than the machine
+  (`HalC2.Settings.Shared`) follow them across their cluster. Each carries a stamp in
+  `<home>/settings-shared.json`, written after settings.json so an MC that knows
+  nothing of it reads and writes the document as before. A change made here, by a
+  client or in the file, is stamped when it is saved, and one made while the MC was
+  down (or ran a version without stamps) when it starts, at the file's time. Members
+  send their stamps through `HalC2.Cluster`, and a newer one is saved here like a
+  `put/2`: watchers hear of it and the version moves on, so a client writing what it
+  read before it is refused as stale.
   """
 
   use GenServer
+
+  alias HalC2.Settings.Shared
 
   require Logger
 
@@ -46,7 +58,7 @@ defmodule HalC2.Settings do
                      textGenerationModelSelection sourceControlWriterModelSelection
                      sourceControlWritingStyle pullRequestMergeMethod sidebarAutoSettleOnMerge
                      sidebarAutoSettleAfterDays continueThreadsAfterServerUpdate
-                     responseStreamingMode)
+                     responseStreamingMode projectEnvironment projectEnvironmentFile)
 
   @doc """
   The settings as they apply to one project: its `projectSettingsOverrides` entry
@@ -192,7 +204,7 @@ defmodule HalC2.Settings do
 
     case invalid do
       [] ->
-        :ok
+        validate_temporary_files_folder(settings)
 
       [{id, name} | _] ->
         {:error,
@@ -207,6 +219,56 @@ defmodule HalC2.Settings do
                "underscores, not starting with a digit."
          }}
     end
+  end
+
+  # Only a folder being chosen is tried: a disk that is away now must not refuse every
+  # other change to settings. `HalC2.Scratch` falls back for as long as it stays away.
+  defp validate_temporary_files_folder(settings) do
+    folder = temporary_files_folder(settings)
+    held = temporary_files_folder(settings())
+
+    cond do
+      folder in [nil, "", held] -> :ok
+      not is_binary(folder) -> temporary_files_error(folder, ": it must be a path")
+      HalC2.Paths.absolute(folder, HalC2.Paths.platform()) == nil -> relative_folder(folder)
+      true -> make_folder(folder)
+    end
+  end
+
+  defp temporary_files_folder(%{"storageCleanup" => %{"temporaryFilesFolder" => folder}}),
+    do: folder
+
+  defp temporary_files_folder(_settings), do: nil
+
+  defp relative_folder(folder), do: temporary_files_error(folder, ": it must be an absolute path")
+
+  defp make_folder(folder) do
+    HalC2.Paths.mkdir_private!(HalC2.Paths.scratch_dir(folder))
+  rescue
+    error in File.Error -> temporary_files_error(folder, ": #{:file.format_error(error.reason)}")
+  end
+
+  defp temporary_files_error(folder, why) do
+    {:error,
+     %{
+       "_tag" => "ServerSettingsError",
+       "settingsPath" => path(),
+       "operation" => "normalize",
+       "message" => "Temporary files cannot go in #{inspect(folder)}#{why}."
+     }}
+  end
+
+  @doc """
+  Whether settings.json could not be read when the MC started and nothing has replaced
+  it since: `settings/0` then says nothing about what the file holds, and something
+  that needs a value from it should refuse rather than go on without. A file that
+  breaks later does not count, since the MC keeps the last document it read.
+  """
+  def unreadable? do
+    :ets.lookup_element(__MODULE__, :held, 2)
+  rescue
+    # An MC started without settings (tests, tools) has defaults.
+    ArgumentError -> false
   end
 
   @doc "`{settings, version}`."
@@ -263,21 +325,42 @@ defmodule HalC2.Settings do
   def notify_usage_limit_sources(sources),
     do: GenServer.cast(__MODULE__, {:usage_limit_sources_changed, sources})
 
-  @doc "Tells watchers the keybinding rules changed (`HalC2.Keybindings`)."
-  def notify_keybindings(rules), do: GenServer.cast(__MODULE__, {:keybindings_changed, rules})
+  @doc """
+  Changes the keybinding rules with `fun` (`HalC2.Keybindings`), in turn with a member's
+  rules arriving, so neither writes over the other.
+  """
+  def edit_keybindings(fun), do: GenServer.call(__MODULE__, {:edit_keybindings, fun})
+
+  @doc "The stamped records of the shared settings (`HalC2.Settings.Shared`), for members."
+  def shared_records do
+    :ets.lookup_element(__MODULE__, :shared, 2)
+  rescue
+    ArgumentError -> %{}
+  end
+
+  @doc """
+  Takes up the shared-settings records a member sent (`HalC2.Cluster`): each newer than
+  this MC's is saved here, and any change is passed on to the members.
+  """
+  def merge_shared(records), do: GenServer.cast(__MODULE__, {:merge_shared, records})
 
   @impl true
   def init(nil) do
     path = path()
 
-    settings =
+    shared = read_shared()
+
+    # Until a document that cannot be read can be (`held`), the shared settings stand in
+    # for it as their records say: a write meanwhile is then compared with them, not
+    # with nothing, which would reset every one of them across the cluster.
+    {settings, held} =
       case read(path) do
         {:ok, settings} ->
-          settings
+          {settings, false}
 
         {:error, reason} ->
           Logger.warning("ignoring unreadable #{path}: #{inspect(reason)}")
-          %{}
+          {Shared.apply(%{}, shared), true}
       end
 
     # A key written in plain text (by hand, or before keys were sealed) moves out now.
@@ -287,9 +370,165 @@ defmodule HalC2.Settings do
     schedule_check()
 
     :ets.new(__MODULE__, [:named_table, :protected, read_concurrency: true])
-    publish(settings, 0)
+    publish(settings, 0, held)
 
-    {:ok, %{path: path, settings: settings, version: 0, watchers: %{}, stamp: stamp(path)}}
+    state = %{
+      path: path,
+      settings: settings,
+      version: 0,
+      watchers: %{},
+      stamp: stamp(path),
+      id: HalC2.Environment.id(),
+      shared: shared,
+      held: held
+    }
+
+    {:ok, start_shared(state)}
+  end
+
+  # The records of what changed while this MC was not running, stamped at the time
+  # their file changed. A document that cannot be read holds nothing to compare, and
+  # until it can be (`held`) nothing a member sends is saved over it. A missing file is
+  # a machine starting over, not a reset to tell the members: it forgets its records
+  # and learns the shared settings from them.
+  defp start_shared(state) do
+    shared =
+      cond do
+        state.held ->
+          state.shared
+
+        not File.exists?(state.path) ->
+          Map.drop(state.shared, Shared.document_keys())
+
+        true ->
+          local_shared(state.shared, state.settings, Shared.document_keys(), state, state.path)
+      end
+
+    file = HalC2.Keybindings.path()
+
+    shared =
+      if File.exists?(file),
+        do:
+          local_shared(
+            shared,
+            keybindings(HalC2.Keybindings.rules()),
+            ["keybindings"],
+            state,
+            file
+          ),
+        else: Map.delete(shared, "keybindings")
+
+    if shared != state.shared, do: write!(shared_path(), shared)
+    :ets.insert(__MODULE__, {:shared, shared})
+    %{state | shared: shared}
+  end
+
+  # `records` with a local write for each of `units` whose value in `values` is not the
+  # one its record holds, stamped now, or at `file`'s time when given.
+  defp local_shared(records, values, units, state, file \\ nil) do
+    at =
+      case file && File.stat(file, time: :posix) do
+        {:ok, %{mtime: seconds}} -> seconds * 1000
+        _ -> System.os_time(:millisecond)
+      end
+
+    Shared.local(records, values, units, Shared.stamp(records, at), state.id)
+  end
+
+  # A rules file that cannot be written fails the edit, not the table every service reads.
+  defp edit_keybindings_file(fun) do
+    rules = fun.(HalC2.Keybindings.rules())
+    HalC2.Keybindings.write(rules)
+    {:ok, rules}
+  rescue
+    exception -> {:error, Exception.message(exception)}
+  catch
+    kind, reason -> {:error, Exception.format_banner(kind, reason)}
+  end
+
+  # A member's records are taken up all or nothing. Every file they change is written
+  # beside itself before any is moved into place, so one this MC cannot write lets the
+  # merge go, not the table every service reads: the member's next gossip brings it
+  # again. A records file left behind its values would have them stamped later as this
+  # MC's own edit, over a newer one from another member.
+  defp merge_shared(state, records) do
+    # A rules file unlike its record was edited by hand since. It is stamped first, so
+    # the merge weighs the edit rather than writing over it.
+    ours =
+      if File.exists?(HalC2.Keybindings.path()),
+        do: local_keybindings(state.shared, state),
+        else: state.shared
+
+    merged = Shared.merge(ours, Shared.sanitize(records))
+
+    if merged == state.shared do
+      state
+    else
+      rules = merged["keybindings"]["value"] || []
+
+      rules? =
+        merged["keybindings"] != state.shared["keybindings"] and
+          rules != HalC2.Keybindings.rules()
+
+      settings = Shared.apply(state.settings, merged)
+      shared = local_shared(merged, settings, Shared.document_keys(), state)
+
+      # Moved into place records last, like a save: a crash in between then reads as a
+      # local edit of the new value.
+      [
+        rules? && {HalC2.Keybindings.path(), rules},
+        settings != state.settings && {state.path, settings},
+        {shared_path(), shared}
+      ]
+      |> Enum.filter(& &1)
+      |> write_all!()
+
+      :ets.insert(__MODULE__, {:shared, shared})
+      HalC2.Cluster.share_settings()
+      state = %{state | shared: shared}
+      if rules?, do: HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
+      if settings == state.settings, do: state, else: save(state, settings, false)
+    end
+  rescue
+    exception ->
+      Logger.error("member's shared settings not merged: #{Exception.message(exception)}")
+      state
+  end
+
+  defp local_keybindings(records, state),
+    do: local_shared(records, keybindings(HalC2.Keybindings.rules()), ["keybindings"], state)
+
+  defp keybindings([]), do: %{}
+  defp keybindings(rules), do: %{"keybindings" => rules}
+
+  defp shared_path, do: Path.join(HalC2.Paths.config_dir(), "settings-shared.json")
+
+  defp read_shared do
+    with {:ok, text} <- File.read(shared_path()),
+         {:ok, records} <- JSON.decode(text) do
+      Shared.sanitize(records)
+    else
+      _ -> %{}
+    end
+  end
+
+  # Saves, publishes and tells the members the records of a local change, after whatever
+  # they stamp has been written: a crash in between then reads as a local edit of the
+  # new value. A records file that cannot be written fails neither the change nor its
+  # stamp: the records are kept and shared as made, and the next records written, or a
+  # start, which stamps at the file's time, brings the file up to them.
+  defp put_shared(state, shared) when shared == state.shared, do: state
+
+  defp put_shared(state, shared) do
+    try do
+      write!(shared_path(), shared)
+    rescue
+      exception -> Logger.error("shared settings not saved: #{Exception.message(exception)}")
+    end
+
+    :ets.insert(__MODULE__, {:shared, shared})
+    HalC2.Cluster.share_settings()
+    %{state | shared: shared}
   end
 
   @doc "The document as settings.json holds it, for tools running beside an MC."
@@ -335,6 +574,19 @@ defmodule HalC2.Settings do
   def handle_call({:put, _settings, _version}, _from, state),
     do: {:reply, {:error, :stale}, state}
 
+  def handle_call({:edit_keybindings, fun}, _from, state) do
+    case edit_keybindings_file(fun) do
+      {:ok, rules} ->
+        HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
+
+        {:reply, {:ok, %{"rules" => rules}},
+         put_shared(state, local_keybindings(state.shared, state))}
+
+      error ->
+        {:reply, error, state}
+    end
+  end
+
   def handle_call({:watch, pid, ref}, _from, state) do
     watchers = HalC2.Watchers.add(state.watchers, pid, ref)
     {:reply, :ok, %{state | watchers: watchers}}
@@ -346,10 +598,9 @@ defmodule HalC2.Settings do
     {:noreply, state}
   end
 
-  def handle_cast({:keybindings_changed, rules}, state) do
-    HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
-    {:noreply, state}
-  end
+  def handle_cast({:merge_shared, _records}, %{held: true} = state), do: {:noreply, state}
+
+  def handle_cast({:merge_shared, records}, state), do: {:noreply, merge_shared(state, records)}
 
   def handle_cast({:usage_limit_sources_changed, sources}, state) do
     HalC2.Watchers.notify(state.watchers, {:hal_c2_usage_limit_sources, node(), sources})
@@ -375,14 +626,22 @@ defmodule HalC2.Settings do
   def handle_info({:DOWN, _ref, :process, pid, _}, state),
     do: {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
 
-  # The file changed under the MC: adopt it unless it is unreadable.
+  # The file changed under the MC: adopt it unless it is unreadable. While held it is
+  # tried every time: one that could not be read at all has no stamp, so its removal
+  # changes nothing the stamp can see.
   def handle_info(:check, state) do
     schedule_check()
     stamp = stamp(state.path)
 
-    with true <- stamp != state.stamp,
-         {:ok, settings} when settings != state.settings <- read(state.path) do
-      {:noreply, save(state, settings, false)}
+    with true <- stamp != state.stamp or state.held,
+         {:ok, settings} when settings != state.settings or state.held <- read(state.path) do
+      # A deleted file is a machine starting over, as at start (`start_shared/1`).
+      shared =
+        if stamp == nil,
+          do: Map.drop(state.shared, Shared.document_keys()),
+          else: state.shared
+
+      {:noreply, save(state, settings, false, shared)}
     else
       _ -> {:noreply, %{state | stamp: stamp}}
     end
@@ -399,12 +658,21 @@ defmodule HalC2.Settings do
     kind, reason -> {:reply, {:error, Exception.format_banner(kind, reason)}, state}
   end
 
-  defp save(state, settings, write?) do
+  # `shared` is what the records are before this document's shared keys are compared
+  # with them: a member's newer records, saved together with the keys they change.
+  defp save(state, settings, write?, shared \\ nil) do
     {settings, keys_changed} = HalC2.UsageLimitSources.seal_keys(settings, state.settings)
     {settings, secrets_changed} = HalC2.ProviderSecrets.seal(settings, state.settings)
     if write? or keys_changed or secrets_changed, do: write!(state.path, settings)
+
+    state =
+      put_shared(
+        state,
+        local_shared(shared || state.shared, settings, Shared.document_keys(), state)
+      )
+
     # Published before anything below reacts, so what it reads is the new settings.
-    publish(settings, state.version + 1)
+    publish(settings, state.version + 1, false)
 
     if keys_changed or settings["usageLimitSources"] != state.settings["usageLimitSources"],
       do: HalC2.UsageLimitSources.refresh_async()
@@ -445,18 +713,47 @@ defmodule HalC2.Settings do
       state
       | settings: settings,
         version: state.version + 1,
-        stamp: stamp(state.path)
+        stamp: stamp(state.path),
+        held: false
     }
   end
 
-  defp publish(settings, version), do: :ets.insert(__MODULE__, {:settings, {settings, version}})
+  # A settings process updated in place (`HalC2.Hot`) does not run `init/1` again, so one
+  # from before shared settings takes up their records here.
+  @impl true
+  def code_change(_old, %{shared: _} = state, _extra) do
+    :ets.insert(__MODULE__, {:held, state.held})
+    {:ok, state}
+  end
+
+  def code_change(_old, state, _extra) do
+    state = Map.merge(state, %{id: HalC2.Environment.id(), shared: read_shared(), held: false})
+    {:ok, start_shared(state)}
+  end
+
+  defp publish(settings, version, held),
+    do: :ets.insert(__MODULE__, [{:settings, {settings, version}}, {:held, held}])
 
   # Written to a temporary file and renamed, so a crash never leaves half a file.
-  defp write!(path, settings) do
+  defp write!(path, settings), do: path |> stage!(settings) |> commit!()
+
+  defp stage!(path, settings) do
     File.mkdir_p!(Path.dirname(path))
     tmp = path <> ".tmp"
     File.write!(tmp, JSON.encode_to_iodata!(settings))
     File.chmod!(tmp, 0o600)
-    File.rename!(tmp, path)
+    {tmp, path}
   end
+
+  # Each of `files` written beside itself, then all moved into place in order, so one
+  # that cannot be written moves none. Whatever fails, nothing is left beside them.
+  defp write_all!(files) do
+    files |> Enum.map(fn {path, data} -> stage!(path, data) end) |> Enum.each(&commit!/1)
+  rescue
+    exception ->
+      for {path, _} <- files, do: File.rm(path <> ".tmp")
+      reraise exception, __STACKTRACE__
+  end
+
+  defp commit!({tmp, path}), do: File.rename!(tmp, path)
 end

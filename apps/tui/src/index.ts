@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { createCliRenderer } from "@opentui/core";
+import { createCliRenderer, type KeyEvent } from "@opentui/core";
 import { installKittyClipboardExtension } from "@hal-c2/opentui-image";
 import { runShell } from "opentui-qml";
 
@@ -115,7 +115,7 @@ function resolveQmlDir(): string {
 }
 
 async function main(): Promise<void> {
-  const logPath = process.env.HAL_C2_TUI_LOG ?? "/tmp/hal-c2-tui.log";
+  const logPath = process.env.HAL_C2_TUI_LOG ?? NodePath.join(NodeOS.tmpdir(), "hal-c2-tui.log");
   const appendLog = (line: string) => {
     try {
       NodeFS.appendFileSync(logPath, `${line}\n`);
@@ -193,13 +193,23 @@ async function main(): Promise<void> {
     resolveDone();
   };
 
+  // The renderer reads keys from here on, but the shell's keymap (which turns ^C
+  // into `app.quit`) only exists once the shell has loaded. Until then this
+  // listener is what lets the user out; the race below stops waiting for the load.
+  const quitWhileShellLoads = (key: KeyEvent) => {
+    if (key.ctrl && key.name === "c") handleExit();
+  };
+  renderer.keyInput.on("keypress", quitWhileShellLoads);
+
   let shellRoot: Parameters<typeof movePromptCursorToEnd>[0] | null = null;
   const host = createHost({
     client,
+    origin,
     size: { columns: renderer.width, rows: renderer.height },
     onQuit: handleExit,
     log: appendLog,
     startupWarnings: configWarnings,
+    keymapOverrides: userConfig.keymap,
     promptCursorToEnd: (text) => {
       if (shellRoot) movePromptCursorToEnd(shellRoot, text);
     },
@@ -255,7 +265,7 @@ async function main(): Promise<void> {
     renderer.on("resize", (columns: number, rows: number) => host.resize({ columns, rows }));
 
     const qmlDir = resolveQmlDir();
-    const app = await runShell({
+    const shell = runShell({
       appId: "hal-c2",
       renderer,
       defaultShell: NodePath.join(qmlDir, "HalC2/Tui/DefaultShell.qml"),
@@ -270,8 +280,12 @@ async function main(): Promise<void> {
       onWarning: host.reportWarning,
       onError: host.reportError,
     });
-    shellRoot = app.root;
-    host.attachPlugins(enginePluginPort(app.engine));
+    const app = await Promise.race([shell, done]);
+    renderer.keyInput.off("keypress", quitWhileShellLoads);
+    if (app) {
+      shellRoot = app.root;
+      host.attachPlugins(enginePluginPort(app.engine));
+    }
 
     await done;
   } catch (error) {

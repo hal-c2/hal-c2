@@ -65,6 +65,13 @@ Rectangle {
                 onClicked: Shell.dispatch("worktreeSetup.cancel", {})
             }
             ShellButton {
+                objectName: "worktreeSetupRetry"
+                visible: card.setup?.canRetry === true
+                subtle: true
+                text: qsTr("Retry")
+                onClicked: Shell.dispatch("worktreeSetup.retry", {})
+            }
+            ShellButton {
                 objectName: "worktreeSetupDetails"
                 subtle: true
                 text: card.setup?.detailsOpen === true ? qsTr("Hide details") : qsTr("Details")

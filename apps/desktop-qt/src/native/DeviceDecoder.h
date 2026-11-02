@@ -49,6 +49,7 @@ public:
   // The largest picture worth converting to (the view's size in pixels);
   // pictures are scaled down to fit it, never up. Empty: full size.
   void setMaximumSize(const QSize& size);
+  QSize maximumSize() const { return m_maximum; }
 
   // The newest picture, and the size the device sent it at.
   QImage frame();

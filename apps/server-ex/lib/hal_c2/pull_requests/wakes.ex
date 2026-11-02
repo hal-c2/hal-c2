@@ -5,7 +5,12 @@ defmodule HalC2.PullRequests.Wakes do
   from the server with a `notification`, which the timeline shows in place of its text
   and which starts a turn.
 
-  A thread owns the links it shows while it is neither settled nor archived. Each link
+  A thread owns the links it shows while it is neither settled nor archived. A
+  delegated task's child owns them only while it works on its task: once it is quiet
+  its task ends and its links pass to its caller with what it heard of them
+  (`HalC2.Orchestration.Delegation.hand_over_pull_requests/1`, which a check also
+  calls, so a handover cut short completes), so it is not woken beside whoever took
+  the work over. Each link
   remembers what the thread was last told of it (`heard`); a snapshot from
   `HalC2.PullRequests.Sync` that differs from it in a way worth acting on is news
   (`changes/2`). A link's first snapshot is its baseline. A settled or archived thread
@@ -28,7 +33,7 @@ defmodule HalC2.PullRequests.Wakes do
   require Logger
 
   alias HalC2.{Orchestration, StreamState}
-  alias HalC2.Orchestration.Settlement
+  alias HalC2.Orchestration.{Delegation, Settlement}
   alias HalC2.Projection.JS
   alias HalC2.Projection.PullRequests, as: Links
 
@@ -81,10 +86,13 @@ defmodule HalC2.PullRequests.Wakes do
 
   # A quick look at a sidebar row before its stream decides: whether a link has a
   # snapshot it has not heard. A busy thread waits for its run's end, which changes the
-  # row again.
+  # row again. A delegated child put away with links left has a handover to finish,
+  # whatever it heard: an archived one hears no news. Its row seldom changes; an
+  # active child's news completes the handover too.
   defp due?(row) do
-    waiting? =
-      row["archivedAt"] != nil or row["settledAt"] != nil or row["activityRunStatus"] != nil
+    away? = row["archivedAt"] != nil or row["settledAt"] != nil
+    waiting? = away? or row["activityRunStatus"] != nil
+    handing_over? = away? and row["activityRunStatus"] == nil and delegated?(row)
 
     row["deletedAt"] == nil and
       Enum.any?(Links.visible(row["pullRequests"] || []), fn link ->
@@ -93,6 +101,9 @@ defmodule HalC2.PullRequests.Wakes do
             false
 
           {nil, _} ->
+            true
+
+          _ when handing_over? ->
             true
 
           _ when waiting? ->
@@ -122,6 +133,8 @@ defmodule HalC2.PullRequests.Wakes do
         :woken
 
       other ->
+        # A delegated child done with its task kept what it heard for its caller.
+        Delegation.hand_over_pull_requests(thread_id)
         other
     end
   end
@@ -130,7 +143,8 @@ defmodule HalC2.PullRequests.Wakes do
     links = Links.of(thread)
     runs = StreamState.list(state, "run")
     idle? = not Enum.any?(runs, &(&1["status"] in @busy))
-    {quiet, told, news} = hear(links, away?(thread), idle?, runs)
+    away? = away?(thread) or (delegated?(thread) and Delegation.quiet?(state))
+    {quiet, told, news} = hear(links, away?, idle?, runs)
 
     cond do
       news == [] ->
@@ -151,6 +165,9 @@ defmodule HalC2.PullRequests.Wakes do
         end
     end
   end
+
+  defp delegated?(thread),
+    do: get_in(thread, ["lineage", "relationshipToParent"]) == "subagent"
 
   defp away?(thread),
     do:

@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QQuickItem>
+#include <QQuickWindow>
 
 #include "Harness.h"
 #include "Plugins.h"
@@ -165,6 +166,9 @@ void answer(World& world, const FakeMc::Rpc& rpc) {
       each = comment;
     }
     review.insert(QStringLiteral("comments"), comments);
+  } else if (method == QLatin1String("retry")) {
+    review.insert(QStringLiteral("status"), QStringLiteral("queued"));
+    review.insert(QStringLiteral("elsewhere"), QJsonValue::Null);
   } else if (method == QLatin1String("publish")) {
     review.insert(QStringLiteral("status"), QStringLiteral("published"));
     review.insert(QStringLiteral("publishedAt"), QStringLiteral("2026-10-07T09:30:00Z"));
@@ -256,6 +260,25 @@ const Steps steps([] {
       expect(drawsText(waitShownNamed(world, QStringLiteral("codeReviewComment:") + id), where), QStringLiteral("comment %1 is not on %2").arg(id, where));
     }
   });
+  step(QStringLiteral("the review of #(\\d+) is waiting with a check its machine blocked"), [](World& world, const Captures& c, const Table&) {
+    QJsonObject& review = add(world, c[0].toInt(), QStringLiteral("waiting"));
+    finish(review, QStringLiteral("waiting"), QStringLiteral("comment"));
+    review.insert(QStringLiteral("headline"), QStringLiteral("2 findings."));
+    review.insert(QStringLiteral("validation"),
+                  QJsonObject{{QStringLiteral("ran"), QJsonArray{QJsonObject{{QStringLiteral("command"), QStringLiteral("mix test")}, {QStringLiteral("result"), QStringLiteral("412 passed")}}}},
+                              {QStringLiteral("notRun"), QJsonArray()},
+                              {QStringLiteral("blocked"), QJsonArray{QJsonObject{{QStringLiteral("check"), QStringLiteral("the e2e tests")}, {QStringLiteral("error"), QStringLiteral("STRIPE_KEY is not set")}}}}});
+    publish(world);
+  });
+  step(QStringLiteral("the blocked check is shown as something to fix on the MC's machine, apart from the verdict"), [](World& world, const Captures&, const Table&) {
+    const QString blocked = textOf(world, QStringLiteral("codeReviewBlockedText"));
+    expect(blocked.contains(QLatin1String("the e2e tests: STRIPE_KEY is not set")) && blocked.contains(QLatin1String("on the MC's machine")),
+           QStringLiteral("the blocked check reads %1").arg(blocked));
+    expect(textOf(world, QStringLiteral("codeReviewVerdict")) == QLatin1String("Comment"), QStringLiteral("the verdict reads %1").arg(textOf(world, QStringLiteral("codeReviewVerdict"))));
+    expect(textOf(world, QStringLiteral("codeReviewHeadline")) == QLatin1String("2 findings."), QStringLiteral("the headline reads %1").arg(textOf(world, QStringLiteral("codeReviewHeadline"))));
+    const QString ran = textOf(world, QStringLiteral("codeReviewValidationLines:ran"));
+    expect(ran.contains(QLatin1String("mix test: 412 passed")), QStringLiteral("what ran reads %1").arg(ran));
+  });
   step(QStringLiteral("the user can publish it or dismiss comments"), [](World& world, const Captures&, const Table&) {
     // A changed review draws its comments again.
     const auto dismiss = [&] { return findNamed(waitShownNamed(world, QStringLiteral("codeReviewComment:c1")), QStringLiteral("codeReviewDismiss")); };
@@ -269,6 +292,42 @@ const Steps steps([] {
     world.waitFor([&] { return textOf(world, QStringLiteral("codeReviewStatus")).startsWith(QLatin1String("Published")); },
                   [&] { return textOf(world, QStringLiteral("codeReviewStatus")); });
     expect(asked(world, QStringLiteral("publish")) == QList<QJsonObject>{{{QStringLiteral("key"), key(13)}}}, QStringLiteral("the review was not published once"));
+  });
+
+  step(QStringLiteral("the review of #(\\d+) is running on the user's machine %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // Another machine has its head: here it is not queued, and says where it runs.
+    add(world, c[0].toInt(), QStringLiteral("ready"))
+        .insert(QStringLiteral("elsewhere"), QJsonObject{{QStringLiteral("machine"), c[1]},
+                                                         {QStringLiteral("node"), QStringLiteral("hal_c2_%1@127.0.0.1").arg(c[1])},
+                                                         {QStringLiteral("status"), QStringLiteral("running")}});
+    publish(world);
+  });
+  step(QStringLiteral("the review of #(\\d+) is running on the user's machine %1, which is out of reach").arg(q), [](World& world, const Captures& c, const Table&) {
+    add(world, c[0].toInt(), QStringLiteral("ready"))
+        .insert(QStringLiteral("elsewhere"), QJsonObject{{QStringLiteral("machine"), c[1]},
+                                                         {QStringLiteral("node"), QStringLiteral("hal_c2_%1@127.0.0.1").arg(c[1])},
+                                                         {QStringLiteral("status"), QStringLiteral("running")},
+                                                         {QStringLiteral("claimed"), true},
+                                                         {QStringLiteral("away"), true}});
+    publish(world);
+  });
+  step(QStringLiteral("the review says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitText(world, QStringLiteral("codeReviewProblem"), c[0]);
+    const int number = state(world).reviews.value(state(world).order.last()).value(QLatin1String("number")).toInt();
+    expect(drawsText(row(world, number), c[0]), QStringLiteral("the row of #%1 does not say %2").arg(number).arg(c[0]));
+  });
+  step(QStringLiteral("it cannot be reviewed again on this machine"), [](World& world, const Captures&, const Table&) {
+    waitShownNamed(world, QStringLiteral("codeReviewProblem"));
+    world.sync();
+    QQuickItem* retry = findNamed(pluginShell(world)->contentItem(), QStringLiteral("codeReviewRetry"));
+    expect(retry && !retry->isVisible(), QStringLiteral("the review can be started here"));
+  });
+  step(QStringLiteral("it can be reviewed on this machine"), [](World& world, const Captures&, const Table&) {
+    const int number = state(world).reviews.value(state(world).order.last()).value(QLatin1String("number")).toInt();
+    click(world, waitShownNamed(world, QStringLiteral("codeReviewRetry")));
+    world.waitFor([&] { return asked(world, QStringLiteral("retry")) == QList<QJsonObject>{{{QStringLiteral("key"), key(number)}}}; },
+                  QStringLiteral("the MC to be asked to review it here"));
+    waitText(world, QStringLiteral("codeReviewStatus"), QStringLiteral("Queued"));
   });
 
   step(QStringLiteral("the review of #(\\d+) finished with the verdict %1").arg(q), [](World& world, const Captures& c, const Table&) {

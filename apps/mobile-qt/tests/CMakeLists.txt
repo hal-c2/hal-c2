@@ -18,6 +18,7 @@ include("${_desktop}/cmake/NativeShell.cmake")
 hal_c2_add_native_library()
 include(../cmake/Terminal.cmake)
 include(../cmake/Scanner.cmake)
+include(../cmake/Push.cmake)
 
 # The pairing class by itself: nothing here needs the QML.
 add_executable(tst_Pairing
@@ -45,6 +46,12 @@ hal_c2_target_scanner(tst_Scanner)
 add_test(NAME Scanner COMMAND tst_Scanner)
 set_tests_properties(Scanner PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 
+# The push inbox's decryption by itself, against RFC 8291's example.
+add_executable(tst_PushCrypto tst_PushCrypto.cpp)
+target_link_libraries(tst_PushCrypto PRIVATE Qt6::Core Qt6::Test)
+hal_c2_target_push_inbox(tst_PushCrypto)
+add_test(NAME PushCrypto COMMAND tst_PushCrypto)
+
 # The phone's scenarios of features/, against the same fake MC: the app as
 # main.cpp builds it (MobileApp) with its real root, the desktop runner's
 # Gherkin reader and harness, and one steps file per domain (features/*.cpp,
@@ -57,10 +64,15 @@ add_executable(tst_Features
   ${_feature_sources}
   ../src/MobileApp.cpp
   ../src/MobileApp.h
+  ../src/Maintenance.cpp
+  ../src/Maintenance.h
   ../src/Pairing.cpp
   ../src/Pairing.h
   "${_harness}/FakeMc.cpp"
   "${_harness}/FakeMc.h"
+  "${_harness}/FakeFiles.cpp"
+  "${_harness}/FakeFiles.h"
+  "${_harness}/MediaFixtures.h"
   "${_harness}/Harness.h"
   "${_harness}/Runner.cpp"
   "${_harness}/Runner.h"
@@ -80,8 +92,17 @@ target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Qu
 hal_c2_target_platform_window(tst_Features)
 hal_c2_target_terminal(tst_Features)
 hal_c2_target_scanner(tst_Features)
+hal_c2_target_push(tst_Features)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
+# The screens' own decisions, against the desktop's fake HalC2.Shell. Qt's own
+# runner first: one on PATH can be Qt 5's, which exits 1 saying nothing.
+find_program(HAL_C2_QMLTESTRUNNER NAMES qmltestrunner6 qmltestrunner HINTS "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}")
+if(HAL_C2_QMLTESTRUNNER)
+  add_test(NAME Qml COMMAND "${HAL_C2_QMLTESTRUNNER}" -input "${CMAKE_CURRENT_SOURCE_DIR}/qml"
+    -import "${_desktop}/tests/imports" -import "${_desktop}/qml" -import "${CMAKE_CURRENT_SOURCE_DIR}/../qml")
+  set_tests_properties(Qml PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
+endif()
 # Regressions the property tests (prop/) found, one tst_*Regression.cpp each,
 # picked up on the next build.
 include("${_desktop}/cmake/GlobTests.cmake")

@@ -7,12 +7,17 @@
 #   apps/web/src/lib/halC2ProjectFileDefaults.ts
 #   apps/web/src/hooks/useHandleNewThread.ts (defaultThreadEnvMode)
 #   apps/server-ex/lib/hal_c2/vcs.ex (submodules)
+#   apps/server-ex/lib/hal_c2/project_file.ex (scripts)
+#   apps/server-ex/lib/hal_c2/worktree_setup.ex (setup_script)
+#   apps/desktop-qt/src/native/ProjectFile.cpp (parse)
+#   apps/desktop-qt/src/native/ProjectActionsController.cpp (importScripts: the project keeps its setup script)
 #   apps/server/src/project/HalC2ProjectFileLoader.ts
 #   apps/server/src/project/ProjectFaviconResolver.ts (iconPath)
 
 Feature: The hal-c2.json project file
   A checkout can carry a hal-c2.json file with shared defaults for everyone who opens it:
-  actions, the default workspace for new threads, how deep submodules go, and an icon.
+  actions, the script that sets up a new worktree, the default workspace for new threads,
+  how deep submodules go, and an icon.
   Settings the user saves always win over the file, and the file wins over built-in defaults.
 
   Background:
@@ -48,6 +53,54 @@ Feature: The hal-c2.json project file
     Given the checkout's hal-c2.json is not valid JSON
     When a new worktree is created for "shop"
     Then its submodules are filled at every level
+
+  @mc
+  Scenario: A new worktree runs the setup script hal-c2.json marks
+    Given the checkout's hal-c2.json marks "Setup" to run on new worktrees
+    And "shop" has no saved actions
+    When a thread starts in a new worktree of "shop"
+    Then "Setup" runs in the new worktree
+
+  # A branch cannot choose which setup command runs. The command still runs against
+  # the branch's files, the same as a saved setup script.
+  @mc
+  Scenario: A branch cannot change which setup command runs
+    Given the checkout's hal-c2.json marks "Setup" to run on new worktrees
+    And the branch "contrib" changes the command of "Setup"
+    When a thread starts in a new worktree of "shop" from "contrib"
+    Then the new worktree skips the setup script because it differs from the main checkout's
+
+  @mc
+  Scenario: A setup script only a branch's hal-c2.json has does not run
+    Given the branch "contrib" adds a hal-c2.json marking "Setup" to run on new worktrees
+    When a thread starts in a new worktree of "shop" from "contrib"
+    Then the new worktree skips the setup script because it differs from the main checkout's
+
+  @mc
+  Scenario: A saved setup script wins over hal-c2.json
+    Given the checkout's hal-c2.json marks "Setup" to run on new worktrees
+    And "shop" has the saved action "Install" marked to run on new worktrees
+    When a thread starts in a new worktree of "shop"
+    Then "Install" runs in the new worktree
+
+  @mc
+  Scenario: The first setup script in hal-c2.json is the one that runs
+    Given the checkout's hal-c2.json marks "Setup" and then "Setup (Windows)" to run on new worktrees
+    When a thread starts in a new worktree of "shop"
+    Then "Setup" runs in the new worktree
+
+  @mc
+  Scenario: hal-c2.json is read from the new worktree's branch
+    Given the project folder of "shop" has an uncommitted hal-c2.json marking "Setup" to run on new worktrees
+    When a thread starts in a new worktree of "shop"
+    Then the new worktree runs no setup script
+
+  @mc
+  Scenario: A hal-c2.json that does not match the format runs no setup script
+    Given the checkout's hal-c2.json marks "Setup" to run on new worktrees with an unknown icon
+    When a thread starts in a new worktree of "shop"
+    Then the new worktree runs no setup script
+    And a warning is logged that the project file was ignored
 
   @desktop @mobile @tui @backlog-mobile
   Scenario: hal-c2.json sets the default workspace for new threads

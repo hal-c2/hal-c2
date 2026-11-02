@@ -426,6 +426,31 @@ defmodule HalC2.Steps.Plugins.HostIssues do
 
   # --- refusals --------------------------------------------------------------------------
 
+  step "it creates the issue {string} with the assignee {string} on \#{int} of {string}",
+       %{args: [title, login, number, repository]} = context do
+    refused(context, repository, number, "create", %{"title" => title, "assignees" => [login]})
+  end
+
+  step "it updates it with the assignee {string} on \#{int} of {string}",
+       %{args: [login, number, repository]} = context do
+    refused(context, repository, number, "update", %{"number" => number, "assignees" => [login]})
+  end
+
+  step "it is told the assignees must be logins", context do
+    assert PluginHost.refusal(context) =~ "assignees must be a list of logins."
+    context
+  end
+
+  step "GitHub is never asked to create it", context do
+    assert GitHubIssues.rest_calls(context, "POST", "/issues") == []
+    context
+  end
+
+  step "GitHub is never asked to change it", context do
+    assert GitHubIssues.rest_calls(context, "PATCH", "/issues/7") == []
+    context
+  end
+
   step "it is told to run {string}", %{args: [command]} = context do
     assert PluginHost.refusal(context) =~ command
     context
@@ -447,6 +472,16 @@ defmodule HalC2.Steps.Plugins.HostIssues do
       Map.merge(%{"projectId" => project_id(repository), "repository" => repository}, input)
     )
     |> tap(&assert({:ok, _} = &1.reply))
+  end
+
+  defp refused(context, repository, number, method, input) do
+    context
+    |> GitHubIssues.answers(repository, [GitHubIssues.issue(repository, number)])
+    |> PluginHost.call(
+      "issues",
+      method,
+      Map.merge(%{"projectId" => project_id(repository), "repository" => repository}, input)
+    )
   end
 
   defp project_id(repository),

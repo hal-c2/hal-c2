@@ -26,7 +26,7 @@ constexpr qsizetype kBackStackLimit = 50;
 
 const QStringList kKinds{
     QStringLiteral("home"),         QStringLiteral("thread"), QStringLiteral("draft"), QStringLiteral("settings"),
-    QStringLiteral("pullRequests"), QStringLiteral("usage"),
+    QStringLiteral("pullRequests"), QStringLiteral("usage"),  QStringLiteral("space"),
 };
 
 QVariant nullable(const QString& value) {
@@ -307,6 +307,8 @@ void NavigationController::publish() {
     title = QStringLiteral("Pull requests");
   } else if (m_route.kind == QLatin1String("usage")) {
     title = QStringLiteral("Usage");
+  } else if (m_route.kind == QLatin1String("space")) {
+    title = QStringLiteral("Space");
   }
   QVariant plugin = QVariant::fromValue(nullptr);
   if (const auto thread = m_store->thread(m_route.threadKey); thread && m_route.kind == QLatin1String("thread") && !thread->pluginId.isEmpty()) {

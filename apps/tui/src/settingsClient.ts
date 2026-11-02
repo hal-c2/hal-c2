@@ -1,5 +1,6 @@
 // @effect-diagnostics globalErrorInEffectFailure:off
 // @effect-diagnostics anyUnknownInErrorContext:off
+// @effect-diagnostics globalFetch:off
 // The client calls behind the settings pages (`host/settingsSections.ts`).
 //
 // Settings reach machines other than the one the terminal is connected to
@@ -12,11 +13,15 @@ import {
   type ScheduledTask,
   type ServerProvider,
   type ServerSettings,
+  type SpaceId,
+  type SpacePageId,
+  type SpacePresenceViewer,
   type UsageLimitSourceSnapshots,
   WS_METHODS,
 } from "@hal-c2/contracts";
 import { EnvironmentSupervisor } from "@hal-c2/client-runtime/connection";
-import { subscribe } from "@hal-c2/client-runtime/rpc";
+import { mcStream, subscribe } from "@hal-c2/client-runtime/rpc";
+import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -42,6 +47,8 @@ export interface TuiSettingsClient {
     payload: unknown,
     environmentId?: string,
   ) => Promise<T>;
+  /** Send a file to an upload address the MC signed (`attachments.createUploadUrl`). */
+  readonly uploadToMc: (relativeUrl: string, bytes: Uint8Array, mimeType: string) => Promise<void>;
   /** This machine's scheduled tasks: the whole list now and after every change. */
   readonly subscribeScheduledTasks: (
     onTasks: (tasks: ReadonlyArray<ScheduledTask>) => void,
@@ -70,10 +77,31 @@ export interface TuiSettingsClient {
   readonly subscribeResourceTelemetry: (
     onSnapshot: (snapshot: ResourceTelemetrySnapshot) => void,
   ) => () => void;
+  /**
+   * One of this machine's MC entity streams (`spaces`, `space:<id>`): a snapshot,
+   * then each event, and a fresh snapshot after a reconnection. `onError` gets the
+   * MC's refusal, after which nothing more arrives.
+   */
+  readonly subscribeMcStream: (
+    stream: string,
+    onFrame: (frame: EntityStreamFrame) => void,
+    onError?: (message: string) => void,
+  ) => () => void;
+  /**
+   * Puts this client on a page of a Space until the returned function is called, and
+   * says who else is on it: at once, on every change, and anew after a reconnection.
+   * An MC that cannot say makes that nobody, and is asked again each second.
+   */
+  readonly subscribeSpacePresence: (
+    spaceId: SpaceId,
+    pageId: SpacePageId,
+    onViewers: (viewers: ReadonlyArray<SpacePresenceViewer>) => void,
+  ) => () => void;
 }
 
 export function makeTuiSettingsClient(
   runtime: ManagedRuntime.ManagedRuntime<EnvironmentSupervisor, never>,
+  origin = "",
 ): TuiSettingsClient {
   const drain = <A>(stream: Stream.Stream<A, unknown, EnvironmentSupervisor>): (() => void) => {
     const fiber = runtime.runFork(Stream.runDrain(stream));
@@ -101,6 +129,15 @@ export function makeTuiSettingsClient(
           )) as T;
         }),
       ),
+    // The signed address is its own authorization, like the MC's other upload clients use it.
+    uploadToMc: async (relativeUrl, bytes, mimeType) => {
+      const response = await fetch(new URL(relativeUrl, origin || undefined), {
+        method: "POST",
+        headers: { "content-type": mimeType },
+        body: bytes as Uint8Array<ArrayBuffer>,
+      });
+      if (!response.ok) throw new Error(`The MC refused the upload (${response.status}).`);
+    },
     subscribeScheduledTasks: (onTasks) =>
       drain(
         subscribe(WS_METHODS.scheduledTasksSubscribe, {}).pipe(
@@ -167,6 +204,31 @@ export function makeTuiSettingsClient(
       drain(
         subscribe(WS_METHODS.subscribeResourceTelemetry, {}).pipe(
           Stream.tap((snapshot) => Effect.sync(() => onSnapshot(snapshot))),
+        ),
+      ),
+    subscribeSpacePresence: (spaceId, pageId, onViewers) =>
+      drain(
+        subscribe(
+          WS_METHODS.subscribeSpacePresence,
+          { spaceId, pageId },
+          {
+            onExpectedFailure: () => Effect.sync(() => onViewers([])),
+            retryExpectedFailureAfter: "1 second",
+          },
+        ).pipe(Stream.tap((event) => Effect.sync(() => onViewers(event.viewers)))),
+      ),
+    subscribeMcStream: (stream, onFrame, onError) =>
+      drain(
+        mcStream(stream).pipe(
+          Stream.tap((frame) => Effect.sync(() => onFrame(frame))),
+          Stream.catchCause((cause) =>
+            Stream.fromEffect(
+              Effect.sync(() => {
+                const error = Cause.squash(cause);
+                onError?.(error instanceof Error ? error.message : String(error));
+              }),
+            ),
+          ),
         ),
       ),
   };

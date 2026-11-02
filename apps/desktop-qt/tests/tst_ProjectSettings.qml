@@ -88,6 +88,30 @@ Item {
             compare(Shell.dispatchedActions[1].payload.key, "workspace");
         }
 
+        // settings/project-environment.feature: the row warns what loading runs,
+        // and asks for the file only when the source is a dotenv file.
+        function test_the_project_environment_is_chosen_with_its_file() {
+            const environment = root.choice("off", ["off", "auto", "dotenv"]);
+            environment.file = ".env";
+            Shell.state = { settingsScope: { editable: true, kind: "project" }, projectSettings: root.state({ environment: environment }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const row = findChild(page, "environment");
+            verify(row.description.indexOf("only for a checkout you trust") >= 0);
+            verify(!findChild(row, "file").visible);
+            findChild(row, "control").activated(2);
+            compare(Shell.dispatchedActions[0].action, "projectSettings.environment");
+            compare(Shell.dispatchedActions[0].payload.value, "dotenv");
+
+            Shell.state = Object.assign({}, Shell.state, { projectSettings: root.state({ environment: Object.assign({}, environment, { value: "dotenv", label: "dotenv" }) }) });
+            const file = findChild(row, "file");
+            verify(file.visible);
+            compare(findChild(row, "control").displayText, "dotenv");
+            file.text = ".env.a";
+            file.editingFinished();
+            compare(Shell.dispatchedActions[1].action, "projectSettings.environmentFile");
+            compare(Shell.dispatchedActions[1].payload.file, ".env.a");
+        }
+
         function test_the_model_offers_automatic_first() {
             Shell.state = { settingsScope: { editable: true, kind: "all" }, projectSettings: root.state({}) };
             const page = createTemporaryObject(pageComponent, root);

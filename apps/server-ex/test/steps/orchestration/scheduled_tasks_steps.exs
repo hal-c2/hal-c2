@@ -451,12 +451,20 @@ defmodule HalC2.Steps.Orchestration.ScheduledTasks do
     context
   end
 
+  # With a suspended scheduler request in flight the telling is its reply
+  # frame; a command already answered (the orchestration commands scenarios)
+  # told the client in that answer.
   step "the client is told {string}", %{args: [message]} = context do
-    {frame, client} = Mc.await(World.client(context), Mc.reply?(context.request), 5_000)
-    assert %{"t" => "rpc.error", "error" => ^message} = frame
-    assert :sys.get_state(ScheduledTasks).runs == %{}
-    assert tasks() == []
-    World.put_client(context, client)
+    if context[:request] do
+      {frame, client} = Mc.await(World.client(context), Mc.reply?(context.request), 5_000)
+      assert %{"t" => "rpc.error", "error" => ^message} = frame
+      assert :sys.get_state(ScheduledTasks).runs == %{}
+      assert tasks() == []
+      World.put_client(context, client)
+    else
+      assert {:error, ^message, _} = context.reply
+      context
+    end
   end
 
   # --- the scheduler ---------------------------------------------------------------------------

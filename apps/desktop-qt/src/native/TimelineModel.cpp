@@ -50,6 +50,50 @@ QDateTime timeOf(const QJsonValue& value) {
   return QDateTime::fromString(value.toString(), Qt::ISODateWithMs);
 }
 
+// The checkpoints that count as diff turns, in run order: ready ones of
+// completed runs, as the MC counts getTurnDiff's turns (turn N is the Nth
+// of these, so rewound and unfinished runs leave no gaps). A run the
+// entities do not hold is not evidence against a checkpoint.
+QList<QPair<QString, QJsonObject>> diffCheckpoints(const QHash<QString, QJsonObject>& checkpoints,
+                                                   const QHash<QString, QJsonObject>& runs) {
+  QList<QPair<QString, QJsonObject>> counted;
+  for (auto it = checkpoints.cbegin(); it != checkpoints.cend(); ++it) {
+    if (!it->value(QLatin1String("appRunOrdinal")).isDouble()) continue;
+    if (it->value(QLatin1String("status")).toString() != QLatin1String("ready")) continue;
+    const auto run = runs.constFind(it->value(QLatin1String("runId")).toString());
+    if (run != runs.constEnd() && run->value(QLatin1String("status")).toString() != QLatin1String("completed")) continue;
+    counted.append({it.key(), *it});
+  }
+  std::sort(counted.begin(), counted.end(), [](const QPair<QString, QJsonObject>& left, const QPair<QString, QJsonObject>& right) {
+    return left.second.value(QLatin1String("appRunOrdinal")).toInt() < right.second.value(QLatin1String("appRunOrdinal")).toInt();
+  });
+  return counted;
+}
+
+// A run's diff turn: its counted checkpoint's position, from 1, or 0.
+int diffTurnOf(const QHash<QString, QJsonObject>& checkpoints, const QHash<QString, QJsonObject>& runs, const QString& runId) {
+  const QList<QPair<QString, QJsonObject>> counted = diffCheckpoints(checkpoints, runs);
+  for (qsizetype index = 0; index < counted.size(); ++index) {
+    if (counted.at(index).second.value(QLatin1String("runId")).toString() == runId) return int(index) + 1;
+  }
+  return 0;
+}
+
+// Held for the user and never started: still queued, or cancelled while held.
+bool heldNeverStarted(const QJsonObject& run) {
+  const QString status = text(run, QLatin1String("status"));
+  return (status == QLatin1String("queued") || status == QLatin1String("cancelled")) && run.value(QLatin1String("queueHeld")).toBool();
+}
+
+// Whether a run ever started: not one still queued, held or not, nor one that
+// ended with no start time (cancelled from the queue, its workspace never ready).
+bool everStarted(const QJsonObject& run) {
+  const QString status = text(run, QLatin1String("status"));
+  if (status == QLatin1String("queued") || heldNeverStarted(run)) return false;
+  const bool endedEarly = status == QLatin1String("cancelled") || status == QLatin1String("failed") || status == QLatin1String("interrupted");
+  return !endedEarly || run.value(QLatin1String("startedAt")).isString();
+}
+
 // When a turn item happened: its start, else its last update.
 QDateTime itemTime(const QJsonObject& item) {
   const QDateTime started = timeOf(item.value(QLatin1String("startedAt")));
@@ -791,8 +835,9 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
     m_workspaceTouched = true;
   }
   const bool replaced = patch.value(QLatin1String("d")).toBool();
-  // A command starting, settling or going away; not its streamed output.
-  if (type == QLatin1String("command_execution") &&
+  // A command or a background tool starting, settling or going away; not its
+  // streamed output.
+  if ((type == QLatin1String("command_execution") || type == QLatin1String("dynamic_tool")) &&
       (!existed || !next || replaced || patch.contains(QLatin1String("s")) || patch.contains(QLatin1String("u")))) {
     m_agentsTouched = true;
   }
@@ -897,11 +942,6 @@ QList<TimelineModel::Row> TimelineModel::project() const {
   // instead, where the MC would take the newest made; the pick never depends on
   // hash order either way. The item index is built only when the highest ordinal
   // actually ties, so the common case is one pass over the runs.
-  const auto heldNeverStarted = [](const QJsonObject& run) {
-    const QString status = text(run, QLatin1String("status"));
-    return (status == QLatin1String("queued") || status == QLatin1String("cancelled")) &&
-           run.value(QLatin1String("queueHeld")).toBool();
-  };
   QString latestRun;
   double latestOrdinal = -1;
   bool latestTied = false;
@@ -1196,26 +1236,37 @@ QVariantMap TimelineModel::rewindPointOf(const QString& rowId) const {
   const QString runId = text(item, QLatin1String("runId"));
   const auto runs = m_entities.value(QStringLiteral("run"));
   const auto checkpoints = m_entities.value(QStringLiteral("checkpoint"));
-  // The turn's number: its checkpoint's, else its place among the runs still shown.
-  int turn = 0;
-  for (const QJsonObject& checkpoint : checkpoints) {
-    if (text(checkpoint, QLatin1String("runId")) == runId) turn = checkpoint.value(QLatin1String("appRunOrdinal")).toInt();
-  }
+  // The turn's number: its checkpoint's diff turn, else its place among the
+  // runs that started and are still shown.
+  int turn = diffTurnOf(checkpoints, runs, runId);
+  const double ordinal = runs.value(runId).value(QLatin1String("ordinal")).toDouble();
   if (turn <= 0) {
-    const double ordinal = runs.value(runId).value(QLatin1String("ordinal")).toDouble();
-    for (const QJsonObject& other : runs) {
-      if (other.value(QLatin1String("ordinal")).toDouble() <= ordinal && text(other, QLatin1String("status")) != QLatin1String("rolled_back")) ++turn;
+    for (auto other = runs.cbegin(); other != runs.cend(); ++other) {
+      if (other->value(QLatin1String("ordinal")).toDouble() > ordinal || text(*other, QLatin1String("status")) == QLatin1String("rolled_back")) continue;
+      if (other.key() == runId || everStarted(*other)) ++turn;
     }
   }
   QVariantMap point{{QStringLiteral("turn"), turn},
                     {QStringLiteral("text"), text(item, QLatin1String("text"))},
                     {QStringLiteral("attachments"), item.value(QLatin1String("attachments")).toArray().toVariantList()}};
-  for (auto it = checkpoints.cbegin(); it != checkpoints.cend(); ++it) {
-    if (text(*it, QLatin1String("status")) != QLatin1String("ready") || it->value(QLatin1String("appRunOrdinal")).toInt() != turn - 1) continue;
-    // Before the first turn it is the thread's baseline, which has no turn.
-    if (turn == 1 && (it->value(QLatin1String("appRunOrdinal")).isDouble() || text(*it, QLatin1String("runId")) != runId)) continue;
-    point.insert(QStringLiteral("checkpointId"), it.key());
-    point.insert(QStringLiteral("scopeId"), text(*it, QLatin1String("scopeId")));
+  // The checkpoint to rewind to: the last counted one before this run (a run
+  // number one less is not it when a rewound or unfinished run sits between).
+  for (const auto& [id, checkpoint] : diffCheckpoints(checkpoints, runs)) {
+    const auto countedRun = runs.constFind(text(checkpoint, QLatin1String("runId")));
+    const double countedOrdinal = countedRun != runs.constEnd() ? countedRun->value(QLatin1String("ordinal")).toDouble()
+                                                                 : checkpoint.value(QLatin1String("appRunOrdinal")).toDouble();
+    if (countedOrdinal >= ordinal) break;
+    point.insert(QStringLiteral("checkpointId"), id);
+    point.insert(QStringLiteral("scopeId"), text(checkpoint, QLatin1String("scopeId")));
+  }
+  if (!point.contains(QStringLiteral("checkpointId")) && turn == 1) {
+    for (auto it = checkpoints.cbegin(); it != checkpoints.cend(); ++it) {
+      if (text(*it, QLatin1String("status")) != QLatin1String("ready") || it->value(QLatin1String("appRunOrdinal")).toInt() != 0) continue;
+      // Before the first turn it is the thread's baseline, which has no turn.
+      if (it->value(QLatin1String("appRunOrdinal")).isDouble() || text(*it, QLatin1String("runId")) != runId) continue;
+      point.insert(QStringLiteral("checkpointId"), it.key());
+      point.insert(QStringLiteral("scopeId"), text(*it, QLatin1String("scopeId")));
+    }
   }
   return point;
 }
@@ -1233,15 +1284,12 @@ QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
   const auto checkpoints = m_entities.value(QStringLiteral("checkpoint"));
   for (auto it = checkpoints.cbegin(); it != checkpoints.cend(); ++it) {
     if (text(*it, QLatin1String("runId")) != runId || text(*it, QLatin1String("status")) != QLatin1String("ready")) continue;
-    // The MC's turn number (the diff panel's), else the turn's number among
-    // the runs still shown.
-    int turn = it->value(QLatin1String("appRunOrdinal")).toInt();
-    if (turn <= 0) {
-      const int ordinal = run.value(QLatin1String("ordinal")).toInt();
-      for (const QJsonObject& other : m_entities.value(QStringLiteral("run"))) {
-        if (other.value(QLatin1String("ordinal")).toInt() <= ordinal && text(other, QLatin1String("status")) != QLatin1String("rolled_back")) ++turn;
-      }
-    }
+    // The MC's turn number (the diff panel's). A ready checkpoint that does
+    // not count as a diff turn (its run never completed) has no point at
+    // all: its callers read turn 0 as "the shown or latest turn", so Revert
+    // and Open diff would act on a different turn.
+    const int turn = diffTurnOf(checkpoints, m_entities.value(QStringLiteral("run")), runId);
+    if (turn <= 0) return {};
     return {{QStringLiteral("checkpointId"), it.key()},
             {QStringLiteral("scopeId"), text(*it, QLatin1String("scopeId"))},
             {QStringLiteral("turn"), turn}};
@@ -1257,6 +1305,7 @@ void TimelineModel::loadAttachment(const QString& id) {
 }
 
 void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const QDateTime& expiresAt) {
+  emit attachmentSigned(id, url);
   if (url.isEmpty()) {
     m_attachmentUrls.remove(id);
     return;
@@ -1272,6 +1321,12 @@ void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const Q
       return;
     }
   }
+}
+
+QString TimelineModel::accessJson(const QString& id, const QJsonObject& tree) const {
+  auto known = m_accessJson.find(id);
+  if (known == m_accessJson.end()) known = m_accessJson.insert(id, QString::fromUtf8(QJsonDocument(tree).toJson()));
+  return *known;
 }
 
 // --- Rows --------------------------------------------------------------------------
@@ -1525,11 +1580,23 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         if (text(attachment, QLatin1String("type")) != QLatin1String("image")) continue;
         const QString id = text(attachment, QLatin1String("id"));
         const AttachmentUrl known = m_attachmentUrls.value(id);
-        images.append(QVariantMap{
+        QVariantMap image{
             {QStringLiteral("id"), id},
             {QStringLiteral("name"), text(attachment, QLatin1String("name"))},
             {QStringLiteral("url"), known.expiresAt > m_now() ? known.url : QUrl()},
-        });
+        };
+        // A Snap Shot's capture: its tree as JSON, or its flat text.
+        const QJsonObject source = attachment.value(QLatin1String("source")).toObject();
+        const QJsonObject tree = source.value(QLatin1String("accessibility")).toObject();
+        const QString flat = text(tree, QLatin1String("format")) == QLatin1String("flat-text") ? text(tree, QLatin1String("text")) : text(source, QLatin1String("accessibleText"));
+        if (!tree.isEmpty() && text(tree, QLatin1String("format")) != QLatin1String("flat-text")) {
+          image.insert(QStringLiteral("accessFormat"), QStringLiteral("json"));
+          image.insert(QStringLiteral("accessText"), accessJson(id, tree));
+        } else if (!flat.isEmpty()) {
+          image.insert(QStringLiteral("accessFormat"), QStringLiteral("text"));
+          image.insert(QStringLiteral("accessText"), flat);
+        }
+        images.append(image);
       }
       return images;
     }
@@ -1550,6 +1617,7 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         }
         files.append(QVariantMap{{QStringLiteral("id"), text(attachment, QLatin1String("id"))},
                                  {QStringLiteral("name"), name},
+                                 {QStringLiteral("mimeType"), text(attachment, QLatin1String("mimeType"))},
                                  {QStringLiteral("detail"), detail}});
       }
       return files;

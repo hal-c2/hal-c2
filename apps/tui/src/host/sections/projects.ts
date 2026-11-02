@@ -15,7 +15,7 @@ import type {
   SectionPage,
   SettingsSection,
 } from "../settingsSections.ts";
-import { errorText, plural } from "./shared.ts";
+import { changeSettings, errorText, type Machine, plural, readSettings } from "./shared.ts";
 
 type ShellProject = NonNullable<
   ReturnType<SectionHost["store"]["getState"]>["shell"]
@@ -36,11 +36,46 @@ type View =
 
 const ENV_MODE_LABEL = { worktree: "New worktree", local: "Project folder" } as const;
 
+/** Where a project's agent sessions load its environment from (`projectEnvironment`). */
+type EnvironmentSource = "off" | "auto" | "dotenv";
+const ENVIRONMENT_SOURCES: ReadonlyArray<EnvironmentSource> = ["off", "auto", "dotenv"];
+const ENVIRONMENT_LABEL = { off: "Off", auto: "mise and direnv", dotenv: "A dotenv file" } as const;
+const DEFAULT_ENVIRONMENT_FILE = ".env";
+
+/** A project's settings are its MC's: the one the terminal is connected to. */
+const HERE: Machine = {
+  id: "local",
+  label: "This machine",
+  local: true,
+  online: true,
+  version: null,
+  capabilities: null,
+  host: null,
+  scopes: null,
+};
+
+type Settings = Readonly<Record<string, unknown>>;
+const record = (value: unknown): Settings =>
+  typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Settings) : {};
+const overridesOf = (settings: Settings) => record(settings.projectSettingsOverrides);
+
+/** The project's environment setting: its override, else the environment's; unknown is off. */
+function environmentOf(settings: Settings, projectId: string) {
+  const own = record(overridesOf(settings)[projectId]);
+  const source = own.projectEnvironment ?? settings.projectEnvironment;
+  const file = own.projectEnvironmentFile ?? settings.projectEnvironmentFile;
+  return {
+    source: ENVIRONMENT_SOURCES.find((known) => known === source) ?? "off",
+    file: typeof file === "string" && file.trim() !== "" ? file.trim() : DEFAULT_ENVIRONMENT_FILE,
+  };
+}
+
 /** Run the row's project action in the open thread's terminal (`project.action.run`). */
 export const RUN_PROJECT_ACTION = "project.action.run";
 
 /**
- * Projects: each one's folder, where its new threads start, its actions (named
+ * Projects: each one's folder, where its new threads start, where its agent
+ * sessions load its environment from (the MC's settings), its actions (named
  * commands, run in the open thread's terminal) with what its hal-c2.json
  * offers to import, and removing it from HAL-C2. Changes go to the MC as
  * `project.update`; the page follows the shell snapshot. Removing a project and
@@ -61,6 +96,8 @@ export function projectsSection(
   // Each project's hal-c2.json as last read (null: none, or not valid).
   const files = new Map<string, HalC2ProjectFile | null>();
   const reading = new Set<string>();
+  // The MC's settings as last read, for the project environment row (null: unreadable).
+  let settings: Settings | null | undefined;
 
   const projects = (): ReadonlyArray<ShellProject> => store.getState().shell?.projects ?? [];
   const project = (id: string) => projects().find((candidate) => candidate.id === id) ?? null;
@@ -93,6 +130,86 @@ export function projectsSection(
         host.refresh();
       }),
     );
+  };
+
+  const readEnvironment = () => {
+    void host.track(
+      readSettings(client, HERE).then(
+        (document) => {
+          settings = document.settings;
+          host.refresh();
+        },
+        () => {
+          settings = null;
+          host.refresh();
+        },
+      ),
+    );
+  };
+
+  const changeEnvironment = (target: ShellProject, change: Record<string, unknown>) => {
+    void host
+      .track(
+        changeSettings(client, HERE, (current) => {
+          const overrides = overridesOf(current);
+          return {
+            ...current,
+            projectSettingsOverrides: {
+              ...overrides,
+              [target.id]: { ...record(overrides[target.id]), ...change },
+            },
+          };
+        }),
+      )
+      .then(readEnvironment, (cause: unknown) =>
+        host.status(`Could not save the setting: ${errorText(cause)}`, "error"),
+      );
+  };
+
+  // Loading runs the checkout's own configuration, which the page says beside the row.
+  const environmentRows = (target: ShellProject): SectionItem[] => {
+    if (settings === undefined) {
+      return [{ kind: "row", id: "environment", label: "Project environment", value: "…" }];
+    }
+    if (settings === null) {
+      return [
+        { kind: "row", id: "environment", label: "Project environment", value: "Unavailable" },
+      ];
+    }
+    const { source, file } = environmentOf(settings, target.id);
+    const rows: SectionItem[] = [
+      {
+        kind: "row",
+        id: "environment",
+        label: "Project environment",
+        value: ENVIRONMENT_LABEL[source],
+        run: () =>
+          changeEnvironment(target, {
+            projectEnvironment: ENVIRONMENT_SOURCES[(ENVIRONMENT_SOURCES.indexOf(source) + 1) % 3]!,
+          }),
+      },
+    ];
+    if (source === "dotenv") {
+      rows.push({
+        kind: "row",
+        id: "environment-file",
+        label: "Dotenv file",
+        value: file,
+        run: () =>
+          host.ask(
+            { label: "Dotenv file", value: file, placeholder: DEFAULT_ENVIRONMENT_FILE },
+            (text) => {
+              const next = text.trim() === "" ? DEFAULT_ENVIRONMENT_FILE : text.trim();
+              if (next !== file) changeEnvironment(target, { projectEnvironmentFile: next });
+            },
+          ),
+      });
+    }
+    rows.push({
+      kind: "note",
+      text: "Gives agents the variables a terminal in the thread's checkout would have. Loading runs the checkout's own mise, direnv or dotenv configuration, so turn it on only for a checkout you trust.",
+    });
+    return rows;
   };
 
   const saveScripts = (
@@ -158,6 +275,7 @@ export function projectsSection(
         run: () => {
           view = { kind: "project", projectId: entry.id };
           readFile(entry);
+          readEnvironment();
           host.refresh();
         },
       });
@@ -196,6 +314,7 @@ export function projectsSection(
     const items: SectionItem[] = [
       { kind: "row", id: "folder", label: "Folder", value: target.workspaceRoot },
       workspaceRow(target),
+      ...environmentRows(target),
       { kind: "blank" },
       { kind: "heading", text: "Actions" },
     ];
@@ -427,7 +546,7 @@ export function projectsSection(
       {
         id: "section.projects",
         title: "Projects",
-        keywords: "project settings actions scripts remove folder",
+        keywords: "project settings actions scripts remove folder environment dotenv mise direnv",
         action: "section.open",
         payload: { id: "projects" },
       },
@@ -455,12 +574,14 @@ export function projectsSection(
       if (target) {
         files.delete(target.id);
         readFile(target);
+        readEnvironment();
       }
     },
     close: () => {
       unsubscribe?.();
       unsubscribe = null;
       files.clear();
+      settings = undefined;
     },
     back: () => {
       if (view.kind === "list") return false;

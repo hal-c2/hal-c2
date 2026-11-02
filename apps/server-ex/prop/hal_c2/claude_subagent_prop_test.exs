@@ -3,7 +3,8 @@ defmodule HalC2.ClaudeSubagentPropTest do
   A state machine over one Claude turn (`HalC2.Claude.ThreadRuntime`) into which the
   test plays Claude's stream-json, interleaving the parent's messages with those its
   subagents send under their tool calls (`parent_tool_use_id`): the parent streams
-  and says text and runs commands; it starts a subagent and finishes it with its tool
+  and says text (thought first or not: Claude sends a message one block per event, all
+  under its id) and runs commands; it starts a subagent and finishes it with its tool
   result; a running subagent streams, says text and runs commands; a subagent this
   runtime never saw, or one already finished, says something.
 
@@ -145,7 +146,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
     fresh = @agents -- Map.keys(agents)
 
     [
-      {3, {:call, __MODULE__, :parent_says, [n]}},
+      {3, {:call, __MODULE__, :parent_says, [n, boolean()]}},
       {3, {:call, __MODULE__, :parent_streams, [n, open != nil]}},
       {1, {:call, __MODULE__, :parent_runs, [n]}},
       {1, {:call, __MODULE__, :stray, [n]}},
@@ -161,7 +162,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
       if running == [],
         do: [],
         else: [
-          {4, {:call, __MODULE__, :agent_says, [oneof(running), n]}},
+          {4, {:call, __MODULE__, :agent_says, [oneof(running), n, boolean()]}},
           {3, {:call, __MODULE__, :agent_streams, [oneof(running), n]}},
           {2, {:call, __MODULE__, :agent_runs, [oneof(running), n]}},
           {2, {:call, __MODULE__, :agent_calls, [oneof(running), n]}},
@@ -174,7 +175,9 @@ defmodule HalC2.ClaudeSubagentPropTest do
         ]
     )
     |> Kernel.++(
-      if done == [], do: [], else: [{1, {:call, __MODULE__, :agent_says, [oneof(done), n]}}]
+      if done == [],
+        do: [],
+        else: [{1, {:call, __MODULE__, :agent_says, [oneof(done), n, boolean()]}}]
     )
     |> frequency()
   end
@@ -189,7 +192,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
       when name in [:agent_streams, :agent_runs, :agent_calls],
       do: match?(%{done: false}, agents[a])
 
-  def precondition(%{agents: agents}, {:call, _, :agent_says, [a, _]}),
+  def precondition(%{agents: agents}, {:call, _, :agent_says, [a, _, _]}),
     do: is_map_key(agents, a)
 
   def precondition(%{open: open}, {:call, _, :parent_closes, [text]}),
@@ -216,7 +219,8 @@ defmodule HalC2.ClaudeSubagentPropTest do
     state |> Map.update!(:n, &(&1 + 1)) |> step(call, name)
   end
 
-  defp step(state, {_, _, _, [n]}, :parent_says), do: %{state | parent: state.parent ++ ["P#{n}"]}
+  defp step(state, {_, _, _, [n, _]}, :parent_says),
+    do: %{state | parent: state.parent ++ ["P#{n}"]}
 
   defp step(state, {_, _, _, [n, _]}, :parent_streams),
     do: %{state | open: (state.open || "") <> "Q#{n} "}
@@ -229,7 +233,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
   defp step(state, {_, _, _, [a]}, :start_agent),
     do: put_in(state.agents[a], %{done: false, said: [], commands: 0})
 
-  defp step(state, {_, _, _, [a, n]}, :agent_says) do
+  defp step(state, {_, _, _, [a, n, _]}, :agent_says) do
     case state.agents[a] do
       %{done: false} -> update_in(state.agents[a].said, &(&1 ++ ["S#{n}"]))
       _ -> state
@@ -272,7 +276,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
 
   # --- commands -------------------------------------------------------------------
 
-  def parent_says(n), do: says([assistant("p#{n}", [text("P#{n}")])])
+  def parent_says(n, thinks), do: says(blocks("p#{n}", "P#{n}", thinks))
 
   # The first delta opens the message the parent streams; parent_closes/1 ends it.
   def parent_streams(n, true), do: says([stream(delta("Q#{n} "))])
@@ -313,7 +317,8 @@ defmodule HalC2.ClaudeSubagentPropTest do
     ])
   end
 
-  def agent_says(a, n), do: says([under(a, assistant("s#{n}", [text("S#{n}")]))])
+  def agent_says(a, n, thinks),
+    do: says(Enum.map(blocks("s#{n}", "S#{n}", thinks), &under(a, &1)))
 
   def agent_streams(a, n) do
     says(
@@ -407,6 +412,13 @@ defmodule HalC2.ClaudeSubagentPropTest do
   defp sync do
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, @tid)
     :sys.get_state(pid)
+  end
+
+  # A message saying `said`, after a thought when `thinks`: one event per block, as
+  # Claude sends them, all under the message's id.
+  defp blocks(id, said, thinks) do
+    thought = if thinks, do: [%{"type" => "thinking", "thinking" => "Thinking of #{said}"}]
+    for block <- List.wrap(thought) ++ [text(said)], do: assistant(id, [block])
   end
 
   defp under(a, message), do: Map.put(message, "parent_tool_use_id", "agent-#{a}")

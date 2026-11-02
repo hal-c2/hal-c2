@@ -12,6 +12,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <utility>
 
 #include "KeybindingController.h"
 #include "Keybindings.h"
@@ -20,6 +21,7 @@
 #include "NavigationController.h"
 #include "McClient.h"
 #include "SettingsController.h"
+#include "SpaceController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ThisMachine.h"
@@ -55,6 +57,14 @@ FileLink fileLink(const QString& link) {
   if (!line.hasMatch()) line = position.match(path);
   path.remove(QRegularExpression(QStringLiteral("#.*$"))).remove(QRegularExpression(QStringLiteral("(:\\d+)+$")));
   return {QUrl::fromPercentEncoding(path.toUtf8()), line.hasMatch() ? line.captured(1).toInt() : 0};
+}
+
+// `path` as the workspace at `root` names it: as it is when relative, "" when outside it.
+QString relativeTo(const QString& path, const QString& root) {
+  if (!QDir::isAbsolutePath(path)) return QDir::cleanPath(path);
+  if (root.isEmpty()) return {};
+  const QString relative = QDir(root).relativeFilePath(path);
+  return relative.startsWith(QLatin1String("..")) ? QString() : relative;
 }
 
 // A review tab's pull request: host, repository and number of "host/repository#number".
@@ -128,7 +138,15 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
   connect(&m_diff, &ThreadDiff::commentRequested, this, [this](const QVariantMap& comment) {
     m_bridge->dispatch(QStringLiteral("composer.reviewComment.add"), comment);
   });
+  connect(&m_files, &WorkspaceFiles::commentRequested, this, [this](const QVariantMap& comment) {
+    m_bridge->dispatch(QStringLiteral("composer.reviewComment.add"), comment);
+  });
+  connect(&m_files, &WorkspaceFiles::previewReady, &m_previews, &ThreadPreviews::openPage);
+  connect(&m_files, &WorkspaceFiles::previewRefused, this, [this](const QString& reason) {
+    toast(this, QStringLiteral("error"), QStringLiteral("Could not open the file in the browser"), reason);
+  });
   connect(&m_devices, &ThreadDevices::opened, this, &RightPanelController::openDevice);
+  connect(&m_devices, &ThreadDevices::floated, this, &RightPanelController::floatDevice);
   connect(&m_devices, &ThreadDevices::closed, this, &RightPanelController::closeTabIn);
   connect(&m_devices, &ThreadDevices::namesChanged, this, &RightPanelController::publish);
   // The add menu offers Pull requests only while the thread has some.
@@ -231,14 +249,24 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
                : MenuController::Item{QStringLiteral("open"), tr("Open link"), QStringLiteral("external-link")},
         {QStringLiteral("copy"), isFile ? tr("Copy path") : tr("Copy link"), QStringLiteral("copy")}};
     const QString environmentId = m_thread.left(m_thread.indexOf(QLatin1Char(':')));
+    // A file of the project that is Space content opens as a page too.
+    auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+    const QString relative = isFile ? relativeTo(file.path, m_files.root()) : QString();
+    if (m_onThread && spaces && !relative.isEmpty() && spaces->isSpaceFile(environmentId, m_projectId, relative)) {
+      items.insert(1, {QStringLiteral("open-in-space"), m_onWorktree ? tr("Open the project's copy in a Space") : tr("Open in a Space"),
+                       QStringLiteral("book")});
+    }
     if (m_onThread && ThreadPullRequests::parseUrl(url) &&
         (m_store->supports(environmentId, QStringLiteral("threadPullRequests")) ||
          m_store->supports(environmentId, QStringLiteral("threadPullRequestLinking")))) {
       items.append({QStringLiteral("link-pull-request"), tr("Link pull request to thread"), QStringLiteral("git-pull-request")});
     }
     NativeShell::of(this)->controller<MenuController>()->open(
-        map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble(), items, [this, url, file](const QString& id) {
-          if (id == QLatin1String("open")) {
+        map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble(), items,
+        [this, url, file, environmentId, project = m_projectId, relative](const QString& id) {
+          if (id == QLatin1String("open-in-space")) {
+            if (auto* spaces = NativeShell::of(this)->controller<SpaceController>()) spaces->openFile(environmentId, project, relative);
+          } else if (id == QLatin1String("open")) {
             if (file.path.isEmpty()) {
               openAddress(url);
             } else {
@@ -251,6 +279,10 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
             m_pullRequests.link(url);
           }
         });
+  } else if (action == QLatin1String("rightPanel.rename")) {
+    renameTab(map.value(QStringLiteral("id")).toString(), map.value(QStringLiteral("title")).toString());
+  } else if (action == QLatin1String("rightPanel.unfloat")) {
+    unfloat();
   } else if (action == QLatin1String("rightPanel.activate")) {
     showTab(map.value(QStringLiteral("id")).toString());
   } else if (action == QLatin1String("rightPanel.close")) {
@@ -305,17 +337,24 @@ void RightPanelController::retarget() {
     const QString environmentId = threadKey.left(threadKey.indexOf(QLatin1Char(':')));
     const QJsonObject row = m_store->threadRow(threadKey);
     const QString threadId = row.value(QLatin1String("id")).toString(threadKey.mid(threadKey.indexOf(QLatin1Char(':')) + 1));
+    const QString projectRoot = m_store->projectRow(environmentId, row.value(QLatin1String("projectId")).toString())
+                                    .value(QLatin1String("workspaceRoot"))
+                                    .toString();
     QString root = row.value(QLatin1String("worktreePath")).toString();
-    if (root.isEmpty()) {
-      root = m_store->projectRow(environmentId, row.value(QLatin1String("projectId")).toString())
-                 .value(QLatin1String("workspaceRoot"))
-                 .toString();
-    }
+    // A page follows the project folder's file, never the worktree's copy.
+    m_onWorktree = !root.isEmpty() && QDir::cleanPath(root) != QDir::cleanPath(projectRoot);
+    if (root.isEmpty()) root = projectRoot;
     TimelineModel* timeline = shell->controller<ThreadStore>()->timeline(threadKey);
     m_diff.setThread(environmentId, threadId, timeline);
     m_diff.setCheckout(root);
     m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root, threadId);
+    // Which of the project's files open in a Space, for the tab's menus and the links.
+    m_projectId = row.value(QLatin1String("projectId")).toString();
+    const QString listed = environmentId + QLatin1Char(':') + m_projectId + QLatin1Char('@') + m_client->environment();
+    if (auto* spaces = shell->controller<SpaceController>(); spaces && std::exchange(m_listedFiles, listed) != listed) {
+      spaces->listFiles(environmentId, m_projectId);
+    }
     m_files.setTimeline(timeline);
     m_pullRequests.setThread(threadKey);
     m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));
@@ -478,6 +517,7 @@ void RightPanelController::showTab(const QString& id) {
   } else {
     return;
   }
+  if (state.floating == id) state.floating.clear();
   state.active = id;
   state.open = true;
   update();
@@ -487,6 +527,8 @@ void RightPanelController::showTab(const QString& id) {
 bool RightPanelController::removeTab(Panel& state, const QString& id) {
   const QStringList before = state.tabs;
   if (!state.tabs.removeOne(id)) return false;
+  state.titles.remove(id);
+  if (state.floating == id) state.floating.clear();
   if (id.startsWith(kDeviceTab) && !state.dismissed.contains(id)) state.dismissed.append(id);
   if (state.active == id) {
     const qsizetype at = before.indexOf(id);
@@ -581,6 +623,33 @@ void RightPanelController::openDevice(const QString& id, bool automatic) {
   showTab(id);
 }
 
+void RightPanelController::floatDevice(const QString& id) {
+  if (!m_onThread || !panel().tabs.contains(id)) return;
+  Panel& state = panel();
+  state.floating = id;
+  state.open = false;
+  state.maximized = false;
+  update();
+}
+
+void RightPanelController::unfloat() {
+  if (!m_onThread) return;
+  Panel& state = panel();
+  if (state.floating.isEmpty()) return;
+  const QString id = state.floating;
+  state.floating.clear();
+  showTab(id);
+}
+
+void RightPanelController::renameTab(const QString& id, const QString& title) {
+  if (!m_onThread || !panel().tabs.contains(id)) return;
+  Panel& state = panel();
+  const QString trimmed = title.trimmed();
+  if (trimmed.isEmpty()) state.titles.remove(id);
+  else state.titles.insert(id, trimmed);
+  update();
+}
+
 void RightPanelController::reviewPullRequest(const QString& key) {
   if (key.isEmpty() || m_pullRequests.indexOf(key) < 0) return;
   showTab(kReviewTab + key);
@@ -643,6 +712,9 @@ void RightPanelController::openThread(const QString& threadKey) {
 void RightPanelController::update() {
   if (m_onThread) {
     Panel& state = panel();
+    // A device floats only while the panel is closed: open, the panel's
+    // active tab is what shows and takes input.
+    if (state.open) state.floating.clear();
     // A terminal tab whose terminals all ended (here, in another client, or
     // the MC's) goes: the next one shows.
     const QStringList groups = terminalGroups();
@@ -663,7 +735,10 @@ void RightPanelController::update() {
   m_files.setActive(open && activeTab() == QLatin1String("files"));
   m_agents.setActive(open && activeTab() == QLatin1String("agents"));
   m_previews.setActive(open && activeTab() == QLatin1String("previews"));
-  m_devices.setTab(open && kindOf(activeTab()) == QLatin1String("device") ? activeTab() : QString());
+  // A floating device keeps streaming while the panel is closed.
+  m_devices.setTab(m_onThread && !current().floating.isEmpty()        ? current().floating
+                   : open && kindOf(activeTab()) == QLatin1String("device") ? activeTab()
+                                                                              : QString());
   // The review shows the active review tab's pull request, or the last one shown.
   if (m_onThread && kindOf(activeTab()) == QLatin1String("pull-request")) {
     const Reviewed reviewed = reviewedOf(activeTab().mid(kReviewTab.size()));
@@ -695,7 +770,9 @@ void RightPanelController::publish() {
   m_publishedOpen = state.open;
   QVariantList tabs;
   for (const QString& id : state.tabs) {
-    tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(id, m_devices)}});
+    tabs.append(QVariantMap{{QStringLiteral("id"), id},
+                            {QStringLiteral("kind"), kindOf(id)},
+                            {QStringLiteral("title"), state.titles.value(id, titleOf(id, m_devices))}});
   }
   // Terminals need the thread's place.
   auto* terminals = NativeShell::of(this)->controller<TerminalController>();
@@ -703,9 +780,14 @@ void RightPanelController::publish() {
   m_bridge->publish(QStringLiteral("panel"),
                     QVariantMap{
                         {QStringLiteral("threadKey"), m_thread},
+                        // The project whose Space files the tab offers: none on another MC,
+                        // whose files this MC's Spaces do not follow.
+                        {QStringLiteral("spaceProjectId"), environmentId() == m_client->environment() ? m_projectId : QString()},
+                        {QStringLiteral("onWorktree"), m_onWorktree},
                         {QStringLiteral("isOpen"), state.open},
                         {QStringLiteral("transitionMs"), transitionMs},
                         {QStringLiteral("activeId"), state.active},
+                        {QStringLiteral("floatingDevice"), state.floating.isEmpty() ? QVariant() : QVariant(state.floating)},
                         {QStringLiteral("tabs"), tabs},
                         {QStringLiteral("width"), m_width},
                         {QStringLiteral("maximized"), state.open && state.maximized},
@@ -814,6 +896,10 @@ void RightPanelController::setStorePath(const QString& path) {
     state.open = thread.value(QLatin1String("open")).toBool() && !state.tabs.isEmpty();
     state.details = thread.value(QLatin1String("details")).toBool();
     for (const QJsonValue& id : thread.value(QLatin1String("dismissed")).toArray()) state.dismissed.append(id.toString());
+    const QJsonObject titles = thread.value(QLatin1String("titles")).toObject();
+    for (auto it = titles.begin(); it != titles.end(); ++it) {
+      if (state.tabs.contains(it.key()) && !it.value().toString().isEmpty()) state.titles.insert(it.key(), it.value().toString());
+    }
     m_panels.insert(threadKey, state);
     m_recent.removeOne(threadKey);
     m_recent.append(threadKey);
@@ -833,11 +919,14 @@ void RightPanelController::save() {
     }
     if (tabs.isEmpty() && !state.details) continue;
     const bool terminalShown = kindOf(state.active) == QLatin1String("terminal");
+    QJsonObject titles;
+    for (auto it = state.titles.begin(); it != state.titles.end(); ++it) titles.insert(it.key(), it.value());
     threads.prepend(QJsonObject{{QStringLiteral("threadKey"), threadKey},
                                 {QStringLiteral("open"), state.open},
                                 {QStringLiteral("tabs"), tabs},
                                 {QStringLiteral("active"), terminalShown ? QJsonValue() : QJsonValue(state.active)},
                                 {QStringLiteral("details"), state.details},
+                                {QStringLiteral("titles"), titles},
                                 {QStringLiteral("dismissed"), QJsonArray::fromStringList(state.dismissed)}});
   }
   const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("width"), m_width}, {QStringLiteral("threads"), threads}})

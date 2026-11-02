@@ -41,6 +41,7 @@ import {
 } from "../state/serverConfigProjection.ts";
 import { environmentMismatchError } from "../connection/errors.ts";
 import { SHAPE_PROTOCOL_VERSION } from "../connection/compatibility.ts";
+import type { EntityStreamFrame } from "../state/streamEntities.ts";
 import { connectV3Session } from "../v3/session.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
@@ -86,6 +87,12 @@ export interface RpcSession {
    * is subscribed to (the MC says so there). Absent on a TypeScript server's session.
    */
   readonly mcMembers?: Stream.Stream<void>;
+  /**
+   * The frames of one of the MC's entity streams (`spaces`, `space:<id>`): a
+   * snapshot, then its events, for as long as it is consumed. Fails with the MC's
+   * refusal. Only protocol-3 sessions have it.
+   */
+  readonly subscribeStream?: (stream: string) => Stream.Stream<EntityStreamFrame, Error>;
 }
 
 export interface RpcSessionOptions {

@@ -30,6 +30,7 @@ SettingsPage 1.0 SettingsPage.qml
 SettingsSection 1.0 SettingsSection.qml
 TerminalDrawer 1.0 TerminalDrawer.qml
 FilesPanel 1.0 FilesPanel.qml
+SpaceView 1.0 SpaceView.qml
 FileViewer 1.0 FileViewer.qml
 AddProject 1.0 AddProject.qml
 AddProjectInvite 1.0 AddProjectInvite.qml

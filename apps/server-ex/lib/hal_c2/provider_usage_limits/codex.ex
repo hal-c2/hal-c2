@@ -4,7 +4,7 @@ defmodule HalC2.ProviderUsageLimits.Codex do
 
   `account/rateLimits/read` and the `account/rateLimits/updated` notification carry
   the same snapshot, so `windows/1` serves the probe (`probe/1`) and a turn's update
-  alike, and both land on the rows `primary` and `secondary`. `consume/1` redeems a
+  alike, and both land on the rows `primary` and `secondary`. `consume/2` redeems a
   reset credit (`account/rateLimitResetCredit/consume`). Each opens its own
   short-lived `codex app-server`.
   """
@@ -191,9 +191,9 @@ defmodule HalC2.ProviderUsageLimits.Codex do
 
   def account(_), do: %{}
 
-  @doc "Redeems one reset credit; `key` names the attempt, so a retry reuses it."
-  def consume(key) do
-    with_app_server("codex", fn conn ->
+  @doc "Redeems one of `instance`'s reset credits; `key` names the attempt, so a retry reuses it."
+  def consume(key, instance \\ "codex") do
+    with_app_server(instance, fn conn ->
       case call(conn, "account/rateLimitResetCredit/consume", %{"idempotencyKey" => key}, 20_000) do
         {:ok, %{"outcome" => outcome}}
         when outcome in ["reset", "nothingToReset", "noCredit", "alreadyRedeemed"] ->
@@ -219,7 +219,11 @@ defmodule HalC2.ProviderUsageLimits.Codex do
                    conn,
                    "initialize",
                    %{
-                     "clientInfo" => %{"name" => "hal_c2_elixir", "version" => "0.1.0"},
+                     "clientInfo" => %{
+                       "name" => "hal_c2_desktop",
+                       "title" => "HAL-C2 Desktop",
+                       "version" => "0.1.0"
+                     },
                      "capabilities" => %{"experimentalApi" => true}
                    },
                    15_000

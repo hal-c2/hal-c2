@@ -43,6 +43,10 @@
       "types": "./src/state/shell.ts",
       "default": "./src/state/shell.ts"
     },
+    "./state/stream-entities": {
+      "types": "./src/state/streamEntities.ts",
+      "default": "./src/state/streamEntities.ts"
+    },
     "./state/threads": {
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"

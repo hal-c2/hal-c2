@@ -2,6 +2,7 @@ defmodule HalC2.Orchestration.DelegationTest do
   use ExUnit.Case, async: false
 
   alias HalC2.Orchestration.{Delegation, Recovery}
+  alias HalC2.Projection.PullRequests, as: Links
   alias HalC2.StreamState
 
   @moduletag :tmp_dir
@@ -160,12 +161,11 @@ defmodule HalC2.Orchestration.DelegationTest do
 
   describe "a task whose child was interrupted at boot" do
     test "is interrupted, with its timeline item, when the project does not continue it" do
-      :ok = HalC2.Shell.subscribe(self())
       delegate("running")
       # Recovery reads the sidebar rows: both threads' must be there, the parent's for
-      # its task to be reconciled and the child's for its run to be settled.
-      for id <- ["p", "c"],
-          do: assert_receive({:hal_c2_shell, {:rows, _, [{^id, {"thread", _}}]}}, 1_000)
+      # its task to be reconciled and the child's for its run to be settled. Each
+      # stream writes its row on its own debounce, so one row says nothing of the other.
+      for id <- ["p", "c"], do: :ok = HalC2.Streams.flush_shell(id)
 
       assert "c" in Recovery.run()
       assert task()["status"] == "running"
@@ -222,6 +222,60 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       assert Delegation.reconcile("p") == 1
       assert %{"status" => "completed", "result" => "done"} = task()
+    end
+  end
+
+  describe "a task's child that links a pull request" do
+    @heard %{"state" => "open", "checksFailed" => false}
+
+    defp link_child do
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          thread("c", %{
+            "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"},
+            "pullRequests" => [
+              %{
+                "host" => "github.com",
+                "repository" => "acme/app",
+                "number" => 7,
+                "url" => "https://github.com/acme/app/pull/7",
+                "source" => "agent",
+                "linkedAt" => @at,
+                "heard" => @heard
+              }
+            ]
+          })
+        ])
+
+      :ok
+    end
+
+    defp links(id) do
+      thread = id |> HalC2.Streams.state() |> StreamState.get("thread") |> Map.get(id)
+      Links.visible(Links.of(thread))
+    end
+
+    test "hands it to the caller when the boot settles the task" do
+      :ok = delegate("completed")
+      :ok = link_child()
+
+      assert Delegation.reconcile("p") == 1
+
+      assert links("c") == []
+      assert [%{"number" => 7, "source" => "agent", "heard" => @heard}] = links("p")
+    end
+
+    test "keeps it when the caller is deleted" do
+      :ok = delegate("completed")
+      :ok = link_child()
+      {:ok, _} = HalC2.Streams.commit("p", :thread, [thread("p", %{"deletedAt" => @at})])
+
+      assert ExUnit.CaptureLog.capture_log(fn ->
+               assert Delegation.hand_over_pull_requests("c") == :ok
+             end) == ""
+
+      assert [%{"number" => 7}] = links("c")
+      assert links("p") == []
     end
   end
 
@@ -317,6 +371,22 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert {:ok, %{"status" => "cancelled"}} = Delegation.cancel("p", "task")
       assert %{"status" => "cancelled", "completionDelivery" => %{"state" => "disposed"}} = task()
       refute woken?()
+    end
+
+    test "cancels what the child has queued before it interrupts, and is not refused for it" do
+      delegate("queued")
+      test = self()
+
+      hook_with(fn
+        :cancelling, _ ->
+          send(test, {:at_interrupt, StreamState.get(HalC2.Streams.state("c"), "run")["cr"]})
+
+        _, _ ->
+          :ok
+      end)
+
+      assert {:ok, %{"status" => "cancelled"}} = Delegation.cancel("p", "task")
+      assert_received {:at_interrupt, %{"status" => "cancelled"}}
     end
 
     test "is refused for a task that already ended" do
@@ -605,8 +675,11 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       assert message["text"] =~ ~s(title="Say &quot;hi&quot;&#10;now")
 
-      assert %{"workerThreadId" => "c", "workerTitle" => _, "detail" => "(no answer)"} =
-               message["notification"]
+      assert %{
+               "workerThreadId" => "c",
+               "workerTitle" => _,
+               "detail" => "Child task completed without an assistant result."
+             } = message["notification"]
     end
   end
 

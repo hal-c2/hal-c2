@@ -12,7 +12,14 @@ import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
 import type { ImageDecoder } from "../composerAttachments.ts";
 import { resolveSidebarListViewport } from "../layout.ts";
 import { buildRows, nextSidebarRefreshAt, SIDEBAR_SETTLED_SECTION_ID } from "../sidebar.logic.ts";
-import { KEYBINDING_GROUPS, KEYMAP_LAYERS, KEYMAP_PARITY } from "../keymap.ts";
+import {
+  chordHint,
+  effectiveChord,
+  KEYBINDING_GROUPS,
+  KEYMAP_LAYERS,
+  KEYMAP_PARITY,
+  type KeymapLayer,
+} from "../keymap.ts";
 import { PROJECT_ACTION_RUN_PREFIX, projectActionKeymap } from "../projectActions.ts";
 import type { EditorCommand } from "../promptEditor.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
@@ -28,7 +35,8 @@ import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
 import { createComposer } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
-import { createFilesController } from "./filesState.ts";
+import { createFilesController, type TuiFilesState } from "./filesState.ts";
+import { createSpaceController } from "./spaceState.ts";
 import {
   buildTuiLayoutState,
   composerSurfaceWidth,
@@ -129,6 +137,8 @@ export interface HostOptions {
   readonly log: (message: string) => void;
   /** Clock for snooze partitioning; tests pin it. */
   readonly now?: () => string;
+  /** The address this client reached the MC at; a site link is made on it. */
+  readonly origin?: string;
   /** Put text on the system clipboard; false when the terminal cannot (OSC 52). */
   readonly copyToClipboard?: (text: string) => boolean;
   /** `VISUAL` / `EDITOR` for Ctrl+G (default: the process environment). */
@@ -139,6 +149,10 @@ export interface HostOptions {
   readonly runEditor?: (command: EditorCommand, file: string) => Promise<void>;
   /** Read an image pasted as an absolute path on this machine. */
   readonly readLocalImage?: (path: string) => Promise<Uint8Array>;
+  /** Read a Markdown file on this machine to import it as a Space page (`~` expands). */
+  readonly readLocalText?: (path: string) => Promise<string>;
+  /** Read an image file on this machine to add it to a Space (`~` expands). */
+  readonly readLocalBytes?: (path: string, maxBytes: number) => Promise<Uint8Array>;
   /** Decode attached images for their preview (default: `@hal-c2/opentui-image`). */
   readonly decodeImage?: ImageDecoder;
   /**
@@ -163,6 +177,8 @@ export interface HostOptions {
   readonly trace?: (action: string, payload: unknown) => void;
   /** Warnings from before the host existed (keymap.json conflicts, missing plugin directories). */
   readonly startupWarnings?: ReadonlyArray<string>;
+  /** keymap.json's entries, which the QML engine merges over the published layers. */
+  readonly keymapOverrides?: Record<string, unknown> | undefined;
   /** Put the prompt's cursor after its text (see promptCursor.ts); runs once the text is set. */
   readonly promptCursorToEnd?: (text: string) => void;
   /** What the feature areas need from the entry (see features/index.ts). */
@@ -280,6 +296,8 @@ export function createHost(options: HostOptions): Host {
   let settingsOpen = false;
   // The file browser takes the conversation pane's place (FilesView).
   let filesOpen = false;
+  // So do the Spaces and their pages (SpaceView).
+  let spaceOpen = false;
   // The prompt's editor rows (the composer's 3–8, or as set by Ctrl+Up / Ctrl+Down).
   let editorRows: number | undefined;
   let popoverRows = 0;
@@ -417,7 +435,7 @@ export function createHost(options: HostOptions): Host {
       // Like ChatView, the panel hides (without closing) while settings, the
       // files, diff or image view has the conversation pane.
       rightPanel:
-        filesOpen || settingsOpen || sections?.isOpen() || threadView.paneReplaced()
+        filesOpen || spaceOpen || settingsOpen || sections?.isOpen() || threadView.paneReplaced()
           ? null
           : rightPanel,
       rightPanelFocused,
@@ -437,6 +455,7 @@ export function createHost(options: HostOptions): Host {
     if (previous?.chatWidth !== layout.chatWidth || previous?.panesRows !== layout.panesRows) {
       threadView.resize();
       files?.sync();
+      space?.sync();
       sections?.relayout();
     }
     sourceControl.resize();
@@ -583,7 +602,10 @@ export function createHost(options: HostOptions): Host {
       terminal.sync();
       clientActivity.sync();
     }
-    if (prev && prev.selection !== next.selection) files.close();
+    if (prev && prev.selection !== next.selection) {
+      files.close();
+      space.close();
+    }
     if (prev && prev.shell !== next.shell) addProject.sync();
   };
 
@@ -597,7 +619,13 @@ export function createHost(options: HostOptions): Host {
       requested === "compose"
         ? (sections?.mode() ??
           // The file browser keeps the keys when the palette over it closes.
-          (filesOpen ? files.mode() : composer?.draft() ? "newThread" : threadView.composeMode()))
+          (filesOpen
+            ? files.mode()
+            : spaceOpen
+              ? space.mode()
+              : composer?.draft()
+                ? "newThread"
+                : threadView.composeMode()))
         : requested;
     if (next === mode) return;
     mode = next;
@@ -691,14 +719,33 @@ export function createHost(options: HostOptions): Host {
     copyToClipboard: options.copyToClipboard ?? (() => false),
     publish: (next) => state.set("terminal", next),
   });
+  /** This MC's own projects: the Spaces here open only their files. */
+  const homeProjects = () => {
+    const shell = store.getState().shell;
+    const home = shell?.machines?.[0]?.id;
+    return (shell?.projects ?? []).filter(
+      (project) => project.machineId === undefined || project.machineId === home,
+    );
+  };
+  // The project whose folder the file browser shows, and the one it opens on next instead
+  // of the thread's (a Space page's file).
+  let filesProject: string | null = null;
+  let filesFor: { readonly projectId: string; readonly cwd: string } | null = null;
   // The file browser and viewer take the conversation pane's place.
   const files = createFilesController({
     client,
-    cwd: () => selectedWorkspace()?.cwd ?? null,
+    cwd: () => filesFor?.cwd ?? selectedWorkspace()?.cwd ?? null,
     height: () => layout.panesRows,
     width: () => layout.chatWidth,
     setOpen: (open) => {
       filesOpen = open;
+      if (open) {
+        space.close();
+        filesProject = filesFor?.projectId ?? selectedWorkspace()?.projectId ?? null;
+        if (filesProject !== null && homeProjects().some((p) => p.id === filesProject)) {
+          space.refreshSpaceFiles(filesProject);
+        }
+      }
       publishLayout();
       if (open) setMode("files");
       else if (mode === "files" || mode === "fileEdit") setMode(restingMode());
@@ -718,6 +765,72 @@ export function createHost(options: HostOptions): Host {
         context.attachmentCount < PROVIDER_SEND_TURN_MAX_ATTACHMENTS
       );
     },
+  });
+  // The Spaces and their pages take the conversation pane's place too.
+  const home = options.homeDir ?? NodeOS.homedir();
+  const space = createSpaceController({
+    client,
+    height: () => layout.panesRows,
+    width: () => layout.chatWidth,
+    setOpen: (open) => {
+      spaceOpen = open;
+      if (open) {
+        // One pane at a time: the files, the settings and a settings page give way.
+        files.close();
+        sections!.close();
+        if (settingsOpen) dispatch("settings.close");
+        if (mode === "diff") dispatch("diff.close");
+      }
+      publishLayout();
+      if (open) setMode("space");
+      else if (mode === "space") setMode(restingMode());
+      palette.sync();
+    },
+    publish: (next) => state.set("space", next),
+    status: (text, kind) => store.setStatus(text, kind),
+    ask: (spec) => ask.ask(spec),
+    menu: (spec) => composer!.pick(spec),
+    copy: (text) => options.copyToClipboard?.(text) === true,
+    ...(options.origin ? { origin: options.origin } : {}),
+    readLocalText:
+      options.readLocalText ??
+      ((path) => NodeFSP.readFile(path.replace(/^~(?=$|\/)/, home), "utf8")),
+    readLocalBytes:
+      options.readLocalBytes ??
+      (async (path, maxBytes) => {
+        const file = path.replace(/^~(?=$|\/)/, home);
+        const { size } = await NodeFSP.stat(file);
+        if (size > maxBytes) {
+          throw new Error(`an image may be at most ${maxBytes / (1024 * 1024)} MB`);
+        }
+        return NodeFSP.readFile(file);
+      }),
+    threads: () =>
+      (store.getState().shell?.threads ?? []).map((thread) => ({
+        id: thread.id,
+        title: thread.title,
+      })),
+    currentThreadId: () => {
+      const selection = store.getState().selection;
+      return selection?.kind === "thread" ? selection.id : null;
+    },
+    openThread: (threadId) => {
+      space.close();
+      dispatch("thread.open", { key: threadKey(threadId) });
+    },
+    projects: () => homeProjects().map((project) => ({ id: project.id, title: project.title })),
+    showFile: (projectId, path) => {
+      const project = homeProjects().find((entry) => entry.id === projectId);
+      if (!project) {
+        store.setStatus("The page's project is not on this machine.", "error");
+        return;
+      }
+      space.close();
+      filesFor = { projectId, cwd: project.workspaceRoot };
+      dispatch("files.view", { path });
+      filesFor = null;
+    },
+    commandsChanged: () => palette.sync(),
   });
   // Adding a project is a page over the conversation (mode "project").
   const addProject = createAddProjectController({
@@ -829,9 +942,34 @@ export function createHost(options: HostOptions): Host {
       palette.sync();
     },
   });
-  /** The files, add-project and terminal entries, as palette commands. */
+  /** The file in the browser or viewer as a page, when the MC counts it Space content. */
+  const fileInSpace = () => {
+    const path = files.target();
+    const projectId = filesProject;
+    if (path === null || projectId === null) return [];
+    const project = homeProjects().find((entry) => entry.id === projectId);
+    // Offered for what the MC lists in the project's own folder, which is what opens:
+    // a page follows the project's copy, never a thread's worktree.
+    if (!project || !space.isSpaceFile(projectId, path)) return [];
+    const browsing = (state.get("files") as TuiFilesState | undefined)?.cwd ?? null;
+    const worktree = browsing !== null && browsing !== project.workspaceRoot;
+    return [
+      {
+        title: worktree ? "Open the project's copy in a Space" : "Open this file in a Space",
+        action: "space.openProjectFile",
+        payload: { projectId, path },
+      },
+    ];
+  };
+  /** The files, Spaces, add-project and terminal entries, as palette commands. */
   const areaCommands = (): PaletteCommand[] =>
-    [...addProject.commands(), ...files.commands(), ...terminal.commands()].map((command) => ({
+    [
+      ...addProject.commands(),
+      ...files.commands(),
+      ...fileInSpace(),
+      ...space.commands(),
+      ...terminal.commands(),
+    ].map((command) => ({
       // An action offered several times (one per editor) is told apart by its title.
       id: "payload" in command ? `${command.action}:${command.title}` : command.action,
       title: command.title,
@@ -851,7 +989,7 @@ export function createHost(options: HostOptions): Host {
     question: () => threadView.question(),
     inlineImages: (options.inlineImages ?? null) !== null,
     env: options.env ?? { VISUAL: process.env.VISUAL, EDITOR: process.env.EDITOR },
-    homeDir: options.homeDir ?? NodeOS.homedir(),
+    homeDir: home,
     runEditor: options.runEditor ?? (() => Promise.reject(new Error("no editor runner"))),
     readLocalImage: options.readLocalImage ?? readLocalImageFile,
     ...(options.promptCursorToEnd ? { onTextCompleted: options.promptCursorToEnd } : {}),
@@ -929,6 +1067,7 @@ export function createHost(options: HostOptions): Host {
     palette.sync();
     terminal.sync();
     files.sync();
+    space.sync();
     addProject.relayout();
     features.sync();
     state.set("status", { kind: next.statusKind, text: next.status } satisfies TuiStatusState);
@@ -1163,10 +1302,12 @@ export function createHost(options: HostOptions): Host {
         if (settingsOpen) dispatch("settings.close");
         if (mode === "diff") dispatch("diff.close");
         files.close();
+        space.close();
         return sections!.dispatch(action, payload);
       case "settings.open":
         if (mode === "diff") dispatch("diff.close");
         sections!.close();
+        space.close();
         settingsOpen = true;
         publishSettings();
         void cluster.refresh();
@@ -1308,6 +1449,7 @@ export function createHost(options: HostOptions): Host {
         if (threadView.dispatch(action, payload)) return true;
         if (sourceControl.dispatch(action, payload)) return true;
         if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return true;
+        if (space.dispatch(action, payload)) return true;
         if (cluster.dispatch(action, payload)) return true;
         if (sections!.dispatch(action, payload)) return true;
         if (loadBalancing.dispatch(action, payload)) return true;
@@ -1366,7 +1508,9 @@ export function createHost(options: HostOptions): Host {
           (current.detail?.id === workspace.threadId ? current.detail.projectId : null) ??
           current.shell?.threads.find((thread) => thread.id === workspace.threadId)?.projectId ??
           null;
-        return { threadId: workspace.threadId, projectId, cwd: workspace.cwd };
+        const home = projectId !== null && homeProjects().some((p) => p.id === projectId);
+        const worktree = workspace.worktreePath !== null;
+        return { threadId: workspace.threadId, projectId, home, worktree, cwd: workspace.cwd };
       },
       nowMs: () => Date.parse(now()),
       showDiff: (review) => threadView.showReview(review),
@@ -1407,6 +1551,10 @@ export function createHost(options: HostOptions): Host {
         | { items: string[]; banner: string | null }
         | undefined;
       const page = state.get("page") as { kind: string } | undefined;
+      const layers = (state.get("keybindings") as { layers: Record<string, KeymapLayer> }).layers;
+      const paletteChord = (inMode: string) =>
+        effectiveChord(layers, options.keymapOverrides, inMode, "palette.open");
+      const composeChord = paletteChord("compose");
       state.set(
         "statusRow",
         buildStatusRow({
@@ -1422,9 +1570,8 @@ export function createHost(options: HostOptions): Host {
             (state.get("composer") as { isRunning?: boolean } | undefined)?.isRunning === true,
           draft: page?.kind === "draft",
           pinnedError: (state.get("statusError") as { text: string } | null)?.text ?? null,
-          paletteAvailable:
-            (KEYMAP_LAYERS as Record<string, Record<string, string>>)[mode]?.["ctrl+k"] ===
-            "palette.open",
+          paletteKey: composeChord === null ? null : chordHint(composeChord),
+          paletteAvailable: paletteChord(state.get("mode") as TuiMode) !== null,
         }),
       );
     });
@@ -1448,6 +1595,7 @@ export function createHost(options: HostOptions): Host {
     const before = connectionPhase;
     connectionPhase = phase;
     state.set("connection", connectionState(phase));
+    if (phase === "reconnecting") space.connectionLost();
     if (before === "connected" && phase === "reconnecting") {
       store.setStatus("The server went away; reconnecting…", "busy");
     } else if (before === "reconnecting" && phase === "connected") {
@@ -1485,6 +1633,7 @@ export function createHost(options: HostOptions): Host {
     settled: async () => {
       await addProject.settled();
       await files.settled();
+      await space.settled();
       await terminal.settled();
       await threadView.settled();
       await cluster.settled();
@@ -1511,6 +1660,7 @@ export function createHost(options: HostOptions): Host {
       unsubscribeCluster();
       unsubscribe();
       terminal.dispose();
+      space.dispose();
       features.dispose();
       threadView.dispose();
       store.stop();

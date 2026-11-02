@@ -80,10 +80,16 @@ defmodule HalC2.Environment do
     }
 
     # Only a release can install a version; a checkout omits the capability.
-    case HalC2.Upgrade.capability() do
-      nil -> base
-      method -> put_in(base, ["capabilities", "serverSelfUpdate"], method)
-    end
+    base =
+      case HalC2.Upgrade.capability() do
+        nil -> base
+        method -> put_in(base, ["capabilities", "serverSelfUpdate"], method)
+      end
+
+    # The desktop app that started this MC updates when asked (`HalC2.DesktopUpdate`).
+    if HalC2.DesktopUpdate.available?(),
+      do: put_in(base, ["capabilities", "desktopAppUpdate"], true),
+      else: base
   end
 
   @doc """
@@ -97,18 +103,89 @@ defmodule HalC2.Environment do
   (with a `cwd`) leaves quota and probes alone.
   """
   def refresh_providers(input) do
+    case refresh(input) do
+      :ok -> {:ok, %{"providers" => providers()}}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp refresh(input) do
     case input do
-      # Antigravity's skills come from the workspace's folders (`HalC2.Acp.Antigravity.skills/2`).
+      # Antigravity's and Claude's skills come from the workspace's folders
+      # (`HalC2.Acp.Antigravity.skills/2`, `HalC2.Claude.Skills`), Codex's from
+      # its app-server for that folder (`HalC2.Codex.Provider.refresh_workspace/2`).
       %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
-        if HalC2.Acp.driver(id) == "antigravity",
-          do: HalC2.Acp.Antigravity.refresh_workspace(id, cwd)
+        cond do
+          HalC2.Acp.driver(id) == "antigravity" ->
+            case HalC2.Acp.Antigravity.refresh_workspace(id, cwd) do
+              :ok ->
+                :ok
+
+              {:error, detail} ->
+                {:error,
+                 %{
+                   "_tag" => "ProviderSetupError",
+                   "instanceId" => id,
+                   "operation" => "refresh",
+                   "detail" => "Could not read Antigravity workspace skills.",
+                   "message" => "Could not read Antigravity workspace skills.",
+                   "cause" => detail
+                 }}
+            end
+
+          id in HalC2.Claude.Provider.instances() ->
+            HalC2.Claude.Provider.refresh_workspace(id, cwd)
+
+          HalC2.Settings.known_instance?(id, "codex") ->
+            case HalC2.Codex.Provider.refresh_workspace(id, cwd) do
+              :ok ->
+                :ok
+
+              {:error, detail} ->
+                {:error,
+                 %{
+                   "_tag" => "ProviderSetupError",
+                   "instanceId" => id,
+                   "operation" => "refresh",
+                   "detail" => detail,
+                   "message" => detail
+                 }}
+            end
+
+          true ->
+            :ok
+        end
 
       %{"cwd" => cwd} when is_binary(cwd) ->
         :ok
 
       %{"instanceId" => id} when is_binary(id) ->
         HalC2.ProviderUsageLimits.refresh([id])
-        probe([id], input["refreshModels"] == true)
+
+        # A model refresh on a signed-in Antigravity instance reads its
+        # account's models in a disposable session, and its failure is the
+        # caller's. Without an account there is nothing to refresh, and the
+        # ordinary read says to sign in.
+        if input["refreshModels"] == true and HalC2.Acp.driver(id) == "antigravity" and
+             HalC2.Acp.Antigravity.account(id) != nil do
+          case HalC2.Acp.Antigravity.refresh_models(id) do
+            :ok ->
+              :ok
+
+            {:error, detail} ->
+              {:error,
+               %{
+                 "_tag" => "ProviderSetupError",
+                 "instanceId" => id,
+                 "operation" => "refresh-models",
+                 "detail" => detail,
+                 "message" => detail
+               }}
+          end
+        else
+          probe([id], input["refreshModels"] == true)
+          :ok
+        end
 
       _ ->
         # Newer models, defaults and compatibility policies, when there are any.
@@ -120,14 +197,15 @@ defmodule HalC2.Environment do
           ["codex" | HalC2.Claude.Provider.instances()] ++ HalC2.Acp.instances(),
           input["refreshModels"] == true
         )
-    end
 
-    {:ok, %{"providers" => providers()}}
+        :ok
+    end
   end
 
   # Agents are probed apart, so one slow agent does not hold up the others.
   defp probe(ids, models?) do
-    if models? and "codex" in ids, do: HalC2.Codex.Provider.load()
+    if models? and Enum.any?(ids, &HalC2.Settings.known_instance?(&1, "codex")),
+      do: HalC2.Codex.Provider.load()
 
     claude = Enum.filter(ids, &(&1 in HalC2.Claude.Provider.instances()))
     if models? and claude != [], do: HalC2.Claude.Provider.load(claude)
@@ -149,12 +227,7 @@ defmodule HalC2.Environment do
   def server_config do
     %{
       "environment" => descriptor(),
-      "auth" => %{
-        "policy" => "loopback-browser",
-        "bootstrapMethods" => ["one-time-token"],
-        "sessionMethods" => ["bearer-access-token"],
-        "sessionCookieName" => "hal_c2_session"
-      },
+      "auth" => auth(),
       "cwd" => File.cwd!(),
       "keybindingsConfigPath" => Path.join(HalC2.Paths.config_dir(), "keybindings.json"),
       # Clients compile the rules with the defaults into `keybindings`.
@@ -163,6 +236,7 @@ defmodule HalC2.Environment do
       "issues" => [],
       "providers" => providers(),
       "availableEditors" => HalC2.Editors.available(),
+      "remoteOpenTargets" => HalC2.RemoteOpenTargets.targets(),
       "observability" =>
         %{
           "logsDirectoryPath" => Path.join(HalC2.Paths.state_dir(), "logs"),
@@ -175,6 +249,16 @@ defmodule HalC2.Environment do
           &if(url = HalC2.Traces.otlp_url(), do: Map.put(&1, "otlpTracesUrl", url), else: &1)
         ),
       "settings" => HalC2.Settings.settings()
+    }
+  end
+
+  @doc "`ServerConfig.auth`: how a client signs in here."
+  def auth do
+    %{
+      "policy" => "loopback-browser",
+      "bootstrapMethods" => ["one-time-token"],
+      "sessionMethods" => ["bearer-access-token"],
+      "sessionCookieName" => "hal_c2_session"
     }
   end
 
@@ -314,11 +398,20 @@ defmodule HalC2.Environment do
     # start an editor or a file manager here (`HalC2.Editors`).
     for {key, value} <- [
           {"machine", HalC2.Environment.Machine.kind()},
-          {"machineId", HalC2.Environment.Machine.id()}
+          {"machineId", HalC2.Environment.Machine.id()},
+          {"wsl", if(wsl?(), do: true)}
         ],
         value != nil,
         into: %{"os" => os(), "arch" => arch()},
         do: {key, value}
+  end
+
+  # A Linux kernel of Microsoft's: files are shown by Windows' file manager.
+  defp wsl? do
+    case File.read("/proc/sys/kernel/osrelease") do
+      {:ok, release} -> String.contains?(String.downcase(release), "microsoft")
+      _ -> false
+    end
   end
 
   defp os do

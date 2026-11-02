@@ -124,11 +124,7 @@ defmodule HalC2.Review do
         {:ok, index} = Git.ok(root, ~w(rev-parse --git-path index))
         index = Path.expand(String.trim(index), root)
 
-        scratch =
-          Path.join(
-            System.tmp_dir!(),
-            "hal-c2-review-index-#{System.unique_integer([:positive])}"
-          )
+        scratch = HalC2.Scratch.path("hal-c2-review-index")
 
         env = [{"GIT_INDEX_FILE", scratch}]
         config = ~w(-c core.splitIndex=false -c splitIndex.sharedIndexExpire=never)

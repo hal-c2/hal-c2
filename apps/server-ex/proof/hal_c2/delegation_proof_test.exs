@@ -31,19 +31,38 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation hook(:reporting)" => "report-fail",
       "HalC2.Orchestration.Delegation hook(:settling)" => "report-fail",
       "HalC2.Orchestration.Delegation hook(:expiring)" => "time-out",
-      "HalC2.Orchestration.Delegation hook(:cancelling)" => "cancel"
+      "HalC2.Orchestration.Delegation hook(:cancelling)" => "cancel",
+      "HalC2.Orchestration.Delegation hook(:starting)" => "record"
     },
     abstracts: %{
       "HalC2.Orchestration.Delegation.request/1" => @tool,
       "HalC2.Orchestration.Delegation.task_status/2" => "reads a task; changes nothing",
+      "HalC2.Orchestration.Delegation.settled?/1" =>
+        "reads whether a thread is quiet, for a page asking after its agent; changes nothing",
       "HalC2.Orchestration.Delegation.wait_budget/1" =>
         "how long a wait lasts; the model's wait may give up at any time",
       "HalC2.Orchestration.Delegation.wake_policy/1" => @policy,
       "HalC2.Orchestration.Delegation.preamble/1" =>
         "the text the child's first message opens with; the model has the launch",
       "HalC2.Orchestration.Delegation.resolve_delivery/1" => @policy,
+      "HalC2.Orchestration.Delegation.acknowledge_child_read/3" =>
+        "reading the child's answer in full resolves its delivery, as resolve_delivery/1 does; no part of how the task ends",
+      "HalC2.Orchestration.Delegation.flush_pending/1" =>
+        "wakes the caller for results that landed while a wake was already with it; with one task no delivery is left pending that way, and its caller finished/3 is covered",
+      "HalC2.Orchestration.Delegation.stop_tasks/1" =>
+        "the disposal stop_wakes does, for every run of the thread; the model has the cancel of what it returns",
+      "HalC2.Orchestration.Delegation.stop_wakes/2" =>
+        "stopping the caller's turn disposes its tasks' deliveries and cancels a queued wake; disposal is in the model through cancel, and a suppressed wake can only wake less",
       "HalC2.Orchestration.Delegation.accept_delivery/1" =>
         "the provider reads the message that woke the parent; the model ends at the message",
+      "HalC2.Orchestration.Delegation.quiet?/1" =>
+        "reads whether the child has a run or owed work; changes nothing",
+      "HalC2.Orchestration.Delegation.hand_over_pull_requests/1" =>
+        "moves a quiet child's pull request links to its caller; touches no task, run or delivery, so no part of how the task ends, and may be retried",
+      "HalC2.Orchestration.Recovery.leaving/1" =>
+        "stands in for :init stopping in a test; stopping?/0 is abstracted",
+      "HalC2.Orchestration.Recovery.start_reattach/0" =>
+        "connects to programs that outlive the MC, which here stop with it; Durable's own tests hold it",
       "HalC2.Orchestration.Recovery.start_link/0" => "starts the process that runs boot",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
         "tells the MC is shutting down; the model has crash"
@@ -68,7 +87,7 @@ defmodule HalC2.DelegationProofTest do
         "A waited-for task that finishes while the caller is busy is only acknowledged",
         "A waited-for task that finishes after the caller went idle is delivered",
         "A task whose end never reached its caller settles when the MC starts",
-        "A task whose end report timed out settles on the retry",
+        "A task whose end report failed settles on the retry",
         "A task still working when the MC stopped ends with the turn that continues it",
         "A task whose subagent is not continued after a restart is interrupted",
         "Cancelling a running task interrupts the subagent",

@@ -3,6 +3,8 @@
 #include <QJsonArray>
 #include <QRegularExpression>
 
+#include <algorithm>
+
 #include "McClient.h"
 #include "TimelineModel.h"
 
@@ -102,12 +104,24 @@ void ThreadDiff::takeCheckpoints() {
   QMap<int, QJsonObject> turns;
   if (m_timeline) {
     const QHash<QString, QJsonObject> checkpoints = m_timeline->entities(QStringLiteral("checkpoint"));
+    const QHash<QString, QJsonObject> runs = m_timeline->entities(QStringLiteral("run"));
+    QList<QJsonObject> counted;
     for (const QJsonObject& checkpoint : checkpoints) {
       const QJsonValue ordinal = checkpoint.value(QLatin1String("appRunOrdinal"));
       // The thread's baseline has no turn; one that failed or went missing has no diff.
       if (!ordinal.isDouble() || checkpoint.value(QLatin1String("status")).toString() != QLatin1String("ready")) continue;
-      turns.insert(ordinal.toInt(), checkpoint);
+      // A checkpoint counts as a diff turn only for a completed run, as the MC
+      // counts getTurnDiff's turns; a run the timeline does not hold (a test's
+      // fixtures) is not evidence against it.
+      const QString runId = checkpoint.value(QLatin1String("runId")).toString();
+      const auto run = runs.constFind(runId);
+      if (run != runs.constEnd() && run->value(QLatin1String("status")).toString() != QLatin1String("completed")) continue;
+      counted.append(checkpoint);
     }
+    std::sort(counted.begin(), counted.end(), [](const QJsonObject& left, const QJsonObject& right) {
+      return left.value(QLatin1String("appRunOrdinal")).toInt() < right.value(QLatin1String("appRunOrdinal")).toInt();
+    });
+    for (qsizetype turn = 0; turn < counted.size(); ++turn) turns.insert(int(turn) + 1, counted.at(turn));
   }
   m_turns = turns;
   // A turn that went away (rewound) leaves the picker on the latest one, as

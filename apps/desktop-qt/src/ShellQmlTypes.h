@@ -17,10 +17,12 @@
 #include "native/CommandRegistry.h"
 #include "native/ComposerHighlighter.h"
 #include "native/DeviceScreen.h"
+#include "native/DeviceTools.h"
 #include "native/KeybindingController.h"
 #include "native/OnboardingController.h"
 #include "native/RightPanelController.h"
 #include "native/SettingsController.h"
+#include "native/SpaceController.h"
 #include "native/TerminalController.h"
 #include "native/ThemeController.h"
 #include "native/ThreadDiff.h"
@@ -61,6 +63,7 @@ HAL_C2_SHELL_SINGLETON(RightPanelController, Panel)
 HAL_C2_SHELL_SINGLETON(CommandPaletteController, PaletteModel)
 HAL_C2_SHELL_SINGLETON(OnboardingController, Onboarding)
 HAL_C2_SHELL_SINGLETON(KeybindingController, Keybindings)
+HAL_C2_SHELL_SINGLETON(SpaceController, Spaces)
 
 HAL_C2_SHELL_TYPE(LocalTranscriber)
 HAL_C2_SHELL_TYPE(LocalFolderModel)
@@ -74,7 +77,17 @@ struct DeviceStreamDeclaration {
   QML_UNCREATABLE("A device tab's stream")
 };
 
+struct DeviceToolsDeclaration {
+  Q_GADGET
+  QML_FOREIGN(DeviceTools)
+  QML_NAMED_ELEMENT(DeviceTools)
+  QML_UNCREATABLE("A device tab's tools")
+};
+
 HAL_C2_SHELL_VALUE(CommandRegistry)
 HAL_C2_SHELL_VALUE(TerminalTabs)
 HAL_C2_SHELL_VALUE(ThreadDiff)
 HAL_C2_SHELL_VALUE(TimelineModel)
+HAL_C2_SHELL_VALUE(SpacePages)
+HAL_C2_SHELL_VALUE(SpaceRows)
+HAL_C2_SHELL_VALUE(SpaceHistory)

@@ -26,6 +26,7 @@ One directory per product domain, not per surface. Surfaces are tags.
 | `navigation/`     | palette, keybindings, focus, welcome wizard, appearance, layout              |
 | `source-control/` | git status, refs, worktrees, review, pull requests and stacks, Snap Shot     |
 | `planning/`       | plans of tasks and milestones, timelines, boards, agent actions on a plan    |
+| `space/`          | Spaces: pages people and agents write together, their blocks and comments    |
 | `terminal/`       | terminal sessions, tabs, restart, graphics                                   |
 | `preview/`        | in-app preview surfaces                                                      |
 | `files/`          | project files, explorer, folder operations, project scripts and actions      |

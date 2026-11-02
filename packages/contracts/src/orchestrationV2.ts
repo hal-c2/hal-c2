@@ -25,6 +25,8 @@ import {
   RunId,
   RuntimeRequestId,
   ScheduledTaskId,
+  SpaceId,
+  SpacePageId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
@@ -371,6 +373,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   /** The plugin that started the thread and the kind of thread it is (`plugin.ts`). */
   plugin: Schema.optional(Schema.NullOr(ThreadPluginMark)),
+  /** The page this thread's agent was asked from (`space.page.askAgent`). */
+  spacePage: Schema.optional(Schema.Struct({ spaceId: SpaceId, pageId: SpacePageId })),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   lineage: OrchestrationV2AppThreadLineage,
@@ -872,6 +876,8 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   context: Schema.optional(OrchestrationMessageContext),
   attachments: Schema.Array(ChatAttachment),
   streaming: Schema.Boolean,
+  // In the running turn, and the provider can still refuse it.
+  steer: Schema.optional(Schema.Literal("pending")),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   delegatedCompletion: Schema.optional(
@@ -2788,6 +2794,10 @@ export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaun
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
+  // For an access change: the version of the MC's shell rows that holds it.
+  shell: Schema.optional(
+    Schema.Struct({ mc: Schema.String, epoch: Schema.String, rev: NonNegativeInt }),
+  ),
 });
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
 

@@ -11,6 +11,7 @@
 #include "Alerts.h"
 #include "CommandPaletteController.h"
 #include "ComposerController.h"
+#include "DevicePanelSteps.h"
 #include "FilesIdentity.h"
 #include "Harness.h"
 #include "LoadBalancing.h"
@@ -491,6 +492,8 @@ const Steps steps([] {
   step(QStringLiteral("%1 is offered").arg(q), [](World& world, const Captures& c, const Table&) {
     // The project icon picker's images are offered in the same words (FilesIdentitySteps).
     if (checkIconImageOffered(world, c[0], true)) return;
+    // So are the Device tab's simulators and emulators (DeviceSteps).
+    if (checkDeviceOffered(world, c[0])) return;
     const auto entry = item(world, QStringLiteral("machine:") + c[0]);
     const auto listed = choice(world, c[0]);
     expect(entry && entry->value(QStringLiteral("enabled")).toBool() && listed && listed->enabled, offered(world));

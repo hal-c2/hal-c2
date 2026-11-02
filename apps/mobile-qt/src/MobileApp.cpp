@@ -11,13 +11,16 @@
 #include "LayoutController.h"
 #include "LicensesController.h"
 #include "LocalFolderModel.h"
+#include "Maintenance.h"
 #include "NativeShell.h"
+#include "Notifications.h"
 #include "PlatformWindow.h"
 #include "PluginController.h"
 #include "Scanner.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "SpaceController.h"
 #include "TerminalController.h"
 #include "ThemeStore.h"
 
@@ -57,18 +60,22 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   // The root says which layout it shows (`layout.desktop {shown}`), at start
   // and as the window changes size, for the two things about it that live
   // here. The phone layout's home is the thread list, not a draft to land on,
-  // and the desktop layout's is one. And only the desktop layout draws a
-  // terminal, so in the phone's a thread has no place for one.
+  // and the desktop layout's is one. Only the desktop layout draws a terminal,
+  // so in the phone's a thread has no place for one. And only the phone's Space
+  // screen has steps, so in the desktop layout the selected page is on show.
   m_native->controller<DraftController>()->setLandsOnDraft(false);
   m_native->controller<TerminalController>()->setDrawn(false);
+  m_native->controller<SpaceController>()->setPageShownBySteps(true);
   m_bridge->addInterceptor([drafts = QPointer<DraftController>(m_native->controller<DraftController>()),
-                            terminals = QPointer<TerminalController>(m_native->controller<TerminalController>())](const QString& action, const QVariant& payload) {
+                            terminals = QPointer<TerminalController>(m_native->controller<TerminalController>()),
+                            spaces = QPointer<SpaceController>(m_native->controller<SpaceController>())](const QString& action, const QVariant& payload) {
     if (action != QLatin1String("layout.desktop")) return false;
-    if (!drafts || !terminals) return true;
+    if (!drafts || !terminals || !spaces) return true;
     const bool desktop = payload.toMap().value(QStringLiteral("shown")).toBool();
     drafts->setLandsOnDraft(desktop);
     if (desktop) drafts->land();
     terminals->setDrawn(desktop);
+    spaces->setPageShownBySteps(!desktop);
     return true;
   });
   m_theme = std::make_unique<ThemeStore>(configDir);
@@ -84,21 +91,27 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
       m_theme.get());
   // The one environment the phone is paired with.
   m_pairing = std::make_unique<Pairing>(m_bridge.get(), m_native.get(), m_storage.data, options.device);
+  m_notifications = std::make_unique<Notifications>(m_bridge.get(), m_native.get(), m_pairing.get(),
+                                                    options.pushSystem ? options.pushSystem : devicePushSystem(m_storage.data), m_storage.data);
   m_scanner = std::make_unique<Scanner>(m_bridge.get(), options.camera ? options.camera : deviceCamera());
+  // Its environments' versions and providers, and their updates.
+  m_maintenance = std::make_unique<Maintenance>(m_bridge.get(), m_native.get());
   // A `hal-c2:` link the system opens the app with (the manifest's
-  // `hal-c2://pair`). Qt for Android hands a running app's link, and the one
+  // `hal-c2://pair`, and the `hal-c2://threads/...` a tapped notification
+  // opens, which Notifications takes and passes the rest on). Qt for Android hands a running app's link, and the one
   // a stopped app was started with, to QDesktopServices::openUrl, which
   // calls the scheme's handler. The second comes with the event loop's first
   // turn, so the handler has to be here before that.
-  QDesktopServices::setUrlHandler(QStringLiteral("hal-c2"), m_pairing.get(), "openLink");
+  QDesktopServices::setUrlHandler(QStringLiteral("hal-c2"), m_notifications.get(), "openLink");
 }
 
 MobileApp::~MobileApp() {
-  // Before the pairing goes: a link may be on its way from another thread.
+  // Before the notifications go: a link may be on its way from another thread.
   QDesktopServices::unsetUrlHandler(QStringLiteral("hal-c2"));
 }
 
 void MobileApp::start() {
   m_pairing->start();
+  m_notifications->start();
   m_runtime->start();
 }

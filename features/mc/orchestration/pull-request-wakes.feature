@@ -3,7 +3,8 @@
 #   apps/server-ex/lib/hal_c2/pull_requests/wakes.ex
 #   apps/server-ex/lib/hal_c2/pull_requests/sync.ex (the sweep that reads each link's host state)
 #   apps/server-ex/lib/hal_c2/pull_requests/github.ex (@summary_selection: the review and comment marker)
-#   apps/server-ex/lib/hal_c2/orchestration/delegation.ex (results are notifications that wake the agent)
+#   https://github.com/hal-c2/hal-c2/issues/662
+#   apps/server-ex/lib/hal_c2/orchestration/delegation.ex (results are notifications that wake the agent; a finished task hands its links to its caller)
 #   apps/server-ex/lib/hal_c2/mcp/tools/pull_requests.ex (list_thread_pull_requests, unlink_pull_request)
 #   packages/contracts/src/orchestration.ts (ThreadPullRequestLink heard, ThreadPullRequestSnapshot activity)
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2Notification pull_request source)
@@ -177,6 +178,68 @@ Feature: A thread hears when a pull request it owns needs attention
       | put away | brings it back |
       | settled  | unsettles      |
       | archived | unarchives     |
+
+  # A delegated task's child stops owning its pull requests when its task ends, so
+  # their reviews wake the thread that delegated it, which may have handed the work
+  # to a newer task, instead of reviving the old child beside it.
+  @mc
+  Scenario: A finished task's pull requests pass to the thread that delegated it
+    Given thread "worker" works on a task "t1" delegated and links pull request "acme/app#14", which the MC has read once
+    When the task of "worker" ends
+    Then thread "t1" links "acme/app#14"
+    And thread "worker" no longer links "acme/app#14"
+    When a member publishes a review that asks for changes and the MC reads "acme/app#14" again
+    Then the agent of "worker" is not woken
+    And the agent of "t1" is woken once about "acme/app#14"
+
+  @mc
+  Scenario: News the finished task was not told yet reaches the thread that delegated it
+    Given thread "worker" works on a task "t1" delegated and links pull request "acme/app#14", which the MC has read once
+    And the agent of "worker" is working
+    When the owner comments and the MC reads "acme/app#14" again
+    And the task of "worker" ends
+    And the MC reads "acme/app#14" again
+    Then the agent of "worker" is not woken
+    And the agent of "t1" is woken once about "acme/app#14"
+    And the message says "New comment from owner-1."
+
+  @mc
+  Scenario: The thread that delegated keeps what it heard of a pull request it links too
+    Given thread "worker" works on a task "t1" delegated and links pull request "acme/app#12", which the MC has read once
+    And the agent of "worker" is working
+    And the agent of "t1" was woken because the checks of "acme/app#12" failed
+    When the task of "worker" ends
+    Then thread "worker" no longer links "acme/app#12"
+    When the MC reads "acme/app#12" again
+    Then the agent of "t1" is not woken again
+    And the agent of "worker" is not woken
+
+  @mc
+  Scenario: A handover cut short completes once there is news
+    Given thread "worker" works on a task "t1" delegated and links pull request "acme/app#14", which the MC has read once
+    And the task of "worker" ended without handing its pull requests over
+    When the owner comments and the MC reads "acme/app#14" again
+    And the MC reads "acme/app#14" again
+    Then thread "worker" no longer links "acme/app#14"
+    And the agent of "worker" is not woken
+    And the agent of "t1" is woken once about "acme/app#14"
+    And the message says "New comment from owner-1."
+
+  @mc
+  Scenario Outline: A handover cut short completes on a child put away since
+    Given thread "worker" works on a task "t1" delegated and links pull request "acme/app#14", which the MC has read once
+    And the task of "worker" ended without handing its pull requests over
+    And thread "worker" is <put away>
+    When the owner comments and the MC reads "acme/app#14" again
+    And the MC reads "acme/app#14" again
+    Then thread "worker" no longer links "acme/app#14"
+    And the agent of "t1" is woken once about "acme/app#14"
+    And the message says "New comment from owner-1."
+
+    Examples:
+      | put away |
+      | settled  |
+      | archived |
 
   @mc
   Scenario: Unlinking the pull request stops the wakes

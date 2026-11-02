@@ -23,9 +23,14 @@ const QString kAt = QStringLiteral("2026-09-23T09:00:00Z");
 struct FakeSetup {
   QJsonObject snapshot;
   int sequence = 0;
+  int retries = 0;
 };
 
 const FakeMc::Extension setups([](FakeMc& mc) {
+  mc.onRpc(QStringLiteral("worktreeSetup.retry"), [&mc](const FakeMc::Rpc& rpc) {
+    ++mc.part<FakeSetup>().retries;
+    mc.reply(rpc, QJsonObject{{QStringLiteral("retried"), true}});
+  });
   mc.onShape(QStringLiteral("worktreeSetup"), [&mc](int id, const QJsonObject&) {
     const QJsonObject snapshot = mc.part<FakeSetup>().snapshot;
     mc.send({{QStringLiteral("t"), QStringLiteral("worktreeSetup")}, {QStringLiteral("id"), id},
@@ -95,7 +100,7 @@ const Steps steps([] {
                                                    stage(QStringLiteral("agent"), QStringLiteral("done"))});
          } else if (state == QLatin1String("failed")) {
            publish(world, QStringLiteral("failed"), {fetched, stage(QStringLiteral("checkout"), QStringLiteral("failed"), QStringLiteral("exit 128")),
-                                                     stage(QStringLiteral("setup-script"), QStringLiteral("skipped")), stage(QStringLiteral("agent"), QStringLiteral("skipped"))},
+                                                     stage(QStringLiteral("setup-script"), QStringLiteral("pending")), stage(QStringLiteral("agent"), QStringLiteral("pending"))},
                    QStringLiteral("Could not create the worktree: the branch already exists."));
          } else {
            publish(world, QStringLiteral("cancelled"), {fetched, stage(QStringLiteral("checkout"), QStringLiteral("done")),
@@ -151,6 +156,22 @@ const Steps steps([] {
     expect(!shown(world).value(QStringLiteral("detailsOpen")).toBool(), QStringLiteral("the details are already open"));
     world.bridge().dispatch(QStringLiteral("worktreeSetup.details"), QVariantMap{{QStringLiteral("open"), true}});
   });
+  step(QStringLiteral("the setup of %1 failed as its agent started").arg(q), [](World& world, const Captures&, const Table&) {
+    publish(world, QStringLiteral("failed"), {stage(QStringLiteral("fetch"), QStringLiteral("done")), stage(QStringLiteral("checkout"), QStringLiteral("done")),
+                                              stage(QStringLiteral("setup-script"), QStringLiteral("done")), stage(QStringLiteral("agent"), QStringLiteral("failed"))},
+            QStringLiteral("The agent could not start: no such provider."));
+  });
+  step(QStringLiteral("the user chooses to retry the setup"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return shown(world).value(QStringLiteral("canRetry")).toBool(); }, [&] { return QStringLiteral("a retry; the setup shown is %1").arg(show(shown(world))); });
+    world.bridge().dispatch(QStringLiteral("worktreeSetup.retry"), {});
+  });
+  step(QStringLiteral("the MC is asked to run the setup again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return world.mc.part<FakeSetup>().retries == 1; }, QStringLiteral("the MC to be asked to retry"));
+  });
+  step(QStringLiteral("the conversation offers no retry"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return shown(world).value(QStringLiteral("phase")) == QLatin1String("failed"); }, [&] { return QStringLiteral("the failure; the setup shown is %1").arg(show(shown(world))); });
+    expect(!shown(world).value(QStringLiteral("canRetry")).toBool(), QStringLiteral("the setup shown is %1").arg(show(shown(world))));
+  });
   step(QStringLiteral("the user sees why the setup failed and the steps that ran"), [](World& world, const Captures&, const Table&) {
     const QVariantMap setup = shown(world);
     QStringList ran;
@@ -158,8 +179,8 @@ const Steps steps([] {
       ran.append(entry.toMap().value(QStringLiteral("label")).toString() + QLatin1Char('=') + entry.toMap().value(QStringLiteral("status")).toString());
     }
     expect(setup.value(QStringLiteral("detailsOpen")).toBool() && setup.value(QStringLiteral("error")) == QLatin1String("Could not create the worktree: the branch already exists.") &&
-               ran == QStringList{QStringLiteral("Fetch base branch=done"), QStringLiteral("Check out files=failed"), QStringLiteral("Run setup script=skipped"),
-                                  QStringLiteral("Start agent=skipped")},
+               ran == QStringList{QStringLiteral("Fetch base branch=done"), QStringLiteral("Check out files=failed"), QStringLiteral("Run setup script=pending"),
+                                  QStringLiteral("Start agent=pending")},
            QStringLiteral("the setup shown is %1").arg(show(setup)));
   });
 });

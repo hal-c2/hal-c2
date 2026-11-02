@@ -1114,6 +1114,68 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     context
   end
 
+  step "the instance {string} has an API key in its environment", %{args: [instance]} = context do
+    {settings, version} = HalC2.Settings.get()
+
+    settings =
+      update_in(settings, ["providerInstances", instance], fn config ->
+        Map.put(config, "environment", [
+          %{"name" => "ACME_API_KEY", "value" => "sk-acme-secret", "sensitive" => true}
+        ])
+      end)
+
+    {:ok, _} = HalC2.Settings.put(settings, version)
+    context
+  end
+
+  step "a plugin lists the agents threads can run on", context do
+    {:ok, providers} = HalC2.Plugins.Host.providers("host-probe")
+    Map.put(context, :host_providers, providers)
+  end
+
+  step "it sees {string} as an {string} agent that can run threads",
+       %{args: [instance, driver]} = context do
+    assert %{
+             "name" => "Acme at work",
+             "driverKind" => ^driver,
+             "enabled" => true,
+             "installed" => true,
+             "status" => "ready",
+             "availability" => "available",
+             "auth" => %{"status" => _},
+             "models" => [_]
+           } = FakeAcp.find(context.host_providers, instance)
+
+    context
+  end
+
+  step "it sees {string} as an {string} agent that is unavailable",
+       %{args: [instance, driver]} = context do
+    assert %{
+             "driverKind" => ^driver,
+             "enabled" => false,
+             "installed" => false,
+             "status" => "error",
+             "availability" => "unavailable",
+             "models" => []
+           } = FakeAcp.find(context.host_providers, instance)
+
+    context
+  end
+
+  step "it sees none of the instance's settings or environment", context do
+    listed = JSON.encode!(context.host_providers)
+
+    for secret <- ["sk-acme-secret", "ACME_API_KEY", "hi team", "greeting"],
+        do: refute(listed =~ secret)
+
+    for entry <- context.host_providers,
+        key <- ["environment", "config", "message", "unavailableReason"],
+        do: refute(Map.has_key?(entry, key))
+
+    context
+  end
+
   step "a thread that ran on a provider whose plugin was removed", context do
     context = context |> Turns.providers() |> provider_plugin("acme")
     context = launch(context, "acme", "remember the basket")
@@ -1166,7 +1228,7 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
   step "the stop control is not offered while a turn runs", context do
     refute context.session["capabilities"]["turns"]["supportsInterrupt"]
 
-    assert {:error, "The provider \"acme\" cannot stop a running turn."} =
+    assert {:error, "Acme cannot stop a run once it has started."} =
              HalC2.Orchestration.dispatch(%{
                "type" => "run.interrupt",
                "commandId" => "cmd-stop",
@@ -1244,6 +1306,44 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     assert [%{"contextDivergent" => true, "nativeThreadRef" => nil}] =
              StreamState.list(state(context.thread_id), "provider-thread")
 
+    context
+  end
+
+  # A manifest from before the finer capability atoms: its session keeps the
+  # defaults it shipped with, so its queue still queues.
+  step "a provider plugin that declares only the earlier capabilities", context do
+    earlier =
+      ~w(interrupt active_steering fork rollback approvals plan_updates model_switching interaction_mode text_generation native_sessions usage_limits sign_in)a
+
+    context = provider_plugin(context, "earlier", capabilities: earlier)
+    context = launch(context, "earlier", "wait")
+    [_] = Turns.await_runs(context.thread_id, ["running"])
+    Map.put(context, :plugin, "earlier")
+  end
+
+  step "a message is queued behind its running turn", context do
+    queued =
+      context.thread_id
+      |> Turns.message("m2", "hello again")
+      |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
+
+    {{:ok, _}, context} = World.dispatch(context, queued)
+    [_, _] = Turns.await_runs(context.thread_id, ["running", "queued"])
+    context
+  end
+
+  step "the message runs once that turn is interrupted", context do
+    [%{"id" => run_id, "status" => "running"} | _] =
+      Turns.runs(state(context.thread_id))
+
+    assert {:ok, _} =
+             HalC2.Orchestration.dispatch(%{
+               "type" => "run.interrupt",
+               "threadId" => context.thread_id,
+               "runId" => run_id
+             })
+
+    [_, _] = Turns.await_runs(context.thread_id, ["interrupted", "completed"])
     context
   end
 

@@ -59,7 +59,10 @@ no client sees a change the log lacks. Snapshots are a cache that can be rebuilt
 A command's acknowledgement means its intent committed, not that the provider, checkpoint, or
 other follow-up work finished. Command receipts are kept in the store's meta table so a retried
 command is answered rather than run twice. Keep external I/O out of the step that decides and
-commits a change. Provider runtimes stream their turns back into the log afterwards
+commits a change. Follow-up work is recorded before it runs and run per thread in order
+([`HalC2.Orchestration.Effects`](../../apps/server-ex/lib/hal_c2/orchestration/effects.ex)):
+work tied to a lost provider process is cancelled rather than replayed, and work that is safe
+to repeat runs again. Provider runtimes stream their turns back into the log afterwards
 ([`TurnWriter`](../../apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex)), and work tied to
 a lost provider process cannot replay: [recovery](./server-updates.md#recovering-interrupted-threads)
 ends it before new work is admitted.

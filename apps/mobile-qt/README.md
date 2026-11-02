@@ -37,6 +37,8 @@ item with the `objectName`, a mouse's click or drag there, keys into what has th
 hardware keyboard's chord through the window's shortcuts, Android's Back. The Gherkin reader and
 the step registry are the desktop runner's (`apps/desktop-qt/tests/native/features/Runner.h`).
 `Pairing` is the pairing class by itself, with the links it must refuse, and `Scanner` the scanner.
+`Qml` runs `tests/qml` with `qmltestrunner` over the desktop's fake `HalC2.Shell`, for what a screen
+decides by itself.
 
 No test opens a camera. The device's is one object (`src/ScanCamera.h`), and the tests put
 `tests/FakeCamera.h` in its place: it scripts the user's answer to the system's question and
@@ -52,7 +54,7 @@ the same version as the one for Android, since its `androiddeployqt` and QML too
 package. Then:
 
 ```sh
-uvx --from aqtinstall aqt install-qt all_os android 6.11.1 android_arm64_v8a -m qtwebsockets qtmultimedia -O ~/Qt
+uvx --from aqtinstall aqt install-qt all_os android 6.11.1 android_arm64_v8a -m qtwebsockets qtmultimedia qtpdf -O ~/Qt
 sdkmanager --install "ndk;27.2.12479018" "platforms;android-36" "system-images;android-34;default;arm64-v8a"
 avdmanager create avd -n hal-c2-phone -k "system-images;android-34;default;arm64-v8a" -d pixel_7
 ```

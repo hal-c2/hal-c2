@@ -59,7 +59,13 @@ project crumb.
 The Project category, shown while a project is selected, holds the project's name, icon, actions,
 checkouts and removal. Actions belong to a project: editing them creates the project's own list
 on each selected environment, and reset returns to the environment's shared list. A project's
-`hal-c2.json` actions can be imported there.
+`hal-c2.json` actions can be imported there. A new worktree runs the project's action marked to run
+on worktree creation; when the project has none, it runs the first one marked in the `hal-c2.json`
+of the branch being checked out, imported or not. That script runs only if the project folder's own
+`hal-c2.json` has the same command, so a branch can't change which setup command runs. A branch that
+adds or changes it gets a worktree without it, and the setup details say why; import or save the
+action to run it anyway. The command still runs against the branch's files, such as its
+`package.json` or `mise.toml`, the same as a saved setup script.
 
 Settings a repository can also declare in `hal-c2.json`, such as the workspace for new threads,
 resolve in one order: a project override, then the environment setting, then `hal-c2.json`, then the
@@ -120,3 +126,27 @@ On mobile, use **Settings → Source control** to change selected environment de
 HAL-C2 only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Project environment
+
+An agent started from HAL-C2 gets the environment of the HAL-C2 server, not of a terminal opened in
+the project. If the project's tools or its `.mcp.json` rely on variables that mise, direnv or a
+`.env` file set, select the project, open Project and choose a **Project environment**:
+
+- **mise and direnv** loads what `mise env` and an allowed `.envrc` set in the thread's checkout
+  (its worktree, for a worktree thread).
+- **A dotenv file** loads one file from the checkout, `.env` unless you name another.
+
+In the terminal client, open **Settings → Projects**, pick the project and change **Project
+environment** there.
+
+Loading runs the checkout's own configuration whenever an agent session starts, with your
+account's permissions, so only turn it on for checkouts you trust. mise's `mise trust` and direnv's
+`direnv allow` still apply: HAL-C2 tells you to run them instead of loading a configuration they
+have not approved.
+
+The setting belongs to the machine the project lives on. A thread moved to another machine loads
+that machine's project environment, if it has one. The values are never shown to clients. Variables
+HAL-C2 or the provider set for a session, such as a provider's home directory, are kept. If loading
+fails, the session starts without the project's variables and the thread shows why. Choose **Off**
+to stop loading the environment for new sessions.

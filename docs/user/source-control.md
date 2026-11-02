@@ -173,7 +173,9 @@ Use **Link pull request** in the command palette or **Linked pull requests** pan
 pull request link in the conversation. Creating a pull request from Git actions links it automatically,
 and so does an agent opening one with `gh pr create` or pushing the thread's worktree as a GitHub
 pull request under another branch name. Agents can also link pull requests with the
-`link_pull_request` tool.
+`link_pull_request` tool. When a delegated task finishes, the pull requests its agent linked move to
+the thread that delegated it, so later reviews and checks wake that thread instead of the finished
+task.
 
 Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
 on the Pull Requests page, **Link to thread** lets you search for an active thread. The review header

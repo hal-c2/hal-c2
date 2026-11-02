@@ -99,7 +99,7 @@ defmodule HalC2.Steps.Orchestration.Search do
     {:ok, db} = Exqlite.Sqlite3.open(context.mc.store)
     :ok = Exqlite.Sqlite3.execute(db, "PRAGMA busy_timeout = 5000")
     :ok = Exqlite.Sqlite3.execute(db, "DELETE FROM messages")
-    :ok = Exqlite.Sqlite3.execute(db, "DELETE FROM meta WHERE key = 'messages_indexed'")
+    :ok = Exqlite.Sqlite3.execute(db, "DELETE FROM meta WHERE key = 'messages_typed'")
     :ok = Exqlite.Sqlite3.close(db)
 
     {reply, context} = search(context, %{"query" => "ledger"})
@@ -154,7 +154,14 @@ defmodule HalC2.Steps.Orchestration.Search do
   end
 
   step "{string} comes before {string}", %{args: [first, second]} = context do
-    ids = Enum.map(matches(context), & &1["threadId"])
+    # A search's matches, or another listing of names (`context.listing`,
+    # as the linked-threads steps leave it).
+    ids =
+      case context.reply do
+        {:ok, %{"matches" => _}} -> Enum.map(matches(context), & &1["threadId"])
+        _ -> context.listing
+      end
+
     assert Enum.find_index(ids, &(&1 == first)) < Enum.find_index(ids, &(&1 == second))
     context
   end

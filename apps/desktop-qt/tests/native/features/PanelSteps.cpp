@@ -623,6 +623,10 @@ const Steps steps([] {
     fakeFiles(world.mc).failOnce.insert(c[0]);
   });
   step(QStringLiteral("the user is told the folder could not be loaded"), [](World& world, const Captures&, const Table&) {
+    if (files(world).trailStatus() == QLatin1String("error")) {
+      expect(files(world).trailProblem().startsWith(QStringLiteral("Could not list")), files(world).trailProblem());
+      return;
+    }
     FileTreeModel& model = tree(world);
     for (int row = 0; row < model.rowCount(); ++row) {
       const QModelIndex index = model.index(row);
@@ -634,7 +638,20 @@ const Steps steps([] {
     fail(describeTree(world));
   });
   step(QStringLiteral("the user retries"), [](World& world, const Captures&, const Table&) {
-    // What failed is what is retried: the file, the project's listing or a folder's.
+    // What failed is what is retried: the app's update download, the file,
+    // the project's listing or a folder's.
+    if (at(world.state(QStringLiteral("desktopUpdate")), QStringLiteral("state.errorContext")) == QLatin1String("download")) {
+      world.bridge().dispatch(QStringLiteral("desktopUpdate.press"), {});
+      world.sync();
+      return;
+    }
+    if (files(world).trailStatus() == QLatin1String("error")) {
+      QQuickItem* retry = filesteps::menuEntry(world, QStringLiteral("filePathSiblings"), QStringLiteral("filePathRetry"));
+      expect(retry != nullptr, QStringLiteral("the path trail offers no retry"));
+      QMetaObject::invokeMethod(retry, "triggered");
+      world.waitFor([&] { return files(world).trailStatus() == QLatin1String("ready"); }, QStringLiteral("the folder to be listed"));
+      return;
+    }
     if (files(world).fileStatus() == QLatin1String("error")) {
       files(world).reloadFile();
       world.waitFor([&] { return files(world).fileStatus() != QLatin1String("loading"); }, QStringLiteral("the file to load"));

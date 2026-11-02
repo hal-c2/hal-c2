@@ -4,15 +4,17 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// A draft's attachment opened to look at (`attachmentViewer`,
-// AttachmentViewerController): an image, Markdown rendered or as its source,
-// other text, or a note that it cannot be shown here. It can be taken off the
-// draft from here.
+// An attachment opened to look at (`attachmentViewer`,
+// AttachmentViewerController): an image, Markdown, a table or a page rendered
+// or as its source, other text, or a note that it cannot be shown here. A
+// draft's can be taken off the draft from here; a sent one's can be saved.
 Dialog {
     id: dialog
 
     readonly property var attachment: Shell.state.attachmentViewer ?? null
     readonly property string kind: attachment?.kind ?? ""
+    readonly property bool hasSource: kind === "markdown" || kind === "table" || kind === "page"
+    property string shownId
     property bool source: false
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
@@ -32,10 +34,15 @@ Dialog {
             close();
             return;
         }
-        source = false;
+        // The same attachment published again keeps how it is being read.
+        if (attachment.id !== shownId) source = false;
+        shownId = attachment.id;
         open();
     }
-    onRejected: Shell.dispatch("attachment.viewer.close")
+    onRejected: {
+        shownId = "";
+        Shell.dispatch("attachment.viewer.close");
+    }
 
     background: Rectangle {
         color: Theme.palette.color("surfaceOverlay", "#18181b")
@@ -65,13 +72,33 @@ Dialog {
             }
             ShellButton {
                 objectName: "attachmentViewerSource"
-                visible: dialog.kind === "markdown"
+                visible: dialog.hasSource
                 subtle: true
                 text: dialog.source ? qsTr("Rendered") : qsTr("Source")
-                onClicked: dialog.source = !dialog.source
+                onClicked: {
+                    dialog.source = !dialog.source;
+                    // A sent page's source is read fresh; it may not be text at all.
+                    if (dialog.source && dialog.kind === "page")
+                        Shell.dispatch("attachment.viewer.source");
+                }
+            }
+            ShellButton {
+                objectName: "attachmentViewerCopy"
+                visible: (dialog.attachment?.text ?? null) !== null
+                subtle: true
+                text: dialog.attachment?.truncated ? qsTr("Copy part shown") : qsTr("Copy")
+                onClicked: Shell.dispatch("attachment.viewer.copy")
+            }
+            ShellButton {
+                objectName: "attachmentViewerSave"
+                visible: dialog.attachment?.origin === qsTr("Sent") && dialog.kind !== "loading" && dialog.kind !== "failed"
+                subtle: true
+                text: qsTr("Save")
+                onClicked: Shell.dispatch("attachment.viewer.save")
             }
             ShellButton {
                 objectName: "attachmentViewerRemove"
+                visible: dialog.attachment?.removable === true
                 text: qsTr("Remove")
                 tint: Theme.palette.color("errorForeground", "#ef4444")
                 onClicked: Shell.dispatch("attachment.viewer.remove")
@@ -96,12 +123,40 @@ Dialog {
             fillMode: Image.PreserveAspectFit
             asynchronous: true
         }
+        // Its own files behind a Loader, so a machine without the Qt module says
+        // the attachment cannot be shown.
+        Loader {
+            id: media
+
+            readonly property bool wanted: dialog.kind === "video" || dialog.kind === "audio" || dialog.kind === "document"
+
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: wanted && status !== Loader.Error
+            onWantedChanged: load()
+            Component.onCompleted: load()
+            function load() {
+                if (!wanted)
+                    setSource("");
+                else if (dialog.kind === "document")
+                    setSource("DocumentView.qml", { source: dialog.attachment.url });
+                else
+                    setSource("MediaPlayerView.qml", { source: dialog.attachment.url, video: dialog.kind === "video", autoPlay: true });
+            }
+
+            Connections {
+                target: media.item
+                function onFailed() {
+                    Shell.dispatch("attachment.viewer.mediaFailed");
+                }
+            }
+        }
         Flickable {
             id: page
 
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: dialog.kind === "markdown" || dialog.kind === "text"
+            visible: dialog.kind === "text" || dialog.hasSource
             clip: true
             contentHeight: (body.item as Item)?.implicitHeight ?? 0
             boundsBehavior: Flickable.StopAtBounds
@@ -114,14 +169,26 @@ Dialog {
 
                 width: page.width
                 active: page.visible
-                sourceComponent: dialog.kind === "markdown" && !dialog.source ? rendered : plain
+                sourceComponent: dialog.kind === "text" || dialog.source ? plain : dialog.kind === "page" ? page_ : rendered
             }
             Component {
                 id: rendered
 
                 Markdown {
                     objectName: "attachmentViewerMarkdown"
+                    text: dialog.attachment?.rendered ?? dialog.attachment?.text ?? ""
+                    onLinkActivated: link => Shell.openExternal(link)
+                }
+            }
+            Component {
+                id: page_
+
+                Text {
+                    objectName: "attachmentViewerPage"
                     text: dialog.attachment?.text ?? ""
+                    textFormat: Text.RichText
+                    color: dialog.foreground
+                    wrapMode: Text.Wrap
                     onLinkActivated: link => Shell.openExternal(link)
                 }
             }
@@ -130,7 +197,7 @@ Dialog {
 
                 Text {
                     objectName: "attachmentViewerText"
-                    text: dialog.attachment?.text ?? ""
+                    text: dialog.kind === "page" ? (dialog.attachment?.sourceProblem ?? dialog.attachment?.source ?? "") : (dialog.attachment?.text ?? "")
                     textFormat: Text.PlainText
                     color: dialog.foreground
                     font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
@@ -140,10 +207,43 @@ Dialog {
             }
         }
         Label {
+            objectName: "attachmentViewerLoading"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: dialog.kind === "loading"
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            text: qsTr("Loading the attachment…")
+            color: dialog.muted
+        }
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: dialog.kind === "failed"
+            spacing: 10
+
+            Item { Layout.fillHeight: true }
+            Label {
+                objectName: "attachmentViewerProblem"
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                text: dialog.attachment?.problem ?? ""
+                color: dialog.foreground
+                wrapMode: Text.Wrap
+            }
+            ShellButton {
+                objectName: "attachmentViewerRetry"
+                Layout.alignment: Qt.AlignHCenter
+                text: qsTr("Try again")
+                onClicked: Shell.dispatch("attachment.viewer.retry")
+            }
+            Item { Layout.fillHeight: true }
+        }
+        Label {
             objectName: "attachmentViewerUnsupported"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: dialog.kind === "unsupported"
+            visible: dialog.kind === "unsupported" || (media.wanted && media.status === Loader.Error)
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             text: qsTr("This attachment cannot be shown here.")

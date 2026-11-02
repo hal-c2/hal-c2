@@ -47,7 +47,7 @@ defmodule HalC2.Steps.Platform.Diagnostics do
       World.client(context)
       |> Mc.sub(9, %{"type" => "config", "environment" => context.mc.environment})
 
-    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 9))
+    {frame, client} = Mc.await_config(client, 9)
     {frame["config"], World.put_client(context, client)}
   end
 
