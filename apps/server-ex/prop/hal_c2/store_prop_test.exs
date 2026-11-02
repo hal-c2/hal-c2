@@ -6,8 +6,9 @@ defmodule HalC2.StorePropTest do
   and the next `seq`. Commands append batches (some of which fail and must leave no
   trace), read streams back in every way the MC reads them, put the derived rows,
   search the indexed messages, hold an append up at a store too slow to take it (it
-  waits, however long, and lands once), and restart the store, which must lose nothing
-  it acknowledged. `HalC2.StoreParallelPropTest` runs the same model with concurrent
+  waits, however long, and lands once), store a thread with no stream to index it
+  (`HalC2.Search.storing_thread/2`, whose write may fail), and restart the store, which
+  must lose nothing it acknowledged. `HalC2.StoreParallelPropTest` runs the same model with concurrent
   appenders and readers, and `HalC2.StoreRestartPropTest` with concurrent writers and
   restarts, both with every write counted slow, so each waits the way a write to a
   slow store does.
@@ -47,6 +48,7 @@ defmodule HalC2.StorePropTest do
   # shell: id => {kind, row}
   # messages: stream id => %{message id => {role, text, created_at, typed?}}, typed? nil
   # on one only an older MC wrote.
+  # imported: stream id => %{message id => row}, the messages `storing_thread/2` stored.
   # clock numbers message creation times, which search orders by.
   def initial_state,
     do: %{
@@ -56,6 +58,7 @@ defmodule HalC2.StorePropTest do
       meta: %{},
       shell: %{},
       messages: %{},
+      imported: %{},
       clock: 0,
       store_id: nil
     }
@@ -101,7 +104,7 @@ defmodule HalC2.StorePropTest do
           else: [
             {1, {:call, __MODULE__, :store_id, []}},
             {1, {:call, __MODULE__, :store_path, []}},
-            {3, {:call, __MODULE__, :index_messages, [stream_id(), messages(), state.clock]}}
+            {3, {:call, __MODULE__, :index_messages, [indexed_id(), messages(), state.clock]}}
           ]
         ) ++
         if(mode == :sequential,
@@ -110,8 +113,13 @@ defmodule HalC2.StorePropTest do
             {1, {:call, __MODULE__, :stalled_append, [batches(state), at()]}},
             {1,
              {:call, __MODULE__, :older_mc_indexes,
-              [stream_id(), oneof(["m1", "m2", "m3"]), text(), state.clock]}},
-            {1, {:call, __MODULE__, :forget_untyped_messages, []}}
+              [indexed_id(), oneof(["m1", "m2", "m3"]), text(), state.clock]}},
+            {1, {:call, __MODULE__, :forget_untyped_messages, []}},
+            {3,
+             {:call, __MODULE__, :storing_thread,
+              [imported_id(), message_ids(), text(), oneof([:ok, :before, :after]), state.clock]}},
+            {1, {:call, __MODULE__, :mark_read, []}},
+            {2, {:call, __MODULE__, :read?, []}}
           ],
           else: []
         )
@@ -157,6 +165,10 @@ defmodule HalC2.StorePropTest do
     ])
   end
 
+  @message_ids ["m1", "m2", "m3"]
+  @read_mark "messages_typed"
+  @stored_at 1_750_000_000_000
+
   # Texts are built from words that exercise LIKE's wildcards and escape, and mixed case.
   @words ["alpha", "Beta", "a%b", "c_d", "bang!", " "]
   defp messages do
@@ -170,6 +182,11 @@ defmodule HalC2.StorePropTest do
       )
     )
   end
+
+  # Streams only `storing_thread/2` appends to, so what they hold stays messages.
+  defp imported_id, do: oneof(["imported-1", "imported-2"])
+  defp indexed_id, do: oneof([stream_id(), imported_id()])
+  defp message_ids, do: let(ids <- resize(3, list(oneof(@message_ids))), do: Enum.uniq(ids))
 
   defp text, do: let(words <- resize(3, list(oneof(@words))), do: Enum.join(words))
   defp needle, do: oneof(["alpha", "beta", "BETA", "a%b", "c_d", "d!", "a", " ", "x"])
@@ -249,6 +266,48 @@ defmodule HalC2.StorePropTest do
 
     %{state | messages: kept}
   end
+
+  # What the thread held is forgotten and what it holds is indexed, whether the write
+  # stored it (:ok), failed before storing (:before) or failed after (:after). The mark
+  # comes back only if it held at the start.
+  def next_state(state, _result, {:call, mod, :storing_thread, [id, ids, text, outcome, clock]}) do
+    prior = Map.get(state.imported, id, %{})
+    read? = model_read?(state)
+
+    {state, stored} =
+      if outcome == :before do
+        {state, prior}
+      else
+        appended =
+          next_state(
+            state,
+            :ok,
+            {:call, mod, :append, [[stored(id, ids, text, clock)], @stored_at]}
+          )
+
+        {appended,
+         for {mid, n} <- Enum.with_index(ids, clock), into: %{} do
+           {mid, {"user", text, created_at(n, id, mid), true}}
+         end}
+      end
+
+    rows = state.messages |> Map.get(id, %{}) |> Map.drop(Map.keys(prior)) |> Map.merge(stored)
+
+    %{
+      state
+      | messages: Map.put(state.messages, id, rows),
+        imported: Map.put(state.imported, id, stored),
+        meta:
+          if(read?,
+            do: Map.put(state.meta, @read_mark, "1"),
+            else: Map.delete(state.meta, @read_mark)
+          ),
+        clock: clock + length(@message_ids)
+    }
+  end
+
+  def next_state(state, _result, {:call, _, :mark_read, []}),
+    do: put_in(state.meta[@read_mark], "1")
 
   def next_state(state, _result, {:call, _, :put_meta, [key, value]}),
     do: put_in(state.meta[key], value)
@@ -336,6 +395,8 @@ defmodule HalC2.StorePropTest do
       end)
   end
 
+  def postcondition(state, {:call, _, :read?, []}, result), do: result == model_read?(state)
+
   def postcondition(state, {:call, _, :meta, [key]}, result), do: result == state.meta[key]
 
   def postcondition(state, {:call, _, :metas, [prefix]}, result),
@@ -385,6 +446,39 @@ defmodule HalC2.StorePropTest do
   def postcondition(_state, _call, result), do: result in [:ok, true]
 
   defp known?(state, id), do: Map.has_key?(state.streams, id)
+
+  defp model_read?(state) do
+    state.meta[@read_mark] == "1" and
+      not Enum.any?(state.messages, fn {_, messages} ->
+        Enum.any?(messages, fn {_, row} -> elem(row, 3) == nil end)
+      end)
+  end
+
+  # The write of a thread holding just the messages `ids`.
+  defp stored(id, ids, text, clock) do
+    times = ids |> Enum.with_index(clock) |> Map.new()
+
+    changes =
+      for mid <- @message_ids do
+        patch =
+          if times[mid] do
+            %{
+              "s" => %{
+                "id" => mid,
+                "role" => "user",
+                "text" => text,
+                "createdAt" => created_at(times[mid], id, mid)
+              }
+            }
+          else
+            HalC2.Patch.delete()
+          end
+
+        {"message", mid, patch}
+      end
+
+    {:thread, id, changes}
+  end
 
   defp with_time({kind, entity, patch}, at), do: {kind, entity, patch, at}
   defp with_time(change, _at), do: change
@@ -493,6 +587,25 @@ defmodule HalC2.StorePropTest do
     :ok = Exqlite.Sqlite3.release(db, stmt)
     :ok = Exqlite.Sqlite3.close(db)
   end
+
+  # A failing write raises on one side of the append or the other.
+  def storing_thread(id, ids, text, outcome, clock) do
+    try do
+      HalC2.Search.storing_thread(id, fn ->
+        if outcome == :before, do: raise("before")
+        {:ok, _} = Store.append(Store, [stored(id, ids, text, clock)], @stored_at)
+        if outcome == :after, do: raise("after")
+      end)
+    rescue
+      RuntimeError -> :ok
+    end
+
+    _ = :sys.get_state(Store)
+    :ok
+  end
+
+  def mark_read, do: Store.put_meta(@read_mark, "1")
+  def read?, do: HalC2.Search.read?()
 
   def put_meta(key, value), do: Store.put_meta(key, value)
   def meta(key), do: Store.meta(Store.home_path(), key)

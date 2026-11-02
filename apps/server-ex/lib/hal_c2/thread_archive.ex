@@ -653,7 +653,8 @@ defmodule HalC2.ThreadArchive do
     meta = archive["thread"]
     id = meta["id"]
 
-    loaded = HalC2.Search.storing_thread(id, fn -> v1_thread(archive, project, meta) end)
+    HalC2.Search.storing_thread(id, fn -> v1_thread(archive, project, meta) end)
+    loaded = StreamState.load(Store.path(), id)
 
     # Provider sessions from an earlier install do not come along: the next message hands
     # the conversation over.
