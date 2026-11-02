@@ -21,6 +21,7 @@
 #include <utility>
 
 #include "Brick.h"
+#include "CodeFence.h"
 #include "CommandRegistry.h"
 #include "FakeFiles.h"
 #include "FilesWorkspace.h"
@@ -340,8 +341,7 @@ QString exportMarkdown(FakeMc& mc, const QString& space, const QJsonObject& page
       for (const QString& part : said.split(QLatin1Char('\n'))) quoted.append((QStringLiteral("> ") + part).trimmed());
       line = quoted.join(QLatin1Char('\n'));
     } else if (kind == QLatin1String("code")) {
-      const QString fence = text(block, QLatin1String("fence")).isEmpty() ? QStringLiteral("```") : text(block, QLatin1String("fence"));
-      line = fence + text(block, QLatin1String("language")) + text(block, QLatin1String("info")) + QLatin1Char('\n') + said + QLatin1Char('\n') + fence;
+      line = codeFence::write(block);
     } else if (kind == QLatin1String("subpage_link")) {
       const QString linked = text(block, QLatin1String("linkedPageId"));
       const QString title = titleOf(mc, space, linked);
@@ -367,11 +367,7 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
   static const QRegularExpression heading(QStringLiteral("^#{2,6}\\s+(.*)$"));
   static const QRegularExpression item(QStringLiteral("^\\s*[-*]\\s+\\[([ xX])\\]\\s?(.*)$"));
   static const QRegularExpression link(QStringLiteral("^\\[(.+)\\]\\(#([\\w-]+)\\)$"));
-  static const QRegularExpression notParagraph(QStringLiteral("^(#{1,6}\\s|>| {0,3}(```|~~~)|\\s*[-*]\\s+\\[[ xX]\\])"));
-  static const QRegularExpression fenced(QStringLiteral("^ {0,3}(`{3,}|~{3,})"));
-  // A fence from the start of the line is a code block; indented, or with a space
-  // before its language, it is kept as written (block(:code)).
-  static const QRegularExpression code(QStringLiteral("^(`{3,}|~{3,})(?:(\\S+)(.*))?$"));
+  static const QRegularExpression notParagraph(QStringLiteral("^(#{1,6}\\s|>|\\s*[-*]\\s+\\[[ xX]\\])"));
   const auto block = [](const QString& kind, const QString& said) {
     return QJsonObject{{QStringLiteral("kind"), kind}, {QStringLiteral("text"), said}, {QStringLiteral("checked"), false},
                        {QStringLiteral("linkedPageId"), QJsonValue::Null}};
@@ -384,20 +380,10 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
     QRegularExpressionMatch match;
     if (line.trimmed().isEmpty()) {
       ++i;
-    } else if ((match = fenced.match(line)).hasMatch()) {
-      const QString fence = match.captured(1);
-      QStringList inside;
-      while (++i < lines.size() && !lines.at(i).trimmed().startsWith(fence)) inside.append(lines.at(i));
-      const QString close = i < lines.size() ? lines.at(i++) : QString();
-      if ((match = code.match(line)).hasMatch()) {
-        QJsonObject fencedCode = block(QStringLiteral("code"), inside.join(QLatin1Char('\n')));
-        if (fence != QLatin1String("```")) fencedCode.insert(QStringLiteral("fence"), fence);
-        if (!match.captured(2).isEmpty()) fencedCode.insert(QStringLiteral("language"), match.captured(2));
-        if (!match.captured(3).isEmpty()) fencedCode.insert(QStringLiteral("info"), match.captured(3));
-        blocks.append(fencedCode);
-      } else {
-        blocks.append(block(QStringLiteral("raw"), (QStringList{line} + inside + QStringList{close}).join(QLatin1Char('\n'))));
-      }
+    } else if (!codeFence::opens(line).isEmpty()) {
+      const auto [fenced, next] = codeFence::read(lines, i, block);
+      blocks.append(fenced);
+      i = next;
     } else if ((match = title.match(line)).hasMatch()) {
       // A `# ` heading anywhere but the top is an ordinary heading.
       if (blocks.isEmpty() && pageTitle.isNull()) {
@@ -429,7 +415,9 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
       blocks.append(block(QStringLiteral("callout"), quote.join(QLatin1Char('\n'))));
     } else {
       QStringList paragraph;
-      for (; i < lines.size() && !lines.at(i).trimmed().isEmpty() && !notParagraph.match(lines.at(i)).hasMatch(); ++i) {
+      for (; i < lines.size() && !lines.at(i).trimmed().isEmpty() && !notParagraph.match(lines.at(i)).hasMatch() &&
+             codeFence::opens(lines.at(i)).isEmpty();
+           ++i) {
         paragraph.append(lines.at(i));
       }
       blocks.append(block(QStringLiteral("paragraph"), paragraph.join(QLatin1Char('\n'))));

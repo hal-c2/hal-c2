@@ -176,6 +176,22 @@ defmodule HalC2.SpaceMarkdownTest do
       end
     end
 
+    # The Qt clients' fake MC reads and writes fences by these (CodeFence.h, whose
+    # tst_CodeFence reads the same file), so this keeps it to what the MC does.
+    test "code fences read and write as the clients' fake MC has them" do
+      fences = "../fixtures/space/code-fences.json" |> Path.expand(__DIR__) |> File.read!()
+      %{"read" => read, "notFences" => not_fences, "write" => write} = JSON.decode!(fences)
+
+      for %{"markdown" => markdown, "blocks" => blocks} <- read,
+          do: assert(Markdown.blocks(markdown) == blocks, inspect(markdown))
+
+      # Not a fence, so the line after it opens one rather than closing it.
+      for line <- not_fences, do: assert(length(Markdown.blocks(line <> "\n```")) == 2, line)
+
+      for %{"block" => block, "markdown" => markdown} <- write,
+          do: assert(Markdown.render(block) == markdown)
+    end
+
     test "a fence written another way is raw" do
       for code <- ["  ```ts\n  x\n  ```", "``` ts\nx\n```", "```ts\nx\n````", "```ts\nx"] do
         assert kinds(code) == ["raw"]
