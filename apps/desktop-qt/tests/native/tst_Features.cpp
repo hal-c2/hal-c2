@@ -654,6 +654,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("space/sites.feature"),
     QStringLiteral("space/images.feature"),
     QStringLiteral("space/presence.feature"),
+    QStringLiteral("space/markdown.feature"),
     QStringLiteral("space/project-files.feature"),
 };
 

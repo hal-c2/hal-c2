@@ -1444,8 +1444,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       [
         %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
         %{
-          "args" => ["pr list", "--repo github.com/acme/api"],
-          "stdout" => Enum.map(@keys, &pr_entry(world, &1))
+          "args" => ["api graphql"],
+          "repository" => "acme/api",
+          "pulls" => Enum.map(@keys, &pr_entry(world, &1))
         }
       ] ++
         details ++
