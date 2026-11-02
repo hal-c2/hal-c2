@@ -1,0 +1,184 @@
+{
+  "id": "maintenance",
+  "name": "Maintenance",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "description": "Scheduled repository maintenance: an agent you pick runs the maintain skill on the repositories you choose, updating dependencies, fixing security advisories, correcting docs that drifted and filling coverage gaps, one commit per category behind the repository's own gates. Each run reports what it applied and what it deferred; you decide whether its branch stays in HAL-C2 or becomes a pull request.",
+  "author": { "name": "HAL-C2", "url": "https://github.com/hal-c2/hal-c2" },
+  "homepage": "https://github.com/hal-c2/hal-c2/tree/main/plugins/maintenance",
+  "license": "MIT",
+  "icon": "assets/icon.svg",
+  "permissions": [
+    {
+      "id": "projects:read",
+      "reason": "To find the project of each repository it maintains, and run its agent in that project."
+    },
+    {
+      "id": "pullRequests:read",
+      "reason": "To skip a run while the repository still has an open maintenance pull request."
+    },
+    {
+      "id": "pullRequests:write",
+      "reason": "Only when publishing allows it: to push a run's maintenance branch and open its pull request. Nothing is pushed while publishing keeps runs in HAL-C2 or waits for you."
+    },
+    {
+      "id": "threads:create",
+      "reason": "Each run is a thread of the agent you chose, in the repository's project."
+    },
+    {
+      "id": "threads:read",
+      "reason": "To find the worktree a run's branch is in when its pull request is opened."
+    },
+    {
+      "id": "threads:organize",
+      "reason": "To stop a run you cancel, and settle a run's thread once it ends."
+    },
+    {
+      "id": "agentTools",
+      "reason": "A run's agent reports what it applied and deferred through a tool of this plugin."
+    }
+  ],
+  "settings": [
+    {
+      "key": "repositories",
+      "label": "Repositories",
+      "type": "list",
+      "default": [],
+      "description": "owner/name of each repository to maintain. Each needs a checkout of it as a project on this MC."
+    },
+    {
+      "key": "schedule",
+      "label": "Run",
+      "type": "choice",
+      "options": [
+        { "value": "manual", "label": "Only when I ask" },
+        { "value": "daily", "label": "Every day" },
+        { "value": "weekly", "label": "Every week" }
+      ],
+      "default": "weekly"
+    },
+    {
+      "key": "weekday",
+      "label": "Day of the week",
+      "type": "choice",
+      "options": [
+        { "value": "monday", "label": "Monday" },
+        { "value": "tuesday", "label": "Tuesday" },
+        { "value": "wednesday", "label": "Wednesday" },
+        { "value": "thursday", "label": "Thursday" },
+        { "value": "friday", "label": "Friday" },
+        { "value": "saturday", "label": "Saturday" },
+        { "value": "sunday", "label": "Sunday" }
+      ],
+      "default": "monday",
+      "description": "For a weekly schedule."
+    },
+    {
+      "key": "time",
+      "label": "At",
+      "type": "text",
+      "default": "06:00",
+      "description": "HH:MM, in this MC's local time. A run missed while the MC was off starts once when it is back."
+    },
+    {
+      "key": "mode",
+      "label": "Mode",
+      "type": "choice",
+      "options": [
+        { "value": "fix", "label": "Fix, on a maintenance branch" },
+        { "value": "report", "label": "Report only" }
+      ],
+      "default": "fix",
+      "description": "Report only changes nothing and says what it would do. Fix works on a maintenance/<date> branch in a new worktree, never on the default branch."
+    },
+    {
+      "key": "categories",
+      "label": "Categories",
+      "type": "list",
+      "default": ["deps", "security-alerts", "docs-drift", "coverage-gaps"],
+      "description": "Any of deps, security-alerts, docs-drift and coverage-gaps."
+    },
+    {
+      "key": "securityOnly",
+      "label": "Security advisories only",
+      "type": "boolean",
+      "default": false,
+      "description": "Only fix open security advisories, each with the smallest safe upgrade, and leave the rest."
+    },
+    {
+      "key": "concurrency",
+      "label": "Runs at once",
+      "type": "number",
+      "default": 1
+    },
+    {
+      "key": "provider",
+      "label": "Agent",
+      "type": "text",
+      "default": "claudeAgent",
+      "description": "The provider instance that maintains, such as claudeAgent or codex."
+    },
+    {
+      "key": "model",
+      "label": "Model",
+      "type": "text",
+      "default": "",
+      "description": "Empty for the agent's default model."
+    },
+    {
+      "key": "modelOptions",
+      "label": "Model options",
+      "type": "object",
+      "default": {},
+      "description": "The model's options, such as {\"effort\": \"high\"}."
+    },
+    {
+      "key": "runtimeMode",
+      "label": "Access",
+      "type": "choice",
+      "options": [
+        { "value": "approval-required", "label": "Ask before changes" },
+        { "value": "auto-accept-edits", "label": "Accept edits" },
+        { "value": "auto", "label": "Auto" },
+        { "value": "full-access", "label": "Full access" }
+      ],
+      "default": "auto-accept-edits"
+    },
+    {
+      "key": "prompt",
+      "label": "Prompt",
+      "type": "longText",
+      "default": "Maintain {{repository}} by following the maintain skill at {{skill}}: read it and the roles it names before you start. Mode: {{mode}}. Categories: {{categories}}. Today is {{date}}.",
+      "description": "{{repository}}, {{mode}}, {{categories}}, {{branch}}, {{base}}, {{date}} and {{skill}} are filled in. The rules every run keeps, and how to report, are added after it."
+    },
+    {
+      "key": "instructions",
+      "label": "Per-repository instructions",
+      "type": "object",
+      "default": {},
+      "description": "{\"owner/name\": \"text\"}: added to that repository's prompt, such as which gates to run or what to leave alone."
+    },
+    {
+      "key": "publishing",
+      "label": "Publishing",
+      "type": "choice",
+      "options": [
+        { "value": "local", "label": "Keep in HAL-C2" },
+        { "value": "draft", "label": "Wait for me to open the pull request" },
+        { "value": "automatic", "label": "Open the pull request automatically" }
+      ],
+      "default": "draft"
+    }
+  ],
+  "contributes": {
+    "pages": [{ "id": "maintenance", "title": "Maintenance", "qml": "ui/MaintenancePage.qml" }],
+    "threadKinds": [
+      {
+        "kind": "maintenance",
+        "label": "Maintenance",
+        "rowMark": "ui/MaintenanceRowMark.qml",
+        "header": "ui/MaintenanceHeader.qml"
+      }
+    ]
+  }
+}
