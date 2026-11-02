@@ -102,8 +102,8 @@ SpaceDeck 1.0 SpaceDeck.qml
 SpacePage 1.0 SpacePage.qml
 SpaceAgentStrip 1.0 SpaceAgentStrip.qml
 SpaceViewers 1.0 SpaceViewers.qml
-SpacePageUpdate SpacePageUpdate.qml
-SpaceUpdateDialog SpaceUpdateDialog.qml
+SpacePageUpdate 1.0 SpacePageUpdate.qml
+SpaceUpdateDialog 1.0 SpaceUpdateDialog.qml
 SpacePresenter 1.0 SpacePresenter.qml
 SpaceBlock 1.0 SpaceBlock.qml
 SpaceChart 1.0 SpaceChart.qml
