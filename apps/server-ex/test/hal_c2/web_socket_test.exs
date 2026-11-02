@@ -909,6 +909,59 @@ defmodule HalC2.Web.SocketTest do
            } = reply
   end
 
+  test "a closed socket's diagrams still waiting for their turn are not drawn", %{port: port} do
+    test = self()
+
+    draw = fn request ->
+      send(test, {:drawing, request.source, self()})
+
+      receive do
+        {:outcome, outcome} -> outcome
+      end
+    end
+
+    mermaid = start_supervised!({HalC2.Mermaid, draw: draw, limit: 1})
+    [{_mc, %{"environmentId" => environment}}] = HalC2.Shell.environments()
+
+    render = fn client, id, source ->
+      WsClient.send_json(client, %{
+        "t" => "rpc",
+        "id" => id,
+        "environment" => environment,
+        "method" => "mermaid.render",
+        "payload" => %{"source" => source}
+      })
+    end
+
+    open = connect(port) |> render.(1, "first")
+    assert_receive {:drawing, "first", drawer}, 5_000
+
+    closing = connect(port) |> render.(1, "a") |> render.(2, "b")
+    await_queued(mermaid, ["a", "b"])
+    Mint.HTTP.close(closing.conn)
+    await_queued(mermaid, [])
+
+    send(drawer, {:outcome, {:ok, %{"status" => "drawn", "svg" => "<svg/>"}}})
+    {reply, _, _open} = WsClient.recv_until(open, &(&1["t"] == "rpc.result"))
+    assert %{"id" => 1, "result" => %{"status" => "drawn"}} = reply
+    :sys.get_state(mermaid)
+    refute_received {:drawing, _, _}
+  end
+
+  # Each request runs in a task of its own, so nothing says when the server has it: the
+  # test looks, a bounded number of times.
+  defp await_queued(mermaid, sources, attempts \\ 400) do
+    queued =
+      for {_, %{source: source}, _} <- :queue.to_list(:sys.get_state(mermaid).queued),
+          do: source
+
+    cond do
+      Enum.sort(queued) == sources -> :ok
+      attempts <= 0 -> flunk("queued #{inspect(queued)}, never #{inspect(sources)}")
+      true -> receive after: (5 -> await_queued(mermaid, sources, attempts - 1))
+    end
+  end
+
   test "a request that raises is logged and still answered", %{port: port} do
     [{_mc, %{"environmentId" => environment}}] = HalC2.Shell.environments()
     client = connect(port)

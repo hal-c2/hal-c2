@@ -162,6 +162,25 @@ defmodule HalC2.MermaidTest do
     refute_received {:drawing, "gone", _}
   end
 
+  test "a caller whose socket goes is let go, and its diagram is not drawn" do
+    server = server(draw: gated(), limit: 1)
+    first = render_async(server, "first")
+    assert_receive {:drawing, "first", drawer}
+
+    socket = spawn(fn -> Process.sleep(:infinity) end)
+    caller = Task.async(fn -> Mermaid.render(server, request("closed"), socket) end)
+    Process.exit(socket, :kill)
+
+    assert %{"status" => "failed", "reason" => "The client asking for this diagram has gone."} =
+             Task.await(caller)
+
+    assert queued(server) == []
+    send(drawer, {:outcome, {:ok, @drawn}})
+    assert Task.await(first) == @drawn
+    :sys.get_state(server)
+    refute_received {:drawing, "closed", _}
+  end
+
   defp queued(server),
     do:
       for({_, %{source: source}, _} <- :queue.to_list(:sys.get_state(server).queued), do: source)
