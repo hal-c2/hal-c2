@@ -490,6 +490,8 @@ QVariantMap SpacePages::fileOf(const QString& pageId) const {
           {QStringLiteral("projectTitle"), title.isEmpty() ? QStringLiteral("a project") : title},
           {QStringLiteral("path"), text(file, QLatin1String("path"))},
           {QStringLiteral("missing"), file.value(QLatin1String("missing")).toBool()},
+          // Edited while the file was gone; an MC that does not say has none.
+          {QStringLiteral("unwritten"), file.value(QLatin1String("unwritten")).toBool()},
           {QStringLiteral("conflictAt"), text(file, QLatin1String("conflictAt"))}};
 }
 
@@ -1377,6 +1379,8 @@ void SpaceController::listFiles(const QString& environmentId, const QString& pro
   m_client->call(this, environmentId, QStringLiteral("space.files.list"), QJsonObject{{QStringLiteral("projectId"), projectId}},
                  [this, projectId, token](const QJsonValue& result, const std::optional<QString>& error) {
                    if (m_listing.value(projectId) != token) return;
+                   // Asked again on connecting; what the files were stands meanwhile.
+                   if (error && *error == QLatin1String("disconnected")) return;
                    m_listing.remove(projectId);
                    // Said nowhere: a project the MC cannot list offers none of its files.
                    if (error) {
@@ -1446,7 +1450,7 @@ void SpaceController::openFile(const QString& environmentId, const QString& proj
   call(QStringLiteral("list"), {}, [this, open](const QJsonObject& result) {
     m_listed = true;
     const QJsonArray spaces = result.value(QLatin1String("spaces")).toArray();
-    if (spaces.isEmpty()) return;
+    if (spaces.isEmpty()) return refuse(tr("There is no Space to open the file in. Make a Space first, then open the file."));
     open(spaces.first().toObject().value(QLatin1String("id")).toString());
   });
 }

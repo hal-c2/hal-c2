@@ -228,7 +228,8 @@ class SpacePages : public QObject {
   // {id, title, parentPageId, trashed, sourceThreadId, sourceThreadTitle, site, file},
   // or empty. `site` is what the page has published, {url, localOnly, behind,
   // publishedAt}, or empty. `file` is the project file the page is, {projectId,
-  // projectTitle, path, missing, conflictAt}, or empty.
+  // projectTitle, path, missing, unwritten, conflictAt}, or empty; unwritten when the
+  // page was edited while the file was gone.
   Q_PROPERTY(QVariantMap page READ page NOTIFY changed)
   // What the open page says about the agent asked to work on it: {status (running, stopping,
   // completed, failed, stopped), request, threadId, threadTitle, edited, error}, or empty.

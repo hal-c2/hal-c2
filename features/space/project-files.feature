@@ -525,6 +525,24 @@ Feature: Project files as Space pages
       When the user opens "docs/guide.md" in a Space from its menu
       Then the page "Guide" is in "Research"
 
+    # The MC makes the Space "Personal" when it lists none, as it does for the Spaces pane.
+    Scenario: Opening a file with no Space opens it in the Space the MC makes
+      Given every Space was deleted
+      When the user asks the command palette to open "docs/guide.md" in a Space
+      Then the page "Guide" is in "Personal"
+
+    # A page follows the file in the project's own folder, never a thread's worktree.
+    Scenario: A file only in a thread's worktree has no page to open
+      Given a thread of "shop" works in a worktree where "docs/draft.md" reads "# Draft"
+      When the user is browsing the files of "shop"
+      Then "docs/draft.md" offers no way to open it in a Space
+
+    Scenario: Opening a file from a worktree thread opens the project's copy
+      Given a thread of "shop" works in a worktree where "docs/guide.md" reads "# Guide\n\nDraft."
+      When the user opens the project's copy of "docs/guide.md" in a Space from its menu
+      Then the Space shows the page "Guide"
+      And the page "Guide" shows "Install it."
+
     Scenario: A file-backed page shows its file
       Given the user has opened "docs/guide.md" of "shop" in "Research"
       When the user shows the page "Guide"
@@ -552,8 +570,9 @@ Feature: Project files as Space pages
       When the user unlinks the page "Guide" from its file
       Then the page no longer says it is a file
 
+    # The TUI's Space pane follows only its own MC's Spaces (#860).
     # The desktop's Space view shows only its own MC's Spaces (#865).
-    @backlog-desktop
+    @backlog-tui @backlog-desktop
     Scenario: A project on another machine opens its files in that machine's Space
       Given the project "shop" is on another connected environment
       When the user opens "docs/guide.md" in a Space from its menu

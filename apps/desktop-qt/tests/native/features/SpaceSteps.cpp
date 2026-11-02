@@ -116,6 +116,8 @@ struct FakeSpaces {
   int syncs = 0;
   // The link the agent's message has.
   QString link;
+  // Whether the thread whose files the user browses works in a worktree of the project.
+  bool onWorktree = false;
 };
 
 FakeSpaces& fake(FakeMc& mc) {
@@ -1911,9 +1913,9 @@ void waitForFiles(World& world, const QString& project) {
                 [&] { return QStringLiteral("the Space files of %1 to be listed; %2").arg(project, describe(world)); });
 }
 
-// The Files tab of a thread of `project`, with its Space files known.
-void browseFiles(World& world, const QString& project) {
-  lookAtThread(world, project);
+// The Files tab of a thread of `project`, on a worktree of it when `worktree`, with its Space files known.
+void browseFiles(World& world, const QString& project, bool worktree = false) {
+  lookAtThread(world, project, worktree ? QJsonObject{{QStringLiteral("worktreePath"), QStringLiteral("/work/%1-worktree").arg(project)}} : QJsonObject());
   filesteps::showPanel(world);
   waitForFiles(world, project);
 }
@@ -3105,7 +3107,7 @@ const Steps steps([] {
     fakeFiles(world.mc).files.insert(c[1], QString(c[2]).replace(QStringLiteral("\\n"), QStringLiteral("\n")));
   });
   step(QStringLiteral("the user is browsing the files of %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    browseFiles(world, c[0]);
+    browseFiles(world, c[0], fake(world.mc).onWorktree);
   });
   step(QStringLiteral("the user opens %1 in a Space from its menu").arg(q), [](World& world, const Captures& c, const Table&) {
     browseFiles(world, kProject);
@@ -3177,6 +3179,9 @@ const Steps steps([] {
     menu->setProperty("path", QStringLiteral("docs/guide.md"));
     expect(item != nullptr && item->isEnabled(), QStringLiteral("the menu of docs/guide.md does not offer opening it in a Space"));
   });
+  step(QStringLiteral("every Space was deleted"), [](World& world, const Captures&, const Table&) {
+    for (const QJsonObject& space : all(world.mc, kIndex, QStringLiteral("space"))) remove(world.mc, kIndex, QStringLiteral("space"), text(space, QLatin1String("id")));
+  });
   step(QStringLiteral("the user last had the Space %1 open").arg(q), [](World& world, const Captures& c, const Table&) {
     look(world, spaceNamed(world, c[0]));
   });
@@ -3199,7 +3204,7 @@ const Steps steps([] {
       return file.value(QStringLiteral("path")) == c[0] && file.value(QStringLiteral("projectTitle")) == c[1] && !file.value(QStringLiteral("missing")).toBool() &&
              file.value(QStringLiteral("conflictAt")).toString().isEmpty();
     }, QStringLiteral("the page to say it is %1 of %2").arg(c[0], c[1]));
-    expect(fake(world.mc).syncs >= 1, QStringLiteral("showing the page did not read its file again"));
+    world.waitFor([&] { return fake(world.mc).syncs >= 1; }, QStringLiteral("showing the page to read its file again"));
   });
   step(QStringLiteral("the user shows the file of the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString page = idOfPage(world, c[0]);
@@ -3254,8 +3259,22 @@ const Steps steps([] {
   step(QStringLiteral("%1 of %1 was rewritten outside HAL-C2 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     fakeFiles(world.mc).files.insert(c[0], QString(c[2]).replace(QStringLiteral("\\n"), QStringLiteral("\n")));
   });
+  // The worktree's copy is the thread's alone; the MC lists and opens the project folder's files.
+  step(QStringLiteral("a thread of %1 works in a worktree where %1 reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureProject(world, c[0]);
+    fake(world.mc).onWorktree = true;
+  });
+  step(QStringLiteral("the user opens the project's copy of %1 in a Space from its menu").arg(q), [](World& world, const Captures& c, const Table&) {
+    browseFiles(world, kProject, fake(world.mc).onWorktree);
+    filesteps::choose(world, c[0], QStringLiteral("fileEntryOpenInSpace"));
+    QQuickItem* item = filesteps::menuEntry(world, QStringLiteral("fileEntryMenu"), QStringLiteral("fileEntryOpenInSpace"));
+    expect(item != nullptr && item->property("text").toString().contains(QStringLiteral("project's copy")),
+           QStringLiteral("the entry did not say it opens the project's copy: %1").arg(item ? item->property("text").toString() : QString()));
+    world.sync();
+  });
   step(QStringLiteral("the page %1 shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    lookAtFilePage(world, c[0]);
+    // Already open where the file opened it, which may be another Space than the scenario's.
+    if (viewOf(world)->page().value(QStringLiteral("title")).toString() != c[0]) lookAtFilePage(world, c[0]);
     expectShown(world, [&] { return blockTexts(world).contains(c[1]); }, QStringLiteral("the page %1 to say %2").arg(c[0], c[1]));
   });
 });

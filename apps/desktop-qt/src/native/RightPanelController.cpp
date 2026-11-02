@@ -252,7 +252,8 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     auto* spaces = NativeShell::of(this)->controller<SpaceController>();
     const QString relative = isFile ? relativeTo(file.path, m_files.root()) : QString();
     if (m_onThread && spaces && !relative.isEmpty() && spaces->isSpaceFile(environmentId, m_projectId, relative)) {
-      items.insert(1, {QStringLiteral("open-in-space"), tr("Open in a Space"), QStringLiteral("book")});
+      items.insert(1, {QStringLiteral("open-in-space"), m_onWorktree ? tr("Open the project's copy in a Space") : tr("Open in a Space"),
+                       QStringLiteral("book")});
     }
     if (m_onThread && ThreadPullRequests::parseUrl(url) &&
         (m_store->supports(environmentId, QStringLiteral("threadPullRequests")) ||
@@ -335,12 +336,13 @@ void RightPanelController::retarget() {
     const QString environmentId = threadKey.left(threadKey.indexOf(QLatin1Char(':')));
     const QJsonObject row = m_store->threadRow(threadKey);
     const QString threadId = row.value(QLatin1String("id")).toString(threadKey.mid(threadKey.indexOf(QLatin1Char(':')) + 1));
+    const QString projectRoot = m_store->projectRow(environmentId, row.value(QLatin1String("projectId")).toString())
+                                    .value(QLatin1String("workspaceRoot"))
+                                    .toString();
     QString root = row.value(QLatin1String("worktreePath")).toString();
-    if (root.isEmpty()) {
-      root = m_store->projectRow(environmentId, row.value(QLatin1String("projectId")).toString())
-                 .value(QLatin1String("workspaceRoot"))
-                 .toString();
-    }
+    // A page follows the project folder's file, never the worktree's copy.
+    m_onWorktree = !root.isEmpty() && QDir::cleanPath(root) != QDir::cleanPath(projectRoot);
+    if (root.isEmpty()) root = projectRoot;
     TimelineModel* timeline = shell->controller<ThreadStore>()->timeline(threadKey);
     m_diff.setThread(environmentId, threadId, timeline);
     m_diff.setCheckout(root);
@@ -774,7 +776,10 @@ void RightPanelController::publish() {
   m_bridge->publish(QStringLiteral("panel"),
                     QVariantMap{
                         {QStringLiteral("threadKey"), m_thread},
-                        {QStringLiteral("projectId"), m_projectId},
+                        // The project whose Space files the tab offers: none on another MC,
+                        // whose files this MC's Spaces do not follow.
+                        {QStringLiteral("spaceProjectId"), environmentId() == m_client->environment() ? m_projectId : QString()},
+                        {QStringLiteral("onWorktree"), m_onWorktree},
                         {QStringLiteral("isOpen"), state.open},
                         {QStringLiteral("transitionMs"), transitionMs},
                         {QStringLiteral("activeId"), state.active},

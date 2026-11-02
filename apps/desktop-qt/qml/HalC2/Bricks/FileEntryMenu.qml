@@ -20,12 +20,13 @@ ShellMenu {
     }
     ShellMenuItem {
         objectName: "fileEntryOpenInSpace"
-        // Only a file the project's spaces section covers (SpaceController's `files`).
-        readonly property bool offered: Shell.state.space?.files?.[Shell.state.panel?.projectId ?? ""]?.paths?.[menu.path] !== undefined
+        // Only a file the MC lists for the project folder (SpaceController's `files`);
+        // from a worktree, the project folder's copy is what opens.
+        readonly property bool offered: Shell.state.space?.files?.[Shell.state.panel?.spaceProjectId ?? ""]?.paths?.[menu.path] !== undefined
         visible: offered
         enabled: offered
         height: visible ? implicitHeight : 0
-        text: qsTr("Open in a Space")
+        text: Shell.state.panel?.onWorktree ? qsTr("Open the project's copy in a Space") : qsTr("Open in a Space")
         onTriggered: Shell.dispatch("files.openInSpace", {path: menu.path})
     }
     ShellMenuItem {

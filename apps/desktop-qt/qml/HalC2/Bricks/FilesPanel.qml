@@ -246,7 +246,7 @@ Rectangle {
                     id: openInSpaceButton
 
                     // Only a file the project's spaces section covers (SpaceController's `files`).
-                    readonly property bool wanted: Shell.state.space?.files?.[Shell.state.panel?.projectId ?? ""]?.paths?.[root.source?.openPath ?? ""] !== undefined
+                    readonly property bool wanted: Shell.state.space?.files?.[Shell.state.panel?.spaceProjectId ?? ""]?.paths?.[root.source?.openPath ?? ""] !== undefined
 
                     objectName: "fileOpenInSpace"
                     subtle: true
@@ -256,7 +256,7 @@ Rectangle {
                     iconTint: root.muted
                     implicitWidth: 26
                     implicitHeight: 26
-                    Accessible.name: qsTr("Open in a Space")
+                    Accessible.name: Shell.state.panel?.onWorktree ? qsTr("Open the project's copy in a Space") : qsTr("Open in a Space")
                     onClicked: Shell.dispatch("files.openInSpace", {path: root.source.openPath})
                 }
                 ShellButton {

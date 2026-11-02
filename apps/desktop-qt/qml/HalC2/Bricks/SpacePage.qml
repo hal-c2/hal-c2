@@ -19,7 +19,7 @@ Rectangle {
     readonly property string siteUrl: site.url ?? ""
     readonly property bool siteBehind: site.behind === true
     readonly property bool siteLocalOnly: site.localOnly === true
-    // The project file the page is: {projectId, projectTitle, path, missing, conflictAt}, or empty.
+    // The project file the page is: {projectId, projectTitle, path, missing, unwritten, conflictAt}, or empty.
     readonly property var file: current.file ?? ({})
     readonly property bool fileBacked: (file.path ?? "") !== ""
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
@@ -476,7 +476,9 @@ Rectangle {
                     objectName: "spacePageFileGone"
                     Layout.fillWidth: true
                     visible: page.file.missing ?? false
-                    text: qsTr("The file is gone. The page keeps what it last said; stop following the file to keep it as an ordinary page.")
+                    text: (page.file.unwritten ?? false)
+                        ? qsTr("The file is gone, and edits made since are on the page only. If the file comes back, it wins, and those edits stay in the page's history.")
+                        : qsTr("The file is gone. The page keeps what it last said; stop following the file to keep it as an ordinary page.")
                     color: page.foreground
                     wrapMode: Text.Wrap
                     font.pixelSize: Math.round(12 * Theme.fontScale)

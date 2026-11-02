@@ -35,7 +35,8 @@ class ShellStore;
 // (maximized) lasts until the panel closes or the app quits.
 //
 // Publishes `panel` for the RightPanel brick, null away from a thread:
-//   {threadKey, isOpen, activeId, tabs: [{id, kind, title}], width,
+//   {threadKey, spaceProjectId (whose Space files it offers; this MC's only),
+//    onWorktree, isOpen, activeId, tabs: [{id, kind, title}], width,
 //    maximized, detailsOpen, details,
 //    canAdd: {diff, files, agents, terminal, pullRequests, pullRequest,
 //             previews, device},
@@ -210,6 +211,8 @@ private:
   // so coming back finds the tabs as they were.
   QString m_thread;
   QString m_projectId;
+  // The thread is on a worktree of its project, not the project folder.
+  bool m_onWorktree = false;
   bool m_onThread = false;
   QHash<QString, Panel> m_panels;
   // What was last opened proactively for each thread, so a panel the user

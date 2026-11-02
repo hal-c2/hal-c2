@@ -107,15 +107,38 @@ Dialog {
             boundsBehavior: Flickable.StopAtBounds
 
             delegate: ShellButton {
+                id: fileButton
+
                 required property string modelData
                 readonly property var entry: dialog.listed.paths[modelData]
 
                 objectName: "spaceFilePickerFile:" + modelData
                 width: ListView.view.width
                 subtle: true
-                iconName: "file-text"
                 text: (entry.title ?? "") !== "" ? qsTr("%1 (the page %2)").arg(modelData).arg(entry.title) : modelData
                 onClicked: Shell.dispatch("space.openFile", { projectId: dialog.picking, relativePath: modelData })
+
+                // A list reads from the left, where a button centres its label.
+                contentItem: RowLayout {
+                    spacing: 6
+
+                    ShellIcon {
+                        name: "file-text"
+                        size: fileButton.iconSize
+                        color: fileButton.iconTint
+                        Layout.alignment: Qt.AlignVCenter
+                    }
+
+                    Text {
+                        text: fileButton.text
+                        font: fileButton.font
+                        color: fileButton.tint
+                        elide: Text.ElideMiddle
+                        verticalAlignment: Text.AlignVCenter
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                    }
+                }
             }
         }
 

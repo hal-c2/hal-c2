@@ -8,11 +8,12 @@ the page. Agents and git keep working on one copy, the file.
 
 On the desktop, choose **Open in a Space** from a file's menu in the Files tab, from the file
 viewer, or from a file link in a chat, or add a page from a project's files in the Space view. The
-file opens in the Space you last had open. You can also ask an agent to open the file in a Space;
-it uses the `hal_c2_page_open_file` tool. Opening the
-same file again, from any Space, goes to the page it already is, and brings it back from the trash.
-A file opened from a thread's worktree goes to the page of the project's own folder: a page follows
-the file in the project's folder, whatever branch is checked out there.
+file opens in the Space you last had open; the desktop offers this only for projects on the machine
+its Space view shows. You can also ask an agent to open the file in a Space; it uses the
+`hal_c2_page_open_file` tool. Opening the same file again, from any Space, goes to the page it
+already is, and brings it back from the trash. A file opened from a thread's worktree goes to the
+page of the project's own folder: a page follows the file in the project's folder, whatever branch
+is checked out there.
 
 ## Which files count
 
