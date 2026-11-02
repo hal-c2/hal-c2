@@ -388,7 +388,12 @@ defmodule HalC2.Orchestration do
         else: nil
 
     with {:ok, result} <- cancel_queued_run(thread_id, run_id) do
-      for task_id <- tasks || [] do
+      # The queue may have started the run since the snapshot; then the agent is hearing
+      # the result, and its deliveries are not the cancel's to dispose.
+      cancelled? =
+        StreamState.get(HalC2.Streams.state(thread_id), "run")[run_id]["status"] == "cancelled"
+
+      for task_id <- tasks || [], cancelled? do
         dispatch(%{
           "type" => "delegated_task.completion-delivery.dispose",
           "parentThreadId" => thread_id,

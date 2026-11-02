@@ -487,7 +487,9 @@ defmodule HalC2.CodeReviewTest do
   end
 
   test "a stop outlasts the deadline of its caller on an agent slow to go", context do
-    System.put_env("FAKE_CODEX_IGNORE_INTERRUPT", "1")
+    ignore = Path.join(context.dir, "ignore-interrupt")
+    File.write!(ignore, "")
+    System.put_env("FAKE_CODEX_IGNORE_INTERRUPT", ignore)
     on_exit(fn -> System.delete_env("FAKE_CODEX_IGNORE_INTERRUPT") end)
     review = start_review()
 
