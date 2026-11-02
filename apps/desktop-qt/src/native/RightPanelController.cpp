@@ -325,6 +325,8 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
       if (m_onThread && map.value(QStringLiteral("focus")).toBool() && panel().tabs.contains(id)) panel().stage.focus = true;
       moveToStage(id, map.value(QStringLiteral("pane"), -1).toInt(), map.value(QStringLiteral("zone"), QStringLiteral("center")).toString());
     }
+  } else if (action == QLatin1String("stage.sideBySide")) {
+    sideBySide(map.value(QStringLiteral("id")).toString(), map.value(QStringLiteral("with")).toString());
   } else if (action == QLatin1String("stage.show")) {
     showTab(map.value(QStringLiteral("id")).toString());
   } else if (action == QLatin1String("stage.layout")) {
@@ -760,6 +762,23 @@ void RightPanelController::moveToPanel(const QString& id) {
   update();
 }
 
+void RightPanelController::sideBySide(const QString& id, const QString& other) {
+  if (!m_onThread || id == other) return;
+  Panel& state = panel();
+  if (!state.tabs.contains(id) || !state.tabs.contains(other)) return;
+  const QStringList before = panelTabs(state);
+  for (const QString& tab : {id, other}) {
+    if (state.floating == tab) state.floating.clear();
+    if (!state.stage.contains(tab)) state.stage.tabs.append(tab);
+  }
+  state.stage.layout = QStringLiteral("columns");
+  state.stage.panes = {id, other};
+  state.stage.focused = 0;
+  state.stage.normalize();
+  if (!state.active.isEmpty() && !panelTabs(state).contains(state.active)) nextActive(state, before);
+  update();
+}
+
 void RightPanelController::moveTab() {
   if (!m_onThread) return;
   const Panel& state = panel();
@@ -930,8 +949,17 @@ void RightPanelController::update() {
   } else {
     m_previews.setActive(shown.contains(QStringLiteral("previews")));
   }
-  // A floating device keeps streaming while the panel is closed.
-  m_devices.setTab(m_onThread && !current().floating.isEmpty() ? current().floating : first(QStringLiteral("device")));
+  // Each device tab streams while it shows: a floating device keeps
+  // streaming while the panel is closed.
+  QStringList deviceTabs, shownDevices = shown;
+  if (m_onThread) {
+    for (const QString& id : current().tabs) {
+      if (id.startsWith(kDeviceTab)) deviceTabs.append(id);
+    }
+    if (!current().floating.isEmpty()) shownDevices.append(current().floating);
+  }
+  m_devices.setTabs(deviceTabs);
+  m_devices.setShown(shownDevices);
   // The review shows the shown review tab's pull request, or the last one shown.
   const QString reviewing = first(QStringLiteral("pull-request"));
   if (!reviewing.isEmpty()) {

@@ -426,6 +426,7 @@ Item {
             anchors.fill: parent
             anchors.topMargin: 24
             source: Panel.device
+            tabId: Shell.state.panel?.floatingDevice ?? ""
         }
 
         Item {

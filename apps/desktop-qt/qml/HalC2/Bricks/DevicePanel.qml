@@ -3,34 +3,50 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// The right panel's Device tabs, from ThreadDevices (Panel.device): the
-// picker lists the environment's simulators and emulators, and a device tab
-// shows its device's live screen, taking touches and keys, with its hardware
-// buttons above. See ThreadDevices.h for `view`.
+// A Device tab's body, from ThreadDevices (Panel.device): the picker
+// (`device`) lists the environment's simulators and emulators, and a device
+// tab shows its device's live screen, taking touches and keys, with its
+// hardware buttons above. One body per tab (js/panelTabs.js `perTab`), in the
+// right panel, a stage pane or floating; each device tab has its own stream
+// (`source.tabs[tabId]`, a DeviceTab). See ThreadDevices.h for `view`.
 //
-//   DevicePanel { anchors.fill: parent; source: Panel.device }
+//   DevicePanel { anchors.fill: parent; source: Panel.device; tabId: "device:local:UDID" }
 Rectangle {
     id: root
 
     property var source: null
+    property string tabId: ""
 
     readonly property var view: source ? source.view : null
-    // No screen is an undefined entry of the view: null, as the bindings compare.
-    readonly property var screen: view && view.screen ? view.screen : null
-    readonly property var stream: source ? source.stream : null
-    readonly property var tools: source ? source.tools : null
+    readonly property var deviceTab: source && tabId.length > 0 ? source.tabs[tabId] ?? null : null
+    // No screen is an undefined entry: null, as the bindings compare.
+    readonly property var screen: deviceTab && deviceTab.screen ? deviceTab.screen : null
+    readonly property var stream: deviceTab ? deviceTab.stream : null
+    readonly property var tools: deviceTab ? deviceTab.tools : null
     readonly property bool toolsOpen: tools !== null && tools.view.open
-    // The 3D body view, and an iPad's Magic Keyboard: panel choices, so
-    // they survive switching between the views.
-    property bool show3d: false
-    property bool keyboardAttached: false
+    // The 3D body view, and an iPad's Magic Keyboard: the tab's choices, so
+    // they survive switching views and moving the tab.
+    readonly property bool show3d: deviceTab !== null && deviceTab.show3d
+    readonly property bool keyboardAttached: deviceTab !== null && deviceTab.keyboardAttached
     readonly property bool tablet: screen !== null && String(screen.name).indexOf("iPad") >= 0
+    // The thread's other open devices, to show beside this one: [{id, name}].
+    readonly property var others: {
+        const tabs = source ? source.tabs : {};
+        const found = [];
+        for (const id in tabs) {
+            const other = tabs[id];
+            if (id !== tabId && other && other.screen)
+                found.push({
+                    id: id,
+                    name: other.screen.name
+                });
+        }
+        return found;
+    }
 
     function toggleKeyboard() {
-        keyboardAttached = !keyboardAttached;
-        // A Magic Keyboard is a landscape thing: turn a portrait iPad.
-        if (keyboardAttached && stream && stream.orientation.indexOf("portrait") === 0)
-            stream.setOrientation("landscape_left");
+        if (deviceTab)
+            deviceTab.toggleKeyboard();
     }
     // The tools sit beside the screen from this width, and over it below.
     readonly property bool toolsBeside: width >= 720
@@ -162,7 +178,7 @@ Rectangle {
                     objectName: "device3dToggle"
                     iconName: "box"
                     Accessible.name: root.show3d ? qsTr("Show flat view") : qsTr("Show in 3D")
-                    onClicked: root.show3d = !root.show3d
+                    onClicked: root.deviceTab.show3d = !root.show3d
                 }
                 DeviceButton {
                     objectName: "deviceKeyboardToggle"
@@ -178,22 +194,55 @@ Rectangle {
                     onClicked: root.tools.setOpen(!root.toolsOpen)
                 }
                 DeviceButton {
+                    objectName: "deviceCompare"
+                    visible: root.others.length > 0
+                    iconName: "square-split-horizontal"
+                    Accessible.name: qsTr("Open side by side with…")
+                    onClicked: compareMenu.open()
+
+                    ShellMenu {
+                        id: compareMenu
+
+                        y: parent.height + 4
+                        x: parent.width - width
+
+                        Instantiator {
+                            model: root.others
+
+                            delegate: ShellMenuItem {
+                                required property var modelData
+
+                                objectName: "deviceCompare-" + modelData.id
+                                text: modelData.name
+                                iconName: "smartphone"
+                                onTriggered: Shell.dispatch("stage.sideBySide", {
+                                    id: root.tabId,
+                                    with: modelData.id
+                                })
+                            }
+
+                            onObjectAdded: (index, object) => compareMenu.insertItem(index, object)
+                            onObjectRemoved: (index, object) => compareMenu.removeItem(object)
+                        }
+                    }
+                }
+                DeviceButton {
                     objectName: "deviceFloat"
                     iconName: "picture-in-picture-2"
                     Accessible.name: qsTr("Float device over chat")
-                    onClicked: root.source.floatDevice()
+                    onClicked: root.source.floatDevice(root.tabId)
                 }
                 DeviceButton {
                     objectName: "devicePowerOff"
                     iconName: "power"
                     Accessible.name: qsTr("Power off")
-                    onClicked: root.source.powerOff()
+                    onClicked: root.source.powerOff(root.tabId)
                 }
                 DeviceButton {
                     objectName: "deviceClose"
                     iconName: "x"
                     Accessible.name: qsTr("Close")
-                    onClicked: root.source.close()
+                    onClicked: root.source.close(root.tabId)
                 }
             }
 
@@ -289,8 +338,8 @@ Rectangle {
                 source: "DeviceBody3D.qml"
                 // No Qt Quick 3D here: the flat view rather than an empty stage.
                 onStatusChanged: {
-                    if (status === Loader.Error)
-                        root.show3d = false;
+                    if (status === Loader.Error && root.deviceTab)
+                        root.deviceTab.show3d = false;
                 }
                 onLoaded: {
                     item.stream = Qt.binding(() => root.stream);
