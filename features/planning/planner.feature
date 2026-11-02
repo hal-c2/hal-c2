@@ -803,6 +803,10 @@ Feature: Planner
         | ftp://github.example.com/acme/other/pull/12                 |
         | https://[1:2]/acme/other/pull/12                            |
         | https://github.example.com/acme/other/pull/9007199254740993 |
+        | https://user:token@github.example.com/acme/other/pull/12    |
+        | https://github..example.com/acme/other/pull/12              |
+        | https://github.example.com/../other/pull/12                 |
+        | acme/..#12                                                  |
 
     @mc
     Scenario: Open issues of a followed repository become tasks

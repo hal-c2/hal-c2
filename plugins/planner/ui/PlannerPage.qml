@@ -168,11 +168,13 @@ Item {
     // on github.com instead of its own host, so one is no pull request here. So is an IPv6 literal host, which only an agent can send.
     function pullRequestRef(text) {
         const given = text.trim();
+        // A `.` or `..` owner or name is no repository; the MC would refuse the link.
+        const repository = name => name.split("/").every(part => part !== "." && part !== "..");
         const named = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(given);
         if (named)
-            return Number.isSafeInteger(Number(named[2])) ? { repository: named[1], number: Number(named[2]) } : null;
+            return Number.isSafeInteger(Number(named[2])) && repository(named[1]) ? { repository: named[1], number: Number(named[2]) } : null;
         const address = /^https?:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.?(?::(\d+))?\/([\w.-]+\/[\w.-]+)\/pull\/([1-9]\d*)(?:[\/?#]\S*)?$/i.exec(given);
-        if (!address || !Number.isSafeInteger(Number(address[3])) || (address[1] !== undefined && (Number(address[1]) < 1 || Number(address[1]) > 65535)))
+        if (!address || !Number.isSafeInteger(Number(address[3])) || !repository(address[2]) || (address[1] !== undefined && (Number(address[1]) < 1 || Number(address[1]) > 65535)))
             return null;
         return { repository: address[2], number: Number(address[3]), url: given };
     }
