@@ -111,14 +111,13 @@ const Steps steps([] {
   });
   step(QStringLiteral("it does not disappear and come back when the agent begins"), [](World& world, const Captures&, const Table&) {
     TimelineModel& model = timeline(world);
-    const QDateTime since = model.workingSince();
     bool stopped = false;
     const QMetaObject::Connection watch = QObject::connect(&model, &TimelineModel::workingChanged, [&] { stopped = stopped || !model.working(); });
     set(world, QStringLiteral("run"), world.mc.part<FakeStreams>().run, {{QStringLiteral("status"), QStringLiteral("running")}, {QStringLiteral("startedAt"), iso(now().addSecs(-2))}});
     QObject::disconnect(watch);
     expect(!stopped && model.working(), QStringLiteral("the thread stopped saying the agent is working"));
-    expect(model.workingSince() == since, QStringLiteral("the timer moved from %1 to %2").arg(iso(since), iso(model.workingSince())));
-    expect(model.workingLabel() == QLatin1String("Working for 12s"), QStringLiteral("the thread says \"%1\"").arg(model.workingLabel()));
+    // It counts from when the agent began from now on (deriveActiveWorkStartedAt).
+    expect(model.workingSince() == now().addSecs(-2), QStringLiteral("the timer counts from %1").arg(iso(model.workingSince())));
   });
 
   // Durations (formatDuration).

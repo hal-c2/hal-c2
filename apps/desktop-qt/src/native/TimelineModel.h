@@ -152,6 +152,11 @@ public:
   // times are read in; a change redraws every row's time.
   void setTimestampFormat(const QString& format);
   void setLocale(const QLocale& locale);
+  // How a settled turn folds. The desktop's folds all its work and every reply
+  // but the last; the phone's leaves a failed turn open, a row per call, and
+  // keeps the turn's first reply in view too.
+  enum class Folds { Desktop, Phone };
+  void setFolds(Folds folds);
   // Where the thread works (its worktree, else its project's root), which a
   // changed file's label is read from; empty when it is not known.
   void setWorkspaceRoot(std::function<QString()> root) { m_workspaceRoot = std::move(root); }
@@ -346,6 +351,7 @@ private:
   // run stopped here (Row::startsOpen).
   QSet<QString> m_expandedGroups;
   QSet<QString> m_keptOpen;  // run ids
+  Folds m_folds = Folds::Desktop;
   QHash<QString, AttachmentUrl> m_attachmentUrls;  // by attachment id
   // A Snap Shot's tree as JSON, by attachment id: a list reads its role on every bind.
   mutable QHash<QString, QString> m_accessJson;

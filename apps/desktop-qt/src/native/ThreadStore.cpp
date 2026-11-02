@@ -126,6 +126,13 @@ void ThreadStore::setLocale(const QLocale& locale) {
   emit timesChanged();
 }
 
+void ThreadStore::setFolds(TimelineModel::Folds folds) {
+  m_folds = folds;
+  for (const Followed& followed : std::as_const(m_threads)) {
+    if (followed.model) configure(followed.model);
+  }
+}
+
 QString ThreadStore::upcoming(const QDateTime& at) const {
   return upcomingStamp(at, now(), m_timestampFormat, m_locale);
 }
@@ -143,6 +150,7 @@ void ThreadStore::readSettings() {
 void ThreadStore::configure(TimelineModel* model) const {
   model->setTimestampFormat(m_timestampFormat);
   model->setLocale(m_locale);
+  model->setFolds(m_folds);
   // The other threads of its environment, by the titles the shell lists.
   const QString key = model->threadKey();
   const QString environment = key.left(key.indexOf(QLatin1Char(':')) + 1);

@@ -266,6 +266,8 @@ struct Model {
   // What the user opened, by run and by work group row.
   QSet<QString> foldsOpen;
   QSet<QString> groupsToggled;
+  // Folded as the phone folds (TimelineModel::Folds::Phone).
+  bool phone = false;
 };
 
 bool settled(const Run& run) {
@@ -413,6 +415,8 @@ QString kindOf(const Item& item) {
 // call still running in view; while one of its replies streams it stays open.
 // Consecutive calls of a turn make one group, which a settled turn with
 // several calls summarizes; a group shows its latest call until opened.
+// The phone's fold also keeps a turn's first reply in view, and leaves a
+// failed turn open with a row per call.
 QList<Row> project(const Model& model) {
   const Thread& thread = model.held;
   QList<Item> shown;
@@ -437,10 +441,12 @@ QList<Row> project(const Model& model) {
   QHash<QString, QString> terminal;  // run -> its last reply
   QSet<QString> streaming;           // runs with a reply streaming
   QHash<QString, QString> first;     // run -> its first item after the user's message
+  QHash<QString, QString> firstReply;
   for (const Item& item : std::as_const(shown)) {
     if (item.opener) continue;
     if (!first.contains(item.run)) first.insert(item.run, item.id);
     if (item.type == QLatin1String("assistant_message")) {
+      if (!firstReply.contains(item.run)) firstReply.insert(item.run, item.id);
       terminal.insert(item.run, item.id);
       if (item.streaming) streaming.insert(item.run);
     }
@@ -451,11 +457,13 @@ QList<Row> project(const Model& model) {
   };
   QHash<QString, Fold> foldBefore;  // by the item it goes above
   QSet<QString> folded;
+  const auto failed = [&](const QString& run) { return model.phone && thread.runs.value(run).status == QLatin1String("failed"); };
   for (const Run& run : thread.runs) {
-    if (!settled(run) || streaming.contains(run.id) || !first.contains(run.id)) continue;
+    if (!settled(run) || streaming.contains(run.id) || !first.contains(run.id) || failed(run.id)) continue;
     QStringList hidden;
     for (const Item& item : std::as_const(shown)) {
       if (item.run != run.id || item.opener || item.id == terminal.value(run.id)) continue;
+      if (model.phone && item.id == firstReply.value(run.id)) continue;
       const QString kind = kindOf(item);
       if ((kind == QLatin1String("work") && item.status != QLatin1String("running")) || kind == QLatin1String("message")) {
         hidden.append(item.id);
@@ -493,6 +501,10 @@ QList<Row> project(const Model& model) {
         if (!calls.isEmpty() && foldBefore.contains(call.id)) break;
         if (kindOf(call) != QLatin1String("work") || folded.contains(call.id) || call.run != item.run) break;
         calls.append(call.id);
+        if (failed(item.run)) {
+          ++i;
+          break;
+        }
       }
       row.summarized = calls.size() > 1 && settled(thread.runs.value(item.run));
       if (row.summarized) {
@@ -563,6 +575,7 @@ struct Sut {
   // Each row's roles when the step began, by id.
   QHash<QString, QHash<int, QVariant>> before;
   int earlierWanted = 0;
+  bool phone = false;
 
   Sut() {
     cache.open(dir.path());
@@ -580,6 +593,7 @@ struct Sut {
     model = std::make_unique<TimelineModel>(kKey);
     model->setClock(clock);
     model->setCache(&cache);
+    model->setFolds(phone ? TimelineModel::Folds::Phone : TimelineModel::Folds::Desktop);
     tester = std::make_unique<QAbstractItemModelTester>(model.get(), QAbstractItemModelTester::FailureReportingMode::Warning);
     QObject::connect(model.get(), &QAbstractItemModel::dataChanged, model.get(),
                      [this](const QModelIndex& top, const QModelIndex& bottom, const QList<int>& roles) {
@@ -640,12 +654,13 @@ struct Sut {
     RC_ASSERT(modelTestFailures == 0);
     RC_ASSERT(model->hasEarlier() == expected.floor.has_value());
     RC_ASSERT(!model->loadingEarlier());
-    // The timer counts from the earliest message of a run still working, its
-    // session started or not, and so does not move when a session starts.
+    // The timer counts from the earliest run still working: from when it began,
+    // or from its message while its session starts.
     QDateTime since;
     for (const Run& run : expected.held.runs) {
       if (run.status != QLatin1String("running") && run.status != QLatin1String("starting")) continue;
-      const QDateTime asked = run.requestedAgo >= 0 ? clock().addSecs(-run.requestedAgo) : clock();
+      const bool begun = run.status == QLatin1String("running");
+      const QDateTime asked = !begun && run.requestedAgo >= 0 ? clock().addSecs(-run.requestedAgo) : clock();
       if (!since.isValid() || asked < since) since = asked;
     }
     RC_ASSERT(model->working() == since.isValid());
@@ -1370,6 +1385,21 @@ struct Toggle : Command {
   void show(std::ostream& os) const override { os << "Toggle(" << row.toStdString() << ")"; }
 };
 
+// The window crosses the phone layout's width, and the timeline folds as the
+// phone or the desktop does.
+struct Layout : Command {
+  void apply(Model& model) const override { model.phone = !model.phone; }
+  void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
+    sut.begin();
+    sut.phone = next.phone;
+    sut.model->setFolds(next.phone ? TimelineModel::Folds::Phone : TimelineModel::Folds::Desktop);
+    sut.check(next);
+  }
+  void show(std::ostream& os) const override { os << "Layout"; }
+};
+
 // The app restarts (or the thread was evicted and opened again): the thread
 // parks into the cache, and a new model restores it from there.
 struct Restart : Command {
@@ -1412,7 +1442,7 @@ private slots:
       rc::state::check(model, sut,
                        rc::state::gen::execOneOfWithArgs<StartRun, Begin, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
-                                                         LoadEarlier, Toggle, Restart, AgentModel>());
+                                                         LoadEarlier, Toggle, Layout, Restart, AgentModel>());
     }));
   }
 
