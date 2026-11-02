@@ -6,11 +6,13 @@
 #include <QAbstractItemModel>
 #include <QBuffer>
 #include <QFile>
+#include <QFont>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSet>
+#include <QTest>
 
 #include <algorithm>
 #include <memory>
@@ -23,6 +25,7 @@
 #include "Space.h"
 #include "SpaceController.h"
 #include "Stream.h"
+#include "ThemeStore.h"
 #include "World.h"
 
 namespace {
@@ -427,9 +430,14 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
                    const QJsonObject& author) {
   if (const auto why = writable(mc, space, pageId)) return *why;
   static const QStringList kinds{QStringLiteral("paragraph"), QStringLiteral("heading"), QStringLiteral("checklist"),
-                                 QStringLiteral("callout"), QStringLiteral("subpage_link"), QStringLiteral("image")};
+                                 QStringLiteral("callout"), QStringLiteral("subpage_link"), QStringLiteral("image"),
+                                 QStringLiteral("raw")};
   const QString kind = text(spec, QLatin1String("kind"));
   if (!kinds.contains(kind)) return refused(QStringLiteral("invalid"), QStringLiteral("There is no block kind %1.").arg(kind));
+  const QJsonValue level = spec.value(QLatin1String("level"));
+  if (kind == QLatin1String("heading") && !level.isUndefined() && (level.toInt() < 1 || level.toInt() > 6)) {
+    return refused(QStringLiteral("invalid"), QStringLiteral("A heading's level is 1 to 6."));
+  }
   const QString linked = text(spec, QLatin1String("linkedPageId"));
   if (kind == QLatin1String("subpage_link") && one(mc, streamOf(space), QStringLiteral("page"), linked).isEmpty()) {
     return refused(QStringLiteral("notFound"), QStringLiteral("A subpage link needs a page to link to."));
@@ -455,6 +463,7 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
                     {QStringLiteral("updatedAt"), at}};
   if (kind == QLatin1String("checklist")) block.insert(QStringLiteral("checked"), spec.value(QLatin1String("checked")).toBool());
   if (kind == QLatin1String("subpage_link")) block.insert(QStringLiteral("linkedPageId"), linked);
+  if (kind == QLatin1String("heading") && !level.isUndefined()) block.insert(QStringLiteral("level"), level.toInt());
   if (kind == QLatin1String("image")) {
     block.insert(QStringLiteral("imageId"), imageId);
     if (text(block, QLatin1String("text")).isEmpty()) block.insert(QStringLiteral("text"), image.value(QLatin1String("name")));
@@ -1422,6 +1431,15 @@ void actOnBlock(World& world, const QString& said, const QString& action, QVaria
   act(world, action, payload);
 }
 
+// The item named `objectName` in `item`'s tree (a ListView's delegates are only its items' children).
+QQuickItem* findEditor(QQuickItem* item, const QString& objectName) {
+  if (item->objectName() == objectName) return item;
+  for (QQuickItem* child : item->childItems()) {
+    if (QQuickItem* found = findEditor(child, objectName)) return found;
+  }
+  return nullptr;
+}
+
 void expectShown(World& world, const std::function<bool()>& shown, const QString& wanted) {
   world.waitFor(shown, [&] { return QStringLiteral("%1; %2").arg(wanted, describe(world)); });
 }
@@ -1744,6 +1762,14 @@ QString linkOf(World& world, const QString& title) {
 
 }  // namespace
 
+bool spaceOpens(World& world, const QString& title) {
+  if (fake(world.mc).current.isEmpty()) return false;
+  const QString id = findPage(world, title);
+  if (id.isEmpty()) return false;
+  lookAtPage(world, id);
+  return true;
+}
+
 bool spaceTick(World& world, const QString& said, bool checked) {
   if (fake(world.mc).current.isEmpty()) return false;
   actOnBlock(world, said, QStringLiteral("space.block.setChecked"), {{QStringLiteral("checked"), checked}});
@@ -2002,6 +2028,72 @@ const Steps steps([] {
         return block.value(QStringLiteral("kind")) == c[1] && block.value(QStringLiteral("text")) == c[2];
       });
     }, QStringLiteral("a %1 block %2").arg(c[1], c[2]));
+  });
+  // Markdown a page keeps as written, and headings by level (markdown.feature):
+  // drawn by the page as the Space view draws it, from the rows the MC's blocks make.
+  static const QString kTable = QStringLiteral("| Step | Owner |\n| ---- | ----- |\n|   MC | Ada   |");
+  const auto drawPage = [](World& world) {
+    return std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nSpacePage { width: 900; height: 700 }\n", QSize(900, 700));
+  };
+  const auto editorOf = [](Brick& brick, World& world, const QString& said) {
+    QQuickItem* editor = nullptr;
+    world.waitFor([&] {
+      brick.grab();
+      editor = brick.root() ? findEditor(brick.root(), QStringLiteral("spaceBlockEditor:") + said) : nullptr;
+      return editor != nullptr;
+    }, [&] { return QStringLiteral("the page to show the block %1; %2").arg(said, describe(world)); });
+    return editor;
+  };
+  step(QStringLiteral("the page %1 holds a table the page does not model yet").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], QStringLiteral("raw"), kTable);
+  });
+  step(QStringLiteral("the page %1 with headings of every level from 1 to 6").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (int level = 1; level <= 6; ++level) {
+      given(world, QStringLiteral("block.insert"),
+            {{QStringLiteral("pageId"), givenPage(world, c[0])}, {QStringLiteral("kind"), QStringLiteral("heading")},
+             {QStringLiteral("text"), QStringLiteral("Level %1").arg(level)}, {QStringLiteral("level"), level}});
+    }
+  });
+  step(QStringLiteral("the table is shown as its Markdown, exactly as written, in a fixed-width face"), [drawPage, editorOf](World& world, const Captures&, const Table&) {
+    const std::unique_ptr<Brick> page = drawPage(world);
+    QQuickItem* editor = editorOf(*page, world, kTable);
+    expect(editor->isVisible(), QStringLiteral("the table's source is not shown"));
+    expect(editor->property("text").toString() == kTable, QStringLiteral("the table reads %1").arg(show(editor->property("text"))));
+    // Its lines as written: never wrapped, and the text as plain text.
+    expect(editor->property("wrapMode").toInt() == 0, QStringLiteral("the table's lines wrap (wrapMode %1)").arg(editor->property("wrapMode").toInt()));
+    expect(editor->property("textFormat").toInt() == 0, QStringLiteral("the table is not shown as plain text"));
+    // In the code face, as code in a reply is.
+    const QFont font = editor->property("font").value<QFont>();
+    const QString mono = world.theme().fontMono().isEmpty() ? QStringLiteral("monospace") : world.theme().fontMono();
+    expect(font.family() == mono && font.pixelSize() == world.theme().fontSizeCode(),
+           QStringLiteral("the table is in %1 at %2, not %3 at %4").arg(font.family()).arg(font.pixelSize()).arg(mono).arg(world.theme().fontSizeCode()));
+  });
+  step(QStringLiteral("the user can edit it as text"), [drawPage, editorOf](World& world, const Captures&, const Table&) {
+    const std::unique_ptr<Brick> page = drawPage(world);
+    QQuickItem* editor = editorOf(*page, world, kTable);
+    QTest::mouseClick(&page->window(), Qt::LeftButton, Qt::NoModifier, page->at(editor, 0.05, 0.2));
+    world.waitFor([&] { return editor->hasActiveFocus(); }, QStringLiteral("the table to take the keyboard"));
+    QTest::keyClick(&page->window(), Qt::Key_End, Qt::ControlModifier);
+    // Return starts a line in it; Ctrl+Return writes it.
+    QTest::keyClick(&page->window(), Qt::Key_Return);
+    for (const char key : QByteArrayLiteral("| Ops  | Bo    |")) QTest::keyClick(&page->window(), key);
+    QTest::keyClick(&page->window(), Qt::Key_Return, Qt::ControlModifier);
+    const QString edited = kTable + QStringLiteral("\n| Ops  | Bo    |");
+    world.waitFor([&] { return !findBlock(world, edited).isEmpty(); },
+                  [&] { return QStringLiteral("the MC to hold the edited table; it holds %1").arg(show(editor->property("text"))); });
+    expect(text(findBlock(world, edited), QLatin1String("kind")) == QLatin1String("raw"), QStringLiteral("the edited table is no longer kept as written"));
+  });
+  step(QStringLiteral("each heading is smaller than the one of the level above it"), [drawPage, editorOf](World& world, const Captures&, const Table&) {
+    const std::unique_ptr<Brick> page = drawPage(world);
+    QList<int> sizes;
+    QStringList said;
+    for (int level = 1; level <= 6; ++level) {
+      sizes.append(editorOf(*page, world, QStringLiteral("Level %1").arg(level))->property("font").value<QFont>().pixelSize());
+      said.append(QString::number(sizes.last()));
+    }
+    for (int i = 1; i < sizes.size(); ++i) {
+      expect(sizes[i] < sizes[i - 1], QStringLiteral("level %1 is not smaller than level %2: %3").arg(i + 1).arg(i).arg(said.join(QStringLiteral(", "))));
+    }
   });
   step(QStringLiteral("the user links %1 from %1").arg(q), [](World& world, const Captures& c, const Table&) {
     actOnPage(world, idOfPage(world, c[1]), QStringLiteral("space.block.insert"),

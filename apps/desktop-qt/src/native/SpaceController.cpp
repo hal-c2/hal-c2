@@ -70,6 +70,13 @@ bool byAgent(const QJsonValue& author) {
   return author.toObject().value(QLatin1String("type")).toString() == QLatin1String("agent");
 }
 
+// A heading's level, 1 to 6, and 2 when the block has none; 0 on any other block.
+int headingLevel(const QJsonObject& block) {
+  if (text(block, QLatin1String("kind")) != QLatin1String("heading")) return 0;
+  const int level = block.value(QLatin1String("level")).toInt();
+  return level >= 1 && level <= 6 ? level : 2;
+}
+
 // Written by the page's own update rather than by a person or a thread.
 bool byUpdate(const QJsonValue& author) {
   return author.toObject().value(QLatin1String("type")).toString() == QLatin1String("schedule");
@@ -261,7 +268,7 @@ SpaceHistory::SpaceHistory(std::function<QString(const QString&)> titleOf,
       m_imageFields(std::move(imageFields)),
       m_versions(new SpaceRows({"id", "version", "at", "byAgent", "byUpdate", "threadTitle", "restoredFromAt"}, this)),
       m_blocks(new SpaceRows({"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
-                              "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
+                              "chart", "level", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
                              this)) {}
 
 SpaceHistory::Next SpaceHistory::open(const QString& pageId) {
@@ -419,7 +426,8 @@ void SpaceHistory::repaint() {
                     {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : m_titleOf(linked)},
                     {QStringLiteral("byAgent"), byAgent(block.value(QLatin1String("updatedBy")))},
                     {QStringLiteral("openComments"), 0},
-                    {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()}};
+                    {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()},
+                    {QStringLiteral("level"), headingLevel(block)}};
     row.insert(m_imageFields(image ? text(block, QLatin1String("imageId")) : QString()));
     rows.append(row);
   }
@@ -432,7 +440,7 @@ SpacePages::SpacePages(QObject* parent)
       m_pages(new SpaceRows({"id", "title", "depth", "parentPageId", "hasChildren", "fromThread"}, this)),
       m_trash(new SpaceRows({"id", "title", "trashedAt"}, this)),
       m_blocks(new SpaceRows({"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
-                              "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
+                              "chart", "level", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
                              this)),
       m_comments(new SpaceRows({"id", "blockId", "blockText", "blockGone", "body", "resolved", "byAgent", "createdAt"}, this)),
       m_decks(new SpaceRows({"id", "title"}, this)),
@@ -875,7 +883,8 @@ void SpacePages::rebuild() {
                     {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : titleOf(linked)},
                     {QStringLiteral("byAgent"), byAgent(block.value(QLatin1String("createdBy")))},
                     {QStringLiteral("openComments"), open.value(id)},
-                    {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()}};
+                    {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()},
+                    {QStringLiteral("level"), headingLevel(block)}};
     row.insert(fields);
     blocks.append(row);
   }

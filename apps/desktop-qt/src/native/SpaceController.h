@@ -191,9 +191,10 @@ private:
 //            page tree, depth first, untrashed and under no trashed page
 //   trash    {id, title, trashedAt}: trashed pages, the latest first
 //   blocks   {id, kind, text, checked, linkedPageId, linkedTitle, byAgent,
-//            openComments, imageId, imageState, imageUrl, imageWidth,
-//            imageHeight}: the page's blocks by their `order`; imageState is
-//            shown, trashed or deleted on an image block, else ""
+//            openComments, level, imageId, imageState, imageUrl, imageWidth,
+//            imageHeight}: the page's blocks by their `order`; level is a
+//            heading's 1 to 6 (2 when the MC leaves it out), else 0; imageState
+//            is shown, trashed or deleted on an image block, else ""
 //   comments {id, blockId, blockText, blockGone, body, resolved, byAgent,
 //            createdAt}: the page's comments, open ones first; blockGone when
 //            the block it is on has left the page, as a restore can do
