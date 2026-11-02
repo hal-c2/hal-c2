@@ -12,7 +12,8 @@ import HalC2.Bricks
 // deleting and commenting are in the menu at its end, where a desktop's hover would
 // have them. A chart is not written in: it is drawn, and asked for again from the menu.
 // A raw block is Markdown the page keeps as written: shown and edited as its source,
-// in a fixed-width face, line for line, scrolled sideways rather than wrapped.
+// in a fixed-width face, line for line, scrolled sideways rather than wrapped. A table
+// and a code block show so too until they are drawn as such (#854).
 Rectangle {
     id: row
 
@@ -39,7 +40,7 @@ Rectangle {
     readonly property var chart: model.chart ?? ({})
     // A heading's level, 1 to 6.
     readonly property int level: model.level ?? 2
-    readonly property bool raw: kind === "raw"
+    readonly property bool raw: kind === "raw" || kind === "table" || kind === "code"
     readonly property bool editing: editor.activeFocus
 
     signal menuRequested

@@ -4090,10 +4090,44 @@
         "pageId": { "type": "string" },
         "kind": {
           "type": "string",
-          "enum": ["paragraph", "heading", "checklist", "callout", "subpage_link", "image", "raw"],
-          "description": "raw is Markdown the page does not model (a table, a code block, a list), kept and shown as written."
+          "enum": [
+            "paragraph",
+            "heading",
+            "checklist",
+            "callout",
+            "subpage_link",
+            "image",
+            "table",
+            "code",
+            "raw"
+          ],
+          "description": "A code block's text is the code. raw is Markdown the page does not model (a list, a quote), kept and shown as written."
         },
         "text": { "type": "string" },
+        "table": {
+          "type": "object",
+          "description": "For a table: rows of cells, the header row first, each a line of inline Markdown; align is left, center, right or null for each column. Its text is written from it.",
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": { "type": "array", "items": { "type": "string" } }
+            },
+            "align": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  { "type": "string", "enum": ["left", "center", "right"] },
+                  { "type": "null" }
+                ]
+              }
+            }
+          },
+          "required": ["rows"]
+        },
+        "language": {
+          "type": "string",
+          "description": "For a code block: its language, one word such as elixir or mermaid."
+        },
         "checked": { "type": "boolean", "description": "For a checklist item." },
         "level": {
           "type": "integer",
@@ -4117,14 +4151,24 @@
   },
   {
     "name": "hal_c2_page_block_update",
-    "description": "Change a block's text, or tick or untick a checklist item, written as this thread.",
+    "description": "Change a block's text, tick or untick a checklist item, set a heading's level or a code block's language, written as this thread. What is given changes together. A table's text is its Markdown: give the whole table to change it.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
         "blockId": { "type": "string" },
         "text": { "type": "string" },
-        "checked": { "type": "boolean" }
+        "checked": { "type": "boolean" },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6,
+          "description": "For a heading: 1 to 6, as the number of # in Markdown."
+        },
+        "language": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "description": "For a code block: one word, or null for none."
+        }
       },
       "required": ["spaceId", "blockId"],
       "additionalProperties": true

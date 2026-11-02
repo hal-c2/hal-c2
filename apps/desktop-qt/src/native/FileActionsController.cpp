@@ -11,6 +11,7 @@
 #include "RightPanelController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
+#include "SpaceController.h"
 #include "ToastController.h"
 #include "WorkspaceController.h"
 
@@ -117,6 +118,9 @@ bool FileActionsController::handle(const QString& action, const QVariant& payloa
     }
   } else if (action == kCopyContents) {
     copyContents();
+  } else if (action == QLatin1String("files.openInSpace")) {
+    auto* panel = shell->controller<RightPanelController>();
+    if (auto* spaces = shell->controller<SpaceController>()) spaces->openFile(panel->environmentId(), panel->projectId(), path);
   } else if (action == QLatin1String("files.addToChat")) {
     if (!shell->controller<ComposerController>()->insertAtEnd(composer::pathLink(path))) {
       toasts->error(tr("Unable to add to chat"), tr("Open a chat for this project and try again."));
