@@ -106,9 +106,15 @@ export function createConversationFeature(kit: FeatureKit): Feature {
     });
   };
 
+  // Another machine's files open in its own Spaces, which the Space pane does not follow (#860).
+  const homeProject = () => {
+    const workspace = kit.workspace();
+    return workspace?.home ? workspace.projectId : null;
+  };
+
   /** A file the conversation names, opened as a page of a Space (the newest first). */
   const openInSpace = () => {
-    const projectId = kit.workspace()?.projectId ?? null;
+    const projectId = homeProject();
     const paths = [
       ...new Set(
         messages()
@@ -116,11 +122,14 @@ export function createConversationFeature(kit: FeatureKit): Feature {
           .flatMap((message) => filePaths(message.text)),
       ),
     ];
-    if (projectId === null || paths.length === 0) {
+    if (projectId === null) {
+      kit.status(
+        "This thread's project is on another machine: its files open in its Spaces.",
+        "info",
+      );
+    } else if (paths.length === 0) {
       kit.status("The conversation names no file.", "info");
-      return;
-    }
-    kit.dispatch("space.openProjectFile", { projectId, paths });
+    } else kit.dispatch("space.openProjectFile", { projectId, paths });
   };
 
   return {
@@ -139,12 +148,19 @@ export function createConversationFeature(kit: FeatureKit): Feature {
               keywords: "file location line editor",
               action: "reference.open",
             },
-            {
-              id: "reference.space",
-              title: "Open a file the conversation names in a Space…",
-              keywords: "page link markdown spaces",
-              action: "reference.space",
-            },
+            ...(homeProject() === null
+              ? []
+              : [
+                  {
+                    id: "reference.space",
+                    // A page follows the project's copy of a file, not the worktree's.
+                    title: kit.workspace()?.worktree
+                      ? "Open the project's copy of a file the conversation names in a Space…"
+                      : "Open a file the conversation names in a Space…",
+                    keywords: "page link markdown spaces",
+                    action: "reference.space",
+                  },
+                ]),
           ]
         : [],
     dispatch: (action, payload) => {

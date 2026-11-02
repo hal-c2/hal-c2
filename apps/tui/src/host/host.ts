@@ -35,7 +35,7 @@ import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
 import { createComposer } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
-import { createFilesController } from "./filesState.ts";
+import { createFilesController, type TuiFilesState } from "./filesState.ts";
 import { createSpaceController } from "./spaceState.ts";
 import {
   buildTuiLayoutState,
@@ -947,11 +947,15 @@ export function createHost(options: HostOptions): Host {
     const path = files.target();
     const projectId = filesProject;
     if (path === null || projectId === null) return [];
-    if (!homeProjects().some((project) => project.id === projectId)) return [];
-    if (!space.isSpaceFile(projectId, path)) return [];
+    const project = homeProjects().find((entry) => entry.id === projectId);
+    // Offered for what the MC lists in the project's own folder, which is what opens:
+    // a page follows the project's copy, never a thread's worktree.
+    if (!project || !space.isSpaceFile(projectId, path)) return [];
+    const browsing = (state.get("files") as TuiFilesState | undefined)?.cwd ?? null;
+    const worktree = browsing !== null && browsing !== project.workspaceRoot;
     return [
       {
-        title: "Open this file in a Space",
+        title: worktree ? "Open the project's copy in a Space" : "Open this file in a Space",
         action: "space.openProjectFile",
         payload: { projectId, path },
       },
@@ -1504,7 +1508,9 @@ export function createHost(options: HostOptions): Host {
           (current.detail?.id === workspace.threadId ? current.detail.projectId : null) ??
           current.shell?.threads.find((thread) => thread.id === workspace.threadId)?.projectId ??
           null;
-        return { threadId: workspace.threadId, projectId, cwd: workspace.cwd };
+        const home = projectId !== null && homeProjects().some((p) => p.id === projectId);
+        const worktree = workspace.worktreePath !== null;
+        return { threadId: workspace.threadId, projectId, home, worktree, cwd: workspace.cwd };
       },
       nowMs: () => Date.parse(now()),
       showDiff: (review) => threadView.showReview(review),

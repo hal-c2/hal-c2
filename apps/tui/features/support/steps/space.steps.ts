@@ -32,6 +32,8 @@ import { findObject, pressKey, settle, typeText, type World } from "../world.ts"
 import { selectRow as selectFileRow } from "./files.steps.ts";
 
 interface SpaceWorld extends World {
+  /** A thread's worktree by project: its folder and the files it has that differ. */
+  worktrees?: Map<string, { readonly root: string; readonly files: Map<string, string> }>;
   /** The site link each page had when the scenario first saw it. */
   siteLinks?: Map<string, string>;
   spaceMc?: FakeSpaceMc;
@@ -2371,6 +2373,7 @@ step("each heading is smaller than the one of the level above it", (ctx: SpaceWo
 // The fake MC holds each project's folder; the file browser lists and reads the same copy.
 
 const OPEN_FILE_IN_SPACE = "Open this file in a Space";
+const OPEN_PROJECTS_COPY = "Open the project's copy in a Space";
 const filesPane = (ctx: World) => ctx.host!.state.get("files") as TuiFilesState;
 const projectId = (ctx: World, title: string) => projectNamed(ctx, title).id;
 
@@ -2379,7 +2382,13 @@ async function startWithFiles(ctx: SpaceWorld) {
   await start(ctx);
   const folder = (cwd: string) => {
     const project = env(ctx).projects.find((candidate) => candidate.workspaceRoot === cwd);
-    return project ? mc(ctx).projectFilesOf(project.id) : new Map<string, string>();
+    if (project) return mc(ctx).projectFilesOf(project.id);
+    // A worktree: the project's files, as its own differ.
+    for (const [title, worktree] of ctx.worktrees ?? []) {
+      if (worktree.root !== cwd) continue;
+      return new Map([...mc(ctx).projectFilesOf(projectId(ctx, title)), ...worktree.files]);
+    }
+    return new Map<string, string>();
   };
   ctx.fake!.override("listEntries", async (cwd) =>
     [...folder(cwd).keys()].map((path) => ({ path, kind: "file" as const })),
@@ -2392,9 +2401,12 @@ async function startWithFiles(ctx: SpaceWorld) {
 
 /** A thread of the project, open: the files it browses and the conversation it shows are there. */
 async function openThreadOf(ctx: SpaceWorld, project: string) {
-  const title = `Docs of ${project}`;
+  const worktree = ctx.worktrees?.get(project);
+  const title = worktree ? `Draft of ${project}` : `Docs of ${project}`;
   if (!env(ctx).threads.some((candidate) => candidate.title === title)) {
-    change(ctx, () => addThread(ctx, title, { project }));
+    change(ctx, () =>
+      addThread(ctx, title, { project, ...(worktree ? { worktreePath: worktree.root } : {}) }),
+    );
   }
   await startWithFiles(ctx);
   await settle(ctx);
@@ -2571,6 +2583,11 @@ step("the Space shows the page {string}", async (ctx: SpaceWorld, title: string)
   expect(pane(ctx).title).toStartWith(`page · ${title}`);
 });
 
+step("every Space was deleted", (ctx: SpaceWorld) => {
+  for (const space of mc(ctx).spaces()) mc(ctx).run("space.delete", { spaceId: space.id });
+  expect(mc(ctx).spaces()).toEqual([]);
+});
+
 step("the user is told the scan wrote the spaces section", async (ctx: SpaceWorld) => {
   await settle(ctx);
   expect(status(ctx).kind).toBe("success");
@@ -2579,11 +2596,35 @@ step("the user is told the scan wrote the spaces section", async (ctx: SpaceWorl
 
 // Offered for a Markdown file of the same folder, so the absence is the file's.
 step("{string} offers no way to open it in a Space", async (ctx: SpaceWorld, path: string) => {
+  const label = [...(ctx.worktrees?.values() ?? [])].some(
+    (worktree) => worktree.root === filesPane(ctx)?.cwd,
+  )
+    ? OPEN_PROJECTS_COPY
+    : OPEN_FILE_IN_SPACE;
   await selectFile(ctx, path);
-  expect(await offered(ctx, OPEN_FILE_IN_SPACE)).not.toContain(OPEN_FILE_IN_SPACE);
+  expect(await offered(ctx, label)).not.toContain(label);
   await selectFile(ctx, "docs/guide.md");
-  expect(await offered(ctx, OPEN_FILE_IN_SPACE)).toContain(OPEN_FILE_IN_SPACE);
+  expect(await offered(ctx, label)).toContain(label);
 });
+
+step(
+  "a thread of {string} works in a worktree where {string} reads {string}",
+  (ctx: SpaceWorld, project: string, path: string, text: string) => {
+    ctx.worktrees ??= new Map();
+    const files = new Map([[path, text.replaceAll("\\n", "\n")]]);
+    ctx.worktrees.set(project, { root: `/worktrees/${project}-draft`, files });
+  },
+);
+
+step(
+  "the user opens the project's copy of {string} in a Space from its menu",
+  async (ctx: SpaceWorld, path: string) => {
+    await selectFile(ctx, path);
+    expect(filesPane(ctx).cwd).toBe([...ctx.worktrees!.values()][0]!.root);
+    await chooseCommand(ctx, OPEN_PROJECTS_COPY);
+    await settle(ctx);
+  },
+);
 
 step("the page {string} is in {string}", async (ctx: SpaceWorld, title: string, space: string) => {
   await settle(ctx);

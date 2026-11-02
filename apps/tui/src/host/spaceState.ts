@@ -2725,11 +2725,19 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return refusalText(error);
   };
 
-  /** Where a file opens from outside a Space: the Space last open, else the first. */
-  const targetSpace = async (): Promise<string | null> => {
+  /**
+   * Where a file opens from outside a Space: the Space last open, else the first; null
+   * when there is none, and the refusal when the Spaces could not be listed.
+   */
+  const targetSpace = async (): Promise<string | null | { readonly error: unknown }> => {
     if (open && spaceId !== null) return spaceId;
-    const result = await send<SpaceListResult>(WS_METHODS.spaceList, {});
-    const ids = (result?.spaces ?? []).map((entry) => entry.id as string);
+    let result: SpaceListResult;
+    try {
+      result = await call<SpaceListResult>(WS_METHODS.spaceList, {});
+    } catch (error) {
+      return { error };
+    }
+    const ids = result.spaces.map((entry) => entry.id as string);
     return ids.find((id) => id === lastSpaceId) ?? ids[0] ?? null;
   };
 
@@ -2738,6 +2746,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     void track(
       (async () => {
         const target = into ?? (await targetSpace());
+        if (target !== null && typeof target === "object") {
+          options.status(refusalText(target.error), "error");
+          return;
+        }
+        // The MC makes a Space when it lists none, so this is a last resort.
         if (target === null) {
           options.status("There is no Space to open it in: make one first (^X p, then n).", "info");
           return;

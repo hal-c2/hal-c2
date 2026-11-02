@@ -79,12 +79,16 @@ function setup(origin?: string) {
   const tellPage: Array<(viewers: ReadonlyArray<SpacePresenceViewer>) => void> = [];
   const asks: AskSpec[] = [];
   const uploads = { fails: false, sent: 0 };
+  const lists = { fails: false };
   let state: TuiSpaceState | null = null;
   const controller = createSpaceController({
     client: {
       mcCall: <T>(method: string, payload: unknown) => {
         calls.push({ method, payload });
-        if (method === "space.list") return Promise.resolve({ spaces: [] } as T);
+        if (method === "space.list") {
+          if (lists.fails) return Promise.reject(new Error("The connection to the MC was lost."));
+          return Promise.resolve({ spaces: [] } as T);
+        }
         return new Promise<T>((resolve, reject) => {
           const waiting = replies.get(method) ?? [];
           waiting.push(resolve as (value: unknown) => void);
@@ -157,6 +161,7 @@ function setup(origin?: string) {
     menus,
     asks,
     uploads,
+    lists,
     streams,
     opened,
     onPage,
@@ -985,6 +990,15 @@ describe("project files", () => {
     expect(t.statuses.at(-1)).toBe(
       "There is no Space to open it in: make one first (^X p, then n).",
     );
+    expect(t.calls.map((call) => call.method)).toEqual(["space.list"]);
+  });
+
+  test("Spaces that could not be listed say why, not to make one", async () => {
+    const t = setup();
+    t.lists.fails = true;
+    t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    await t.controller.settled();
+    expect(t.statuses).toEqual(["The connection to the MC was lost."]);
     expect(t.calls.map((call) => call.method)).toEqual(["space.list"]);
   });
 
