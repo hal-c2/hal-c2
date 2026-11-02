@@ -1,4 +1,4 @@
-// space/pages.feature and space/slides.feature: the Spaces pane (^X p), driven by its keys against a fake
+// space/pages.feature, space/slides.feature and space/markdown.feature: the Spaces pane (^X p), driven by its keys against a fake
 // MC that keeps the rules of HalC2.Space (fakeSpaceMc.ts). Givens write to the MC
 // directly; Whens press the pane's keys and answer its fields and pickers; Thens
 // read what the pane shows, the status line and the clipboard. A second client is
@@ -239,7 +239,7 @@ async function blockRows(ctx: SpaceWorld, title: string) {
 /** A block's words, after its tick box, bar or arrow and before the agent that wrote it. */
 const blockText = (row: TuiSpaceRow) =>
   words(row)
-    .replace(/^(\[[ x]\] |▌ |↳ )/, "")
+    .replace(/^(\[[ x]\] |▌ |↳ |#{1,6} |│ )/, "")
     .replace(/ {2}· .*$/, "");
 
 // --- Spaces ---
@@ -2244,4 +2244,89 @@ step("the images list shows the prompt {string}", (ctx: SpaceWorld, prompt: stri
 step("the page shows the text {string}", (ctx: SpaceWorld, text: string) => {
   const rows = pane(ctx).rows.filter((row) => row.kind === "block" && row.first);
   expect(rows.map(blockText)).toContain(text);
+});
+
+// --- Markdown a page keeps as written (space/markdown.feature) ---
+
+// A table as GitHub writes one, indented by a space (as far as three may be): aligned
+// columns and an escaped pipe.
+const KEPT_TABLE = [
+  " | Step | Owner   |",
+  " | :--- | ------: |",
+  " | MC   | `a \\| b` |",
+  " | TUI  | Ada     |",
+];
+
+/** 'the user opens "Plan"' for a Space page (registered with files' "the user opens {string}"). */
+export function spacePageOpener(ctx: World, title: string): (() => Promise<void>) | null {
+  const world = ctx as SpaceWorld;
+  if (
+    !world.spaceMc
+      ?.spaces()
+      .some((entry) =>
+        world.spaceMc!.pagesOf(entry.id as string).some((page) => page.title === title),
+      )
+  ) {
+    return null;
+  }
+  return () => openPage(world, title);
+}
+
+/** The rows of the page's one raw block, after the marker and the gutter. */
+const rawSource = (ctx: SpaceWorld) => {
+  const rows = pane(ctx).rows.filter((row) => row.blockKind === "raw");
+  expect(new Set(rows.map((row) => row.key)).size).toBe(1);
+  for (const row of rows) expect(row.text.slice(2, 4)).toBe("│ ");
+  return { key: rows[0]!.key, lines: rows.map((row) => row.text.slice(4)) };
+};
+
+step(
+  "the page {string} holds a table the page does not model yet",
+  (ctx: SpaceWorld, title: string) => {
+    seedBlock(ctx, title, "raw", KEPT_TABLE.join("\n"));
+  },
+);
+
+// A terminal draws every character a column wide, so the face is fixed-width already: what
+// holds is that each source line is a row of its own, spaces and all, never wrapped.
+step(
+  "the table is shown as its Markdown, exactly as written, in a fixed-width face",
+  (ctx: SpaceWorld) => {
+    expect(rawSource(ctx).lines).toEqual(KEPT_TABLE);
+  },
+);
+
+step("the user can edit it as text", async (ctx: SpaceWorld) => {
+  const { key } = rawSource(ctx);
+  await selectRow(ctx, key);
+  await press(ctx, "e");
+  // The field holds the source on one line: a line break is \n, a backslash \\.
+  const field = KEPT_TABLE.join("\\n").replaceAll("\\|", "\\\\|");
+  expect(findObject(ctx, "askInput").get("text")).toBe(field);
+  const edited = [...KEPT_TABLE, " | Ship | Grace   |"];
+  await answer(ctx, `${field}\\n${edited.at(-1)}`);
+  expect(mc(ctx).blockNamed(edited.join("\n")).kind).toBe("raw");
+  expect(rawSource(ctx).lines).toEqual(edited);
+});
+
+step(
+  "the page {string} with headings of every level from 1 to 6",
+  (ctx: SpaceWorld, title: string) => {
+    for (const level of [1, 2, 3, 4, 5, 6]) {
+      mc(ctx).run("space.block.insert", {
+        spaceId: currentSpaceId(ctx),
+        pageId: seedPage(ctx, title),
+        kind: "heading",
+        text: `Level ${level}`,
+        level,
+      });
+    }
+  },
+);
+
+// A terminal has one size of type: a heading carries its level's # marks, and a level's
+// weight steps down from underlined accent (1) through accent (2) and text (3, 4) to dim.
+step("each heading is smaller than the one of the level above it", (ctx: SpaceWorld) => {
+  const headings = pane(ctx).rows.filter((row) => row.blockKind === "heading" && row.first);
+  expect(headings.map(words)).toEqual([1, 2, 3, 4, 5, 6].map((n) => `${"#".repeat(n)} Level ${n}`));
 });
