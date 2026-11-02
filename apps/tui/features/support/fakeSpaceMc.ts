@@ -219,6 +219,17 @@ function parseMarkdown(markdown: string): { title: string | null; blocks: Entity
     } else if ((match = /^\s*[-*]\s+\[([ xX])\]\s?(.*)$/.exec(line))) {
       out.push(block("checklist", match[2]!, match[1] !== " "));
       index += 1;
+    } else if ((match = /^ {0,3}(`{3,}|~{3,})/.exec(line))) {
+      // A fenced block is kept as written, as the MC keeps it: a raw block.
+      const close = new RegExp(`^ {0,3}\\${match[1]![0]}{${match[1]!.length},}\\s*$`);
+      const fenced = [line];
+      index += 1;
+      while (index < lines.length) {
+        fenced.push(lines[index]!);
+        index += 1;
+        if (close.test(fenced.at(-1)!)) break;
+      }
+      out.push(block("raw", fenced.join("\n")));
     } else if (line.startsWith(">")) {
       const quote: string[] = [];
       while (index < lines.length && lines[index]!.startsWith(">")) {

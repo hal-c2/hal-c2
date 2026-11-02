@@ -440,7 +440,7 @@ export interface MermaidView {
  * A Mermaid diagram from what the MC said of it (`result`, undefined while it is asked):
  * its title names its type, then comes its drawing in characters when there is one that
  * fits `width` and the user has not asked for the `source`, else the source under the
- * reason it is not drawn. Drawing and source are never wrapped.
+ * reason it is not drawn, wrapped to `width`. Drawing and source are never wrapped.
  */
 export function mermaidLines(
   source: string,
@@ -494,7 +494,11 @@ export function mermaidLines(
     drawable,
     lines: [
       title,
-      ...(reason ? [styled(chunk(reason.text, { fg: reason.fg }))] : []),
+      ...(reason
+        ? wrapCell(reason.text, Math.max(8, width)).map((text) =>
+            styled(chunk(text, { fg: reason.fg })),
+          )
+        : []),
       ...sourceLines,
     ],
   };

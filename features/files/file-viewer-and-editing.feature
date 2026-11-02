@@ -211,12 +211,13 @@ Feature: Viewing and editing files
 
     # The same renderer draws diagrams in pages and replies
     # (features/space/markdown.feature, features/timeline/markdown.feature).
-    @shared @backlog
+    # https://github.com/hal-c2/hal-c2/issues/843
+    @shared @backlog-desktop @backlog-mobile
     Scenario Outline: Mermaid diagrams are drawn in a rendered file
       Given "shop" holds the file "<path>" with a flowchart in it
       When the user opens "<path>"
       Then on the desktop and the phone the flowchart is drawn
-      And in the terminal the diagram's source is shown, named as a "flowchart" diagram
+      And in the terminal the diagram is drawn in characters, or its source is shown, named as a "flowchart" diagram
       When the user switches to the source
       Then the diagram's source is shown
 
@@ -225,7 +226,8 @@ Feature: Viewing and editing files
         | docs/flow.md     | a "mermaid" code block     |
         | docs/flow.mmd    | the whole file             |
 
-    @shared @backlog
+    # https://github.com/hal-c2/hal-c2/issues/843
+    @shared @backlog-desktop @backlog-mobile
     Scenario: A Mermaid file that cannot be drawn shows its source and says why
       Given "shop" holds the file "docs/broken.mmd" with a flowchart with an unclosed bracket
       When the user opens "docs/broken.mmd"

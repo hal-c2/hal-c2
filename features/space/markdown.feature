@@ -284,16 +284,17 @@ Feature: GitHub Markdown in a page
       Then the export writes it fenced with "~~~~"
 
   # https://github.com/hal-c2/hal-c2/issues/843
-  @backlog @mc @shared
+  @mc @shared @backlog-mc @backlog-desktop @backlog-mobile
   Rule: Mermaid diagrams
 
     # The diagram is drawn by the one Mermaid renderer the pages, the chat and the file
-    # viewer share. The terminal shows the diagram's source, named as a diagram.
+    # viewer share. The terminal shows it drawn in characters, or, for a type with no
+    # drawing in characters, its source, named as a diagram.
     Scenario Outline: A Mermaid diagram is drawn
       When the user imports a page holding a "<type>" Mermaid diagram
       Then the page has a diagram block of the type "<type>"
       And on the desktop and the phone the diagram is drawn
-      And in the terminal the diagram's source is shown, named as a "<type>" diagram
+      And in the terminal the diagram is drawn in characters, or its source is shown, named as a "<type>" diagram
 
       Examples:
         | type            |

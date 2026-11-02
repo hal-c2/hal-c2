@@ -178,7 +178,13 @@ describe("Mermaid blocks", () => {
     );
     expect(lines).toEqual([
       "◇ flowchart diagram",
-      "Drawn 21 columns wide, wider than the 12 here: its source instead.",
+      "Drawn 21",
+      "columns",
+      "wide, wider",
+      "than the 12",
+      "here: its",
+      "source",
+      "instead.",
       "flowchart LR",
       "  Cart --> Paid",
     ]);
