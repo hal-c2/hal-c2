@@ -1385,9 +1385,12 @@ void SpaceController::listFiles(const QString& environmentId, const QString& pro
                    // Asked again on connecting; what the files were stands meanwhile.
                    if (error && *error == QLatin1String("disconnected")) return;
                    m_listing.remove(projectId);
-                   // Said nowhere: a project the MC cannot list offers none of its files.
+                   // A project the MC cannot list offers none of its files, and says why.
                    if (error) {
-                     if (m_files.remove(projectId)) publish();
+                     m_files.insert(projectId, QVariantMap{{QStringLiteral("config"), QString()},
+                                                           {QStringLiteral("paths"), QVariantMap()},
+                                                           {QStringLiteral("error"), *error}});
+                     publish();
                      return;
                    }
                    receiveFiles(projectId, result.toObject());
@@ -1423,17 +1426,25 @@ void SpaceController::openFile(const QString& environmentId, const QString& proj
     return refuse(tr("A file opens in a Space only from a project on this machine."));
   }
   const auto open = [this, projectId, relativePath](const QString& space) {
+    // Opening the same file again says its page again.
+    if (!m_written.isEmpty()) {
+      m_written.clear();
+      publish();
+    }
     call(
         QStringLiteral("page.openFile"),
         {{QStringLiteral("spaceId"), space}, {QStringLiteral("projectId"), projectId}, {QStringLiteral("relativePath"), relativePath}},
         [this, space, projectId](const QJsonObject& result) {
-          if (!std::exchange(m_picking, QString()).isEmpty()) publish();
+          m_picking.clear();
+          // Said before the route opens: the phone's Space screen opens this page when it arrives.
+          m_written = result.value(QLatin1String("page")).toObject().value(QLatin1String("id")).toString();
+          publish();
           if (auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
             navigation->open(NavigationController::Route::of(kRoute));
           }
           // The file's page may be in another Space, which is where it is shown.
           awaitSpace(result.value(QLatin1String("spaceId")).toString(space));
-          awaitPage(result.value(QLatin1String("page")).toObject().value(QLatin1String("id")).toString());
+          awaitPage(m_written);
           listFiles(m_client->environment(), projectId);
         },
         [relativePath](const QJsonObject& detail) {

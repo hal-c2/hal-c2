@@ -469,7 +469,7 @@ Item {
         }
 
         function version(id, more) {
-            return Object.assign({ version: id, at: "2026-10-31T10:00:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" }, more ?? {});
+            return Object.assign({ version: id, at: "2026-10-31T10:00:00Z", byAgent: false, byUpdate: false, byFile: false, threadTitle: "", restoredFromAt: "" }, more ?? {});
         }
 
         function openHistory(history, state) {
@@ -480,6 +480,82 @@ Item {
             screen.view = "history";
             waitForRendering(screen);
             return screen;
+        }
+
+        function fileOf(more) {
+            return Object.assign({ projectId: "shop", projectTitle: "shop", path: "docs/guide.md", missing: false, unwritten: false, conflictAt: "" }, more ?? {});
+        }
+
+        function openFilePage(file) {
+            const screen = makeScreen({ page: root.pageOf("p1", { file: file }) });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            waitForRendering(screen);
+            return screen;
+        }
+
+        function texts(item) {
+            let found = item.visible && typeof item.text === "string" ? [item.text] : [];
+            for (const child of item.children ?? [])
+                found = found.concat(texts(child));
+            return found;
+        }
+
+        function test_aFilePageSaysWhichFileItIs() {
+            const screen = openFilePage(fileOf());
+            verify(findChild(screen, "spacePageFile").visible);
+            compare(findChild(screen, "spacePageFilePath").text, "The file docs/guide.md of shop");
+            verify(findChild(screen, "spacePageFileShow").visible);
+            verify(!findChild(screen, "spacePageFileGone").visible);
+            verify(!findChild(screen, "spacePageFileConflict").visible);
+        }
+
+        function test_anOrdinaryPageSaysNothingOfAFile() {
+            const screen = openFilePage(undefined);
+            verify(!findChild(screen, "spacePageFile").visible);
+            verify(!sheetIdsOf(screen, "p1").includes("showFile"));
+            verify(!sheetIdsOf(screen, "p1").includes("unlinkFile"));
+        }
+
+        function test_aGoneFileIsNotOfferedToShow() {
+            const screen = openFilePage(fileOf({ missing: true }));
+            verify(findChild(screen, "spacePageFileGone").visible);
+            verify(!findChild(screen, "spacePageFileShow").visible);
+            const ids = sheetIdsOf(screen, "p1");
+            verify(!ids.includes("showFile"));
+            verify(ids.includes("unlinkFile"));
+        }
+
+        function test_aFileThatWonLeadsToTheHistory() {
+            const screen = openFilePage(fileOf({ conflictAt: "2026-10-31T10:00:00Z" }));
+            verify(findChild(screen, "spacePageFileConflict").visible);
+            findChild(screen, "spacePageFileHistory").clicked();
+            compare(screen.view, "history");
+        }
+
+        function sheetIdsOf(screen, id) {
+            screen.pageMenu(id, id, "", {});
+            const ids = sheetIds(screen);
+            sheetOf(screen).close();
+            return ids;
+        }
+
+        function test_theOpenFilePagesMenuShowsOrStopsFollowingItsFile() {
+            const screen = openFilePage(fileOf());
+            const ids = sheetIdsOf(screen, "p1");
+            verify(ids.includes("showFile"));
+            verify(ids.includes("unlinkFile"));
+            // Of a page only listed, its file is not known.
+            verify(!sheetIdsOf(screen, "p2").includes("unlinkFile"));
+            screen.pageMenu("p1", "p1", "", {});
+            sheetOf(screen).choose("unlinkFile");
+            compare(dispatched("space.page.unlinkFile")[0].pageId, "p1");
+        }
+
+        function test_aVersionTheFileWroteSaysSo() {
+            const screen = openHistory({ versions: [version(3, { byFile: true }), version(1)] });
+            verify(texts(findChild(screen, "spaceHistoryRow:0")).includes("The project file · current"));
+            verify(texts(findChild(screen, "spaceHistoryRow:1")).includes("You"));
         }
 
         function test_aPageMenuOpensTheHistoryOnThatPage() {

@@ -1,4 +1,6 @@
-// What tests/prop/tst_SpaceFilesProp.cpp found in SpaceController's project files.
+// What tests/prop/tst_SpaceFilesProp.cpp found in SpaceController's project files,
+// what opening a file says when there is no Space to open it in, and a refused
+// list of files told apart from an empty one.
 
 #include <QtTest>
 
@@ -17,9 +19,16 @@ struct Shell {
   ShellBridge bridge;
   NativeShell native{&bridge};
   QList<FakeMc::Rpc> held;
+  // Every value `space.written` took, in order.
+  QStringList written;
 
   Shell() {
     mc.onRpc(QStringLiteral("space.files.list"), [this](const FakeMc::Rpc& rpc) { held.append(rpc); });
+    QObject::connect(&bridge, &ShellBridge::stateEntryChanged, &bridge, [this](const QString& key, const QVariant& value) {
+      if (key != QLatin1String("space")) return;
+      const QString now = value.toMap().value(QStringLiteral("written")).toString();
+      if (now != (written.isEmpty() ? QString() : written.last())) written.append(now);
+    });
     native.client()->setRetryDelays({20});
     native.setStoreDirs(home.filePath(QStringLiteral("state")), home.filePath(QStringLiteral("data")), home.filePath(QStringLiteral("cache")));
     native.controller<SettingsController>()->setDevicePath(home.filePath(QStringLiteral("preferences.json")));
@@ -33,9 +42,14 @@ struct Shell {
     const QJsonObject file{{QStringLiteral("relativePath"), path}, {QStringLiteral("kind"), QStringLiteral("markdown")}, {QStringLiteral("page"), QJsonValue::Null}};
     mc.reply(rpc, QJsonObject{{QStringLiteral("config"), QStringLiteral("default")}, {QStringLiteral("files"), QJsonArray{file}}});
   }
-  QStringList paths(const QString& project) const {
-    return bridge.state()->value(QStringLiteral("space")).toMap().value(QStringLiteral("files")).toMap().value(project).toMap().value(QStringLiteral("paths")).toMap().keys();
+  bool open(const QString& path) {
+    return space()->handle(QStringLiteral("space.openFile"), QVariantMap{{QStringLiteral("projectId"), QStringLiteral("alpha")}, {QStringLiteral("relativePath"), path}});
   }
+  QString error() const { return bridge.state()->value(QStringLiteral("space")).toMap().value(QStringLiteral("error")).toString(); }
+  QVariantMap listed(const QString& project) const {
+    return bridge.state()->value(QStringLiteral("space")).toMap().value(QStringLiteral("files")).toMap().value(project).toMap();
+  }
+  QStringList paths(const QString& project) const { return listed(project).value(QStringLiteral("paths")).toMap().keys(); }
 };
 
 }  // namespace
@@ -68,6 +82,69 @@ private slots:
     QTRY_COMPARE(shell.held.size(), 1);
     shell.answer(shell.held.takeFirst(), QStringLiteral("alpha-2.md"));
     QTRY_COMPARE(shell.paths(QStringLiteral("alpha")), QStringList{QStringLiteral("alpha-2.md")});
+  }
+
+  // A refused list used to drop the project's entry, which the picker reads as
+  // still looking: it said "Looking for the files of …" for good. It now keeps
+  // the MC's error, and an empty answer stays an empty list with no error.
+  void aRefusedListIsNotAnEmptyOne() {
+    Shell shell;
+    QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
+
+    QVERIFY(shell.list(QStringLiteral("alpha")));
+    QTRY_COMPARE(shell.held.size(), 1);
+    shell.mc.refuse(shell.held.takeFirst(), QStringLiteral("The project could not be read."));
+    QTRY_COMPARE(shell.listed(QStringLiteral("alpha")).value(QStringLiteral("error")).toString(), QStringLiteral("The project could not be read."));
+    QCOMPARE(shell.paths(QStringLiteral("alpha")), QStringList{});
+
+    QVERIFY(shell.list(QStringLiteral("alpha")));
+    QTRY_COMPARE(shell.held.size(), 1);
+    shell.mc.reply(shell.held.takeFirst(), QJsonObject{{QStringLiteral("config"), QStringLiteral("default")}, {QStringLiteral("files"), QJsonArray{}}});
+    QTRY_COMPARE(shell.listed(QStringLiteral("alpha")).value(QStringLiteral("config")).toString(), QStringLiteral("default"));
+    QVERIFY(!shell.listed(QStringLiteral("alpha")).contains(QStringLiteral("error")));
+    QCOMPARE(shell.paths(QStringLiteral("alpha")), QStringList{});
+  }
+
+  // With no Space shown the file opens in the first the MC lists; with none listed
+  // the user is told to make one first.
+  void noSpaceAsksForOneFirst() {
+    Shell shell;
+    shell.mc.onRpc(QStringLiteral("space.list"), [&](const FakeMc::Rpc& rpc) { shell.mc.reply(rpc, QJsonObject{{QStringLiteral("spaces"), QJsonArray{}}}); });
+    QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
+
+    QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
+    QTRY_COMPARE(shell.error(), QStringLiteral("There is no Space to open the file in. Make a Space first, then open the file."));
+    QCOMPARE(shell.written, QStringList{});
+  }
+
+  // A list that failed is not an empty one: the user is told what the MC said.
+  void aFailedListSaysWhy() {
+    Shell shell;
+    shell.mc.onRpc(QStringLiteral("space.list"), [&](const FakeMc::Rpc& rpc) { shell.mc.refuse(rpc, QStringLiteral("The Spaces could not be read.")); });
+    QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
+
+    QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
+    QTRY_COMPARE(shell.error(), QStringLiteral("The Spaces could not be read."));
+  }
+
+  // The phone's Space screen opens the page `written` names when it changes, so
+  // opening the same file again has to say its page again.
+  void openingAFileAgainSaysItsPageAgain() {
+    Shell shell;
+    const QJsonObject personal{{QStringLiteral("id"), QStringLiteral("space-1")}, {QStringLiteral("name"), QStringLiteral("Personal")}};
+    shell.mc.onRpc(QStringLiteral("space.list"), [&](const FakeMc::Rpc& rpc) { shell.mc.reply(rpc, QJsonObject{{QStringLiteral("spaces"), QJsonArray{personal}}}); });
+    shell.mc.onRpc(QStringLiteral("space.page.openFile"), [&](const FakeMc::Rpc& rpc) {
+      shell.mc.reply(rpc, QJsonObject{{QStringLiteral("spaceId"), QStringLiteral("space-1")},
+                                      {QStringLiteral("page"), QJsonObject{{QStringLiteral("id"), QStringLiteral("page-1")}}},
+                                      {QStringLiteral("created"), false}});
+    });
+    QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
+
+    QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
+    QTRY_COMPARE(shell.written, QStringList{QStringLiteral("page-1")});
+    QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
+    QTRY_COMPARE(shell.written, (QStringList{QStringLiteral("page-1"), QString(), QStringLiteral("page-1")}));
+    QCOMPARE(shell.error(), QString());
   }
 };
 
