@@ -44,6 +44,11 @@ add_executable(tst_ReleaseNotes tst_ReleaseNotes.cpp ../../src/native/DesktopUpd
 target_include_directories(tst_ReleaseNotes PRIVATE ../../src/native)
 target_link_libraries(tst_ReleaseNotes PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME ReleaseNotes COMMAND tst_ReleaseNotes)
+# What the pull request thread dialog reads from a pasted reference.
+add_executable(tst_PullRequestReference tst_PullRequestReference.cpp ../../src/native/PullRequestReference.cpp)
+target_include_directories(tst_PullRequestReference PRIVATE ../../src/native)
+target_link_libraries(tst_PullRequestReference PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME PullRequestReference COMMAND tst_PullRequestReference)
 add_executable(tst_BackendProcess tst_BackendProcess.cpp ../../src/BackendProcess.cpp)
 target_include_directories(tst_BackendProcess PRIVATE ../../src)
 target_link_libraries(tst_BackendProcess PRIVATE Qt6::Core Qt6::Test)

@@ -284,7 +284,7 @@ Feature: Threads that work on or link pull requests
     When the user pastes "https://github.com/acme/shop/pull/42" to start a pull request thread
     Then the user sees the pull request's title and branches before choosing local or worktree
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A pull request can be pasted as its host's link or checkout command
     When the user pastes "<reference>" to start a pull request thread
     Then the pull request number is read as <number>
@@ -300,39 +300,39 @@ Feature: Threads that work on or link pull requests
       | tea pr checkout 7                                             | 7      |
       | az repos pr checkout --id 7                                   | 7      |
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request reference nobody can read is refused
     When the user types "see the tax change" to start a pull request thread
     Then the user is told "Use a pull request URL, checkout command, 123, or #123."
     And neither local nor worktree can be chosen
 
-  @backlog @desktop
+  @desktop
   Scenario: Clearing the reference asks for one
     Given the user typed "42" to start a pull request thread
     When the user clears the reference
     Then the user is told "Paste a pull request URL, checkout command, or enter 123 / #123."
 
-  @backlog @desktop
+  @desktop
   Scenario: Choosing waits until the pull request is resolved
     When the user types "42" to start a pull request thread
     Then the user is told "Resolving pull request..." until its title and branches arrive
     And neither local nor worktree can be chosen until then
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request that cannot be resolved says why
     Given the host answers that pull request 9999 does not exist
     When the user types "9999" to start a pull request thread
     Then the user is told the host's reason in the dialog
     And neither local nor worktree can be chosen
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request thread is not abandoned while it is prepared
     Given the user chose to start a thread on pull request 42 in a new worktree
     When the checkout is still being prepared
     Then the dialog says "Preparing worktree..." and cannot be cancelled
     And local and worktree cannot be chosen again
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A pull request thread that could not be prepared stays open with the reason
     Given the MC fails to prepare pull request 42 <how>
     When the user starts a thread on pull request 42 in a new worktree
