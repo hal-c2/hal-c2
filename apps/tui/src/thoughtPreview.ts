@@ -27,7 +27,7 @@ export function thoughtPreview(markdown: string, fallback: string): string {
     .replace(/^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/gm, "")
     .replace(/\|/g, " ")
     // Code spans are set aside so emphasis leaves `user_id_map` alone.
-    .replace(/(`+)([^`\n]*?)\1/g, (_, _ticks, code: string) => {
+    .replace(/(`+)([^\n]*?[^`\n])\1(?!`)/g, (_, _ticks, code: string) => {
       codes.push(code);
       return `\u0000${codes.length - 1}\u0000`;
     })

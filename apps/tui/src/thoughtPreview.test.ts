@@ -34,6 +34,7 @@ describe("thoughtPreview", () => {
     );
     expect(thoughtPreview("It is _done_ and __done__", "Thought")).toBe("It is done and done");
     expect(thoughtPreview("Use `a*b*c` or `**kwargs`", "Thought")).toBe("Use a*b*c or **kwargs");
+    expect(thoughtPreview("Quote ``a`b`` here", "Thought")).toBe("Quote a`b here");
   });
 
   it("falls back when there are no words", () => {
