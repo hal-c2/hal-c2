@@ -9,7 +9,7 @@ export function thoughtPreview(markdown: string, fallback: string): string {
   const codes: string[] = [];
   const words = markdown
     // Fenced code keeps its code, not its fences.
-    .replace(/^ {0,3}(`{3,}|~{3,})[^\n]*$/gm, "")
+    .replace(/^ {0,3}(`{3,}[^`\n]*|~{3,}[^\n]*)$/gm, "")
     // Link definitions and HTML say nothing.
     .replace(/^ {0,3}\[[^\]\n]+\]:[^\n]*$/gm, "")
     .replace(/<[^>\n]+>/g, "")
