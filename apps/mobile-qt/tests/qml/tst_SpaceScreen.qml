@@ -26,7 +26,7 @@ Item {
     }
 
     function block(id, text, more) {
-        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more ?? {});
+        return Object.assign({ id: id, kind: "paragraph", text: text, language: "", checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more ?? {});
     }
 
     function pageOf(id, more) {
@@ -1092,11 +1092,12 @@ Item {
             compare(rename.title, "Renamed");
         }
 
-        // A page open on a raw block that is one "mermaid" fence.
+        // A page open on a diagram as the MC imports a "mermaid" fence: a code
+        // block in "mermaid" holding the bare source (HalC2.Space.Markdown).
         function openDiagram(source) {
             Diagrams.reset();
-            const text = "```mermaid\n" + source + "\n```";
-            const screen = makeScreen({ blocks: [root.block("b1", text, { kind: "raw" })] });
+            const text = source;
+            const screen = makeScreen({ blocks: [root.block("b1", text, { kind: "code", language: "mermaid" })] });
             screen.openSpace("s1");
             screen.openPage("p1");
             tryVerify(() => findChild(screen, "spaceDiagram:" + text) !== null);
@@ -1138,7 +1139,7 @@ Item {
             findChild(page.screen, "spaceDiagramSource:" + page.text).clicked();
             const editor = findChild(page.screen, "spaceBlockEditor:" + page.text);
             editor.forceActiveFocus();
-            const ours = "```mermaid\n" + source + "\n  Pay --> Ship\n```";
+            const ours = source + "\n  Pay --> Ship";
             editor.text = ours;
             editor.focus = false;
             compare(dispatched("space.block.update")[0].text, ours);
@@ -1162,7 +1163,7 @@ Item {
             verify(editor.activeFocus);
 
             const theirs = source + "\n  Pay --> Ship";
-            Spaces.blocks.setProperty(0, "text", "```mermaid\n" + theirs + "\n```");
+            Spaces.blocks.setProperty(0, "text", theirs);
             Diagrams.answer(theirs, "dark", { status: "drawn", kind: "flowchart", url: "", width: 120, height: 60 });
             verify(editor.visible, "the source stays");
             verify(editor.activeFocus, "the user is still writing");
@@ -1178,6 +1179,36 @@ Item {
             verify(status.visible);
             compare(status.text, "Line 2: A bracket is opened and not closed.");
             verify(!findChild(page.screen, "spaceDiagramSource:" + page.text).visible, "nothing to switch to");
+        }
+
+        // A fence the MC keeps as written (indented, or with a space before its
+        // language) is a raw block, and still drawn.
+        function test_aMermaidFenceKeptAsWrittenIsDrawnToo() {
+            Diagrams.reset();
+            const spaced = "``` mermaid\nflowchart LR\n  Cart --> Pay\n```";
+            const indented = "  ~~~Mermaid\nsequenceDiagram\n  A->>B: hi\n  ~~~";
+            const screen = makeScreen({ blocks: [root.block("b1", spaced, { kind: "raw" }), root.block("b2", indented, { kind: "raw" })] });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            tryVerify(() => findChild(screen, "spaceDiagram:" + indented) !== null);
+            verify(findChild(screen, "spaceDiagram:" + spaced) !== null);
+            compare(Object.keys(Diagrams.asked).sort(), ["dark\nflowchart LR\n  Cart --> Pay", "dark\nsequenceDiagram\n  A->>B: hi"]);
+        }
+
+        // Code in another language, a fence among other text, and a table are
+        // shown as written.
+        function test_onlyAMermaidCodeBlockOrFenceIsADiagram() {
+            Diagrams.reset();
+            const blocks = [root.block("b1", "flowchart LR\n  A --> B", { kind: "code", language: "js" }),
+                            root.block("b2", "flowchart LR\n  A --> B", { kind: "code" }),
+                            root.block("b3", "```js\nflowchart LR\n```", { kind: "raw" }),
+                            root.block("b4", "Before\n```mermaid\nflowchart LR\n```", { kind: "raw" }),
+                            root.block("b5", "| a |\n| - |\n| 1 |", { kind: "table" })];
+            const screen = makeScreen({ blocks: blocks });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            tryVerify(() => findChild(screen, "spaceBlockEditor:" + blocks[4].text) !== null);
+            compare(Object.keys(Diagrams.asked).length, 0);
         }
 
         function test_whatWasWrittenOnASlideGoesToTheMcWhenTheEditorLosesFocus() {

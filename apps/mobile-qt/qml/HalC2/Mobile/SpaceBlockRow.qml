@@ -13,9 +13,9 @@ import HalC2.Bricks
 // have them. A chart is not written in: it is drawn, and asked for again from the menu.
 // A raw block is Markdown the page keeps as written: shown and edited as its source,
 // in a fixed-width face, line for line, scrolled sideways rather than wrapped. A table
-// and a code block show so too until they are drawn as such (#854). One that is a
-// single "mermaid" fence is drawn as its diagram instead, with its source a tap
-// away, and says under the source why when it can't be drawn.
+// and a code block show so too until they are drawn as such (#854). A "mermaid" code
+// block, or a raw block that is one "mermaid" fence, is drawn as its diagram instead,
+// with its source a tap away, and says under the source why when it can't be drawn.
 Rectangle {
     id: row
 
@@ -42,11 +42,15 @@ Rectangle {
     readonly property var chart: model.chart ?? ({})
     // A heading's level, 1 to 6.
     readonly property int level: model.level ?? 2
+    // A code block's language ("" for none).
+    readonly property string language: model.language ?? ""
     readonly property bool raw: kind === "raw" || kind === "table" || kind === "code"
     readonly property bool editing: editor.activeFocus
-    // The Mermaid source a raw block is, or "": drawn in place of the text until
-    // the user switches to the source, and what they write there once it is saved.
-    readonly property string diagramCode: raw ? mermaidOf(text) : ""
+    // The Mermaid source a "mermaid" code block holds, or a raw block's fence, or "":
+    // drawn in place of the text until the user switches to the source, and what
+    // they write there once it is saved.
+    readonly property string diagramCode: kind === "code" ? (language.toLowerCase() === "mermaid" ? text : "")
+                                        : kind === "raw" ? mermaidOf(text) : ""
     property bool diagramSource: false
     readonly property bool diagramShown: diagramCode.length > 0 && diagram.drawn && !diagramSource
 
