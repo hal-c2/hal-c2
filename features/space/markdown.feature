@@ -425,6 +425,81 @@ Feature: GitHub Markdown in a page
         """
 
     @mc
+    Scenario: A table's text rewritten in its own form keeps its spacing
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | Step | Owner |
+        | --- | --- |
+        | MC | Ada |
+        """
+      When the user changes the text of the table of "Plan" to:
+        """
+        | Step | Owner |
+        | --- | --- |
+        | MC | Barbara |
+        """
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner |
+        | --- | --- |
+        | MC | Barbara |
+        """
+
+    @mc
+    Scenario: A table's text rewritten another way is padded to its cells
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | Step | Owner |
+        | ---- | ----- |
+        | MC   | Ada   |
+        """
+      When the user changes the text of the table of "Plan" to:
+        """
+        Step | Owner
+        --- | ---:
+        MC | Barbara
+        """
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner   |
+        | ---- | ------: |
+        | MC   | Barbara |
+        """
+
+    @mc
+    Scenario: A table's text must be a table
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | Step |
+        | ---- |
+        | MC   |
+        """
+      When the user changes the text of the table of "Plan" to:
+        """
+        | Step |
+        | ---- |
+        | MC   |
+
+        Notes for later
+        """
+      Then the user is told "A table's text is a table"
+      And the table of "Plan" has the rows:
+        | Step |
+        | MC   |
+
+    @mc
     Scenario: A table written another way is kept as written
       Given the page "Plan" imported from:
         """

@@ -315,6 +315,34 @@ defmodule HalC2.SpaceMarkdownPropTest do
     end
   end
 
+  @table_lines [
+    "| a | b |",
+    "|---|---|",
+    "| --- | :-: |",
+    "|a\rb|c|",
+    "",
+    "Notes for later",
+    "| Step |",
+    "| --- |",
+    "a | b",
+    "--- | ---",
+    "| x \\| y |"
+  ]
+
+  property "text read as a table is a table a page accepts, every line of it a row",
+    numtests: HalC2.Prop.numtests(500) do
+    forall lines <- list(oneof([elements(@table_lines), utf8(6)])) do
+      case Table.read(lines) do
+        nil ->
+          true
+
+        read ->
+          Table.cast(Map.take(read, ~w(rows align widths ruleWidths tight))) == {:ok, read} and
+            length(read["rows"]) == length(lines) - 1
+      end
+    end
+  end
+
   # --- code ---------------------------------------------------------------------------
 
   @code_lines [

@@ -235,10 +235,10 @@ defmodule HalC2.Space.Blocks do
          "A table's text is a table: a header row, a row of ---, and rows of as many cells."}
 
       table ->
-        table =
+        {:ok, table} =
           if Table.markdown(table) == text,
-            do: table,
-            else: elem(Table.cast(Map.take(table, ~w(rows align))), 1)
+            do: {:ok, table},
+            else: Table.cast(Map.take(table, ~w(rows align)))
 
         {:ok, %{"table" => table, "text" => Table.markdown(table)}}
     end

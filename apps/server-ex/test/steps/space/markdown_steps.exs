@@ -143,6 +143,17 @@ defmodule HalC2.Steps.Space.Markdown do
     edit_table(context, title, %{"type" => "deleteColumn", "column" => last})
   end
 
+  step "the user changes the text of the table of {string} to:", %{args: [title]} = context do
+    payload = %{
+      "spaceId" => context.space,
+      "blockId" => table(context, title)["id"],
+      "text" => context.docstring
+    }
+
+    {reply, context} = World.call(context, "space.block.update", payload)
+    Map.put(context, :reply, reply)
+  end
+
   step "the user adds a table to {string} of the rows:", %{args: [title]} = context do
     payload = %{
       "spaceId" => context.space,
