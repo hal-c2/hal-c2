@@ -339,7 +339,16 @@ Feature: Reviewing working tree and branch changes
     Then nothing is opened because the file is not in the thread's folder
     And "packages/web/src/app.ts" opens as "src/app.ts"
 
+  # Legacy: apps/web/src/components/diffs/StyledDiffCodeView.tsx
   @backlog @desktop
+  Scenario: Each file of the diff on the desktop is coloured by its language
+    Given the diff changes "src/cart.ts" and "README.md"
+    When the user reviews the working tree
+    Then each file is shown with the highlighting of its language
+
+  # Waits for "Each file of the diff on the desktop is coloured by its language": the
+  # desktop's diff has no highlighter to fail yet.
+  @backlog @blocked @desktop
   Scenario: A diff is still shown when syntax highlighting cannot start
     Given the highlighter cannot be started
     When the user reviews the working tree
