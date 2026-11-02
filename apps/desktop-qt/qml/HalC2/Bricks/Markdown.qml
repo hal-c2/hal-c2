@@ -284,25 +284,30 @@ Item {
             acceptedModifiers: Qt.ControlModifier
             onTapped: eventPoint => richText.follow(eventPoint)
         }
+        // Offers what can be done with the link under a point.
+        function linkMenu(position, scenePosition) {
+            const link = linkAt(position.x, position.y);
+            if (link.length > 0) {
+                Shell.dispatch("link.menu", {
+                    url: link,
+                    x: scenePosition.x,
+                    y: scenePosition.y
+                });
+            }
+        }
+        // A finger follows a link with a tap, and holds it for its menu.
         TapHandler {
+            id: touchLink
             acceptedDevices: PointerDevice.TouchScreen
             onTapped: eventPoint => richText.follow(eventPoint)
+            onLongPressed: richText.linkMenu(touchLink.point.position, touchLink.point.scenePosition)
         }
         // The secondary button on a link offers what can be done with it
         // (a finger has no buttons, and would count as it).
         TapHandler {
             acceptedButtons: Qt.RightButton
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-            onTapped: eventPoint => {
-                const link = parent.linkAt(eventPoint.position.x, eventPoint.position.y);
-                if (link.length > 0) {
-                    Shell.dispatch("link.menu", {
-                        url: link,
-                        x: eventPoint.scenePosition.x,
-                        y: eventPoint.scenePosition.y
-                    });
-                }
-            }
+            onTapped: eventPoint => richText.linkMenu(eventPoint.position, eventPoint.scenePosition)
         }
         HoverHandler {
             cursorShape: parent.hoveredLink.startsWith("task:") ? Qt.PointingHandCursor : Qt.IBeamCursor
