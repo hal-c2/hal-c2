@@ -3058,7 +3058,7 @@ step(
   async (ctx: SpaceWorld, project: string, path: string) => {
     await startWithFiles(ctx);
     await press(ctx, "f");
-    await chooseIfAsked(ctx, "Add a page from the files of which project?", project);
+    await chooseIfAsked(ctx, "Edit a file of which project as a page?", project);
     await choose(ctx, path);
   },
 );
