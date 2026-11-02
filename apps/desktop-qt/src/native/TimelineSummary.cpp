@@ -7,6 +7,7 @@
 #include <QSet>
 
 #include <algorithm>
+#include <array>
 #include <optional>
 
 namespace timeline {
@@ -17,38 +18,129 @@ QString text(const QJsonObject& object, QLatin1StringView field) {
   return object.value(field).toString();
 }
 
-// The orchestration tools a
-// summary describes by what they did. The rest of HAL-C2's tools are counted
-// as tools used.
-const QHash<QString, QString>& orchestrationActions() {
-  static const QHash<QString, QString> actions{
-      {QStringLiteral("hal_c2_thread_send"), QStringLiteral("thread-send")},
-      {QStringLiteral("create_threads"), QStringLiteral("thread-create")},
-      {QStringLiteral("hal_c2_thread_start"), QStringLiteral("thread-create")},
-      {QStringLiteral("hal_c2_thread_launch"), QStringLiteral("thread-create")},
-      {QStringLiteral("delegate_task"), QStringLiteral("delegate")},
-      {QStringLiteral("hal_c2_thread_read"), QStringLiteral("thread-read")},
-      {QStringLiteral("hal_c2_thread_wait"), QStringLiteral("thread-wait")},
-  };
-  return actions;
+// One of HAL-C2's own MCP tools (halC2McpToolPresentation): what a summary
+// counts it as and what its row calls it.
+struct HalC2Tool {
+  QString action;
+  QString displayName;
+};
+
+const QHash<QString, HalC2Tool>& halC2Tools() {
+  // [action, detail] read "Delegate a child task"; a tool's summary action groups it.
+  static const QHash<QString, HalC2Tool> tools = [] {
+    const QList<std::array<const char*, 4>> inventory{
+        {"link_pull_request", "link-pr", "Link", "a pull request"},
+        {"unlink_pull_request", "unlink-pr", "Unlink", "a pull request"},
+        {"list_thread_pull_requests", "list-prs", "Check", "linked pull requests"},
+        {"orchestrator_capabilities", "capabilities", "Get", "orchestration capabilities"},
+        {"delegate_task", "delegate", "Delegate", "a child task"},
+        {"task_status", "task-status", "Get", "delegated task status"},
+        {"task_cancel", "task-cancel", "Cancel", "delegated task"},
+        {"schedule_task", "schedule-create", "Schedule", "a recurring task"},
+        {"list_scheduled_tasks", "schedule-list", "List", "scheduled tasks"},
+        {"update_scheduled_task", "schedule-update", "Update", "a scheduled task"},
+        {"delete_scheduled_task", "schedule-delete", "Delete", "a scheduled task"},
+        {"create_threads", "thread-create", "Create", "HAL-C2 threads"},
+        {"hal_c2_thread_start", "thread-create", "Start", "a HAL-C2 thread"},
+        {"hal_c2_thread_list", "thread-list", "List", "HAL-C2 threads"},
+        {"hal_c2_thread_read", "thread-read", "Read", "a HAL-C2 thread"},
+        {"hal_c2_thread_send", "thread-send", "Send", "to a HAL-C2 thread"},
+        {"hal_c2_thread_wait", "thread-wait", "Wait", "for a HAL-C2 thread"},
+        {"hal_c2_thread_interrupt", "thread-interrupt", "Interrupt", "a HAL-C2 thread"},
+        {"hal_c2_worktree_handoff", "worktree-handoff", "Hand off", "thread to a git worktree"},
+        {"hal_c2_worktree_status", "worktree-status", "Get", "thread worktree status"},
+        {"preview_status", "browser", "Get", "preview browser status"},
+        {"preview_open", "browser", "Open", "a page in the preview browser"},
+        {"preview_navigate", "browser", "Navigate", "the preview browser"},
+        {"preview_snapshot", "browser", "Snapshot", "the preview page"},
+        {"preview_click", "browser", "Click", "in the preview browser"},
+        {"preview_press", "browser", "Press", "a key in the preview browser"},
+        {"preview_type", "browser", "Type", "in the preview browser"},
+        {"preview_scroll", "browser", "Scroll", "the preview browser"},
+        {"preview_resize", "browser", "Resize", "the preview browser"},
+        {"preview_evaluate", "browser", "Evaluate", "script in the preview browser"},
+        {"preview_wait_for", "browser", "Wait", "for the preview page"},
+        {"preview_set_appearance", "browser", "Set", "preview browser appearance"},
+        {"preview_recording_start", "browser", "Start", "recording the preview browser"},
+        {"preview_recording_stop", "browser", "Stop", "recording the preview browser"},
+        {"device_list", "device", "List", "simulators and emulators"},
+        {"device_open", "device", "Open", "a device in the Device panel"},
+        {"device_screenshot", "device", "Take a screenshot of", "the device"},
+        {"device_close", "device", "Close", "a device"},
+        {"run_scheduled_task_now", "schedule-run", "Run", "a scheduled task"},
+        {"hal_c2_queue_list", "queue-list", "List", "queued messages"},
+        {"hal_c2_queue_read", "queue-read", "Read", "a queued message"},
+        {"hal_c2_queue_edit", "queue-edit", "Edit", "a queued message"},
+        {"hal_c2_queue_cancel", "queue-cancel", "Cancel", "a queued run"},
+        {"hal_c2_queue_reorder", "queue-reorder", "Reorder", "a queued run"},
+        {"hal_c2_queue_promote_to_steer", "queue-steer", "Steer with", "a queued message"},
+        {"hal_c2_pending_request_list", "question-list", "List", "pending questions"},
+        {"hal_c2_pending_request_read", "question-read", "Read", "pending questions"},
+        {"hal_c2_pending_request_respond", "question-respond", "Answer", "pending questions"},
+        {"hal_c2_thread_configuration", "thread-configuration", "Read", "thread configuration"},
+        {"hal_c2_thread_configure", "thread-configure", "Set", "thread model"},
+        {"hal_c2_thread_fork", "thread-fork", "Fork", "this thread"},
+        {"hal_c2_thread_merge_back", "thread-merge", "Merge", "thread context"},
+        {"hal_c2_thread_search", "thread-search", "Search", "thread content"},
+        {"hal_c2_thread_transfers", "thread-transfers", "Read", "thread transfers"},
+        {"hal_c2_thread_organize", "thread-organize", "Organize", "a thread"},
+        {"hal_c2_thread_update", "thread-update", "Update", "HAL-C2 thread metadata"},
+        {"hal_c2_worktree_list", "worktree-list", "List", "workspace branches"},
+        {"hal_c2_preview_list", "browser", "List", "preview tabs"},
+        {"hal_c2_preview_close", "browser", "Close", "a preview tab"},
+        {"hal_c2_environment_read", "environment-read", "Read", "environment preferences"},
+        {"hal_c2_environment_preferences_update", "environment-update", "Update", "environment preferences"},
+        {"hal_c2_thread_launch", "thread-create", "Launch", "a project thread"},
+        {"hal_c2_project_list", "project-list", "List", "projects"},
+        {"hal_c2_project_read", "project-read", "Read", "a project"},
+        {"hal_c2_project_create", "project-create", "Register", "a project"},
+        {"hal_c2_project_update", "project-update", "Update", "a project"},
+        {"hal_c2_project_delete", "project-delete", "Delete", "a project"},
+        {"hal_c2_project_clone", "project-clone", "Clone", "a repository"},
+        {"hal_c2_attachment_prepare_upload", "attachment-prepare", "Prepare", "an attachment upload"},
+        {"hal_c2_attachment_discard", "attachment-discard", "Discard", "a pending attachment"},
+        {"hal_c2_thread_send_attachments", "attachment-send", "Send", "attachments"},
+    };
+    QHash<QString, HalC2Tool> byName;
+    for (const auto& [name, action, verb, detail] : inventory) {
+      byName.insert(QString::fromLatin1(name), {QString::fromLatin1(action), QStringLiteral("%1 %2").arg(QLatin1String(verb), QLatin1String(detail))});
+    }
+    return byName;
+  }();
+  return tools;
 }
 
 // resolveHalC2McpToolName: agents prefix the HAL-C2 server's tools their own
-// way (`mcp__hal-c2__x`, `hal-c2.x`, a bare `x`).
-QString orchestrationAction(const QString& toolName) {
+// way (`mcp__hal-c2__x`, `hal-c2.x`, `hal-c2 · x`, a bare `x`). Only a name in
+// the inventory counts, and another server's same-named tool is not HAL-C2's.
+std::optional<HalC2Tool> halC2Tool(const QString& toolName) {
   static const QRegularExpression done(QStringLiteral("\\s+(?:complete|completed)\\s*$"),
                                        QRegularExpression::CaseInsensitiveOption);
-  QString label = toolName;
-  label = label.remove(done).trimmed();
   static const QRegularExpression mcp(QStringLiteral("^mcp__(.+?)__(.+)$"), QRegularExpression::CaseInsensitiveOption);
-  static const QSet<QString> servers{QStringLiteral("hal-c2"), QStringLiteral("hal_c2"), QStringLiteral("halc2")};
-  if (const auto match = mcp.match(label); match.hasMatch()) {
-    return servers.contains(match.captured(1).toLower()) ? orchestrationActions().value(match.captured(2)) : QString();
-  }
   static const QRegularExpression scoped(QStringLiteral("^hal[-_]?c2(?:[.:/]|\\s*·\\s*)(.+)$"),
                                          QRegularExpression::CaseInsensitiveOption);
-  if (const auto match = scoped.match(label); match.hasMatch()) return orchestrationActions().value(match.captured(1));
-  return orchestrationActions().value(label);
+  static const QRegularExpression prefixed(QStringLiteral("^(?:mcp[-_]{1,2})?hal[-_ ]?c2(?:__|[-_.:/ ])(.+)$"),
+                                           QRegularExpression::CaseInsensitiveOption);
+  static const QSet<QString> servers{QStringLiteral("hal-c2"), QStringLiteral("hal_c2"), QStringLiteral("halc2")};
+  const QString label = QString(toolName).remove(done).trimmed();
+  QString name = label;
+  if (const auto match = mcp.match(label); match.hasMatch()) {
+    if (!servers.contains(match.captured(1).toLower())) return std::nullopt;
+    name = match.captured(2);
+  } else if (const auto match = scoped.match(label); match.hasMatch()) {
+    name = match.captured(1);
+  } else if (!halC2Tools().contains(label)) {
+    // Bare names start with `hal_c2_` themselves: an exact match wins over the prefix.
+    name = prefixed.match(label).captured(1);
+  }
+  const auto tool = halC2Tools().constFind(name);
+  if (tool == halC2Tools().cend()) return std::nullopt;
+  return *tool;
+}
+
+QString orchestrationAction(const QString& toolName) {
+  const auto tool = halC2Tool(toolName);
+  return tool ? tool->action : QString();
 }
 
 // An MCP result as the provider adapters keep it: the data it carries and
@@ -154,6 +246,19 @@ QString orchestrationLabel(const QString& action, const QList<Call>& calls) {
   const auto phrase = [&](const QString& past, const QString& infinitive, const QString& object) {
     return QStringLiteral("%1 %2").arg(completed.isEmpty() ? QStringLiteral("Tried to ") + infinitive : past, object);
   };
+  // The ids the calls name under `key`, from their result or else their arguments.
+  const auto ids = [&](QLatin1StringView key) {
+    QList<std::optional<QString>> found;
+    for (const Call& call : selected) {
+      std::optional<QString> id = idOf(call.output.value(key));
+      if (!id) id = idOf(call.input.value(key));
+      found.append(id);
+    }
+    return found;
+  };
+  const auto entities = [&](QLatin1StringView key, const QString& noun) {
+    return quantity(countEntities(ids(key)), noun);
+  };
   QList<std::optional<QString>> threads;
   for (const Call& call : selected) {
     std::optional<QString> thread = idOf(call.output.value(QLatin1String("threadId")));
@@ -167,17 +272,18 @@ QString orchestrationLabel(const QString& action, const QList<Call>& calls) {
     for (const auto& id : threads) distinct.insert(*id);
     return int(distinct.size());
   };
-  const QString times = quantity(int(selected.size()), QStringLiteral("time"));
+  const int count = int(selected.size());
+  const QString times = quantity(count, QStringLiteral("time"));
 
   if (action == QLatin1String("thread-send")) {
     QList<std::optional<QString>> messageIds;
     for (const Call& call : selected) messageIds.append(idOf(call.output.value(QLatin1String("messageId"))));
     const int messages = countEntities(messageIds);
     if (!targetsKnown) return phrase(QStringLiteral("Sent"), QStringLiteral("send"), quantity(messages, QStringLiteral("message")));
-    const int count = distinctThreads();
-    const QString object = messages == count && messages > 1
-                               ? QStringLiteral("messages to %1").arg(quantity(count, QStringLiteral("thread")))
-                               : QStringLiteral("%1 to %2").arg(quantity(messages, QStringLiteral("message")), quantity(count, QStringLiteral("thread")));
+    const int targets = distinctThreads();
+    const QString object = messages == targets && messages > 1
+                               ? QStringLiteral("messages to %1").arg(quantity(targets, QStringLiteral("thread")))
+                               : QStringLiteral("%1 to %2").arg(quantity(messages, QStringLiteral("message")), quantity(targets, QStringLiteral("thread")));
     return phrase(QStringLiteral("Sent"), QStringLiteral("send"), object);
   }
   if (action == QLatin1String("thread-create")) {
@@ -200,19 +306,126 @@ QString orchestrationLabel(const QString& action, const QList<Call>& calls) {
     return known ? QStringLiteral("Created %1").arg(quantity(int(created.size()), QStringLiteral("thread")))
                  : QStringLiteral("Requested thread creation %1").arg(times);
   }
-  if (action == QLatin1String("delegate")) {
-    QList<std::optional<QString>> tasks;
-    for (const Call& call : selected) {
-      std::optional<QString> task = idOf(call.output.value(QLatin1String("taskId")));
-      if (!task) task = idOf(call.input.value(QLatin1String("taskId")));
-      tasks.append(task);
-    }
-    return phrase(QStringLiteral("Delegated"), QStringLiteral("delegate"), quantity(countEntities(tasks), QStringLiteral("task")));
+  if (action == QLatin1String("thread-read") || action == QLatin1String("thread-wait")) {
+    const QString targets = targetsKnown ? quantity(distinctThreads(), QStringLiteral("thread")) : QStringLiteral("threads %1").arg(times);
+    return action == QLatin1String("thread-read") ? phrase(QStringLiteral("Read"), QStringLiteral("read"), targets)
+                                                  : phrase(QStringLiteral("Waited on"), QStringLiteral("wait on"), targets);
   }
-  // thread-read and thread-wait.
-  const QString targets = targetsKnown ? quantity(distinctThreads(), QStringLiteral("thread")) : QStringLiteral("threads %1").arg(times);
-  return action == QLatin1String("thread-read") ? phrase(QStringLiteral("Read"), QStringLiteral("read"), targets)
-                                                : phrase(QStringLiteral("Waited on"), QStringLiteral("wait on"), targets);
+  if (action == QLatin1String("project-read") || action == QLatin1String("project-create") ||
+      action == QLatin1String("project-update") || action == QLatin1String("project-delete")) {
+    QList<std::optional<QString>> projects;
+    for (const Call& call : selected) {
+      std::optional<QString> project = idOf(call.output.value(QLatin1String("id")));
+      if (!project) project = idOf(call.output.value(QLatin1String("projectId")));
+      if (!project) project = idOf(call.input.value(QLatin1String("projectId")));
+      projects.append(project);
+    }
+    const QString object = quantity(countEntities(projects), QStringLiteral("project"));
+    if (action == QLatin1String("project-read")) return phrase(QStringLiteral("Read"), QStringLiteral("read"), object);
+    if (action == QLatin1String("project-create")) return phrase(QStringLiteral("Registered"), QStringLiteral("register"), object);
+    if (action == QLatin1String("project-update")) return phrase(QStringLiteral("Updated"), QStringLiteral("update"), object);
+    return phrase(QStringLiteral("Deleted"), QStringLiteral("delete"), object);
+  }
+  if (action == QLatin1String("attachment-send")) {
+    // A message can carry several attachments; retries count by the message.
+    QHash<QString, Call> messages;
+    for (int index = 0; index < count; ++index) {
+      const Call& call = selected.at(index);
+      messages.insert(idOf(call.output.value(QLatin1String("messageId"))).value_or(QStringLiteral("call-%1").arg(index)), call);
+    }
+    int attachments = 0;
+    bool countsKnown = true;
+    for (const Call& call : std::as_const(messages)) {
+      const QJsonArray listed = call.input.value(QLatin1String("attachments")).toArray();
+      attachments += int(listed.size());
+      countsKnown = countsKnown && !listed.isEmpty();
+    }
+    const QString targets = targetsKnown ? QStringLiteral(" to %1").arg(quantity(distinctThreads(), QStringLiteral("thread"))) : QString();
+    return phrase(QStringLiteral("Sent"), QStringLiteral("send"),
+                  countsKnown ? quantity(attachments, QStringLiteral("attachment")) + targets
+                              : QStringLiteral("attachments%1 %2").arg(targets, times));
+  }
+  if (action == QLatin1String("project-clone")) {
+    const int repositories = countEntities(ids(QLatin1String("cwd")));
+    return phrase(QStringLiteral("Cloned"), QStringLiteral("clone"),
+                  QStringLiteral("%1 %2").arg(repositories).arg(repositories == 1 ? QStringLiteral("repository") : QStringLiteral("repositories")));
+  }
+  if (action == QLatin1String("list-prs")) {
+    return phrase(QStringLiteral("Checked"), QStringLiteral("check"),
+                  count == 1 ? QStringLiteral("linked pull requests") : QStringLiteral("linked pull requests %1").arg(times));
+  }
+
+  // The rest name what they acted on by id, by count, or by how often.
+  struct ById {
+    const char* key;
+    const char* past;
+    const char* infinitive;
+    const char* noun;
+  };
+  static const QHash<QString, ById> byId{
+      {QStringLiteral("delegate"), {"taskId", "Delegated", "delegate", "task"}},
+      {QStringLiteral("task-cancel"), {"taskId", "Requested cancellation of", "cancel", "task"}},
+      {QStringLiteral("schedule-create"), {"scheduledTaskId", "Scheduled", "schedule", "task"}},
+      {QStringLiteral("schedule-update"), {"scheduledTaskId", "Updated", "update", "scheduled task"}},
+      // A delete can report deleted:false; it was still asked for.
+      {QStringLiteral("schedule-delete"), {"scheduledTaskId", "Requested deletion of", "delete", "scheduled task"}},
+      {QStringLiteral("queue-read"), {"queuedRunId", "Read", "read", "queued message"}},
+      {QStringLiteral("queue-edit"), {"queuedRunId", "Edited", "edit", "queued message"}},
+      {QStringLiteral("queue-cancel"), {"queuedRunId", "Requested cancellation of", "cancel", "queued run"}},
+      {QStringLiteral("queue-reorder"), {"queuedRunId", "Reordered", "reorder", "queued run"}},
+      {QStringLiteral("queue-steer"), {"queuedRunId", "Requested steering with", "steer with", "queued message"}},
+      {QStringLiteral("question-read"), {"requestId", "Read", "read", "pending question request"}},
+      {QStringLiteral("question-respond"), {"requestId", "Answered", "answer", "pending question request"}},
+      {QStringLiteral("worktree-handoff"), {"worktreePath", "Handed off to", "hand off to", "worktree"}},
+      {QStringLiteral("attachment-prepare"), {"attachmentId", "Prepared", "prepare", "attachment upload"}},
+      {QStringLiteral("attachment-discard"), {"attachmentId", "Discarded", "discard", "pending attachment"}},
+  };
+  if (const auto found = byId.constFind(action); found != byId.cend()) {
+    return phrase(QLatin1String(found->past), QLatin1String(found->infinitive),
+                  entities(QLatin1StringView(found->key), QLatin1String(found->noun)));
+  }
+  if (action == QLatin1String("thread-interrupt") || action == QLatin1String("thread-update")) {
+    const QString object = quantity(countEntities(threads), QStringLiteral("thread"));
+    return action == QLatin1String("thread-interrupt") ? phrase(QStringLiteral("Requested interrupts for"), QStringLiteral("interrupt"), object)
+                                                       : phrase(QStringLiteral("Updated"), QStringLiteral("update"), object);
+  }
+  struct Counted {
+    const char* past;
+    const char* infinitive;
+    const char* noun;
+  };
+  static const QHash<QString, Counted> counted{
+      {QStringLiteral("schedule-run"), {"Requested", "request", "scheduled task run"}},
+      {QStringLiteral("thread-fork"), {"Requested", "request", "thread fork"}},
+      {QStringLiteral("thread-merge"), {"Requested", "request", "context merge"}},
+      {QStringLiteral("link-pr"), {"Linked", "link", "pull request"}},
+      {QStringLiteral("unlink-pr"), {"Unlinked", "unlink", "pull request"}},
+  };
+  if (const auto found = counted.constFind(action); found != counted.cend()) {
+    return phrase(QLatin1String(found->past), QLatin1String(found->infinitive), quantity(count, QLatin1String(found->noun)));
+  }
+  static const QHash<QString, Counted> repeated{
+      {QStringLiteral("thread-list"), {"Listed", "list", "threads"}},
+      {QStringLiteral("task-status"), {"Checked", "check", "task status"}},
+      {QStringLiteral("schedule-list"), {"Listed", "list", "scheduled tasks"}},
+      {QStringLiteral("thread-configuration"), {"Checked", "check", "thread configuration"}},
+      {QStringLiteral("thread-configure"), {"Set", "set", "thread model"}},
+      {QStringLiteral("thread-search"), {"Searched", "search", "threads"}},
+      {QStringLiteral("thread-transfers"), {"Checked", "check", "thread transfers"}},
+      {QStringLiteral("thread-organize"), {"Organized", "organize", "threads"}},
+      {QStringLiteral("queue-list"), {"Listed", "list", "queued messages"}},
+      {QStringLiteral("question-list"), {"Listed", "list", "pending questions"}},
+      {QStringLiteral("worktree-list"), {"Listed", "list", "workspace branches"}},
+      {QStringLiteral("worktree-status"), {"Checked", "check", "worktree status"}},
+      {QStringLiteral("project-list"), {"Listed", "list", "projects"}},
+      {QStringLiteral("environment-read"), {"Checked", "check", "environment preferences"}},
+      {QStringLiteral("environment-update"), {"Updated", "update", "environment preferences"}},
+      {QStringLiteral("browser"), {"Used", "use", "browser"}},
+      {QStringLiteral("device"), {"Used", "use", "device controls"}},
+      {QStringLiteral("capabilities"), {"Checked", "check", "orchestration capabilities"}},
+  };
+  const Counted done = repeated.value(action, {"Used", "use", "HAL-C2 tools"});
+  return phrase(QLatin1String(done.past), QLatin1String(done.infinitive), QStringLiteral("%1 %2").arg(QLatin1String(done.noun), times));
 }
 
 // toolGroupAction: what kind of work a call was.
@@ -259,10 +472,25 @@ QString actionLabel(const QString& action, int count) {
 
 // summaryActionPriority: what changed something comes before what only looked.
 int priority(const QString& action) {
-  static const QSet<QString> first{QStringLiteral("command"), QStringLiteral("edit"), QStringLiteral("delegate"),
-                                   QStringLiteral("thread-create"), QStringLiteral("thread-send")};
+  static const QSet<QString> first{
+      QStringLiteral("command"),          QStringLiteral("edit"),               QStringLiteral("delegate"),
+      QStringLiteral("task-cancel"),      QStringLiteral("thread-create"),      QStringLiteral("thread-send"),
+      QStringLiteral("thread-interrupt"), QStringLiteral("schedule-create"),    QStringLiteral("schedule-update"),
+      QStringLiteral("schedule-delete"),  QStringLiteral("schedule-run"),       QStringLiteral("thread-configure"),
+      QStringLiteral("thread-fork"),      QStringLiteral("thread-merge"),       QStringLiteral("thread-organize"),
+      QStringLiteral("thread-update"),    QStringLiteral("queue-edit"),         QStringLiteral("queue-cancel"),
+      QStringLiteral("queue-reorder"),    QStringLiteral("queue-steer"),        QStringLiteral("question-respond"),
+      QStringLiteral("worktree-handoff"), QStringLiteral("project-create"),     QStringLiteral("project-update"),
+      QStringLiteral("project-delete"),   QStringLiteral("project-clone"),      QStringLiteral("environment-update"),
+      QStringLiteral("attachment-prepare"), QStringLiteral("attachment-discard"), QStringLiteral("attachment-send")};
   if (first.contains(action)) return 0;
   return action == QLatin1String("other") || action == QLatin1String("update") ? 2 : 1;
+}
+
+// "Chrome", "Chrome and Slack", "Chrome, Slack, and Linear".
+QString listed(const QStringList& names) {
+  if (names.size() < 3) return names.join(QStringLiteral(" and "));
+  return names.mid(0, names.size() - 1).join(QStringLiteral(", ")) + QStringLiteral(", and ") + names.last();
 }
 
 }  // namespace
@@ -303,10 +531,27 @@ GroupSummary summarize(const QList<QJsonObject>& all) {
     QList<QJsonObject> items;
   };
   QList<Group> groups;
+  // Calls through a browser, the computer or an integration the MC named
+  // (`toolSource`) are summed up by what they went through.
+  QStringList sourceKeys;
+  QStringList sourceNames;
+  bool integrations = true;
+  int sourced = 0;
   for (const QJsonObject& item : std::as_const(items)) {
     const QString orchestration = text(item, QLatin1String("type")) == QLatin1String("dynamic_tool")
                                       ? orchestrationAction(text(item, QLatin1String("toolName")))
                                       : QString();
+    const QJsonObject source = item.value(QLatin1String("toolSource")).toObject();
+    if (orchestration.isEmpty() && !source.isEmpty()) {
+      ++sourced;
+      const QString sourceKey = text(source, QLatin1String("key"));
+      if (!sourceKeys.contains(sourceKey)) {
+        sourceKeys.append(sourceKey);
+        sourceNames.append(text(source, QLatin1String("name")));
+        integrations = integrations && text(source, QLatin1String("kind")) == QLatin1String("integration");
+      }
+      continue;
+    }
     const QString key = orchestration.isEmpty() ? actionOf(item) : orchestration;
     auto group = std::find_if(groups.begin(), groups.end(), [&](const Group& candidate) { return candidate.key == key; });
     if (group == groups.end()) {
@@ -360,7 +605,12 @@ GroupSummary summarize(const QList<QJsonObject>& all) {
   std::sort(selected.begin(), selected.end(), [](const Named& a, const Named& b) { return a.index < b.index; });
 
   QStringList labels;
-  int counted = 0;
+  int counted = sourced;
+  if (!sourceNames.isEmpty()) {
+    labels.append(QStringLiteral("Used ") + listed(sourceNames) +
+                  (integrations ? sourceNames.size() == 1 ? QStringLiteral(" integration") : QStringLiteral(" integrations")
+                                : QString()));
+  }
   for (const Named& summary : std::as_const(selected)) {
     labels.append(summary.label);
     counted += summary.count;
@@ -369,13 +619,7 @@ GroupSummary summarize(const QList<QJsonObject>& all) {
     labels.append(QStringLiteral("Performed %1 other %2").arg(remaining).arg(remaining == 1 ? QStringLiteral("action") : QStringLiteral("actions")));
   }
   for (qsizetype i = 1; i < labels.size(); ++i) labels[i][0] = labels[i].at(0).toLower();
-  QString sentence;
-  if (labels.size() < 3) {
-    sentence = labels.join(QStringLiteral(" and "));
-  } else {
-    sentence = labels.mid(0, labels.size() - 1).join(QStringLiteral(", ")) + QStringLiteral(", and ") + labels.last();
-  }
-  return {sentence, std::any_of(named.cbegin(), named.cend(), [](const Named& summary) { return summary.failed; })};
+  return {listed(labels), std::any_of(named.cbegin(), named.cend(), [](const Named& summary) { return summary.failed; })};
 }
 
 QString plainDetail(const QString& markdown) {
@@ -401,6 +645,11 @@ QString subagentDetail(bool settled, const QString& progress, const QString& res
   const QString second = settled ? progress.trimmed() : result.trimmed();
   const QString raw = first.isEmpty() ? second : first;
   return raw.isEmpty() || placeholder.match(raw).hasMatch() ? QString() : plainDetail(raw);
+}
+
+QString halC2ToolDisplayName(const QString& toolName) {
+  const std::optional<HalC2Tool> tool = halC2Tool(toolName);
+  return tool ? tool->displayName : QString();
 }
 
 QString commandDisplayText(const QString& command) {

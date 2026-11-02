@@ -98,13 +98,13 @@ Feature: Tool calls and file changes
       | one pull request unlinked                      | Unlinked 1 pull request             |
       | two checks of the linked pull requests         | Checked linked pull requests 2 times |
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Reasoning is left out of a group's counts
     Given the activity group holds two thoughts and one command
     When the user reads the activity group
     Then it reads "Ran 1 command"
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: A group of only reasoning reads as a thought
     Given the activity group holds <thoughts>
     When the user reads the activity group
@@ -115,13 +115,13 @@ Feature: Tool calls and file changes
       | one thought    | Thought       |
       | three thoughts | Thought (×3)  |
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Calls through a named integration are summarised by its name
     Given the activity group holds two calls through the "Chrome" integration and one command
     When the user reads the activity group
     Then it reads "Used Chrome integration and ran 1 command"
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: Several integrations are named in a list
     Given the activity group holds calls through <sources>
     When the user reads the activity group
@@ -133,7 +133,7 @@ Feature: Tool calls and file changes
       | the "Chrome", "Slack" and "Linear" integrations | Used Chrome, Slack, and Linear integrations |
       | the built-in browser and computer controls      | Used Browser and Computer Use            |
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: Calls a summary leaves out are counted
     Given the activity group holds commands, file changes and four web searches
     When the user reads the activity group
@@ -162,7 +162,7 @@ Feature: Tool calls and file changes
       | two attachments sent to one thread                      | Sent 2 attachments to 1 thread           |
 
   # Legacy: packages/client-runtime/src/halC2ToolSummary.ts (phrase: "Tried to …")
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: A summary of calls that all failed says what the agent tried
     Given the activity group holds two attempts to send a message that both failed
     When the user reads the activity group
@@ -170,7 +170,7 @@ Feature: Tool calls and file changes
     And the group is marked as having a failure
 
   # Legacy: packages/client-runtime/src/halC2ToolSummary.ts (readResult, halC2ToolResultIndicatesFailure)
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: A HAL-C2 tool call that answered with an error counts as failed though the provider finished it
     Given the provider reported a HAL-C2 tool call as completed
     And the tool's answer says it is an error
@@ -178,7 +178,7 @@ Feature: Tool calls and file changes
     Then the call is shown as failed
 
   # Legacy: packages/shared/src/halC2McpToolPresentation.ts (displayName per tool)
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: A call to one of HAL-C2's own tools is named for what it does
     Given the agent called HAL-C2's "<tool>" tool
     Then the call reads "<label>"
@@ -195,7 +195,7 @@ Feature: Tool calls and file changes
       | device_screenshot       | Take a screenshot of the device        |
 
   # Legacy: packages/shared/src/halC2McpToolPresentation.ts (resolveHalC2McpToolName: provider prefixes, "completed" suffix)
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: HAL-C2's own tools are recognised however the provider writes their names
     Given the agent called HAL-C2's thread-reading tool and the provider named it "<name>"
     Then the call reads "Read a HAL-C2 thread"
@@ -211,13 +211,13 @@ Feature: Tool calls and file changes
       | hal_c2_thread_read completed      |
 
   # Legacy: packages/shared/src/halC2McpToolPresentation.ts (a tool of another server is not claimed)
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: A tool of another server with the same name is not shown as HAL-C2's
     Given the agent called a tool named "mcp__other-server__hal_c2_thread_read"
     Then the call is shown as an ordinary tool call
     And it does not carry HAL-C2's name for the tool
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: A group with a failed call is marked as having a failure
     Given the activity group holds a command that exited with a failure
     When the user reads the activity group
@@ -225,7 +225,7 @@ Feature: Tool calls and file changes
 
   # Legacy: packages/shared/src/toolOutput.ts (toolOutputIndicatesFailure),
   # packages/client-runtime/src/work-log/presentation.ts, apps/server/src/orchestration-v2/WireProjection.ts
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: A command the provider called finished is shown as failed when its output says it failed
     Given the provider reported a command as completed
     And the command's output says <output>
@@ -239,7 +239,7 @@ Feature: Tool calls and file changes
       | "exited with exit code 1"                           |
       | "Cannot find path 'C:\x' because it does not exist" |
 
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: A command whose output merely mentions a zero exit code stays a success
     Given the provider reported a command as completed
     And the command's output says "exited with exit code 0"
@@ -544,7 +544,7 @@ Feature: Tool calls and file changes
       | its latest tool call succeeded and none followed | what that call did               |
 
   # Legacy: packages/client-runtime/src/work-log/commandLabel.ts (commandProgramName)
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: A command is named by the program it runs, through the shells and set-up around it
     Given the agent's latest command is <command>
     When it finishes
@@ -562,7 +562,7 @@ Feature: Tool calls and file changes
       | "pwsh -NoProfile -Command \"Set-Location C:\\work; pnpm test\"" | pnpm |
 
   # Legacy: packages/client-runtime/src/work-log/commandLabel.ts (commandProgramName falls back)
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: A command with no program to name is called "command"
     Given the agent's latest command is <command>
     When it finishes
@@ -577,7 +577,7 @@ Feature: Tool calls and file changes
 
   # Legacy: apps/web/src/components/chat/MessagesTimeline.logic.ts (liveWorkEntryLabel),
   # apps/mobile/src/lib/threadActivity.ts
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: The live row's verb follows how the command ended
     Given the agent's latest command is "npm test"
     When the command <ending>
@@ -592,7 +592,7 @@ Feature: Tool calls and file changes
       | is stopped                  | Stopped npm    |
 
   # Legacy: packages/client-runtime/src/work-log/commandLabel.ts (commandDisplayText)
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: A command is shown without the shell the provider wrapped it in
     Given the agent ran <command>
     When the user reads the activity group
@@ -608,7 +608,7 @@ Feature: Tool calls and file changes
       | "zsh -lc 'pwd'; git status"          | "zsh -lc 'pwd'; git status"      |
 
   # Legacy: packages/client-runtime/src/work-log/commandLabel.ts (commandDisplayText keeps the original for details)
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The command as the provider ran it stays available in the call's details
     Given the agent ran "/bin/zsh -lc 'git diff --stat'"
     When the user opens the call's details
