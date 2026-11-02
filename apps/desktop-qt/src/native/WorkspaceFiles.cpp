@@ -711,7 +711,8 @@ QString WorkspaceFiles::renderKind() const {
       {QStringLiteral("markdown"), QStringLiteral("markdown")}, {QStringLiteral("mdown"), QStringLiteral("markdown")},
       {QStringLiteral("mkd"), QStringLiteral("markdown")},  {QStringLiteral("csv"), QStringLiteral("csv")},
       {QStringLiteral("tsv"), QStringLiteral("csv")},       {QStringLiteral("html"), QStringLiteral("html")},
-      {QStringLiteral("htm"), QStringLiteral("html")},
+      {QStringLiteral("htm"), QStringLiteral("html")},       {QStringLiteral("mmd"), QStringLiteral("mermaid")},
+      {QStringLiteral("mermaid"), QStringLiteral("mermaid")},
   };
   return m_fileStatus == QLatin1String("ready") ? kinds.value(extensionOf(m_openPath)) : QString();
 }
@@ -763,6 +764,15 @@ void WorkspaceFiles::setSourceKinds(const QStringList& kinds) {
 QString WorkspaceFiles::renderedText() const {
   const QString kind = renderKind();
   if (kind == QLatin1String("csv")) return tableMarkdown(m_text, previewDelimiter(m_openPath));
+  if (kind == QLatin1String("mermaid")) {
+    // The whole file is one diagram: a "mermaid" block, fenced past any run of
+    // backticks in it.
+    static const QRegularExpression ticks(QStringLiteral("`+"));
+    qsizetype longest = 2;
+    for (auto it = ticks.globalMatch(m_text); it.hasNext();) longest = std::max(longest, it.next().capturedLength());
+    const QString fence(longest + 1, QLatin1Char('`'));
+    return fence + QStringLiteral("mermaid\n") + m_text + (m_text.endsWith(QLatin1Char('\n')) ? QString() : QStringLiteral("\n")) + fence + QLatin1Char('\n');
+  }
   if (kind != QLatin1String("markdown")) return m_text;
   // Each task's box becomes a link the rendered view answers with toggleTask.
   QString out = m_text;

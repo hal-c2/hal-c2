@@ -8,8 +8,9 @@ import HalC2.Shell
 // written when the user leaves it or presses Return, a checklist item's tick,
 // a callout's tint, a subpage link that opens the page, an image above its
 // caption, a chart drawn from its description, what a page's update wrote (Markdown
-// nobody edits by hand), and the block's own actions (comment, add a block below,
-// ask again for a chart, move up or down, delete).
+// nobody edits by hand), a Mermaid diagram drawn from a raw block's source, and the
+// block's own actions (comment, add a block below, ask again for a chart, switch a
+// diagram to its source, move up or down, delete).
 Item {
     id: block
 
@@ -39,10 +40,22 @@ Item {
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color info: Theme.palette.color("info", "#3b82f6")
     readonly property bool editing: editor.activeFocus
+    // A raw block that is one "mermaid" fence is drawn in place of its text,
+    // until the user switches to the source; what they write there is drawn
+    // once it is saved.
+    readonly property string diagramCode: block.kind === "raw" ? block.mermaidOf(block.text) : ""
+    property bool diagramSource: false
+    readonly property bool diagramShown: diagramCode.length > 0 && diagram.drawn && !diagramSource
 
     signal commentRequested(string blockId)
     signal addBelowRequested(string blockId)
     signal askAgainRequested(string blockId, string request)
+
+    // The source of the one fenced "mermaid" block `text` is, or "".
+    function mermaidOf(text) {
+        const fence = /^ {0,3}(`{3,}|~{3,})[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)\r?\n {0,3}\1[`~]*[ \t]*(?:\r?\n)?$/i.exec(text);
+        return fence ? fence[2] : "";
+    }
 
     // Writes what the user typed, if it differs from the block's text.
     function commit() {
@@ -52,12 +65,13 @@ Item {
     }
 
     objectName: "spaceBlock:" + text
-    implicitHeight: Math.max(row.implicitHeight, 28) + (block.kind === "heading" ? 10 : 4) + (picture.visible ? picture.height + 6 : 0)
+    implicitHeight: Math.max(row.implicitHeight, 28) + (block.kind === "heading" ? 10 : 4) + (picture.visible ? picture.height + 6 : 0) + diagramNote.height
 
     // The editor follows the block while the user is not writing in it.
     onTextChanged: {
         if (!editor.activeFocus)
             editor.text = block.text;
+        block.diagramSource = false;
     }
 
     HoverHandler {
@@ -90,13 +104,28 @@ Item {
         readOnly: block.readOnly
     }
 
+    // Why the diagram is not drawn (yet), under its source.
+    MermaidDiagram {
+        id: diagramNote
+
+        objectName: "spaceDiagramNote:" + block.text
+        anchors.top: row.bottom
+        anchors.left: row.left
+        anchors.right: row.right
+        height: implicitHeight
+        active: block.diagramCode.length > 0
+        code: block.diagramCode
+        showPicture: false
+        padding: 0
+    }
+
     RowLayout {
         id: row
 
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        anchors.verticalCenterOffset: picture.visible ? (picture.height + 6) / 2 : 0
+        anchors.verticalCenterOffset: (picture.visible ? (picture.height + 6) / 2 : 0) - diagramNote.height / 2
         anchors.leftMargin: block.kind === "callout" ? 10 : 0
         spacing: 8
 
@@ -160,12 +189,25 @@ Item {
             }
         }
 
+        MermaidDiagram {
+            id: diagram
+
+            objectName: "spaceDiagram:" + block.text
+            Layout.fillWidth: true
+            Layout.preferredHeight: implicitHeight
+            visible: block.diagramShown
+            active: block.diagramCode.length > 0
+            code: block.diagramCode
+            showNote: false
+            padding: 0
+        }
+
         TextEdit {
             id: editor
 
             objectName: "spaceBlockEditor:" + block.text
             Layout.fillWidth: true
-            visible: block.kind !== "subpage_link" && block.kind !== "chart" && block.kind !== "generated"
+            visible: block.kind !== "subpage_link" && block.kind !== "chart" && block.kind !== "generated" && !block.diagramShown
             readOnly: block.readOnly
             wrapMode: TextEdit.Wrap
             selectByMouse: true
@@ -228,7 +270,7 @@ Item {
         }
 
         RowLayout {
-            Layout.alignment: block.kind === "chart" ? Qt.AlignTop : Qt.AlignVCenter
+            Layout.alignment: block.kind === "chart" || block.diagramShown ? Qt.AlignTop : Qt.AlignVCenter
             spacing: 0
             // Kept in the layout so the text does not reflow on hover.
             opacity: hover.hovered || block.editing || block.openComments > 0 ? 1 : 0
@@ -265,6 +307,18 @@ Item {
                 toolTip: qsTr("Ask again")
                 visible: block.kind === "chart" && !block.readOnly
                 onClicked: block.askAgainRequested(block.blockId, block.chart.request ?? "")
+            }
+
+            ShellButton {
+                objectName: "spaceDiagramSource:" + block.text
+                subtle: true
+                iconName: block.diagramSource ? "image" : "code"
+                implicitHeight: 26
+                implicitWidth: 26
+                Accessible.name: block.diagramSource ? qsTr("Show the diagram") : qsTr("Show the source")
+                toolTip: Accessible.name
+                visible: block.diagramCode.length > 0 && diagram.drawn
+                onClicked: block.diagramSource = !block.diagramSource
             }
 
             ShellButton {
