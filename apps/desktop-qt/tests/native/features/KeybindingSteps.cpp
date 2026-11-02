@@ -251,6 +251,10 @@ void pressSequence(World& world, const QString& sequence) {
 
 }  // namespace
 
+void bindKey(World& world, const QString& key, const QString& command) {
+  addRule(world, key, command);
+}
+
 bool sendKey(World& world, QEvent::Type type, int key, Qt::KeyboardModifiers modifiers, bool autoRepeat) {
   KeyWindow* window = world.mc.part<KeyTarget>().window.get();
   window->reached = false;

@@ -557,7 +557,9 @@ defmodule HalC2.SourceControl.Forgejo do
          token when is_binary(token) <-
            get_in(keys, ["hosts", target.login, "token"]) ||
              {:error, {:unauthenticated, "fj has no credentials for this server."}} do
-      request(cwd, target.base_url, token, path, method, body)
+      # `HAL_C2_FORGEJO_API_BASE_URL` stands in for the server, as Bitbucket's does.
+      base_url = System.get_env("HAL_C2_FORGEJO_API_BASE_URL") || target.base_url
+      request(cwd, base_url, token, path, method, body)
     end
   end
 

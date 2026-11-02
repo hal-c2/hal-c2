@@ -6,19 +6,25 @@
 // did or did not get: each reaches the thread once or comes back to its draft,
 // unless a newer user message is in the thread by then. A model of another
 // provider than the thread's moves the thread to it before its message.
+// A Space page's prompt keeps a draft of its own: plain words write a block,
+// and words starting with @agent ask an agent, which the MC takes, refuses or
+// holds; a refused ask keeps every word and image.
 
 #include <QBuffer>
 #include <QImage>
+#include <QRegularExpression>
 
 #include "ComposerController.h"
 #include "DraftController.h"
 #include "FakeMc.h"
 #include "McClient.h"
+#include "NavigationController.h"
 #include "NativeShell.h"
 #include "Prop.h"
 #include "ShellBridge.h"
 #include "SettingsController.h"
 #include "ShellStore.h"
+#include "SpaceController.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
 #include "ToastController.h"
@@ -34,6 +40,16 @@ const QStringList kTexts{QString(), QStringLiteral("hello"), QStringLiteral("fix
 // Codex's two models, then Claude's.
 const QStringList kModels{QStringLiteral("gpt-a"), QStringLiteral("gpt-b"), QStringLiteral("claude-a")};
 const QStringList kRuntimeModes{QStringLiteral("approval-required"), QStringLiteral("auto"), QStringLiteral("full-access")};
+// Two pages of one Space, and what their prompts are given: a block's words, or an ask.
+const QStringList kPages{QStringLiteral("pg1"), QStringLiteral("pg2")};
+const QStringList kPageTexts{QStringLiteral("a note"), QStringLiteral("@agent tidy this"), QStringLiteral("@Agent"),
+                             QStringLiteral("@agents meet"), QStringLiteral("  ")};
+
+// Words that ask an agent: they start with @agent.
+bool asks(const QString& text) {
+  static const QRegularExpression ask(QStringLiteral("^@agent(\\s|$)"), QRegularExpression::CaseInsensitiveOption);
+  return ask.match(text.trimmed()).hasMatch();
+}
 
 // rc::gen::elementOf finds begin() by ADL alone, which a QList lacks.
 QString pick(const QStringList& pool) { return *rc::gen::elementOf(std::vector<QString>(pool.cbegin(), pool.cend())); }
@@ -49,6 +65,15 @@ struct Target {
   QString text;
   int images = 0;
   QString model;  // picked, else the default
+  int pending = 0;  // of a page's images, the first ones, those its ask on its way carries
+};
+
+// A page's ask whose answer the MC holds; whether it will refuse it.
+struct Ask {
+  QString page;
+  QString text;
+  int images = 0;
+  bool refused = false;
 };
 
 // A send on its way: the first of a thread's is at the MC, the rest wait behind it.
@@ -117,6 +142,12 @@ struct Model {
   QList<std::pair<QString, QString>> lagged;
   // The changes the MC took whose rows have not come, by thread.
   QMap<QString, QString> landing;
+  // The pages with an ask on its way, and those whose answers the MC holds.
+  QSet<QString> asking;
+  QList<Ask> heldAsks;
+  // The asks the MC took ("page|request|images"), and the blocks the pages' prompts wrote ("page|text").
+  QStringList asked;
+  QStringList written;
 
   int total() const {
     int count = 0;
@@ -124,6 +155,7 @@ struct Model {
     return count;
   }
   bool isThread(const QString& target) const { return kThreads.contains(target); }
+  bool isPage(const QString& target) const { return kPages.contains(target); }
   QString provider(const QString& thread) const { return providers.value(thread, QStringLiteral("codex")); }
   QString selected(const QString& target) const {
     const QString picked = targets.value(target).model;
@@ -148,6 +180,7 @@ QStringList commandsOf(const Send& send) {
 }
 
 void dispatchFirst(Model& m, const QString& thread);
+void answerAsk(Model& m, const Ask& ask);
 
 // The MC answers an access change: the thread takes it, and the pick goes once
 // the row with it has come, whatever the row shows; a refused one goes too,
@@ -279,6 +312,7 @@ void answerHeld(Model& m) {
   m.holding = false;
   for (const HeldPick& pick : std::exchange(m.heldPicks, {})) answerPick(m, pick);
   QStringList refused;  // whose next command the MC refuses, in the order they went out
+  for (const Ask& ask : std::exchange(m.heldAsks, {})) answerAsk(m, ask);
   for (const QString& thread : std::exchange(m.held, {})) {
     const Send send = m.queues[thread].first();
     if (send.refusedAtMc) {
@@ -305,6 +339,22 @@ void answerHeld(Model& m) {
   for (const QString& thread : refused) fail(m, thread);
 }
 
+// The MC answers a page's ask: one it took empties the prompt of what it
+// carried (its words only if they are still all there), a refused one leaves
+// everything to try again.
+void answerAsk(Model& m, const Ask& ask) {
+  m.asking.remove(ask.page);
+  Target& target = m.targets[ask.page];
+  if (ask.refused) {
+    target.pending = 0;
+    m.toasts.prepend({ask.page, QString()});
+    return;
+  }
+  m.asked.append(QStringList{ask.page, ask.text.trimmed(), QString::number(ask.images)}.join(u'|'));
+  target.images -= std::exchange(target.pending, 0);
+  if (target.text == ask.text) target.text.clear();
+}
+
 QString png() {
   static const QString encoded = [] {
     QImage picture(4, 4, QImage::Format_RGB32);
@@ -319,7 +369,8 @@ QString png() {
 }
 
 // The app as main.cpp wires it, on a fake MC with one project of three Codex
-// threads, Codex offering two models and Claude one; stores in a home of its own.
+// threads, Codex offering two models and Claude one, and a Space of two
+// pages whose agents run in that project; stores in a home of its own.
 struct Sut {
   QTemporaryDir home{QDir::tempPath() + QStringLiteral("/composer-XXXXXX")};
   FakeMc mc;
@@ -337,6 +388,10 @@ struct Sut {
   bool losing = false;
   // Those commands, by their place in mc.commands.
   QSet<qsizetype> lost;
+  // The asks the MC took and the blocks the pages' prompts wrote, as the model has them.
+  QStringList asked;
+  QStringList written;
+  bool refusingAsks = false;
 
   Sut() {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{
@@ -381,13 +436,33 @@ struct Sut {
       }
       mc.reply(rpc, QJsonObject{{QStringLiteral("attachments"), stored}});
     });
-    // Each thread's messages, whole on every subscription, then as they come.
+    // Each thread's messages, whole on every subscription, then as they come;
+    // the Space and its pages, which never change.
     mc.onShape(QStringLiteral("stream"), [this](int id, const QJsonObject& shape) {
+      const QString stream = shape.value(QLatin1String("stream")).toString();
+      if (stream == QLatin1String("spaces") || stream.startsWith(QLatin1String("space:"))) return sendSpace(id, stream);
       if (slow) {
         waiting.append({id, shape});
         return;
       }
       sendThread(id, shape);
+    });
+    // A page's agents run in p1. An ask is taken, refused, or held with the
+    // commands' answers.
+    mc.onRpc(QStringLiteral("space."), [this](const FakeMc::Rpc& rpc) {
+      if (rpc.method == QLatin1String("space.page.agentTarget")) return mc.reply(rpc, QJsonObject{{QStringLiteral("projectId"), QStringLiteral("p1")}});
+      if (rpc.method != QLatin1String("space.page.askAgent")) return mc.reply(rpc, QJsonObject());
+      const QString took = QStringList{rpc.payload.value(QLatin1String("pageId")).toString(),
+                                       rpc.payload.value(QLatin1String("request")).toString(),
+                                       QString::number(rpc.payload.value(QLatin1String("attachments")).toArray().size())}
+                               .join(u'|');
+      const auto answer = [this, rpc, took, refused = refusingAsks] {
+        if (refused) return mc.refuse(rpc, QStringLiteral("The agent could not start."));
+        asked.append(took);
+        mc.reply(rpc, QJsonObject{{QStringLiteral("threadId"), QStringLiteral("agent-%1").arg(rpc.id)}});
+      };
+      if (mc.holding(QStringLiteral("answers"))) return mc.defer(answer);
+      answer();
     });
     // A provider change moves the thread, as the MC's projection does.
     mc.effects.append([this](const QJsonObject& command) {
@@ -430,6 +505,34 @@ struct Sut {
              {QStringLiteral("handle"), QStringLiteral("log-1")}});
   }
 
+  // The Space's index, or its stream: Notes, with the pages pg1 and pg2.
+  void sendSpace(int id, const QString& stream) {
+    const QString at = QStringLiteral("2026-09-01T09:00:00Z");
+    QJsonArray rows;
+    if (stream == QLatin1String("spaces")) {
+      rows.append(QJsonArray{QStringLiteral("space"), QStringLiteral("sp1"),
+                             QJsonObject{{QStringLiteral("id"), QStringLiteral("sp1")}, {QStringLiteral("name"), QStringLiteral("Notes")},
+                                         {QStringLiteral("createdAt"), at}, {QStringLiteral("updatedAt"), at}}});
+    } else {
+      for (const QString& page : kPages) {
+        rows.append(QJsonArray{QStringLiteral("page"), page,
+                               QJsonObject{{QStringLiteral("id"), page},
+                                           {QStringLiteral("spaceId"), QStringLiteral("sp1")},
+                                           {QStringLiteral("title"), page},
+                                           {QStringLiteral("parentPageId"), QJsonValue::Null},
+                                           {QStringLiteral("sourceThreadId"), QJsonValue::Null},
+                                           {QStringLiteral("trashedAt"), QJsonValue::Null},
+                                           {QStringLiteral("createdAt"), at},
+                                           {QStringLiteral("updatedAt"), at}}});
+      }
+    }
+    mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("part"), 0},
+             {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("offset"), 1},
+             {QStringLiteral("floor"), QJsonValue::Null}, {QStringLiteral("handle"), QStringLiteral("space-log")}});
+    mc.send({{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), 1},
+             {QStringLiteral("handle"), QStringLiteral("space-log")}});
+  }
+
   // The MC sends the threads it was slow to.
   void load() {
     slow = false;
@@ -469,6 +572,12 @@ struct Sut {
     native->controller<SettingsController>()->setDevicePath(home.filePath(QStringLiteral("config/preferences.json")));
     // Toasts stay until the user closes them.
     native->controller<ToastController>()->setClock([] { return QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC); });
+    // The blocks a page's prompt writes, which SpacePage would put on the page.
+    QObject::connect(bridge.get(), &ShellBridge::actionRequested, [this](const QString& action, const QVariant& payload) {
+      if (action != QLatin1String("space.prompt.write")) return;
+      const QVariantMap write = payload.toMap();
+      written.append(write.value(QStringLiteral("pageId")).toString() + u'|' + write.value(QStringLiteral("text")).toString());
+    });
     native->restoreWindows();
     native->open(mc.origin(), QStringLiteral("mc-token"));
     RC_ASSERT(prop::until([this] { return online(); }));
@@ -530,10 +639,23 @@ struct Sut {
 
   ComposerController* composer() const { return native->controller<ComposerController>(); }
 
-  QString keyFor(const QString& target) const { return target == kDraft ? draftId : keyOf(target); }
+  QString keyFor(const QString& target) const {
+    if (kPages.contains(target)) return ComposerController::pageKey(target);
+    return target == kDraft ? draftId : keyOf(target);
+  }
 
   void open(const QString& target) {
-    if (target == kDraft) {
+    if (kPages.contains(target)) {
+      auto* spaces = native->controller<SpaceController>();
+      if (native->controller<NavigationController>()->route().kind != QLatin1String("space")) {
+        bridge->dispatch(SpaceController::kOpen, QVariantMap{});
+      }
+      RC_ASSERT(prop::until([&] { return spaces->spaceId() == QLatin1String("sp1") && spaces->space().live(); }));
+      bridge->dispatch(QStringLiteral("space.selectPage"), QVariantMap{{QStringLiteral("pageId"), target}});
+      RC_ASSERT(prop::until([&] {
+        return bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("target")).toString() == keyFor(target);
+      }));
+    } else if (target == kDraft) {
       bridge->dispatch(QStringLiteral("draft.open"), QVariantMap{{QStringLiteral("draftId"), draftId}});
     } else {
       bridge->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), keyOf(target)}});
@@ -611,7 +733,7 @@ void verify(const Model& m, Sut& sut) {
   sut.settle(m.total());
   RC_ASSERT(sut.commands() == m.commands);
   auto* composer = sut.composer();
-  for (const QString& target : kThreads + QStringList{kDraft}) {
+  for (const QString& target : kThreads + QStringList{kDraft} + kPages) {
     const Target expected = m.targets.value(target);
     RC_ASSERT(composer->draft(sut.keyFor(target)) == expected.text);
     RC_ASSERT(composer->attachments(sut.keyFor(target)).size() == expected.images);
@@ -619,7 +741,10 @@ void verify(const Model& m, Sut& sut) {
   const QVariantMap shown = sut.bridge->state()->value(QStringLiteral("composer")).toMap();
   RC_ASSERT(shown.value(QStringLiteral("target")).toString() == sut.keyFor(m.open));
   RC_ASSERT(shown.value(QStringLiteral("text")).toString() == m.targets.value(m.open).text);
-  RC_ASSERT(composer->currentSelection().value(QLatin1String("model")).toString() == m.selected(m.open));
+  // A page's ask defaults to the model its project last worked with, which the model leaves out.
+  if (!m.isPage(m.open)) RC_ASSERT(composer->currentSelection().value(QLatin1String("model")).toString() == m.selected(m.open));
+  RC_ASSERT(sut.asked == m.asked);
+  RC_ASSERT(sut.written == m.written);
   if (m.isThread(m.open)) RC_ASSERT(shown.value(QStringLiteral("runtimeMode")).toString() == m.runtime(m.open));
   QList<bool> toasts;
   for (const Toast& toast : m.toasts) toasts.append(toast.restore);
@@ -679,7 +804,11 @@ struct Attach : Command {
 
 struct RemoveImage : Command {
   void checkPreconditions(const Model& m) const override { RC_PRE(m.targets.value(m.open).images > 0); }
-  void apply(Model& m) const override { --m.targets[m.open].images; }
+  void apply(Model& m) const override {
+    Target& target = m.targets[m.open];
+    --target.images;
+    if (target.pending > 0) --target.pending;
+  }
   void run(const Model& m0, Sut& sut) const override {
     const QVariantList images = sut.composer()->attachments(sut.keyFor(m0.open));
     RC_ASSERT(!images.isEmpty());
@@ -708,7 +837,7 @@ struct PickRuntime : Command {
   QString mode = pick(kRuntimeModes);
   void checkPreconditions(const Model& m) const override {
     RC_PRE(m.isThread(m.open));
-    RC_PRE(!m.holding || m.held.isEmpty());
+    RC_PRE(!m.holding || (m.held.isEmpty() && m.heldAsks.isEmpty()));
   }
   void apply(Model& m) const override {
     if (mode == m.runtime(m.open)) return;
@@ -763,6 +892,8 @@ struct Submit : Command {
   void checkPreconditions(const Model& m) const override {
     RC_PRE(m.isThread(m.open));
     RC_PRE(m.heldPicks.isEmpty());
+    // A held ask's answer would race the send's for the toasts.
+    RC_PRE(m.heldAsks.isEmpty());
     RC_PRE(!m.lagging);
   }
   void apply(Model& m) const override {
@@ -826,6 +957,7 @@ struct Stash : Command {
     if (m.stash.size() > 20) m.stash.removeLast();
     target.text.clear();
     target.images = 0;
+    target.pending = 0;
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.stash"));
@@ -947,6 +1079,7 @@ struct Refuse : Command {
         sut.mc.refusals.remove(type);
       }
     }
+    sut.refusingAsks = on;
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "Refuse(" << on << ")"; }
@@ -967,9 +1100,9 @@ struct AnswerHeld : Command {
 // client connects again. Nothing is sent twice or lost.
 struct Drop : Command {
   bool received = *rc::gen::arbitrary<bool>();
-  // An access change cut off is not modelled yet (hal-c2#609).
+  // An access change cut off is not modelled yet (hal-c2#609), nor is an ask.
   // Lagging rows are not modelled across a reconnect, which sends them whole.
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.heldPicks.isEmpty() && !m.lagging); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.heldPicks.isEmpty() && m.heldAsks.isEmpty() && !m.lagging); }
   void apply(Model& m) const override {
     cutOff(m, received);
     // The threads followed are asked for again, and a slow MC keeps them waiting.
@@ -1020,8 +1153,9 @@ struct Elsewhere : Command {
 // comes back once the thread is open.
 struct Restart : Command {
   bool received = *rc::gen::arbitrary<bool>();
-  // Lagging rows are not modelled across a reconnect, which sends them whole.
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.heldPicks.isEmpty() && !m.lagging); }
+  // Lagging rows are not modelled across a reconnect, which sends them whole;
+  // nor is an ask cut off.
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.heldPicks.isEmpty() && m.heldAsks.isEmpty() && !m.lagging); }
   void apply(Model& m) const override {
     m.toasts.clear();
     if (!m.held.isEmpty()) cutOff(m, received);
@@ -1041,6 +1175,67 @@ struct Restart : Command {
   void show(std::ostream& os) const override {
     os << "Restart(" << (received ? "the MC got what it held" : "the MC never got what it held") << ")";
   }
+};
+
+// A page of the Space, shown with its prompt.
+struct OpenPage : Command {
+  QString page = pick(kPages);
+  void apply(Model& m) const override { m.open = page; }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.open(page);
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "OpenPage(" << page.toStdString() << ")"; }
+};
+
+// What the user types into a page's prompt: a block's words, or an ask.
+struct TypeOnPage : Command {
+  Type type;
+  TypeOnPage() { type.text = pick(kPageTexts); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.isPage(m.open)); }
+  void apply(Model& m) const override { type.apply(m); }
+  void run(const Model& m0, Sut& sut) const override { type.run(m0, sut); }
+  void show(std::ostream& os) const override { os << "TypeOnPage(\"" << type.text.toStdString() << "\")"; }
+};
+
+// A send from a page's prompt: plain words write a block (SpacePage empties the
+// prompt as it does, which the model leaves to it), and an image without an ask
+// is refused. An ask goes to the MC with its images, one at a time.
+struct SubmitOnPage : Command {
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.isPage(m.open));
+    // Its answer would race a held send's or access change's for the toasts.
+    RC_PRE(m.held.isEmpty() && m.heldPicks.isEmpty());
+  }
+  void apply(Model& m) const override {
+    Target& target = m.targets[m.open];
+    const QString trimmed = target.text.trimmed();
+    if (!asks(trimmed)) {
+      if (target.images > 0) {
+        m.toasts.prepend({m.open, QString()});
+      } else if (!trimmed.isEmpty()) {
+        m.written.append(m.open + u'|' + trimmed);
+      }
+      return;
+    }
+    if (m.asking.contains(m.open)) return;
+    m.asking.insert(m.open);
+    target.pending = target.images;
+    const Ask ask{m.open, target.text, target.images, m.refusing};
+    if (m.holding) {
+      m.heldAsks.append(ask);
+    } else {
+      answerAsk(m, ask);
+    }
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.bridge->dispatch(QStringLiteral("composer.submit"),
+                         QVariantMap{{QStringLiteral("edit"), sut.editOf()},
+                                     {QStringLiteral("text"), m0.targets.value(m0.open).text},
+                                     {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "SubmitOnPage"; }
 };
 
 // The MC is slow to send threads: one opened now is not known until Load.
@@ -1158,6 +1353,24 @@ private slots:
           0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, PickModel, PickModel, PickModel, Prompt, Prompt, Prompt, SetRunning,
                                                    Hold, AnswerHeld, Refuse, Restart, Drop>()));
+      rc::state::runAll(commands, model, sut);
+    }));
+  }
+
+  // A Space's pages among the threads: each page's prompt keeps its own draft,
+  // writes plain words as a block, and asks with words to @agent; an ask the
+  // MC took empties the prompt of what it carried, a refused one keeps it all,
+  // and a second ask waits for the first's answer.
+  void pagePrompts() {
+    QVERIFY(rc::check("each page's prompt keeps its own draft, and only an ask the MC took empties it", [] {
+      Sut sut;
+      Model model;
+      verify(model, sut);
+      const auto commands = *rc::gen::scale(
+          0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
+                                                   Open, OpenPage, OpenPage, Type, TypeOnPage, TypeOnPage, TypeOnPage, Attach,
+                                                   RemoveImage, SubmitOnPage, SubmitOnPage, SubmitOnPage, Prompt, Stash, Hold,
+                                                   AnswerHeld, Refuse, Restart>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

@@ -60,7 +60,10 @@ Item {
     // The centred column rows are laid out in, as wide as the composer's.
     readonly property real columnWidth: Math.max(0, Math.min(width - 40, 768))
 
-    signal linkActivated(string link)
+    // The hover cards and clicks of pull request links (Markdown.linkPreviews).
+    property var linkPreviews: null
+
+    signal linkActivated(string link, bool external)
     // A fold or tool call group was opened or closed.
     signal toggled(string rowId)
     // A file to open in the right panel: "diff" for a reply's changed files,
@@ -937,7 +940,8 @@ Item {
                             lineBreaks: true
                             fitWidth: true
                             textColor: root.messageTextColor
-                            onLinkActivated: link => root.linkActivated(link)
+                            linkPreviews: root.linkPreviews
+                            onLinkActivated: (link, external) => root.linkActivated(link, external)
                         }
                     }
                     ActionLink {
@@ -1009,7 +1013,8 @@ Item {
                         text: row.text ?? ""
                         streaming: row.streaming ?? false
                         citable: root.citable && row.streaming !== true && !!row.messageId
-                        onLinkActivated: link => root.linkActivated(link)
+                        linkPreviews: root.linkPreviews
+                        onLinkActivated: (link, external) => root.linkActivated(link, external)
                         onCited: selector => root.cited(row.messageId, selector)
                         // "Cite" under a short reply's last line reaches over the next row.
                         onSelectionChanged: row.z = selection !== null ? 1 : 0
@@ -1586,7 +1591,8 @@ Item {
                         Markdown {
                             width: parent.width
                             text: row.text ?? ""
-                            onLinkActivated: link => root.linkActivated(link)
+                            linkPreviews: root.linkPreviews
+                            onLinkActivated: (link, external) => root.linkActivated(link, external)
                         }
                     }
                 }

@@ -44,7 +44,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["alt+1", "alt+2", "alt+3", "alt+4", "alt+5", "alt+6", "alt+7", "alt+8", "alt+9"],
       },
       { keys: "PgUp/PgDn", description: "Scroll the conversation", chords: ["pageup", "pagedown"] },
-      { keys: "Enter", description: "Send the reply", chords: ["return"] },
+      {
+        keys: "Enter",
+        description: "Send the reply · on a Space page: write a block, or ask an agent",
+        chords: ["return"],
+      },
       {
         keys: "↑/↓",
         description: "Earlier prompts · walk approvals when the prompt is empty",
@@ -70,6 +74,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "^U", description: "Reopen a pending question", chords: ["ctrl+u"] },
       { keys: "Space", description: "Question: toggle an option", chords: ["space"] },
       { keys: "Esc", description: "Clear the draft / stop the turn", chords: ["escape"] },
+      {
+        keys: "^P",
+        description: "Prompt ⇄ terminal · on a Space page: prompt ⇄ the page",
+        chords: ["ctrl+p"],
+      },
     ],
   },
   {
@@ -128,7 +137,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["pageup", "pagedown"],
       },
       { keys: "Esc", description: "Back / close", chords: ["escape"] },
-      { keys: "^P", description: "Back to the prompt from any pane", chords: ["ctrl+p"] },
+      {
+        keys: "^P",
+        description: "Back to the prompt from any pane · Spaces: the open page's prompt",
+        chords: ["ctrl+p"],
+      },
       { keys: "s", description: "Diff: toggle split / stacked", chords: ["s"] },
       {
         keys: "y / n",
@@ -171,9 +184,9 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
       { keys: "h", description: "Spaces: a page's history", chords: ["h"] },
       {
-        keys: "f · F",
-        description: "Spaces: a page from a project's files, or a page's own file · unlink it",
-        chords: ["f", "shift+f"],
+        keys: "f",
+        description: "Spaces: a page from a project's files, or a page's own file",
+        chords: ["f"],
       },
       {
         keys: "A · s · o · z",
@@ -434,9 +447,27 @@ export const KEYMAP_LAYERS = {
     "shift+s": "space.deckFromPage",
     v: "space.images",
     f: "space.files",
-    "shift+f": "space.unlinkFile",
     "ctrl+k": "palette.open",
-    "ctrl+p": "space.close",
+    "ctrl+p": "space.prompt",
+  },
+  /**
+   * A Space page's prompt (`spaceState.ts`): the conversation's prompt controls, none of a
+   * thread's (approvals, plans, the terminal); ^P gives the keys back to the page.
+   */
+  pagePrompt: {
+    "ctrl+k": "palette.open",
+    pageup: "space.pageUp",
+    pagedown: "space.pageDown",
+    "ctrl+up": "composer.grow",
+    "ctrl+down": "composer.shrink",
+    "ctrl+b, shift+tab": "composer.interactionMode.toggle",
+    "ctrl+o": "composer.runtimePicker.toggle",
+    "ctrl+shift+m": "composer.modelPicker.toggle",
+    "ctrl+shift+e": "composer.effortPicker.toggle",
+    "ctrl+g": "composer.editor.open",
+    "ctrl+p": "space.focus",
+    escape: "composer.escape",
+    return: "composer.submit",
   },
   fileEdit: { escape: "files.editor.done" },
   sectionInput: { escape: "section.input.cancel" },
@@ -528,6 +559,7 @@ const MODE_GROUP: Record<string, string> = {
   compose: "Conversation",
   newThread: "Conversation",
   userInput: "Conversation",
+  pagePrompt: "Conversation",
 };
 
 /** What the reference says a chord does in `mode`; the action's name when it is undocumented. */

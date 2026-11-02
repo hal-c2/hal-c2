@@ -65,6 +65,9 @@ ShellWindow {
     // layout has no such screen, and ends where the route has nothing before it.
     readonly property bool canStepBack: scanning || adding || (paired && (popupOpen || (roomy ? route !== null && route.canGoBack === true : routeKind !== "home")))
 
+    // The phone layout's thread screen while it shows, which can have a tab
+    // of the right panel over the thread.
+    property Item threadScreen: null
     // The phone layout's Space screen while it shows, which has steps of its own.
     property Item spaceScreen: null
     // The page last written from a thread (`space.written`), which the phone's
@@ -82,7 +85,7 @@ ShellWindow {
     // One step back: out of the scanner, from pairing with another
     // environment to the one the device has, out of an open popup, in the
     // phone layout from a settings section to the sections, from a thread's
-    // files or diff to the thread and from a step of
+    // files, diff or pull requests to the thread and from a step of
     // the Spaces to the one before it, and from anything
     // else to where the user was before (NavigationController's back stack,
     // home when it is empty).
@@ -97,7 +100,7 @@ ShellWindow {
             Shell.dispatch("composer.modelPicker.toggle");
         else if (layout === "phone" && openSection.length > 0)
             Shell.dispatch("settings.navigate", { to: "/settings" });
-        else if (layout === "phone" && screen === "thread" && Shell.state.panel?.isOpen && ["files", "diff"].indexOf(Shell.state.panel.activeId) >= 0)
+        else if (layout === "phone" && screen === "thread" && threadScreen !== null && threadScreen.panelShown)
             Shell.dispatch("rightPanel.close");
         else if (layout === "phone" && spaceScreen !== null && spaceScreen.stepBack())
             return;
@@ -247,6 +250,7 @@ ShellWindow {
                     Loader {
                         anchors.fill: parent
                         active: root.screen === "thread"
+                        onItemChanged: root.threadScreen = item
                         sourceComponent: ThreadScreen {
                             onBackRequested: root.stepBack()
                         }

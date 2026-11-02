@@ -23,6 +23,8 @@
 #     apps/server-ex/lib/hal_c2/space/table.ex
 #   packages/contracts/src/space.ts (SpaceBlock, SpaceWritableBlockKind, SpaceTable, SpaceTableEdit,
 #     SpaceCalloutAlert)
+#   apps/desktop-qt/qml/HalC2/Bricks/SpaceBlock.qml (a page's diagram on the desktop)
+#   apps/mobile-qt/qml/HalC2/Mobile/SpaceBlockRow.qml (a page's diagram on the phone)
 
 Feature: GitHub Markdown in a page
   A page reads and writes GitHub Markdown. Whatever a page models (headings, paragraphs,
@@ -183,6 +185,142 @@ Feature: GitHub Markdown in a page
       Given the page "Plan" holds a table and a code block
       When the user opens "Plan"
       Then the table and the code are each shown line for line in a fixed-width face
+
+    # The blocks the next scenario gives the clients, as the MC reads them from its Markdown;
+    # `-` is a field the block does not have.
+    @mc
+    Scenario: The blocks the clients show as Markdown are the MC's
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        3. Release
+        4. Ship
+           - Tag
+             1. Notes
+             2. Docs
+                - [x] Changelog
+        5. Announce
+
+        > [!WARNING]
+        > Ship on a weekday.
+
+        ---
+
+        Read the notes.[^wiki]
+
+        [^wiki]: Kept in the wiki.
+
+        <details>
+        <summary>Steps</summary>
+
+        Tag it.
+
+        </details>
+
+        $$
+        E = mc^2
+        $$
+
+        ```math
+        a^2 + b^2 = c^2
+        ```
+
+        ![Logo](https://example.com/logo.png)
+
+        ***
+
+        <details open><summary>More</summary>
+
+        Ship it.
+
+        </details>
+        """
+      Then the blocks of "Plan" are:
+        | kind        | text                   | depth | start | checked | alert   | label | language | fence | url                          | marker                  |
+        | numbered    | Release                | -     | 3     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Ship                   | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | bullet      | Tag                    | 1     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Notes                  | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Docs                   | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | checklist   | Changelog              | 3     | -     | true    | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Announce               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | callout     | Ship on a weekday.     | -     | -     | false   | warning | -     | -        | -     | -                            | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Read the notes.[^wiki] | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | footnote    | Kept in the wiki.      | -     | -     | false   | -       | wiki  | -        | -     | -                            | -                       |
+        | details     | Steps                  | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Tag it.                | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | code        | E = mc^2               | -     | -     | false   | -       | -     | math     | $$    | -                            | -                       |
+        | code        | a^2 + b^2 = c^2        | -     | -     | false   | -       | -     | math     | -     | -                            | -                       |
+        | image       | Logo                   | -     | -     | false   | -       | -     | -        | -     | https://example.com/logo.png | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | ***                     |
+        | details     | More                   | -     | -     | false   | -       | -     | -        | -     | -                            | <details open><summary> |
+        | paragraph   | Ship it.               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+
+    # Until the clients draw these kinds, each shows what the MC writes around its text, and
+    # the text stays editable as before; a checklist item keeps its tick and a callout its
+    # tint, which stand for `- [ ]` and `> `.
+    # https://github.com/hal-c2/hal-c2/issues/869
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared
+    Scenario: Blocks the clients do not draw yet are shown as the MC writes them
+      Given the page "Plan" holds the blocks:
+        | kind        | text                   | depth | start | checked | alert   | label | language | fence | url                          | marker                  |
+        | numbered    | Release                | -     | 3     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Ship                   | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | bullet      | Tag                    | 1     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Notes                  | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Docs                   | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | checklist   | Changelog              | 3     | -     | true    | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Announce               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | callout     | Ship on a weekday.     | -     | -     | false   | warning | -     | -        | -     | -                            | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Read the notes.[^wiki] | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | footnote    | Kept in the wiki.      | -     | -     | false   | -       | wiki  | -        | -     | -                            | -                       |
+        | details     | Steps                  | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Tag it.                | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | code        | E = mc^2               | -     | -     | false   | -       | -     | math     | $$    | -                            | -                       |
+        | code        | a^2 + b^2 = c^2        | -     | -     | false   | -       | -     | math     | -     | -                            | -                       |
+        | image       | Logo                   | -     | -     | false   | -       | -     | -        | -     | https://example.com/logo.png | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | ***                     |
+        | details     | More                   | -     | -     | false   | -       | -     | -        | -     | -                            | <details open><summary> |
+        | paragraph   | Ship it.               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+      When the user opens "Plan"
+      Then each block is shown as this Markdown, line for line:
+        """
+        3. Release
+        4. Ship
+           - Tag
+             1. Notes
+             2. Docs
+                - [x] Changelog
+        5. Announce
+        > [!WARNING]
+        > Ship on a weekday.
+        ---
+        Read the notes.[^wiki]
+        [^wiki]: Kept in the wiki.
+        <details>
+        <summary>Steps</summary>
+        Tag it.
+        </details>
+        $$
+        E = mc^2
+        $$
+        ```math
+        a^2 + b^2 = c^2
+        ```
+        ![Logo](https://example.com/logo.png)
+        ***
+        <details open><summary>More</summary>
+        Ship it.
+        </details>
+        """
 
   Rule: Headings
 
@@ -667,7 +805,7 @@ Feature: GitHub Markdown in a page
       Then the page shows the new text, named "bash"
 
   # https://github.com/hal-c2/hal-c2/issues/843
-  @mc @shared @backlog-mc @backlog-desktop @backlog-mobile
+  @mc @shared @backlog-mc
   Rule: Mermaid diagrams
 
     # The diagram is drawn by the one Mermaid renderer the pages, the chat and the file

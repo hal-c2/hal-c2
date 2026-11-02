@@ -15,13 +15,18 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ChatAttachment, UploadChatAttachment } from "./chatAttachment.ts";
+import { OrchestrationMessageContext } from "./composerContext.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ScheduledTaskRunStatus, ScheduledTaskUpsertSchedule } from "./scheduledTask.ts";
 
 /**
  * Spaces hold Pages that people and agents write together, and slide decks. Clients
  * read them from streams, the same subscribe/resume path as projects and threads:
- * `SPACES_STREAM_ID` holds one `space` entity per Space, and `spaceStreamId(id)`
- * holds that Space's `page`, `block`, `comment`, `image`, `site`, `deck`, `slide` and `pageAgent`
+ * `SPACES_STREAM_ID` holds one `space` entity per Space and one `projectSpace` per project
+ * whose files were opened as pages (`SpaceProjectSpace`), and `spaceStreamId(id)` holds that
+ * Space's `page`, `block`, `comment`, `image`, `site`, `deck`, `slide` and `pageAgent`
  * entities. The RPCs below change them. An image's bytes are never on a stream: fetch them on
  * demand from the address `assets.createUrl` signs for a `space-image`.
  */
@@ -48,6 +53,21 @@ export const Space = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type Space = typeof Space.Type;
+
+/**
+ * A `projectSpace` entity: the project's own Space, which holds the pages of its files
+ * (`space.page.openFile`). It is the project's, not the user's: `space.list` leaves it out,
+ * and clients show its pages under the project in the Space sidebar, never as a Space.
+ * Its pages are read from `spaceStreamId(id)` like any Space's.
+ */
+export const SpaceProjectSpace = Schema.Struct({
+  id: SpaceId,
+  projectId: ProjectId,
+  name: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type SpaceProjectSpace = typeof SpaceProjectSpace.Type;
 
 /**
  * What a page shows of its update: the MC's scheduler keeps it and mirrors it here, so
@@ -522,19 +542,18 @@ export type SpacePageImportMarkdownInput = typeof SpacePageImportMarkdownInput.T
 // Project files as pages
 
 /**
- * The page of a project file, made in `spaceId` when the file has none, or the page it
- * already is wherever it is (brought back from the trash and read again). Only files
- * the project's `spaces` section counts open. `relativePath` is in the project's folder.
+ * The page of a project file, made in the project's Space when the file has none, or the
+ * page it already is (brought back from the trash and read again). Only files the
+ * project's `spaces` section counts open. `relativePath` is in the project's folder.
  */
 export const SpacePageOpenFileInput = Schema.Struct({
-  spaceId: SpaceId,
   projectId: ProjectId,
   relativePath: TrimmedNonEmptyString,
 });
 export type SpacePageOpenFileInput = typeof SpacePageOpenFileInput.Type;
 
 export const SpacePageOpenFileResult = Schema.Struct({
-  /** The Space the page is in, which is not `spaceId` when it was opened elsewhere. */
+  /** The project's Space, the page's: a `projectSpace`, never one `space.list` lists. */
   spaceId: SpaceId,
   page: SpacePage,
   created: Schema.Boolean,
@@ -569,6 +588,8 @@ export const SpaceFilesListResult = Schema.Struct({
       ),
     }),
   ),
+  /** The project's Space, where its files' pages are; null before one was opened. */
+  spaceId: Schema.NullOr(SpaceId),
 });
 export type SpaceFilesListResult = typeof SpaceFilesListResult.Type;
 
@@ -783,16 +804,43 @@ export const SpacePageAgent = Schema.Struct({
   error: Schema.NullOr(Schema.String),
   startedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
+  /** Which start of its MC took the ask; none on one from before there were tokens. */
+  boot: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type SpacePageAgent = typeof SpacePageAgent.Type;
 
+/**
+ * An ask from a page's prompt, which is the timeline's prompt: what it may choose is what a
+ * thread's first turn may. Each choice left out is made as for an older client, which sends
+ * none: the project `space.page.agentTarget` names and the model a new thread there would use.
+ */
 export const SpacePageAskAgentInput = Schema.Struct({
   spaceId: SpaceId,
   pageId: SpacePageId,
   /** What the agent should do; a leading `@agent` is not part of it. */
   request: Schema.String,
+  /** The project the agent's thread runs in, at its own checkout. */
+  projectId: Schema.optional(ProjectId),
+  /** The model and its options, such as effort. One whose provider cannot run is refused. */
+  modelSelection: Schema.optional(ModelSelection),
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
+  /** As a turn's: images inline, or what the MC already holds, such as an uploaded file. */
+  attachments: Schema.optional(Schema.Array(Schema.Union([UploadChatAttachment, ChatAttachment]))),
+  /** As a turn's message carries them: mentions, skills and the other context records. */
+  context: Schema.optional(OrchestrationMessageContext),
 });
 export type SpacePageAskAgentInput = typeof SpacePageAskAgentInput.Type;
+
+/** `space.page.agentTarget`: where an ask that picks no project would run, for the prompt to show. */
+export const SpacePageAgentTargetInput = Schema.Struct({});
+export type SpacePageAgentTargetInput = typeof SpacePageAgentTargetInput.Type;
+
+export const SpacePageAgentTarget = Schema.Struct({
+  /** The project the user last worked in; null when this MC has none to run in. */
+  projectId: Schema.NullOr(ProjectId),
+});
+export type SpacePageAgentTarget = typeof SpacePageAgentTarget.Type;
 
 /** Names a page for `space.page.stopAgent` and `space.page.dismissAgent`. */
 export const SpacePageAgentRef = Schema.Struct({
