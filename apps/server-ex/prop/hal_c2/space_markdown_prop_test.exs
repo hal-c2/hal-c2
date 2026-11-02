@@ -142,6 +142,32 @@ defmodule HalC2.SpaceMarkdownPropTest do
     end
   end
 
+  # A gap is the spacing a block was read under. After a page deletes the block above it,
+  # the gap must not join it to the block now above where the usual blank line would keep
+  # them apart. (Some blocks join whatever the spacing, such as two raw lists once the
+  # heading between them goes: Markdown has nothing that keeps those apart.)
+  property "a gap never joins a block to a new block above it",
+    numtests: HalC2.Prop.numtests(300) do
+    forall {markdown, n} <- {document(), non_neg_integer()} do
+      blocks = Markdown.blocks(markdown)
+      left = if blocks == [], do: [], else: List.delete_at(blocks, rem(n, length(blocks)))
+
+      read = fn blocks ->
+        blocks
+        |> Markdown.document(fn _ -> nil end)
+        |> Markdown.blocks()
+        |> Enum.map(&{&1["kind"], &1["text"]})
+      end
+
+      gapped = read.(left)
+      usual = read.(Enum.map(left, &Map.delete(&1, "gap")))
+      kept = Enum.map(left, &{&1["kind"], &1["text"]})
+
+      (usual != kept or gapped == kept)
+      |> when_fail(IO.puts("markdown: #{inspect(markdown)}\nleft: #{inspect(left)}"))
+    end
+  end
+
   property "every block is a kind a page has, and a heading has a level",
     numtests: HalC2.Prop.numtests(300) do
     forall markdown <- document() do
