@@ -29,7 +29,7 @@ export function thoughtPreview(markdown: string, fallback: string): string {
     // Code spans are set aside so emphasis leaves `user_id_map` alone.
     .replace(/(`+)([^\n]*?[^`\n])\1(?!`)/g, (_, _ticks, code: string) => {
       codes.push(code);
-      return `\u0000${codes.length - 1}\u0000`;
+      return `\uE000${codes.length - 1}\uE000`;
     })
     // Emphasis and strikethrough. As in remark, `_` never opens or closes
     // inside a word (snake_case), though `*` does (2*3*4 reads 234).
@@ -38,7 +38,7 @@ export function thoughtPreview(markdown: string, fallback: string): string {
     .replace(/\*(?=\S)([^*\n]*?\S)\*/g, "$1")
     .replace(/(?<![\p{L}\p{N}])_(?=\S)([^_\n]*?\S)_(?![\p{L}\p{N}])/gu, "$1")
     .replace(/\\([\\`*_{}[\]()#+\-.!|~>])/g, "$1")
-    .replace(/\u0000(\d+)\u0000/g, (_, index: string) => codes[Number(index)]!)
+    .replace(/\uE000(\d+)\uE000/g, (_, index: string) => codes[Number(index)]!)
     .replace(/\s+/g, " ")
     .trim();
   return words || fallback;

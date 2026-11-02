@@ -5,7 +5,7 @@
 // client makes of the thread is pushed into the booted shell, so the timeline
 // shows what the real resume, resync and apply-once logic produced. In a cluster
 // the thread lives on another member, reached through `makeClusterClient`.
-import * as NodeOs from "node:os";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -106,7 +106,7 @@ export async function synced(
         bearerToken: "fake-bearer",
         mintSocketUrl: () => mc.mintSocketUrl(),
         logPath: NodePath.join(
-          process.env.TMPDIR ?? NodeOs.tmpdir(),
+          process.env.TMPDIR ?? NodeOS.tmpdir(),
           `tui-stream-sync-${process.pid}.log`,
         ),
         reconnectDelay: "20 millis",
