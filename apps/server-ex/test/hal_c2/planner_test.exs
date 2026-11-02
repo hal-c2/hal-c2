@@ -802,6 +802,23 @@ defmodule HalC2.PlannerTest do
       assert later == %{{"acme/api", 7} => 20, {"acme/api", 9} => 11}
     end
 
+    test "of one issue's moves in a report, each kept, the last one's time stands" do
+      moves =
+        for {m, at} <- [{2, 10}, {3, 12}], do: Map.merge(@issue, %{"milestone" => m, "at" => at})
+
+      assert {[%{"milestone" => 2}, %{"milestone" => 3}], latest} = Sync.newest(moves, %{})
+      assert latest == %{{"acme/api", 7} => 12}
+    end
+
+    # The clock is monotonic, not strictly increasing: a move taken at the same time as
+    # the last one is kept.
+    test "a move taken at the same time as the last one is kept" do
+      {_, latest} = Sync.newest([Map.merge(@issue, %{"milestone" => 2, "at" => 20})], %{})
+
+      assert {[%{"milestone" => 3}], ^latest} =
+               Sync.newest([Map.merge(@issue, %{"milestone" => 3, "at" => 20})], latest)
+    end
+
     test "the same report taken again is not older than itself" do
       move = Map.merge(@issue, %{"milestone" => 2, "at" => 20})
       {moved, latest} = Sync.newest([move], %{})

@@ -12,7 +12,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
   its own, as another window's would, so it can wait on GitHub while the case goes on.
   GitHub answers the moves it holds one at a time, and now and then refuses one, and the
   plugin now and then looks at GitHub, which lists each issue in the milestone it took
-  for it last. After every step, a look's included, the plan has each task in the
+  for it last, or restarts, its moves going on. After every step, a look's included, the plan has each task in the
   milestone it was moved to last, and once GitHub has answered everything:
 
   - GitHub has each issue in the milestone its task is in, or in none, the move it took
@@ -115,6 +115,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
       {4, {:call, __MODULE__, :answer, [integer(0, 3)]}},
       {1, {:call, __MODULE__, :refuse, [integer(0, 3)]}},
       {1, {:call, __MODULE__, :look, []}},
+      {1, {:call, __MODULE__, :restart, []}},
       {1, {:call, __MODULE__, :settle, []}}
     ])
   end
@@ -159,13 +160,21 @@ defmodule HalC2.PlannerMilestonesPropTest do
           {"moveToMilestone", Map.put(ids, "id", task)}
       end
 
+    case_pid = self()
+
     caller =
       spawn_monitor(fn ->
         try do
-          call(method, input)
+          # A refusal is GitHub's answer and stays in the plan; anything else is a problem.
+          case call(method, input) do
+            {:ok, _} -> :ok
+            {:ok, _, _} -> :ok
+            other -> send(case_pid, {:pl_failed, method, other})
+          end
         catch
-          # The plugin stopped with the case.
-          :exit, _ -> :ok
+          # The plugin stopped with the case, or the call failed; a message left
+          # at the case's end is dropped as the next case begins.
+          :exit, reason -> send(case_pid, {:pl_failed, method, {:exit, reason}})
         end
       end)
 
@@ -209,6 +218,15 @@ defmodule HalC2.PlannerMilestonesPropTest do
   def look do
     rules(github())
     {:ok, _} = call("sync", %{})
+    observe()
+  end
+
+  # The plugin restarts, its moves on the way to GitHub going on, and returns once it has
+  # looked at GitHub, which it does on starting, as `look/0` has GitHub list each issue.
+  def restart do
+    rules(github())
+    {:ok, _} = HalC2.Plugins.handle("restart", %{"id" => @id})
+    drain()
     observe()
   end
 
@@ -278,6 +296,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
   # What the model checks: where the plan has each task, where GitHub has each issue,
   # and which items are marked as not synced or waiting on GitHub.
   defp observe do
+    failed()
     plan = plan()
 
     at =
@@ -326,6 +345,25 @@ defmodule HalC2.PlannerMilestonesPropTest do
       milestone = if milestone == "null", do: nil, else: String.to_integer(milestone)
       Map.put(github, String.to_integer(n), milestone)
     end)
+  end
+
+  # The calls of the callers that ended that did not succeed.
+  defp failed do
+    receive do
+      {:pl_failed, method, reply} ->
+        problem("#{method} failed: #{inspect(reply, limit: 20)}")
+        failed()
+    after
+      0 -> :ok
+    end
+  end
+
+  defp flush_failed do
+    receive do
+      {:pl_failed, _, _} -> flush_failed()
+    after
+      0 -> :ok
+    end
   end
 
   defp problem(text), do: Process.put(:pl_problems, [text | Process.get(:pl_problems, [])])
@@ -421,6 +459,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
 
     Process.put(:pl_reader, {reader, notify})
     rules(Map.new(@issues, &{&1, &1}))
+    flush_failed()
     Process.put(:pl_held, [])
     Process.put(:pl_callers, [])
     Process.put(:pl_problems, [])
@@ -559,6 +598,14 @@ defmodule HalC2.PlannerMilestonesPropTest do
     # They end before the next case begins: a gh one of them ran later would read that
     # case's rules and log.
     release(System.monotonic_time(:millisecond) + 15_000)
+
+    # A caller a loaded machine kept past that would run its next gh against the next
+    # case's GitHub, which would then have an issue moved that its plan never touched.
+    for {pid, ref} <- Process.get(:pl_callers) do
+      Process.exit(pid, :kill)
+      receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+    end
+
     {reader, notify} = Process.get(:pl_reader)
     File.write!(notify, "stop
 ", [:raw])

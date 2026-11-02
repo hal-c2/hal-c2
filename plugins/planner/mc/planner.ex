@@ -737,9 +737,6 @@ defmodule HalC2Plugins.Planner do
        slack: nil,
        slack_at: nil,
        polling: nil,
-       # When GitHub last took a move for each issue (`Sync.newest/2`). Monotonic times
-       # mean nothing to another MC run, so it is not saved.
-       latest_moves: %{},
        published: %{},
        launching: %{}
      }), {:continue, :announce}}
@@ -2152,8 +2149,22 @@ defmodule HalC2Plugins.Planner do
       views: data["views"] || Plan.default_views(),
       updates: data["updates"] || [],
       plan_feedback: data["planFeedback"] || [],
-      runs: prune(runs)
+      runs: prune(runs),
+      latest_moves: loaded_latest(data["latestMoves"])
     }
+  end
+
+  # When GitHub last took a move for each issue (`Sync.newest/2`), as `save/1` wrote it.
+  # The runners of this MC run outlive a restart of the plugin and report moves stamped
+  # by the same clock, so the stamps stand; another MC run's mean nothing, and its
+  # runners are gone.
+  defp loaded_latest(saved) do
+    run_id = run_id()
+
+    case loaded_term(saved) do
+      {^run_id, latest} when is_map(latest) -> latest
+      _ -> %{}
+    end
   end
 
   # Names this MC run: an OS pid alone can come back after a restart (in a container the
@@ -2258,7 +2269,8 @@ defmodule HalC2Plugins.Planner do
           }
 
           {id, saved}
-        end)
+        end),
+      "latestMoves" => saved_term({run_id(), state.latest_moves})
     }
 
     tmp = file() <> ".tmp"
