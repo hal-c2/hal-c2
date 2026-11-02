@@ -330,7 +330,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   let viewersPage: string | null = null;
   let viewers = "";
   let unsubscribeViewers: (() => void) | null = null;
-  // The rows the last publish had room for, which a page up or down steps by.
+  // The rows the last publish had room for, which a move or a page up or down steps within.
   let rowsOnShow = 1;
   let deckId: string | null = null;
   // The slide on show, by id so a move elsewhere keeps it; its index for when it goes.
@@ -1321,9 +1321,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     // The rest of an entry taller than the pane comes before the next entry.
     const first = rows.findIndex((row) => row.selected);
     const last = rows.findLastIndex((row) => row.selected);
-    const room = Math.max(1, options.height() - SPACE_CHROME_ROWS);
-    if (first >= 0 && last - first + 1 > room) {
-      const within = Math.max(first, Math.min(last - room + 1, top + delta));
+    if (first >= 0 && last - first + 1 > rowsOnShow) {
+      const within = Math.max(first, Math.min(last - rowsOnShow + 1, top + delta));
       if (within !== top) {
         top = within;
         publish();

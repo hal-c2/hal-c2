@@ -796,6 +796,25 @@ describe("a page's agent", () => {
     expect(selected()).toBe(`Block ${onShow}`);
   });
 
+  test("an entry taller than the pane under a wrapped message scrolls a row at a time to its end", () => {
+    const tall = `${Array.from({ length: 800 }, (_, index) => `w${index}`).join(" ")} end`;
+    const t = onRoadmap(
+      block("b0", "p1", tall, "a0"),
+      block("b1", "p1", "After", "a1"),
+      agent({ request: "tidy ".repeat(100) }),
+    );
+    t.select("block:b0");
+    const shown = () => t.view().rows.map((row) => row.text);
+    let before = shown();
+    for (let step = 0; step < 200 && !before.some((text) => text.endsWith(" end")); step += 1) {
+      t.controller.dispatch("space.next", {});
+      const after = shown();
+      expect(after[0]).toBe(before[1]);
+      before = after;
+    }
+    expect(before.some((text) => text.endsWith(" end"))).toBe(true);
+  });
+
   test("the palette offers the way out that fits what the agent is doing", () => {
     const titles = (t: ReturnType<typeof onRoadmap>) =>
       t.controller.commands().map((command) => command.action);
