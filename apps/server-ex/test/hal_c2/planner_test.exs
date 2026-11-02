@@ -824,7 +824,6 @@ defmodule HalC2.PlannerTest do
         details: [],
         projects: [],
         items: items,
-        kept: Map.take(items, ["m1"]),
         board: nil,
         prs: %{},
         moving: [Map.take(listed, ~w(repository number))]
