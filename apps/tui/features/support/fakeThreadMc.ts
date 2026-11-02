@@ -130,7 +130,8 @@ export function startFakeThreadMc(options: FakeThreadMcOptions): FakeThreadMc {
   const changed = () => {
     for (const waiter of waiters) waiter();
   };
-  const head = () => log.at(-1)?.[0] ?? 0;
+  // A real MC's log is long past its start by the time a client opens the thread.
+  const head = () => log.at(-1)?.[0] ?? 100;
   const send = (ws: ServerWebSocket<SocketData>, frame: unknown) => ws.send(JSON.stringify(frame));
 
   const snapshotRows = (): ThreadRow[] => {

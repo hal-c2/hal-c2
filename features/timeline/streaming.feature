@@ -246,7 +246,7 @@ Feature: Streaming the agent's reply
       | on September 20      | 9/20 9:05 AM         | 9:05 AM, 20th September 2026      |
       | on December 30, 2025 | 12/30/2025 9:05 AM   | 9:05 AM, 30th December 2025       |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A reply that finishes while the connection is down is caught up
     Given the agent is writing a reply
     And the MC drops the connection
@@ -256,7 +256,7 @@ Feature: Streaming the agent's reply
     And the rows shown before are kept
     And the MC sends only what the client lacks
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A catch-up cut off part-way is not applied twice
     Given the agent is writing a reply
     And the agent finishes the reply while the MC cannot be reached
@@ -265,7 +265,7 @@ Feature: Streaming the agent's reply
     And the rows shown before are kept
     And the client asked again from where it was
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A thread that falls behind is caught up from the MC
     Given the agent is writing a reply
     When the agent writes more than the shell has read
@@ -273,7 +273,7 @@ Feature: Streaming the agent's reply
     Then the whole reply is shown
     And the rows shown before are kept
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A thread whose MC leaves the cluster says so until the MC returns
     Given the user is looking at a thread on another MC of the cluster
     And the agent has answered "Use the tax table."
