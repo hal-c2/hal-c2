@@ -177,14 +177,14 @@ Feature: Streaming the agent's reply
   # The Run action sits beside Copy on a shell block the agent wrote. It sends the command to
   # the thread's terminal, the same path a project script takes, and leaves the project's
   # selected script alone.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario: A complete shell command in a reply runs in the thread's terminal
     Given the agent's reply has a single-line shell command in a code block
     When the user runs the command from its code block
     Then the command runs in the thread's terminal in the thread's folder
     And the project's selected script is not changed
 
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile
   Scenario Outline: A code block that is not one complete shell command offers no run
     Given the agent's reply has <block> in a code block
     Then the code block offers no run action

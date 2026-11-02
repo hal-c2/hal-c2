@@ -4,8 +4,9 @@ import { expect } from "bun:test";
 import * as DateTime from "effect/DateTime";
 
 import { step } from "../../steps.ts";
-import { chooseCommand } from "../threadUi.ts";
 import { advance, pressKey, snapshot } from "../world.ts";
+import { project } from "../fakeClient.ts";
+import { chooseCommand, palette } from "../threadUi.ts";
 import { clickText, hostState, plain, recorded, settle } from "../threadWorld.ts";
 import {
   addCommand,
@@ -369,4 +370,80 @@ step(/^it is (shown in full|shortened)$/, async (ctx: StreamWorld, shown: string
     expect(linesOf(sent).join("\n")).not.toContain("Show full message");
     expect(screen).not.toContain("Show full message");
   }
+});
+
+// --- running a reply's shell command -----------------------------------------------------
+
+const SHELL_BLOCKS: Record<string, { readonly fence: string; readonly streaming?: boolean }> = {
+  "a single-line shell command": { fence: "```bash\nbun test\n```" },
+  "a shell command still streaming": { fence: "```bash\nbun test\n```", streaming: true },
+  "a shell command that spans several lines": { fence: "```bash\ncd web\nbun test\n```" },
+  "an empty shell block": { fence: "```bash\n\n```" },
+  "a shell command ending in a backslash": { fence: "```bash\nbun test \\\n```" },
+  "a Python snippet": { fence: "```python\nprint('tax')\n```" },
+};
+
+const SCRIPTS = [
+  { id: "test", name: "Test", command: "bun test", icon: "test", runOnWorktreeCreate: false },
+  { id: "lint", name: "Lint", command: "bun run lint", icon: "lint", runOnWorktreeCreate: false },
+];
+
+step(/^the agent's reply has (.+) in a code block$/, async (ctx: StreamWorld, kind: string) => {
+  const block = SHELL_BLOCKS[kind];
+  if (!block) throw new Error(`no code block for ${kind}`);
+  await turns(ctx);
+  const current = ctx.fake!.latestShell();
+  ctx.fake!.emitShell({
+    ...current,
+    projects: current.projects.map((entry) => ({ ...entry, scripts: SCRIPTS })),
+  } as never);
+  await settle();
+  // The user last ran Lint, so the palette offers it first.
+  ctx.host!.dispatch("script.run", { id: "lint" });
+  await settle();
+  ctx.fake!.calls.length = 0;
+  ctx.fake!.terminals.clear();
+  await startRun(ctx);
+  const id = await addItem(ctx, "assistant_message", {
+    id: "answer",
+    text: `Run the tests:\n\n${block.fence}`,
+    streaming: block.streaming === true,
+  });
+  if (!block.streaming) {
+    await settleRun(ctx, "completed", 5);
+    return;
+  }
+  await setItem(ctx, id, { streaming: true });
+});
+
+step("the user runs the command from its code block", async (ctx: StreamWorld) => {
+  await clickText(ctx, "▶ Run");
+  await settle();
+});
+
+step(
+  "the command runs in the thread's terminal in the thread's folder",
+  async (ctx: StreamWorld) => {
+    const opened = ctx.fake!.calls.find((call) => call.method === "terminalOpen");
+    expect(opened).toBeDefined();
+    const input = opened!.args[0] as { threadId: string; cwd: string; worktreePath: string | null };
+    expect(input.threadId).toBe(ctx.thread!.id);
+    expect(input.cwd).toBe(ctx.thread!.worktreePath ?? project.workspaceRoot);
+    const writes = [...ctx.fake!.terminals.values()].flatMap((terminal) => terminal.writes);
+    expect(writes).toEqual(["bun test\r"]);
+  },
+);
+
+step("the project's selected script is not changed", async (ctx: StreamWorld) => {
+  await pressKey(ctx, "Ctrl+K");
+  const titles = palette(ctx).commands.map((command) => command.title);
+  expect(titles).toContain("Run Lint");
+  expect(titles).not.toContain("Run Chat code block");
+  await pressKey(ctx, "Escape");
+});
+
+step("the code block offers no run action", async (ctx: StreamWorld) => {
+  const answer = messageItem(ctx, "answer");
+  expect(answer.lines.some((line) => line.right && plain(line.right.text) === "▶ Run")).toBe(false);
+  expect(await snapshot(ctx)).not.toContain("▶ Run");
 });

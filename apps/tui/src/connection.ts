@@ -147,6 +147,8 @@ import {
 export interface TuiThreadPage {
   readonly hasMore: boolean;
   readonly loadingOlder: boolean;
+  /** Why the thread's MC cannot be reached (it left the cluster); the cluster client says so. */
+  readonly unreachable?: string | null;
 }
 
 function historyToPage(history: ThreadHistoryMeta): TuiThreadPage {

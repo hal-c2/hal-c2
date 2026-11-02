@@ -208,8 +208,16 @@ export interface MarkdownDiagrams {
 /** A line of rendered Markdown, with the code block or table it belongs to. */
 export interface MarkdownLine {
   readonly text: StyledText;
-  /** The fenced code block this line is in (counted from 0) and its whole source. */
-  readonly code?: { readonly index: number; readonly source: string };
+  /**
+   * The fenced code block this line is in (counted from 0), its whole source, the
+   * first word of its info string, and whether its closing fence was written.
+   */
+  readonly code?: {
+    readonly index: number;
+    readonly source: string;
+    readonly language: string;
+    readonly closed: boolean;
+  };
   /** The table this line is in (counted from 0). */
   readonly table?: { readonly index: number; readonly table: MarkdownTable };
   /** The alert this line titles (`> [!NOTE]`). */
@@ -254,12 +262,15 @@ export function markdownBlockLines(
   let codeStart = -1;
   // The open block is a `mermaid` one (and diagrams are drawn).
   let mermaid = false;
+  let language = "";
   const closeCode = (closed = false) => {
     if (codeStart < 0) return;
     const block = lines.slice(codeStart);
     const code = {
       index: codeCount,
       source: block.map((entry) => plainText(entry.text)).join("\n"),
+      language,
+      closed,
     };
     if (mermaid && closed && diagrams) {
       // Drawn only once its fence closes: a diagram being written is code so far.
@@ -329,6 +340,7 @@ export function markdownBlockLines(
     if (fenceMatch?.[1]) {
       fence = fenceMatch[1];
       mermaid = isMermaidInfo(raw.slice(fenceMatch[0].length));
+      language = raw.slice(fenceMatch[0].length).trim().split(/\s+/)[0] ?? "";
       separate();
       codeStart = lines.length;
       continue;

@@ -41,6 +41,9 @@ export function makeClusterClient(
     readonly follow: (client: TuiClient) => () => void;
     client: TuiClient;
     stop: () => void;
+    /** Why the thread's machine cannot be reached, as last shown; told again when it changes. */
+    unreachable: string | null;
+    retell: () => void;
   }>();
   /** What is on screen: the thread last opened, and the project of a draft open over it. */
   let viewedThread: string | null = null;
@@ -148,13 +151,28 @@ export function makeClusterClient(
     };
   };
 
+  /** Why the machine of `client` cannot be reached: it is listed, but out of the cluster. */
+  const unreachable = (client: TuiClient): string | null => {
+    const id = [...members.values()].find((machine) => machine.client === client)?.id;
+    const member = status?.members.find((listed) => listed.id === id);
+    return member && !member.connected
+      ? `This thread's MC cannot be reached: ${member.label} has left the cluster.`
+      : null;
+  };
+
   const changed = () => {
     for (const subscription of threadSubscriptions) {
       const client = clientForThread(subscription.threadId);
-      if (client === subscription.client) continue;
-      subscription.stop();
-      subscription.client = client;
-      subscription.stop = subscription.follow(client);
+      if (client !== subscription.client) {
+        subscription.stop();
+        subscription.client = client;
+        subscription.stop = subscription.follow(client);
+      }
+      // The thread stays as it was while its machine is away, and says so.
+      const reason = unreachable(client);
+      if (reason === subscription.unreachable) continue;
+      subscription.unreachable = reason;
+      subscription.retell();
     }
     const snapshot = merged();
     if (snapshot) for (const listener of shellListeners) listener(snapshot);
@@ -214,9 +232,26 @@ export function makeClusterClient(
     subscribeThread: (threadId, onThread) => {
       const client = clientForThread(threadId);
       viewedThread = threadId;
+      let last: Parameters<typeof onThread> | null = null;
+      const tell = () => {
+        if (last === null) return;
+        const [thread, page] = last;
+        onThread(thread, { ...page, unreachable: subscription.unreachable });
+      };
       const follow = (from: TuiClient) =>
-        from.subscribeThread(threadId, (thread, page) => onThread(keyed(from, thread), page));
-      const subscription = { threadId, follow, client, stop: follow(client) };
+        from.subscribeThread(threadId, (thread, page) => {
+          last = [keyed(from, thread), page];
+          tell();
+        });
+      const subscription = {
+        threadId,
+        follow,
+        client,
+        stop: () => {},
+        unreachable: unreachable(client),
+        retell: tell,
+      };
+      subscription.stop = follow(client);
       threadSubscriptions.add(subscription);
       return () => {
         threadSubscriptions.delete(subscription);

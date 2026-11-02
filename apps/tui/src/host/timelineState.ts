@@ -11,6 +11,7 @@ import { CHAT_CONTENT_MAX_WIDTH } from "../layout.ts";
 import { deriveContextWindow, formatContextWindow } from "../contextWindow.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
+import { runnableShellCommand } from "../shellRun.ts";
 import { fileGlyph, fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { ansi, type Palette, relativeTime, sessionStatusColor } from "../theme.ts";
@@ -125,7 +126,15 @@ export const FALLBACK_CELL_PIXELS: CellPixels = { width: 18, height: 35 };
 
 export interface TimelineItem {
   readonly key: string;
-  readonly kind: "pager" | "lineage" | "message" | "work" | "fold" | "files" | "background";
+  readonly kind:
+    | "notice"
+    | "pager"
+    | "lineage"
+    | "message"
+    | "work"
+    | "fold"
+    | "files"
+    | "background";
   readonly align: "left" | "right";
   readonly boxed: boolean;
   /** Width of the item's box (the column width unless boxed). */
@@ -170,6 +179,8 @@ export interface TimelineInput {
   readonly detail: OrchestrationThread | null;
   readonly hasOlderTurns: boolean;
   readonly loadingOlderTurns: boolean;
+  /** Why the thread's MC cannot be reached (it left the cluster); null while it can. */
+  readonly unreachable?: string | null;
   readonly approvalCount: number;
   readonly view: TimelineView;
   /** Turns whose fold starts open: the ones the user stopped in this session. */
@@ -267,6 +278,17 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
   };
 
   const items: TimelineItem[] = [];
+  if (input.unreachable) {
+    items.push(
+      item(
+        "notice:unreachable",
+        "notice",
+        width,
+        [line(styled(chunk(input.unreachable, { fg: palette.warning })))],
+        { marginBottom: 1 },
+      ),
+    );
+  }
   if (input.parent) {
     items.push(
       item(
@@ -691,7 +713,7 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
       "message",
       width,
       [
-        ...replyLines(message.id, body, ctx),
+        ...replyLines(message.id, body, message.streaming, ctx),
         ...(imageLines.length > 0 ? [line(styled(chunk(""))), ...imageLines] : []),
       ],
       { marginTop: 1, marginBottom: checkpoint ? 0 : 1 },
@@ -712,9 +734,15 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
  * table is followed by a row that copies it as Markdown or CSV and cuts its
  * cells to one line or wraps them again. A Mermaid diagram is drawn in
  * characters when the MC can, its title switching to its source and back; a
- * click on it copies its source. What was just copied shows it.
+ * click on it copies its source. What was just copied shows it. A finished one-line
+ * shell block offers to run its command in the thread's terminal (shellRun.ts).
  */
-function replyLines(messageId: string, body: string, ctx: RowContext): TimelineLine[] {
+function replyLines(
+  messageId: string,
+  body: string,
+  streaming: boolean,
+  ctx: RowContext,
+): TimelineLine[] {
   const { palette, width } = ctx;
   const tableKey = (index: number) => `${messageId}:table:${index}`;
   const diagramKey = (index: number) => `${messageId}:diagram:${index}`;
@@ -739,8 +767,14 @@ function replyLines(messageId: string, body: string, ctx: RowContext): TimelineL
           ? { chunks: block.text.chunks.map((part) => ({ ...part, fg: palette.success })) }
           : block.text;
       const label = block.diagram ? "Diagram source" : "Code block";
-      const toggle =
-        block.diagram?.title && block.diagram.drawable
+      const command = runnableShellCommand(block.code, streaming);
+      const toggle = command
+        ? {
+            text: styled(chunk("▶ Run", { fg: palette.dim })),
+            action: "timeline.code.run",
+            payload: { command },
+          }
+        : block.diagram?.title && block.diagram.drawable
           ? {
               text: styled(
                 chunk(

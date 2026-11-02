@@ -249,6 +249,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       detail,
       hasOlderTurns: page?.hasMore ?? false,
       loadingOlderTurns: page?.loadingOlder ?? false,
+      unreachable: page?.unreachable ?? null,
       approvalCount: approvals.length,
       view,
       openTurns: interruptedTurns,

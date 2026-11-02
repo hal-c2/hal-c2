@@ -1330,6 +1330,17 @@ export function createHost(options: HostOptions): Host {
       case "terminal.toggle":
         terminal.toggle();
         return true;
+      case "timeline.code.run": {
+        // A reply's shell block runs like a project script, without becoming the
+        // project's last-run script (pingdotgg/t3code#13060).
+        const command = payloadField(payload, "command");
+        if (
+          typeof command === "string" &&
+          !terminal.runAction({ name: "Chat code block", command })
+        )
+          store.setStatus("Open a thread to run a command in its terminal.", "warning");
+        return true;
+      }
       case "terminal.open":
         terminal.open();
         return true;
