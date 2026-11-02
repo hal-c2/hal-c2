@@ -1378,12 +1378,12 @@ defmodule HalC2.Steps.Planning.Planner do
 
   step "the plugin read no page of {string}'s pull requests past \#{int}",
        %{args: [_repository, _number]} = context do
-    assert [_first] = World.cli_calls(context, "pr list")
+    assert [_first] = context |> World.pull_listings() |> World.first_pages()
     context
   end
 
   step "the plugin did not list {string}'s pull requests again", context do
-    assert [_first] = World.cli_calls(context, "pr list")
+    assert [_first] = context |> World.pull_listings() |> World.first_pages()
     context
   end
 
@@ -4478,11 +4478,13 @@ defmodule HalC2.Steps.Planning.Planner do
       end
 
     rows = newer ++ prs ++ older
-    first = %{"args" => ["pr list"], "stdout" => Enum.take(rows, 501)}
+    listing = %{"args" => ["api graphql"], "stdin" => ["PullRequestList"]}
+    first = Map.put(listing, "pulls", Enum.take(rows, 501))
 
     case Enum.at(rows, 499) do
       %{"updatedAt" => boundary} when length(rows) > 500 ->
-        rest = %{"args" => ["pr list", "updated:<=#{boundary}"], "stdout" => Enum.drop(rows, 499)}
+        rest = %{listing | "stdin" => ["PullRequestList", "updated:<=#{boundary}"]}
+        rest = Map.put(rest, "pulls", Enum.drop(rows, 499))
         World.cli_rules(context, [rest, first])
 
       _ ->

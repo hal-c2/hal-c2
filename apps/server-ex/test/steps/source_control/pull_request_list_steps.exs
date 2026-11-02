@@ -1,9 +1,9 @@
 defmodule HalC2.Steps.SourceControl.PullRequestList do
   @moduledoc """
   The fake GitHub holds a few pull requests in each repository and answers a
-  `gh pr list` search the way GitHub would for the qualifier it carries: one rule
+  pull request search the way GitHub would for the qualifier it carries: one rule
   per repository, state and qualifier, so a listing that sends the wrong search
-  gets the wrong rows.
+  gets the wrong rows. A repository's own list answers with all of a state's.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
@@ -71,7 +71,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   defp qualifiers do
     [
       {"review-requested:#{@me}", &requested?/1},
-      {"--author #{@me}", &author?(&1, @me)},
+      {"author:#{@me} ", &author?(&1, @me)},
       {"draft:true", & &1["isDraft"]},
       {"draft:false", &(not &1["isDraft"])},
       {"review:changes_requested", &(&1["reviewDecision"] == "CHANGES_REQUESTED")},
@@ -89,12 +89,30 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     for {repository, prs} <- fixture(),
         {state, raw} <- [{"open", "OPEN"}, {"closed", "CLOSED"}, {"merged", "MERGED"}],
         in_state = Enum.filter(prs, &(&1["state"] == raw)),
-        {qualifier, keep} <- qualifiers() ++ [{nil, fn _ -> true end}] do
+        {qualifier, keep} <-
+          qualifiers() ++ [{nil, fn _ -> true end}, {:own, fn _ -> true end}] do
+      matches =
+        case qualifier do
+          :own ->
+            ["PullRequestListRepository", ~s("states":["#{raw}"])]
+
+          nil ->
+            ["PullRequestListSearch", "is:#{state} "]
+
+          # As it sits in the request's JSON.
+          text ->
+            [
+              "PullRequestListSearch",
+              "is:#{state} ",
+              text |> JSON.encode!() |> String.slice(1..-2//1)
+            ]
+        end
+
       %{
-        "args" =>
-          ["pr list", "--repo github.com/#{repository}", "--state #{state}"] ++
-            List.wrap(qualifier),
-        "stdout" => Enum.filter(in_state, keep)
+        "args" => ["api graphql"],
+        "repository" => repository,
+        "stdin" => matches,
+        "pulls" => Enum.filter(in_state, keep)
       }
     end
   end
@@ -221,8 +239,9 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   step "the search runs on GitHub for each project", context do
     for repository <- ["acme/shop", "acme/api"] do
       assert Enum.any?(
-               World.cli_calls(context, "--repo github.com/#{repository}"),
-               &Enum.any?(&1["args"], fn arg -> String.contains?(arg, ~s("#{context.query}")) end)
+               World.pull_listings(context),
+               &(&1["variables"]["q"] =~ "repo:#{repository} " and
+                   &1["variables"]["q"] =~ ~s("#{context.query}"))
              ),
              "no search of #{repository} for #{context.query}"
     end
@@ -244,8 +263,10 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
 
     context
     |> World.cli_rules(%{
-      "args" => ["pr list", "--repo github.com/#{repository}", "--state open"],
-      "stdout" => prs
+      "args" => ["api graphql"],
+      "repository" => repository,
+      "stdin" => ["is:open "],
+      "pulls" => prs
     })
     |> Map.merge(%{many: {repository, prs}})
   end
@@ -263,8 +284,10 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
 
     context
     |> World.cli_rules(%{
-      "args" => ["pr list", "--repo github.com/#{repository}", "updated:<=#{boundary}"],
-      "stdout" => older
+      "args" => ["api graphql"],
+      "repository" => repository,
+      "stdin" => ["updated:<=#{boundary}"],
+      "pulls" => older
     })
     |> list(%{"cursors" => cursors})
     |> Map.put(:first_page, first)
@@ -368,10 +391,40 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
 
   step "{string} cannot be read", %{args: [repository]} = context do
     World.cli_rules(context, %{
-      "args" => ["pr list", "--repo github.com/#{repository}"],
+      "args" => ["api graphql"],
+      "repository" => repository,
       "stderr" => "HTTP 502: Bad Gateway\n",
       "exit" => 1
     })
+  end
+
+  step "GitHub gives up on reading more than {int} of them at once", %{args: [most]} = context do
+    {repository, _prs} = context.many
+
+    gave_up =
+      for first <- (most + 1)..100 do
+        %{
+          "args" => ["api graphql"],
+          "repository" => repository,
+          "stdin" => [~s("first":#{first},)],
+          "stderr" => "HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)\n",
+          "exit" => 1
+        }
+      end
+
+    World.cli_rules(context, gave_up)
+  end
+
+  step "all {int} open pull requests of {string} are listed",
+       %{args: [count, repository]} = context do
+    numbers = for e <- entries(context), e["repository"] == repository, do: e["number"]
+    assert numbers == Enum.to_list(count..1//-1)
+    context
+  end
+
+  step "no project reports an error", context do
+    assert {:ok, %{"errors" => []}} = context.reply
+    context
   end
 
   step "the pull requests of {string} are listed", %{args: [repository]} = context do
@@ -443,7 +496,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
 
     before = %{
       user: length(World.cli_calls(context, "api user")),
-      list: length(World.cli_calls(context, "pr list"))
+      list: length(World.pull_listings(context))
     }
 
     {{:ok, _}, context} = World.call(context, "pullRequests.invalidate", %{})
@@ -453,7 +506,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   step "the MC reads the pull requests afresh", context do
     context = list(context)
     assert length(World.cli_calls(context, "api user")) == context.calls_before.user + 1
-    assert length(World.cli_calls(context, "pr list")) > context.calls_before.list
+    assert length(World.pull_listings(context)) > context.calls_before.list
     context
   end
 end

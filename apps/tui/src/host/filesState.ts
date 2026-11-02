@@ -102,6 +102,8 @@ export interface FilesController {
   readonly mode: () => "files" | "fileEdit";
   /** Republish after a resize. */
   readonly sync: () => void;
+  /** The file in hand, relative to the folder shown: the one open, else the selected file row. */
+  readonly target: () => string | null;
   readonly commands: () => ReadonlyArray<{
     readonly title: string;
     readonly action: string;
@@ -732,6 +734,11 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     mode: () => (viewer?.edit ? "fileEdit" : "files"),
     sync: () => {
       if (open) publish();
+    },
+    target: () => {
+      if (!open) return null;
+      if (viewer) return viewer.path;
+      return flat().find((row) => row.path === selectedPath)?.kind === "file" ? selectedPath : null;
     },
     commands: () =>
       options.cwd() === null
