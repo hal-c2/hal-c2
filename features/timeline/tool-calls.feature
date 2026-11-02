@@ -34,7 +34,7 @@ Feature: Tool calls and file changes
 
   # A new tool call still separates two messages. Progress on a tool already shown does not,
   # so a table or link the agent is writing is not cut in two.
-  @backlog @mc @shared
+  @mc @shared @backlog-desktop @backlog-mobile
   Scenario: A running command's progress does not split the agent's message in two
     Given the agent is writing a message
     And a command it started in the background reports progress in the middle of the message

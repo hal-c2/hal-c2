@@ -500,6 +500,82 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     context
   end
 
+  # The agent backgrounds a command, then writes a markdown table while the command
+  # ticks, finishes, and reports its end again (upstream T3 Code #13386). The chunks
+  # carry no message id, as Antigravity's do.
+  step "the agent is writing a message", context do
+    say = &%{"update" => %{"sessionUpdate" => "agent_message_chunk", "content" => &1}}
+    text = &say.(%{"type" => "text", "text" => &1})
+
+    progress =
+      &%{
+        "update" => %{
+          "sessionUpdate" => "tool_call_update",
+          "toolCallId" => "background-1",
+          "status" => &1,
+          "rawOutput" => %{"stdout" => &2}
+        }
+      }
+
+    started = %{
+      "update" => %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => "background-1",
+        "title" => "Terminal",
+        "kind" => "execute",
+        "status" => "in_progress",
+        "rawInput" => %{"command" => "sleep 3 && echo done"}
+      }
+    }
+
+    steps = [
+      started,
+      text.("| a | b |\n|---|---|\n| 1 "),
+      progress.("in_progress", "."),
+      text.("| x |\n"),
+      progress.("completed", "done"),
+      text.("| 2 | y |\n"),
+      progress.("completed", "done"),
+      text.("| 3 | z |")
+    ]
+
+    turn = %{"match" => "write the table", "steps" => steps}
+
+    context
+    |> FakeAcp.install("opencode", %{"turns" => [turn | FakeAcp.turns()]}, enabled: true)
+    |> FakeAcp.thread("Agent work")
+  end
+
+  step "a command it started in the background reports progress in the middle of the message",
+       context do
+    context = FakeAcp.send_message(context, "write the table")
+    Map.put(context, :run_state, FakeAcp.await_run(context, "completed"))
+  end
+
+  step "the message stays one message", context do
+    assert [message] =
+             Enum.filter(
+               StreamState.list(context.run_state, "turn-item"),
+               &(&1["type"] == "assistant_message")
+             )
+
+    Map.put(context, :message, message)
+  end
+
+  step "the text the agent writes after the progress is part of it", context do
+    assert context.message["text"] ==
+             "| a | b |\n|---|---|\n| 1 | x |\n| 2 | y |\n| 3 | z |"
+
+    assert [command] =
+             Enum.filter(
+               StreamState.list(context.run_state, "turn-item"),
+               &(&1["type"] == "command_execution")
+             )
+
+    assert command["status"] == "completed"
+    context
+  end
+
   defp changed_files(diff),
     do: for([_, path] <- Regex.scan(~r/^diff --git a\/(\S+) /m, diff), do: path) |> Enum.sort()
 end
