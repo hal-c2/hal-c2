@@ -15,6 +15,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
   reaps what the boot could not, as the MC the boot was given, before it runs
   (hal-c2/hal-c2#451). An orphan may exit on its own before the boot, leaving its background command in its
   group: the boot kills that command all the same (hal-c2/hal-c2#380).
+  A run kills through the pid-kill helper or with the `kill` it falls back to, and
+  which must not change any of this (hal-c2/hal-c2#411).
   """
 
   use ExUnit.Case, async: false
@@ -46,9 +48,10 @@ defmodule HalC2.SubprocessOrphansPropTest do
   property "a boot kills what a dead MC left running and nothing else",
     numtests: HalC2.Prop.numtests(40),
     max_size: 20 do
-    forall cmds <- commands(__MODULE__) do
+    forall {cmds, helper?} <- {commands(__MODULE__), boolean()} do
       trap_exit do
         HalC2.Prop.scratch_home("orphans")
+        Application.put_env(:hal_c2, :pid_kill_helper, helper? && nil)
         {history, state, result} = run_commands(__MODULE__, cmds)
         cleanup()
 

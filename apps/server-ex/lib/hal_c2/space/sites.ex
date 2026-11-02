@@ -11,6 +11,7 @@ defmodule HalC2.Space.Sites do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState}
+  alias HalC2.Space
   alias HalC2.Space.{Blocks, Pages}
 
   @doc "The site of the page `page_id`, if it is published."
@@ -128,6 +129,13 @@ defmodule HalC2.Space.Sites do
       |> Enum.flat_map(fn block -> published(state, block) end)
 
     %{"title" => page["title"], "blocks" => blocks}
+  end
+
+  # A run's Markdown reads as the blocks removing the update would make of it.
+  defp published(state, %{"kind" => "generated"} = block) do
+    state
+    |> Space.written(block["text"])
+    |> Enum.flat_map(&published(state, &1))
   end
 
   defp published(state, %{"kind" => "subpage_link"} = block) do

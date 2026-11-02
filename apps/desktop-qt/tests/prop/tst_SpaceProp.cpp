@@ -288,6 +288,16 @@ bool untrashed(const Entities& held, const QJsonObject& page) {
   return true;
 }
 
+// What the page shows of its update: the MC's field and the label of its cadence,
+// or nothing since the field went or was set to null.
+QVariantMap updateOf(const QJsonObject& page) {
+  const QJsonObject schedule = page.value(QLatin1String("schedule")).toObject();
+  if (schedule.isEmpty()) return {};
+  QVariantMap update = schedule.toVariantMap();
+  update.insert(QStringLiteral("cadenceLabel"), SpacePages::cadenceLabel(schedule.value(QLatin1String("cadence")).toObject()));
+  return update;
+}
+
 // What the page has published: one site at most, as the MC keeps it.
 QVariantMap siteShownOf(const Model& model) {
   for (const QJsonObject& site : ofKind(model.held, kSite)) {
@@ -310,6 +320,8 @@ QVariantMap pageOf(const Model& model) {
           {QStringLiteral("trashed"), !untrashed(model.held, page)},
           {QStringLiteral("sourceThreadId"), thread},
           {QStringLiteral("sourceThreadTitle"), thread.isEmpty() ? QString() : QStringLiteral("a thread")},
+          {QStringLiteral("schedule"), updateOf(page)},
+          {QStringLiteral("writtenAt"), str(page, "writtenAt")},
           {QStringLiteral("site"), siteShownOf(model)}};
 }
 
@@ -581,6 +593,7 @@ struct Write : Command {
       offer(2, "page.move");
       offer(3, "page.trash");
       offer(1, "page.delete");
+      offer(2, "page.schedule");
       if (blocks.size() < kMaxBlocks) offer(4, "block.create");
     }
     if (!blocks.isEmpty()) {
@@ -626,6 +639,10 @@ struct Write : Command {
       flag = *rc::gen::arbitrary<bool>();
     } else if (op == QLatin1String("page.rename")) {
       value = pick({QStringLiteral("Plans"), QStringLiteral("Roadmap"), QString()});
+    } else if (op == QLatin1String("page.schedule")) {
+      // An instruction, or "" for an update that was removed.
+      value = pick({QStringLiteral("Summarise"), QStringLiteral("List"), QString()});
+      flag = *rc::gen::arbitrary<bool>();
     } else if (op == QLatin1String("page.move")) {
       other = pick(pages + QStringList{QString()});
     } else if (op == QLatin1String("block.create")) {
@@ -689,6 +706,13 @@ struct Write : Command {
                   {QStringLiteral("createdAt"), at}, {QStringLiteral("trashedAt"), QJsonValue::Null}});
     }
     if (op == QLatin1String("page.rename")) return set({{QStringLiteral("title"), value}, {QStringLiteral("updatedAt"), at}});
+    if (op == QLatin1String("page.schedule")) {
+      if (value.isEmpty()) return set({{QStringLiteral("schedule"), QJsonValue::Null}, {QStringLiteral("writtenAt"), QJsonValue::Null}});
+      const QJsonObject cadence = flag ? QJsonObject{{QStringLiteral("type"), QStringLiteral("interval")}, {QStringLiteral("everyMs"), 7200000}}
+                                       : QJsonObject{{QStringLiteral("type"), QStringLiteral("fixed_time")}, {QStringLiteral("timeOfDay"), QStringLiteral("07:30")}, {QStringLiteral("weekdays"), QJsonArray()}};
+      return set({{QStringLiteral("schedule"), QJsonObject{{QStringLiteral("instruction"), value}, {QStringLiteral("cadence"), cadence}, {QStringLiteral("enabled"), flag}, {QStringLiteral("nextRunAt"), QJsonValue::Null}}},
+                  {QStringLiteral("writtenAt"), at}});
+    }
     if (op == QLatin1String("page.move")) {
       if (!other.isEmpty() && (!model.mc.contains(keyOf(kPage, other)) || subtree(model, id).contains(other))) return std::nullopt;
       return set({{QStringLiteral("parentPageId"), nullable(other)}, {QStringLiteral("updatedAt"), at}});

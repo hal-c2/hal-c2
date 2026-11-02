@@ -236,6 +236,20 @@ Feature: Launching and leaving the terminal client
       | SIGINT  |
       | SIGTERM |
 
+  # The renderer takes the alternate screen and reads keys before the shell's keymap exists, and
+  # loading the shell can take a while; none of that may trap the user.
+  @tui
+  Scenario Outline: The client can be left while its shell is still loading
+    When the user leaves with <way> before the shell has loaded
+    Then the terminal client closes and restores the terminal
+    And it exits with status 0
+
+    Examples:
+      | way     |
+      | ctrl+c  |
+      | SIGINT  |
+      | SIGTERM |
+
   # The Node server's "hal-c2 tui" launcher is gone; the client has no session of its own to revoke on the local MC, and keeps a
   # paired remote one ("Leaving keeps a paired remote session until the environment revokes it").
   @dropped @tui

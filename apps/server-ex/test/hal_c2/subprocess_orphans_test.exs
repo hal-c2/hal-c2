@@ -20,8 +20,23 @@ defmodule HalC2.Subprocess.OrphansTest do
 
   setup %{tmp_dir: dir} do
     Application.put_env(:hal_c2, :home, dir)
+    on_exit(fn -> Application.delete_env(:hal_c2, :pid_kill_helper) end)
     :ok
   end
+
+  # The tests that take `kill` off PATH mean there is no way to signal at all.
+  defp no_pid_kill_helper, do: Application.put_env(:hal_c2, :pid_kill_helper, false)
+
+  # A stand-in hal-c2-pid-kill that says how it was run, then runs `script`.
+  defp pid_kill_stub(dir, script) do
+    {stub, args} = {Path.join(dir, "pid-kill"), Path.join(dir, "pid-kill-args")}
+    File.write!(stub, ~s(#!/bin/sh\necho "$@" >> '#{args}'\n#{script}\n))
+    File.chmod!(stub, 0o755)
+    Application.put_env(:hal_c2, :pid_kill_helper, stub)
+    args
+  end
+
+  defp ticks(started), do: started |> String.split(":") |> List.last()
 
   # An MC that is gone: this VM's pid, but not its start time.
   defp dead_mc, do: %{"pid" => String.to_integer(System.pid()), "started" => "an earlier boot"}
@@ -84,6 +99,87 @@ defmodule HalC2.Subprocess.OrphansTest do
 
     boot(:next)
 
+    assert Orphans.gone?(command)
+    assert File.ls!(Orphans.dir()) == []
+  end
+
+  test "a kill goes through the helper with the start time that was read", %{tmp_dir: dir} do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    pid = Subprocess.os_pid(sub)
+    started = Orphans.started(pid)
+    :ok = stop_supervised(:died)
+    args = pid_kill_stub(dir, ~s(exec kill -KILL -- "-$2"))
+
+    boot(:next)
+
+    assert File.read!(args) == "--group #{pid} #{ticks(started)}\n"
+    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+    assert File.ls!(Orphans.dir()) == []
+  end
+
+  test "a sweep signals each command through the helper, alone", %{tmp_dir: dir} do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @leaves])
+    :ok = stop_supervised(:died)
+    command = left_behind(sub)
+    started = Orphans.started(command)
+    args = pid_kill_stub(dir, ~s(exec kill -KILL -- "$1"))
+
+    boot(:next)
+
+    assert File.read!(args) == "#{command} #{ticks(started)}\n"
+    assert Orphans.gone?(command)
+    assert File.ls!(Orphans.dir()) == []
+  end
+
+  test "a kill the helper finds the pid reused for does not fall back to kill", %{tmp_dir: dir} do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+    pid_kill_stub(dir, "exit 3")
+
+    boot(:next)
+
+    alive!(sub)
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
+  # No pidfds (4), and what a binary that will not load comes back as (8, 127).
+  for status <- [4, 8, 127] do
+    test "a helper exiting #{status} gets the kill it always got", %{tmp_dir: dir} do
+      boot(:died, owner: dead_mc())
+      {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+      :ok = stop_supervised(:died)
+      pid_kill_stub(dir, "exit #{unquote(status)}")
+
+      boot(:next)
+
+      assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+      assert File.ls!(Orphans.dir()) == []
+    end
+  end
+
+  test "a program that exits just before the helper's check still has its commands swept",
+       %{tmp_dir: dir} do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", "sleep 60 & echo $!; " <> @echo])
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
+    Subprocess.ack(sub)
+    command = String.to_integer(line)
+    leader = Subprocess.os_pid(sub)
+    :ok = stop_supervised(:died)
+
+    # The first run ends the program alone and finds it gone, as the helper would; the
+    # sweep's run is a plain kill of the command.
+    pid_kill_stub(
+      dir,
+      ~s(if [ "$1" = --group ]; then kill -KILL "$2"; exit 3; fi; exec kill -KILL "$1")
+    )
+
+    boot(:next)
+
+    assert Orphans.gone?(leader)
     assert Orphans.gone?(command)
     assert File.ls!(Orphans.dir()) == []
   end
@@ -171,6 +267,7 @@ defmodule HalC2.Subprocess.OrphansTest do
   end
 
   test "a boot with no kill to run keeps the record of what a gone program left" do
+    no_pid_kill_helper()
     boot(:died, owner: dead_mc())
     {:ok, sub} = Subprocess.start(["sh", "-c", @leaves])
     :ok = stop_supervised(:died)
@@ -256,6 +353,7 @@ defmodule HalC2.Subprocess.OrphansTest do
   end
 
   test "a failed kill of a zombie program keeps its record for the next boot", %{tmp_dir: dir} do
+    no_pid_kill_helper()
     # A zombie (as in the unreaped-MC test below): exited, so "not running" before
     # any signal — a failed kill must not be read as success from that alone.
     child = ~S{sh -c 'while [ "$(cat /proc/$PPID/comm)" != sleep ]; do sleep 0.01; done'}
@@ -290,6 +388,7 @@ defmodule HalC2.Subprocess.OrphansTest do
   end
 
   test "a boot with no kill to run keeps the record, and a later one kills the program" do
+    no_pid_kill_helper()
     boot(:died, owner: dead_mc())
     {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
     :ok = stop_supervised(:died)

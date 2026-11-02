@@ -373,6 +373,22 @@ defmodule HalC2.Orchestration.DelegationTest do
       refute woken?()
     end
 
+    test "cancels what the child has queued before it interrupts, and is not refused for it" do
+      delegate("queued")
+      test = self()
+
+      hook_with(fn
+        :cancelling, _ ->
+          send(test, {:at_interrupt, StreamState.get(HalC2.Streams.state("c"), "run")["cr"]})
+
+        _, _ ->
+          :ok
+      end)
+
+      assert {:ok, %{"status" => "cancelled"}} = Delegation.cancel("p", "task")
+      assert_received {:at_interrupt, %{"status" => "cancelled"}}
+    end
+
     test "is refused for a task that already ended" do
       delegate("completed")
       Delegation.finished("c", "cr", "completed")

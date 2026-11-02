@@ -219,7 +219,7 @@ void FakeMc::setOnline(const QString& environment, bool online) {
   if (!m_socket || m_shellSubscription < 0) return;
   send({{QStringLiteral("t"), QStringLiteral("shell.mc")},
         {QStringLiteral("id"), m_shellSubscription},
-        {QStringLiteral("mc"), peers.value(environment)},
+        {QStringLiteral("mc"), environment == environmentId ? name : peers.value(environment)},
         {QStringLiteral("online"), online}});
 }
 

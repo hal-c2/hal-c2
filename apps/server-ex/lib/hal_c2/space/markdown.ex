@@ -55,6 +55,14 @@ defmodule HalC2.Space.Markdown do
     end
   end
 
+  @doc "The blocks of `markdown`, with a title at the top as an ordinary heading."
+  def blocks(markdown) do
+    case parse(markdown) do
+      {nil, blocks} -> blocks
+      {title, blocks} -> [new("heading", title) | blocks]
+    end
+  end
+
   # A `# ` heading anywhere but the top is an ordinary heading.
   defp untitle({:title, text}), do: new("heading", text)
   defp untitle(block), do: block

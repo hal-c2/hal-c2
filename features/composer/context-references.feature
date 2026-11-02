@@ -352,6 +352,15 @@ Feature: Referencing files, skills, commands and context
     When the user types "@" into the composer
     Then the suggestion list says "No matching files or folders."
 
+  @desktop @mobile @backlog-mobile
+  Scenario: The @ menu says it cannot search while the environment is away, and answers when it returns
+    Given a project with an open thread
+    And the environment of the open thread is unreachable
+    When the user types "@zzz" into the composer
+    Then the suggestion list says "Can't search files right now."
+    When the environment of the open thread is reachable again
+    Then the suggestion list says "No matching files or folders."
+
   @backlog @desktop
   Scenario Outline: A suggestion list with nothing to offer says why
     When the user types "<typed>" and <situation>

@@ -911,6 +911,17 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  step "a message is queued behind the subagent's turn", context do
+    {{:ok, _}, context} = World.send_message(context, "subagent", "and another thing")
+    context
+  end
+
+  step "the subagent's turn is interrupted and the message behind it cancelled", context do
+    assert {:ok, _} = context.mcp_result
+    World.await_runs(context, "subagent", ["interrupted", "cancelled"])
+    context
+  end
+
   step "the task is cancelled and its delivery disposed", context do
     task = task(context)
     assert task["status"] == "cancelled"
