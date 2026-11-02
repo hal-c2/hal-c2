@@ -156,6 +156,8 @@ set(hal_c2_bricks_qml_files
     SnapShotSettings.qml
     Markdown.qml
     js/markdown.js
+    BrowserPanel.qml
+    js/browser.js
 )
 set(hal_c2_bricks_resources
     qmldir
