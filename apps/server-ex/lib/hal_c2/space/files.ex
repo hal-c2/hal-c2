@@ -459,7 +459,7 @@ defmodule HalC2.Space.Files do
      if(kind == "subpage_link", do: block["linkedPageId"]), block["imageId"],
      if(kind == "heading", do: Markdown.level(block)), block["gap"],
      if(kind == "code", do: Map.take(block, ~w(language fence info))),
-     Map.take(block, ~w(depth indent marker start alert))}
+     Map.take(block, ~w(url depth indent marker start alert label))}
   end
 
   defp file(%{"file" => %{} = file}), do: {:ok, file}
