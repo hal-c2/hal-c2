@@ -1,6 +1,8 @@
 #include "WorkspaceController.h"
 
+#include <QDesktopServices>
 #include <QJsonValue>
+#include <QStandardPaths>
 #include <QUrl>
 #include <QRegularExpression>
 
@@ -27,7 +29,55 @@ namespace {
 const NativeControllerRegistrar<WorkspaceController> registrar(QStringLiteral("workspace"),
                                                                {QStringLiteral("workspace")});
 
+// What showing a file in its folder is called on the machine that does it.
+QString revealLabel(const QJsonObject& environment) {
+  const QJsonObject platform = environment.value(QLatin1String("platform")).toObject();
+  const QString os = platform.value(QLatin1String("os")).toString();
+  if (os == QLatin1String("darwin")) return QStringLiteral("Reveal in Finder");
+  if (os == QLatin1String("win32") || platform.value(QLatin1String("wsl")).toBool()) return QStringLiteral("Reveal in File Explorer");
+  if (os == QLatin1String("linux")) return QStringLiteral("Reveal in Files");
+  return QStringLiteral("Reveal in file manager");
+}
+
 // packages/contracts EDITORS, in the order the picker offers them.
+const QString kFilesElsewhere = QStringLiteral("The files are on another machine and can't be opened here yet.");
+
+// The editors that open a folder over SSH from a deep link, and the commands
+// that say one is installed (REMOTE_CAPABLE_EDITOR_IDS in packages/contracts).
+struct SshEditor {
+  QString id;
+  QString scheme;
+  QStringList commands;
+};
+const QList<SshEditor>& sshEditorList() {
+  static const QList<SshEditor> editors{
+      {QStringLiteral("cursor"), QStringLiteral("cursor"), {QStringLiteral("cursor")}},
+      {QStringLiteral("vscode"), QStringLiteral("vscode"), {QStringLiteral("code")}},
+      {QStringLiteral("vscode-insiders"), QStringLiteral("vscode-insiders"), {QStringLiteral("code-insiders")}},
+      {QStringLiteral("vscodium"), QStringLiteral("vscodium"), {QStringLiteral("codium")}},
+      {QStringLiteral("zed"), QStringLiteral("zed"), {QStringLiteral("zed"), QStringLiteral("zeditor")}},
+  };
+  return editors;
+}
+
+// `buildRemoteOpenUrl` in packages/contracts. A Windows path is `/C:/...` in a
+// vscode-remote URI; Zed resolves a rooted path on the system drive.
+QUrl sshOpenUrl(const QString& editor, const QString& host, const QString& absolutePath) {
+  const auto found = std::find_if(sshEditorList().cbegin(), sshEditorList().cend(),
+                                  [&](const SshEditor& candidate) { return candidate.id == editor; });
+  if (found == sshEditorList().cend()) return {};
+  QString path = QString(absolutePath).replace(QLatin1Char('\\'), QLatin1Char('/'));
+  if (!path.startsWith(QLatin1Char('/'))) path.prepend(QLatin1Char('/'));
+  const bool zed = editor == QLatin1String("zed");
+  if (zed && path.startsWith(QLatin1String("/C:/"), Qt::CaseInsensitive)) path.remove(0, 3);
+  QStringList segments = path.split(QLatin1Char('/'));
+  for (QString& segment : segments) segment = QString::fromLatin1(QUrl::toPercentEncoding(segment));
+  const QString encodedHost = QString::fromLatin1(QUrl::toPercentEncoding(host));
+  const QString prefix = zed ? QStringLiteral("://ssh/") + encodedHost
+                             : QStringLiteral("://vscode-remote/ssh-remote+") + encodedHost;
+  return QUrl(found->scheme + prefix + segments.join(QLatin1Char('/')), QUrl::StrictMode);
+}
+
 const QList<std::pair<QString, QString>>& editorLabels() {
   static const QList<std::pair<QString, QString>> labels{
       {QStringLiteral("default"), QStringLiteral("Default Editor")},
@@ -38,6 +88,7 @@ const QList<std::pair<QString, QString>>& editorLabels() {
       {QStringLiteral("vscode-insiders"), QStringLiteral("VS Code Insiders")},
       {QStringLiteral("vscodium"), QStringLiteral("VSCodium")},
       {QStringLiteral("zed"), QStringLiteral("Zed")},
+      {QStringLiteral("sublime"), QStringLiteral("Sublime Text")},
       {QStringLiteral("antigravity"), QStringLiteral("Antigravity")},
       {QStringLiteral("idea"), QStringLiteral("IntelliJ IDEA")},
       {QStringLiteral("aqua"), QStringLiteral("Aqua")},
@@ -494,9 +545,57 @@ QJsonObject WorkspaceController::localConfig() const {
   return settings ? settings->config() : QJsonObject();
 }
 
-// This machine's: a thread elsewhere opens in an editor here.
+QString WorkspaceController::placeLabel() const {
+  const QString label = text(m_store->environment(m_place->environmentId), "label");
+  return label.isEmpty() ? m_place->environmentId : label;
+}
+
+QString WorkspaceController::sshNote() const {
+  return farFromHere() && !sshHost().isEmpty() ? QStringLiteral("Opens over SSH at %1. Needs your key on %2").arg(sshHost(), placeLabel())
+                                               : QString();
+}
+
+QString WorkspaceController::noSshRoute() const {
+  return farFromHere() && sshHost().isEmpty() ? QStringLiteral("No SSH route to %1").arg(placeLabel()) : QString();
+}
+
+bool WorkspaceController::farFromHere() const {
+  return m_place && !thisMachine::hosts(*m_store, *m_client, m_place->environmentId) &&
+         !thisMachine::hosts(*m_store, *m_client, m_client->environment());
+}
+
+// The SSH name that environment advertises as most reachable. Empty: no route.
+QString WorkspaceController::sshHost() const {
+  return text(environmentConfig().value(QLatin1String("remoteOpenTargets")).toArray().first().toObject(), "host");
+}
+
+// The editors installed on this computer that work over SSH. No MC can say
+// that for it, and the list is looked for again only when PATH changes. A
+// desktop launch can miss PATH entries, so finding none leaves VS Code, whose
+// link the operating system answers or refuses.
+QJsonArray WorkspaceController::sshEditors() const {
+  const QByteArray path = qgetenv("PATH");
+  if (!m_sshEditors || m_sshEditorsPath != path) {
+    QJsonArray found;
+    for (const SshEditor& editor : sshEditorList()) {
+      const bool installed = std::any_of(editor.commands.cbegin(), editor.commands.cend(), [](const QString& command) {
+        return !QStandardPaths::findExecutable(command).isEmpty();
+      });
+      if (installed) found.append(editor.id);
+    }
+    if (found.isEmpty()) found.append(QStringLiteral("vscode"));
+    m_sshEditors = found;
+    m_sshEditorsPath = path;
+  }
+  return *m_sshEditors;
+}
+
+// This machine's: a thread elsewhere opens in an editor here, from the folder
+// its own MC keeps for a member, else over SSH.
 QJsonArray WorkspaceController::editors() const {
-  const QJsonArray available = localConfig().value(QLatin1String("availableEditors")).toArray();
+  const bool far = farFromHere();
+  if (far && sshHost().isEmpty()) return {};
+  const QJsonArray available = far ? sshEditors() : localConfig().value(QLatin1String("availableEditors")).toArray();
   QJsonArray result;
   for (const auto& [id, label] : editorLabels()) {
     if (available.contains(id)) result.append(QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("label"), label}});
@@ -666,6 +765,9 @@ QVariantMap WorkspaceController::build() const {
       {QStringLiteral("canOpenPullRequest"), canOpenPullRequest},
       {QStringLiteral("editors"), editorList.toVariantList()},
       {QStringLiteral("preferredEditorId"), nullable(preferredEditor(editorList))},
+      {QStringLiteral("openOverSsh"), sshNote()},
+      {QStringLiteral("noSshRoute"), noSshRoute()},
+      {QStringLiteral("revealLabel"), revealLabel(m_store->environment(place.environmentId))},
       {QStringLiteral("scripts"), place.scripts.toVariantList()},
       {QStringLiteral("preferredScriptId"), known ? QVariant(lastScript) : QVariant::fromValue(nullptr)},
       {QStringLiteral("environments"), environmentChoices()},
@@ -827,6 +929,13 @@ void WorkspaceController::openInEditor(const QString& editorId) {
 
 bool WorkspaceController::openInEditor(const QString& editorId, const QString& path, bool reveal) {
   if (!m_place || path.isEmpty()) return false;
+  auto* toasts = NativeShell::of(this)->controller<ToastController>();
+  const bool far = farFromHere();
+  // A file manager has no SSH route, and without a route nothing can open it.
+  if (far && (reveal || sshHost().isEmpty())) {
+    toasts->error(kFilesElsewhere);
+    return true;
+  }
   const QJsonArray available = editors();
   const QString editor = reveal ? QStringLiteral("file-manager") : editorId.isEmpty() ? preferredEditor(available) : editorId;
   bool known = false;
@@ -836,14 +945,16 @@ bool WorkspaceController::openInEditor(const QString& editorId, const QString& p
   if (!reveal) {
     if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) settings->writeDevice(kLastEditor, editor);
   }
-  openHere(m_place->environmentId, path, editor, reveal, QStringLiteral("Failed to open in editor."));
+  if (far) {
+    if (!QDesktopServices::openUrl(sshOpenUrl(editor, sshHost(), path))) {
+      toasts->error(QStringLiteral("Failed to open in editor."));
+    }
+  } else {
+    openHere(m_place->environmentId, path, editor, reveal, QStringLiteral("Failed to open in editor."));
+  }
   publish();
   return true;
 }
-
-namespace {
-const QString kFilesElsewhere = QStringLiteral("The files are on another machine and can't be opened here yet.");
-}  // namespace
 
 // A machine's own files are where they are. Another member's are in the folder
 // the shell's MC keeps for it (files.localPath), when that MC runs here; an MC
@@ -884,7 +995,8 @@ void WorkspaceController::openHere(const QString& environmentId, const QString& 
       if (done) {
         done(local.problem);
       } else {
-        toasts->error(local.problem);
+        // The reason is the whole message: no "An error occurred." under it.
+        toasts->show(QStringLiteral("error"), local.problem);
       }
       return;
     }

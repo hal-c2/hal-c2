@@ -574,7 +574,7 @@ defmodule HalC2.ThreadArchive do
 
     entity =
       entity
-      |> Map.drop(["movedTo", "moving", "plugin"])
+      |> Map.drop(["movedTo", "moving", "plugin", "spacePage"])
       |> Map.put("worktreePath", worktree)
       |> then(&if(arrived, do: Map.put(&1, "arrived", arrived), else: &1))
 
@@ -637,7 +637,10 @@ defmodule HalC2.ThreadArchive do
       {:ok, _} = Streams.commit(id, :thread, changes)
       Streams.flush_shell(id)
     else
-      {:ok, _} = Store.append([{:thread, id, changes}])
+      HalC2.Search.storing_thread(id, fn ->
+        {:ok, _} = Store.append([{:thread, id, changes}])
+      end)
+
       HalC2.Projection.rebuild(id)
     end
 
@@ -650,6 +653,32 @@ defmodule HalC2.ThreadArchive do
     meta = archive["thread"]
     id = meta["id"]
 
+    HalC2.Search.storing_thread(id, fn -> v1_thread(archive, project, meta) end)
+    loaded = StreamState.load(Store.path(), id)
+
+    # Provider sessions from an earlier install do not come along: the next message hands
+    # the conversation over.
+    native =
+      for pt <- StreamState.list(loaded, "provider-thread"),
+          is_map(pt["nativeThreadRef"]),
+          do: {"provider-thread", pt["id"], %{"s" => %{"nativeThreadRef" => nil}}}
+
+    if native != [], do: {:ok, _} = Store.append([{:thread, id, native}])
+
+    if Process.whereis(HalC2.Shell) do
+      case HalC2.Projection.rebuild(id) do
+        {_, _} = kind_row -> HalC2.Shell.put_row(id, kind_row)
+        nil -> :ok
+      end
+    else
+      HalC2.Projection.rebuild(id)
+    end
+
+    {:ok, %{thread: id, title: meta["title"], project: project["id"], session: false, notes: []}}
+  end
+
+  # Stores the thread and its files, as `Import.V2` writes them in batches.
+  defp v1_thread(archive, project, %{"id" => id} = meta) do
     source = HalC2.Scratch.path("hal-c2-thread", ".sqlite")
 
     rewrite =
@@ -684,28 +713,6 @@ defmodule HalC2.ThreadArchive do
     for %{"fileName" => name} = file <- archive["terminalLogs"],
         terminal = v1_terminal(name, id),
         do: Terminal.put_scrollback(id, terminal, bytes(file))
-
-    # Provider sessions from an earlier install do not come along: the next message hands
-    # the conversation over.
-    loaded = StreamState.load(Store.path(), id)
-
-    native =
-      for pt <- StreamState.list(loaded, "provider-thread"),
-          is_map(pt["nativeThreadRef"]),
-          do: {"provider-thread", pt["id"], %{"s" => %{"nativeThreadRef" => nil}}}
-
-    if native != [], do: {:ok, _} = Store.append([{:thread, id, native}])
-
-    if Process.whereis(HalC2.Shell) do
-      case HalC2.Projection.rebuild(id) do
-        {_, _} = kind_row -> HalC2.Shell.put_row(id, kind_row)
-        nil -> :ok
-      end
-    else
-      HalC2.Projection.rebuild(id)
-    end
-
-    {:ok, %{thread: id, title: meta["title"], project: project["id"], session: false, notes: []}}
   end
 
   @doc "The terminal an earlier install's scrollback file `name` belongs to in `thread_id`, or `nil`."

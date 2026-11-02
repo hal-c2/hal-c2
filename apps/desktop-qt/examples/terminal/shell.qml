@@ -102,6 +102,15 @@ ShellWindow {
                     Layout.alignment: Qt.AlignVCenter
                     Layout.leftMargin: 14
                     size: 10
+                    // "DEV" after C2 in a development shell (StageController).
+                    dev: Shell.state.stage?.artwork === "dev"
+                }
+
+                // Any other stage the build is marked with, as a pill.
+                StagePill {
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.leftMargin: 8
+                    visible: !!Shell.state.stage?.pill || Shell.state.stage?.artwork === "nightly"
                 }
 
                 Segment {
@@ -198,11 +207,15 @@ ShellWindow {
             color: root.canvas
 
             RowLayout {
+                id: columns
+
                 anchors.fill: parent
                 spacing: 0
 
                 Sidebar {
                     id: sidebar
+
+                    showStage: false
 
                     Layout.preferredWidth: root.sidebarCollapsed ? 0 : implicitWidth
                     Layout.minimumWidth: 0
@@ -230,8 +243,13 @@ ShellWindow {
                 }
 
                 ColumnLayout {
+                    id: thread
+
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    // The thread keeps room of its own (DefaultLayout's
+                    // threadMinimumWidth); the right panel gives way instead.
+                    Layout.minimumWidth: 360
                     visible: !root.pluginTab
                     spacing: 0
 
@@ -278,6 +296,9 @@ ShellWindow {
 
                     Layout.fillHeight: true
                     Layout.preferredWidth: implicitWidth
+                    // What the thread leaves it, so a narrower window or a
+                    // wider drag takes no room from the thread.
+                    maximumWidth: Math.max(minimumWidth, columns.width - thread.x - thread.Layout.minimumWidth)
                     ownToggle: false
                     visible: available && !root.pluginTab
                 }

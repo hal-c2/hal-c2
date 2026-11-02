@@ -126,6 +126,7 @@ Rectangle {
             Layout.rightMargin: 10
             Layout.bottomMargin: 6
             placeholderText: qsTr("Search settings")
+            Accessible.name: qsTr("Search settings")
             text: nav.route !== null ? (nav.route.search ?? "") : ""
             // Clears the query; an empty field leaves Escape to the section list's
             // owner, which leaves Settings.
@@ -298,7 +299,7 @@ Rectangle {
 
                 ShellButton {
                     objectName: "confirm"
-                    tint: Theme.palette.color("error", "#ef4444")
+                    tint: Theme.palette.color("errorForeground", "#ef4444")
                     text: qsTr("Restore defaults")
                     onClicked: restoreDialog.accept()
                 }

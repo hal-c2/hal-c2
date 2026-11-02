@@ -61,6 +61,11 @@ defmodule HalC2.Test.Mc do
   then the core; `restart/1` brings them all back.
   """
   def stop(mc) do
+    # The watch goes first: a runtime killed for not stopping in time, because it holds a
+    # request, must leave its turn for `HalC2.Orchestration.Recovery`, not end it in a
+    # race with the streams stopping.
+    ExUnit.Callbacks.stop_supervised(HalC2.Orchestration.TurnWatch)
+
     # Provider processes die with the MC.
     if Process.whereis(HalC2.Codex.Supervisor) do
       for {_, pid, _, _} <- DynamicSupervisor.which_children(HalC2.Codex.Supervisor),
@@ -219,6 +224,16 @@ defmodule HalC2.Test.Mc do
   @doc "The first frame matching `fun`, skipping others. Raises after `timeout`."
   def await(client, fun, timeout \\ 30_000) do
     {frame, _skipped, client} = WsClient.recv_until(client, fun, timeout)
+    {frame, client}
+  end
+
+  @doc """
+  The config frame of the subscription `id`. A config the MC could not build comes as an
+  error frame saying why, and waiting on past it would only report a missing frame.
+  """
+  def await_config(client, id) do
+    {frame, client} = await(client, &(&1["t"] in ["config", "error"] and &1["id"] == id))
+    if frame["t"] == "error", do: flunk("the MC sent no config: #{frame["reason"]}")
     {frame, client}
   end
 
@@ -1426,6 +1441,21 @@ defmodule HalC2.Test.Mc.World do
     |> Enum.map(&JSON.decode!/1)
     |> Enum.filter(&(Enum.join(&1["args"], " ") =~ fragment))
   end
+
+  @doc """
+  The pull request listings the fake `gh` was sent so far (`HalC2.PullRequests.GitHub.list/2`),
+  a GraphQL request (`query`, `variables`) per page, oldest first; `first_pages/1` keeps
+  the first page of each.
+  """
+  def pull_listings(context) do
+    for call <- cli_calls(context, "api graphql"),
+        request = JSON.decode!(call["stdin"]),
+        request["query"] =~ "PullRequestList",
+        do: request
+  end
+
+  @doc "Of `pull_listings/1`, the first page of each listing."
+  def first_pages(listings), do: Enum.filter(listings, &(&1["variables"]["after"] == nil))
 
   @doc """
   Makes `tool` impossible to find: its fake goes, `gh` is looked up under a name
@@ -4305,6 +4335,9 @@ defmodule HalC2.Test.Mc.Terminal do
       await_output(context, name, pattern, timeout)
     end
   end
+
+  @doc "Whether `output` ends at the shell's prompt; true when its prompt is not known."
+  def at_prompt?(output), do: not prompt_known?() or prompt_tail(output) =~ @prompt
 
   @doc "Waits until an OS process has ended (a shell ignores SIGTERM, so up to a second)."
   def await_exit(os_pid) do

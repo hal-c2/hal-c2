@@ -24,9 +24,9 @@ Rectangle {
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color borderColor: Theme.palette.color("border", "#27272a")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     readonly property color successColor: Theme.palette.color("success", "#22c55e")
-    readonly property color warningColor: Theme.palette.color("warning", "#f59e0b")
+    readonly property color warningColor: Theme.palette.color("warningForeground", "#f59e0b")
 
     function stateColor(state) {
         if (state === "open")

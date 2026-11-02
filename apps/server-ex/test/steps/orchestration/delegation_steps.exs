@@ -307,8 +307,16 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     Map.put(context, :first_wake, wake)
   end
 
-  step "{string} and {string} complete afterwards", %{args: [first, second]} = context do
-    context |> complete_named(first) |> complete_named(second) |> Map.put(:later, [first, second])
+  # The caller's busy turn holds the wake for `first` in its queue, so `second` joins
+  # it whatever the timing. Were the caller idle, that wake could run and end before
+  # `second` lands, and the wake limit would leave `second` unwoken (#634).
+  step "{string} and {string} complete afterwards, while {string} works on another turn",
+       %{args: [first, second, parent]} = context do
+    World.send_turn(context, parent, "wait for it")
+    World.await_runs(context, parent, ["completed", "completed", "running"])
+    context = context |> complete_named(first) |> complete_named(second)
+    World.send_turn(context, parent, "say Carrying on")
+    Map.put(context, :later, [first, second])
   end
 
   step "{string} is woken again for them", %{args: [parent]} = context do
@@ -317,9 +325,9 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     Map.put(context, :later_wakes, wakes)
   end
 
-  # Each result is delivered once; two that land together may ride one turn.
-  step "completions that arrive together may share one wake turn", context do
-    assert length(Enum.uniq_by(context.later_wakes, & &1["id"])) in 1..2
+  # Each result is delivered once, and two that land together ride one turn.
+  step "completions that arrive together share one wake turn", context do
+    assert [_] = Enum.uniq_by(context.later_wakes, & &1["id"])
 
     for name <- context.later do
       assert [_] =
@@ -656,6 +664,17 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # Its caller has heard the task failed, and may have given the work to another agent.
+  step "retrying the subagent's setup is refused", context do
+    child = World.thread_id(context, "subagent")
+    {reply, context} = World.call(context, "worktreeSetup.retry", %{"threadId" => child})
+    assert {:ok, %{"retried" => false}} = reply
+
+    assert %{"stages" => stages} = HalC2.WorktreeSetup.subscribe(child, self())
+    assert Enum.find(stages, &(&1["id"] == "agent"))["status"] == "skipped"
+    context
+  end
+
   step "the subagent never ran", context do
     state = World.state(context, "subagent")
     assert StreamState.list(state, "provider-turn") == []
@@ -897,6 +916,17 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   step "the subagent's turn is interrupted", context do
     assert {:ok, _} = context.mcp_result
     World.await_runs(context, "subagent", ["interrupted"])
+    context
+  end
+
+  step "a message is queued behind the subagent's turn", context do
+    {{:ok, _}, context} = World.send_message(context, "subagent", "and another thing")
+    context
+  end
+
+  step "the subagent's turn is interrupted and the message behind it cancelled", context do
+    assert {:ok, _} = context.mcp_result
+    World.await_runs(context, "subagent", ["interrupted", "cancelled"])
     context
   end
 

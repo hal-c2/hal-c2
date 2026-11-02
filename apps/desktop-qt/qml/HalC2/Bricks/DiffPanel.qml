@@ -79,6 +79,7 @@ Rectangle {
                 id: picker
 
                 objectName: "diffTurnPicker"
+                Accessible.name: qsTr("Turn to show")
                 Layout.preferredWidth: 150
                 visible: root.source?.hasTurns ?? true
                 outline: true

@@ -24,7 +24,7 @@ defmodule HalC2.MixProject do
           steps: [
             :assemble,
             &stage_cursor_acp/1,
-            &stage_machine_files/1,
+            &stage_native_helpers/1,
             &write_upgrade_manifest/1
           ]
         ]
@@ -101,19 +101,27 @@ defmodule HalC2.MixProject do
     release
   end
 
-  # The machine-files helper (native/machine-files, HalC2.MachineFiles.Helper) in
-  # priv/bin. It is Linux-only for now; elsewhere the MC says it is not supported.
-  defp stage_machine_files(release) do
-    if :os.type() == {:unix, :linux} do
-      root = Path.expand("../..", __DIR__)
-      manifest = Path.join(root, "native/machine-files/Cargo.toml")
+  # The machine-files helper (native/machine-files, HalC2.MachineFiles.Helper), the
+  # orphan reaper's (native/pid-kill, HalC2.Subprocess.Orphans) and the Mermaid renderer
+  # (native/mermaid, HalC2.Mermaid) in priv/bin. The first two are Linux-only: elsewhere
+  # the MC says machine files are not supported, and kills with `kill`.
+  defp stage_native_helpers(release) do
+    crates =
+      if :os.type() == {:unix, :linux},
+        do: ~w(machine-files pid-kill mermaid),
+        else: ~w(mermaid)
+
+    root = Path.expand("../..", __DIR__)
+    target = Path.join([release.path, "lib", "hal_c2-#{release.version}", "priv", "bin"])
+    File.mkdir_p!(target)
+
+    for crate <- crates do
+      manifest = Path.join(root, "native/#{crate}/Cargo.toml")
       run!("cargo", ["build", "--locked", "--release", "--manifest-path", manifest], root)
 
-      target = Path.join([release.path, "lib", "hal_c2-#{release.version}", "priv", "bin"])
-      File.mkdir_p!(target)
-      built = Path.join(root, "native/machine-files/target/release/hal-c2-machine-files")
-      File.cp!(built, Path.join(target, "hal-c2-machine-files"))
-      File.chmod!(Path.join(target, "hal-c2-machine-files"), 0o755)
+      built = Path.join(root, "native/#{crate}/target/release/hal-c2-#{crate}")
+      File.cp!(built, Path.join(target, "hal-c2-#{crate}"))
+      File.chmod!(Path.join(target, "hal-c2-#{crate}"), 0o755)
     end
 
     release
@@ -226,8 +234,13 @@ defmodule HalC2.MixProject do
       "packages" =>
         digest.(
           [Path.join(own, "priv/cursor-acp/package.json")] ++
-            Enum.map(~w(Cargo.toml Cargo.lock), &Path.join(root, "native/machine-files/#{&1}")) ++
-            Path.wildcard(Path.join(root, "native/machine-files/src/*.rs"))
+            for(
+              crate <- ~w(machine-files pid-kill),
+              file <-
+                Enum.map(~w(Cargo.toml Cargo.lock), &Path.join(root, "native/#{crate}/#{&1}")) ++
+                  Path.wildcard(Path.join(root, "native/#{crate}/src/*.rs")),
+              do: file
+            )
         ),
       "config" =>
         digest.(

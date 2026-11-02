@@ -50,6 +50,13 @@ export type LocalServersShape = { readonly type: "localServers"; readonly mc: st
 export type DevicesShape = { readonly type: "devices"; readonly mc: string };
 /** An MC's Slack connection (`SlackStatus`), at once and on every change. */
 export type SlackShape = { readonly type: "slack"; readonly mc: string };
+/** Who else is on an open page of a Space: being subscribed is being on the page. */
+export type SpacePresenceShape = {
+  readonly type: "spacePresence";
+  readonly mc: string;
+  readonly spaceId: string;
+  readonly pageId: string;
+};
 /** This client as an MC's browser automation host; the MC ends it when it drops the host. */
 export type PreviewAutomationShape = {
   readonly type: "previewAutomation";
@@ -86,6 +93,7 @@ export type Shape =
   | LocalServersShape
   | DevicesShape
   | SlackShape
+  | SpacePresenceShape
   | PreviewAutomationShape
   | PullRequestRefreshesShape
   | GitActionShape

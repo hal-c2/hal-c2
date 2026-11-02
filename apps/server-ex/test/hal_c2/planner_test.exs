@@ -785,6 +785,94 @@ defmodule HalC2.PlannerTest do
       assert applied["m1"]["after"] == []
       assert applied["t"]["issue"]["milestone"] == nil
     end
+
+    # The user moved "t" from "m2" to "m1", whose push to GitHub waits, while GitHub
+    # still lists #2 in M2, where an earlier answered push left it and the plan has not
+    # heard of yet. "m2" has nothing on the way, so the look takes GitHub's word for it,
+    # but not for an issue a push moves: "t" stays in "m1" alone (#418).
+    test "does not add the issue's task to the milestone GitHub lists it in while a push moves it elsewhere" do
+      milestone = fn number, tasks ->
+        %{
+          "title" => "M#{number}",
+          "kind" => "milestone",
+          "due" => "2026-11-30",
+          "after" => tasks
+        }
+      end
+
+      ref = &%{"repository" => "acme/api", "number" => &1, "title" => "M#{&1}"}
+
+      items =
+        plan([
+          {"t", %{"title" => "Issue 2"}},
+          {"m1", milestone.(1, ["t"])},
+          {"m2", milestone.(2, [])}
+        ])
+        |> put_in(["t", "issue"], %{"repository" => "acme/api", "number" => 2, "milestone" => nil})
+        |> put_in(["m1", "milestone"], ref.(1))
+        |> put_in(["m2", "milestone"], ref.(2))
+
+      listed = %{"repository" => "acme/api", "number" => 2, "title" => "Issue 2"}
+
+      found = %{
+        issues: [
+          Map.merge(listed, %{
+            "state" => "open",
+            "milestone" => %{"number" => 2, "title" => "M2", "dueOn" => "2026-11-30"}
+          })
+        ],
+        details: [],
+        projects: [],
+        items: items,
+        board: nil,
+        prs: %{},
+        moving: [Map.take(listed, ~w(repository number))]
+      }
+
+      applied = Sync.apply(items, found, %{"sync" => "twoWay"}, @now, fn -> "new" end)
+      assert applied["m1"]["after"] == ["t"]
+      assert applied["m2"]["after"] == []
+      assert applied["t"]["issue"]["milestone"] == nil
+    end
+  end
+
+  describe "moves reported out of the order GitHub took them" do
+    @issue %{"repository" => "acme/api", "number" => 7}
+
+    test "a move taken before one already reported is dropped" do
+      {moved, latest} = Sync.newest([Map.merge(@issue, %{"milestone" => 2, "at" => 20})], %{})
+      assert moved == [Map.put(@issue, "milestone", 2)]
+
+      taken_early =
+        for {number, at} <- [{7, 10}, {9, 11}],
+            do: %{"repository" => "ACME/api", "number" => number, "milestone" => 3, "at" => at}
+
+      assert {[%{"number" => 9}], later} = Sync.newest(taken_early, latest)
+      assert later == %{{"acme/api", 7} => 20, {"acme/api", 9} => 11}
+    end
+
+    test "of one issue's moves in a report, each kept, the last one's time stands" do
+      moves =
+        for {m, at} <- [{2, 10}, {3, 12}], do: Map.merge(@issue, %{"milestone" => m, "at" => at})
+
+      assert {[%{"milestone" => 2}, %{"milestone" => 3}], latest} = Sync.newest(moves, %{})
+      assert latest == %{{"acme/api", 7} => 12}
+    end
+
+    # The clock is monotonic, not strictly increasing: a move taken at the same time as
+    # the last one is kept.
+    test "a move taken at the same time as the last one is kept" do
+      {_, latest} = Sync.newest([Map.merge(@issue, %{"milestone" => 2, "at" => 20})], %{})
+
+      assert {[%{"milestone" => 3}], ^latest} =
+               Sync.newest([Map.merge(@issue, %{"milestone" => 3, "at" => 20})], latest)
+    end
+
+    test "the same report taken again is not older than itself" do
+      move = Map.merge(@issue, %{"milestone" => 2, "at" => 20})
+      {moved, latest} = Sync.newest([move], %{})
+      assert {^moved, ^latest} = Sync.newest([move], latest)
+    end
   end
 
   describe "a milestone's correction GitHub refused" do
@@ -977,6 +1065,97 @@ defmodule HalC2.PlannerTest do
       asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
       assert [{%{"milestone" => 3}, took}] = asks
       assert took.(synced)["misplaced"] == %{}
+    end
+
+    test "an issue left in a milestone that no longer holds its task goes out once the task leaves it" do
+      issue = %{"repository" => @repo, "number" => 7}
+
+      milestone = fn id, number, after_ ->
+        %{
+          "id" => id,
+          "title" => "Launch",
+          "due" => nil,
+          "after" => after_,
+          "projectId" => "p",
+          "milestone" => %{"repository" => @repo, "number" => number}
+        }
+      end
+
+      # GitHub refused moving #7 from milestone 3 to 4, so it still has it in 3.
+      before = %{
+        "ms" => milestone.("ms", 3, []),
+        "mr" => milestone.("mr", 4, ["t"]),
+        "t" => task(Map.put(issue, "milestone", 3))
+      }
+
+      items = %{"ms" => before["ms"], "mr" => milestone.("mr", 4, [])}
+      marks = [%{"task" => "t", "issue" => issue}]
+      assert Sync.left(before, items) == %{"ms" => marks}
+
+      # A task still naming the issue leaves nothing behind.
+      assert Sync.left(before, before) == %{}
+
+      synced =
+        %{"title" => "Launch", "due" => nil, "after" => [], "refs" => %{}}
+        |> Sync.left_behind(marks)
+
+      assert [{"update", %{"number" => 7, "milestone" => nil}, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+
+      assert took.(synced)["misplaced"] == %{}
+    end
+
+    test "an issue a correction put in the milestone of its task leaves when the task relinks" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      milestone = fn after_, synced ->
+        %{
+          "id" => "ms",
+          "title" => "Launch",
+          "due" => nil,
+          "after" => after_,
+          "projectId" => "p",
+          "milestone" => %{"repository" => @repo, "number" => 3},
+          "synced" => synced
+        }
+      end
+
+      # GitHub refused the milestone's push, so it has the task under #7, and took another
+      # milestone's correction, which put the task's #8 in it. Its push will only ask #7 out.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(7)}
+      }
+
+      before = %{
+        "ms" => milestone.(["t"], synced),
+        "t" => task(Map.put(issue.(8), "milestone", 3))
+      }
+
+      items = %{"ms" => before["ms"], "t" => task(issue.(9))}
+      marks = [%{"task" => "t", "issue" => issue.(8)}]
+      assert Sync.left(before, items) == %{"ms" => marks}
+
+      # Unlinking or removing the task leaves it behind the same way.
+      unlinked = %{items | "t" => Map.delete(task(nil), "issue")}
+      assert Sync.left(before, unlinked) == %{"ms" => marks}
+      assert Sync.left(before, Map.delete(items, "t")) == %{"ms" => marks}
+
+      synced = Sync.left_behind(synced, marks)
+
+      asked =
+        for {"update", %{"number" => n, "milestone" => to}, _took} <-
+              Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects),
+            do: {n, to}
+
+      assert Enum.sort(asked) == [{7, nil}, {8, nil}, {9, 3}]
+
+      # A milestone GitHub has the task in under the issue it leaves asks by itself.
+      had_it = milestone.(["t"], %{synced | "refs" => %{"t" => issue.(8)}})
+      assert Sync.left(%{before | "ms" => had_it}, %{items | "ms" => had_it}) == %{}
+      assert Sync.left(%{before | "ms" => milestone.(["t"], nil)}, items) == %{}
     end
 
     test "keeps a mark per issue, so a task that left two issues behind loses neither" do
@@ -1346,6 +1525,54 @@ defmodule HalC2.PlannerTest do
 
       assert {"addAssignees", %{"number" => 8, "assignees" => ["dana"]}, _} =
                Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
+    end
+
+    test "an owner a refused relink push left on the new issue comes off it, and the relations off the old" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      old_issue = %{"repository" => "acme/api", "number" => 7}
+      new_issue = %{"repository" => "acme/api", "number" => 8}
+      other = %{"repository" => "acme/api", "number" => 9}
+
+      task = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "bob",
+        "after" => [],
+        "parent" => nil,
+        "issue" => new_issue
+      }
+
+      items = %{"t" => task, "o" => %{"id" => "o", "issue" => other}}
+
+      synced =
+        Sync.synced(
+          %{task | "owner" => "alice", "issue" => old_issue, "after" => ["o"]},
+          %{},
+          items
+        )
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, task, items, projects)
+      names = Enum.map(ops, &elem(&1, 0))
+      assert names == ["removeAssignees", "addAssignees", "removeBlockedBy"]
+
+      # GitHub takes the assignees and refuses the drop.
+      left =
+        ops |> Enum.take(2) |> Enum.reduce(synced, fn {_, _, took}, acc -> took.(acc) end)
+
+      ops =
+        Sync.pushes(%{"sync" => "twoWay"}, left, %{task | "owner" => "carol"}, items, projects)
+
+      assert {"removeAssignees", %{"number" => 8, "assignees" => ["bob"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "removeAssignees"))
+
+      assert {"addAssignees", %{"number" => 8, "assignees" => ["carol"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
+
+      assert {"removeBlockedBy", %{"number" => 7}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "removeBlockedBy"))
     end
 
     test "a case-only owner change pushes no assignee ops" do

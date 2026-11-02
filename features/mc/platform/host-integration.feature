@@ -1,5 +1,6 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/editors.ex (availableEditors, shell.openInEditor)
+#   apps/server-ex/lib/hal_c2/codex/provider.ex (the version read a server config waits on)
 #   apps/server-ex/lib/hal_c2/local_servers.ex (subscribeDiscoveredLocalServers)
 #   apps/server-ex/lib/hal_c2/projects.ex (filesystem.browse)
 #   apps/server-ex/lib/hal_c2/paths.ex (symlink resolution)
@@ -208,6 +209,23 @@ Feature: The MC working with its host machine
     Given the host's xdg-mime never answers
     When a client reads the MC's server config
     Then the default editor is not offered
+
+  @mc
+  Scenario: A hung Codex CLI does not hold up the server config
+    Given the host's codex never answers
+    When a client reads the MC's server config
+    Then Codex is listed with an unknown version
+    When the host's codex answers with version "1.2.3"
+    And a client reads the MC's server config again
+    Then Codex is listed with version "1.2.3"
+
+  @mc
+  Scenario: A Codex CLI that stays hung is asked again only after a minute
+    Given the host's codex never answers, and a minute has not passed since it was asked
+    When a client reads the MC's server config
+    And a client reads the MC's server config again
+    Then Codex is listed with an unknown version
+    And codex was asked for its version once
 
   @mc
   Scenario: A host without a default text editor does not offer one

@@ -2,14 +2,15 @@ defmodule HalC2.Mcp.Tools.Pages do
   @moduledoc """
   MCP tools that read and write the pages of a Space (`HalC2.Space`), for
   `HalC2.Mcp.Tools`. Spaces belong to the environment, so any thread's agent may
-  use them; what it writes names the thread as its author.
+  use them; what it writes names the thread as its author, and what it reads or writes
+  puts it on that page (`HalC2.Space.Presence`).
   """
 
-  alias HalC2.Space
-  alias HalC2.Space.Pages
+  alias HalC2.{Space, StreamState}
+  alias HalC2.Space.{Files, Pages, Presence}
 
   @tools ~w(hal_c2_page_list hal_c2_page_read hal_c2_page_block_insert hal_c2_page_block_update
-            hal_c2_page_block_delete)
+            hal_c2_page_block_delete hal_c2_page_open_file hal_c2_space_files_scan)
 
   def tools, do: @tools
 
@@ -21,9 +22,11 @@ defmodule HalC2.Mcp.Tools.Pages do
     |> reply()
   end
 
-  def run("hal_c2_page_read", %{"spaceId" => space, "pageId" => page}, _caller) do
+  def run("hal_c2_page_read", %{"spaceId" => space, "pageId" => page}, caller) do
     with {:ok, read} <- Space.page(space, page),
          {:ok, markdown} <- Space.export_markdown(space, page) do
+      touched(caller, space, page)
+
       {:ok,
        %{
          "page" => read.page,
@@ -40,24 +43,59 @@ defmodule HalC2.Mcp.Tools.Pages do
         %{"spaceId" => s, "pageId" => p, "kind" => _} = args,
         caller
       ) do
-    spec = Map.take(args, ~w(kind text checked linkedPageId))
+    spec =
+      Map.take(
+        args,
+        ~w(kind text checked linkedPageId imageId url level table language depth start alert
+           label)
+      )
 
     s
     |> Space.insert_block(p, spec, Map.get(args, "afterBlockId", :last), author(caller))
-    |> block()
+    |> block(caller, s)
   end
 
-  # Text and the tick change together when given; a block given neither is returned as is.
+  # What is given changes together; a block given nothing to change is returned as is.
   def run("hal_c2_page_block_update", %{"spaceId" => s, "blockId" => b} = args, caller) do
-    s |> Space.edit_block(b, args["text"], args["checked"], author(caller)) |> block()
+    changes = Map.take(args, ~w(text checked level language depth start alert label url))
+    s |> Space.edit_block(b, changes, author(caller)) |> block(caller, s)
   end
 
-  def run("hal_c2_page_block_delete", %{"spaceId" => s, "blockId" => b}, _caller) do
-    reply(with({:ok, id} <- Space.delete_block(s, b), do: {:ok, %{"blockId" => id}}))
+  def run("hal_c2_page_block_delete", %{"spaceId" => s, "blockId" => b}, caller) do
+    page = with {:ok, state} <- Space.state(s), do: StreamState.get(state, "block")[b]["pageId"]
+
+    reply(
+      with {:ok, id} <- Space.delete_block(s, b, author(caller)) do
+        touched(caller, s, page)
+        {:ok, %{"blockId" => id}}
+      end
+    )
   end
+
+  def run("hal_c2_page_open_file", %{"spaceId" => s, "relativePath" => path} = args, caller) do
+    with {:ok, %{"spaceId" => s, "page" => page} = opened} <-
+           Space.open_file(s, project(args, caller), path) do
+      touched(caller, s, page["id"])
+      {:ok, opened}
+    end
+    |> reply()
+  end
+
+  def run("hal_c2_space_files_scan", args, caller),
+    do: args |> project(caller) |> Files.scan(args["replace"] == true) |> reply()
 
   def run(name, _args, _caller),
     do: {:error, "invalid_request", "#{name} is missing a required argument."}
+
+  # The project named, or the thread's own.
+  defp project(%{"projectId" => id}, _caller) when is_binary(id), do: id
+
+  defp project(_args, caller) do
+    case HalC2.Shell.row(node(), caller.thread_id) do
+      {"thread", %{"projectId" => id}} -> id
+      _ -> nil
+    end
+  end
 
   defp author(caller), do: Space.agent(caller.thread_id)
 
@@ -76,7 +114,30 @@ defmodule HalC2.Mcp.Tools.Pages do
     space |> Map.take(~w(id name)) |> Map.put("pages", pages)
   end
 
-  defp block(result), do: with({:ok, block} <- result, do: {:ok, %{"block" => block}}) |> reply()
+  defp block(result, caller, space) do
+    with {:ok, block} <- result do
+      touched(caller, space, block["pageId"])
+      {:ok, %{"block" => block}}
+    end
+    |> reply()
+  end
+
+  # The thread's agent is on the page, shown by the thread's title. A rename takes
+  # any text, and clients only accept a trimmed title with words in it.
+  defp touched(caller, space, page) do
+    title =
+      case HalC2.Shell.row(node(), caller.thread_id) do
+        {"thread", %{"title" => title}} when is_binary(title) -> String.trim(title)
+        _ -> ""
+      end
+
+    Presence.agent_touched(
+      caller.thread_id,
+      if(title == "", do: "Agent", else: title),
+      space,
+      page
+    )
+  end
 
   defp reply({:ok, _} = ok), do: ok
   defp reply({:error, _reason, message}), do: {:error, "invalid_request", message}

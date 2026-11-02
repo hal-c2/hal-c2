@@ -58,6 +58,8 @@ Rectangle {
     color: Theme.palette.color("canvas", "#0f0f12")
     // Never over the panel beside it.
     clip: true
+    Accessible.role: Accessible.ToolBar
+    Accessible.name: qsTr("Thread header")
 
     DragHandler {
         enabled: strip.framelessChrome
@@ -70,6 +72,7 @@ Rectangle {
     TapHandler {
         objectName: "titleTap"
         enabled: strip.framelessChrome
+        // ljos-allow(focus-pointer-only): a double click on the title bar is the pointer's shortcut for the window controls' Maximize button, which the keyboard reaches
         onDoubleTapped: strip.window.visibility === Window.Maximized ? strip.window.showNormal() : strip.window.showMaximized()
     }
 
@@ -118,8 +121,16 @@ Rectangle {
                 font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.weight: Font.Medium
                 elide: Text.ElideRight
+                activeFocusOnTab: true
                 Accessible.role: Accessible.Button
                 Accessible.name: qsTr("New thread in project")
+                Accessible.onPressAction: Shell.dispatch("workspace.newThread")
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                        Shell.dispatch("workspace.newThread");
+                        event.accepted = true;
+                    }
+                }
                 // The whole name of a project cut short.
                 ToolTip.visible: projectHover.hovered && truncated
                 ToolTip.delay: 500
@@ -135,6 +146,17 @@ Rectangle {
                     id: projectHover
 
                     cursorShape: Qt.PointingHandCursor
+                }
+
+                // Tab's focus; a click does not take it.
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: -3
+                    visible: projectLabel.activeFocus
+                    color: "transparent"
+                    radius: 4
+                    border.width: 1
+                    border.color: Theme.palette.color("focus", "#3b82f6")
                 }
 
                 TapHandler {
@@ -160,6 +182,17 @@ Rectangle {
 
                 Component.onCompleted: handledRenameRequest = strip.ready ? strip.model.renameRequestId : 0
 
+                function openMenu() {
+                    if (!strip.ready || strip.model.isDraft) {
+                        return;
+                    }
+                    const p = titleSlot.mapToItem(null, 0, titleSlot.height + 4);
+                    Shell.dispatch("workspace.titleMenu", {
+                        x: p.x,
+                        y: p.y
+                    });
+                }
+
                 function startEditing() {
                     editing = true;
                     titleEditor.text = strip.model.threadTitle;
@@ -172,6 +205,18 @@ Rectangle {
                 Layout.minimumWidth: Math.min(Math.ceil(titleRow.implicitWidth), 40 + titleRow.spacing + 14)
                 implicitHeight: 28
                 implicitWidth: titleRow.implicitWidth
+                activeFocusOnTab: !editing && strip.ready && !strip.model.isDraft
+                Accessible.role: Accessible.Button
+                Accessible.name: threadLabel.text
+                // A draft's title opens nothing.
+                Accessible.focusable: activeFocusOnTab
+                Accessible.onPressAction: openMenu()
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                        openMenu();
+                        event.accepted = true;
+                    }
+                }
                 // The whole title, which a narrow header cuts short.
                 ToolTip.visible: titleHover.hovered && threadLabel.truncated
                 ToolTip.delay: 500
@@ -200,21 +245,23 @@ Rectangle {
                 TapHandler {
                     enabled: !titleSlot.editing
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    onTapped: eventPoint => {
-                        if (!strip.ready || strip.model.isDraft) {
-                            return;
-                        }
-                        const p = titleSlot.mapToItem(null, 0, titleSlot.height + 4);
-                        Shell.dispatch("workspace.titleMenu", {
-                            x: p.x,
-                            y: p.y
-                        });
-                    }
+                    onTapped: titleSlot.openMenu()
                     onDoubleTapped: {
                         if (strip.ready && !strip.model.isDraft) {
                             titleSlot.startEditing();
                         }
                     }
+                }
+
+                Rectangle {
+                    x: -4
+                    width: titleRow.width + 8
+                    height: parent.height
+                    visible: titleSlot.activeFocus
+                    color: "transparent"
+                    radius: 4
+                    border.width: 1
+                    border.color: Theme.palette.color("focus", "#3b82f6")
                 }
 
                 RowLayout {
@@ -250,6 +297,7 @@ Rectangle {
                         Behavior on opacity {
                             NumberAnimation {
                                 duration: 120
+                                easing.type: Easing.OutCubic
                             }
                         }
                     }
@@ -333,6 +381,15 @@ Rectangle {
             }
         }
 
+        ShellButton {
+            objectName: "noSshRoute"
+            visible: strip.ready && (strip.model.noSshRoute ?? "") !== "" && !strip.tight
+            subtle: true
+            iconName: "external-link"
+            text: strip.ready ? strip.model.noSshRoute ?? "" : ""
+            onClicked: Shell.dispatch("workspace.openInEditor", {})
+        }
+
         ShellSplitButton {
             objectName: "openEditorButton"
             visible: strip.ready && strip.model.editors.length > 0 && !strip.tight
@@ -363,6 +420,15 @@ Rectangle {
 
                     onObjectAdded: (index, object) => editorsMenu.insertItem(index, object)
                     onObjectRemoved: (index, object) => editorsMenu.removeItem(object)
+                }
+
+                ShellMenuItem {
+                    readonly property string note: strip.ready ? strip.model.openOverSsh ?? "" : ""
+
+                    visible: note !== ""
+                    height: visible ? implicitHeight : 0
+                    enabled: false
+                    text: note
                 }
             }
         }

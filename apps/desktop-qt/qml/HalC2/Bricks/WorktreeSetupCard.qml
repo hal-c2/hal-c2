@@ -18,9 +18,9 @@ Rectangle {
             return muted;
         }
         if (setup.phase === "failed") {
-            return Theme.palette.color("error", "#ef4444");
+            return Theme.palette.color("errorForeground", "#ef4444");
         }
-        return setup.label.endsWith("failed") ? Theme.palette.color("warning", "#f59e0b") : muted;
+        return setup.label.endsWith("failed") ? Theme.palette.color("warningForeground", "#f59e0b") : muted;
     }
 
     objectName: "worktreeSetup"
@@ -65,6 +65,13 @@ Rectangle {
                 onClicked: Shell.dispatch("worktreeSetup.cancel", {})
             }
             ShellButton {
+                objectName: "worktreeSetupRetry"
+                visible: card.setup?.canRetry === true
+                subtle: true
+                text: qsTr("Retry")
+                onClicked: Shell.dispatch("worktreeSetup.retry", {})
+            }
+            ShellButton {
                 objectName: "worktreeSetupDetails"
                 subtle: true
                 text: card.setup?.detailsOpen === true ? qsTr("Hide details") : qsTr("Details")
@@ -91,7 +98,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: card.setup?.detailsOpen === true && text.length > 0
             text: card.setup?.error ?? ""
-            color: Theme.palette.color("error", "#ef4444")
+            color: Theme.palette.color("errorForeground", "#ef4444")
             font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
@@ -116,10 +123,11 @@ Rectangle {
                         text: stage.modelData.label
                         color: stage.modelData.status === "pending" || stage.modelData.status === "skipped" ? card.muted : card.foreground
                         font.pixelSize: Math.round(12 * Theme.fontScale)
+                        elide: Text.ElideRight
                     }
                     Label {
                         text: stage.modelData.detail.length > 0 ? stage.modelData.detail : stage.modelData.status
-                        color: stage.modelData.status === "failed" ? Theme.palette.color("error", "#ef4444") : card.muted
+                        color: stage.modelData.status === "failed" ? Theme.palette.color("errorForeground", "#ef4444") : card.muted
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                 }

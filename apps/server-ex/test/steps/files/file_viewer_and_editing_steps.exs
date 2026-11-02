@@ -75,6 +75,58 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
     context
   end
 
+  step "{string} in {string} is an image of {int} MB", %{args: [file, project, mb]} = context do
+    write(context, project, file, @png <> :binary.copy(<<0>>, mb * 1_048_576))
+  end
+
+  step "{string} in {string} is an archive", %{args: [file, project]} = context do
+    write(context, project, file, <<"PK", 3, 4, 0, 0, 255>>)
+  end
+
+  step "only its size is returned, with no bytes, and it is marked truncated", context do
+    assert {:ok, %{"contents" => "", "byteLength" => size, "truncated" => true}} = context.reply
+    assert size == byte_size(context.contents)
+    context
+  end
+
+  step "the MC answers that the file is binary and cannot be read as text", context do
+    assert {:error, message, %{"failure" => "binary_file"}} = context.reply
+    assert message =~ "is binary and cannot be read as text"
+    context
+  end
+
+  step "{string} holds {string} as a link to the binary file {string}",
+       %{args: [project, link, target]} = context do
+    root = World.project(context, project).root
+    File.write!(Path.join(root, target), @png)
+    File.ln_s!(target, Path.join(root, link))
+    context
+  end
+
+  step "{string} holds a named pipe {string} nobody writes to",
+       %{args: [project, pipe]} = context do
+    {_, 0} = System.cmd("mkfifo", [Path.join(World.project(context, project).root, pipe)])
+    context
+  end
+
+  # The call came back at all: a read that opened the pipe would still be waiting.
+  step "the MC answers that {string} is not a file without waiting", %{args: [file]} = context do
+    refused(context, "path_not_file", "'#{file}' is not a file.")
+  end
+
+  step "the folder of {string} was replaced by a file", %{args: [project]} = context do
+    root = World.project(context, project).root
+    File.rm_rf!(root)
+    File.write!(root, "not a folder\n")
+    context
+  end
+
+  step "the MC answers that the project folder is not a folder", context do
+    assert {:error, message, %{"failure" => "workspace_root_not_directory"}} = context.reply
+    assert message =~ "is not a folder"
+    context
+  end
+
   step "the host has the file {string}", %{args: [file]} = context do
     path = Host.path(context, file)
     File.mkdir_p!(Path.dirname(path))

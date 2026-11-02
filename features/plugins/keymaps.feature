@@ -30,6 +30,20 @@ Feature: Keymaps
     Then pressing "ctrl+n" does not start a new thread
 
   @tui
+  Scenario: The key hints name the key the keymap file gives the palette
+    Given a keymap file that sets "ctrl+k" to null
+    And a keymap file that binds "ctrl+t" to "palette.open"
+    When the TUI starts with that keymap file
+    Then the key hint row shows "^T commands"
+    And the key hint row does not show "^K commands"
+
+  @tui
+  Scenario: The key hints offer no key for a palette the keymap file unbinds
+    Given a keymap file that sets "ctrl+k" to null
+    When the TUI starts with that keymap file
+    Then the key hint row does not show "commands"
+
+  @tui
   Scenario: An override can add a second key for the same action
     Given a keymap file that binds "ctrl+q" to "quit"
     And the built-in keymap binds "ctrl+c" to "quit"

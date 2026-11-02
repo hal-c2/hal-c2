@@ -499,7 +499,18 @@ defmodule HalC2.Web.SocketTest do
            } = error
   end
 
+  # The terminals run `cat`, which prints nothing of its own: a real shell's prompt comes
+  # whenever it has started, into a test that says exactly what the terminal told it.
   defp start_terminals do
+    previous_shell = System.get_env("SHELL")
+    System.put_env("SHELL", System.find_executable("cat"))
+
+    on_exit(fn ->
+      if previous_shell,
+        do: System.put_env("SHELL", previous_shell),
+        else: System.delete_env("SHELL")
+    end)
+
     start_supervised!({Registry, keys: :unique, name: HalC2.Terminal.Registry})
 
     start_supervised!(
@@ -575,11 +586,9 @@ defmodule HalC2.Web.SocketTest do
     assert {output, client} = terminal_output(client)
     assert Enum.sort(output) == [{1, "for-both\r\n"}, {2, "for-both\r\n"}]
 
-    # An unsub has no reply. The socket reads frames in order, so its pong says the
-    # unsub is done; output printed before that is still owed to the subscription.
+    # Nothing answers an unsub. The socket reads frames in order, so its pong says it has.
     client = WsClient.send_json(client, %{"t" => "unsub", "id" => 1})
-    client = WsClient.send_json(client, %{"t" => "ping"})
-    {_pong, _frames, client} = WsClient.recv_until(client, &(&1["t"] == "pong"))
+    assert {[], client} = terminal_output(client)
     print_terminal(input, "for-second\r\n")
     assert {output, _client} = terminal_output(client)
     assert output == [{2, "for-second\r\n"}]
@@ -1001,6 +1010,59 @@ defmodule HalC2.Web.SocketTest do
                }
              }
            } = reply
+  end
+
+  test "a closed socket's diagrams still waiting for their turn are not drawn", %{port: port} do
+    test = self()
+
+    draw = fn request ->
+      send(test, {:drawing, request.source, self()})
+
+      receive do
+        {:outcome, outcome} -> outcome
+      end
+    end
+
+    mermaid = start_supervised!({HalC2.Mermaid, draw: draw, limit: 1})
+    [{_mc, %{"environmentId" => environment}}] = HalC2.Shell.environments()
+
+    render = fn client, id, source ->
+      WsClient.send_json(client, %{
+        "t" => "rpc",
+        "id" => id,
+        "environment" => environment,
+        "method" => "mermaid.render",
+        "payload" => %{"source" => source}
+      })
+    end
+
+    open = connect(port) |> render.(1, "first")
+    assert_receive {:drawing, "first", drawer}, 5_000
+
+    closing = connect(port) |> render.(1, "a") |> render.(2, "b")
+    await_queued(mermaid, ["a", "b"])
+    Mint.HTTP.close(closing.conn)
+    await_queued(mermaid, [])
+
+    send(drawer, {:outcome, {:ok, %{"status" => "drawn", "svg" => "<svg/>"}}})
+    {reply, _, _open} = WsClient.recv_until(open, &(&1["t"] == "rpc.result"))
+    assert %{"id" => 1, "result" => %{"status" => "drawn"}} = reply
+    :sys.get_state(mermaid)
+    refute_received {:drawing, _, _}
+  end
+
+  # Each request runs in a task of its own, so nothing says when the server has it: the
+  # test looks, a bounded number of times.
+  defp await_queued(mermaid, sources, attempts \\ 400) do
+    queued =
+      for {_, %{source: source}, _} <- :queue.to_list(:sys.get_state(mermaid).queued),
+          do: source
+
+    cond do
+      Enum.sort(queued) == sources -> :ok
+      attempts <= 0 -> flunk("queued #{inspect(queued)}, never #{inspect(sources)}")
+      true -> receive after: (5 -> await_queued(mermaid, sources, attempts - 1))
+    end
   end
 
   test "a request that raises is logged and still answered", %{port: port} do

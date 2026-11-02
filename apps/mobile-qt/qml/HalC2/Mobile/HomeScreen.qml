@@ -96,6 +96,8 @@ ColumnLayout {
         // desktop's; the bar above has what a phone starts from here.
         showScope: false
         showFooter: false
+        // The phone does not mark the build's stage yet (features/navigation/appearance.feature).
+        showStage: false
         touchRows: true
 
         // Projects are added where their folders are.

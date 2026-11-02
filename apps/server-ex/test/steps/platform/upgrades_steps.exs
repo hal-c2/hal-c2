@@ -788,6 +788,45 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
+  step "newer code loads", context do
+    mod = context.blocker
+    Map.put(context, :report, HalC2.Hot.reload([{mod, blocker_beam(context, mod, 3)}]))
+  end
+
+  step "the reload is refused naming the blocked process", context do
+    {mod, pid} = {context.blocker, context.blocked}
+
+    assert {:error, {:previous_version_still_running, [{^mod, [{^pid, _current}]}]} = reason} =
+             context.report
+
+    assert HalC2.Hot.describe_error(reason) =~ inspect(pid)
+    assert mod.version() == 2
+    context
+  end
+
+  step "a changed module that loads a NIF", context do
+    mod = :"hal_c2_steps_nif_#{System.unique_integer([:positive])}"
+    path = Path.join(Mc.tmp_dir(context.mc, "nif"), "#{mod}.erl")
+
+    # Its NIF library does not exist: loading the module at all would fail.
+    File.write!(path, """
+    -module(#{mod}).
+    -export([init/0]).
+    -on_load(init/0).
+    init() -> erlang:load_nif("#{Path.rootname(path)}", 0).
+    """)
+
+    {:ok, ^mod, beam} = :compile.file(String.to_charlist(path), [:binary, :return_errors])
+    Map.merge(context, %{native: mod, next: {mod, beam}})
+  end
+
+  step "it is reported as native and left unloaded", context do
+    mod = context.native
+    assert {:ok, %{changed: [], native: [^mod]}} = context.report
+    refute :code.is_loaded(mod)
+    context
+  end
+
   step "the process is not killed", context do
     assert Process.alive?(context.blocked)
     # It moves to the new code on its next qualified call.

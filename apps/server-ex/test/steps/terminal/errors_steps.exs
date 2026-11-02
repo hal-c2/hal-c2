@@ -36,6 +36,20 @@ defmodule HalC2.Steps.Terminal.Errors do
     context
   end
 
+  step "the MC cannot read its provider settings", context do
+    file = Path.join(HalC2.Paths.config_dir(), "settings.json")
+    File.mkdir_p!(Path.dirname(file))
+    File.write!(file, "{not json")
+    Mc.ensure(HalC2.Settings)
+    context
+  end
+
+  step "the open fails saying the settings cannot be read", context do
+    assert {:error, message, %{"_tag" => "TerminalProviderEnvironmentError"}} = context.reply
+    assert message =~ "settings.json cannot be read"
+    context
+  end
+
   step "the folder {string} cannot be read by the MC", %{args: [path]} = context do
     # The folder sits in a directory the MC may not enter.
     dir = Terminal.mkdir(context, path)
@@ -287,24 +301,10 @@ defmodule HalC2.Steps.Terminal.Errors do
     context
   end
 
-  step "the open fails", context do
-    assert {:error, _message, _detail} = context.reply
-    context
-  end
-
-  step ~r/^no shell is started(?: with a missing home or variables)?$/, context do
+  step "no shell is started", context do
     %{"threadId" => thread, "terminalId" => terminal} = context.terminal
     assert Registry.lookup(HalC2.Terminal.Registry, {thread, terminal}) == []
     refute Enum.any?(HalC2.Terminal.Hub.summaries(), &(&1["threadId"] == thread))
-    context
-  end
-
-  step "the MC cannot read its provider settings", context do
-    context = Terminal.ensure(context)
-    path = Path.join(HalC2.Paths.config_dir(), "settings.json")
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, "{ not json")
-    Mc.ensure(HalC2.Settings)
     context
   end
 

@@ -257,6 +257,53 @@ defmodule HalC2.AcpTest do
     assert :persistent_term.get({HalC2.Acp, "grok", :models}, nil) != nil
   end
 
+  test "a read that raises leaves the next listing to read again", %{tmp_dir: dir} do
+    grok = Path.join(dir, "grok")
+    raised = Path.join(dir, "raised")
+
+    # The first launch answers `session/new` with what no read can take.
+    File.write!(grok, """
+    #!/usr/bin/env python3
+    import json, os, sys
+    def answer(request, result):
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+    answer(json.loads(sys.stdin.readline()), {"protocolVersion": 1, "agentInfo": {"version": "9.9.9"}, "agentCapabilities": {}})
+    model = {"id": "model", "currentValue": "fresh", "options": [{"value": "fresh", "name": "Fresh"}]}
+    first = not os.path.exists(#{inspect(raised)})
+    open(#{inspect(raised)}, "w").close()
+    answer(json.loads(sys.stdin.readline()), 42 if first else {"sessionId": "s", "configOptions": [model]})
+    sys.stdin.read()
+    """)
+
+    File.chmod!(grok, 0o755)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "grok" => %{
+              "driver" => "grok",
+              "enabled" => true,
+              "config" => %{"binaryPath" => grok}
+            }
+          }
+        },
+        0
+      )
+
+    on_exit(fn -> HalC2.Acp.forget("grok") end)
+    :ok = HalC2.Settings.watch(self())
+
+    assert %{"models" => []} = HalC2.Acp.entry("grok")
+    assert_receive {:hal_c2_providers_changed, _}, 5_000
+    assert :persistent_term.get({HalC2.Acp, "grok", :loading}, false) == false
+    assert :persistent_term.get({HalC2.Acp, "grok", :error}, nil) == nil
+
+    assert %{"models" => []} = HalC2.Acp.entry("grok")
+    assert_receive {:hal_c2_providers_changed, _}, 5_000
+    assert %{"models" => [%{"slug" => "fresh"}]} = HalC2.Acp.entry("grok")
+  end
+
   test "a read that was forgotten while it ran leaves no failure behind", %{tmp_dir: dir} do
     # The agent refuses `initialize` once the instance is forgotten.
     forgotten_mid_read(dir, """

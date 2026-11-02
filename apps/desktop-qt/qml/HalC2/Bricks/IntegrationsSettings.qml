@@ -18,8 +18,8 @@ SettingsPage {
     readonly property bool slackIdle: (slack?.pending ?? "") === ""
     readonly property bool idle: (settings?.pending ?? "") === ""
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color warning: Theme.palette.color("warning", "#fbbf24")
-    readonly property color danger: Theme.palette.color("error", "#ef4444")
+    readonly property color warning: Theme.palette.color("warningForeground", "#fbbf24")
+    readonly property color danger: Theme.palette.color("errorForeground", "#ef4444")
 
     function send(name, payload) {
         Shell.dispatch("deviceSettings." + name, payload ?? {});
@@ -115,7 +115,9 @@ SettingsPage {
 
         RowLayout {
             spacing: 8
-            visible: update.visible || check.visible
+            // From the state, not the buttons' `visible`: theirs follows
+            // this row's, so a row once hidden would stay hidden.
+            visible: (toggle.entry?.update ?? "") !== "" || (toggle.settings?.canCheck ?? false)
 
             ShellButton {
                 id: update

@@ -19,6 +19,9 @@ Rectangle {
     // sidebar; a rice with its own title bar leaves it off.
     // When frameless it doubles as the window's drag handle.
     property bool showBrand: false
+    // Without the brand band, the stage ("Dev", "Nightly") is a pill at the
+    // top; a shell that marks the stage itself turns it off.
+    property bool showStage: true
     // A list that may be under a finger (a phone's, a tablet's): a finger
     // dragging a row scrolls the list instead of arranging the row, and its
     // long press opens the row's menu, which holds every row action and Move
@@ -224,7 +227,8 @@ Rectangle {
             visible: sidebar.showBrand
 
             // A Nightly MC marks the band (StageController): a night sky, or
-            // a pill by the wordmark, as Environment identification says.
+            // a pill by the wordmark, as Environment identification says. A
+            // development shell's artwork is "DEV" in the wordmark.
             Rectangle {
                 objectName: "stageArtwork"
                 anchors.fill: parent
@@ -277,30 +281,26 @@ Rectangle {
 
                 x: 52
                 size: 11
+                dev: sidebar.stage !== null && sidebar.stage.artwork === "dev"
                 anchors.verticalCenter: parent.verticalCenter
             }
 
-            Rectangle {
+            StagePill {
                 objectName: "stagePill"
                 visible: sidebar.stage !== null && !!sidebar.stage.pill
                 anchors.left: wordmark.right
                 anchors.leftMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
-                implicitWidth: pillText.implicitWidth + 12
-                implicitHeight: 18
-                radius: 9
-                color: Theme.palette.color("secondary", "#27272a")
-
-                Text {
-                    id: pillText
-
-                    anchors.centerIn: parent
-                    text: sidebar.stage !== null ? (sidebar.stage.pill ?? "") : ""
-                    color: Theme.palette.color("secondaryForeground", "#e4e4e7")
-                    font.pixelSize: Math.round(10 * Theme.fontScale)
-                    font.weight: Font.DemiBold
-                }
             }
+        }
+
+        // A shell without the brand band still says which build it is: the
+        // stage's pill above the list, unless the shell marks it itself.
+        StagePill {
+            objectName: "stageBadge"
+            Layout.leftMargin: 12
+            Layout.topMargin: 8
+            visible: sidebar.showStage && !sidebar.showBrand && sidebar.stage !== null && (!!sidebar.stage.artwork || !!sidebar.stage.pill)
         }
 
         // Search + new thread, scope + add project.
@@ -330,6 +330,8 @@ Rectangle {
                     background: Rectangle {
                         radius: 8
                         color: parent.hovered || parent.down ? Theme.palette.color("sidebarRowHover", "#1c1c21") : Theme.palette.color("sidebarControlSurface", "#141416")
+                        border.width: parent.visualFocus ? 1 : 0
+                        border.color: Theme.palette.color("focus", "#3b82f6")
 
                         Behavior on color {
                             ColorAnimation {
@@ -369,10 +371,12 @@ Rectangle {
                     iconName: "folder"
                     iconSize: 16
                     iconTint: Qt.alpha(sidebar.muted, 0.8)
-                    tint: Qt.alpha(sidebar.muted, 0.8)
+                    // Muted at full strength: dimmer, it falls below 4.5:1 on the sidebar.
+                    tint: sidebar.muted
                     text: sidebar.scopeLabel
                     font.pixelSize: Math.round(14 * Theme.fontScale)
-                    Accessible.name: qsTr("Project scope")
+                    // Begins with what it shows, so speech control reaches it by that.
+                    Accessible.name: qsTr("%1, project scope").arg(sidebar.scopeLabel)
                     onClicked: scopeMenu.open()
 
                     ShellMenu {
@@ -659,7 +663,9 @@ Rectangle {
             reuseItems: true
             spacing: 1
             boundsBehavior: Flickable.StopAtBounds
-            activeFocusOnTab: true
+            // A Tab stop while it has a row for the cursor: an empty list
+            // would take the keyboard and show nowhere it went.
+            activeFocusOnTab: sidebar.rows.some(r => r.rowKey !== undefined)
             keyNavigationEnabled: false
             Accessible.role: Accessible.List
             Accessible.name: qsTr("Threads")
@@ -711,6 +717,9 @@ Rectangle {
                 readonly property var modelData: rowData
 
                 readonly property string kind: modelData.kind
+                // A pooled entry that turns from a thread into a divider updates its
+                // row's bindings before its Loader lets the row go: they read this.
+                readonly property var thread: modelData.item ?? ({})
                 readonly property bool focused: list.activeFocus && modelData.rowKey !== undefined && modelData.rowKey === list.cursorKey
 
                 width: ListView.view.width
@@ -722,6 +731,9 @@ Rectangle {
                 Item {
                     objectName: entry.kind === "header" ? "header:" + entry.modelData.key : ""
                     anchors.fill: parent
+                    Accessible.role: Accessible.Button
+                    Accessible.name: entry.kind === "header" ? entry.modelData.label : ""
+                    Accessible.onPressAction: sidebar.toggleSection(entry.modelData.key)
                     visible: entry.kind === "header"
 
                     Rectangle {
@@ -753,7 +765,7 @@ Rectangle {
 
                         Text {
                             text: entry.kind === "header" ? entry.modelData.label : ""
-                            color: entry.kind === "header" && entry.modelData.key === "snoozed" ? Theme.palette.color("info", "#60a5fa") : Qt.alpha(sidebar.muted, headerHover.hovered ? 0.8 : 0.5)
+                            color: entry.kind === "header" && entry.modelData.key === "snoozed" ? Theme.palette.color("info", "#60a5fa") : headerHover.hovered ? sidebar.foreground : sidebar.muted
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
                         }
@@ -774,7 +786,7 @@ Rectangle {
                             objectName: "headerCount"
                             visible: entry.kind === "header" && !entry.modelData.open
                             text: entry.kind === "header" ? entry.modelData.count : ""
-                            color: Qt.alpha(sidebar.muted, 0.5)
+                            color: sidebar.muted
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                         }
 
@@ -858,25 +870,25 @@ Rectangle {
                         focused: entry.focused
                         touch: sidebar.touchRows
                         item: entry.kind === "draft" ? {
-                            title: entry.modelData.item.label,
+                            title: entry.thread.label,
                             status: "ready",
                             statusLabel: null,
                             unread: false,
                             branch: null,
                             updatedAt: null
-                        } : entry.modelData.item
-                        projectName: sidebar.projectNames[entry.modelData.item.projectKey] ?? ""
-                        projectIcon: sidebar.projectIcons[entry.modelData.item.projectKey] ?? null
-                        active: sidebar.model !== null && (entry.kind === "draft" ? entry.modelData.item.draftId === sidebar.model.activeDraftId : entry.modelData.item.key === sidebar.model.activeThreadKey)
+                        } : entry.thread
+                        projectName: sidebar.projectNames[entry.thread.projectKey] ?? ""
+                        projectIcon: sidebar.projectIcons[entry.thread.projectKey] ?? null
+                        active: sidebar.model !== null && (entry.kind === "draft" ? entry.thread.draftId === sidebar.model.activeDraftId : entry.thread.key === sidebar.model.activeThreadKey)
                         onActivated: {
                             list.cursorKey = entry.modelData.rowKey;
                             if (entry.kind === "draft") {
                                 Shell.dispatch("draft.open", {
-                                    draftId: entry.modelData.item.draftId
+                                    draftId: entry.thread.draftId
                                 });
                             } else {
                                 Shell.dispatch("thread.open", {
-                                    key: entry.modelData.item.key
+                                    key: entry.thread.key
                                 });
                             }
                         }
@@ -884,53 +896,53 @@ Rectangle {
                             const files = Shell.readImageFiles(urls);
                             if (files.length > 0) {
                                 Shell.dispatch("thread.attachFiles", {
-                                    key: entry.modelData.item.key,
+                                    key: entry.thread.key,
                                     files: files
                                 });
                             }
                         }
-                        onDragMoved: windowY => list.trackDrop(entry.modelData.item.key, windowY)
+                        onDragMoved: windowY => list.trackDrop(entry.thread.key, windowY)
                         onDragEnded: dropped => list.finishDrop(dropped)
                         onSelectionToggled: Shell.dispatch("thread.select.toggle", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onRangeSelected: Shell.dispatch("thread.select.range", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onMenuRequested: (windowX, windowY) => {
                             if (entry.kind === "draft") {
                                 Shell.dispatch("draft.menu", {
-                                    draftId: entry.modelData.item.draftId,
+                                    draftId: entry.thread.draftId,
                                     x: windowX,
                                     y: windowY
                                 });
                             } else {
                                 Shell.dispatch("thread.menu", {
-                                    key: entry.modelData.item.key,
+                                    key: entry.thread.key,
                                     x: windowX,
                                     y: windowY
                                 });
                             }
                         }
                         onSettleRequested: Shell.dispatch("thread.settle", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onUnsettleRequested: Shell.dispatch("thread.unsettle", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onUnpinRequested: Shell.dispatch("thread.unpin", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onUnsnoozeRequested: Shell.dispatch("thread.unsnooze", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onSnoozeRequested: (windowX, windowY) => Shell.dispatch("thread.snoozeMenu", {
-                            key: entry.modelData.item.key,
+                            key: entry.thread.key,
                             x: windowX,
                             y: windowY
                         })
                         onWokeDismissed: Shell.dispatch("thread.wokeDismiss", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                     }
                 }
@@ -942,7 +954,7 @@ Rectangle {
                 y: 24
                 visible: list.count === 0
                 text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : qsTr("No threads yet")
-                color: Qt.alpha(sidebar.muted, 0.6)
+                color: sidebar.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
         }

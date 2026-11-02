@@ -3827,7 +3827,7 @@
   },
   {
     "name": "task_cancel",
-    "description": "Interrupt a running delegated task and drop its pending result message. Fails with task_not_cancellable if the task already finished; use task_status for its result.",
+    "description": "Interrupt a running delegated task, drop its pending result message, and cancel what its child thread has queued, including messages a user sent it. Fails with task_not_cancellable if the task already finished; use task_status for its result.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -4090,13 +4090,88 @@
         "pageId": { "type": "string" },
         "kind": {
           "type": "string",
-          "enum": ["paragraph", "heading", "checklist", "callout", "subpage_link"]
+          "enum": [
+            "paragraph",
+            "heading",
+            "checklist",
+            "bullet",
+            "numbered",
+            "callout",
+            "divider",
+            "subpage_link",
+            "image",
+            "table",
+            "code",
+            "footnote",
+            "details",
+            "details_end",
+            "raw"
+          ],
+          "description": "A list item is a block: bullet, numbered or checklist, nested by depth. A divider has no text. A code block's text is the code; math is code in math. A footnote's text is the note of its label. A collapsed section is a details block, its text the summary (one line, with no details or summary tags), then the blocks inside it, then a details_end block, which has no text. Inline formatting such as **bold**, ~~struck~~ or $x^2$ is written in a block's text as Markdown. raw is Markdown the page does not model (other HTML), kept and shown as written."
         },
         "text": { "type": "string" },
+        "table": {
+          "type": "object",
+          "description": "For a table: rows of cells, the header row first, each a line of inline Markdown; align is left, center, right or null for each column. Its text is written from it.",
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": { "type": "array", "items": { "type": "string" } }
+            },
+            "align": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  { "type": "string", "enum": ["left", "center", "right"] },
+                  { "type": "null" }
+                ]
+              }
+            }
+          },
+          "required": ["rows"]
+        },
+        "language": {
+          "type": "string",
+          "description": "For a code block: its language, one word such as elixir or mermaid."
+        },
         "checked": { "type": "boolean", "description": "For a checklist item." },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6,
+          "description": "For a heading: 1 to 6, as the number of # in Markdown. 2 when left out."
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "For a list item: how far it is nested under the items above it. 0 when left out."
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 999999999,
+          "description": "For a numbered item that begins a list: its number. 1 when left out."
+        },
+        "alert": {
+          "type": "string",
+          "enum": ["note", "tip", "important", "warning", "caution"],
+          "description": "For a callout: the kind of GitHub alert it is. A plain quote when left out."
+        },
         "linkedPageId": {
           "type": "string",
           "description": "For a subpage_link: the page it links to."
+        },
+        "imageId": {
+          "type": "string",
+          "description": "For an image: an image of this Space, named in a page's Markdown as space-image:<id>."
+        },
+        "url": {
+          "type": "string",
+          "description": "For an image instead of imageId: its address, with no spaces, angle brackets, parentheses or backslashes, and not a space-image: one. Never fetched until a reader asks to see it."
+        },
+        "label": {
+          "type": "string",
+          "description": "For a footnote: its label, as in [^label], with no spaces or brackets."
         },
         "afterBlockId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
       },
@@ -4106,14 +4181,48 @@
   },
   {
     "name": "hal_c2_page_block_update",
-    "description": "Change a block's text, or tick or untick a checklist item, written as this thread.",
+    "description": "Change a block's text, tick or untick a checklist item, set a heading's level, a code block's language, a list item's depth, a numbered item's start, a callout's alert, a footnote's label or an image's url, written as this thread. What is given changes together. A table's text is its Markdown: give the whole table to change it.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
         "blockId": { "type": "string" },
         "text": { "type": "string" },
-        "checked": { "type": "boolean" }
+        "checked": { "type": "boolean" },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6,
+          "description": "For a heading: 1 to 6, as the number of # in Markdown."
+        },
+        "language": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }],
+          "description": "For a code block: one word, or null for none."
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "For a list item: how far it is nested under the items above it."
+        },
+        "start": {
+          "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 999999999 }, { "type": "null" }],
+          "description": "For a numbered item that begins a list: its number, or null for 1."
+        },
+        "alert": {
+          "anyOf": [
+            { "type": "string", "enum": ["note", "tip", "important", "warning", "caution"] },
+            { "type": "null" }
+          ],
+          "description": "For a callout: the kind of GitHub alert, or null for a plain quote."
+        },
+        "label": {
+          "type": "string",
+          "description": "For a footnote: its label, as in [^label], with no spaces or brackets."
+        },
+        "url": {
+          "type": "string",
+          "description": "For an image by its address (not one of this Space): the new address."
+        }
       },
       "required": ["spaceId", "blockId"],
       "additionalProperties": true
@@ -4129,6 +4238,44 @@
         "blockId": { "type": "string" }
       },
       "required": ["spaceId", "blockId"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_page_open_file",
+    "description": "Open a Markdown file of a project as a page of a Space. The page is the file: edits to the page are written to it, and changes to the file show on the page. A file that is a page already is that page, wherever it is. Only files the project's hal-c2.json spaces section counts can be opened (see hal_c2_space_files_scan).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
+        "projectId": {
+          "type": "string",
+          "description": "The project; this thread's when left out."
+        },
+        "relativePath": {
+          "type": "string",
+          "description": "The file's path in the project's own folder."
+        }
+      },
+      "required": ["spaceId", "relativePath"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_space_files_scan",
+    "description": "Propose which of a project's files are Space pages from the Markdown it has, and write that as the spaces section of its hal-c2.json, keeping the rest of the file. A section someone already wrote is kept unless replace is true.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "description": "The project; this thread's when left out."
+        },
+        "replace": {
+          "type": "boolean",
+          "description": "Write over a spaces section that is already there."
+        }
+      },
       "additionalProperties": true
     }
   }

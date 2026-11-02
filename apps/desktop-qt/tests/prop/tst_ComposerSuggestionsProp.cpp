@@ -3,11 +3,13 @@
 // text moved on. A bare `@` is never searched, so its menu opens at once and
 // says nothing matches; a word after it says nothing until the search for that
 // word has answered, and an older word's answer (landing late) never counts.
+// While the environment is away a word not yet answered says it can't be
+// searched, and once it returns that word is asked again and answers. Moving the
+// checkout asks the word again, and the old checkout's late answer never counts.
 // Scope: the caret is at the end of the text, on one thread, with a workspace
-// present and online. Not modelled: the no-place/offline case (searchPaths
-// returns early, so a non-empty query stays waiting with no menu) and
-// switching target between issuing a search and its answer; the claim above
-// is proven only inside this envelope.
+// present. Not modelled: a route with no workspace and switching target between
+// issuing a search and its answer; the claim above is proven only inside this
+// envelope.
 
 #include "Prop.h"
 
@@ -21,6 +23,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ThreadStore.h"
+#include "WorkspaceController.h"
 
 namespace prop = halc2::prop;
 
@@ -41,6 +44,7 @@ const QStringList kTexts{QString(),
                          QStringLiteral("hello @s"),
                          QStringLiteral("hello@s")};
 const QString kNothing = QStringLiteral("No matching files or folders.");
+const QString kUnavailable = QStringLiteral("Can't search files right now.");
 
 // What the workspace's search finds for a query: the folder src and the file
 // src/main.cpp, each when its last segment contains the query.
@@ -60,6 +64,8 @@ struct Model {
   bool answered = false;
   // The searches asked so far, each one the MC receives.
   int asked = 0;
+  bool online = true;
+  int moves = 0;
 
   // The @ word the composer itself reads from the text with the caret at its
   // end, so the model does not restate the trigger rules.
@@ -69,6 +75,15 @@ struct Model {
   }
   bool path() const { return trigger().has_value(); }
   QString query() const { return trigger() ? trigger()->query : QString(); }
+  // A new word is searched if the environment is there; the same one is not
+  // asked again.
+  void search() {
+    const QString word = query();
+    if (!online || word.isEmpty() || word == searched) return;
+    searched = word;
+    answered = !holding;
+    ++asked;
+  }
 };
 
 struct Sut {
@@ -137,6 +152,13 @@ struct Sut {
                                                                     {QStringLiteral("cursor"), text.size()}});
   }
 
+  // The MC's row of the thread changes.
+  void sendThread(const QString& field, const QString& value) {
+    QJsonObject& row = mc.threads[QStringLiteral("t1")];
+    row.insert(field, value);
+    mc.sendRow(QStringLiteral("t1"), row);
+  }
+
   QTemporaryDir home;
   FakeMc mc;
   std::unique_ptr<ShellBridge> bridge;
@@ -156,7 +178,9 @@ bool menuIs(const Model& m, const Sut& sut) {
   const int count = int(shown.value(QStringLiteral("suggestions")).toList().size());
   if (!path) return count == 0 && empty.isNull();
   if (m.query().isEmpty()) return count == 0 && empty.toString() == kNothing;
-  if (m.searched != m.query() || !m.answered) return count == 0 && empty.isNull();
+  if (m.searched != m.query() || !m.answered) {
+    return count == 0 && (m.online ? empty.isNull() : empty.toString() == kUnavailable);
+  }
   const int found = matchesOf(m.query());
   return count == found && (found > 0 ? empty.isNull() : empty.toString() == kNothing);
 }
@@ -174,13 +198,7 @@ struct Type : Command {
   QString text = *rc::gen::elementOf(std::vector<QString>(kTexts.cbegin(), kTexts.cend()));
   void apply(Model& m) const override {
     m.text = text;
-    const QString query = m.query();
-    // A new word is searched; the same one is not asked again.
-    if (!query.isEmpty() && query != m.searched) {
-      m.searched = query;
-      m.answered = !m.holding;
-      ++m.asked;
-    }
+    m.search();
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.type(text);
@@ -216,6 +234,73 @@ struct AnswerHeld : Command {
   void show(std::ostream& os) const override { os << "AnswerHeld"; }
 };
 
+// The environment drops: a search it had not answered is lost with it.
+struct GoOffline : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.online); }
+  void apply(Model& m) const override {
+    m.online = false;
+    if (!m.answered) m.searched.clear();
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.mc.setOnline(sut.mc.environmentId, false);
+    RC_ASSERT(prop::until([&] { return !sut.native->store()->environmentOnline(sut.mc.environmentId); }));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "GoOffline"; }
+};
+
+// It returns, and the word in the text is asked if it has no answer.
+struct GoOnline : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.online); }
+  void apply(Model& m) const override {
+    m.online = true;
+    m.search();
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.mc.setOnline(sut.mc.environmentId, true);
+    RC_ASSERT(prop::until([&] { return sut.native->store()->environmentOnline(sut.mc.environmentId); }));
+    const Model m1 = nextState(m0);
+    RC_ASSERT(prop::until([&] { return fakeFiles(sut.mc).searches >= m1.asked; }));
+    verify(m1, sut);
+  }
+  void show(std::ostream& os) const override { os << "GoOnline"; }
+};
+
+// The route moves to another checkout, online: any search is of the old one,
+// and a held answer from it that lands now changes nothing.
+struct MoveCheckout : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.online); }
+  void apply(Model& m) const override {
+    ++m.moves;
+    m.searched.clear();
+    m.answered = false;
+    m.search();
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    const Model m1 = nextState(m0);
+    const QString cwd = QStringLiteral("/work/worktrees/%1").arg(m1.moves);
+    sut.sendThread(QStringLiteral("worktreePath"), cwd);
+    RC_ASSERT(prop::until([&] {
+      const auto& place = sut.native->controller<WorkspaceController>()->place();
+      return place && place->cwd() == cwd;
+    }));
+    RC_ASSERT(prop::until([&] { return fakeFiles(sut.mc).searches >= m1.asked; }));
+    // The newest held answer may be the current search's; older ones never are.
+    if (sut.mc.heldAnswers() >= 2) {
+      sut.mc.answerOldestHeld();
+      // Frames arrive in order, so this row landing means the answer has too.
+      const QString marker = QStringLiteral("moved %1").arg(m1.moves);
+      sut.sendThread(QStringLiteral("title"), marker);
+      RC_ASSERT(prop::until([&] {
+        const auto thread = sut.native->store()->thread(sut.key);
+        return thread && thread->title == marker;
+      }));
+    }
+    verify(m1, sut);
+  }
+  void show(std::ostream& os) const override { os << "MoveCheckout"; }
+};
+
 }  // namespace
 
 class ComposerSuggestionsProp : public QObject {
@@ -223,11 +308,11 @@ class ComposerSuggestionsProp : public QObject {
 
 private slots:
   void theAtMenuSaysNothingMatchesOnlyForASearchThatAnswered() {
-    QVERIFY(rc::check("a bare @ says nothing matches at once; a word does once its own search answered, never for an older one", [] {
+    QVERIFY(rc::check("a bare @ says nothing matches at once; a word does once its own search answered, never for an older one, and is asked again when the environment returns", [] {
       Sut sut;
       Model model;
       const auto commands = *rc::gen::scale(
-          0.6, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Type, Type, Type, Hold, AnswerHeld>()));
+          0.6, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Type, Type, Type, Hold, AnswerHeld, GoOffline, GoOnline, MoveCheckout>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

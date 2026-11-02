@@ -1,12 +1,16 @@
+#include <QDropEvent>
 #include <QFile>
 #include <QJsonDocument>
 #include <QImage>
+#include <QMimeData>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QPointer>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <algorithm>
 #include <memory>
 
 #include "ShellBridge.h"
@@ -36,6 +40,8 @@ class ShellExamplesTest : public QObject {
   Q_OBJECT
 
   QTemporaryDir directory;
+  // Files dragged in from another application, apart from the shell's own.
+  QTemporaryDir dragged;
   ShellBridge bridge;
   QVariantMap initialState;
   std::unique_ptr<ThemeStore> theme;
@@ -43,6 +49,41 @@ class ShellExamplesTest : public QObject {
 
   static QObject* terminalsOf(QQmlEngine* engine) {
     return engine->singletonInstance<QObject*>("HalC2.Shell", "Terminals");
+  }
+
+  // The composer of a thread whose turn is running.
+  static QVariant threadComposer() {
+    return QJsonDocument::fromJson(R"({
+      "target": "env-a:thread-1", "edit": null, "text": "", "cursor": 0, "suggestions": [],
+      "triggerKind": null, "suggestionsEmptyText": null, "options": [], "attachments": [],
+      "terminalContexts": [], "placeholder": "Send a message", "editorDisabled": true, "canSend": false,
+      "selectedInstanceId": null, "selectedModel": null, "runtimeMode": "approval-required",
+      "runtimeModes": [], "showInteractionModeToggle": false, "interactionMode": "default",
+      "pendingApprovalCount": 0, "showPlanFollowUpPrompt": false, "isRunning": true,
+      "followUpBehavior": "steer",
+      "enterIntents": {"singleLine": {"": "foreground"}, "multiline": {"": "foreground"}}
+    })").toVariant();
+  }
+
+  // Drops a file from another application at `at`, as the platform delivers
+  // the drag, and says whether it joined the draft (composer.attach).
+  bool dropAttaches(QQuickWindow* window, const QPointF& at) {
+    QFile file(dragged.filePath("notes.txt"));
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    file.write("notes");
+    file.close();
+    QMimeData data;
+    data.setUrls({QUrl::fromLocalFile(file.fileName())});
+    QSignalSpy actions(&bridge, &ShellBridge::actionRequested);
+    const QPoint point = at.toPoint();
+    QDragEnterEvent enter(point, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &enter);
+    QDragMoveEvent move(point, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &move);
+    QDropEvent drop(point, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(window, &drop);
+    return std::any_of(actions.cbegin(), actions.cend(),
+                       [](const QList<QVariant>& call) { return call.first().toString() == "composer.attach"; });
   }
 
 private slots:
@@ -117,6 +158,30 @@ private slots:
     bridge.publish("route", QVariant());
     QTRY_VERIFY(centre->isVisible());
     QTRY_VERIFY(!settings->isVisible());
+  }
+
+  // The open right panel, even one dragged wide, takes what the thread leaves
+  // it, not the thread's own room (hal-c2#584: a crushed thread folds the
+  // composer's toolbar over itself), and stays inside the window.
+  void rightPanelLeavesTheThreadRoom(QQuickWindow* window) {
+    auto* panel = findVisualItemOfType(window->contentItem(), "RightPanel");
+    QVERIFY(panel);
+    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    QVERIFY(centre);
+    auto open = QJsonDocument::fromJson(R"({
+      "isOpen":true,"tabs":[],"activeId":"","width":900,
+      "canAdd":{"diff":true,"files":true,"terminal":true}
+    })").toVariant().toMap();
+    bridge.publish("panel", open);
+    const auto close = qScopeGuard([this] { bridge.publish("panel", QVariant()); });
+    QTRY_VERIFY(panel->isVisible());
+    QTRY_VERIFY(panel->width() > 0);
+    // Laid out: the panel sits right of the centre.
+    QTRY_VERIFY(panel->mapToScene(QPointF()).x() >= centre->mapToScene(QPointF(centre->width(), 0)).x());
+    // The thread's 360, less a card's border round the centre, once a
+    // sidebar that folds for it has.
+    QTRY_VERIFY2(centre->width() >= 356, qPrintable(QString::number(centre->width())));
+    QTRY_VERIFY(panel->mapToScene(QPointF(panel->width(), 0)).x() <= window->width());
   }
 
   // The usage route draws its chart inside the centre, and the day under the
@@ -247,6 +312,9 @@ private slots:
     pluginPagesHaveTabs(window);
     if (QTest::currentTestFailed()) return;
     if (width == 1000) threadRoutesDrawTheCentre(window);
+    if (QTest::currentTestFailed()) return;
+    if (width == 1000 && example != "glass-macos" && example != "folders") rightPanelLeavesTheThreadRoom(window);
+    if (QTest::currentTestFailed()) return;
 
     if (example == "glass-macos") {
       // The breakpoints: the sidebar goes off-canvas under 768, the
@@ -820,6 +888,12 @@ private slots:
     }
     QVERIFY(scrim->isVisible());
     QCOMPARE(scrim->mapToScene(QPointF(0, 0)).x(), 208.0);
+    // Files dropped on the list, or beside it, are not the draft's.
+    bridge.publish("composer", threadComposer());
+    QTRY_VERIFY(findVisualItem(window->contentItem(), "composerDrop")->isVisible());
+    QVERIFY(!dropAttaches(window, QPointF(100, 200)));
+    QVERIFY(!dropAttaches(window, QPointF(420, 200)));
+    bridge.publish("composer", QVariant());
 
     QSignalSpy actions(&bridge, &ShellBridge::actionRequested);
     const auto toggles = [&] {
@@ -972,6 +1046,10 @@ private slots:
     QVERIFY(scrim->isVisible());
     QCOMPARE(leftOf(scrim) + scrim->width(), leftOf(side));
     QCOMPARE(top(scrim), workspace->height());
+    // Files dropped on it are not the draft's.
+    bridge.publish("composer", threadComposer());
+    QTRY_VERIFY(findVisualItem(root, "composerDrop")->isVisible());
+    QVERIFY(!dropAttaches(window, QPointF(leftOf(side) + side->width() / 2, 500)));
     // Its width is the sheet's, not one to drag or to fill the window from.
     QVERIFY(!findVisualItem(side, "panelEdge")->isVisible());
     QVERIFY(!findVisualItem(side, "panelMaximize")->isVisible());
@@ -1006,6 +1084,9 @@ private slots:
     QTRY_COMPARE(leftOf(details) + details->width(), 880.0);
     QCOMPARE(top(details), workspace->height());
     QVERIFY(findVisualItem(details, "threadDetailsClose")->isVisible());
+    // Files dropped on the details are not the draft's; beside them they are.
+    QVERIFY(!dropAttaches(window, QPointF(leftOf(details) + details->width() / 2, 500)));
+    QVERIFY(dropAttaches(window, QPointF(leftOf(workspace) + 100, 500)));
 
     // The smallest window: the list is over the thread too, and the sheet is
     // 384 wide.
@@ -1037,6 +1118,7 @@ private slots:
     QTRY_VERIFY(scrim->isVisible());
     QCOMPARE(leftOf(side) + side->width(), 1200.0);
 
+    bridge.publish("composer", QVariant());
     bridge.publish("panel", QVariant());
     bridge.publish("route", QVariant());
     bridge.publish("layout", initialState.value("layout"));
@@ -1174,16 +1256,7 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(window));
 
     bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
-    bridge.publish("composer", QJsonDocument::fromJson(R"({
-      "target": "env-a:thread-1", "edit": null, "text": "", "cursor": 0, "suggestions": [],
-      "triggerKind": null, "suggestionsEmptyText": null, "options": [], "attachments": [],
-      "terminalContexts": [], "placeholder": "Send a message", "editorDisabled": true, "canSend": false,
-      "selectedInstanceId": null, "selectedModel": null, "runtimeMode": "approval-required",
-      "runtimeModes": [], "showInteractionModeToggle": false, "interactionMode": "default",
-      "pendingApprovalCount": 0, "showPlanFollowUpPrompt": false, "isRunning": true,
-      "followUpBehavior": "steer",
-      "enterIntents": {"singleLine": {"": "foreground"}, "multiline": {"": "foreground"}}
-    })").toVariant());
+    bridge.publish("composer", threadComposer());
     bridge.publish("turn", QJsonDocument::fromJson(R"({
       "threadKey": "env-a:thread-1", "kind": "thread", "running": true, "approvals": [], "plan": null, "queue": [],
       "questions": [{
@@ -1206,6 +1279,48 @@ private slots:
     QVERIFY(option->mapToScene(QPointF(0, 0)).y() >= 0);
 
     bridge.publish("turn", QVariant());
+    bridge.publish("composer", QVariant());
+    bridge.publish("route", QVariant());
+  }
+
+  void shellsTakeDroppedFiles_data() { shellsShowThePendingQuestion_data(); }
+
+  // Scenario: The user attaches images by dropping them on the composer
+  // (features/composer/attachments.feature): the built-in layout lays its
+  // drop over the whole conversation, and every example, which embeds only
+  // the composer, still takes them there.
+  void shellsTakeDroppedFiles() {
+    QFETCH(QString, example);
+    QFile::remove(directory.filePath("shell.qml"));
+    if (example != "default") {
+      const QDir source(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/examples/") + example);
+      for (const auto& file : source.entryList(QDir::Files)) {
+        const QString target = directory.filePath(file);
+        if (QFile::exists(target)) QVERIFY(QFile::remove(target));
+        QVERIFY(QFile::copy(source.filePath(file), target));
+      }
+    }
+    theme->reload();
+    runtime->reload();
+    QCOMPARE(runtime->usingUserShell(), example != "default");
+    QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    window->resize(1200, 880);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
+    bridge.publish("composer", threadComposer());
+    QTRY_VERIFY(findVisualItem(window->contentItem(), "composerDrop"));
+    auto* card = findVisualItem(window->contentItem(), "composerDrop");
+    QTRY_VERIFY(card->isVisible() && card->height() > 0);
+    // A frame lays it out where it is drawn: shown, it has not moved yet.
+    window->grabWindow();
+    QVERIFY(dropAttaches(window, card->mapToScene(QPointF(card->width() / 2, card->height() / 2))));
+
     bridge.publish("composer", QVariant());
     bridge.publish("route", QVariant());
   }

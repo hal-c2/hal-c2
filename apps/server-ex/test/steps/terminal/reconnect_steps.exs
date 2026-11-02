@@ -249,6 +249,24 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     context
   end
 
+  step "a terminal whose id is 200 characters long that has printed {string}",
+       %{args: [text]} = context do
+    {_, context} = Terminal.open!(context, %{"terminalId" => String.duplicate("x", 200)}, "ctl")
+    {_, context} = Terminal.attach!(context, "default", attach_input(context))
+    print(context, "default", text)
+  end
+
+  step "later opens the long terminal again", context do
+    {_, context} = Terminal.open!(context, %{}, "ctl")
+    {snapshot, context} = Terminal.attach!(context, "later", attach_input(context))
+    Map.put(context, :snapshot, snapshot)
+  end
+
+  step "its history contains {string}", %{args: [text]} = context do
+    assert context.snapshot["history"] =~ line(text)
+    context
+  end
+
   step "a client closes the terminal and deletes its history", context do
     input = Map.put(session(context), "deleteHistory", true)
     {nil, context} = World.call!(context, "terminal.close", input, "ctl")
@@ -584,9 +602,16 @@ defmodule HalC2.Steps.Terminal.Reconnect do
       )
 
   # Output on the "default" client until each page in `ids` has been told a
-  # line reading `text`; what each page was told is kept per page.
+  # line reading `text` and the prompt after it; what each page was told is kept
+  # per page. With the prompt read, no output is left to reach a page that leaves,
+  # and the next command typed prints its line at the start of one.
   defp await_pages(context, ids, text, seen \\ %{}) do
-    if Enum.all?(ids, &(Map.get(seen, &1, "") =~ line(text))) do
+    told? = fn id ->
+      output = Map.get(seen, id, "")
+      output =~ line(text) and Terminal.at_prompt?(output)
+    end
+
+    if Enum.all?(ids, told?) do
       Map.put(context, :page_output, seen)
     else
       {frame, client} = HalC2.Test.WsClient.recv(World.client(context, "default"), 5_000)

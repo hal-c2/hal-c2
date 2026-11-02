@@ -18,6 +18,15 @@ defmodule HalC2.ScheduledTasks do
   never comes back cannot keep its task `running` for good. A task that starts
   a new thread per run is given that thread's id up front, so the same cleanup
   finds its thread too.
+
+  A task can keep a Space page up to date instead (`HalC2.Space.Schedule`): it has a
+  `page` target, and its run writes the page rather than sending a prompt. Such a task
+  is seen and managed on its page, so `list/1` and watchers leave it out; every change
+  to it is shown on the page's `schedule` field in the Space's stream. While its page is
+  in the trash the task is `held`: it has no next run, and letting go of it aims the
+  next run afresh, so what it missed does not run. Nothing that holds a stream's
+  transaction may call this process, because it writes to those streams, and a stream
+  that does not answer in time is left for the next tick (`by_space/4`).
   """
 
   use GenServer
@@ -31,6 +40,7 @@ defmodule HalC2.ScheduledTasks do
   @max_sleep 60_000
   @run_timeout_ms 60 * 60_000
   @cleanup_timeout_ms 5 * 60_000
+  @pages_timeout_ms 2_000
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -49,6 +59,31 @@ defmodule HalC2.ScheduledTasks do
   # (`HalC2.Web.Socket.rpc_timeout/1`), so the answer reaches clients too.
   def run_now(%{"id" => id}),
     do: GenServer.call(__MODULE__, {:run_now, id}, run_timeout_ms() + 5_000)
+
+  @doc "The tasks that keep a page up to date."
+  def page_tasks, do: GenServer.call(__MODULE__, :page_tasks)
+
+  @doc """
+  Saves the task of a page (`id`, `page`, `prompt`, `schedule`): a new one starts
+  enabled, a changed one stays paused or running as it is.
+  """
+  def put_page_task(input), do: GenServer.call(__MODULE__, {:put_page_task, input})
+
+  @doc "Starts a task's run and replies at once, with its status `running`."
+  def start(%{"id" => id}), do: GenServer.call(__MODULE__, {:start, id})
+
+  @doc """
+  Holds, lets go of, or deletes the page tasks of a Space by what became of their pages.
+  Always `:ok`: what the Space decided stands, and a Space that did not answer is asked
+  again on the next tick.
+  """
+  def reconcile_pages(space_id) do
+    if Process.whereis(__MODULE__),
+      do: GenServer.call(__MODULE__, {:reconcile_pages, space_id}),
+      else: :ok
+  catch
+    :exit, _ -> :ok
+  end
 
   def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
   def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
@@ -73,16 +108,72 @@ defmodule HalC2.ScheduledTasks do
         {task["id"], task}
       end
 
-    state = %{path: path, tasks: tasks, runs: %{}, watchers: %{}, timer: nil}
-    {:ok, schedule(state)}
+    state = %{
+      path: path,
+      tasks: tasks,
+      runs: %{},
+      watchers: %{},
+      timer: nil,
+      unsettled: MapSet.new(),
+      silent: MapSet.new()
+    }
+
+    {:ok, state, {:continue, :pages}}
+  end
+
+  # A page trashed or deleted as the MC stopped is settled before anything can run, and
+  # a run the stop cut off is shown as failed on its page.
+  @impl true
+  def handle_continue(:pages, state) do
+    {:noreply, state |> reconcile(page_tasks(state)) |> changed()}
   end
 
   @impl true
-  def handle_call(:list, _from, state), do: {:reply, sorted(state), state}
+  def handle_call(:list, _from, state), do: {:reply, public(state), state}
+
+  def handle_call(:page_tasks, _from, state), do: {:reply, page_tasks(state), state}
+
+  def handle_call({:put_page_task, input}, _from, state) do
+    existing = state.tasks[input["id"]]
+
+    if invalid_schedule?(input["schedule"]) do
+      {:reply, error("The schedule is not valid.", input["id"]), state}
+    else
+      enabled = if existing, do: existing["enabled"], else: true
+
+      task =
+        input
+        |> Map.merge(%{"enabled" => enabled, "creationSource" => "space"})
+        |> build(existing, now())
+        |> Map.put("page", input["page"])
+
+      state = state |> heard(task) |> put(task) |> changed()
+      {:reply, {:ok, %{"task" => state.tasks[task["id"]]}}, state}
+    end
+  end
+
+  def handle_call({:start, id}, _from, state) do
+    cond do
+      state.tasks[id] == nil ->
+        {:reply, error("Schedule task not found.", id), state}
+
+      running?(state, id) ->
+        {:reply, error("Schedule task is already running.", id), state}
+
+      true ->
+        state = state |> heard(state.tasks[id]) |> start_run(state.tasks[id], "manual", nil)
+        {:reply, {:ok, %{"task" => state.tasks[id]}}, state}
+    end
+  end
+
+  def handle_call({:reconcile_pages, space_id}, _from, state) do
+    tasks = Enum.filter(page_tasks(state), &(&1["page"]["spaceId"] == space_id))
+    {:reply, :ok, state |> reconcile(tasks) |> changed()}
+  end
 
   def handle_call({:subscribe, pid, ref}, _from, state) do
     watchers = HalC2.Watchers.add(state.watchers, pid, ref)
-    {:reply, {:ok, sorted(state)}, %{state | watchers: watchers}}
+    {:reply, {:ok, public(state)}, %{state | watchers: watchers}}
   end
 
   def handle_call({:upsert, input}, _from, state) do
@@ -132,7 +223,7 @@ defmodule HalC2.ScheduledTasks do
               end
           })
 
-        {:reply, {:ok, %{"task" => task}}, state |> put(task) |> changed()}
+        {:reply, {:ok, %{"task" => task}}, state |> heard(task) |> put(task) |> changed()}
     end
   end
 
@@ -154,7 +245,7 @@ defmodule HalC2.ScheduledTasks do
   def handle_info(:tick, state) do
     at = now()
     before = state.tasks
-    state = %{state | timer: nil}
+    state = settle_unanswered(%{state | timer: nil, silent: MapSet.new()})
 
     state =
       state.tasks
@@ -173,8 +264,10 @@ defmodule HalC2.ScheduledTasks do
         end
       end)
 
-    # A tick that starts nothing (a due task still running) only re-arms the timer.
-    {:noreply, if(state.tasks == before, do: schedule(state), else: changed(state))}
+    # A tick that starts nothing (a due task still running) saves nothing, but writes what
+    # a stream did not take before, and re-arms the timer.
+    {:noreply,
+     if(state.tasks == before, do: state |> show_pages() |> schedule(), else: changed(state))}
   end
 
   # A run finished: record it, and answer a waiting "run now".
@@ -239,6 +332,11 @@ defmodule HalC2.ScheduledTasks do
         {pid, run}
       end)
 
+    state =
+      state
+      |> Map.put_new(:unsettled, MapSet.new())
+      |> Map.put_new(:silent, MapSet.new())
+
     {:ok, %{state | runs: runs}}
   end
 
@@ -251,7 +349,8 @@ defmodule HalC2.ScheduledTasks do
     # The thread this run's prompt lands in: the task's own, or — for a task
     # that starts a new thread each run — one minted now and handed to the
     # launch, so a run that times out mid-launch still has a thread to clean up.
-    thread_id = task["threadId"] || HalC2.Environment.uuid4()
+    # A task that writes a page sends no prompt, so it has no thread at all.
+    thread_id = task["threadId"] || if(!task["page"], do: HalC2.Environment.uuid4())
     # Linked, so a scheduler that dies takes its runs with it, and monitored, so a run
     # that exits fails its task.
     parent = self()
@@ -520,6 +619,9 @@ defmodule HalC2.ScheduledTasks do
         fake = Application.get_env(:hal_c2, :scheduled_tasks_fire) ->
           fake.(task, fire_key)
 
+        task["page"] ->
+          HalC2.Space.Schedule.run(task)
+
         task["threadId"] ->
           Orchestration.dispatch(%{
             "type" => "message.dispatch",
@@ -698,17 +800,136 @@ defmodule HalC2.ScheduledTasks do
 
   defp running?(state, id), do: Enum.any?(state.runs, fn {_, run} -> run.id == id end)
 
-  defp put(state, task), do: %{state | tasks: Map.put(state.tasks, task["id"], task)}
+  defp put(state, task), do: %{state | tasks: Map.put(state.tasks, task["id"], aim(task))}
+
+  # A held task has no next run, whatever else just aimed it.
+  defp aim(%{"held" => true} = task), do: Map.put(task, "nextRunAt", nil)
+  defp aim(task), do: task
 
   defp sorted(state), do: state.tasks |> Map.values() |> Enum.sort_by(& &1["createdAt"])
 
-  # Saves, tells watchers, and re-arms the timer.
+  defp public(state), do: state |> sorted() |> Enum.reject(& &1["page"])
+  defp page_tasks(state), do: state |> sorted() |> Enum.filter(& &1["page"])
+
+  # Saves, tells watchers, shows page tasks on their pages, and re-arms the timer.
   defp changed(state) do
     save(state.path, sorted(state))
-    tasks = sorted(state)
-    HalC2.Watchers.notify(state.watchers, {:hal_c2_scheduled_tasks, node(), tasks})
-    schedule(state)
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_scheduled_tasks, node(), public(state)})
+    state |> show_pages() |> schedule()
   end
+
+  # Writes each page task that changed since it was last shown, and clears the page of
+  # one that is gone. One the Space's stream refused stays unshown, for the next tick, and
+  # one in a Space that did not answer waits for it without being asked.
+  defp show_pages(state) do
+    current = Map.new(page_tasks(state), &{&1["id"], {&1["page"], HalC2.Space.Schedule.view(&1)}})
+    shown = Map.get(state, :shown, %{})
+
+    cleared =
+      for {id, {page, _}} <- shown, not is_map_key(current, id), into: %{}, do: {id, {page, nil}}
+
+    pending =
+      for {id, {page, _} = entry} <- Map.merge(cleared, current),
+          shown[id] != entry,
+          page["spaceId"] not in state.silent,
+          do: {id, entry}
+
+    {answered, state} =
+      by_space(state, pending, fn {_id, {page, _view}} -> page["spaceId"] end, fn entries ->
+        for {id, {page, view} = entry} <- entries,
+            HalC2.Space.Schedule.show(page, view) == :ok,
+            into: %{},
+            do: {id, entry}
+      end)
+
+    kept =
+      Enum.reduce(answered, shown, fn
+        {id, {_page, nil}}, shown -> Map.delete(shown, id)
+        {id, entry}, shown -> Map.put(shown, id, entry)
+      end)
+
+    Map.put(state, :shown, kept)
+  end
+
+  # Settles page tasks by what became of their pages. A page this MC cannot read just
+  # now leaves its task as it is.
+  defp reconcile(state, tasks) do
+    {fates, state} =
+      by_space(state, tasks, & &1["page"]["spaceId"], fn tasks ->
+        Map.new(tasks, &{&1["id"], HalC2.Space.Schedule.fate(&1)})
+      end)
+
+    state =
+      Enum.reduce(tasks, state, fn task, state ->
+        case Map.get(fates, task["id"], :unknown) do
+          :gone -> %{stop_runs(state, task["id"]) | tasks: Map.delete(state.tasks, task["id"])}
+          :held -> put(state, Map.put(task, "held", true))
+          :live -> put(state, let_go(task))
+          :unknown -> state
+        end
+      end)
+
+    # A held task has no next run to look again at its page, so this has to.
+    unanswered = Enum.filter(tasks, &(Map.get(fates, &1["id"], :unknown) == :unknown))
+
+    unsettled =
+      state.unsettled
+      |> MapSet.difference(MapSet.new(tasks, & &1["page"]["spaceId"]))
+      |> MapSet.union(MapSet.new(unanswered, & &1["page"]["spaceId"]))
+
+    %{state | unsettled: unsettled}
+  end
+
+  defp settle_unanswered(state) do
+    if MapSet.size(state.unsettled) == 0 do
+      state
+    else
+      tasks = Enum.filter(page_tasks(state), &(&1["page"]["spaceId"] in state.unsettled))
+      reconcile(%{state | unsettled: MapSet.new()}, tasks)
+    end
+  end
+
+  # A Space's stream waits as long as it must, and every task on this MC waits on this
+  # process, so reading or writing streams gets one limit. Each Space works apart, so one
+  # that does not answer loses only its own items, and goes `silent`: `show_pages/1` does
+  # not wait on it again until a tick, a reconcile or `heard/2`. `fun` turns a Space's
+  # items into a map; the result merges the maps of the Spaces that answered in time, with
+  # the state that knows which did not.
+  defp by_space(state, items, space_id, fun) do
+    timeout = Application.get_env(:hal_c2, :scheduled_tasks_pages_timeout_ms, @pages_timeout_ms)
+
+    {spaces, tasks} =
+      items
+      |> Enum.group_by(space_id)
+      |> Enum.map(fn {space, items} -> {space, Task.async(fn -> fun.(items) end)} end)
+      |> Enum.unzip()
+
+    spaces
+    |> Enum.zip(Task.yield_many(tasks, timeout))
+    |> Enum.reduce({%{}, state}, fn {space, {task, result}}, {answered, state} ->
+      case result || Task.shutdown(task, :brutal_kill) do
+        {:ok, part} ->
+          {Map.merge(answered, part), %{state | silent: MapSet.delete(state.silent, space)}}
+
+        _ ->
+          {answered, %{state | silent: MapSet.put(state.silent, space)}}
+      end
+    end)
+  end
+
+  # Whoever changes a page's task has just read the page from its stream, so it answers.
+  defp heard(state, %{"page" => %{"spaceId" => space}}),
+    do: %{state | silent: MapSet.delete(state.silent, space)}
+
+  defp heard(state, _task), do: state
+
+  defp let_go(%{"held" => true} = task) do
+    task
+    |> Map.delete("held")
+    |> Map.put("nextRunAt", if(task["enabled"], do: next_run(task["schedule"], now())))
+  end
+
+  defp let_go(task), do: task
 
   defp schedule(state) do
     if state.timer, do: Process.cancel_timer(state.timer)

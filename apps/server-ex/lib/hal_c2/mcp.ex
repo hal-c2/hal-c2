@@ -502,6 +502,26 @@ defmodule HalC2.Mcp do
     {:reply, token, state}
   end
 
+  @doc """
+  The thread's live credentials, for `restore/1`: a provider program that outlives the MC
+  keeps the token it was started with, and this table does not outlive it.
+  """
+  def credentials(thread_id) do
+    if :ets.whereis(@table) != :undefined,
+      do: :ets.match_object(@table, {:_, %{thread_id: thread_id}, :_}),
+      else: []
+  end
+
+  @doc "Honours credentials an earlier MC gave a program this one reattached to."
+  def restore(credentials) do
+    if :ets.whereis(@table) != :undefined do
+      now = System.monotonic_time(:millisecond)
+      for {token, caller, _} <- credentials, do: :ets.insert(@table, {token, caller, now})
+    end
+
+    :ok
+  end
+
   defp mint(thread_id, instance, capabilities) do
     token = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
 

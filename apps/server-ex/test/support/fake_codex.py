@@ -404,6 +404,13 @@ for line in sys.stdin:
         if text.startswith("write-all "):
             for name in text.split()[1:]:
                 open(name, "w").write(text + "\n")
+        # 'put NAME "text"' writes exactly the JSON string given to NAME; "remove NAME" deletes it.
+        if text.startswith("put "):
+            _, name, contents = text.split(" ", 2)
+            os.makedirs(os.path.dirname(name) or ".", exist_ok=True)
+            open(name, "w", newline="").write(json.loads(contents))
+        if text.startswith("remove "):
+            os.remove(text.split()[1])
         # "fail" ends the turn as failed.
         if text.startswith("fail"):
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "failed", "error": {"message": "the turn failed"}}}})
@@ -634,6 +641,13 @@ for line in sys.stdin:
     elif method == "turn/interrupt":
         if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
             interrupted_turns.add(params["turnId"])
+        # While the file FAKE_CODEX_HOLD_INTERRUPT names exists, a stop waits, bounded as a
+        # held steer is.
+        hold_deadline = time.time() + 120
+        while os.path.exists(os.environ.get("FAKE_CODEX_HOLD_INTERRUPT", "/nonexistent")):
+            if time.time() > hold_deadline:
+                sys.exit("fake Codex: interrupt held past 120s (stuck hold-interrupt gate)")
+            time.sleep(0.01)
         send({"id": mid, "result": {}})
         # FAKE_CODEX_IGNORE_INTERRUPT acknowledges the stop and never ends the turn.
         if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
