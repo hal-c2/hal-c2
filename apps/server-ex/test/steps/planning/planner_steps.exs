@@ -2754,6 +2754,20 @@ defmodule HalC2.Steps.Planning.Planner do
   # task moves to `away`, which GitHub takes, and back.
   step "the user moves {string} to {string} and back to {string} while GitHub holds moving {string} from {string} to {string}",
        %{args: [title, away, back, other, from, to]} = context do
+    away_and_back(context, title, away, back, other, from, to, & &1)
+  end
+
+  # As above, with the plugin restarted after the task is back, while the held move's
+  # runner still waits on GitHub and reports to the restarted plugin.
+  step "the user moves {string} to {string} and back to {string} while GitHub holds moving {string} from {string} to {string}, then {string} is restarted before GitHub answers it",
+       %{args: [title, away, back, other, from, to, id]} = context do
+    away_and_back(context, title, away, back, other, from, to, fn context ->
+      {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+      context
+    end)
+  end
+
+  defp away_and_back(context, title, away, back, other, from, to, then) do
     %{mc: mc} = context
     input = move_input(context, other, from, to)
     call = %{"id" => @id, "method" => "moveToMilestone", "input" => input}
@@ -2775,8 +2789,27 @@ defmodule HalC2.Steps.Planning.Planner do
           context
       end
 
+    context = then.(context)
     :ok = :file.close(gate)
     assert {{:ok, _}, _} = Task.await(moving, 30_000)
+    context
+  end
+
+  # The save an earlier MC run left, its clock past this run's when GitHub took a move of
+  # #`number`: a run's monotonic clock starts anywhere.
+  step "an earlier MC run saw GitHub take a move of \#{int} at a time this run's clock has not reached",
+       %{args: [number]} = context do
+    {_, context} = World.call!(context, "plugins.disable", %{"id" => @id})
+    file = Path.join(HalC2.Plugins.Host.data_dir(@id), "plan.json")
+    later = System.monotonic_time() + System.convert_time_unit(3600, :second, :native)
+    latest = %{{String.downcase(context.repository), number} => later}
+    saved = {{"earlier", "run"}, latest} |> :erlang.term_to_binary() |> Base.encode64()
+    data = file |> File.read!() |> JSON.decode!() |> Map.put("latestMoves", saved)
+    File.write!(file, JSON.encode!(data))
+
+    {_, context} =
+      World.call!(context, "plugins.enable", %{"id" => @id, "acceptPermissions" => []})
+
     context
   end
 
