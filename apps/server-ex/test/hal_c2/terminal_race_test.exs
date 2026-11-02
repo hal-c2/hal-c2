@@ -133,8 +133,8 @@ defmodule HalC2.TerminalRaceTest do
     old = session(input)
     down = Process.monitor(old)
 
-    # The detach reaches the hub before the close has told it anything to forget, and
-    # the terminal only after the close.
+    # The detach reaches the terminal only after the close, and the hub before the
+    # close has told it anything to forget.
     :sys.suspend(old)
     ref = make_ref()
     send(old, {:"$gen_call", {self(), ref}, {:close, false}})

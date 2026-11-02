@@ -86,9 +86,11 @@ defmodule HalC2.Terminal do
 
   @doc "Stops sending a terminal's events to `subscriber`."
   def detach(thread_id, terminal_id, subscriber) do
-    # The hub may still hold it for a process that has not reported yet.
-    Hub.forget(thread_id, terminal_id, subscriber)
     if pid = lookup(thread_id, terminal_id), do: GenServer.cast(pid, {:detach, subscriber})
+    # The hub may still hold it for a process that has not reported yet, or be handed
+    # it by one closing now. Told after the terminal, the hub hears this after any
+    # `Hub.closed` the detach arrived too late for (`retire/2`).
+    Hub.forget(thread_id, terminal_id, subscriber)
     :ok
   end
 
@@ -588,21 +590,24 @@ defmodule HalC2.Terminal do
 
   # The end of the process, its followers left with the hub for the next one.
   defp retire(state, delete_history) do
-    state = state |> drop_detached() |> emit(%{"type" => "closed"})
+    state = emit(state, %{"type" => "closed"})
     Hub.closed(state.thread_id, state.terminal_id, Map.keys(state.subscribers))
+    forget_detached(state)
     unless delete_history, do: persist(state)
     %{state | persist_timer: nil, cwd: nil}
   end
 
-  # Detaches that arrived while the close was stopping the shell: handled after it,
-  # they would never be, and their pids would follow the next process.
-  defp drop_detached(state) do
+  # Detaches that arrived while the close was stopping the shell, too late for the
+  # list `Hub.closed` took: the hub hears of them after it, from this process, so it
+  # drops them. One that arrives later still finds the hub told, as `detach/3` tells
+  # the hub after this process.
+  defp forget_detached(state) do
     receive do
       {:"$gen_cast", {:detach, subscriber}} ->
-        {:noreply, state} = handle_cast({:detach, subscriber}, state)
-        drop_detached(state)
+        Hub.forget(state.thread_id, state.terminal_id, subscriber)
+        forget_detached(state)
     after
-      0 -> state
+      0 -> :ok
     end
   end
 
