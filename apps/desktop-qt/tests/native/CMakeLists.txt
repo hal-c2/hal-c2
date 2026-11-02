@@ -112,6 +112,10 @@ add_test(NAME ThemeResolution COMMAND tst_ThemeResolution)
 add_executable(tst_ThisMachine tst_ThisMachine.cpp)
 target_link_libraries(tst_ThisMachine PRIVATE hal_c2_native Qt6::Test)
 add_test(NAME ThisMachine COMMAND tst_ThisMachine)
+# Which links in the conversation are pull requests, and which project reads one.
+add_executable(tst_PullRequestLinks tst_PullRequestLinks.cpp)
+target_link_libraries(tst_PullRequestLinks PRIVATE hal_c2_native Qt6::Test)
+add_test(NAME PullRequestLinks COMMAND tst_PullRequestLinks)
 set_tests_properties(ThemeResolution PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 # Regressions the property tests (tests/prop) found, one tst_*Regression.cpp
 # each, picked up on the next build.
