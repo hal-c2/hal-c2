@@ -3,10 +3,12 @@ defmodule HalC2.MermaidPropTest do
   `HalC2.Mermaid` against a model of its promise: every caller is answered once, with
   what was drawn for its source; a source is drawn once while it is kept or being drawn;
   no more than the limit draw at once, the rest start in the order they were asked for;
-  and only what the renderer said is kept, the oldest forgotten past the cache's size.
+  only what the renderer said is kept, the oldest forgotten past the cache's size; and a
+  source that waits too long for its turn is dropped, its callers told the MC is busy.
 
   Drawings are held by the test until it finishes them with an outcome: a drawing, a
-  failure the renderer reports, or a crash. Callers ask without waiting
+  failure the renderer reports, or a crash. The test also decides when a queued source
+  has waited too long, sending the server the message its own timer would. Callers ask without waiting
   (`:gen_server.send_request/2`), so many wait on one drawing at once.
   """
 
@@ -24,6 +26,7 @@ defmodule HalC2.MermaidPropTest do
   @limit 2
   @cache_size 2
   @failed %{"status" => "failed", "kind" => nil, "reason" => "no", "line" => nil, "column" => nil}
+  @busy "The MC is busy drawing other diagrams; try again."
 
   property "every caller gets what was drawn for its source, drawn once",
     numtests: HalC2.Prop.numtests(200),
@@ -60,7 +63,14 @@ defmodule HalC2.MermaidPropTest do
     end
 
     {:ok, server} =
-      Mermaid.start_link(name: nil, draw: draw, limit: @limit, cache_size: @cache_size)
+      Mermaid.start_link(
+        name: nil,
+        draw: draw,
+        limit: @limit,
+        cache_size: @cache_size,
+        # The test says when a source has waited too long, not the clock.
+        wait: 3_600_000
+      )
 
     Process.put(:server, server)
     # request id => source, for callers not answered yet
@@ -111,11 +121,16 @@ defmodule HalC2.MermaidPropTest do
              {:call, __MODULE__, :finish,
               [oneof(state.running), oneof([:drawn, :drawn, :failed, :crash])]}}
           ]
+        ) ++
+        if(state.queued == [],
+          do: [],
+          else: [{1, {:call, __MODULE__, :wait_out, [oneof(state.queued)]}}]
         )
     )
   end
 
   def precondition(state, {:call, _, :finish, [source, _]}), do: source in state.running
+  def precondition(state, {:call, _, :wait_out, [source]}), do: source in state.queued
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :ask, [source]}) do
@@ -147,6 +162,14 @@ defmodule HalC2.MermaidPropTest do
       [next | queued] -> %{state | running: state.running ++ [next], queued: queued}
       [] -> state
     end
+  end
+
+  def next_state(state, _result, {:call, _, :wait_out, [source]}) do
+    %{
+      state
+      | queued: List.delete(state.queued, source),
+        waiting: Map.delete(state.waiting, source)
+    }
   end
 
   defp keep(state, source) do
@@ -189,6 +212,14 @@ defmodule HalC2.MermaidPropTest do
       started == Enum.take(state.queued, 1)
   end
 
+  # Everyone waiting for a source dropped from the queue is told the MC is busy, and
+  # nothing starts in its place.
+  def postcondition(state, {:call, _, :wait_out, [source]}, {answers, started}) do
+    length(answers) == state.waiting[source] and
+      Enum.all?(answers, &match?(%{"status" => "failed", "reason" => @busy}, &1)) and
+      started == []
+  end
+
   # --- commands ---------------------------------------------------------------
 
   # A caller asks and does not wait. Returns the answers it got at once and the
@@ -220,18 +251,32 @@ defmodule HalC2.MermaidPropTest do
     Process.put(:drawers, drawers)
     send(drawer, {:outcome, outcome})
 
+    {answers_for(source), started(server)}
+  end
+
+  defp answers_for(source) do
     {mine, others} = Enum.split_with(Process.get(:asked), fn {_, s} -> s == source end)
     Process.put(:asked, Map.new(others))
 
-    answers =
-      for {request, _} <- mine do
-        case :gen_server.wait_response(request, 10_000) do
-          {:reply, result} -> result
-          other -> raise "a caller of #{source} was not answered: #{inspect(other)}"
-        end
+    for {request, _} <- mine do
+      case :gen_server.wait_response(request, 10_000) do
+        {:reply, result} -> result
+        other -> raise "a caller of #{source} was not answered: #{inspect(other)}"
       end
+    end
+  end
 
-    {answers, started(server)}
+  # `source` has waited too long for its turn. Returns the answers of everyone waiting
+  # for it and the drawings that started.
+  def wait_out(source) do
+    server = Process.get(:server)
+
+    [ref] =
+      for {_key, %{source: ^source}, ref} <- :queue.to_list(:sys.get_state(server).queued),
+          do: ref
+
+    send(server, {:waited_too_long, ref})
+    {answers_for(source), started(server)}
   end
 
   # The drawings the server started since the last command. Every one it started has

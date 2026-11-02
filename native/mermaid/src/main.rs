@@ -272,7 +272,6 @@ fn failed(kind: Option<&str>, reason: &str) -> Value {
     json!({"status": "failed", "kind": kind, "reason": reason})
 }
 
-/// The root element's `width` and `height`.
 /// The drawing with a width and height in pixels on its root, and those sizes. Some
 /// types (pie) are written `width="100%"` with only a `viewBox`, which leaves a client
 /// with no size to lay out; their size is the `viewBox`'s.
@@ -355,7 +354,8 @@ fn one_line_texts(svg: &str) -> String {
         out.push_str(&rest[..start]);
         let element = &rest[start..];
         let Some(end) = element.find("</text>") else {
-            break;
+            out.push_str(element);
+            return out;
         };
         let whole = &element[..end + "</text>".len()];
         match split_lines(&element[..end]) {
@@ -585,6 +585,12 @@ mod tests {
             ),
             r##"<g><text fill="#000" x="10.00" y="20.00" font-weight="600">one</text><text fill="#000" x="10.00" y="41.00">two</text></g>"##
         );
+    }
+
+    #[test]
+    fn a_text_left_open_is_kept_once() {
+        let svg = r#"<svg><text x="1" y="2">a</text><text x="3" y="4"/></svg>"#;
+        assert_eq!(one_line_texts(svg), svg);
     }
 
     #[test]
