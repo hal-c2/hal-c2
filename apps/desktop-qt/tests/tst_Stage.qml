@@ -66,6 +66,38 @@ Item {
         }
     }
 
+    // The thread's centre with the side panel beside it, as DefaultLayout has them.
+    Component {
+        id: centreComponent
+        Item {
+            property alias bodies: bodies
+            property alias area: area
+            property alias panel: panel
+            width: 1200
+            height: 700
+
+            PanelBodies {
+                id: bodies
+            }
+
+            ThreadArea {
+                id: area
+                width: 760
+                height: 700
+                routeKind: "thread"
+                bodies: bodies
+            }
+
+            RightPanel {
+                id: panel
+                bodies: bodies
+                x: 760
+                width: 440
+                height: 700
+            }
+        }
+    }
+
     // A DiffSelection with nothing in it.
     Component {
         id: fakeDiff
@@ -274,6 +306,39 @@ Item {
             mouseRelease(pair, panelAt.x, panelAt.y);
             tryVerify(() => lastAction()?.action === "rightPanel.dock" && lastAction().payload.dock === "panel");
             compare(lastAction().payload.id, "files");
+        }
+
+        // With nothing in the centre yet, a tab dragged onto the conversation
+        // goes there.
+        function test_aTabDragsIntoAnEmptyCentre() {
+            show({ staged: [], activeId: "files" });
+            const holder = createTemporaryObject(centreComponent, root);
+            const drop = findChild(holder.area, "centreDrop");
+            const tab = findChild(holder.panel, "panelTab-files");
+            verify(drop && tab);
+            verify(!drop.enabled, "the centre takes nothing until a tab drags");
+            const from = tab.mapToItem(holder, tab.width / 2, tab.height / 2);
+            const to = holder.area.mapToItem(holder, holder.area.width * 0.75, 200);
+            mousePress(holder, from.x, from.y);
+            drag(holder, from, to);
+            compare(holder.bodies.dragging, "files");
+            verify(drop.enabled && drop.containsDrag, "the centre shows it takes the tab");
+            mouseRelease(holder, to.x, to.y);
+            tryVerify(() => lastAction()?.action === "rightPanel.dock");
+            compare(lastAction().payload.id, "files");
+            compare(lastAction().payload.dock, "stage");
+            verify(!drop.enabled);
+
+            // Once the stage shows, its panes take drops instead.
+            show({ staged: ["files"], activeId: "diff" });
+            verify(findChild(holder.area, "stage").visible);
+            const other = findChild(holder.panel, "panelTab-diff");
+            const start = other.mapToItem(holder, other.width / 2, other.height / 2);
+            mousePress(holder, start.x, start.y);
+            drag(holder, start, to);
+            compare(holder.bodies.dragging, "diff");
+            verify(!drop.enabled);
+            mouseRelease(holder, to.x, to.y);
         }
 
         // Scenario: The latest activity shows over the composer while the

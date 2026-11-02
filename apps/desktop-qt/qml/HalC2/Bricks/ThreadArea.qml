@@ -194,4 +194,42 @@ Item {
         width: threadArea.focusMode ? threadArea.width : threadArea.width - x
         height: threadArea.focusMode ? stageRoom.height : threadArea.height
     }
+
+    // While no stage shows, a side panel tab dragged over the
+    // conversation's right half goes to the centre.
+    DropArea {
+        id: centreDrop
+
+        objectName: "centreDrop"
+        x: Math.round(threadArea.width / 2)
+        width: threadArea.width - x
+        height: threadArea.height - (composerView.visible ? composerView.height : 0)
+        keys: ["hal-c2/panel-tab"]
+        enabled: threadArea.routeKind === "thread" && !stageView.visible && threadArea.bodies.dragging.length > 0
+        onDropped: drop => {
+            const id = threadArea.bodies.dragging;
+            drop.accept();
+            // After the drag has let go of the tab it moves.
+            Qt.callLater(() => Shell.dispatch("rightPanel.dock", {
+                    id: id,
+                    dock: "stage"
+                }));
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: 8
+            visible: centreDrop.enabled
+            radius: 8
+            color: Qt.alpha(Theme.palette.color("accent", "#2563eb"), centreDrop.containsDrag ? 0.18 : 0.06)
+            border.color: Theme.palette.color("accent", "#2563eb")
+
+            Text {
+                anchors.centerIn: parent
+                text: qsTr("Show in the centre")
+                color: Theme.palette.color("text", "#e4e4e7")
+                font.pixelSize: Math.round(13 * Theme.fontScale)
+            }
+        }
+    }
 }

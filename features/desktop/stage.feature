@@ -97,7 +97,7 @@ Feature: The stage: right panel tabs in the thread's centre
       Given the "Diff" tab is on the stage in a grid
       Then each empty pane offers the "Files" tab to show there
 
-    # Proved by tst_Stage.qml (test_aTabDragsBetweenThePanelAndTheStage), not yet by a step.
+    # Proved by tst_Stage.qml (test_aTabDragsIntoAnEmptyCentre, test_aTabDragsBetweenThePanelAndTheStage), not yet by a step.
     @desktop @backlog-desktop
     Scenario: Tabs drag between the side panel and the stage
       Given the right panel is open
