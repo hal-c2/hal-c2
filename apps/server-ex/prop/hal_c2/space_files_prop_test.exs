@@ -6,10 +6,13 @@ defmodule HalC2.SpaceFilesPropTest do
   read again from their file and unlinked; unlinked pages edited; and the server that
   follows the files restarting, which reads every file again.
 
-  Every file reads `# Doc`, a blank line and one block, a word, a table or a code block,
-  so a page is that block; the page edits it as its kind is edited (a table's text, a
-  code block's text and language), so a word stays a word. After each command the test
-  reads the folder and the Space back and checks them against the model:
+  Every file reads `# Doc`, a blank line and a word: a paragraph, a table, a code block,
+  a quote or alert, a list or a rule, so a page is that word's blocks. The page edits a
+  word as its kind is edited (a table's text, a code block's text and language, a quote's
+  text and alert), so a word stays a word of its kind; a list or rule written as a page
+  cannot write it (a marker, a depth, a rule other than `---`) only ever changes in the
+  file. After each command the test reads the folder and the Space back and checks them
+  against the model:
 
   - the folder holds exactly what the model says: only a linked page with its file in
     place, read as it was last read, writes it, and an unlinked page never does;
@@ -38,7 +41,16 @@ defmodule HalC2.SpaceFilesPropTest do
              "| a |\n| --- |\n| 2 |",
              "```js\nx\n```",
              "```ts\nx\n```",
-             "```js\ny\n```"
+             "```js\ny\n```",
+             "> x",
+             "> [!NOTE]\n> x",
+             "> [!TIP]\n> x",
+             "> a\n>\n> b",
+             "* a",
+             "- a\n- b",
+             "- a\n  - b",
+             "***",
+             "___"
            ]
 
   property "pages that are files follow them, and they follow the pages",
@@ -134,13 +146,13 @@ defmodule HalC2.SpaceFilesPropTest do
     do: Map.has_key?(s.disk, from) and not Map.has_key?(s.disk, to)
 
   def precondition(s, {:call, _, :edit, [path, id, word]}),
-    do: match?(%{id: ^id}, s.links[path]) and kind(word) == kind(s.links[path].word)
+    do: match?(%{id: ^id}, s.links[path]) and editable?(word, s.links[path].word)
 
   def precondition(s, {:call, _, name, [path, id | _]}) when name in [:sync, :unlink],
     do: match?(%{id: ^id}, s.links[path])
 
   def precondition(s, {:call, _, :edit_unlinked, [id, word]}),
-    do: Enum.any?(s.unlinked, &(&1.id == id and kind(word) == kind(&1.word)))
+    do: Enum.any?(s.unlinked, &(&1.id == id and editable?(word, &1.word)))
 
   def precondition(_s, _call), do: true
 
@@ -295,11 +307,16 @@ defmodule HalC2.SpaceFilesPropTest do
     disk == s.disk and linked and unlinked and length(files) == length(Enum.uniq(files))
   end
 
-  defp words(state, page), do: Enum.map(Blocks.of_page(state, page["id"]), &Markdown.render/1)
+  defp words(state, page) do
+    blocks = Blocks.of_page(state, page["id"])
+    [blocks |> Markdown.document(fn _ -> nil end) |> String.trim_trailing("\n")]
+  end
 
   # What a page's block is: an edit keeps it the same kind.
   defp kind("|" <> _), do: :table
   defp kind("```" <> _), do: :code
+  defp kind(">" <> _), do: :callout
+  defp kind(word) when word in ["* a", "- a\n- b", "- a\n  - b", "***", "___"], do: {:as, word}
   defp kind(_), do: :paragraph
 
   defp doc(word), do: "# Doc\n\n#{word}\n"
@@ -357,7 +374,30 @@ defmodule HalC2.SpaceFilesPropTest do
     %{"text" => text, "language" => language}
   end
 
+  defp changes(:callout, word) do
+    case String.split(word, "\n", parts: 2) do
+      ["> [!" <> alert, text] ->
+        %{
+          "alert" => alert |> String.trim_trailing("]") |> String.downcase(),
+          "text" => unquote_lines(text)
+        }
+
+      _ ->
+        %{"alert" => nil, "text" => unquote_lines(word)}
+    end
+  end
+
   defp changes(_kind, word), do: %{"text" => word}
+
+  defp unquote_lines(text),
+    do:
+      text
+      |> String.split("\n")
+      |> Enum.map_join("\n", &(&1 |> String.trim_leading(">") |> String.trim_leading(" ")))
+
+  # A page's edit gives the block a word of its kind, and one written only as a file
+  # writes it (a marker, a depth, a rule) is not one a page's edit can give.
+  defp editable?(word, from), do: kind(word) == kind(from) and not match?({:as, _}, kind(word))
 
   def restart do
     HalC2.Prop.restart_service(Files)

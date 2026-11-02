@@ -214,7 +214,11 @@ export const SpaceCodeLanguage = Schema.String.check(Schema.isPattern(/^\S+$/u))
 /** How far a list item is nested under the items above it; 0 is not nested. */
 export const SpaceListDepth = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
-/** The number a `numbered` item that begins a list starts it at. */
+/**
+ * The number a `numbered` item that begins a list starts it at. An item that continues a
+ * list counts on from the one above it and keeps its start for when it begins one, after
+ * the items above it are moved or deleted.
+ */
 export const SpaceListStart = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: 999_999_999 }),
 );

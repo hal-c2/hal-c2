@@ -72,9 +72,17 @@ defmodule HalC2.Space.Markdown do
         separator =
           if apart_item?(above, block, item), do: "\n\n", else: separator(above, block, text)
 
-        # The document's first line reads as its top: `---` there is front matter.
-        lead = if above == :start and separator == "", do: "", else: "\n"
-        {[separator, text], {block["kind"], lead <> text}}
+        # What is above the next block: a list item with the items above it in its list,
+        # whose indent only reads so under them. The document's first line reads as its
+        # top: `---` there is front matter.
+        over =
+          case above do
+            {kind, over} when kind in @lists and item != nil -> over <> separator <> text
+            :start when separator == "" -> text
+            _ -> "\n" <> text
+          end
+
+        {[separator, text], {block["kind"], over}}
       end)
 
     IO.iodata_to_binary(parts)

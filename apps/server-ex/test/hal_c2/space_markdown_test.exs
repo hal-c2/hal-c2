@@ -297,6 +297,13 @@ defmodule HalC2.SpaceMarkdownTest do
       written = Markdown.document([item, third], &none/1)
       assert written == "- item\n\n3) third\n"
       assert kinds(written) == ["bullet", "numbered"]
+
+      # A nested item's indent reads so only under its parent: alone it would be code, and
+      # the paragraph under it would seem apart.
+      [item, deeper, _heading, text] = Markdown.blocks("- item\n    1. deeper\n# Title\nText")
+      written = Markdown.document([item, deeper, text], &none/1)
+      assert written == "- item\n    1. deeper\n\nText\n"
+      assert kinds(written) == ["bullet", "numbered", "paragraph"]
     end
 
     test "a quote is a callout only when written as one would be" do

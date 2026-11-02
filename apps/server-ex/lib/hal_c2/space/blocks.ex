@@ -19,9 +19,10 @@ defmodule HalC2.Space.Blocks do
 
   A list item (a `bullet`, a `numbered` item or a `checklist` item) is nested under the
   items above it by its `depth`, 0 when it has none, and a numbered item that begins a
-  list may `start` it at a number other than 1. From Markdown an item keeps the `marker`
-  and `indent` it was written with (`HalC2.Space.Markdown`); changing its depth or moving
-  it gives it the usual indent. A `callout` may be an `alert`: note, tip, important,
+  list may `start` it at a number other than 1. An item that continues a list counts on
+  from the one above it, and keeps a start it is given for when it begins one. From
+  Markdown an item keeps the `marker` and `indent` it was written with
+  (`HalC2.Space.Markdown`); changing its depth or moving it gives it the usual indent. A `callout` may be an `alert`: note, tip, important,
   warning or caution, and from Markdown keeps `> ` as its `marker` when its blank lines
   were written so. A `divider` has no text, and from Markdown keeps the rule it was
   written as when it is not `---`, as its `marker`.
@@ -139,6 +140,9 @@ defmodule HalC2.Space.Blocks do
   end
 
   @extras ~w(imageId level table language fence info depth indent marker start alert gap)
+
+  @doc "The fields a block has only by its kind, or from Markdown: how it is written beyond its text."
+  def extras, do: @extras
 
   defp put_extra(block, _key, value) when value in [nil, false], do: block
   defp put_extra(block, key, value), do: Map.put(block, key, value)
