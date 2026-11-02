@@ -564,28 +564,39 @@ defmodule HalC2.Codex.Provider do
       )
 
   # Read once per executable, so each instance's binary path has its own. A read that
-  # missed its deadline is "unknown" for now and not kept, so the next one tries again.
+  # missed its deadline is "unknown" until `:codex_version_retry_ms` (a minute) has
+  # passed, then read again: a CLI that stays hung costs one deadline a minute, not one
+  # per server config.
   defp version(path) do
     versions = :persistent_term.get({__MODULE__, :version}, %{})
+    now = System.monotonic_time(:millisecond)
 
     case versions do
-      %{^path => version} ->
+      %{^path => {:retry_at, at}} when at > now ->
+        "unknown"
+
+      %{^path => version} when is_binary(version) ->
         version
 
       _ ->
-        case probe_version(path) do
-          :timeout ->
-            "unknown"
+        {kept, version} =
+          case probe_version(path) do
+            :timeout ->
+              {{:retry_at, now + Application.get_env(:hal_c2, :codex_version_retry_ms, 60_000)},
+               "unknown"}
 
-          version ->
-            :persistent_term.put({__MODULE__, :version}, Map.put(versions, path, version))
-            version
-        end
+            version ->
+              {version, version}
+          end
+
+        :persistent_term.put({__MODULE__, :version}, Map.put(versions, path, kept))
+        version
     end
   end
 
-  # A client waits on this for its server config, so the run has a deadline. Exile stops
-  # the CLI when the task is killed, so a hung one does not outlive the read.
+  # A client waits on this for its server config, so the run has a deadline. Exile
+  # signals the CLI when the task is killed; a wrapper that forks must pass that on to
+  # its child, or the child outlives the read.
   defp probe_version(path) do
     task = Task.async(fn -> run_version(path) end)
     timeout = Application.get_env(:hal_c2, :codex_version_timeout_ms, 5_000)

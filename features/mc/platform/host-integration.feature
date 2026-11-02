@@ -220,6 +220,14 @@ Feature: The MC working with its host machine
     Then Codex is listed with version "1.2.3"
 
   @mc
+  Scenario: A Codex CLI that stays hung is asked again only after a minute
+    Given the host's codex never answers, and a minute has not passed since it was asked
+    When a client reads the MC's server config
+    And a client reads the MC's server config again
+    Then Codex is listed with an unknown version
+    And codex was asked for its version once
+
+  @mc
   Scenario: A host without a default text editor does not offer one
     Given a Linux host with no display
     When a client reads the available editors

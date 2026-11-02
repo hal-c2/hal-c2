@@ -520,8 +520,27 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   step "the host's codex never answers", context do
+    World.put_app_env(:codex_version_retry_ms, 0)
+    hung_codex(context)
+  end
+
+  step "the host's codex never answers, and a minute has not passed since it was asked",
+       context do
+    hung_codex(context)
+  end
+
+  step "codex was asked for its version once", context do
+    assert File.read!(context.codex_log) |> String.split("\n", trim: true) == ["--version"]
+    context
+  end
+
+  # A codex that notes each run in `codex_log`, then hangs.
+  defp hung_codex(context) do
     World.put_app_env(:codex_version_timeout_ms, 300)
-    install_script(bin(context), "codex", "exec sleep 30")
+    context = bin(context)
+    log = Path.join(context.bin, "codex.log")
+    install_script(context, "codex", ~s(echo "$*" >> "#{log}"\nexec sleep 30))
+    Map.put(context, :codex_log, log)
   end
 
   step "Codex is listed with an unknown version", context do
