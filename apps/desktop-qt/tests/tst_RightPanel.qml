@@ -904,6 +904,27 @@ Item {
             compare(source.opened, ["README.md"]);
         }
 
+        // A finger that slides off the held row before lifting doesn't click it,
+        // and leaves nothing behind: its next press-less click opens the file.
+        function test_aFingerSlidOffAHeldRowLeavesItClickable() {
+            const source = createTemporaryObject(fakeFiles, root);
+            source.tree = createTemporaryObject(fakeFolderTree, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const menu = findChild(files, "fileEntryMenu");
+            tryVerify(() => findChild(files, "filesEntry-README.md")?.visible);
+            const file = findChild(files, "filesEntry-README.md");
+            const touch = touchEvent(file);
+            touch.press(0, file).commit();
+            tryVerify(() => menu.visible, 3000, "the held file's menu opens");
+            touch.move(0, file, file.width / 2, file.height * 4).commit();
+            touch.release(0, file, file.width / 2, file.height * 4).commit();
+            menu.close();
+            tryVerify(() => !menu.visible);
+            compare(source.opened, []);
+            file.clicked();
+            compare(source.opened, ["README.md"]);
+        }
+
         // Hiding the tree from its toggle (here through the preference the
         // toggle sets) under the focused search field rescues focus too.
         function test_hidingTheTreeMovesFocusFromTheTreeToTheToggle() {
