@@ -57,8 +57,9 @@ public:
 
   // What this host can do, as it tells each MC.
   static QStringList operations();
-  // A client id that is the same for this machine's desktop every run.
-  static QString machineClientId();
+  // A client id that is the same every run for the desktop on this machine
+  // that keeps its state in `home`, and another for one that keeps it elsewhere.
+  static QString machineClientId(const QString& home);
 
   QString clientId() const { return m_clientId; }
   // The MCs to offer this host to: new ones are subscribed, gone ones dropped.

@@ -6,7 +6,8 @@
 // After every step the host is registered exactly once under the same client
 // id, knows the connection the MC gave it last, has told that connection
 // whether the window has focus, and every request was answered once, on the
-// connection it came on, before its deadline.
+// connection it came on, before its deadline. And the client id is the same
+// for one HAL-C2 home, another for another.
 
 #include "Prop.h"
 
@@ -328,6 +329,19 @@ private slots:
       Sut sut;
       rc::state::check(Model(), sut,
                        rc::state::gen::execOneOfWithArgs<Focus, End, Drop, Quick, Quick, Hang, Queue, Close, Missing>());
+    }));
+  }
+
+  void clientId() {
+    QVERIFY(rc::check("one HAL-C2 home is one client id, every run; two are two", [] {
+      const QString name = *rc::gen::elementOf(std::vector<QString>{QStringLiteral("hal-c2"), QStringLiteral("hal-c2-dev"), QStringLiteral("home")});
+      const QString other = *rc::gen::elementOf(std::vector<QString>{QStringLiteral("hal-c2"), QStringLiteral("hal-c2-dev"), QStringLiteral("home")});
+      const QString home = QStringLiteral("/home/user/.local/state/") + name;
+      const QString id = PreviewAutomationHost::machineClientId(home);
+      RC_ASSERT(id.startsWith(QStringLiteral("desktop-")));
+      RC_ASSERT(PreviewAutomationHost::machineClientId(home) == id);
+      RC_ASSERT(PreviewAutomationHost::machineClientId(home + QStringLiteral("/")) == id);
+      RC_ASSERT((PreviewAutomationHost::machineClientId(QStringLiteral("/home/user/.local/state/") + other) == id) == (other == name));
     }));
   }
 };

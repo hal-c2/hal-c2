@@ -7,6 +7,7 @@
 #include <QBuffer>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDir>
 #include <QHostInfo>
 #include <QImage>
 #include <QJsonDocument>
@@ -136,10 +137,13 @@ QStringList PreviewAutomationHost::operations() {
           QStringLiteral("waitFor"), QStringLiteral("resize"), QStringLiteral("setColorScheme")};
 }
 
-QString PreviewAutomationHost::machineClientId() {
+QString PreviewAutomationHost::machineClientId(const QString& home) {
   QByteArray machine = QSysInfo::machineUniqueId();
   if (machine.isEmpty()) machine = QHostInfo::localHostName().toUtf8();
-  const QByteArray hash = QCryptographicHash::hash("hal-c2-desktop:" + machine, QCryptographicHash::Sha256);
+  // The MC keeps one host per id and drops the one it replaces: the installed
+  // desktop and a dev build on one machine must not share one.
+  const QByteArray hash =
+      QCryptographicHash::hash("hal-c2-desktop:" + machine + '\n' + QDir::cleanPath(home).toUtf8(), QCryptographicHash::Sha256);
   return QStringLiteral("desktop-") + QString::fromLatin1(hash.toHex().left(24));
 }
 
