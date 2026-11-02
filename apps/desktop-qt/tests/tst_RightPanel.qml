@@ -883,6 +883,27 @@ Item {
             compare(source.opened, ["README.md"]);
         }
 
+        // A long press is skipped once, however the lift ends: a click with no
+        // press before it (an accessibility press action) opens the file.
+        function test_aClickAfterAHeldFingerStillOpensTheFile() {
+            const source = createTemporaryObject(fakeFiles, root);
+            source.tree = createTemporaryObject(fakeFolderTree, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const menu = findChild(files, "fileEntryMenu");
+            tryVerify(() => findChild(files, "filesEntry-README.md")?.visible);
+            const file = findChild(files, "filesEntry-README.md");
+            const touch = touchEvent(file);
+            touch.press(0, file).commit();
+            tryVerify(() => menu.visible, 3000, "the held file's menu opens");
+            touch.release(0, file).commit();
+            menu.close();
+            tryVerify(() => !menu.visible);
+            compare(source.opened, []);
+            // `click()` presses first; an accessibility press only clicks.
+            file.clicked();
+            compare(source.opened, ["README.md"]);
+        }
+
         // Hiding the tree from its toggle (here through the preference the
         // toggle sets) under the focused search field rescues focus too.
         function test_hidingTheTreeMovesFocusFromTheTreeToTheToggle() {

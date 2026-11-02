@@ -1013,9 +1013,13 @@ Rectangle {
                         ToolTip.delay: 400
                         ToolTip.text: path
                         onPressed: held = false
+                        onCanceled: held = false
                         onClicked: {
-                            if (held)
+                            // One click only: a lift the menu took may never click.
+                            if (held) {
+                                held = false;
                                 return;
+                            }
                             if (kind === "directory")
                                 root.tree.toggle(path);
                             else if (kind === "file")
