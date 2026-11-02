@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
+import type { TerminalAttachStreamEvent } from "@hal-c2/contracts";
 
+import type { TuiClient } from "../connection.ts";
 import { fakeClient } from "../../features/support/fakeClient.ts";
 import { createHost } from "./host.ts";
-import { terminalNumber } from "./terminalState.ts";
+import { terminalNumber, type TuiTerminalState } from "./terminalState.ts";
 
 function boot(rows = 40) {
   const fake = fakeClient();
@@ -24,6 +26,85 @@ describe("terminalNumber", () => {
   it("reads N from term-N and falls back to the position otherwise", () => {
     expect(terminalNumber("term-4", 0)).toBe(4);
     expect(terminalNumber("custom", 2)).toBe(3);
+  });
+});
+
+describe("acknowledging terminal output", () => {
+  const running = (sequence: number, history = "") => ({
+    type: "snapshot" as const,
+    snapshot: { status: "running", pid: 1, history, sequence },
+  });
+  const output = (sequence: number, data: string) => ({
+    type: "output" as const,
+    data,
+    sequence,
+  });
+
+  /** A drawer on a client that records acks and hands the test its event stream. */
+  function attached() {
+    const fake = fakeClient();
+    const acks: number[] = [];
+    let nextAck = () => {};
+    let emit = (_event: unknown) => {};
+    const client: TuiClient = {
+      ...fake.client,
+      subscribeTerminal: (_input, onEvent) => {
+        emit = (event) =>
+          onEvent(event as TerminalAttachStreamEvent, (sequence) => {
+            acks.push(sequence);
+            nextAck();
+          });
+        return () => {};
+      },
+    };
+    const host = createHost({ client, size: { columns: 140, rows: 40 }, log: () => {} });
+    fake.connect();
+    host.dispatch("thread.open", { key: "local:t1" });
+    host.dispatch("terminal.toggle");
+    const screen = () =>
+      (host.state.get("terminal") as TuiTerminalState).lines
+        .map((line) => line.chunks.map((part) => part.text).join(""))
+        .join("\n");
+    const nextAcked = () => new Promise<void>((resolve) => (nextAck = resolve));
+    return { host, acks, emit: (event: unknown) => emit(event), screen, nextAcked };
+  }
+
+  it("acknowledges a snapshot once the emulator has it", async () => {
+    const { host, acks, emit } = attached();
+    await host.settled();
+    emit(running(3, "history"));
+    expect(acks).toEqual([]);
+    await host.settled();
+    expect(acks).toEqual([3]);
+  });
+
+  it("acknowledges a burst by its newest sequence once enough of it is handled", async () => {
+    const { host, acks, emit } = attached();
+    emit(running(0));
+    await host.settled();
+    emit(output(1, "x".repeat(10 * 1024)));
+    emit(output(2, "x".repeat(10 * 1024)));
+    emit(output(3, "x".repeat(10 * 1024)));
+    await host.settled();
+    // Not one ack per event: the first two together make enough, the last waits a moment.
+    expect(acks).toEqual([0, 2]);
+  });
+
+  it("acknowledges the last of the output even when no more comes", async () => {
+    const { host, acks, emit, nextAcked } = attached();
+    emit(running(0));
+    await host.settled();
+    const acked = nextAcked();
+    emit(output(1, "short"));
+    await acked;
+    expect(acks).toEqual([0, 1]);
+  });
+
+  it("does not take a snapshot of an ended shell for a running one", async () => {
+    const { host, emit, screen } = attached();
+    emit({ ...running(4, "last words"), snapshot: { history: "last words", status: "exited" } });
+    await host.settled();
+    expect(screen()).toContain("[process exited]");
   });
 });
 

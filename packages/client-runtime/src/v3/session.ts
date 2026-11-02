@@ -120,6 +120,7 @@ import {
   ClusterSocket,
   type Shape,
   type ShapeFrame,
+  type TerminalShape,
   type WindowedSubscription,
 } from "./clusterSocket.ts";
 import { ShellShapeFold, type ShellRow } from "./shellShape.ts";
@@ -341,7 +342,7 @@ function entityStreamFrame(frame: ShapeFrame): ReadonlyArray<EntityStreamFrame> 
  * `error` frame fails the stream when `toError` is given.
  */
 function shapeStream<A, E = never>(
-  socket: ClusterSocket,
+  socket: Pick<ClusterSocket, "subscribe">,
   shape: Shape,
   fold: (frame: ShapeFrame) => ReadonlyArray<A>,
   toError?: (frame: ShapeFrame) => E,
@@ -770,9 +771,27 @@ export function makeV3Session(input: {
         terminalError(request, cause instanceof ClusterRpcError ? cause.detail : undefined),
       );
 
-    const terminalAttach = (request: TerminalRequest) =>
+    // What acknowledges each terminal attached with `acks`. A second attach of a terminal
+    // takes over; the first's acks then stop, and its window is what the MC holds back.
+    const terminalAcks = new Map<string, (sequence: number) => void>();
+    const acknowledgedTerminal = (request: TerminalRequest): Pick<ClusterSocket, "subscribe"> => ({
+      subscribe: (shape, onFrame) => {
+        const key = `${request.threadId}:${request.terminalId}`;
+        const { unsubscribe, ack } = socket.subscribeAcknowledged(shape as TerminalShape, onFrame);
+        terminalAcks.set(key, ack);
+        return () => {
+          if (terminalAcks.get(key) === ack) terminalAcks.delete(key);
+          unsubscribe();
+        };
+      },
+    });
+
+    const terminalAttach = ({
+      acks,
+      ...request
+    }: TerminalRequest & { readonly acks?: boolean | undefined }) =>
       shapeStream(
-        socket,
+        acks ? acknowledgedTerminal(request) : socket,
         { type: "terminal", mc, input: request },
         (frame) => (frame.t === "terminal" ? [frame.event] : []),
         (frame) => terminalError(request, frame.detail),
@@ -1556,6 +1575,8 @@ export function makeV3Session(input: {
       closed: Effect.never,
       mcCall,
       loadEarlierThread,
+      ackTerminal: (threadId, terminalId, sequence) =>
+        terminalAcks.get(`${threadId}:${terminalId}`)?.(sequence),
       callEnvironment: (environmentId, method, payload) =>
         Effect.tryPromise({
           try: () => socket.call(environmentId, method, payload),

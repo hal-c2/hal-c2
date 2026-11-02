@@ -83,6 +83,50 @@ describe("ClusterSocket", () => {
     socket.close();
   });
 
+  describe("an acknowledged terminal", () => {
+    const shape = { type: "terminal", mc: "hal_c2@b", input: { threadId: "t" } } as const;
+
+    it("says so on every sub, a reconnect's too, and acks on its id", async () => {
+      vi.useFakeTimers();
+      const { socket, sockets } = setup();
+      const subscription = socket.subscribeAcknowledged(shape, () => {});
+      sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      expect(sockets[0]!.sent).toEqual([{ t: "sub", id: 1, shape, offset: null, acks: true }]);
+      subscription.ack(7);
+      expect(sockets[0]!.sent.at(-1)).toEqual({ t: "ack", id: 1, sequence: 7 });
+
+      sockets[0]!.close();
+      await vi.advanceTimersByTimeAsync(10);
+      sockets[1]!.serve({ t: "hello", mc: "hal_c2@a" });
+      expect(sockets[1]!.sent).toEqual([{ t: "sub", id: 1, shape, offset: null, acks: true }]);
+      socket.close();
+      vi.useRealTimers();
+    });
+
+    it("drops an ack it cannot deliver", () => {
+      const { socket, sockets } = setup();
+      const subscription = socket.subscribeAcknowledged(shape, () => {});
+      // Before the MC's hello the sub has not gone out, so there is nothing to acknowledge.
+      subscription.ack(1);
+      expect(sockets[0]!.sent).toEqual([]);
+
+      sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      subscription.unsubscribe();
+      subscription.ack(2);
+      expect(sockets[0]!.sent.at(-1)).toEqual({ t: "unsub", id: 1 });
+      socket.close();
+    });
+  });
+
+  it("a subscription that does not acknowledge never says it does", () => {
+    const { socket, sockets } = setup();
+    const shape = { type: "terminal", mc: "hal_c2@b", input: { threadId: "t" } } as const;
+    socket.subscribe(shape, () => {});
+    sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+    expect(sockets[0]!.sent).toEqual([{ t: "sub", id: 1, shape, offset: null }]);
+    socket.close();
+  });
+
   describe("a windowed subscription", () => {
     const shape = { type: "stream", mc: "hal_c2@b", stream: "thread-1" } as const;
 

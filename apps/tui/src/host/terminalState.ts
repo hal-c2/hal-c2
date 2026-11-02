@@ -41,6 +41,10 @@ export const TERMINAL_HISTORY_TAIL = 128 * 1024;
 /** Drawer chrome around the screen: header, tab row and the frame's two borders. */
 const DRAWER_CHROME_ROWS = 4;
 const RENDER_THROTTLE_MS = 16;
+/** Output handled that is worth acknowledging at once: a quarter of the MC's window. */
+const ACK_BYTES = 16 * 1024;
+/** How soon the rest is acknowledged, so a quiet shell leaves nothing waiting. */
+const ACK_DELAY_MS = 50;
 
 export type TerminalScrollAction = "line-up" | "line-down" | "page-up" | "page-down" | "bottom";
 
@@ -207,7 +211,12 @@ export function terminalRowText(
   return new StyledText(segments.map((segment) => segmentChunk(segment, focused)));
 }
 
-/** One tab's emulator and live subscription. */
+/**
+ * One tab's emulator and live subscription. Output is acknowledged once the emulator has
+ * parsed it, painted or not: a background tab keeps up, so the MC never holds it back, and
+ * its scrollback bounds what it keeps. A tab without a pane (drawer closed, another thread)
+ * has no subscription, and gets a snapshot of the MC's bounded history when it has one again.
+ */
 class Pane {
   readonly term: XTerm;
   offset = 0;
@@ -217,6 +226,13 @@ class Pane {
   readonly terminalId: string;
   private readonly track: (promise: Promise<unknown>) => void;
   private readonly changed: (pane: Pane) => void;
+  // What has been parsed and not acknowledged yet, and the attach to tell.
+  private handled: {
+    readonly sequence: number;
+    readonly ack: (sequence: number) => void;
+    bytes: number;
+  } | null = null;
+  private ackTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     client: TuiClient,
@@ -244,22 +260,35 @@ class Pane {
         rows,
         ...(thread.env ? { env: thread.env } : {}),
       },
-      (event) => {
+      (event, ack) => {
         if (event.type === "snapshot" || event.type === "restarted") {
           this.term.reset();
           this.offset = 0;
           const history = event.snapshot.history;
+          // A restart's own event comes after the snapshot it carries.
+          const sequence = Math.max(
+            event.type === "restarted" ? (event.sequence ?? -1) : -1,
+            event.snapshot.sequence ?? -1,
+          );
           this.write(
             history.length > TERMINAL_HISTORY_TAIL
               ? history.slice(history.length - TERMINAL_HISTORY_TAIL)
               : history,
+            () => {
+              if (sequence >= 0) this.acknowledge(sequence, ACK_BYTES, ack);
+            },
           );
+          // A catch-up snapshot can be of a shell that ended while this tab was held back.
+          if (event.snapshot.status === "exited") this.writeLive("\r\n[process exited]\r\n");
         } else if (event.type === "cleared") {
           this.term.reset();
           this.offset = 0;
           this.changed(this);
         } else if (event.type === "output") {
-          this.writeLive(event.data);
+          const { data, sequence } = event;
+          this.writeLive(data, () => {
+            if (sequence !== undefined) this.acknowledge(sequence, data.length, ack);
+          });
         } else if (event.type === "exited") {
           this.writeLive("\r\n[process exited]\r\n");
         } else if (event.type === "error") {
@@ -282,14 +311,34 @@ class Pane {
   }
 
   /** Live output; a scrolled-back view keeps its lines by following the growth. */
-  private writeLive(data: string) {
+  private writeLive(data: string, after?: () => void) {
     const previousBaseY = this.term.buffer.active.baseY;
     this.write(data, () => {
       const nextBaseY = this.term.buffer.active.baseY;
       if (this.offset > 0 && nextBaseY > previousBaseY) {
         this.offset = Math.min(nextBaseY, this.offset + nextBaseY - previousBaseY);
       }
+      after?.();
     });
+  }
+
+  /**
+   * Records what the emulator has parsed. Writes finish in order, so the newest sequence
+   * covers the rest; the timer sees that the last of a burst is told too, or the MC would
+   * hold this tab back waiting on an ack nothing is left to send.
+   */
+  private acknowledge(sequence: number, bytes: number, ack?: (sequence: number) => void) {
+    if (ack === undefined) return;
+    this.handled = { sequence, ack, bytes: (this.handled?.bytes ?? 0) + bytes };
+    if (this.handled.bytes >= ACK_BYTES) this.flushAck();
+    else this.ackTimer ??= setTimeout(() => this.flushAck(), ACK_DELAY_MS);
+  }
+
+  private flushAck() {
+    if (this.ackTimer !== null) clearTimeout(this.ackTimer);
+    this.ackTimer = null;
+    this.handled?.ack(this.handled.sequence);
+    this.handled = null;
   }
 
   send(data: string) {
@@ -333,6 +382,7 @@ class Pane {
   }
 
   dispose() {
+    if (this.ackTimer !== null) clearTimeout(this.ackTimer);
     this.unsubscribe();
     this.term.dispose();
   }

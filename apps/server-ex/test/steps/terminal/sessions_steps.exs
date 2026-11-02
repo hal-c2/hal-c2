@@ -139,6 +139,8 @@ defmodule HalC2.Steps.Terminal.Sessions do
         fake
       end
 
+    # A real shell reads the user's rc files, and fish writes its history.
+    Terminal.put_env("HOME", context.mc.home)
     Terminal.put_env("SHELL", shell)
     context
   end
@@ -162,8 +164,19 @@ defmodule HalC2.Steps.Terminal.Sessions do
   end
 
   step "the shell that runs is {string}", %{args: [shell]} = context do
-    # Once the shell answers, it is the program running under the PTY.
-    {_, context} = Terminal.run(context, "default", "true")
+    # Once something has printed, the shell is the program running under the PTY. Not
+    # by typing at it: fish throws away what is typed while it starts.
+    {seen, context} =
+      Terminal.attach!(context, "seen", Map.take(context.terminal, ["threadId", "terminalId"]))
+
+    context =
+      if seen["history"] == "" do
+        {_, _, context} = Terminal.await_output(context, "default", &(&1 != ""))
+        context
+      else
+        context
+      end
+
     assert Terminal.comm(context.snapshot["pid"]) == shell
     context
   end
@@ -263,7 +276,7 @@ defmodule HalC2.Steps.Terminal.Sessions do
   end
 
   step "the scrollback starts empty", context do
-    refute context.snapshot["history"] =~ "first-shell"
+    refute context.snapshot["history"] =~ (context[:old_output] || "first-shell")
     context
   end
 
@@ -357,6 +370,8 @@ defmodule HalC2.Steps.Terminal.Sessions do
       for shell <- ~w(/bin/zsh /bin/bash /bin/sh),
           do: if(shell in missing, do: Terminal.folder(context, shell), else: shell)
 
+    # A real bash reads the user's rc files, which can do anything to what is typed.
+    Terminal.put_env("HOME", context.mc.home)
     Application.put_env(:hal_c2, :terminal_shells, shells)
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :terminal_shells) end)
     context
@@ -366,4 +381,295 @@ defmodule HalC2.Steps.Terminal.Sessions do
     {snapshot, context} = Terminal.open!(context, change, "second")
     Map.put(context, :snapshot, snapshot)
   end
+
+  # --- zsh ------------------------------------------------------------------------------------
+
+  step "the user's shell is zsh", context do
+    context = Terminal.ensure(context)
+    path = Path.join(context.mc.home, "zsh")
+    File.write!(path, ~s(#!/bin/sh\nprintf 'zsh-args:%s\\n' "$*"\nread _\n))
+    File.chmod!(path, 0o755)
+    Terminal.put_env("SHELL", path)
+    context
+  end
+
+  step "the shell is started with zsh's partial-line marker turned off", context do
+    {snapshot, context} =
+      Terminal.attach!(context, "later", Map.take(context.terminal, ["threadId", "terminalId"]))
+
+    if snapshot["history"] =~ "-o nopromptsp" do
+      context
+    else
+      {_, _, context} = Terminal.await_output(context, "later", "-o nopromptsp")
+      context
+    end
+  end
+
+  # --- started from an AppImage ---------------------------------------------------------------
+
+  step "the MC was started from an AppImage with APPIMAGE, APPDIR, ARGV0 and OWD set", context do
+    context = Terminal.ensure(context)
+    Terminal.put_env("APPIMAGE", "/home/me/HAL-C2.AppImage")
+    Terminal.put_env("APPDIR", "/tmp/.mount_hal-c2/")
+    Terminal.put_env("ARGV0", "HAL-C2.AppImage")
+    Terminal.put_env("OWD", "/home/me")
+    context
+  end
+
+  step "PATH holds {string} and {string}", %{args: [mount, kept]} = context do
+    Terminal.put_env("PATH", "#{mount}:#{kept}")
+    context
+  end
+
+  step "the shell sees none of APPIMAGE, APPDIR, ARGV0 or OWD", context do
+    {output, context} =
+      Terminal.run(context, "default", ~s(echo "<$APPIMAGE$APPDIR$ARGV0$OWD>"))
+
+    assert output =~ "<>"
+    context
+  end
+
+  step ~r/^the shell sees PATH as "(?<path>[^"]+)"$/, %{args: [path]} = context do
+    {output, context} = Terminal.run(context, "default", ~s(echo "<$PATH>"))
+    assert output =~ "<#{path}>"
+    context
+  end
+
+  step "the MC was started from an AppImage mounted at {string}", %{args: [mount]} = context do
+    context = Terminal.ensure(context)
+    Terminal.put_env("APPIMAGE", "/home/me/HAL-C2.AppImage")
+    Terminal.put_env("APPDIR", mount)
+    context
+  end
+
+  step ~r/^(?<variable>\w+) holds only entries under "(?<mount>[^"]+)"$/,
+       %{args: [variable, mount]} = context do
+    Terminal.put_env(variable, "#{mount}/usr/one:#{mount}/usr/two")
+    Map.put(context, :mc_variable, variable)
+  end
+
+  step "the MC was not started from an AppImage", context do
+    context = Terminal.ensure(context)
+    Terminal.put_env("APPIMAGE", nil)
+    Terminal.put_env("APPDIR", nil)
+    context
+  end
+
+  step "a variable named {string} is set", %{args: [name]} = context do
+    Terminal.put_env(name, "/kept/as/it/is")
+    Map.put(context, :mc_variable, name)
+  end
+
+  step "the shell sees {string} unchanged", %{args: [name]} = context do
+    {output, context} = Terminal.run(context, "default", ~s(echo "<$#{name}>"))
+    assert output =~ "</kept/as/it/is>"
+    context
+  end
+
+  # --- provider instances ---------------------------------------------------------------------
+
+  step "the Codex instance {string} sets the variable {string} to {string}",
+       %{args: [id, key, value]} = context do
+    context = Terminal.ensure(context)
+    put_instance(id, %{"driver" => "codex", "environment" => [variable(key, value)]})
+    Map.put(context, :instance_value, value)
+  end
+
+  step "the terminal's snapshot does not carry the instance's variables", context do
+    refute inspect(context.snapshot) =~ context.instance_value
+    context
+  end
+
+  step ~r/^the (?<driver>Codex|Claude) instance "(?<id>[^"]+)" has the home folder "(?<home>[^"]+)"$/,
+       %{args: [driver, id, home]} = context do
+    context = Terminal.ensure(context)
+    driver = if driver == "Codex", do: "codex", else: "claudeAgent"
+    put_instance(id, %{"driver" => driver, "config" => %{"homePath" => home}})
+    Map.put(context, :instance, id)
+  end
+
+  step ~r/^the instance also sets (?<key>\w+) to "(?<value>[^"]+)"$/,
+       %{args: [key, value]} = context do
+    put_instance(context.instance, %{"environment" => [variable(key, value)]})
+    context
+  end
+
+  step ~r/^the shell sees (?<key>\w+) as the expanded "(?<path>[^"]+)"$/,
+       %{args: [key, path]} = context do
+    {output, context} = Terminal.run(context, "default", ~s(echo "<$#{key}>"))
+    assert output =~ "<#{Path.expand(path)}>"
+    context
+  end
+
+  step "no provider instance named {string} is configured", %{args: [id]} = context do
+    context = Terminal.ensure(context)
+    assert get_in(HalC2.Settings.settings(), ["providerInstances", id]) == nil
+    Terminal.put_env("CODEX_HOME", nil)
+    Terminal.put_env("OWN_TO_THE_MC", "own")
+    context
+  end
+
+  step "the shell starts with the MC's own environment", context do
+    assert context.snapshot["status"] == "running"
+    {output, context} = Terminal.run(context, "default", ~s(echo "<$OWN_TO_THE_MC|$CODEX_HOME>"))
+    assert output =~ "<own|>"
+    context
+  end
+
+  step "a terminal running for the provider instance {string} with {string} set to {string}",
+       %{args: [id, key, value]} = context do
+    context = Terminal.ensure(context)
+    put_instance(id, %{"driver" => "codex", "environment" => [variable(key, value)]})
+    {snapshot, context} = Terminal.open!(context, %{"providerInstanceId" => id})
+
+    {_, context} =
+      Terminal.attach!(context, "default", Map.take(context.terminal, ["threadId", "terminalId"]))
+
+    Map.merge(context, %{snapshot: snapshot, first: snapshot, instance: id})
+  end
+
+  step "the instance now sets {string} to {string}", %{args: [key, value]} = context do
+    put_instance(context.instance, %{"environment" => [variable(key, value)]})
+    context
+  end
+
+  step "a client opens the terminal again", context do
+    reopen(context, %{})
+  end
+
+  step "the new shell sees {string} as {string}", %{args: [key, value]} = context do
+    {output, context} = Terminal.run(context, "default", ~s(echo "<$#{key}>"))
+    assert output =~ "<#{value}>"
+    context
+  end
+
+  # --- opening an ended shell -----------------------------------------------------------------
+
+  step "the thread's default terminal printed {string} and its shell has exited",
+       %{args: [text]} = context do
+    context = Terminal.exited(context, text)
+    Map.put(context, :old_output, text)
+  end
+
+  step "a client opens it again in the same folder", context do
+    reopen(context, %{})
+  end
+
+  step "a new shell is running", context do
+    assert %{"status" => "running", "pid" => pid, "exitCode" => nil} = context.snapshot
+    assert File.exists?("/proc/#{pid}")
+    context
+  end
+
+  step "the terminal reports that it restarted", context do
+    {event, context} = Terminal.await_event(context, "default", &(&1["type"] == "restarted"))
+    assert event["snapshot"]["pid"] == context.snapshot["pid"]
+    context
+  end
+
+  step "the thread's default terminal runs on the worktree {string} and its shell has exited",
+       %{args: [path]} = context do
+    context = Terminal.ensure(context)
+    worktree = Terminal.mkdir(context, path)
+
+    context =
+      Terminal.put_input(
+        context,
+        Terminal.input(context, %{"cwd" => worktree, "worktreePath" => worktree})
+      )
+
+    context |> Terminal.exited("on the worktree") |> Map.put(:worktree, worktree)
+  end
+
+  step "a client opens it again on that worktree", context do
+    reopen(context, %{"cwd" => context.worktree, "worktreePath" => context.worktree})
+  end
+
+  step "the new shell's snapshot and its started event name the worktree {string}", context do
+    assert context.snapshot["worktreePath"] == context.worktree
+    {event, context} = Terminal.await_event(context, "default", &(&1["type"] == "restarted"))
+    assert event["snapshot"]["worktreePath"] == context.worktree
+    context
+  end
+
+  # --- two opens at once ----------------------------------------------------------------------
+
+  step "the thread has no terminal {string} yet", %{args: [terminal]} = context do
+    context = Terminal.ensure(context)
+    input = Terminal.input(context, %{"terminalId" => terminal})
+    assert Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], terminal}) == []
+    context
+  end
+
+  step "two clients open {string} at the same moment", %{args: [terminal]} = context do
+    context = Terminal.ensure(context)
+    input = Terminal.input(context, %{"terminalId" => terminal})
+
+    # Both are connected before either sends.
+    context =
+      for name <- ~w(first second), reduce: context do
+        context -> World.put_client(context, name, World.client(context, name))
+      end
+
+    {context, ids} =
+      for name <- ~w(first second), reduce: {context, %{}} do
+        {context, ids} ->
+          id = System.unique_integer([:positive])
+
+          client =
+            Mc.rpc(
+              World.client(context, name),
+              context.mc.environment,
+              id,
+              "terminal.open",
+              input
+            )
+
+          {World.put_client(context, name, client), Map.put(ids, name, id)}
+      end
+
+    {context, replies} =
+      for {name, id} <- ids, reduce: {context, []} do
+        {context, replies} ->
+          {frame, client} = Mc.await(World.client(context, name), Mc.reply?(id), 5_000)
+          {World.put_client(context, name, client), [frame["result"] | replies]}
+      end
+
+    context |> Terminal.put_input(input) |> Map.put(:open_replies, replies)
+  end
+
+  step "exactly one shell is started", context do
+    assert [one] = context.open_replies |> Enum.map(& &1["pid"]) |> Enum.uniq()
+    assert is_integer(one)
+    %{"threadId" => thread, "terminalId" => terminal} = context.terminal
+    assert [{_, _}] = Registry.lookup(HalC2.Terminal.Registry, {thread, terminal})
+    Map.put(context, :one_shell, one)
+  end
+
+  step "both clients are told about that shell", context do
+    assert [%{"status" => "running"}, %{"status" => "running"}] = context.open_replies
+    assert File.exists?("/proc/#{context.one_shell}")
+    context
+  end
+
+  # --- a long label ---------------------------------------------------------------------------
+
+  step "a client opens a terminal whose id is {int} characters long",
+       %{args: [length]} = context do
+    {snapshot, context} =
+      Terminal.open!(context, %{"terminalId" => String.duplicate("x", length)})
+
+    Map.put(context, :snapshot, snapshot)
+  end
+
+  step "the terminal is labelled with the first {int} characters of its id",
+       %{args: [length]} = context do
+    assert context.snapshot["label"] == String.slice(context.terminal["terminalId"], 0, length)
+    context
+  end
+
+  defp put_instance(id, instance),
+    do: World.merge_settings(%{"providerInstances" => %{id => instance}})
+
+  defp variable(key, value), do: %{"name" => key, "value" => value}
 end

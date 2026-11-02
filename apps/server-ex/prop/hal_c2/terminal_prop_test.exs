@@ -109,7 +109,8 @@ defmodule HalC2.TerminalPropTest.Client do
 
   defp apply_event(term, %{"type" => "cleared"}), do: %{term | text: ""}
   defp apply_event(term, %{"type" => "exited"}), do: %{term | status: "exited"}
-  defp apply_event(term, %{"type" => "closed"}), do: %{term | status: "closed"}
+  # The terminal's next process counts its own sequences.
+  defp apply_event(term, %{"type" => "closed"}), do: %{term | status: "closed", seq: 0}
   defp apply_event(term, _), do: term
 
   defp hub_event(nil, _), do: nil
@@ -170,6 +171,8 @@ defmodule HalC2.TerminalPropTest do
   @keys [{"th1", "a"}, {"th1", "b"}, {"th2", "a"}]
   @registry HalC2.Terminal.Registry
   @wait 15_000
+  @ended_keys for n <- 1..5, do: {"th-ended", "t#{n}"}
+  @ended_limit 2
 
   property "terminals, their clients and the hub agree with the model",
     numtests: HalC2.Prop.numtests(100),
@@ -203,6 +206,48 @@ defmodule HalC2.TerminalPropTest do
           )
         )
         |> aggregate(command_names(cmds))
+      end
+    end
+  end
+
+  property "only the ended terminals over the limit leave memory, their output saved",
+    numtests: HalC2.Prop.numtests(30),
+    max_size: 20 do
+    forall ends <- list(elements(@ended_keys)) do
+      trap_exit do
+        HalC2.Prop.scratch_home("terminal")
+        shell = System.get_env("SHELL")
+        System.put_env("SHELL", System.find_executable("cat"))
+        Application.put_env(:hal_c2, :terminal_ended_limit, @ended_limit)
+
+        HalC2.Prop.start_services([
+          {Registry, keys: :unique, name: @registry},
+          {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
+          Hub
+        ])
+
+        running = {"th-kept", "running"}
+        {:ok, _} = Terminal.open(launch(running))
+
+        bad =
+          ends
+          |> Enum.with_index(1)
+          |> Enum.find_value(fn {key, n} ->
+            {:ok, _} = Terminal.open(launch(key))
+            end_shell(key)
+            settle_evictions(@ended_keys)
+            summaries = Hub.summaries()
+            ended = Enum.count(summaries, &(&1["status"] == "exited"))
+
+            if ended > @ended_limit or live_pid(running) == nil or
+                 not Enum.all?(Enum.take(ends, n), &output_kept?/1),
+               do: {key, summaries}
+          end)
+
+        HalC2.Prop.stop_services()
+        Application.delete_env(:hal_c2, :terminal_ended_limit)
+        if shell, do: System.put_env("SHELL", shell), else: System.delete_env("SHELL")
+        (bad == nil) |> when_fail(IO.inspect(bad, label: "over the limit or lost"))
       end
     end
   end
@@ -272,8 +317,11 @@ defmodule HalC2.TerminalPropTest do
   # --- model ----------------------------------------
 
   # terms: key => %{status: :running | :exited, tokens: [{text, times}], attached: [pid]}
+  # A token ends in "." so none is the start of another, and is counted without its line
+  # ending: the PTY writes "t2" and its "\r\n" apart, and `inject` can land in between.
   # disk: key => tokens a closed terminal saved. clients: pid => %{stalled, watching}
-  def initial_state, do: %{terms: %{}, disk: %{}, clients: %{}, n: 0}
+  # followers: who was attached to a terminal when it closed, attached again when it opens.
+  def initial_state, do: %{terms: %{}, disk: %{}, clients: %{}, n: 0, followers: %{}}
 
   def command(s) do
     keys = @keys
@@ -281,7 +329,7 @@ defmodule HalC2.TerminalPropTest do
     running = for {k, %{status: :running}} <- s.terms, do: k
     free = for {pid, %{stalled: false}} <- s.clients, do: pid
     attachments = for {k, t} <- s.terms, pid <- t.attached, free?(s, pid), do: {pid, k}
-    token = "t#{s.n}"
+    token = "t#{s.n}."
 
     entries =
       [
@@ -303,7 +351,7 @@ defmodule HalC2.TerminalPropTest do
       ] ++
         if(running != [],
           do: [
-            {4, {:call, __MODULE__, :inject, [elements(running), "i#{s.n}"]}},
+            {4, {:call, __MODULE__, :inject, [elements(running), "i#{s.n}."]}},
             {2,
              let(
                key <- elements(running),
@@ -355,10 +403,10 @@ defmodule HalC2.TerminalPropTest do
         do: {pid, k, t.tokens, t.status == :exited}
   end
 
-  def precondition(s, {:call, _, :write, [_, token]}), do: token == "t#{s.n}"
+  def precondition(s, {:call, _, :write, [_, token]}), do: token == "t#{s.n}."
 
   def precondition(s, {:call, _, :inject, [key, token]}),
-    do: running?(s, key) and token == "i#{s.n}"
+    do: running?(s, key) and token == "i#{s.n}."
 
   def precondition(s, {:call, _, :die, [key, _, tokens]}),
     do: running?(s, key) and tokens == tokens_of(s, key)
@@ -396,7 +444,8 @@ defmodule HalC2.TerminalPropTest do
 
   def next_state(s, _, {:call, _, :kill_client, [pid]}) do
     terms = Map.new(s.terms, fn {k, t} -> {k, %{t | attached: List.delete(t.attached, pid)}} end)
-    %{s | clients: Map.delete(s.clients, pid), terms: terms}
+    followers = Map.new(s.followers, fn {k, pids} -> {k, List.delete(pids, pid)} end)
+    %{s | clients: Map.delete(s.clients, pid), terms: terms, followers: followers}
   end
 
   def next_state(s, _, {:call, _, :stall, [pid]}), do: put_in(s.clients[pid].stalled, true)
@@ -404,8 +453,11 @@ defmodule HalC2.TerminalPropTest do
   def next_state(s, _, {:call, _, :watch, [pid]}), do: put_in(s.clients[pid].watching, true)
   def next_state(s, _, {:call, _, :unwatch, [pid]}), do: put_in(s.clients[pid].watching, false)
 
-  def next_state(s, _, {:call, _, :restart_hub, []}),
-    do: %{s | clients: Map.new(s.clients, fn {p, c} -> {p, %{c | watching: false}} end)}
+  # Who follows a closed terminal is the hub's, and goes with it.
+  def next_state(s, _, {:call, _, :restart_hub, []}) do
+    clients = Map.new(s.clients, fn {p, c} -> {p, %{c | watching: false}} end)
+    %{s | clients: clients, followers: %{}}
+  end
 
   def next_state(s, _, {:call, _, :open, [key]}) do
     case s.terms[key] do
@@ -438,13 +490,13 @@ defmodule HalC2.TerminalPropTest do
     s = %{s | n: s.n + 1}
 
     if running?(s, key),
-      do: update_in(s.terms[key].tokens, &(&1 ++ [{token <> "\r\n", 2}])),
+      do: update_in(s.terms[key].tokens, &(&1 ++ [{token, 2}])),
       else: s
   end
 
   def next_state(s, _, {:call, _, :inject, [key, token]}) do
     s = %{s | n: s.n + 1}
-    update_in(s.terms[key].tokens, &(&1 ++ [{token <> "\r\n", 1}]))
+    update_in(s.terms[key].tokens, &(&1 ++ [{token, 1}]))
   end
 
   def next_state(s, _, {:call, _, :clear, [key, _]}) do
@@ -466,7 +518,13 @@ defmodule HalC2.TerminalPropTest do
         {t, false} -> Map.put(s.disk, key, t.tokens)
       end
 
-    %{s | terms: Map.delete(s.terms, key), disk: disk}
+    followers =
+      case s.terms[key] do
+        nil -> s.followers
+        t -> Map.put(s.followers, key, t.attached)
+      end
+
+    %{s | terms: Map.delete(s.terms, key), disk: disk, followers: followers}
   end
 
   def next_state(s, _, {:call, _, :die, [key, _, _]}), do: put_in(s.terms[key].status, :exited)
@@ -479,7 +537,13 @@ defmodule HalC2.TerminalPropTest do
 
   defp start(s, key, disk \\ nil) do
     tokens = disk || Map.get(s.disk, key, [])
-    put_in(s.terms[key], %{status: :running, tokens: tokens, attached: []})
+    {attached, followers} = Map.pop(s.followers, key, [])
+
+    put_in(%{s | followers: followers}.terms[key], %{
+      status: :running,
+      tokens: tokens,
+      attached: attached
+    })
   end
 
   def postcondition(s, {:call, _, :open, [key]}, result) do
@@ -581,12 +645,12 @@ defmodule HalC2.TerminalPropTest do
 
   def open(key) do
     note_pids()
-    slim(Terminal.open(launch(key)))
+    Terminal.open(launch(key)) |> handed_followers(key) |> slim()
   end
 
   def restart(key) do
     note_pids()
-    slim(Terminal.restart(launch(key)))
+    Terminal.restart(launch(key)) |> handed_followers(key) |> slim()
   end
 
   def write(key, token) do
@@ -740,7 +804,7 @@ defmodule HalC2.TerminalPropTest do
     extra = if cwd?, do: %{"cwd" => File.cwd!()}, else: %{}
     extra = if restart?, do: Map.put(extra, "restartIfNotRunning", true), else: extra
     note_pids()
-    slim(ask(client, :attach, [input(key, extra)]))
+    client |> ask(:attach, [input(key, extra)]) |> handed_followers(key) |> slim()
   end
 
   def detach({client, key}), do: ask(client, :detach, [key])
@@ -755,6 +819,51 @@ defmodule HalC2.TerminalPropTest do
 
   def watch(client), do: ask(client, :watch)
   def unwatch(client), do: ask(client, :unwatch)
+
+  # A new process has reported to the hub by the time it answers, and the hub hands it
+  # whoever followed the terminal before; the model holds them attached from here.
+  defp handed_followers(result, key) do
+    Hub.summaries()
+    sync_terminal(key)
+    result
+  end
+
+  # The shell of `key` prints a mark and ends, as a process attached to it hears.
+  defp end_shell({thread_id, terminal_id} = key) do
+    {:ok, _} = Terminal.attach(input(key), self())
+    {:ok, nil} = Terminal.write(input(key, %{"data" => "mark\n" <> <<4>>}))
+    wait_exit(key)
+    Terminal.detach(thread_id, terminal_id, self())
+    drain()
+  end
+
+  # The hub hears of a shell's end from its terminal and tells the terminals over the
+  # limit to go, which they do before answering anyone else.
+  defp settle_evictions(keys) do
+    Enum.each(keys, &sync_terminal/1)
+    Hub.summaries()
+    Enum.each(keys, &sync_terminal/1)
+    Hub.summaries()
+  end
+
+  defp sync_terminal(key) do
+    if pid = live_pid(key), do: :sys.get_state(pid)
+  catch
+    :exit, _ -> :gone
+  end
+
+  defp live_pid(key) do
+    case Registry.lookup(@registry, key) do
+      [{pid, _}] -> if Process.alive?(pid), do: pid
+      [] -> nil
+    end
+  end
+
+  defp output_kept?({thread_id, terminal_id} = key) do
+    live_pid(key) != nil or
+      thread_id |> Terminal.saved_scrollback() |> List.keyfind!(terminal_id, 0) |> elem(1) =~
+        "mark"
+  end
 
   def restart_hub do
     HalC2.Prop.restart_service(Hub)
