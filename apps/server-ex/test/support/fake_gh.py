@@ -68,13 +68,13 @@ def pulls(prs, stdin):
     request = json.loads(stdin)
     variables = request.get("variables", {})
     start = int(variables.get("after") or 0)
-    end = start + variables["first"]
+    end = start + variables.get("first", 1)
     connection = {
         "pageInfo": {"hasNextPage": end < len(prs), "endCursor": str(end)},
         "nodes": [pull_node(pr) for pr in prs[start:end]],
     }
     if "search(" in request["query"]:
-        return {"data": {"search": connection}}
+        return {"data": {"search": {**connection, "issueCount": len(prs)}}}
     return {"data": {"repository": {"pullRequests": connection}}}
 
 def lists(repository, stdin):

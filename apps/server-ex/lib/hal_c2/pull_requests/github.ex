@@ -124,6 +124,13 @@ defmodule HalC2.PullRequests.GitHub do
   }
   """
 
+  # How many pull requests the search index holds for a repository, without reading any.
+  @list_indexed_query """
+  query PullRequestListIndexed($q: String!) {
+    search(query: $q, type: ISSUE, first: 1) { issueCount }
+  }
+  """
+
   @list_repository_query """
   query PullRequestListRepository($owner: String!, $name: String!, $states: [PullRequestState!], $first: Int!, $after: String) {
     repository(owner: $owner, name: $name) {
@@ -513,18 +520,32 @@ defmodule HalC2.PullRequests.GitHub do
   One repository's pull requests. `opts`: state, involvement, viewer, limit, query,
   filters, cursor (`%{boundary: iso}` or nil). The first read is a search sorted by
   update, which a cursor carries on from; GitHub leaves some repositories out of its
-  search index, so an empty first answer with no text to match is read again from
-  the repository's own list, narrowed here, and cannot be continued.
+  search index, so an empty first answer with no text to match, from a repository
+  the index holds nothing for, is read again from the repository's own list, narrowed
+  here, and cannot be continued. Reading that list is costly on a busy repository, so
+  an empty answer from an indexed one stands.
   """
   def list(ctx, opts) do
     case list_read(ctx, opts, true) do
       {:ok, %{items: []}} = empty ->
         if opts.cursor == nil and String.trim(opts.query || "") == "",
-          do: list_read(ctx, opts, false),
+          do: unindexed(ctx, opts, empty),
           else: empty
 
       other ->
         other
+    end
+  end
+
+  defp unindexed(ctx, opts, empty) do
+    q = "repo:#{ctx.repository} is:pr"
+
+    with {:ok, data} <- graphql(ctx, @list_indexed_query, %{"q" => q}) do
+      case get_in(data, ["search", "issueCount"]) do
+        0 -> list_read(ctx, opts, false)
+        n when is_integer(n) -> empty
+        _ -> decoded(:error)
+      end
     end
   end
 
@@ -612,12 +633,11 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
-  # What GitHub (or `gh`) says when a query took too long: a gateway's 502 or 504,
-  # a body cut short, GraphQL's own timeout, or `gh` not answering at all.
+  # What GitHub says when a query took too long: a gateway's 502 or 504, a body cut
+  # short, or GraphQL's own timeout. `gh` itself not answering is not among them: a
+  # stalled network or prompt would stall every smaller page as long.
   defp gave_up?(detail),
-    do:
-      detail =~
-        ~r/HTTP 50[234]|unexpected end of JSON|timeout|something went wrong|did not answer in time/i
+    do: detail =~ ~r/HTTP 50[234]|unexpected end of JSON|timeout|something went wrong/i
 
   # A listed pull request as `list_item/1` reads it. The row needs only GitHub's own
   # summary of its checks, not each of them, which keeps a page cheap to answer.

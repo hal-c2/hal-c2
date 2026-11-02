@@ -248,6 +248,38 @@ defmodule HalC2.PullRequestsTest do
              [{50, nil}, {25, nil}, {12, nil}, {12, "12"}, {12, "24"}]
   end
 
+  test "an empty search is read again from the repository only when the index holds none of it",
+       %{dir: dir} do
+    rows = for n <- 300..1//-1, do: pr(n, "2026-03-01T00:00:00Z", %{})
+    own = %{"args" => ["api graphql"], "stdin" => ["PullRequestListRepository"], "pulls" => rows}
+
+    # Nothing of the viewer's, in a repository the index holds: the empty answer stands.
+    rules!(dir, [
+      viewer_rule(),
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestListIndexed"], "pulls" => rows},
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestListSearch"], "pulls" => []},
+      own
+    ])
+
+    assert {:ok, %{"entries" => [], "errors" => [], "truncated" => false}} =
+             PullRequests.list(%{"state" => "closed", "involvement" => "authored"})
+
+    refute Enum.any?(listings(dir), &(&1["query"] =~ "PullRequestListRepository"))
+
+    # A repository the index leaves out is read from its own list.
+    File.rm!(Path.join(dir, "gh.log"))
+
+    rules!(dir, [
+      viewer_rule(),
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestListSearch"], "pulls" => []},
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestListIndexed"], "pulls" => []},
+      own
+    ])
+
+    assert {:ok, %{"entries" => [_ | _]}} = PullRequests.list(%{"state" => "open"})
+    assert Enum.any?(listings(dir), &(&1["query"] =~ "PullRequestListRepository"))
+  end
+
   test "a project on another host is unsupported", %{dir: dir} do
     project!(dir, "p2", "https://gitlab.com/acme/app.git")
 
