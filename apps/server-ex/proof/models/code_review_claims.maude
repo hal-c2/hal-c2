@@ -332,6 +332,11 @@ mod CODE-REVIEW-CLAIMS is
   eq relook(L1 ; lk(K, nosha, unread, false) ; L2) = L1 ; lk(K, nosha, unread, false) ; L2 .
   eq relook(Ls) = Ls ; lk(again, nosha, unread, false) [owise] .
 
+  --- The head a review holds.
+  op headOf : Review -> MSha .
+  eq headOf(rv(St, Cl, Rd, Hd, E, Ho)) = Hd .
+  eq headOf(unknown) = nosha .
+
   --- handle_call {:started, ...}: the looks in flight began before the claim.
   op older : Looks -> Looks .
   eq older(nolook) = nolook .
@@ -449,12 +454,13 @@ mod CODE-REVIEW-CLAIMS is
     => { mc(X, true, N, R) looks(X, L1 ; lk(K, S, seenAt(X, S, C), B) ; L2) gh(S) C } .
 
   --- handle_info {:polled, found}: apply_look/2, which drops a look older than the one
-  --- applied last and leaves the review alone if the look began before its claim, and
+  --- applied last and leaves the review alone if the look began before its claim, looking
+  --- again at once if it listed another head than the review holds (disputed?/3), and
   --- pump/1; a periodic look's DOWN arms the next :poll. A machine out of reach that
   --- started the commit has it still.
   crl [polled] :
     { mc(X, true, N, R) looks(X, L1 ; lk(K, S, W, B) ; L2) poll(X, Pl) periodic(Bu) C }
-    => { pump(X, set(X, R, R', mc(X, true, N, R) looks(X, L2)
+    => { pump(X, set(X, R, R', mc(X, true, N, R) looks(X, if B and headOf(R) =/= S then relook(L2) else L2 fi)
            poll(X, rearm(K == tick or ticks(L1), Bu, Pl))
            periodic(spend(K == tick or ticks(L1), Bu)) C)) }
     if R' := (if B then R else applied(R, S, orAway(W, R, S, near(X, C))) fi) .
