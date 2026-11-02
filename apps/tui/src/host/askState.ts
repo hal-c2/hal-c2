@@ -23,6 +23,8 @@ export interface AskSpec {
   readonly value?: string;
   /** Runs with the trimmed answer after the field closed. */
   readonly onSubmit: (text: string) => void;
+  /** Hand `onSubmit` the answer as typed, its leading and trailing spaces kept. */
+  readonly untrimmed?: boolean;
   /** The mode the keys go back to ("compose" unless given). */
   readonly returnMode?: TuiMode;
 }
@@ -67,7 +69,8 @@ export function createAsk(ctx: {
           ? (payload as { text?: unknown }).text
           : undefined;
       const spec = close();
-      spec?.onSubmit(typeof raw === "string" ? raw.trim() : "");
+      const text = typeof raw === "string" ? raw : "";
+      spec?.onSubmit(spec.untrimmed ? text : text.trim());
       return true;
     },
   };
