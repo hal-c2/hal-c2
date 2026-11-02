@@ -16,6 +16,8 @@ ColumnLayout {
     readonly property bool trashed: page.trashed === true
     readonly property var site: page.site ?? ({})
     readonly property string siteUrl: site.url ?? ""
+    // The project file the page is, or nothing.
+    readonly property var file: page.file ?? ({})
     // The row being written in, kept above the keyboard.
     property SpaceBlockRow editing: null
 
@@ -91,6 +93,68 @@ ColumnLayout {
                 text: qsTr("Made from the thread “%1”").arg(view.page.sourceThreadTitle ?? "")
                 color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(13 * Theme.fontScale)
+            }
+
+            // The project file the page is: where it is, and that it is gone or won over an edit.
+            ColumnLayout {
+                objectName: "spacePageFile"
+                Layout.fillWidth: true
+                Layout.margins: 16
+                Layout.bottomMargin: 4
+                visible: (view.file.path ?? "") !== ""
+                spacing: 4
+
+                Label {
+                    objectName: "spacePageFilePath"
+                    Layout.fillWidth: true
+                    elide: Text.ElideMiddle
+                    text: qsTr("The file %1 of %2").arg(view.file.path ?? "").arg(view.file.projectTitle ?? "")
+                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Label {
+                    objectName: "spacePageFileGone"
+                    Layout.fillWidth: true
+                    visible: view.file.missing === true
+                    wrapMode: Text.Wrap
+                    text: view.file.unwritten === true
+                        ? qsTr("The file is gone, and edits made since are on the page only. If the file comes back, it wins, and those edits stay in the page's history.")
+                        : qsTr("The file is gone. The page keeps what it last said; stop following the file to keep it as an ordinary page.")
+                    color: Theme.palette.color("warning", "#f59e0b")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Label {
+                    objectName: "spacePageFileConflict"
+                    Layout.fillWidth: true
+                    visible: (view.file.conflictAt ?? "") !== ""
+                    wrapMode: Text.Wrap
+                    text: qsTr("The file changed while you were editing, and the page now shows the file. Your edit is in the page's history.")
+                    color: Theme.palette.color("warning", "#f59e0b")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 4
+
+                    MobileButton {
+                        objectName: "spacePageFileShow"
+                        subtle: true
+                        visible: view.file.missing !== true
+                        text: qsTr("Show file")
+                        onClicked: Shell.dispatch("space.page.showFile", { pageId: Spaces.pageId })
+                    }
+
+                    MobileButton {
+                        objectName: "spacePageFileHistory"
+                        subtle: true
+                        visible: (view.file.conflictAt ?? "") !== ""
+                        text: qsTr("History")
+                        onClicked: view.screen.showHistory(Spaces.pageId)
+                    }
+                }
             }
 
             SpaceAgentStrip {
