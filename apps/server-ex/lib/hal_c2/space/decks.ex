@@ -90,13 +90,20 @@ defmodule HalC2.Space.Decks do
   defp ordinary(state, %{"kind" => "generated"} = block), do: Space.written(state, block["text"])
   defp ordinary(_state, block), do: [block]
 
-  defp body(state, blocks), do: Enum.map_join(blocks, "\n", &line(state, &1))
+  # List items, quotes, dividers and code read as their Markdown.
+  defp body(state, blocks) do
+    blocks
+    |> Enum.zip(Markdown.list_items(blocks))
+    |> Enum.map_join("\n", fn
+      {block, nil} -> line(state, block)
+      {block, item} -> Markdown.render_item(block, item)
+    end)
+  end
 
-  defp line(_state, %{"kind" => "checklist", "checked" => true} = b), do: "- [x] " <> b["text"]
-  defp line(_state, %{"kind" => "checklist"} = b), do: "- [ ] " <> b["text"]
-  defp line(_state, %{"kind" => "callout"} = b), do: "> " <> b["text"]
+  defp line(_state, %{"kind" => kind} = b) when kind in ~w(callout divider code),
+    do: Markdown.render(b)
+
   defp line(_state, %{"kind" => "image"} = b), do: "[image: " <> b["text"] <> "]"
-  defp line(_state, %{"kind" => "code"} = b), do: Markdown.render(b)
 
   defp line(state, %{"kind" => "subpage_link"} = b),
     do: (Pages.get(state, b["linkedPageId"]) || %{})["title"] || b["text"]

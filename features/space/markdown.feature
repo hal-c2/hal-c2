@@ -9,9 +9,15 @@
 #     language in 62, Mermaid in 27, front matter in 19, strikethrough in 3, <details>, task lists and
 #     images in 1 each). It is private: the tests carry synthetic files of the same shapes, and run
 #     against the corpus itself only where it is checked out.
+#   https://spec.commonmark.org/0.31.2/#list-items (list items, their content column, lazy lines)
+#   https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#alerts
+#   ~/dev/pos-ecs again for lists, quotes and rules (1772 distinct .md files outside hidden directories:
+#     5388 lists, 77 of them kept raw; 24752 items, 1315 nested; 920 quotes, 23 of them alerts, 85 kept by
+#     their `> ` blank lines or two-space line breaks, and 4 kept raw; 598 rules, 152 of them not `---`)
 #   apps/server-ex/lib/hal_c2/space/markdown.ex, apps/server-ex/lib/hal_c2/space/blocks.ex,
 #     apps/server-ex/lib/hal_c2/space/table.ex
-#   packages/contracts/src/space.ts (SpaceBlock, SpaceWritableBlockKind, SpaceTable, SpaceTableEdit)
+#   packages/contracts/src/space.ts (SpaceBlock, SpaceWritableBlockKind, SpaceTable, SpaceTableEdit,
+#     SpaceCalloutAlert)
 
 Feature: GitHub Markdown in a page
   A page reads and writes GitHub Markdown. Whatever a page models (headings, paragraphs,
@@ -68,23 +74,18 @@ Feature: GitHub Markdown in a page
         """
         # Plan
 
-        1. Tag
-        2. Ship
+        <p align="center">Tag</p>
         """
       When the user changes the raw block of "Plan" to:
         """
-        1. Tag
-        2. Build
-        3. Ship
+        <p align="center">Tag and ship</p>
         """
       And the user exports "Plan" as Markdown
       Then the Markdown is:
         """
         # Plan
 
-        1. Tag
-        2. Build
-        3. Ship
+        <p align="center">Tag and ship</p>
         """
 
     @mc
@@ -703,67 +704,318 @@ Feature: GitHub Markdown in a page
       When the user scrolls the page past it and back
       Then the diagram is not drawn again
 
-  # https://github.com/hal-c2/hal-c2/issues/844
-  @backlog @mc @shared
+  # Each list item is a block: a bullet, a numbered item or a checklist item, nested under
+  # the items above it by its depth. A numbered item counts on from the one before it at
+  # its depth; one that begins a list may start at another number. An item keeps the
+  # marker (`*`, `+`, `)`) and the indent it was written with, and its text runs on in
+  # lines indented under it. A list its own form would not write back exactly (a lazy
+  # line, numbers that skip, an item back under a parent's text) is kept as written.
   Rule: Lists
 
-    Scenario Outline: A list keeps its kind, its numbers and its nesting
-      When the user imports a page holding <list>
-      Then the page has a list block shown as <list>
-      And the export writes it as it was
+    @mc
+    Scenario: Each list item is a block of its kind and depth
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        - Release
+          1. Tag
+          2. Ship
+             - [x] Notes
+        - Announce
+        """
+      Then the list items of "Plan" are:
+        | kind      | depth | text     |
+        | bullet    | 0     | Release  |
+        | numbered  | 1     | Tag      |
+        | numbered  | 1     | Ship     |
+        | checklist | 2     | Notes    |
+        | bullet    | 0     | Announce |
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        - Release
+          1. Tag
+          2. Ship
+             - [x] Notes
+        - Announce
+        """
+
+    @mc
+    Scenario Outline: A list keeps how it was written
+      When the user imports the Markdown "# Plan\n\n<written>" into "Research"
+      Then the blocks of "Plan" are of the kinds "<kinds>"
+      When the user exports the imported page as Markdown
+      Then the exported Markdown is "# Plan\n\n<written>\n"
 
       Examples:
-        | list                                      |
-        | a bulleted list                           |
-        | an ordered list starting at 3             |
-        | a bulleted list with an ordered list in it |
-        | a list whose items hold code              |
-        | a list with blank lines between its items |
+        | written                                 | kinds                      |
+        | * Tag\n* Ship                           | bullet, bullet             |
+        | + Tag\n+ Ship                           | bullet, bullet             |
+        | 3) Tag\n4) Ship                         | numbered, numbered         |
+        | 1. Tag\n\n2. Ship                       | numbered, numbered         |
+        | - Tag\n    - Ship                       | bullet, bullet             |
+        | - Tag\n  the release tag\n- Ship        | bullet, bullet             |
+        | - Tag:\n  ```sh\n  git tag\n  ```\n- Ship | bullet, bullet             |
+        | - Tag\n---\n- Ship                      | bullet, divider, bullet    |
+        | - Tag\nthe release tag                  | raw                        |
+        | 1. Tag\n3. Ship                         | raw                        |
+        | - Tag\n  - Ship\n  the release tag      | raw                        |
+        | * [ ] Tag                               | raw                        |
 
-    Scenario: The user adds, indents and outdents a list item
-      Given a page with a bulleted list
+    @mc
+    Scenario: A numbered list counts on from where it starts
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        3. Tag
+        4. Ship
+        """
+      When the user adds the numbered item "Announce" after "Ship"
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        3. Tag
+        4. Ship
+        5. Announce
+        """
+      When the user starts the list at "Tag" from 1
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        1. Tag
+        2. Ship
+        3. Announce
+        """
+
+    @mc
+    Scenario: The user indents and outdents a list item
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        - Release
+            - Tag
+        - Ship
+        """
+      When the user nests "Ship" 1 deep
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        - Release
+            - Tag
+          - Ship
+        """
+      When the user nests "Tag" 0 deep
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        - Release
+        - Tag
+          - Ship
+        """
+
+    @mc
+    Scenario: A task nested in a list keeps its tick
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        - Release
+          - [ ] Tag
+          - [x] Ship
+        """
+      When the user ticks "Tag"
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        - Release
+          - [x] Tag
+          - [x] Ship
+        """
+
+    @mc
+    Scenario: Only a list item has a depth
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        Ship it
+        """
+      When the user nests "Ship it" 1 deep
+      Then the user is told "Only a list item has a depth."
+
+    # https://github.com/hal-c2/hal-c2/issues/869
+    @shared @backlog
+    Scenario: A list is shown with its markers and nesting
+      Given the page "Plan" with a bulleted list holding a numbered list
+      When the user opens "Plan"
+      Then each item is shown with its bullet or its number, indented under its parent
+
+    # https://github.com/hal-c2/hal-c2/issues/869
+    @shared @backlog
+    Scenario: The user adds, indents and outdents a list item in a page
+      Given the page "Plan" with a bulleted list
       When the user adds an item, indents it, then outdents it
-      Then the list's Markdown has the item at the level it ended at
+      Then the item is shown at the depth it ended at
 
-    Scenario: A task list in a list keeps its ticks
-      When the user imports a list whose nested items are tasks, some ticked
-      Then ticking a nested task changes only that task's mark in the export
-
-  # https://github.com/hal-c2/hal-c2/issues/844
-  @backlog @mc @shared
+  # A quote is a callout. One that starts `[!NOTE]` (or TIP, IMPORTANT, WARNING, CAUTION)
+  # is GitHub's alert of that kind, a callout with its `alert`.
   Rule: Quotes and alerts
 
+    @mc
     Scenario: A quote is a callout
-      When the user imports a page holding a quote of two paragraphs
-      Then the page has a callout of those two paragraphs
-      And the export writes the quote as it was
+      Given the page "Plan" imported from:
+        """
+        # Plan
 
+        > Tag first.
+        >
+        > Then ship.
+        """
+      Then "Plan" has a callout holding:
+        """
+        Tag first.
+
+        Then ship.
+        """
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        > Tag first.
+        >
+        > Then ship.
+        """
+
+    # Some editors write a quote's blank line as `> ` and keep two spaces for a line break.
+    @mc
+    Scenario: A quote keeps its blank lines and line breaks as written
+      When the user imports the Markdown "# Plan\n\n> Tag first,  \n> then wait.\n> \n> Then ship." into "Research"
+      Then the blocks of "Plan" are of the kinds "callout"
+      When the user exports the imported page as Markdown
+      Then the exported Markdown is "# Plan\n\n> Tag first,  \n> then wait.\n> \n> Then ship.\n"
+
+    @mc
     Scenario Outline: A GitHub alert is a callout of its kind
-      When the user imports a page holding the alert "> [!<kind>]"
-      Then the page has a callout of the kind "<kind>", shown as one
-      And the export writes "> [!<kind>]" again
+      When the user imports the Markdown "# Plan\n\n> [!<written>]\n> Tag first." into "Research"
+      Then "Plan" has a "<alert>" callout "Tag first."
+      When the user exports the imported page as Markdown
+      Then the exported Markdown is "# Plan\n\n> [!<written>]\n> Tag first.\n"
 
       Examples:
-        | kind      |
-        | NOTE      |
-        | TIP       |
-        | IMPORTANT |
-        | WARNING   |
-        | CAUTION   |
+        | written   | alert     |
+        | NOTE      | note      |
+        | TIP       | tip       |
+        | IMPORTANT | important |
+        | WARNING   | warning   |
+        | CAUTION   | caution   |
 
-    Scenario: The user changes a callout's kind
-      Given a page with a "NOTE" callout
-      When the user makes it a "WARNING"
-      Then the export writes "> [!WARNING]"
+    @mc
+    Scenario: The user changes a callout's alert
+      Given the page "Plan" imported from:
+        """
+        # Plan
 
-  # https://github.com/hal-c2/hal-c2/issues/844
-  @backlog @mc @shared
+        > [!NOTE]
+        > Tag first.
+        """
+      When the user makes "Tag first." a "warning" alert
+      And the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n> [!WARNING]\n> Tag first.\n"
+      When the user makes "Tag first." a plain quote
+      And the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n> Tag first.\n"
+
+    @mc
+    Scenario: Only a callout has an alert
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        Ship it
+        """
+      When the user makes "Ship it" a "note" alert
+      Then the user is told "Only a callout has an alert."
+
+    # https://github.com/hal-c2/hal-c2/issues/869
+    @shared @backlog
+    Scenario: An alert is shown as its kind
+      Given the page "Plan" with a "warning" callout
+      When the user opens "Plan"
+      Then the callout is shown as a warning
+      And the user can make it another kind of alert, or a plain quote
+
+  # A horizontal rule is a divider, and one written other than `---` keeps how it was
+  # written. A rule set in by spaces, or with spaces after it, stays raw.
   Rule: Horizontal rules
 
+    @mc
     Scenario: A horizontal rule is a divider
-      When the user imports a page holding "---" between two paragraphs
-      Then the page has a divider between them
-      And the export writes "---" again
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        Tag
+
+        ---
+
+        Ship
+        """
+      Then the blocks of "Plan" are of the kinds "paragraph, divider, paragraph"
+      When the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\nTag\n\n---\n\nShip\n"
+
+    @mc
+    Scenario Outline: A divider keeps how its rule was written
+      When the user imports the Markdown "# Plan\n\nTag\n\n<written>\n\nShip" into "Research"
+      Then the blocks of "Plan" are of the kinds "paragraph, divider, paragraph"
+      When the user exports the imported page as Markdown
+      Then the exported Markdown is "# Plan\n\nTag\n\n<written>\n\nShip\n"
+
+      Examples:
+        | written    |
+        | ***        |
+        | ___        |
+        | - - -      |
+        | ---------- |
+
+    @mc
+    Scenario: A rule set in by spaces is kept as written
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        Tag
+
+           ***
+
+        Ship
+        """
+      Then the blocks of "Plan" are of the kinds "paragraph, raw, paragraph"
+      When the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\nTag\n\n   ***\n\nShip\n"
+
+    # https://github.com/hal-c2/hal-c2/issues/869
+    @shared @backlog
+    Scenario: A divider is shown as a line
+      Given the page "Plan" with a divider between two paragraphs
+      When the user opens "Plan"
+      Then a line is shown between them
 
   # https://github.com/hal-c2/hal-c2/issues/845
   @backlog @mc @shared

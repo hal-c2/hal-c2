@@ -392,7 +392,7 @@ defmodule HalC2.Space.Files do
 
   # What a block read from the file holds beyond its kind and text, taken whole into the
   # block it replaces.
-  @spec_fields ~w(imageId level gap table language fence info)
+  @spec_fields Blocks.extras()
 
   defp settle(_state, _page_id, {[], []}, _anchor), do: []
 
@@ -458,7 +458,8 @@ defmodule HalC2.Space.Files do
     {kind, block["text"] || "", kind == "checklist" and block["checked"] == true,
      if(kind == "subpage_link", do: block["linkedPageId"]), block["imageId"],
      if(kind == "heading", do: Markdown.level(block)), block["gap"],
-     if(kind == "code", do: Map.take(block, ~w(language fence info)))}
+     if(kind == "code", do: Map.take(block, ~w(language fence info))),
+     Map.take(block, ~w(depth indent marker start alert))}
   end
 
   defp file(%{"file" => %{} = file}), do: {:ok, file}
