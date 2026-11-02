@@ -101,7 +101,7 @@ Rectangle {
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color borderColor: Theme.palette.color("border", "#27272a")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
 
     objectName: "filesPanel"
@@ -389,7 +389,7 @@ Rectangle {
                 Layout.bottomMargin: 4
                 visible: text.length > 0
                 text: root.source?.truncatedNotice ?? ""
-                color: Theme.palette.color("warning", "#f59e0b")
+                color: Theme.palette.color("warningForeground", "#f59e0b")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -475,10 +475,12 @@ Rectangle {
                                 acceptedButtons: Qt.LeftButton
                                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                 acceptedModifiers: Qt.ControlModifier
+                                // ljos-allow(focus-pointer-only): a link in an HTML page's text; Qt's Text has no keyboard path between links, and the Source view shows each link to read and copy
                                 onTapped: eventPoint => renderedPageText.follow(eventPoint)
                             }
                             TapHandler {
                                 acceptedDevices: PointerDevice.TouchScreen
+                                // ljos-allow(focus-pointer-only): a finger's tap on a link in an HTML page's text, as the Ctrl-click above
                                 onTapped: eventPoint => renderedPageText.follow(eventPoint)
                             }
                             // The secondary button offers opening or copying the link.
@@ -548,6 +550,7 @@ Rectangle {
                             id: image
 
                             objectName: "fileImage"
+                            Accessible.name: (root.source?.openPath ?? "").split("/").pop()
                             anchors.centerIn: parent
                             width: Math.min(parent.width, implicitWidth)
                             height: Math.min(parent.height, implicitHeight)
@@ -765,6 +768,7 @@ Rectangle {
                         Text {
                             width: glyph.advanceWidth * 6
                             horizontalAlignment: Text.AlignRight
+                            // ljos-allow(text-unbounded-dynamic): a line number, in a gutter six digits wide
                             text: line.number
                             color: root.muted
                             font.family: root.mono
@@ -887,6 +891,7 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     placeholderText: qsTr("Search files")
+                    Accessible.name: qsTr("Search files")
                     enabled: (root.source?.root ?? "").length > 0
                     text: root.source?.query ?? ""
                     onTextEdited: root.source.query = text
@@ -1030,6 +1035,8 @@ Rectangle {
                         }
                         background: Rectangle {
                             color: entry.selected ? Theme.palette.color("sidebarRowSelected", "#25314d") : entry.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+                            border.width: entry.visualFocus ? 1 : 0
+                            border.color: Theme.palette.color("focus", "#3b82f6")
                         }
                         contentItem: RowLayout {
                             spacing: 6

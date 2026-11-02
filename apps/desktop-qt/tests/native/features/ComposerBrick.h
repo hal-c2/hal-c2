@@ -6,6 +6,7 @@
 #include <QString>
 
 class Brick;
+class QObject;
 class QQuickItem;
 class World;
 
@@ -29,6 +30,14 @@ void typeInComposer(World& world, const QString& text);
 // included; null when there is none.
 QQuickItem* composerPart(World& world, const QString& objectName);
 
+// The item of a text's right-click menu (TextEditMenu) the user calls
+// `said` ("Cut", "Copy", "Paste", "Select All").
+QString textMenuItem(const QString& said);
+// Chooses `said` from `menu`, a TextEditMenu opening in `brick`'s window.
+void chooseInTextMenu(World& world, Brick& brick, QObject* menu, const QString& said);
+// Right-clicks the draft and chooses `said` from its menu.
+void chooseInDraftMenu(World& world, const QString& said);
+
 // "X is listed", "X is not listed" and "X shows Y" are the model picker's
 // while the composer is on screen: they check it and return true. False
 // leaves the step to its own domain (the palette, previews, terminals).
@@ -36,6 +45,10 @@ bool modelPickerLists(World& world, const QString& name, bool listed);
 bool modelPickerShows(World& world, const QString& name, const QString& reason);
 // "the user chooses X": the row named X of the open model picker.
 bool modelPickerChooses(World& world, const QString& name);
+// "the conversation says X" while something is dragged over the composer's
+// conversation: checks that its drop hint says X and returns true. False
+// leaves the step to its own domain (the worktree setup card).
+bool conversationDropSays(World& world, const QString& text);
 // "the user removes X": the attachment X of the draft on screen.
 bool removeComposerAttachment(World& world, const QString& name);
 // "the agent receives X": the message the composer on screen just sent.

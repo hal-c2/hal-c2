@@ -106,7 +106,7 @@ Dialog {
             ShellButton {
                 objectName: "projectRemovalConfirm"
                 text: dialog.checkout ? qsTr("Remove checkout") : qsTr("Remove project")
-                tint: Theme.palette.color("error", "#ef4444")
+                tint: Theme.palette.color("errorForeground", "#ef4444")
                 onClicked: Shell.dispatch("project.remove.confirm")
             }
         }

@@ -249,6 +249,22 @@ Item {
             tryVerify(() => atEnd(list) && timeline.following, 5000, "End returns to the end and follows");
         }
 
+        // The conversation shows it has the keyboard when Tab brings it there,
+        // not after a click in it.
+        function test_keyboardFocusIsDrawn() {
+            const timeline = longThread();
+            const list = view(timeline);
+            const ring = findChild(timeline, "timelineFocus");
+            list.forceActiveFocus(Qt.TabFocusReason);
+            tryVerify(() => list.activeFocus, 2000, "the conversation has the keyboard");
+            verify(ring.visible, "Tab to the conversation draws its ring");
+            list.focus = false;
+            tryVerify(() => !list.activeFocus);
+            mouseClick(list, list.width / 2, list.height / 2);
+            tryVerify(() => list.activeFocus, 2000, "a click gives the conversation the keyboard");
+            verify(!ring.visible, "a click draws no ring");
+        }
+
         // The jump pill is a button: named, reached by Tab, pressed with Space.
         function test_jumpToTheEndIsAKeyboardButton() {
             const timeline = longThread();

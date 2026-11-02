@@ -100,7 +100,7 @@ Dialog {
                 objectName: "attachmentViewerRemove"
                 visible: dialog.attachment?.removable === true
                 text: qsTr("Remove")
-                tint: Theme.palette.color("error", "#ef4444")
+                tint: Theme.palette.color("errorForeground", "#ef4444")
                 onClicked: Shell.dispatch("attachment.viewer.remove")
             }
             ShellButton {
@@ -114,6 +114,7 @@ Dialog {
 
         Image {
             objectName: "attachmentViewerImage"
+            Accessible.name: dialog.attachment?.name ?? ""
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: dialog.kind === "image"

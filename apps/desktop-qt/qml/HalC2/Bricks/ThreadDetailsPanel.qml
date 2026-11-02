@@ -55,6 +55,10 @@ Rectangle {
         objectName: "threadDetailsRelation"
         Layout.fillWidth: true
         implicitHeight: 40
+        // No vertical padding: the two lines are taller than the style's
+        // padding leaves, so the row would hang them low instead of centring.
+        topPadding: 0
+        bottomPadding: 0
         hoverEnabled: true
         Accessible.name: modelData.relation + " " + modelData.title
         onClicked: Shell.dispatch("rightPanel.openThread", {
@@ -83,6 +87,7 @@ Rectangle {
                 Text {
                     Layout.fillWidth: true
                     text: relation.modelData.relation
+                    elide: Text.ElideRight
                     color: root.muted
                     font.pixelSize: Math.round(11 * Theme.fontScale)
                 }
@@ -174,7 +179,7 @@ Rectangle {
                 objectName: "threadDetailsEnvironment"
                 icon: Shell.state.environmentIcons?.[root.environmentId]?.icon ?? "server"
                 value: root.details ? (root.details.online ? root.details.environment : qsTr("%1 (unreachable)").arg(root.details.environment)) : ""
-                tint: root.details?.online === false ? Theme.palette.color("warning", "#f59e0b") : root.foreground
+                tint: root.details?.online === false ? Theme.palette.color("warningForeground", "#f59e0b") : root.foreground
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -268,7 +273,7 @@ Rectangle {
                 Layout.fillWidth: true
                 visible: root.actions?.file === "invalid"
                 text: qsTr("hal-c2.json is invalid, so its actions are not offered.")
-                color: Theme.palette.color("warning", "#f59e0b")
+                color: Theme.palette.color("warningForeground", "#f59e0b")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -321,7 +326,7 @@ Rectangle {
                 objectName: "threadDetailsFailed"
                 visible: root.failedCount > 0
                 text: qsTr("%1 failed").arg(root.failedCount)
-                color: Theme.palette.color("error", "#ef4444")
+                color: Theme.palette.color("errorForeground", "#ef4444")
                 font.pixelSize: Math.round(11 * Theme.fontScale)
                 Layout.leftMargin: 8
             }

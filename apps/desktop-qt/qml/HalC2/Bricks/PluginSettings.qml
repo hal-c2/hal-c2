@@ -21,7 +21,7 @@ SettingsPage {
     readonly property var fields: entry?.settingsSchema ?? []
     readonly property string ownPage: entry?.settingsPageUrl ?? ""
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     // The values the fields show, saved together.
     property var values: ({})
     property bool dirty: false

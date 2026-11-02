@@ -51,6 +51,12 @@ Feature: Answering the agent's questions from the composer
     When the user reopens the pending question
     Then "Which database?" is shown again with its options
 
+  @desktop
+  Scenario: Questions asked while the composer is open are shown whole above its editor
+    Given the composer is on screen
+    When the agent asks two long questions in place of the first
+    Then the questions, their options and the answer button sit above the composer's editor
+
   @desktop @mobile @backlog-mobile
   Scenario: A question can be dismissed without an answer
     When the user dismisses the question without answering
