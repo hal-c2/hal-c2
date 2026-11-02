@@ -12,6 +12,11 @@ defmodule HalC2.Space.Blocks do
   has a `level`, 1 to 6, and a block from Markdown may keep the blank lines above it as
   its `gap`; moving a block gives it the usual ones.
 
+  A `table` block has its `table` (`HalC2.Space.Table`), and its text is the table's
+  Markdown, which the MC writes: setting the text reads it as a table again. A `code`
+  block's text is the code, with its `language` and, from Markdown, the `fence` and the
+  `info` after the language it was written with.
+
   A block of the kind `generated` is the marked part of a page that updates itself
   (`HalC2.Space.Schedule`): a page has at most one, its text is the Markdown of the last
   run, and only `write_generated/4` writes it. Anyone may move or delete it or comment on
@@ -20,9 +25,9 @@ defmodule HalC2.Space.Blocks do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState}
-  alias HalC2.Space.{Chart, Images, Order, Pages}
+  alias HalC2.Space.{Chart, Images, Markdown, Order, Pages, Table}
 
-  @kinds ~w(paragraph heading checklist callout subpage_link image raw)
+  @kinds ~w(paragraph heading checklist callout subpage_link image raw table code)
 
   @generated "generated"
 
@@ -44,7 +49,8 @@ defmodule HalC2.Space.Blocks do
 
   @doc """
   New blocks on a live page from `specs` (maps of `kind`, `text`, `checked`,
-  `linkedPageId`, `imageId`, `level`, `gap`), in order after `after`. Used by insert and by imports.
+  `linkedPageId`, `imageId`, `level`, `table`, `language`, `fence`, `info`, `gap`), in
+  order after `after`. Used by insert and by imports.
   An image block's text is its caption, the image's name unless given, so a client
   that does not know the kind still shows something true.
   """
@@ -90,16 +96,26 @@ defmodule HalC2.Space.Blocks do
     end
   end
 
+  def text(_state, %{"kind" => "table", "table" => table}), do: Table.markdown(table)
   def text(_state, spec), do: spec["text"] || ""
 
-  # Only an image block has `imageId` and a heading `level`, and only a block from
-  # Markdown a `gap`: every other block stays as it was written.
+  # Only an image block has `imageId`, a heading `level`, a table its `table` and code
+  # its `language`, `fence` and `info`, and only a block from Markdown a `gap`: every
+  # other block stays as it was written.
   defp with_extras(block, spec) do
+    code = spec["kind"] == "code"
+
     block
     |> put_extra("imageId", spec["kind"] == "image" && spec["imageId"])
     |> put_extra("level", spec["kind"] == "heading" && spec["level"])
+    |> put_extra("table", spec["kind"] == "table" && spec["table"])
+    |> put_extra("language", code && spec["language"])
+    |> put_extra("fence", code && spec["fence"])
+    |> put_extra("info", code && spec["info"])
     |> put_extra("gap", spec["gap"])
   end
+
+  @extras ~w(imageId level table language fence info gap)
 
   defp put_extra(block, _key, value) when value in [nil, false], do: block
   defp put_extra(block, key, value), do: Map.put(block, key, value)
@@ -166,30 +182,67 @@ defmodule HalC2.Space.Blocks do
   end
 
   def update_text(state, id, text, author) when is_binary(text),
-    do: edit(state, id, text, nil, author)
+    do: edit(state, id, %{"text" => text}, author)
 
   def update_text(_state, _id, _text, _author),
     do: Pages.refused({:error, :invalid, "A block's text is a string."})
 
   def set_checked(state, id, checked, author) when is_boolean(checked),
-    do: edit(state, id, nil, checked, author)
+    do: edit(state, id, %{"checked" => checked}, author)
 
   def set_checked(_state, _id, _checked, _author),
     do: Pages.refused({:error, :invalid, "checked is true or false."})
 
   @doc """
-  Changes a block's text and tick in one step: either refused, nothing changes. A
-  `nil` text or tick stays as it is.
+  Changes a block's `text`, tick (`checked`), heading `level` and code `language` (nil
+  for none) in one step: either refused, nothing changes. What `changes` leaves out, or
+  gives as a nil text, tick or level, stays as it is.
   """
-  def edit(state, id, text, checked, author) do
+  def edit(state, id, changes, author) do
     change(state, id, author, fn block ->
-      with {:ok, text} <- text_change(block, text),
-           {:ok, tick} <- tick_change(block, checked),
-           do: {:ok, Map.merge(text, tick)}
+      with {:ok, text} <- text_change(block, changes["text"]),
+           {:ok, tick} <- tick_change(block, changes["checked"]),
+           {:ok, level} <- level_change(block, changes["level"]),
+           {:ok, language} <- language_change(block, changes),
+           do: {:ok, text |> Map.merge(tick) |> Map.merge(level) |> Map.merge(language)}
+    end)
+  end
+
+  @doc "Edits the table of a table block as `HalC2.Space.Table.edit/2` does."
+  def edit_table(state, id, edit, author) do
+    change(state, id, author, fn
+      %{"kind" => "table", "table" => table} ->
+        case Table.edit(table, edit) do
+          {:ok, table} -> {:ok, %{"table" => table, "text" => Table.markdown(table)}}
+          {:error, message} -> {:error, :invalid, message}
+        end
+
+      _ ->
+        {:error, :invalid, "Only a table's cells can be edited."}
     end)
   end
 
   defp text_change(_block, nil), do: {:ok, %{}}
+
+  # A table's text is its Markdown: what is written is read as the table, kept as it is
+  # when it is in the table's own form and padded to its cells when it is not.
+  defp text_change(%{"kind" => "table"}, text) when is_binary(text) do
+    text = String.trim_trailing(text)
+
+    case text |> String.split(~r/\r?\n/) |> Table.read() do
+      nil ->
+        {:error, :invalid,
+         "A table's text is a table: a header row, a row of ---, and rows of as many cells."}
+
+      table ->
+        {:ok, table} =
+          if Table.markdown(table) == text,
+            do: {:ok, table},
+            else: Table.cast(Map.take(table, ~w(rows align)))
+
+        {:ok, %{"table" => table, "text" => Table.markdown(table)}}
+    end
+  end
 
   defp text_change(%{"kind" => @generated}, _text),
     do: {:error, :invalid, "What a page's update wrote cannot be edited by hand."}
@@ -209,6 +262,31 @@ defmodule HalC2.Space.Blocks do
     do: {:error, :invalid, "Only a checklist item can be ticked."}
 
   defp tick_change(_block, _), do: {:error, :invalid, "checked is true or false."}
+
+  defp level_change(_block, nil), do: {:ok, %{}}
+
+  defp level_change(%{"kind" => "heading"}, level) when level in 1..6,
+    do: {:ok, %{"level" => level}}
+
+  defp level_change(%{"kind" => "heading"}, _),
+    do: {:error, :invalid, "A heading's level is 1 to 6."}
+
+  defp level_change(_block, _), do: {:error, :invalid, "Only a heading has a level."}
+
+  defp language_change(_block, changes) when not is_map_key(changes, "language"),
+    do: {:ok, %{}}
+
+  defp language_change(%{"kind" => "code"} = block, %{"language" => language}) do
+    # No language takes the rest of the fence's line with it.
+    next =
+      if language, do: %{"language" => language}, else: %{"language" => :unset, "info" => :unset}
+
+    if Markdown.code?(Map.merge(block, next) |> Map.reject(fn {_, v} -> v == :unset end)),
+      do: {:ok, next},
+      else: {:error, :invalid, "A code block's language is one word, or null for none."}
+  end
+
+  defp language_change(_block, _), do: {:error, :invalid, "Only a code block has a language."}
 
   def move(state, id, after_id, author) do
     change(state, id, author, fn block ->
@@ -291,7 +369,7 @@ defmodule HalC2.Space.Blocks do
             "updatedBy" => author,
             "updatedAt" => Entities.now()
           })
-          |> Map.drop(~w(imageId level gap))
+          |> Map.drop(@extras)
           |> with_extras(first)
 
         {inserted, _} = insert_all(state, page_id, rest, block["id"], author)
@@ -402,8 +480,9 @@ defmodule HalC2.Space.Blocks do
 
   defp valid_specs(state, specs) do
     Enum.reduce_while(specs, {:ok, []}, fn spec, {:ok, acc} ->
-      case valid_spec(state, spec) do
-        :ok -> {:cont, {:ok, [spec | acc]}}
+      with :ok <- valid_spec(state, spec), {:ok, spec} <- with_table(spec) do
+        {:cont, {:ok, [spec | acc]}}
+      else
         error -> {:halt, error}
       end
     end)
@@ -433,6 +512,9 @@ defmodule HalC2.Space.Blocks do
       spec["kind"] == "heading" and spec["level"] not in [nil | Enum.to_list(1..6)] ->
         {:error, :invalid, "A heading's level is 1 to 6."}
 
+      spec["kind"] == "code" and not Markdown.code?(spec) ->
+        {:error, :invalid, "A code block's language is one word, or null for none."}
+
       not is_nil(spec["gap"]) and not (is_binary(spec["gap"]) and gap?(spec["gap"])) ->
         {:error, :invalid, "A block's gap is blank lines."}
 
@@ -440,6 +522,16 @@ defmodule HalC2.Space.Blocks do
         :ok
     end
   end
+
+  # A table's widths, when the spec has none, are its cells'.
+  defp with_table(%{"kind" => "table"} = spec) do
+    case Table.cast(spec["table"]) do
+      {:ok, table} -> {:ok, Map.put(spec, "table", table)}
+      {:error, message} -> {:error, :invalid, message}
+    end
+  end
+
+  defp with_table(spec), do: {:ok, spec}
 
   defp gap?("\n" <> rest), do: String.trim(rest) == ""
   defp gap?(_), do: false

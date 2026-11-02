@@ -6,9 +6,10 @@ defmodule HalC2.SpaceFilesPropTest do
   read again from their file and unlinked; unlinked pages edited; and the server that
   follows the files restarting, which reads every file again.
 
-  Every file reads `# Doc`, a blank line and one word, so a page is that word. After
-  each command the test reads the folder and the Space back and checks them against
-  the model:
+  Every file reads `# Doc`, a blank line and one block, a word, a table or a code block,
+  so a page is that block; the page edits it as its kind is edited (a table's text, a
+  code block's text and language), so a word stays a word. After each command the test
+  reads the folder and the Space back and checks them against the model:
 
   - the folder holds exactly what the model says: only a linked page with its file in
     place, read as it was last read, writes it, and an unlinked page never does;
@@ -19,8 +20,8 @@ defmodule HalC2.SpaceFilesPropTest do
     wins over it, and the page says so; an edit that reaches the file clears that;
   - a page writing its file does not set the server following the folder, but another
     page that is the same file through a link takes what it wrote; a link stays a link;
-  - a linked page reads as what it last read or wrote, records that text's hash, and
-    says whether its file is gone;
+  - a linked page writes as the Markdown it last read or wrote, records that text's
+    hash, and says whether its file is gone;
   - a file that vanished is followed to the one file no page has that reads the same,
     and to none when there are more, pages claiming such files in the order of their
     paths;
@@ -32,7 +33,7 @@ defmodule HalC2.SpaceFilesPropTest do
   use PropCheck.StateM
 
   alias HalC2.{Space, StreamState}
-  alias HalC2.Space.{Blocks, Files}
+  alias HalC2.Space.{Blocks, Files, Markdown}
 
   @moduletag timeout: :infinity
   @moduletag capture_log: true
@@ -40,7 +41,14 @@ defmodule HalC2.SpaceFilesPropTest do
   @paths ~w(a.md b.md d/c.md l.md)
   # Links are made at the top of the folder, to a file there, never to another link.
   @tops ~w(a.md b.md l.md)
-  @words ~w(alpha beta gamma)
+  @words ~w(alpha beta gamma) ++
+           [
+             "| a |\n| --- |\n| 1 |",
+             "| a |\n| --- |\n| 2 |",
+             "```js\nx\n```",
+             "```ts\nx\n```",
+             "```js\ny\n```"
+           ]
 
   property "pages that are files follow them, and they follow the pages",
     numtests: HalC2.Prop.numtests(600),
@@ -149,11 +157,14 @@ defmodule HalC2.SpaceFilesPropTest do
       from != to and free?(s, from) and from not in Map.values(s.sym) and
         not Map.has_key?(s.sym, to)
 
-  def precondition(s, {:call, _, name, [path, id | _]}) when name in [:edit, :sync, :unlink],
+  def precondition(s, {:call, _, :edit, [path, id, word]}),
+    do: match?(%{id: ^id}, s.links[path]) and kind(word) == kind(s.links[path].word)
+
+  def precondition(s, {:call, _, name, [path, id | _]}) when name in [:sync, :unlink],
     do: match?(%{id: ^id}, s.links[path])
 
-  def precondition(s, {:call, _, :edit_unlinked, [id, _]}),
-    do: Enum.any?(s.unlinked, &(&1.id == id))
+  def precondition(s, {:call, _, :edit_unlinked, [id, word]}),
+    do: Enum.any?(s.unlinked, &(&1.id == id and kind(word) == kind(&1.word)))
 
   def precondition(_s, _call), do: true
 
@@ -381,7 +392,12 @@ defmodule HalC2.SpaceFilesPropTest do
       length(files) == length(Enum.uniq(files))
   end
 
-  defp words(state, page), do: Enum.map(Blocks.of_page(state, page["id"]), & &1["text"])
+  defp words(state, page), do: Enum.map(Blocks.of_page(state, page["id"]), &Markdown.render/1)
+
+  # What a page's block is: an edit keeps it the same kind.
+  defp kind("|" <> _), do: :table
+  defp kind("```" <> _), do: :code
+  defp kind(_), do: :paragraph
 
   defp doc(word), do: "# Doc\n\n#{word}\n"
   defp word_of("# Doc\n\n" <> rest), do: String.trim_trailing(rest, "\n")
@@ -440,8 +456,15 @@ defmodule HalC2.SpaceFilesPropTest do
     space = Process.get(:space)
     {:ok, state} = Space.state(space)
     [block] = Blocks.of_page(state, id)
-    done(Space.update_block(space, block["id"], word))
+    done(Space.edit_block(space, block["id"], changes(kind(word), word)))
   end
+
+  defp changes(:code, word) do
+    ["```" <> language, text, "```"] = String.split(word, "\n")
+    %{"text" => text, "language" => language}
+  end
+
+  defp changes(_kind, word), do: %{"text" => word}
 
   def restart do
     HalC2.Prop.restart_service(Files)

@@ -6,7 +6,7 @@ defmodule HalC2.SpaceTest do
   use ExUnit.Case
 
   alias HalC2.{Space, Streams}
-  alias HalC2.Space.{Decks, ImageFile, Images, Markdown, Order}
+  alias HalC2.Space.{Blocks, Decks, ImageFile, Images, Markdown, Order}
 
   @moduletag :tmp_dir
   setup %{tmp_dir: dir} do
@@ -353,6 +353,20 @@ defmodule HalC2.SpaceTest do
       seq = Streams.sequence(Space.stream_id(space))
       assert {:ok, %{"checked" => true}} = Space.set_checked(space, item, true)
       assert Streams.sequence(Space.stream_id(space)) == seq
+    end
+
+    test "a table's text that is not a table, or has a cell of two lines, is refused",
+         %{space: space, page: page} do
+      {:ok, table} =
+        Space.insert_block(space, page, %{"kind" => "table", "table" => %{"rows" => [["Step"]]}})
+
+      for text <- ["| a | b |\n|---|---|\n|a\rb|c|", "| Step |\n| --- |\n\nNotes for later"] do
+        assert {:error, :invalid, "A table's text is a table" <> _} =
+                 Space.update_block(space, table["id"], text)
+      end
+
+      assert [%{"table" => %{"rows" => [["Step"]]}}] =
+               Blocks.of_page(Streams.state(Space.stream_id(space)), page)
     end
 
     test "an agent's edit names its thread", %{space: space, page: page} do

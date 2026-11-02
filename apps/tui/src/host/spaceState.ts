@@ -616,6 +616,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
    * its leading spaces and never wrapped, so a table or code lines up as in the file.
    * A line wider than the pane is cut short; the block's text stays whole.
    */
+  // Markdown the page keeps as written is its source, and so are a table and a code block
+  // until they are drawn as such (#854).
+  const asSource = (block: SpaceBlock) =>
+    block.kind === "raw" || block.kind === "table" || block.kind === "code";
+
   const rawRows = (block: SpaceBlock): TuiSpaceRow[] => {
     const key = `block:${block.id}`;
     const active = selected[view] === key;
@@ -648,7 +653,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     // A chart this client cannot read shows what it says of itself, as any block does.
     const chart = block.kind === "chart" ? chartData(block.chart) : null;
     if (chart) return chartRows(block, chart);
-    if (block.kind === "raw") return rawRows(block);
+    if (asSource(block)) return rawRows(block);
     const key = `block:${block.id}`;
     const active = selected[view] === key;
     const linked = block.kind === "subpage_link" ? pageById(block.linkedPageId) : undefined;
@@ -2004,7 +2009,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         visualize();
         return;
       }
-      if (block?.kind === "raw") {
+      if (block && asSource(block)) {
         // As written, spaces and all: a source line's indent is part of its Markdown.
         const source = bodyToField(block.text);
         options.ask({

@@ -9,8 +9,9 @@
 #     language in 62, Mermaid in 27, front matter in 19, strikethrough in 3, <details>, task lists and
 #     images in 1 each). It is private: the tests carry synthetic files of the same shapes, and run
 #     against the corpus itself only where it is checked out.
-#   apps/server-ex/lib/hal_c2/space/markdown.ex, apps/server-ex/lib/hal_c2/space/blocks.ex
-#   packages/contracts/src/space.ts (SpaceBlock, SpaceWritableBlockKind)
+#   apps/server-ex/lib/hal_c2/space/markdown.ex, apps/server-ex/lib/hal_c2/space/blocks.ex,
+#     apps/server-ex/lib/hal_c2/space/table.ex
+#   packages/contracts/src/space.ts (SpaceBlock, SpaceWritableBlockKind, SpaceTable, SpaceTableEdit)
 
 Feature: GitHub Markdown in a page
   A page reads and writes GitHub Markdown. Whatever a page models (headings, paragraphs,
@@ -47,18 +48,18 @@ Feature: GitHub Markdown in a page
         """
         # Plan
 
-        | Step | Owner |
-        | ---- | ----- |
-        | MC   | Ada   |
+        <div align="center">
+          <b>Ada</b>
+        </div>
 
         Ship it
         """
       Then the blocks of "Plan" are of the kinds "raw, paragraph"
       And the raw block of "Plan" holds:
         """
-        | Step | Owner |
-        | ---- | ----- |
-        | MC   | Ada   |
+        <div align="center">
+          <b>Ada</b>
+        </div>
         """
 
     @mc
@@ -170,6 +171,13 @@ Feature: GitHub Markdown in a page
       Then the table is shown as its Markdown, exactly as written, in a fixed-width face
       And the user can edit it as text
 
+    # https://github.com/hal-c2/hal-c2/issues/854
+    @shared
+    Scenario: A table and code are shown as their source until they are drawn as such
+      Given the page "Plan" holds a table and a code block
+      When the user opens "Plan"
+      Then the table and the code are each shown line for line in a fixed-width face
+
   Rule: Headings
 
     @mc
@@ -211,8 +219,7 @@ Feature: GitHub Markdown in a page
       When the user exports "Plan" as Markdown
       Then the exported Markdown is "# Plan\n\n## Steps\n"
 
-    # https://github.com/hal-c2/hal-c2/issues/846
-    @mc @backlog
+    @mc
     Scenario: The user changes a heading's level
       Given the page "Plan" imported from:
         """
@@ -222,6 +229,27 @@ Feature: GitHub Markdown in a page
         """
       When the user makes "Steps" a level 3 heading
       Then "Plan" has a heading "Steps" of level 3
+      When the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n### Steps\n"
+
+    @mc
+    Scenario: Only a heading has a level
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        Ship it
+        """
+      When the user makes "Ship it" a level 3 heading
+      Then the user is told "Only a heading has a level."
+      And the blocks of "Plan" are of the kinds "paragraph"
+
+    # https://github.com/hal-c2/hal-c2/issues/854
+    @shared @backlog
+    Scenario: The user picks a heading's level
+      Given the page "Plan" with a heading "Steps"
+      When the user makes "Steps" a level 3 heading from the block's menu
+      Then "Steps" is shown as a level 3 heading
 
     # https://github.com/hal-c2/hal-c2/issues/847
     @shared
@@ -230,58 +258,407 @@ Feature: GitHub Markdown in a page
       When the user opens "Plan"
       Then each heading is smaller than the one of the level above it
 
-  # https://github.com/hal-c2/hal-c2/issues/842
-  @backlog @mc @shared
+  # A table is its cells and how its columns align. Its Markdown keeps the widths it was
+  # written with, the cells' and the rule row's apart: a padded table comes back padded,
+  # one with unpadded cells unpadded, and editing a cell writes only that cell's row
+  # again. A table made in a page is padded to its widest cell. A table its own form would
+  # not write back exactly (rows of other lengths, no pipes at the ends, cells padded on
+  # the left) is kept as written.
   Rule: Tables
 
+    @mc
     Scenario: A table is a block of rows and columns
-      When the user imports a page holding a table with the columns "Step", "Owner" and "Done"
-      Then the page has a table block of 3 columns and its rows
-      And it is shown as a table
+      Given the page "Plan" imported from:
+        """
+        # Plan
 
+        | Step | Owner | Done |
+        | ---- | ----- | ---- |
+        | MC   | Ada   | yes  |
+        """
+      Then the blocks of "Plan" are of the kinds "table"
+      And the table of "Plan" has the rows:
+        | Step | Owner | Done |
+        | MC   | Ada   | yes  |
+
+    @mc
+    Scenario: A table keeps the spacing it was written with
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | Step | Owner |
+        | --- | --- |
+        | MC | Ada |
+
+        | Step     | Owner |
+        |---|---|
+        | MC       | Ada   |
+        | Lovelace | Grace |
+        """
+      Then the blocks of "Plan" are of the kinds "table, table"
+      When the user changes the "Owner" of "MC" in the table of "Plan" to "Barbara"
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner |
+        | --- | --- |
+        | MC | Barbara |
+
+        | Step     | Owner |
+        |---|---|
+        | MC       | Ada   |
+        | Lovelace | Grace |
+        """
+
+    @mc
     Scenario: A column keeps its alignment
-      When the user imports a table whose columns are aligned left, centre and right
-      Then the columns are shown aligned that way
-      And the export writes the same alignment row
+      Given the page "Plan" imported from:
+        """
+        # Plan
 
+        | Step | Owner | Done |
+        |:-----|:-----:|-----:|
+        | MC   | Ada   | yes  |
+        """
+      Then the columns of the table of "Plan" are aligned "left, center, right"
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner | Done |
+        |:-----|:-----:|-----:|
+        | MC   | Ada   | yes  |
+        """
+
+    @mc
     Scenario: The user edits a cell
-      Given a page with a table
-      When the user changes a cell's text
-      Then the table's Markdown has the new text in that cell, the other rows as they were
+      Given the page "Plan" imported from:
+        """
+        # Plan
 
+        | Step | Owner |
+        | ---- | ----- |
+        | MC   | Ada   |
+        | QML  | Grace |
+        """
+      When the user changes the "Owner" of "MC" in the table of "Plan" to "Barbara"
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner |
+        | ---- | ----- |
+        | MC   | Barbara |
+        | QML  | Grace |
+        """
+
+    @mc
     Scenario: The user adds and removes a row and a column
-      Given a page with a table
-      When the user adds a row, then a column, then removes them again
-      Then the table's Markdown is what it was before
+      Given the page "Plan" imported from:
+        """
+        # Plan
 
+        | Step | Owner |
+        |------|------:|
+        | MC   | Ada   |
+        """
+      When the user adds a row to the end of the table of "Plan"
+      And the user adds a column to the end of the table of "Plan"
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner |     |
+        |------|------:|-----|
+        | MC   | Ada   |     |
+        |      |       |     |
+        """
+      When the user removes the last row of the table of "Plan"
+      And the user removes the last column of the table of "Plan"
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner |
+        |------|------:|
+        | MC   | Ada   |
+        """
+
+    @mc
     Scenario: A cell can hold formatting and an escaped pipe
-      When the user imports a table whose cell holds "`a \| b`" and bold text
-      Then the cell shows the code and the bold text
-      And the export writes the cell as it was
+      Given the page "Plan" imported from:
+        """
+        # Plan
 
-  # https://github.com/hal-c2/hal-c2/issues/842
-  @backlog @mc @shared
+        | Code     | Note     |
+        | -------- | -------- |
+        | `a \| b` | **bold** |
+        """
+      Then the first row's "Code" in the table of "Plan" reads "`a | b`"
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Code     | Note     |
+        | -------- | -------- |
+        | `a \| b` | **bold** |
+        """
+
+    @mc
+    Scenario: A table made in a page is padded to its widest cell
+      Given the page "Plan" imported from:
+        """
+        # Plan
+        """
+      When the user adds a table to "Plan" of the rows:
+        | Step | Owner   |
+        | MC   | Barbara |
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner   |
+        | ---- | ------- |
+        | MC   | Barbara |
+        """
+
+    @mc
+    Scenario: A table's text rewritten in its own form keeps its spacing
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | Step | Owner |
+        | --- | --- |
+        | MC | Ada |
+        """
+      When the user changes the text of the table of "Plan" to:
+        """
+        | Step | Owner |
+        | --- | --- |
+        | MC | Barbara |
+        """
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner |
+        | --- | --- |
+        | MC | Barbara |
+        """
+
+    @mc
+    Scenario: A table's text rewritten another way is padded to its cells
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | Step | Owner |
+        | ---- | ----- |
+        | MC   | Ada   |
+        """
+      When the user changes the text of the table of "Plan" to:
+        """
+        Step | Owner
+        --- | ---:
+        MC | Barbara
+        """
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner   |
+        | ---- | ------: |
+        | MC   | Barbara |
+        """
+
+    @mc
+    Scenario: A table's text must be a table
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | Step |
+        | ---- |
+        | MC   |
+        """
+      When the user changes the text of the table of "Plan" to:
+        """
+        | Step |
+        | ---- |
+        | MC   |
+
+        Notes for later
+        """
+      Then the user is told "A table's text is a table"
+      And the table of "Plan" has the rows:
+        | Step |
+        | MC   |
+
+    @mc
+    Scenario: A table written another way is kept as written
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | a | b |
+        |---|---|
+        | 1 |
+
+        a | b
+        --- | ---
+        1 | 2
+
+        | Total |
+        | ----: |
+        |    12 |
+        """
+      Then the blocks of "Plan" are of the kinds "raw, raw, raw"
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | a | b |
+        |---|---|
+        | 1 |
+
+        a | b
+        --- | ---
+        1 | 2
+
+        | Total |
+        | ----: |
+        |    12 |
+        """
+
+    # https://github.com/hal-c2/hal-c2/issues/854
+    @shared @backlog
+    Scenario: A table is shown as a table
+      Given the page "Plan" with a table whose columns are aligned left, centre and right
+      When the user opens "Plan"
+      Then the table is shown as a grid of its cells, its header row apart
+      And each column is aligned as it was written
+      And a cell's formatting is shown, a "\|" as a pipe
+
+    # https://github.com/hal-c2/hal-c2/issues/854
+    @shared @backlog
+    Scenario: The user edits a table where it stands
+      Given the page "Plan" with a table
+      When the user changes a cell, adds a row and a column, then removes them
+      Then the page shows the table with only the changed cell
+
+  # A code block's text is the code, its language the first word after the fence. The
+  # fence (backticks or tildes, and how many) and the rest of its line come back as they
+  # were written. A fence that is indented, or has a space before its language, is kept as
+  # written. A diagram's fence is a code block too, in "mermaid" (see Mermaid diagrams).
   Rule: Code
 
+    @mc
     Scenario: A fenced code block keeps its language and its text
-      When the user imports a page holding a "ts" code block
-      Then the page has a code block in "ts"
-      And it is shown in a fixed-width face, coloured for that language where the surface can
-      And the export writes the same fence, language and text
+      Given the page "Plan" imported from:
+        """
+        # Plan
 
+        ```ts
+        const a = 1
+
+        // two
+        ```
+        """
+      Then "Plan" has a code block in "ts" holding:
+        """
+        const a = 1
+
+        // two
+        """
+      When the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n```ts\nconst a = 1\n\n// two\n```\n"
+
+    @mc
+    Scenario: The user edits code and its language
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        ```sh
+        echo hi
+        ```
+        """
+      When the user makes the code block of "Plan" "bash" code holding:
+        """
+        echo hello
+        """
+      And the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n```bash\necho hello\n```\n"
+
+    @mc
+    Scenario: Code holding a fence is written inside a longer one
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        ```md
+        x
+        ```
+        """
+      When the user makes the code block of "Plan" "md" code holding:
+        """
+        ```ts
+        x
+        ```
+        """
+      And the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n````md\n```ts\nx\n```\n````\n"
+
+    @mc
+    Scenario Outline: Code keeps the fence it was written with
+      When the user imports the Markdown "# Plan\n\n<written>" into "Research"
+      Then the blocks of "Plan" are of the kinds "<kinds>"
+      When the user exports the imported page as Markdown
+      Then the exported Markdown is "# Plan\n\n<written>\n"
+
+      Examples:
+        | written                          | kinds |
+        | ~~~~js\nx\n~~~~                   | code  |
+        | ```js {.numbered}\nx\n```         | code  |
+        | ````md\n```ts\nx\n```\n````       | code  |
+        | ```\nno language\n```             | code  |
+        |   ```ts\n  x\n  ```               | raw   |
+        | ``` ts\nx\n```                    | raw   |
+
+    # https://github.com/hal-c2/hal-c2/issues/854
+    @shared @backlog
+    Scenario: A code block is shown as code
+      Given the page "Plan" with a "ts" code block
+      When the user opens "Plan"
+      Then its text is shown in a fixed-width face, coloured for that language where the surface can
+      And its language is named on it
+
+    # https://github.com/hal-c2/hal-c2/issues/854
+    @shared @backlog
     Scenario: The user copies a code block
-      Given a page with a code block
+      Given the page "Plan" with a code block
       When the user copies the code block
       Then the clipboard holds its text without the fence
 
-    Scenario: The user edits code and its language
-      Given a page with a "sh" code block
+    # https://github.com/hal-c2/hal-c2/issues/854
+    @shared @backlog
+    Scenario: The user edits code and its language in a page
+      Given the page "Plan" with a "sh" code block
       When the user changes its text and makes it "bash"
-      Then the export writes the new fence and text
-
-    Scenario: Code written with tildes or a longer fence keeps its fence
-      When the user imports code fenced with "~~~~"
-      Then the export writes it fenced with "~~~~"
+      Then the page shows the new text, named "bash"
 
   # https://github.com/hal-c2/hal-c2/issues/843
   @backlog @mc @shared

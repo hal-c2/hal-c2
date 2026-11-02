@@ -635,7 +635,17 @@ export function fakeSpaceMc(options: {
     order: string,
     by: SpaceAuthor,
   ) => {
-    const kinds = ["paragraph", "heading", "checklist", "callout", "subpage_link", "image", "raw"];
+    const kinds = [
+      "paragraph",
+      "heading",
+      "checklist",
+      "callout",
+      "subpage_link",
+      "image",
+      "raw",
+      "table",
+      "code",
+    ];
     if (!kinds.includes(spec.kind)) refuse("invalid", `A block is one of ${kinds.join(", ")}.`);
     const level = spec.kind === "heading" ? spec.level : undefined;
     if (level !== undefined && !(Number.isInteger(level) && level >= 1 && level <= 6)) {
