@@ -674,6 +674,7 @@ Rectangle {
                 width: ListView.view.width
                 blockId: model.id
                 level: model.level ?? 0
+                language: model.language ?? ""
                 chart: model.chart ?? ({})
                 readOnly: page.trashed
                 previousId: index > 0 ? Spaces.blocks.get(index - 1).id : ""
