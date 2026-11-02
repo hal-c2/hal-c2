@@ -69,13 +69,83 @@ defmodule HalC2.SpaceTest do
 
       Application.put_env(:hal_c2, :page_agent_launch, launch)
       on_exit(fn -> Application.delete_env(:hal_c2, :page_agent_launch) end)
-      target = fn -> {:ok, %{project_id: nil, model: nil, runtime_mode: nil}} end
 
-      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", target)
+      target = fn _ ->
+        {:ok, %{project_id: nil, model: nil, runtime_mode: nil, interaction_mode: nil}}
+      end
+
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", %{}, target)
       assert_receive :launched
 
       assert {:ok, %{"status" => "stopping"}} = Space.stop_page_agent(space, page)
       assert {:ok, %{"status" => "stopping"}} = Space.stop_page_agent(space, page)
+    end
+
+    test "what the page's prompt chose reaches the thread, and a refused ask keeps no image",
+         %{space: space, tmp_dir: dir} do
+      page = page!(space, "Roadmap")
+      test = self()
+      home = Application.get_env(:hal_c2, :home)
+      Application.put_env(:hal_c2, :home, dir)
+      Application.put_env(:hal_c2, :page_agent_launch, &send(test, {:launched, &1}))
+
+      on_exit(fn ->
+        Application.put_env(:hal_c2, :home, home)
+        Application.delete_env(:hal_c2, :page_agent_launch)
+      end)
+
+      target = fn choices ->
+        {:ok,
+         %{
+           project_id: "shop",
+           model: choices["modelSelection"],
+           runtime_mode: choices["runtimeMode"],
+           interaction_mode: choices["interactionMode"]
+         }}
+      end
+
+      image = %{
+        "type" => "image",
+        "name" => "sketch.png",
+        "mimeType" => "image/png",
+        "sizeBytes" => 68,
+        "dataUrl" =>
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII="
+      }
+
+      file = %{"type" => "file", "id" => "pending-x", "name" => "notes.pdf", "sizeBytes" => 3}
+      context = %{"version" => 1, "records" => [%{"kind" => "skill", "contextId" => "c1"}]}
+
+      choices = %{
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "approval-required",
+        "interactionMode" => "plan",
+        "attachments" => [image, file],
+        "context" => context
+      }
+
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", choices, target)
+      assert_receive {:launched, input}
+
+      assert %{
+               "modelSelection" => %{"model" => "gpt-5.4"},
+               "runtimeMode" => "approval-required",
+               "interactionMode" => "plan",
+               "initialMessage" => %{
+                 "attachments" => [saved, ^file],
+                 "context" => ^context
+               }
+             } = input
+
+      assert %{"name" => "sketch.png", "sizeBytes" => 68} = saved
+      assert HalC2.Attachments.path(saved)
+      kept = Path.wildcard(Path.join(HalC2.Attachments.dir(), "*"))
+
+      # The page's agent is at work, so a second ask is refused, and its image with it.
+      assert {:error, :invalid, _} =
+               Space.PageAgent.ask(space, page, "again", %{"attachments" => [image]}, target)
+
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == kept
     end
   end
 

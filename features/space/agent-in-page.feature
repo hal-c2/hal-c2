@@ -6,11 +6,13 @@
 #     space.page.dismissAgent, the pageAgent entity)
 #   apps/server-ex/lib/hal_c2/space/page_agent.ex
 #   features/space/self-updating-pages.feature (where an ask meets a page's own update)
+#   features/space/prompt.feature (what an ask may choose)
 
 Feature: An agent in a page
   From an open page the user asks an agent to do something to it. The agent runs in an
   ordinary thread, visible in the sidebar, in the project the user last worked in and on
-  the model a new thread there would use, or the one last used if none is set. Its edits
+  the model a new thread there would use, or the one last used if none is set, unless the
+  page's prompt chose others (`features/space/prompt.feature`). Its edits
   are the hal_c2_page_* tools' edits: they land live on every client and page history
   names the thread. A page has one such agent at a time, and
   the page says what it is doing. Every edit is in the page's history, so asking needs
@@ -398,7 +400,3 @@ Feature: An agent in a page
     Scenario: An agent edits a slide deck
       When the user asks "tighten these slides" on the slide deck "Launch"
       Then an agent edits the deck and its edits name its thread
-
-    Scenario: The user picks the project and model for an ask
-      When the user asks "tidy this" on the page "Roadmap" with the project "docs" and another model
-      Then the agent's thread is in "docs" on that model

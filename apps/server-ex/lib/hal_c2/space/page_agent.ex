@@ -38,19 +38,45 @@ defmodule HalC2.Space.PageAgent do
   def active?(%{"status" => status}), do: status in @active
   def active?(_), do: false
 
+  # What the page's prompt may choose for an ask, as `space.page.askAgent` names them.
+  @choices ~w(projectId modelSelection runtimeMode interactionMode attachments context)
+
+  @doc "The fields of `space.page.askAgent` an ask may choose (`ask/5`)."
+  def choices, do: @choices
+
   @doc """
   Asks an agent to do `request` to a page: an optional leading `@agent` is not part of
   what is asked. The reply does not wait for the provider to start; a thread that cannot
-  start fails on the page. `target` says where it runs, by default where the user last
-  worked.
+  start fails on the page. `choices` are what the page's prompt chose (`choices/0`); each
+  one left out is made as for a new thread where the user last worked. `target` turns
+  them into where it runs.
   """
-  def ask(space_id, page_id, request, target \\ &target/0) do
+  def ask(space_id, page_id, request, choices \\ %{}, target \\ &target/1) do
+    thread_id = HalC2.Environment.uuid4()
+
     with {:ok, request} <- request(request),
-         {:ok, target} <- target.(),
-         thread_id = HalC2.Environment.uuid4(),
+         {:ok, target} <- target.(choices),
+         {:ok, attachments} <- attachments(thread_id, choices["attachments"]),
          {:ok, agent, page, space} <- record(space_id, page_id, request, thread_id) do
-      launch(agent, page, space, target)
+      message = %{"attachments" => attachments, "context" => choices["context"]}
+      launch(agent, page, space, target, message)
       {:ok, agent}
+    else
+      refused ->
+        # Images it saved for a thread that will never be.
+        HalC2.Attachments.delete_thread(thread_id)
+        refused
+    end
+  end
+
+  @doc """
+  The project an ask that picks none runs in, for the page's prompt to show:
+  `%{"projectId" => id}`, nil when this MC has no project to run in.
+  """
+  def default_project do
+    case last_worked() do
+      {:ok, project_id, _project, _last} -> {:ok, %{"projectId" => project_id}}
+      {:error, _, _} -> {:ok, %{"projectId" => nil}}
     end
   end
 
@@ -341,11 +367,11 @@ defmodule HalC2.Space.PageAgent do
   # Starting a thread can wait on the provider, so it happens off the caller. What it
   # could not start fails on the page, and an agent stopped meanwhile stops here: its
   # thread did not exist yet when the stop looked for it.
-  defp launch(agent, page, space, target) do
+  defp launch(agent, page, space, target, message) do
     Task.start(fn ->
       launched =
         try do
-          launcher().(input(agent, page, space, target))
+          launcher().(input(agent, page, space, target, message))
         rescue
           error -> {:error, Exception.message(error)}
         catch
@@ -405,7 +431,7 @@ defmodule HalC2.Space.PageAgent do
   defp reason_text(%{"message" => message}) when is_binary(message), do: message
   defp reason_text(reason), do: inspect(reason)
 
-  defp input(agent, page, space, target) do
+  defp input(agent, page, space, target, message) do
     thread_id = agent["threadId"]
 
     %{
@@ -415,18 +441,47 @@ defmodule HalC2.Space.PageAgent do
       "title" => title(page, agent["request"]),
       "modelSelection" => target.model,
       "runtimeMode" => target.runtime_mode,
-      "interactionMode" => "default",
+      "interactionMode" => target.interaction_mode,
       "workspaceStrategy" => %{"type" => "root"},
       "createdBy" => "user",
       "creationSource" => "server",
       "spacePage" => %{"spaceId" => page["spaceId"], "pageId" => page["id"]},
-      "initialMessage" => %{
-        "messageId" => "page-agent-message:#{thread_id}",
-        "text" => prompt(agent["request"], page, space),
-        "attachments" => []
-      }
+      "initialMessage" =>
+        %{
+          "messageId" => "page-agent-message:#{thread_id}",
+          "text" => prompt(agent["request"], page, space),
+          "attachments" => message["attachments"]
+        }
+        |> then(&if(message["context"], do: Map.put(&1, "context", message["context"]), else: &1))
     }
   end
+
+  # An image sent inline is saved for the thread, as `assets.persistChatAttachments` does
+  # for a turn; what the MC already holds, such as an uploaded file, is claimed at launch.
+  defp attachments(_thread_id, nil), do: {:ok, []}
+
+  defp attachments(thread_id, attachments) when is_list(attachments) do
+    attachments
+    |> Enum.reduce_while({:ok, []}, fn
+      %{"dataUrl" => _} = image, {:ok, acc} ->
+        case HalC2.Attachments.persist(%{"threadId" => thread_id, "attachments" => [image]}) do
+          {:ok, %{"attachments" => [stored]}} -> {:cont, {:ok, [stored | acc]}}
+          {:error, %{"message" => message}} -> {:halt, {:error, :invalid, message}}
+        end
+
+      %{} = held, {:ok, acc} ->
+        {:cont, {:ok, [held | acc]}}
+
+      _, _ ->
+        {:halt, {:error, :invalid, "An attachment of the ask is not one."}}
+    end)
+    |> case do
+      {:ok, kept} -> {:ok, Enum.reverse(kept)}
+      refused -> refused
+    end
+  end
+
+  defp attachments(_thread_id, _), do: {:error, :invalid, "The ask's attachments are not a list."}
 
   defp title(page, request), do: String.slice("#{page["title"]}: #{request}", 0, 80)
 
@@ -446,46 +501,81 @@ defmodule HalC2.Space.PageAgent do
 
   # --- which project and model --------------------------------------------------------
 
+  # Where an ask runs: what the prompt chose, else as a new thread where the user last
+  # worked would.
+  defp target(choices) do
+    with {:ok, project_id, project, last} <- project(choices["projectId"]) do
+      settings = HalC2.Settings.for_project(project_id)
+
+      if settings["enableAgentBrowserAccess"] == false do
+        {:error, :invalid,
+         "The HAL-C2 tools are off for the project \"#{project["title"]}\", so an agent could not edit this page."}
+      else
+        with {:ok, model} <- model(choices["modelSelection"], settings, project, last) do
+          {:ok,
+           %{
+             project_id: project_id,
+             model: model,
+             runtime_mode:
+               choices["runtimeMode"] || settings["defaultRuntimeMode"] || "full-access",
+             interaction_mode: choices["interactionMode"] || "default"
+           }}
+        end
+      end
+    end
+  end
+
+  defp project(nil), do: last_worked()
+
+  defp project(project_id) do
+    {_threads, projects} = local_rows()
+
+    case Enum.find(projects, &(&1["id"] == project_id)) do
+      nil -> {:error, :invalid, "That project is not on this MC, so an agent cannot run in it."}
+      project -> {:ok, project_id, project, nil}
+    end
+  end
+
   # The project of the thread the user worked in last, else the project made last: a page
   # belongs to no project, and this is where the user is most likely working. What plugins
   # and agents started in the background says nothing about that.
-  defp target do
-    rows = HalC2.Shell.rows() |> Enum.flat_map(&local_row/1)
-    threads = for {"thread", row} <- rows, row["deletedAt"] == nil, by_user?(row), do: row
-    projects = for {"project", row} <- rows, row["deletedAt"] == nil, do: row
+  defp last_worked do
+    {threads, projects} = local_rows()
     known = MapSet.new(projects, & &1["id"])
 
     last = threads |> Enum.filter(&(&1["projectId"] in known)) |> latest()
 
     case (last && last["projectId"]) || (latest(projects) || %{})["id"] do
-      nil -> {:error, :invalid, "Add a project first: an agent needs one to run in."}
-      project_id -> target(project_id, Enum.find(projects, &(&1["id"] == project_id)), last)
+      nil ->
+        {:error, :invalid, "Add a project first: an agent needs one to run in."}
+
+      project_id ->
+        {:ok, project_id, Enum.find(projects, &(&1["id"] == project_id)), last}
     end
+  end
+
+  defp local_rows do
+    rows = HalC2.Shell.rows() |> Enum.flat_map(&local_row/1)
+    threads = for {"thread", row} <- rows, row["deletedAt"] == nil, by_user?(row), do: row
+    projects = for {"project", row} <- rows, row["deletedAt"] == nil, do: row
+    {threads, projects}
   end
 
   defp by_user?(thread), do: thread["createdBy"] in ["user", nil]
 
-  defp target(project_id, project, last) do
-    settings = HalC2.Settings.for_project(project_id)
-
-    if settings["enableAgentBrowserAccess"] == false do
-      {:error, :invalid,
-       "The HAL-C2 tools are off for the project \"#{project["title"]}\", so an agent could not edit this page."}
-    else
-      with {:ok, model} <- model(settings, project, last) do
-        {:ok,
-         %{
-           project_id: project_id,
-           model: model,
-           runtime_mode: settings["defaultRuntimeMode"] || "full-access"
-         }}
-      end
-    end
+  # A model the prompt chose is the user's word: one that cannot run is refused, not
+  # swapped for another behind their back.
+  defp model(%{"instanceId" => instance} = chosen, _settings, _project, _last) do
+    if runs?(chosen, HalC2.Environment.providers()),
+      do: {:ok, chosen},
+      else:
+        {:error, :invalid,
+         "#{instance} is turned off or cannot start an agent right now. Choose another model."}
   end
 
   # The clients' order for a new thread, then the model last used, then the first
   # provider that can run at all. A model on a provider that can't run gives way.
-  defp model(settings, project, last) do
+  defp model(_none, settings, project, last) do
     providers = HalC2.Environment.providers()
 
     candidates = project_models(settings, project) ++ [last && last["modelSelection"]]

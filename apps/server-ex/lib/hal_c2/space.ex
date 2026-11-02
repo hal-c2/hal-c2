@@ -329,8 +329,8 @@ defmodule HalC2.Space do
 
   # --- the agent of a page ----------------------------------------------------------------
 
-  @doc "See `HalC2.Space.PageAgent.ask/3`."
-  defdelegate ask_page_agent(space_id, page_id, request), to: PageAgent, as: :ask
+  @doc "See `HalC2.Space.PageAgent.ask/5`."
+  defdelegate ask_page_agent(space_id, page_id, request, choices \\ %{}), to: PageAgent, as: :ask
 
   @doc "See `HalC2.Space.PageAgent.stop/2`."
   defdelegate stop_page_agent(space_id, page_id), to: PageAgent, as: :stop
