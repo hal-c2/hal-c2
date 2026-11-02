@@ -514,6 +514,17 @@ bool callFailed(const QJsonObject& item) {
          readResult(item.value(QLatin1String("output"))).failed;
 }
 
+QString delegatedTask(const QJsonObject& item) {
+  const QString status = text(item, QLatin1String("status"));
+  if (text(item, QLatin1String("type")) != QLatin1String("dynamic_tool") ||
+      (status != QLatin1String("running") && status != QLatin1String("completed")) ||
+      orchestrationAction(text(item, QLatin1String("toolName"))) != QLatin1String("delegate")) {
+    return {};
+  }
+  const Result result = readResult(item.value(QLatin1String("output")));
+  return result.failed ? QString() : result.data.value(QLatin1String("taskId")).toString();
+}
+
 GroupSummary summarize(const QList<QJsonObject>& all) {
   QList<QJsonObject> items;
   for (const QJsonObject& item : all) {

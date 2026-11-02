@@ -263,6 +263,8 @@ struct Model {
   // What the user opened, by run and by work group row.
   QSet<QString> foldsOpen;
   QSet<QString> groupsToggled;
+  // The timeline reads as the phone's activity log (TimelineModel::brief).
+  bool brief = false;
 };
 
 bool settled(const Run& run) {
@@ -411,11 +413,17 @@ QString kindOf(const Item& item) {
 // call still running in view; while one of its replies streams it stays open.
 // Consecutive calls of a turn make one group, which a settled turn with
 // several calls summarizes; a group shows its latest call until opened.
+// Brief, a settled turn leaves out the calls that never ended, and a running
+// latest turn ends in "Thinking" unless its last call is running or went
+// well, or its reply is streaming.
 QList<Row> project(const Model& model) {
   const Thread& thread = model.held;
   QList<Item> shown;
   for (const Item& item : thread.items) {
-    if (thread.runs.value(item.run).status != QLatin1String("rolled_back")) shown.append(item);
+    const Run& run = thread.runs.value(item.run);
+    if (run.status == QLatin1String("rolled_back")) continue;
+    if (model.brief && settled(run) && kindOf(item) == QLatin1String("work") && item.status == QLatin1String("running")) continue;
+    shown.append(item);
   }
   std::sort(shown.begin(), shown.end(), [](const Item& a, const Item& b) {
     return a.ordinal != b.ordinal ? a.ordinal < b.ordinal : a.id < b.id;
@@ -535,6 +543,21 @@ QList<Row> project(const Model& model) {
     rows.append(row);
     ++i;
   }
+  if (model.brief && thread.runs.value(latest).status == QLatin1String("running")) {
+    // The last item on screen, of the last row: a group's latest call.
+    Item last;
+    for (qsizetype i = shown.size() - 1; i >= 0 && last.id.isEmpty(); --i) {
+      if (!folded.contains(shown.at(i).id)) last = shown.at(i);
+    }
+    const QString kind = kindOf(last);
+    const bool told = last.run == latest && ((kind == QLatin1String("work") && (last.status == QLatin1String("running") || last.status == QLatin1String("completed"))) ||
+                                             (last.type == QLatin1String("assistant_message") && last.streaming));
+    if (!told) {
+      Row row{QStringLiteral("thinking:") + latest, QStringLiteral("thinking")};
+      row.title = QStringLiteral("Thinking");
+      rows.append(row);
+    }
+  }
   return rows;
 }
 
@@ -570,8 +593,9 @@ struct Sut {
   // Each row's roles when the step began, by id.
   QHash<QString, QHash<int, QVariant>> before;
   int earlierWanted = 0;
+  bool brief = false;
 
-  Sut() {
+  explicit Sut(bool brief = false) : brief(brief) {
     cache.open(dir.path());
     make();
   }
@@ -587,6 +611,7 @@ struct Sut {
     model = std::make_unique<TimelineModel>(kKey);
     model->setClock(clock);
     model->setCache(&cache);
+    model->setBrief(brief);
     tester = std::make_unique<QAbstractItemModelTester>(model.get(), QAbstractItemModelTester::FailureReportingMode::Warning);
     QObject::connect(model.get(), &QAbstractItemModel::dataChanged, model.get(),
                      [this](const QModelIndex& top, const QModelIndex& bottom, const QList<int>& roles) {
@@ -1386,6 +1411,18 @@ private slots:
     QVERIFY(rc::check("the rows are the MC's thread as the client holds it, redrawn only where they changed", [] {
       Model model;
       Sut sut;
+      rc::state::check(model, sut,
+                       rc::state::gen::execOneOfWithArgs<StartRun, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
+                                                         Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
+                                                         LoadEarlier, Toggle, Restart, AgentModel>());
+    }));
+  }
+
+  void brief() {
+    QVERIFY(rc::check("brief, the rows are the phone's activity log of the thread the client holds", [] {
+      Model model;
+      model.brief = true;
+      Sut sut(true);
       rc::state::check(model, sut,
                        rc::state::gen::execOneOfWithArgs<StartRun, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,

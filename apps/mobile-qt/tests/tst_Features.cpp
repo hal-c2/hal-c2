@@ -49,6 +49,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("providers/codex.feature:A plan Codex marked finished*"),
     QStringLiteral("settings/updates.feature"),
     QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
+    QStringLiteral("timeline/tool-calls.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

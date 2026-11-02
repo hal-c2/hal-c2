@@ -462,6 +462,13 @@ void TimelineModel::setTimestampFormat(const QString& format) {
   redrawTimes();
 }
 
+void TimelineModel::setBrief(bool brief) {
+  if (brief == m_brief) return;
+  m_brief = brief;
+  restructure({});
+  emit briefChanged();
+}
+
 void TimelineModel::setLocale(const QLocale& locale) {
   if (locale == m_locale) return;
   m_locale = locale;
@@ -936,6 +943,10 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   QStringList fields = patch.value(QLatin1String("s")).toObject().keys();
   for (const QJsonValue& field : patch.value(QLatin1String("u")).toArray()) fields.append(field.toString());
   for (const QString& field : std::as_const(fields)) structural = structural || kStructural.contains(field);
+  // Brief, how a call ends decides whether it is listed and whether the live row thinks.
+  static const QSet<QString> ending{QStringLiteral("status"), QStringLiteral("exitCode"), QStringLiteral("outputIndicatesFailure"),
+                                    QStringLiteral("output"), QStringLiteral("input")};
+  for (const QString& field : std::as_const(fields)) structural = structural || (m_brief && ending.contains(field));
   // Anything but text appended to the item as it streams.
   const QJsonObject appended = patch.value(QLatin1String("a")).toObject();
   if (!existed || !next || replaced || !fields.isEmpty() || appended.size() != 1 || !appended.contains(QLatin1String("text"))) {
@@ -1007,11 +1018,28 @@ QList<TimelineModel::Row> TimelineModel::project() const {
       interruptRequested.insert(text(item, QLatin1String("runId")));
     }
   }
+  // Brief (apps/mobile/src/lib/threadActivity.ts): the subagents whose cards
+  // the timeline shows, by run, stand in for the calls that delegated them.
+  QSet<QString> carded;
+  if (m_brief) {
+    for (const QJsonObject& item : items) {
+      if (text(item, QLatin1String("type")) != QLatin1String("subagent") || text(item, QLatin1String("origin")) != QLatin1String("app_owned")) continue;
+      carded.insert(text(item, QLatin1String("runId")) + QLatin1Char('\n') + text(item, QLatin1String("subagentId")));
+    }
+  }
   const auto visible = [&](const QJsonObject& item) {
     const QString runId = text(item, QLatin1String("runId"));
     const QString type = text(item, QLatin1String("type"));
     const QString status = text(runs.value(runId), QLatin1String("status"));
     if (status == QLatin1String("rolled_back")) return false;
+    if (m_brief) {
+      // A call that never said it ended once its turn settled, the
+      // workspace's preparation, and a delegation its subagent's card shows.
+      if (kSettled.contains(status) && classify(item) == Kind::Work && text(item, QLatin1String("status")) == QLatin1String("running")) return false;
+      if (type == QLatin1String("command_execution") && text(item, QLatin1String("input")) == QLatin1String("Preparing workspace")) return false;
+      const QString task = timeline::delegatedTask(item);
+      if (!task.isEmpty() && carded.contains(runId + QLatin1Char('\n') + task)) return false;
+    }
     if (status == QLatin1String("cancelled") && type == QLatin1String("user_message") &&
         text(item, QLatin1String("inputIntent")) == QLatin1String("queued_turn")) {
       return false;
@@ -1205,6 +1233,26 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     }
     rows.append(row);
     ++i;
+  }
+  // Brief, a running turn ends in one live row: its latest call when that
+  // says what the agent is doing (still running, or done without failing), a
+  // reply it is writing or a compaction under way, else that it is thinking.
+  if (m_brief && kRunning.contains(text(runs.value(latestRun), QLatin1String("status")))) {
+    bool told = false;
+    if (!rows.isEmpty() && !rows.last().items.isEmpty()) {
+      const QJsonObject last = items.value(rows.last().items.last());
+      const QString type = text(last, QLatin1String("type"));
+      const QString status = text(last, QLatin1String("status"));
+      if (text(last, QLatin1String("runId")) != latestRun) {
+        told = false;
+      } else if (rows.last().kind == QLatin1String("work")) {
+        told = status == QLatin1String("running") || (status == QLatin1String("completed") && !timeline::callFailed(last));
+      } else {
+        told = (type == QLatin1String("assistant_message") && last.value(QLatin1String("streaming")).toBool()) ||
+               (type == QLatin1String("compaction") && status == QLatin1String("running"));
+      }
+    }
+    if (!told) rows.append({QStringLiteral("thinking:") + latestRun, QStringLiteral("thinking")});
   }
   return rows;
 }
@@ -1630,6 +1678,11 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
     if (role == HiddenCountRole) return row.hidden;
     if (role == ExpandedRole) return row.expanded;
     if (role == TimeRole) return stamp(row.at);
+    return {};
+  }
+  if (row.kind == QLatin1String("thinking")) {
+    if (role == TitleRole) return QStringLiteral("Thinking");
+    if (role == IconRole) return QStringLiteral("brain");
     return {};
   }
   if (row.kind == QLatin1String("work")) {

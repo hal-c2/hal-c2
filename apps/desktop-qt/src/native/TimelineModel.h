@@ -44,11 +44,12 @@ class TimelineModel : public QAbstractListModel {
   Q_PROPERTY(QDateTime workingSince READ workingSince NOTIFY workingChanged)
   Q_PROPERTY(bool hasEarlier READ hasEarlier NOTIFY earlierChanged)
   Q_PROPERTY(bool loadingEarlier READ loadingEarlier NOTIFY earlierChanged)
+  Q_PROPERTY(bool brief READ brief NOTIFY briefChanged)
 
 public:
   enum Role {
     IdRole = Qt::UserRole + 1,
-    // message, work, fold, plan, subagent, error or marker
+    // message, work, fold, plan, subagent, error, marker, or (brief) thinking
     KindRole,
     // A message's: user or assistant.
     AuthorRole,
@@ -167,6 +168,14 @@ public:
   // "tomorrow at 9:41 AM", "10/9 9:41 AM"; a past one reads as stamp().
   QString upcoming(const QDateTime& at) const;
 
+  // Whether the timeline reads as the phone's activity log: a settled turn
+  // lists only calls that ended, a delegation its subagent's card shows and
+  // the workspace's preparation are left out, and a running turn ends in one
+  // live row ("Thinking" when no call says what the agent is doing). Off, as
+  // the desktop reads it, unless set.
+  bool brief() const { return m_brief; }
+  void setBrief(bool brief);
+
   // The `kinds` a subscription to a thread's stream names: the entities the
   // model folds, so the MC sends no others.
   static QJsonObject streamKinds();
@@ -262,6 +271,7 @@ signals:
   // The MC answered: an image's new address, empty when it would not sign one.
   void attachmentSigned(const QString& id, const QUrl& url);
   void earlierChanged();
+  void briefChanged();
   // loadEarlier(): the runs before the window holding `items` turn items are wanted.
   void earlierWanted(int items);
 
@@ -370,6 +380,7 @@ private:
   std::function<QString(const QString&)> m_threadTitle;
   std::function<QString()> m_workspaceRoot;
   QString m_timestampFormat = QStringLiteral("locale");
+  bool m_brief = false;
   QLocale m_locale;
   cache::Cursor m_cursor;
   // Between a `sub` frame and the `live` that answers it.

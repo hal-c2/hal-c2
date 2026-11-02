@@ -25,6 +25,10 @@ GroupSummary summarize(const QList<QJsonObject>& items);
 // that carries an error.
 bool callFailed(const QJsonObject& item);
 
+// The task a call to HAL-C2's delegate tool started, once it is running or
+// done without failing: its answer's taskId. Empty for any other call.
+QString delegatedTask(const QJsonObject& item);
+
 // A file the agent read: an ACP `read` call, which the MC projects as a file
 // search with the file as its one result.
 bool isFileRead(const QJsonObject& item);

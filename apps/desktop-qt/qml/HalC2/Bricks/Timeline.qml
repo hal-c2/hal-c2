@@ -141,6 +141,10 @@ Item {
     // Whether a selection in a reply offers "Cite".
     property bool citable: false
 
+    // Whether a long press on a tool call or a failure copies what it says:
+    // the phone's activity log (TimelineModel::brief).
+    readonly property bool holdToCopy: root.model !== null && root.model.brief === true
+
     // Whether the model can put a message on the clipboard (copy(rowId)).
     readonly property bool canCopy: root.model !== null && typeof root.model.copy === "function"
 
@@ -387,6 +391,9 @@ Item {
         readonly property bool hovered: lineHover.hovered
         // A changed file's path keeps its end, the file name.
         property int labelElide: Text.ElideRight
+        // What a long press copies where lines copy so (holdToCopy).
+        property string copyText
+        property bool copied: false
         signal clicked(point position)
         Accessible.role: line.interactive ? Accessible.Button : Accessible.StaticText
         Accessible.name: line.preview.length > 0 ? line.label + ": " + line.preview : line.label
@@ -439,6 +446,15 @@ Item {
             anchors.rightMargin: 2
             height: parent.height
             spacing: 6
+            RowText {
+                objectName: "workLineCopied"
+                visible: line.copied
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("Copied")
+                wrapMode: Text.NoWrap
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                color: root.accentColor
+            }
         }
         HoverHandler {
             id: lineHover
@@ -447,6 +463,19 @@ Item {
         TapHandler {
             enabled: line.interactive
             onTapped: eventPoint => line.clicked(eventPoint.position)
+        }
+        TapHandler {
+            enabled: root.holdToCopy && line.copyText.length > 0
+            onLongPressed: {
+                Shell.setClipboardText(line.copyText);
+                line.copied = true;
+                copiedTimer.restart();
+            }
+        }
+        Timer {
+            id: copiedTimer
+            interval: 1500
+            onTriggered: line.copied = false
         }
     }
 
@@ -730,6 +759,8 @@ Item {
                         return subagent;
                     case "error":
                         return error;
+                    case "thinking":
+                        return thinking;
                     default:
                         // A finished worker's notification names its thread: a card.
                         return (row.model.thread ?? "").length > 0 ? workerResult : marker;
@@ -1525,6 +1556,7 @@ Item {
                                         preview: call.modelData.preview ?? ""
                                         labelElide: (call.modelData.path ?? "").length > 0 ? Text.ElideMiddle : Text.ElideRight
                                         interactive: call.hasDetails
+                                        copyText: [call.modelData.label ?? "", call.modelData.command ?? "", call.modelData.detail ?? ""].filter((part, at, parts) => part.length > 0 && parts.indexOf(part) === at).join("\n")
                                         onClicked: position => {
                                             // Open takes its own tap.
                                             if (openLink.visible && openLink.contains(openLink.mapFromItem(callLine, position)))
@@ -1981,11 +2013,22 @@ Item {
             }
 
             Component {
+                id: thinking
+                // A running turn's live row while no call says what the agent is doing.
+                WorkLine {
+                    objectName: "thinkingRow"
+                    iconName: row.icon || "brain"
+                    label: row.title ?? ""
+                }
+            }
+
+            Component {
                 id: error
                 // The failure's heading, then its message.
                 Column {
                     WorkLine {
                         id: errorLine
+                        objectName: "errorLine"
                         width: parent.width
                         iconName: row.icon || "circle-alert"
                         // A usage limit is a wait, not a crash.
@@ -1993,9 +2036,11 @@ Item {
                         label: row.title ?? ""
                         labelColor: row.model.warning === true ? root.warningColor : root.errorColor
                         labelWeight: Font.Medium
+                        copyText: [row.title ?? "", row.text ?? ""].filter(part => part.length > 0).join("\n")
                         Stamp {
                             anchors.verticalCenter: parent.verticalCenter
-                            visible: text.length > 0 && row.showMeta
+                            // The activity log always says when a turn failed.
+                            visible: text.length > 0 && (row.showMeta || root.holdToCopy)
                             rowId: row.rowId
                             text: row.time ?? ""
                         }
