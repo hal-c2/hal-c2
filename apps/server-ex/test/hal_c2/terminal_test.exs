@@ -24,6 +24,11 @@ defmodule HalC2.TerminalTest do
       history = Enum.reduce(1..5, history, &History.append(&2, "line #{&1}\n"))
       assert History.value(history) == "line 3\nline 4\nline 5\n"
 
+      # A line that arrived in two chunks is kept whole when the first chunk is cut.
+      history = History.new("", max_lines: 2, max_bytes: 1_000)
+      history = Enum.reduce(["a\nb", "c\n", "d\n"], history, &History.append(&2, &1))
+      assert History.value(history) == "bc\nd\n"
+
       history = History.new("", max_lines: 100, max_bytes: 8)
       history = History.append(history, "ab€cdefgh")
       # Never cuts through a character.
