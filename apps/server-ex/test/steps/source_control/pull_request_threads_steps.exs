@@ -95,32 +95,9 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     context
   end
 
-  # As the pull request dialog does: the pull request is prepared, then the thread is
-  # made on the branch and worktree it was prepared in.
   step ~r/^the user starts a thread on pull request 42 in (?<mode>the local checkout|a new worktree)$/,
        %{args: [mode]} = context do
-    mode = mode_of(mode)
-    context = answer_view(context)
-
-    context =
-      if mode == "local",
-        do: context |> discovery() |> branch_answer("feature/tax", 42, "OPEN"),
-        else: context
-
-    context = prepare(context, mode)
-
-    case context.reply do
-      {:ok, prepared} ->
-        context
-        |> World.create_thread("PR 42", @repository, %{
-          "branch" => prepared["branch"],
-          "worktreePath" => prepared["worktreePath"]
-        })
-        |> Map.put(:prepared, prepared)
-
-      _refused ->
-        context
-    end
+    context |> answer_view() |> start(mode_of(mode))
   end
 
   step "the project's checkout switches to the pull request's branch", context do
@@ -197,6 +174,255 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     assert File.dir?(path)
     refute File.exists?(Path.join(path, "setup-ran.txt"))
     refute File.exists?(Path.join(context.cwd, "setup-ran.txt"))
+    context
+  end
+
+  # --- reused worktrees ----------------------------------------------------------------
+
+  step "a worktree for pull request {int} exists with no changes or commits of its own",
+       %{args: [42]} = context do
+    existing_worktree(context)
+  end
+
+  step ~r/^a worktree for pull request 42 exists and (?<state>.+)$/, %{args: [state]} = context do
+    context = existing_worktree(context)
+    path = context.existing_worktree
+
+    case state do
+      "it has uncommitted changes and the pull request has new commits" ->
+        File.write!(Path.join(path, "tax.txt"), "edited\n")
+        push_pr(context, context.pr_head, "More tax")
+
+      "it has commits of its own and the pull request was rewritten" ->
+        World.commit!(path, %{"local.txt" => "mine\n"}, "Local work")
+        push_pr(context, "main", "Charge tax, rebased")
+
+      "the host cannot say what the pull request's head is and the branch was cut from another branch" ->
+        bare = bare(@repository)
+        World.git!(bare, ~w(update-ref -d refs/pull/42/head))
+        World.git!(bare, ~w(update-ref -d refs/heads/feature/tax))
+        World.git!(path, ~w(branch -q --set-upstream-to=origin/main))
+        context
+    end
+    |> then(fn context ->
+      Map.put(context, :before, %{
+        head: World.git!(path, ~w(rev-parse HEAD)),
+        status: World.git!(path, ~w(status --porcelain))
+      })
+    end)
+  end
+
+  step "the pull request has since received new commits", context do
+    push_pr(context, context.pr_head, "More tax")
+  end
+
+  step "the pull request's author has since rebased it and pushed over the old commits",
+       context do
+    push_pr(context, "main", "Charge tax, rebased")
+  end
+
+  step ~r/^the existing worktree is moved onto the (pull request's newest commit|rewritten head)$/,
+       context do
+    assert %{"worktreePath" => path} = context.prepared
+    assert path == context.existing_worktree
+    assert World.git!(path, ~w(rev-parse HEAD)) == context.new_head
+    context
+  end
+
+  step "the user is not told the checkout is behind", context do
+    assert context.prepared["isOnPullRequestHead"] == true
+    context
+  end
+
+  step "the commit it was on can still be found afterwards", context do
+    assert World.git!(context.existing_worktree, ~w(rev-parse refs/hal-c2/pre-refresh)) ==
+             context.pr_head
+
+    context
+  end
+
+  step "the existing worktree is handed back unchanged", context do
+    assert %{"worktreePath" => path} = context.prepared
+    assert path == context.existing_worktree
+    assert World.git!(path, ~w(rev-parse HEAD)) == context.before.head
+    assert World.git!(path, ~w(status --porcelain)) == context.before.status
+    context
+  end
+
+  step ~r/^the user's own "(?<branch>[^"]+)" is checked out in another worktree$/,
+       %{args: [branch]} = context do
+    path = Path.join(Mc.tmp_dir(context.mc, "own-worktree"), branch)
+    World.git!(context.cwd, ~w(checkout -q --detach))
+    World.git!(context.cwd, ["worktree", "add", "-q", path, branch])
+
+    Map.put(context, :own_worktree, %{
+      path: path,
+      head: World.git!(path, ~w(rev-parse HEAD)),
+      upstream: World.git!(path, ~w(rev-parse --abbrev-ref @{upstream}))
+    })
+  end
+
+  step ~r/^the user's "(?<branch>[^"]+)" worktree is not changed$/, %{args: [branch]} = context do
+    %{path: path, head: head, upstream: upstream} = context.own_worktree
+    assert World.git!(path, ~w(branch --show-current)) == branch
+    assert World.git!(path, ~w(rev-parse HEAD)) == head
+    assert World.git!(path, ~w(rev-parse --abbrev-ref @{upstream})) == upstream
+    assert World.git!(path, ~w(status --porcelain)) == ""
+    context
+  end
+
+  step "the thread is told the checkout is not on the pull request's head", context do
+    assert %{"isOnPullRequestHead" => false} = context.prepared
+    context
+  end
+
+  # --- fork remotes --------------------------------------------------------------------
+
+  step ~r/^pull request 42 comes from the fork "(?<fork>[^"]+)"(?: branch "(?<branch>[^"]+)")?(?<unfetchable> and the fork cannot be fetched from)?$/,
+       %{args: [fork | rest]} = context do
+    [branch, unfetchable] = Enum.take(rest ++ [nil, nil], 2)
+    branch = if branch in [nil, ""], do: "tax", else: branch
+    fork(context, fork, branch, unfetchable not in [nil, ""])
+  end
+
+  step ~r/^the user starts a thread on pull request 42 from "(?<fork>[^"]+)" in a new worktree$/,
+       %{args: [fork]} = context do
+    context = fork(context, fork, "tax", false)
+    start(context, "worktree")
+  end
+
+  step ~r/^the project's "origin" is reached over (?<protocol>ssh|https)$/,
+       %{args: [protocol]} = context do
+    if protocol == "https" do
+      World.git!(context.cwd, ~w(remote set-url origin https://github.com/acme/shop.git))
+      remotes = System.get_env("HAL_C2_FAKE_REMOTES")
+      World.git!(context.cwd, ["config", "url.#{remotes}/.insteadOf", "https://github.com/"])
+    end
+
+    context
+  end
+
+  step "the checkout gets a remote for {string} named after its owner",
+       %{args: [repository]} = context do
+    [owner, _] = String.split(repository, "/")
+
+    assert World.git!(context.cwd, ["config", "remote.#{owner}.url"]) ==
+             "git@github.com:#{repository}.git"
+
+    Map.put(context, :fork_remote, owner)
+  end
+
+  step "the branch follows {string} on that remote", %{args: [branch]} = context do
+    assert_follows(context, "#{context.fork_remote}/#{branch}")
+  end
+
+  step ~r/^the fork's remote is added with its (?<protocol>ssh|https) address$/,
+       %{args: [protocol]} = context do
+    url =
+      if protocol == "ssh", do: "git@github.com:sam/shop.git", else: "https://github.com/sam/shop"
+
+    assert World.git!(context.cwd, ~w(config remote.sam.url)) == url
+    assert_follows(context, "sam/tax")
+  end
+
+  step ~r/^the checkout already has a remote "(?<name>[^"]+)" for the address of "(?<repository>[^"]+)"$/,
+       %{args: [name, repository]} = context do
+    World.git!(context.cwd, ["remote", "add", name, "git@github.com:#{repository}.git"])
+    context
+  end
+
+  step ~r/^the checkout has a remote "(?<name>[^"]+)" that points at another repository$/,
+       %{args: [name]} = context do
+    World.git!(context.cwd, ["remote", "add", name, "git@github.com:#{name}/other.git"])
+    Map.put(context, :other_remote, {name, "git@github.com:#{name}/other.git"})
+  end
+
+  step "{string} is used", %{args: [name]} = context do
+    assert_follows(context, "#{name}/tax")
+  end
+
+  step "no further remote is added", context do
+    assert World.git!(context.cwd, ~w(remote)) |> String.split("\n") |> Enum.sort() ==
+             ["origin", "sam-fork"]
+
+    context
+  end
+
+  step "the fork is added as the remote {string}", %{args: [name]} = context do
+    assert World.git!(context.cwd, ["config", "remote.#{name}.url"]) ==
+             "git@github.com:sam/shop.git"
+
+    assert_follows(context, "#{name}/tax")
+  end
+
+  step "the existing {string} remote is not changed", %{args: [name]} = context do
+    {^name, url} = context.other_remote
+    assert World.git!(context.cwd, ["config", "remote.#{name}.url"]) == url
+    context
+  end
+
+  step "the pull request's head is fetched from the host's own pull request ref instead",
+       context do
+    assert %{"branch" => "hal-c2/pr-42/tax", "worktreePath" => path} = context.prepared
+    assert World.git!(path, ~w(rev-parse HEAD)) == context.pr_head
+    context
+  end
+
+  step "the thread starts in a worktree on it", context do
+    row = World.await_row(World.thread_id(context, "PR 42"), & &1)
+    assert row["worktreePath"] == context.prepared["worktreePath"]
+    assert row["branch"] == "hal-c2/pr-42/tax"
+    context
+  end
+
+  step "neither the fork nor the host's pull request ref can be fetched", context do
+    File.rm_rf!(bare("sam/shop"))
+    World.git!(bare(@repository), ~w(update-ref -d refs/pull/42/head))
+    context
+  end
+
+  step "the thread is not prepared", context do
+    assert {:error, _, _} = context.reply
+    refute context[:prepared]
+    context
+  end
+
+  step "the user is told that both fetches failed for pull request {int}",
+       %{args: [number]} = context do
+    assert World.failure(context) =~
+             "Repository-head and pull-request-ref fetches both failed for pull request ##{number}"
+
+    context
+  end
+
+  step "the remote cannot be reached when the branch is about to be set to follow it",
+       context do
+    context
+    |> answer_view()
+    |> World.cli_rules(%{
+      "args" => ["pr checkout 42 --force"],
+      "run" =>
+        "git fetch -q origin +refs/pull/42/head:refs/heads/feature/tax && " <>
+          "git checkout -q feature/tax && " <>
+          "git remote set-url origin git@github.com:acme/gone.git"
+    })
+  end
+
+  step "the checkout is on the pull request's branch", context do
+    assert %{"branch" => "feature/tax", "worktreePath" => nil} = context.prepared
+    assert World.git!(context.cwd, ~w(branch --show-current)) == "feature/tax"
+    assert World.git!(context.cwd, ~w(rev-parse HEAD)) == context.pr_head
+    context
+  end
+
+  step "the thread is prepared without an upstream", context do
+    assert {_, status} =
+             System.cmd("git", ~w(rev-parse --abbrev-ref @{upstream}),
+               cd: context.cwd,
+               stderr_to_stdout: true
+             )
+
+    assert status != 0
     context
   end
 
@@ -544,6 +770,91 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   end
 
   # --- helpers -------------------------------------------------------------------------
+
+  # As the pull request dialog does: the pull request is prepared, then the thread is
+  # made on the branch and worktree it was prepared in.
+  defp start(context, mode) do
+    context =
+      if mode == "local" and context.pr_view["headRefName"] == "feature/tax",
+        do: context |> discovery() |> branch_answer("feature/tax", 42, "OPEN"),
+        else: context
+
+    context = prepare(context, mode)
+
+    case context.reply do
+      {:ok, prepared} ->
+        context
+        |> World.create_thread("PR 42", @repository, %{
+          "branch" => prepared["branch"],
+          "worktreePath" => prepared["worktreePath"]
+        })
+        |> Map.put(:prepared, prepared)
+
+      _refused ->
+        context
+    end
+  end
+
+  # Pull request 42 prepared in a worktree of its own, as a thread before this one did.
+  defp existing_worktree(context) do
+    context = context |> answer_view() |> prepare("worktree")
+    assert {:ok, %{"worktreePath" => path, "isOnPullRequestHead" => true}} = context.reply
+    Map.put(context, :existing_worktree, path)
+  end
+
+  # A new head for pull request 42 on top of `base` (its head, or main for a rewrite),
+  # force-pushed to its ref and branch on the fake GitHub by its author.
+  defp push_pr(context, base, message) do
+    root = context.cwd
+    World.git!(root, ["checkout", "-q", "--detach", base])
+    head = World.commit!(root, %{"tax.txt" => message <> "\n"}, message)
+    # Straight to the bare repository, as the author's own push: the checkout's
+    # remote-tracking branches stay where they were.
+    World.git!(root, [
+      "push",
+      "-q",
+      "-f",
+      bare(@repository),
+      "HEAD:refs/pull/42/head",
+      "HEAD:refs/heads/feature/tax"
+    ])
+
+    World.git!(root, ~w(checkout -q main))
+    Map.put(context, :new_head, head)
+  end
+
+  # A repository's bare repository on the fake host (`World.github_remote/3`).
+  defp bare(repository),
+    do: Path.join(System.get_env("HAL_C2_FAKE_REMOTES"), "#{repository}.git")
+
+  # Pull request 42 from `branch` of the fork `repository`, which holds its head unless
+  # `unfetchable`; `gh repo view` knows the fork's addresses.
+  defp fork(context, repository, branch, unfetchable?) do
+    [owner, name] = String.split(repository, "/")
+
+    context =
+      answer_view(context, %{
+        "headRefName" => branch,
+        "isCrossRepository" => true,
+        "headRepository" => %{"id" => "R_fork", "name" => name, "nameWithOwner" => repository},
+        "headRepositoryOwner" => %{"login" => owner}
+      })
+
+    unless unfetchable? do
+      fork = bare(repository)
+      World.git!(context.cwd, ["init", "-q", "--bare", fork])
+      World.git!(context.cwd, ["push", "-q", fork, "#{context.pr_head}:refs/heads/#{branch}"])
+    end
+
+    Shared.answer_lookup(context, "github", repository)
+  end
+
+  defp assert_follows(context, upstream) do
+    assert %{"worktreePath" => path} = context.prepared
+    assert World.git!(path, ~w(rev-parse --abbrev-ref @{upstream})) == upstream
+    assert World.git!(path, ~w(rev-parse HEAD)) == context.pr_head
+    context
+  end
 
   defp mode_of("the local checkout"), do: "local"
   defp mode_of("a new worktree"), do: "worktree"

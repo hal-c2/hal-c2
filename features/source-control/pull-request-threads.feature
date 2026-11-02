@@ -118,8 +118,7 @@ Feature: Threads that work on or link pull requests
     Then the setup script does not run
 
   # Legacy: apps/server/src/git/GitManager.ts (reuseExistingWorktree), GitVcsDriverCore.ts (refreshCheckedOutBranch)
-  # Likely already implemented: apps/server-ex/lib/hal_c2/pull_requests/checkout.ex (advance)
-  @mc @backlog
+  @mc
   Scenario: A reused pull request worktree that holds nothing of its own follows the pull request
     Given a worktree for pull request 42 exists with no changes or commits of its own
     And the pull request has since received new commits
@@ -128,7 +127,7 @@ Feature: Threads that work on or link pull requests
     And the user is not told the checkout is behind
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (refreshCheckedOutBranch: rewritten head)
-  @mc @backlog
+  @mc
   Scenario: A pull request that was rewritten is taken by a worktree that holds nothing of its own
     Given a worktree for pull request 42 exists with no changes or commits of its own
     And the pull request's author has since rebased it and pushed over the old commits
@@ -137,7 +136,7 @@ Feature: Threads that work on or link pull requests
     And the commit it was on can still be found afterwards
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (refreshCheckedOutBranch), GitManager.ts (reuseExistingWorktree)
-  @mc @backlog
+  @mc
   Scenario Outline: A reused pull request worktree is left as it is when moving it could lose work
     Given a worktree for pull request 42 exists and <state>
     When the user starts a thread on pull request 42 in a new worktree
@@ -151,7 +150,7 @@ Feature: Threads that work on or link pull requests
       | the host cannot say what the pull request's head is and the branch was cut from another branch |
 
   # Legacy: apps/server/src/git/GitManager.ts (reuseExistingWorktree: findLocalHeadBranch)
-  @mc @backlog
+  @mc
   Scenario: A branch that only shares a fork pull request's branch name is left alone
     Given pull request 42 comes from the fork branch "main"
     And the user's own "main" is checked out in another worktree
@@ -160,8 +159,7 @@ Feature: Threads that work on or link pull requests
     And the thread is told the checkout is not on the pull request's head
 
   # Legacy: apps/server/src/git/GitManager.ts (configurePullRequestHeadUpstream, ensureRemote)
-  # Uncertain: the scenario "A pull request from a fork gets a branch of its own" says the branch has no upstream
-  @mc @backlog
+  @mc
   Scenario: A pull request branch follows the pull request's own branch so a push lands on it
     Given pull request 42 comes from the fork "sam/shop" branch "tax"
     When the user starts a thread on pull request 42 in a new worktree
@@ -169,7 +167,7 @@ Feature: Threads that work on or link pull requests
     And the branch follows "tax" on that remote
 
   # Legacy: apps/server/src/git/GitManager.ts (shouldPreferSshRemote)
-  @mc @backlog
+  @mc
   Scenario Outline: A fork is added the way the project's own remote is reached
     Given the project's "origin" is reached over <protocol>
     And pull request 42 comes from the fork "sam/shop"
@@ -182,7 +180,7 @@ Feature: Threads that work on or link pull requests
       | https    |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (ensureRemote)
-  @mc @backlog
+  @mc
   Scenario: A fork the checkout already has a remote for is not added a second time
     Given the checkout already has a remote "sam-fork" for the address of "sam/shop"
     When the user starts a thread on pull request 42 from "sam/shop" in a new worktree
@@ -190,7 +188,7 @@ Feature: Threads that work on or link pull requests
     And no further remote is added
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (ensureRemote: preferredName collisions)
-  @mc @backlog
+  @mc
   Scenario: A remote already named after the fork's owner but pointing elsewhere gets a numbered name
     Given the checkout has a remote "sam" that points at another repository
     When the user starts a thread on pull request 42 from "sam/shop" in a new worktree
@@ -198,7 +196,7 @@ Feature: Threads that work on or link pull requests
     And the existing "sam" remote is not changed
 
   # Legacy: apps/server/src/git/GitManager.ts (materializePullRequestHeadBranch)
-  @mc @backlog
+  @mc
   Scenario: A fork that cannot be fetched falls back to the pull request's own ref
     Given pull request 42 comes from the fork "sam/shop" and the fork cannot be fetched from
     When the user starts a thread on pull request 42 in a new worktree
@@ -206,7 +204,7 @@ Feature: Threads that work on or link pull requests
     And the thread starts in a worktree on it
 
   # Legacy: apps/server/src/git/GitManager.ts (GitPullRequestMaterializationError)
-  @mc @backlog
+  @mc
   Scenario: A pull request that cannot be fetched either way names both failures
     Given pull request 42 comes from the fork "sam/shop"
     And neither the fork nor the host's pull request ref can be fetched
@@ -215,7 +213,7 @@ Feature: Threads that work on or link pull requests
     And the user is told that both fetches failed for pull request 42
 
   # Legacy: apps/server/src/git/GitManager.ts (configurePullRequestHeadUpstream: Effect.catch logs)
-  @mc @backlog
+  @mc
   Scenario: A pull request thread is still prepared when its branch cannot be set to follow the remote
     Given the remote cannot be reached when the branch is about to be set to follow it
     When the user starts a thread on pull request 42 in the local checkout
