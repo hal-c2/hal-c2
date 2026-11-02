@@ -20,7 +20,7 @@ Item {
     }
 
     function block(id, text, more) {
-        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more);
+        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, level: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more);
     }
 
     function pageRow(id, title, depth, parentPageId) {
@@ -616,6 +616,53 @@ Item {
             keyClick("F");
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.block.update"), [{ blockId: "b1", text: "F" }]);
+        }
+
+        // features/space/markdown.feature: Markdown a page keeps as written.
+        function test_a_raw_block_is_its_source_and_return_starts_a_line_in_it() {
+            const table = "| Step | Owner |\n| ---- | ----- |\n|   MC | Ada   |";
+            const view = root.research({ blocks: [root.block("b1", table, { kind: "raw" })] });
+            const editor = findChild(view, "spaceBlockEditor:" + table);
+            compare(editor.text, table);
+            compare(editor.wrapMode, TextEdit.NoWrap);
+            compare(editor.textFormat, TextEdit.PlainText);
+            editor.forceActiveFocus();
+            editor.cursorPosition = editor.length;
+            keyClick(Qt.Key_Return);
+            keyClick("|");
+            compare(root.dispatched("space.block.update").length, 0);
+            keyClick(Qt.Key_Return, Qt.ControlModifier);
+            compare(root.dispatched("space.block.update"), [{ blockId: "b1", text: table + "\n|" }]);
+        }
+
+        function test_a_scrolled_raw_block_comes_back_when_its_lines_get_shorter() {
+            const long = "| " + "x".repeat(400) + " |";
+            const view = root.research({ blocks: [root.block("b1", long, { kind: "raw" })] });
+            const scroller = findChild(view, "spaceBlockScroll:" + long);
+            verify(scroller.contentWidth > scroller.width);
+            mouseWheel(scroller, 10, 10, -100000, 0);
+            verify(scroller.contentX > 0);
+            compare(scroller.contentX, scroller.contentWidth - scroller.width);
+            // A wider page shows more of the line, and none of it past its end.
+            const narrow = scroller.width;
+            view.width += 300;
+            tryVerify(() => scroller.width > narrow);
+            tryCompare(scroller, "contentX", scroller.contentWidth - scroller.width);
+            // Another client writes it shorter: the start of its lines shows again.
+            Spaces.blocks.setProperty(0, "text", "| x |");
+            tryCompare(scroller, "contentX", 0);
+        }
+
+        function test_headings_step_down_in_size_from_level_one() {
+            const levels = [1, 2, 3, 4, 5, 6];
+            const headings = levels.map(level => root.block("h" + level, "Level " + level, { kind: "heading", level: level }));
+            const view = root.research({ blocks: headings.concat([root.block("h", "Plain", { kind: "heading" })]) });
+            tryVerify(() => findChild(view, "spaceBlockEditor:Plain") !== null);
+            const sizes = levels.map(level => findChild(view, "spaceBlockEditor:Level " + level).font.pixelSize);
+            for (let i = 1; i < sizes.length; ++i)
+                verify(sizes[i] < sizes[i - 1], "level " + (i + 1) + " is smaller than level " + i + ": " + sizes);
+            // Level 2 is the page's usual heading, and so is a heading with no level.
+            compare(findChild(view, "spaceBlockEditor:Plain").font.pixelSize, sizes[1]);
         }
 
         function test_what_the_user_is_writing_is_not_overwritten_by_the_stream() {
