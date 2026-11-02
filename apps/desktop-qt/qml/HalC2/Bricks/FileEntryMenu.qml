@@ -19,6 +19,16 @@ ShellMenu {
         onTriggered: Shell.dispatch("files.open", {path: menu.path})
     }
     ShellMenuItem {
+        objectName: "fileEntryOpenInSpace"
+        // Only a file the project's spaces section covers (SpaceController's `files`).
+        readonly property bool offered: Shell.state.space?.files?.[Shell.state.panel?.projectId ?? ""]?.paths?.[menu.path] !== undefined
+        visible: offered
+        enabled: offered
+        height: visible ? implicitHeight : 0
+        text: qsTr("Open in a Space")
+        onTriggered: Shell.dispatch("files.openInSpace", {path: menu.path})
+    }
+    ShellMenuItem {
         objectName: "fileEntryReveal"
         text: Shell.state.workspace?.revealLabel ?? qsTr("Reveal in file manager")
         enabled: menu.editors.some(editor => editor.id === "file-manager")

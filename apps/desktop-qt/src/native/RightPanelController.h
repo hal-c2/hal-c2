@@ -98,6 +98,9 @@ public:
 
   ThreadDiff* diff() { return &m_diff; }
   WorkspaceFiles* files() { return &m_files; }
+  // The thread whose files the panel shows: its environment and project.
+  QString environmentId() const { return m_thread.left(m_thread.indexOf(QLatin1Char(':'))); }
+  QString projectId() const { return m_projectId; }
   AgentsModel* agents() { return &m_agents; }
   ThreadPullRequests* pullRequests() { return &m_pullRequests; }
   ThreadPreviews* previews() { return &m_previews; }
@@ -206,6 +209,7 @@ private:
   // The thread the panel shows; kept while the route is elsewhere (settings)
   // so coming back finds the tabs as they were.
   QString m_thread;
+  QString m_projectId;
   bool m_onThread = false;
   QHash<QString, Panel> m_panels;
   // What was last opened proactively for each thread, so a panel the user

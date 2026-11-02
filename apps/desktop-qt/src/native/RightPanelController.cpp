@@ -20,6 +20,7 @@
 #include "NavigationController.h"
 #include "McClient.h"
 #include "SettingsController.h"
+#include "SpaceController.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ThisMachine.h"
@@ -55,6 +56,14 @@ FileLink fileLink(const QString& link) {
   if (!line.hasMatch()) line = position.match(path);
   path.remove(QRegularExpression(QStringLiteral("#.*$"))).remove(QRegularExpression(QStringLiteral("(:\\d+)+$")));
   return {QUrl::fromPercentEncoding(path.toUtf8()), line.hasMatch() ? line.captured(1).toInt() : 0};
+}
+
+// `path` as the workspace at `root` names it: as it is when relative, "" when outside it.
+QString relativeTo(const QString& path, const QString& root) {
+  if (!QDir::isAbsolutePath(path)) return QDir::cleanPath(path);
+  if (root.isEmpty()) return {};
+  const QString relative = QDir(root).relativeFilePath(path);
+  return relative.startsWith(QLatin1String("..")) ? QString() : relative;
 }
 
 // A review tab's pull request: host, repository and number of "host/repository#number".
@@ -239,14 +248,23 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
                : MenuController::Item{QStringLiteral("open"), tr("Open link"), QStringLiteral("external-link")},
         {QStringLiteral("copy"), isFile ? tr("Copy path") : tr("Copy link"), QStringLiteral("copy")}};
     const QString environmentId = m_thread.left(m_thread.indexOf(QLatin1Char(':')));
+    // A file of the project that is Space content opens as a page too.
+    auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+    const QString relative = isFile ? relativeTo(file.path, m_files.root()) : QString();
+    if (m_onThread && spaces && !relative.isEmpty() && spaces->isSpaceFile(environmentId, m_projectId, relative)) {
+      items.insert(1, {QStringLiteral("open-in-space"), tr("Open in a Space"), QStringLiteral("book")});
+    }
     if (m_onThread && ThreadPullRequests::parseUrl(url) &&
         (m_store->supports(environmentId, QStringLiteral("threadPullRequests")) ||
          m_store->supports(environmentId, QStringLiteral("threadPullRequestLinking")))) {
       items.append({QStringLiteral("link-pull-request"), tr("Link pull request to thread"), QStringLiteral("git-pull-request")});
     }
     NativeShell::of(this)->controller<MenuController>()->open(
-        map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble(), items, [this, url, file](const QString& id) {
-          if (id == QLatin1String("open")) {
+        map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble(), items,
+        [this, url, file, environmentId, project = m_projectId, relative](const QString& id) {
+          if (id == QLatin1String("open-in-space")) {
+            if (auto* spaces = NativeShell::of(this)->controller<SpaceController>()) spaces->openFile(environmentId, project, relative);
+          } else if (id == QLatin1String("open")) {
             if (file.path.isEmpty()) {
               openAddress(url);
             } else {
@@ -328,6 +346,9 @@ void RightPanelController::retarget() {
     m_diff.setCheckout(root);
     m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root, threadId);
+    // Which of the project's files open in a Space, for the tab's menus and the links.
+    m_projectId = row.value(QLatin1String("projectId")).toString();
+    if (auto* spaces = shell->controller<SpaceController>()) spaces->listFiles(environmentId, m_projectId);
     m_files.setTimeline(timeline);
     m_pullRequests.setThread(threadKey);
     m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));
@@ -753,6 +774,7 @@ void RightPanelController::publish() {
   m_bridge->publish(QStringLiteral("panel"),
                     QVariantMap{
                         {QStringLiteral("threadKey"), m_thread},
+                        {QStringLiteral("projectId"), m_projectId},
                         {QStringLiteral("isOpen"), state.open},
                         {QStringLiteral("transitionMs"), transitionMs},
                         {QStringLiteral("activeId"), state.active},

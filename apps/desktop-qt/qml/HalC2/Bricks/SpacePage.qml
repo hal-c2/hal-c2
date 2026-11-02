@@ -19,6 +19,9 @@ Rectangle {
     readonly property string siteUrl: site.url ?? ""
     readonly property bool siteBehind: site.behind === true
     readonly property bool siteLocalOnly: site.localOnly === true
+    // The project file the page is: {projectId, projectTitle, path, missing, conflictAt}, or empty.
+    readonly property var file: current.file ?? ({})
+    readonly property bool fileBacked: (file.path ?? "") !== ""
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     // The kind the composer adds, and the block it goes after ("" for the end).
@@ -377,6 +380,24 @@ Rectangle {
             }
 
             ShellMenuItem {
+                objectName: "spaceShowFile"
+                text: qsTr("Show the file")
+                iconName: "file-text"
+                visible: page.fileBacked && !(page.file.missing ?? false)
+                height: visible ? implicitHeight : 0
+                onTriggered: Shell.dispatch("space.page.showFile", { pageId: Spaces.pageId })
+            }
+
+            ShellMenuItem {
+                objectName: "spaceUnlinkFile"
+                text: qsTr("Stop following the file")
+                iconName: "circle-x"
+                visible: page.fileBacked
+                height: visible ? implicitHeight : 0
+                onTriggered: Shell.dispatch("space.page.unlinkFile", { pageId: Spaces.pageId })
+            }
+
+            ShellMenuItem {
                 text: qsTr("Move to the top of the Space")
                 iconName: "arrow-up"
                 visible: (page.current.parentPageId ?? "") !== "" && !page.trashed
@@ -404,6 +425,84 @@ Rectangle {
             text: qsTr("Made from the thread “%1”").arg(page.current.sourceThreadTitle ?? "")
             color: page.muted
             font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        // The project file the page is: where it is, and that it is gone or won over an edit.
+        Rectangle {
+            objectName: "spacePageFile"
+            Layout.fillWidth: true
+            visible: page.fileBacked
+            readonly property bool warn: (page.file.missing ?? false) || (page.file.conflictAt ?? "") !== ""
+            implicitHeight: fileColumn.implicitHeight + 12
+            radius: Math.min(Theme.radius, 8)
+            color: warn ? Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.12) : Qt.alpha(page.foreground, 0.05)
+            border.color: warn ? Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.4) : Qt.alpha(page.foreground, 0.15)
+
+            ColumnLayout {
+                id: fileColumn
+
+                anchors.fill: parent
+                anchors.margins: 6
+                spacing: 4
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    ShellIcon {
+                        name: "file-text"
+                        size: 14
+                        color: page.foreground
+                    }
+
+                    Text {
+                        objectName: "spacePageFilePath"
+                        Layout.fillWidth: true
+                        text: qsTr("The file %1 of %2").arg(page.file.path ?? "").arg(page.file.projectTitle ?? "")
+                        color: page.foreground
+                        elide: Text.ElideMiddle
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+
+                    ShellButton {
+                        objectName: "spacePageFileShow"
+                        text: qsTr("Show file")
+                        visible: !(page.file.missing ?? false)
+                        onClicked: Shell.dispatch("space.page.showFile", { pageId: Spaces.pageId })
+                    }
+                }
+
+                Text {
+                    objectName: "spacePageFileGone"
+                    Layout.fillWidth: true
+                    visible: page.file.missing ?? false
+                    text: qsTr("The file is gone. The page keeps what it last said; stop following the file to keep it as an ordinary page.")
+                    color: page.foreground
+                    wrapMode: Text.Wrap
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                }
+
+                RowLayout {
+                    objectName: "spacePageFileConflict"
+                    Layout.fillWidth: true
+                    visible: (page.file.conflictAt ?? "") !== ""
+                    spacing: 8
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("The file changed while you were editing, and the page now shows the file. Your edit is in the page's history.")
+                        color: page.foreground
+                        wrapMode: Text.Wrap
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+
+                    ShellButton {
+                        objectName: "spacePageFileHistory"
+                        text: qsTr("History")
+                        onClicked: Shell.dispatch("space.history.open", { pageId: Spaces.pageId })
+                    }
+                }
+            }
         }
 
         SpaceAgentStrip {
