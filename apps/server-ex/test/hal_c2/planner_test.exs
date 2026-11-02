@@ -1050,6 +1050,11 @@ defmodule HalC2.PlannerTest do
       marks = [%{"task" => "t", "issue" => issue.(8)}]
       assert Sync.left(before, items) == %{"ms" => marks}
 
+      # Unlinking or removing the task leaves it behind the same way.
+      unlinked = %{items | "t" => Map.delete(task(nil), "issue")}
+      assert Sync.left(before, unlinked) == %{"ms" => marks}
+      assert Sync.left(before, Map.delete(items, "t")) == %{"ms" => marks}
+
       synced = Sync.left_behind(synced, marks)
 
       asked =
