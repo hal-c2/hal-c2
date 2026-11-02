@@ -760,30 +760,22 @@ defmodule HalC2.CodeReviewTest do
     push!(context, 2)
     rules!(context, head: 2)
 
-    entry =
-      review
-      |> Map.take(
-        ~w(key repository number projectId title url author headBranch baseBranch isDraft labels reviewRequested changedLines updatedAt)
-      )
-      |> Map.put("headSha", second)
-
-    found = %{
-      at: at,
-      problem: nil,
-      unwatched: [],
-      entries: [entry],
-      read: [],
-      sizes: %{},
-      unknown_sizes: [],
-      asked: %{},
-      closed: [],
-      elsewhere: %{}
-    }
-
-    send(Process.whereis(@server), {:polled, found})
+    send(Process.whereis(@server), {:polled, listing(review, at, second)})
     :sys.get_state(@server)
     settle()
     assert %{"status" => "running", "headSha" => ^second} = review()
+  end
+
+  test "a look begun before a run claimed that lists the head it holds starts no other",
+       context do
+    at = System.monotonic_time()
+    %{"headSha" => head} = review = start_review()
+    lists = list_calls(context)
+
+    send(Process.whereis(@server), {:polled, listing(review, at, head)})
+    :sys.get_state(@server)
+    settle()
+    assert list_calls(context) == lists
   end
 
   # From the Maude model of claims between machines: while the plugin restarted, its
@@ -857,6 +849,37 @@ defmodule HalC2.CodeReviewTest do
   end
 
   # --- helpers ----------------------------------------------------------------------------
+
+  # What a look begun at `at` found: the pull request of `review` at the head `head`.
+  defp listing(review, at, head) do
+    entry =
+      review
+      |> Map.take(
+        ~w(key repository number projectId title url author headBranch baseBranch isDraft labels reviewRequested changedLines updatedAt)
+      )
+      |> Map.put("headSha", head)
+
+    %{
+      at: at,
+      problem: nil,
+      unwatched: [],
+      entries: [entry],
+      read: [],
+      sizes: %{},
+      unknown_sizes: [],
+      asked: %{},
+      closed: [],
+      elsewhere: %{}
+    }
+  end
+
+  # How many times the fake GitHub listed the pull requests.
+  defp list_calls(context) do
+    Path.join(context.dir, "gh.log")
+    |> File.read!()
+    |> String.split("\n", trim: true)
+    |> Enum.count(&("pr" in JSON.decode!(&1)["args"] and "list" in JSON.decode!(&1)["args"]))
+  end
 
   # A review of #1 waiting to be posted, and the review `login` posted of the same commit
   # with the plugin's marker.
