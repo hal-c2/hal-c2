@@ -785,6 +785,56 @@ defmodule HalC2.PlannerTest do
       assert applied["m1"]["after"] == []
       assert applied["t"]["issue"]["milestone"] == nil
     end
+
+    # The user moved "t" from "m2" to "m1", whose push to GitHub waits, while GitHub
+    # still lists #2 in M2, where an earlier answered push left it and the plan has not
+    # heard of yet. "m2" has nothing on the way, so the look takes GitHub's word for it,
+    # but not for an issue a push moves: "t" stays in "m1" alone (#418).
+    test "does not add the issue's task to the milestone GitHub lists it in while a push moves it elsewhere" do
+      milestone = fn number, tasks ->
+        %{
+          "title" => "M#{number}",
+          "kind" => "milestone",
+          "due" => "2026-11-30",
+          "after" => tasks
+        }
+      end
+
+      ref = &%{"repository" => "acme/api", "number" => &1, "title" => "M#{&1}"}
+
+      items =
+        plan([
+          {"t", %{"title" => "Issue 2"}},
+          {"m1", milestone.(1, ["t"])},
+          {"m2", milestone.(2, [])}
+        ])
+        |> put_in(["t", "issue"], %{"repository" => "acme/api", "number" => 2, "milestone" => nil})
+        |> put_in(["m1", "milestone"], ref.(1))
+        |> put_in(["m2", "milestone"], ref.(2))
+
+      listed = %{"repository" => "acme/api", "number" => 2, "title" => "Issue 2"}
+
+      found = %{
+        issues: [
+          Map.merge(listed, %{
+            "state" => "open",
+            "milestone" => %{"number" => 2, "title" => "M2", "dueOn" => "2026-11-30"}
+          })
+        ],
+        details: [],
+        projects: [],
+        items: items,
+        kept: Map.take(items, ["m1"]),
+        board: nil,
+        prs: %{},
+        moving: [Map.take(listed, ~w(repository number))]
+      }
+
+      applied = Sync.apply(items, found, %{"sync" => "twoWay"}, @now, fn -> "new" end)
+      assert applied["m1"]["after"] == ["t"]
+      assert applied["m2"]["after"] == []
+      assert applied["t"]["issue"]["milestone"] == nil
+    end
   end
 
   describe "a milestone's correction GitHub refused" do
