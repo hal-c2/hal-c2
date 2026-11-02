@@ -475,13 +475,16 @@ step(
 );
 
 step("the user looks at the change", async (ctx: TurnWorld) => {
-  // Finished work folds behind its turn: open it, then the change's row opens its diff.
+  // Finished work folds behind its turn, and its calls behind their summary: open
+  // both, then the change's row opens its diff.
   const fold = itemsOf(ctx, "fold").at(-1)!;
   await clickText(ctx, linesOf(fold)[0]!.slice(2));
   await settleHost(ctx);
+  await clickText(ctx, "Changed 1 file");
+  await settleHost(ctx);
   const row = workLines(ctx).find((line) => line.includes("src/cart.ts"))!;
   expect(row).toContain("+2 -1");
-  await clickText(ctx, "Changed src/cart.ts");
+  await clickText(ctx, "src/cart.ts ✓");
   await settleHost(ctx);
   expect(ctx.host!.state.get("mode")).toBe("diff");
 });
