@@ -7,7 +7,7 @@ import HalC2.Bricks
 DefaultShell {
     id: root
 
-    title: qsTr("HAL-C2 · folders")
+    title: qsTr("%1 · folders").arg(appName)
     property string browsePath: ""
     navigationPanel: explorerComponent
 

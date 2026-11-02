@@ -19,6 +19,9 @@ Rectangle {
     // sidebar; a rice with its own title bar leaves it off.
     // When frameless it doubles as the window's drag handle.
     property bool showBrand: false
+    // Without the brand band, the stage ("Dev", "Nightly") is a pill at the
+    // top; a shell that marks the stage itself turns it off.
+    property bool showStage: true
     // A list that may be under a finger (a phone's, a tablet's): a finger
     // dragging a row scrolls the list instead of arranging the row, and its
     // long press opens the row's menu, which holds every row action and Move
@@ -282,27 +285,22 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
             }
 
-            Rectangle {
+            StagePill {
                 objectName: "stagePill"
                 visible: sidebar.stage !== null && !!sidebar.stage.pill
                 anchors.left: wordmark.right
                 anchors.leftMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
-                implicitWidth: pillText.implicitWidth + 12
-                implicitHeight: 18
-                radius: 9
-                color: Theme.palette.color("secondary", "#27272a")
-
-                Text {
-                    id: pillText
-
-                    anchors.centerIn: parent
-                    text: sidebar.stage !== null ? (sidebar.stage.pill ?? "") : ""
-                    color: Theme.palette.color("secondaryForeground", "#e4e4e7")
-                    font.pixelSize: Math.round(10 * Theme.fontScale)
-                    font.weight: Font.DemiBold
-                }
             }
+        }
+
+        // A shell without the brand band still says which build it is: the
+        // stage's pill above the list, unless the shell marks it itself.
+        StagePill {
+            objectName: "stageBadge"
+            Layout.leftMargin: 12
+            Layout.topMargin: 8
+            visible: sidebar.showStage && !sidebar.showBrand && sidebar.stage !== null && (!!sidebar.stage.artwork || !!sidebar.stage.pill)
         }
 
         // Search + new thread, scope + add project.

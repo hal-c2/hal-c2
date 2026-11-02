@@ -54,6 +54,7 @@ qt_add_qml_module(hal_c2_bricks
     DesktopUpdateSettings.qml
     SidebarThreadRow.qml
     HalC2Wordmark.qml
+    StagePill.qml
     KeybindingsSettings.qml
     TerminalDrawer.qml
     TitleBar.qml
