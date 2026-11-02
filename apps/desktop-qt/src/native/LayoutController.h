@@ -63,6 +63,7 @@ public:
   int panelAnimationMs() const;
   // The system's preference (main.cpp asks the platform); every window follows it.
   static void setSystemReducedMotion(bool reduced);
+  static bool systemReducedMotion();
 
 private:
   void load();

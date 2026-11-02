@@ -264,14 +264,14 @@ Feature: Terminal sessions
         | 400       | 400    |
         | 900       | 750    |
 
-    @backlog @desktop
+    @desktop
     Scenario: Shrinking the window pulls a tall terminal back within its limit
       Given the terminal is showing 700 pixels tall in a window 1000 pixels tall
       When the user shrinks the window to 600 pixels tall
       Then the terminal is 450 pixels tall
       And the terminal's shell is resized to match
 
-    @backlog @desktop
+    @desktop
     Scenario: A hidden terminal stops drawing but keeps reading its shell
       Given the terminal is running a build that prints continuously
       When the user hides the terminal
@@ -280,7 +280,7 @@ Feature: Terminal sessions
       When the user shows the terminal again
       Then the terminal is drawn in full and shows the latest output
 
-    @backlog @desktop
+    @desktop
     Scenario: Hiding the terminal does not shrink the shell
       Given the shell is running at 120 columns and 30 rows
       When the user hides the terminal so that it has no size

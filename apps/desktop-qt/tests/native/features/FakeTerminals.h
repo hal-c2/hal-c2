@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QMap>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 
@@ -14,6 +15,7 @@
 #include "TerminalController.h"
 
 class FakeMc;
+class QQuickItem;
 class World;
 
 namespace terminalfake {
@@ -25,7 +27,20 @@ struct FakeTerminals {
   struct Terminal {
     QJsonObject summary;
     QString history;
+    qint64 sequence = 0;
   };
+  // What a subscription that asked for `acks` holds, as HalC2.Terminal.OutputWindow:
+  // the output it sent and has not heard back about, and whether it held some back.
+  struct Window {
+    QList<QPair<qint64, qsizetype>> pending;
+    qsizetype bytes = 0;
+    bool behind = false;
+  };
+  static constexpr qsizetype kWindowLimit = 64 * 1024;
+  // By subscription id: only those that asked.
+  QHash<int, Window> windows;
+  // Every `ack` frame.
+  QList<QJsonObject> acks;
   // By "threadId/terminalId".
   QMap<QString, Terminal> terminals;
   // Every terminal.* call, as {method, payload}.
@@ -34,6 +49,13 @@ struct FakeTerminals {
   QString refuseOpen;
   // Why terminal.close fails, when it does.
   QString refuseClose;
+  // Why terminal.write fails, when it does (the reason may be empty).
+  std::optional<QString> refuseWrite;
+  // The list stays silent about a terminal just opened.
+  bool quietOpen = false;
+  // A close's `remove` waits in heldRemoves, as if the list had not got there yet.
+  bool holdRemove = false;
+  QList<QJsonObject> heldRemoves;
   // What the shell prints back when it is written exactly this.
   QHash<QString, QString> replies;
   // The terminal the steps' right panel tab runs.
@@ -42,9 +64,16 @@ struct FakeTerminals {
 
 // To the `terminal` subscriptions of "threadId/terminalId".
 void sendTerminal(FakeMc& mc, const QString& key, const QJsonObject& event);
+// To the latest `terminals` subscription.
+void sendTerminals(FakeMc& mc, const QJsonObject& event);
+QJsonObject terminalSummary(const QString& threadId, const QString& terminalId, const QString& cwd);
+// The visible items of the world's brick named `objectName`, in drawing order.
+QList<QQuickItem*> visibleItems(World& world, const QString& objectName);
 // A terminal the MC already runs, as another client left it.
 void addTerminal(FakeMc& mc, const QString& threadId, const QString& terminalId, const QString& label, bool busy);
 void print(FakeMc& mc, const QString& threadId, const QString& terminalId, const QString& data);
+// The terminal's output window of its subscription, if it asked for one.
+FakeTerminals::Window* terminalWindow(FakeMc& mc, const QString& key);
 // The `terminal` subscriptions still attached, by terminal key.
 QStringList attached(FakeMc& mc);
 QString tabLabels(World& world);
@@ -67,6 +96,13 @@ QString describeRows(World& world);
 bool toastShown(World& world, const QString& title);
 // Closing a terminal asks first (terminal/tabs.feature): the user says yes.
 void confirmTerminalClose(World& world);
+// The thread's drawer, open on a terminal that has printed some output, drawn
+// in World::brick (TerminalMenuSteps.cpp).
+QQuickItem* drawnTerminal(World& world);
+// The platform the drawn terminal behaves as: "macOS", "Linux" or "Windows".
+void setTerminalPlatform(World& world, const QString& platform);
+// The last of these calls the MC got.
+std::optional<QJsonObject> lastTerminalCall(World& world, const QString& method, const QString& threadId, const QString& terminalId);
 // The MC's project "p1" at /work/p1, connected, unless a Background set one up.
 void ensureProject(World& world);
 

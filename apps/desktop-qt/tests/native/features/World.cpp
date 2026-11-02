@@ -64,7 +64,7 @@ void World::start() {
     if (key == QLatin1String("theme")) m_theme->applyBaseTheme(value);
   });
   m_bridge->setUrlOpener([this](const QUrl& url) {
-    if (browserFails) return false;
+    if (browserFails || urlsRefused) return false;
     openedUrls.append(url);
     return true;
   });

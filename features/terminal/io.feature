@@ -52,6 +52,48 @@ Feature: Terminal input and output
       And the MC stops sending output to that client until it catches up
       And the shell itself keeps running
 
+    @desktop
+    Scenario: The desktop says what it has read in batches, not per chunk
+      Given the terminal shows a running shell
+      And saying what was read waits as long as it can
+      When the shell prints a little, five times
+      Then the MC has heard nothing about that output yet
+      When the shell prints 20 KiB more
+      Then the MC hears once that all of it has been read
+
+    @desktop
+    Scenario: Output that stops is still said to be read, so the desktop never stalls itself
+      Given the terminal shows a running shell
+      When the shell prints a little
+      Then the MC hears that all of it has been read
+
+    @desktop
+    Scenario: A hidden terminal keeps reading
+      Given the terminal shows a running shell
+      When the user hides the terminal drawer
+      And the shell prints a little
+      Then the MC hears that all of it has been read
+
+    @desktop
+    Scenario: A new connection starts over from its snapshot
+      Given the terminal shows a running shell
+      And saying what was read waits as long as it can
+      When the shell prints a little
+      And the connection to the MC drops and comes back
+      Then the terminal asks again to say what it has read
+      And the MC hears once, of the new snapshot
+
+    @desktop
+    Scenario: A terminal of a thread the user left stops reading until they return
+      Given the terminal shows a running shell
+      When the user goes to another thread
+      And the shell prints more than the MC sends a client that has not read it
+      Then the MC holds the rest back
+      And the terminal stays attached
+      When the user returns to the terminal's thread
+      Then the terminal has everything the shell printed
+      And the MC holds nothing back
+
     @tui
     Scenario: A terminal the client has hidden costs nothing and catches up when shown
       Given a running terminal whose shell prints continuously
@@ -293,24 +335,24 @@ Feature: Terminal input and output
       When the user clears the terminal from the keyboard
       Then the shell receives Ctrl-L and redraws its prompt at the top
 
-    @backlog @desktop
+    @desktop
     Scenario: Cmd+K clears the terminal on macOS
       Given the user is on macOS
       When the user presses "Cmd+K" in the terminal
       Then the shell receives Ctrl-L and redraws its prompt at the top
 
-    @backlog @desktop
+    @desktop
     Scenario: Cmd+Backspace deletes to the start of the line on macOS
       Given the user is on macOS
       And the shell prompt holds "git status --short"
       When the user presses "Cmd+Backspace" in the terminal
       Then the shell receives the command that deletes to the start of the line
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Arrow keys with a modifier move by word or line
       Given the user is on <platform>
       When the user presses "<keys>" in the terminal
-      Then the cursor moves <movement>
+      Then the terminal's cursor moves <movement>
 
       Examples:
         | platform | keys        | movement                 |
@@ -322,32 +364,32 @@ Feature: Terminal input and output
         | Linux    | Alt+Right   | one word right           |
         | Windows  | Ctrl+Right  | one word right           |
 
-    @backlog @desktop
+    @desktop
     Scenario: Selecting with Shift and an arrow is left to the terminal
       Given the user is on macOS
       When the user presses "Shift+Option+Left" in the terminal
       Then the shell receives the key as the terminal encodes it
       And no word or line movement is sent
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Clicking again selects a word and then a line
-      Given the terminal shows "git commit -m fix"
+      Given the shell has printed "git commit -m fix"
       When the user clicks <times> in quick succession on "commit"
-      Then <selected> is selected
+      Then <selected> is selected in the terminal
 
       Examples:
-        | times  | selected           |
-        | twice  | "commit"           |
+        | times   | selected            |
+        | twice   | "commit"            |
         | 3 times | "git commit -m fix" |
 
-    @backlog @desktop
+    @desktop
     Scenario: Dragging a selection past the edge scrolls the history while it grows
       Given the terminal has scrolled-back output
       When the user drags a selection past the top of the terminal and holds it there
       Then the history keeps scrolling up
       And the selection grows with it
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The Linux and Windows copy and paste keys work in the terminal
       Given the user is on <platform>
       And the terminal has a selection
@@ -363,7 +405,7 @@ Feature: Terminal input and output
         | Windows  | Ctrl+Insert  | the selected text is on the clipboard   |
         | Windows  | Shift+Insert | the clipboard text is sent to the shell |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Ctrl+C copies once on Linux and Windows and then interrupts
       Given the user is on <platform>
       And the terminal has a selection
@@ -378,7 +420,7 @@ Feature: Terminal input and output
         | Linux    |
         | Windows  |
 
-    @backlog @desktop
+    @desktop
     Scenario: On macOS Cmd+C copies and Ctrl+C always interrupts
       Given the user is on macOS
       And the terminal has a selection
@@ -388,6 +430,8 @@ Feature: Terminal input and output
       When the user presses "Ctrl+C" in the terminal
       Then the shell receives Ctrl-C
 
+    # The terminal does this, but the offscreen platform the scenarios run on has
+    # no selection clipboard to paste from. Needs an X11 or Wayland run.
     @backlog @desktop
     Scenario: Middle-clicking on Linux pastes the selected text
       Given the user is on Linux
@@ -395,7 +439,7 @@ Feature: Terminal input and output
       When the user middle-clicks the terminal
       Then the selected text is sent to the shell as a paste
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Middle-clicking where the button means something else does not paste
       Given the user is on <platform>
       And the terminal has a selection
@@ -407,14 +451,14 @@ Feature: Terminal input and output
         | macOS    |
         | Windows  |
 
-    @backlog @desktop
+    @desktop
     Scenario: A program that asks for the mouse receives the user's clicks
       Given a program in the terminal has asked to receive mouse events
       When the user clicks and drags in the terminal
       Then the program receives the presses, motion and releases
       And no text is selected
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Holding a modifier selects text even while a program has the mouse
       Given a program in the terminal has asked to receive mouse events
       When the user drags in the terminal holding <modifier>
@@ -427,39 +471,46 @@ Feature: Terminal input and output
         | Ctrl     |
         | Cmd      |
 
-    @backlog @desktop
+    @desktop
     Scenario: Scrolling the wheel in a full-screen program moves it with arrow keys
       Given a full-screen program such as an editor or pager is showing
       When the user scrolls the wheel down three rows
       Then the shell receives three down-arrow keys
       And the terminal's own history does not scroll
 
-    @backlog @desktop
+    @desktop
     Scenario: Small wheel movements add up to whole rows
       Given the terminal has history above what is on screen
       When the user scrolls with a trackpad in many movements each smaller than a row
       Then the terminal scrolls one row each time the movements add up to a row
       And no movement is lost
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The wheel scrolls by the unit the device reports
       Given the terminal has history above what is on screen
       When the wheel reports <movement>
       Then the terminal scrolls <result>
 
       Examples:
-        | movement        | result              |
-        | three lines     | three rows          |
-        | one page        | one screenful       |
-        | pixels          | by that many pixels, rounded down to rows |
+        | movement    | result                                    |
+        | three lines | three rows                                |
+        | pixels      | by that many pixels, rounded down to rows |
 
-    @backlog @desktop
+      # Qt's wheel events report only pixels and angles, so a wheel that moves in
+      # pages cannot be told from one that moves that far in lines.
+      @dropped
+      Examples:
+        | movement | result        |
+        | one page | one screenful |
+
+    @desktop
     Scenario: The terminal shows a scrollbar for its history
       Given the terminal has more output than fits on screen
       Then a scrollbar shows where the view sits in the history
+      And the drawer's buttons leave the scrollbar clear
       And the scrollbar is hidden while everything fits
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The user moves through the history with the scrollbar
       Given the terminal has more output than fits on screen
       When the user <gesture>
@@ -475,43 +526,51 @@ Feature: Terminal input and output
         | presses End on the scrollbar            | moves to the newest output              |
         | presses an arrow key on the scrollbar   | moves one row                           |
 
-    @backlog @desktop
+    @desktop
     Scenario: The scrollbar's thumb stays large enough to grab
       Given the terminal has a very long history
       Then the scrollbar's thumb is never smaller than a small grab target
 
-    @backlog @desktop
+    @desktop
     Scenario: With history above it, the prompt sits flush with the bottom edge
       Given the terminal has history and its height is not a whole number of rows
       Then the leftover space is above the first row and not below the prompt
       And the prompt does not shift while the user drags a selection across rows
 
-    @backlog @desktop
+    @desktop
     Scenario: Scrolling the wheel reaches a program that asked for the mouse
       Given a program in the terminal has asked to receive mouse events
       When the user scrolls the wheel
       Then the program receives wheel events
 
-    @backlog @desktop
+    @desktop
     Scenario: Characters composed with an input method reach the shell once
       When the user composes "日本語" with an input method in the terminal
       Then the shell receives "日本語" once the composition is committed
       And the keys pressed during the composition are not sent separately
 
-    @backlog @desktop
+    @desktop
+    Scenario: What an input method is composing shows at the cursor
+      When the user is composing with an input method in the terminal
+      Then what is being composed is drawn at the cursor
+      When the user cancels the composition
+      Then nothing is drawn in its place
+
+    @desktop
     Scenario: A character typed with AltGr is typed as text
       Given the user's keyboard layout types "@" with AltGr
       When the user types "@" with AltGr in the terminal
       Then the shell receives "@"
 
-    @backlog @desktop
+    @desktop
     Scenario: The terminal draws prompt symbols without an installed symbol font
       Given the machine has no Nerd Font installed
       When the shell prints a prompt with powerline separators and file-type icons
       Then the terminal draws those symbols
       And the text keeps its own font and cell size
+      And text outside the terminal does not take the symbol font
 
-    @backlog @desktop
+    @desktop
     Scenario: The cursor blinks only while the terminal has focus
       Given the shell asked for a blinking cursor
       When the terminal has focus
@@ -519,7 +578,7 @@ Feature: Terminal input and output
       When the terminal loses focus
       Then the cursor is drawn as an outline and does not blink
 
-    @backlog @desktop
+    @desktop
     Scenario: The cursor stays steady when the user prefers reduced motion
       Given the shell asked for a blinking cursor
       And the user prefers reduced motion
