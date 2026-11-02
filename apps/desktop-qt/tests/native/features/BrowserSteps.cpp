@@ -691,6 +691,16 @@ const Steps steps([] {
     // Drawn once DevTools have named the page they inspect.
     waitForEngine(world, [&] { return tools->property("title").toString().contains(QLatin1String("DevTools")); },
                   [&] { return QStringLiteral("DevTools to name the page; they are \"%1\"").arg(tools->property("title").toString()); });
+    // And drawn: more than one colour where they sit.
+    const auto drawn = [&] {
+      const QRectF area = tools->mapRectToScene(QRectF(0, 0, tools->width(), tools->height()));
+      const QImage image = world.brick->grab().copy(area.toAlignedRect().adjusted(8, 8, -8, -8));
+      for (int y = 0; y < image.height(); y += 4)
+        for (int x = 0; x < image.width(); x += 4)
+          if (image.pixel(x, y) != image.pixel(0, 0)) return true;
+      return false;
+    };
+    waitForEngine(world, drawn, [&] { return QStringLiteral("DevTools to draw; %1").arg(state(world)); });
     QQuickItem* shown = view(world);
     const QPointF at = tools->mapToItem(shown->parentItem(), QPointF());
     expect(right ? at.x() >= shown->width() && tools->height() > shown->height() / 2 : at.y() >= shown->height() && tools->width() >= shown->width(),
