@@ -162,30 +162,6 @@ Item {
         anchors.leftMargin: block.kind === "callout" || block.raw ? 10 : 0
         spacing: 8
 
-        Text {
-            objectName: "spaceMarkdownLead:" + block.text
-            visible: block.markdownLead.length > 0
-            text: block.markdownLead
-            color: block.muted
-            font.family: block.mono
-            font.pixelSize: Theme.fontSizeCode
-            font.features: { "liga": 0, "calt": 0 }
-        }
-
-        ShellCheckBox {
-            objectName: "spaceTick:" + block.text
-            Accessible.name: block.text
-            visible: block.kind === "checklist"
-            padding: 0
-            checked: block.checked
-            enabled: !block.readOnly
-            onToggled: {
-                Shell.dispatch("space.block.setChecked", { blockId: block.blockId, checked: checked });
-                // The pending tick, then the stream, says what it is.
-                checked = Qt.binding(() => block.checked);
-            }
-        }
-
         ShellIcon {
             visible: block.kind === "callout"
             name: "info"
@@ -248,8 +224,7 @@ Item {
         // The text, between what the MC writes around it.
         ColumnLayout {
             Layout.fillWidth: true
-            visible: block.kind !== "subpage_link" && block.kind !== "chart" && block.kind !== "generated" && block.kind !== "divider"
-                     && block.kind !== "details_end" && !block.diagramShown
+            visible: block.kind !== "subpage_link" && block.kind !== "chart" && block.kind !== "generated" && !block.diagramShown
             spacing: 2
 
             Text {
@@ -266,6 +241,33 @@ Item {
                 Layout.fillWidth: true
                 spacing: 0
 
+                // Under the line above, as the MC writes it: a section's summary under its tag.
+                Text {
+                    objectName: "spaceMarkdownLead:" + block.text
+                    visible: block.markdownLead.length > 0
+                    text: block.markdownLead
+                    color: block.muted
+                    font.family: block.mono
+                    font.pixelSize: Theme.fontSizeCode
+                    font.features: { "liga": 0, "calt": 0 }
+                    Layout.rightMargin: 6
+                }
+
+                ShellCheckBox {
+                    objectName: "spaceTick:" + block.text
+                    Accessible.name: block.text
+                    visible: block.kind === "checklist"
+                    padding: 0
+                    Layout.rightMargin: 8
+                    checked: block.checked
+                    enabled: !block.readOnly
+                    onToggled: {
+                        Shell.dispatch("space.block.setChecked", { blockId: block.blockId, checked: checked });
+                        // The pending tick, then the stream, says what it is.
+                        checked = Qt.binding(() => block.checked);
+                    }
+                }
+
                 // The editor, which a raw block's long lines scroll sideways in: the
                 // wheel's sideways axis or shift, as code in a reply does.
                 Flickable {
@@ -273,6 +275,8 @@ Item {
 
                     objectName: "spaceBlockScroll:" + block.text
                     Layout.fillWidth: true
+                    // A divider and a section's end have no text: their Markdown is all they show.
+                    visible: block.kind !== "divider" && block.kind !== "details_end"
                     // Up to its text's width when something follows it on its line.
                     Layout.maximumWidth: block.markdownTail.length > 0 ? Math.max(40, editor.implicitWidth + 2) : Number.POSITIVE_INFINITY
                     implicitHeight: editor.height
@@ -362,7 +366,7 @@ Item {
 
                 Item {
                     Layout.fillWidth: true
-                    visible: block.markdownTail.length > 0
+                    visible: block.markdownTail.length > 0 || !scroller.visible
                 }
             }
 

@@ -102,28 +102,6 @@ Rectangle {
         anchors.rightMargin: 4
         spacing: 4
 
-        Label {
-            objectName: "spaceMarkdownLead:" + row.text
-            visible: row.markdownLead.length > 0
-            text: row.markdownLead
-            color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.family: row.mono
-            font.pixelSize: Math.round(13 * Theme.fontScale)
-            font.features: { "liga": 0, "calt": 0 }
-        }
-
-        CheckBox {
-            objectName: "spaceTick:" + row.text
-            visible: row.kind === "checklist"
-            enabled: !row.readOnly
-            checked: row.checked
-            Accessible.name: row.text
-            onToggled: {
-                Shell.dispatch("space.block.setChecked", { blockId: row.blockId, checked: checked });
-                checked = Qt.binding(() => row.checked);
-            }
-        }
-
         ColumnLayout {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignVCenter
@@ -161,20 +139,44 @@ Rectangle {
                 font.features: { "liga": 0, "calt": 0 }
             }
 
-            // The text, and what the MC writes after it on its line.
+            // The text, and what the MC writes before and after it on its line.
             RowLayout {
                 id: source
 
                 Layout.fillWidth: true
-                visible: row.kind !== "subpage_link" && row.kind !== "chart" && row.kind !== "generated" && row.kind !== "divider"
-                         && row.kind !== "details_end" && !row.diagramShown
-                spacing: 0
+                visible: row.kind !== "subpage_link" && row.kind !== "chart" && row.kind !== "generated" && !row.diagramShown
+                spacing: 4
+
+                // Under the line above, as the MC writes it: a section's summary under its tag.
+                Label {
+                    objectName: "spaceMarkdownLead:" + row.text
+                    visible: row.markdownLead.length > 0
+                    text: row.markdownLead
+                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                    font.family: row.mono
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.features: { "liga": 0, "calt": 0 }
+                }
+
+                CheckBox {
+                    objectName: "spaceTick:" + row.text
+                    visible: row.kind === "checklist"
+                    enabled: !row.readOnly
+                    checked: row.checked
+                    Accessible.name: row.text
+                    onToggled: {
+                        Shell.dispatch("space.block.setChecked", { blockId: row.blockId, checked: checked });
+                        checked = Qt.binding(() => row.checked);
+                    }
+                }
 
                 // A raw block's lines keep their length: it scrolls sideways, the others wrap.
                 Flickable {
                     id: scroller
 
                     Layout.fillWidth: true
+                    // A divider and a section's end have no text: their Markdown is all they show.
+                    visible: row.kind !== "divider" && row.kind !== "details_end"
                     // Up to its text's width when something follows it on its line.
                     Layout.maximumWidth: row.markdownTail.length > 0 ? Math.max(40, editor.implicitWidth + 2) : Number.POSITIVE_INFINITY
                     Layout.preferredHeight: editor.height
@@ -240,7 +242,7 @@ Rectangle {
 
                 Item {
                     Layout.fillWidth: true
-                    visible: row.markdownTail.length > 0
+                    visible: row.markdownTail.length > 0 || !scroller.visible
                 }
             }
 
