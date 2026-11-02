@@ -159,7 +159,8 @@ public:
   // back on the panel, where it shows.
   Q_INVOKABLE void moveToStage(const QString& id, int pane = -1, const QString& zone = QStringLiteral("center"));
   Q_INVOKABLE void moveToPanel(const QString& id);
-  // The panel's active tab to the stage, or else the stage's focused tab back.
+  // The stage's focused tab back while the timeline is hidden, else the
+  // panel's active tab to the stage, else the stage's focused tab back.
   Q_INVOKABLE void moveTab();
   Q_INVOKABLE void setStageLayout(const QString& layout);
   Q_INVOKABLE void focusPane(int pane);

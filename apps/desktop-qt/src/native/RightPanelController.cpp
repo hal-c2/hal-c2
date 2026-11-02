@@ -728,7 +728,10 @@ void RightPanelController::moveToPanel(const QString& id) {
 void RightPanelController::moveTab() {
   if (!m_onThread) return;
   const Panel& state = panel();
-  if (isOpen() && !state.active.isEmpty()) {
+  // With the timeline away the stage is what the user looks at.
+  if (state.stage.focus && !state.stage.focusedTab().isEmpty()) {
+    moveToPanel(state.stage.focusedTab());
+  } else if (isOpen() && !state.active.isEmpty()) {
     moveToStage(state.active);
   } else if (!state.stage.focusedTab().isEmpty()) {
     moveToPanel(state.stage.focusedTab());
