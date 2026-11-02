@@ -207,6 +207,22 @@ defmodule HalC2.SpaceTest do
       assert texts(space, page_id) == ["Final", "Moves", "Three threads moved forward"]
     end
 
+    # Two runs writing the same words within a millisecond once committed an empty patch,
+    # which crashed the Space's stream.
+    test "a run that writes the same words leaves the generated part as it is",
+         %{space: space} do
+      page_id = page!(space, "Roadmap")
+      ref = %{"spaceId" => space, "pageId" => page_id}
+      :ok = Space.Schedule.show(ref, %{"instruction" => "Summarise", "enabled" => true})
+      {:ok, generated} = Space.Schedule.write(space, page_id, "Three threads moved forward")
+
+      assert {:ok, ^generated} =
+               Space.Schedule.write(space, page_id, "Three threads moved forward")
+
+      {:ok, state} = Space.state(space)
+      assert [^generated] = Space.Blocks.of_page(state, page_id)
+    end
+
     test "a restore while the page updates itself leaves the generated part alone",
          %{space: space} do
       page_id = page!(space, "Roadmap")

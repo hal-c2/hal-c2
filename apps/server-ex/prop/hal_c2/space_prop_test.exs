@@ -687,7 +687,7 @@ defmodule HalC2.SpacePropTest do
   end
 
   # The page's `writtenAt`, and its generated part: a new one, or the one it has, which
-  # a run within the same millisecond as the last with the same words leaves as it is.
+  # a run with the same words leaves as it is. `writtenAt` stays within a millisecond.
   defp step(s, :run_update, [{name, page}, text]) do
     cond do
       not live?(s, page) ->
