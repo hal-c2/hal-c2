@@ -17,6 +17,14 @@ defmodule HalC2.PullRequests.GitHub do
   @approval_limit 1_000
 
   @list_fields "number,title,url,author,headRefName,headRefOid,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,latestReviews,labels,statusCheckRollup"
+  @list_page 50
+  @list_least_page 10
+  @list_states %{"open" => ["OPEN"], "closed" => ["CLOSED"], "merged" => ["MERGED"]}
+  @search_states %{
+    "open" => ["is:open"],
+    "closed" => ["is:closed", "is:unmerged"],
+    "merged" => ["is:merged"]
+  }
   @detail_fields @list_fields <>
                    ",body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest"
 
@@ -90,6 +98,38 @@ defmodule HalC2.PullRequests.GitHub do
             pageInfo { hasNextPage }
           } } } }
         }
+      }
+    }
+  }
+  """
+
+  @list_node """
+  number title url author { __typename login ... on User { name } }
+  headRefName headRefOid baseRefName state isDraft mergeable reviewDecision
+  additions deletions createdAt updatedAt mergedAt
+  reviewRequests(first: 50) {
+    nodes { requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Team { slug name } } }
+  }
+  latestReviews(first: 50) { nodes { state author { login } } }
+  labels(first: 100) { nodes { name color } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+  """
+
+  @list_search_query """
+  query PullRequestListSearch($q: String!, $first: Int!, $after: String) {
+    search(query: $q, type: ISSUE, first: $first, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { ... on PullRequest { #{@list_node} } }
+    }
+  }
+  """
+
+  @list_repository_query """
+  query PullRequestListRepository($owner: String!, $name: String!, $states: [PullRequestState!], $first: Int!, $after: String) {
+    repository(owner: $owner, name: $name) {
+      pullRequests(states: $states, first: $first, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
+        pageInfo { hasNextPage endCursor }
+        nodes { #{@list_node} }
       }
     }
   }
@@ -473,14 +513,14 @@ defmodule HalC2.PullRequests.GitHub do
   One repository's pull requests. `opts`: state, involvement, viewer, limit, query,
   filters, cursor (`%{boundary: iso}` or nil). The first read is a search sorted by
   update, which a cursor carries on from; GitHub leaves some repositories out of its
-  search index, so an empty first answer with no text to match is read again the way
-  `gh pr list` lists without one, narrowed here, and cannot be continued.
+  search index, so an empty first answer with no text to match is read again from
+  the repository's own list, narrowed here, and cannot be continued.
   """
   def list(ctx, opts) do
-    case list_read(ctx, opts, true, opts.limit + 1) do
+    case list_read(ctx, opts, true) do
       {:ok, %{items: []}} = empty ->
         if opts.cursor == nil and String.trim(opts.query || "") == "",
-          do: list_read(ctx, opts, false, opts.limit + 1),
+          do: list_read(ctx, opts, false),
           else: empty
 
       other ->
@@ -488,52 +528,137 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
-  defp list_read(ctx, opts, sorted, rows) do
-    args =
-      ["pr", "list"] ++
-        repo_args(ctx) ++
-        list_args(opts, sorted) ++
-        ["--state", opts.state, "--limit", "#{rows}", "--json", @list_fields]
+  defp list_read(ctx, opts, true) do
+    variables = %{"q" => Enum.join(search_terms(ctx, opts), " ")}
 
-    with {:ok, raw} <- gh_json(ctx.cwd, args) do
-      raw = raw || []
-      items = Enum.flat_map(raw, &list_item/1)
-      most = max(opts.limit + 1, 1_000)
-
-      if sorted do
-        truncated = length(raw) > opts.limit
-        {:ok, %{items: Enum.take(items, opts.limit), truncated: truncated, sorted: true}}
-      else
-        kept = Enum.filter(items, &unsorted_match?(&1, opts))
-
-        if length(kept) < opts.limit and length(raw) >= rows and rows < most do
-          list_read(ctx, opts, false, min(rows * 2, most))
-        else
-          truncated = length(kept) > opts.limit or length(raw) >= rows
-          {:ok, %{items: Enum.take(kept, opts.limit), truncated: truncated, sorted: false}}
-        end
-      end
+    with {:ok, raw, _more} <-
+           list_pages(ctx, @list_search_query, variables, ["search"], opts.limit + 1) do
+      items = Enum.flat_map(raw, &list_node/1)
+      truncated = length(raw) > opts.limit
+      {:ok, %{items: Enum.take(items, opts.limit), truncated: truncated, sorted: true}}
     end
   end
 
-  # `--state closed` includes merged pull requests, so Closed also excludes them;
-  # `gh` takes one `--search`, so the reader's text joins the qualifiers.
-  defp list_args(opts, sorted) do
+  defp list_read(ctx, opts, false) do
+    {owner, name} = split(ctx.repository)
+
+    variables = %{
+      "owner" => owner,
+      "name" => name,
+      "states" => @list_states[opts.state]
+    }
+
+    # The repository's own list is wider than the request, so it is narrowed here.
+    kept = fn raw ->
+      raw |> Enum.flat_map(&list_node/1) |> Enum.filter(&unsorted_match?(&1, opts))
+    end
+
+    enough? = &(length(kept.(&1)) > opts.limit)
+    path = ["repository", "pullRequests"]
+
+    with {:ok, raw, more} <-
+           list_pages(
+             ctx,
+             @list_repository_query,
+             variables,
+             path,
+             max(opts.limit + 1, 1_000),
+             enough?
+           ) do
+      kept = kept.(raw)
+      truncated = length(kept) > opts.limit or more
+      {:ok, %{items: Enum.take(kept, opts.limit), truncated: truncated, sorted: false}}
+    end
+  end
+
+  # Up to `most` nodes of the connection at `path`, a page at a time, until `enough?`
+  # holds for what was read; `{:ok, nodes, more?}`. GitHub gives up on a query it
+  # cannot answer in about ten seconds, which a page of a busy repository's pull
+  # requests can take: a page it gave up on is asked for again at half the size,
+  # down to `@list_least_page`, and the rest are read at that size.
+  defp list_pages(ctx, query, variables, path, most, enough? \\ fn _ -> false end) do
+    read = fn first, cursor ->
+      with {:ok, data} <-
+             graphql(ctx, query, Map.merge(variables, %{"first" => first, "after" => cursor})),
+           %{"nodes" => nodes} = connection when is_list(nodes) <- get_in(data, path) do
+        {:ok, Enum.reject(nodes, &is_nil/1), next_cursor(connection["pageInfo"])}
+      else
+        {:error, _} = error -> error
+        _ -> decoded(:error)
+      end
+    end
+
+    read_pages(read, most, enough?, @list_page, nil, [])
+  end
+
+  defp read_pages(read, most, enough?, page, cursor, acc) do
+    first = min(page, most - length(acc))
+
+    case read.(first, cursor) do
+      {:ok, nodes, next} ->
+        acc = acc ++ nodes
+
+        if next == nil or nodes == [] or length(acc) >= most or enough?.(acc),
+          do: {:ok, acc, next != nil},
+          else: read_pages(read, most, enough?, first, next, acc)
+
+      {:error, {:failed, detail}} = error ->
+        if first > @list_least_page and gave_up?(detail),
+          do: read_pages(read, most, enough?, max(div(first, 2), @list_least_page), cursor, acc),
+          else: error
+
+      error ->
+        error
+    end
+  end
+
+  # What GitHub (or `gh`) says when a query took too long: a gateway's 502 or 504,
+  # a body cut short, GraphQL's own timeout, or `gh` not answering at all.
+  defp gave_up?(detail),
+    do:
+      detail =~
+        ~r/HTTP 50[234]|unexpected end of JSON|timeout|something went wrong|did not answer in time/i
+
+  # A listed pull request as `list_item/1` reads it. The row needs only GitHub's own
+  # summary of its checks, not each of them, which keeps a page cheap to answer.
+  defp list_node(node) when is_map(node) do
+    rollup = get_in(node, ["commits", "nodes", Access.at(0), "commit", "statusCheckRollup"])
+
+    node
+    |> Map.merge(%{
+      "reviewRequests" => nodes(node, ["reviewRequests", "nodes"], "requestedReviewer"),
+      "latestReviews" => get_in(node, ["latestReviews", "nodes"]),
+      "labels" => get_in(node, ["labels", "nodes"]),
+      "statusCheckRollup" => nil
+    })
+    |> list_item()
+    |> Enum.map(&Map.put(&1, "checksState", checks_state(rollup && rollup["state"])))
+  end
+
+  defp list_node(_node), do: []
+
+  defp checks_state(state) do
+    case up(state) do
+      "SUCCESS" -> "passing"
+      s when s in ~w(FAILURE ERROR) -> "failing"
+      s when s in ~w(PENDING EXPECTED) -> "pending"
+      _ -> nil
+    end
+  end
+
+  # The search a sorted read sends. Closed is asked for unmerged, as GitHub counts
+  # merged pull requests closed too; GitHub's search takes the reader's text among
+  # its qualifiers.
+  defp search_terms(ctx, opts) do
     query = String.trim(opts.query || "")
 
-    terms =
-      if sorted do
-        if(opts.involvement == "reviewing", do: ["review-requested:#{opts.viewer}"], else: []) ++
-          if(opts.state == "closed", do: ["is:unmerged"], else: []) ++
-          if(query == "", do: [], else: [phrase(query)]) ++
-          if(opts.cursor, do: ["updated:<=#{opts.cursor.boundary}"], else: []) ++
-          qualifiers(opts.filters, opts.viewer) ++ ["sort:updated-desc"]
-      else
-        []
-      end
-
-    if(opts.involvement == "authored", do: ["--author", opts.viewer], else: []) ++
-      if(terms == [], do: [], else: ["--search", Enum.join(terms, " ")])
+    ["repo:#{ctx.repository}", "is:pr"] ++
+      Map.get(@search_states, opts.state, []) ++
+      if(opts.involvement == "authored", do: ["author:#{opts.viewer}"], else: []) ++
+      if(opts.involvement == "reviewing", do: ["review-requested:#{opts.viewer}"], else: []) ++
+      if(query == "", do: [], else: [phrase(query)]) ++
+      if(opts.cursor, do: ["updated:<=#{opts.cursor.boundary}"], else: []) ++
+      qualifiers(opts.filters, opts.viewer) ++ ["sort:updated-desc"]
   end
 
   # The reader's words as one quoted phrase, so `is:merged` typed into the box stays text.
@@ -579,7 +704,6 @@ defmodule HalC2.PullRequests.GitHub do
     if Regex.match?(~r/^@?me$/i, author) and viewer not in [nil, ""], do: viewer, else: author
   end
 
-  # The fallback read is wider than the request, so it is narrowed here.
   defp unsorted_match?(item, opts) do
     viewer = String.downcase(opts.viewer)
 
