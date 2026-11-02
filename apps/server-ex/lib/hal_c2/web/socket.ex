@@ -463,6 +463,12 @@ defmodule HalC2.Web.Socket do
         method == "server.updateServer" and mc == node() ->
           {HalC2.Upgrade, :update, [payload || %{}, nil, socket]}
 
+        # The call runs in a process of its own that outlives this socket, so the
+        # Mermaid server watches the socket (on whichever MC draws): a diagram it asked
+        # for and is still waiting for when it goes is not drawn for nobody.
+        method == "mermaid.render" ->
+          {HalC2.Mermaid, :handle, [payload || %{}, socket]}
+
         true ->
           {HalC2.Rpc, :handle, [method, payload || %{}]}
       end
