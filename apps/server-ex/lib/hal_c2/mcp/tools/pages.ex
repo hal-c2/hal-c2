@@ -59,7 +59,7 @@ defmodule HalC2.Mcp.Tools.Pages do
     page = with {:ok, state} <- Space.state(s), do: StreamState.get(state, "block")[b]["pageId"]
 
     reply(
-      with {:ok, id} <- Space.delete_block(s, b) do
+      with {:ok, id} <- Space.delete_block(s, b, author(caller)) do
         touched(caller, s, page)
         {:ok, %{"blockId" => id}}
       end

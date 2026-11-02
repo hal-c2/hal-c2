@@ -271,6 +271,13 @@ Rectangle {
             }
 
             ShellMenuItem {
+                objectName: "spaceHistoryOpen"
+                text: qsTr("History")
+                iconName: "clock"
+                onTriggered: Shell.dispatch("space.history.open", { pageId: Spaces.pageId })
+            }
+
+            ShellMenuItem {
                 objectName: "spaceUpdateMenu"
                 text: (page.current.schedule?.instruction ?? "") !== "" ? qsTr("Change its update…") : qsTr("Update itself…")
                 iconName: "clock"

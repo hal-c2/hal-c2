@@ -2,10 +2,11 @@ defmodule HalC2.SpacePropTest do
   @moduledoc """
   A state machine over the pages, blocks and comments of one Space (`HalC2.Space`):
   pages made, moved, trashed, restored and deleted for good; blocks inserted, moved,
-  ticked, edited and deleted; comments added, resolved and reopened; decks made blank
-  or from a page, trashed, restored and deleted; slides added, edited, moved and deleted;
-  images added, placed, trashed, restored and deleted for good; and the Space's streams
-  restarting, which reads everything back from the event log.
+  ticked, edited and deleted; comments added, resolved and reopened; versions of a page
+  remembered and restored; decks made blank or from a page, trashed, restored and deleted;
+  slides added, edited, moved and deleted; images added, placed, trashed, restored and
+  deleted for good; and the Space's streams restarting, which reads everything back from
+  the event log.
 
   After each command the test reads the Space's stream back and checks it against
   the model:
@@ -21,6 +22,17 @@ defmodule HalC2.SpacePropTest do
     cannot be edited, and asking again keeps its place and its comments;
   - each command writes one event per entity it changes, and a refusal, a tick to
     the same value, or resolving a resolved comment (reopening an open one) writes none;
+  - a restore makes a live page look as it did, keeps every comment, moves no page, and
+    writes nothing when the page already looks like it;
+  - a page's update is not content: each run writes the page's one generated part,
+    removing the update leaves it as the ordinary block it reads as, and a restore keeps
+    the update and never writes a generated part: it leaves the page's as it is, takes
+    none of a version's while the page updates itself, and brings a version's back as
+    the ordinary block it reads as to a page that no longer does;
+  - reading a page's history writes nothing, its versions go strictly back in time, and
+    the newest of them reads as the page does now;
+  - deleting a page for good is its deleter's edit of a page that linked to it, whoever
+    wrote the link;
   - a deck made from a page has a slide per section of the page as it was, and no later
     change of the page reaches it; a deck in the trash takes no edits, and its slides go
     with it when it is deleted for good;
@@ -39,14 +51,15 @@ defmodule HalC2.SpacePropTest do
   use PropCheck.StateM
 
   alias HalC2.{Space, StreamState, Streams}
-  alias HalC2.Space.{Blocks, Chart, Decks, ImageFile}
+  alias HalC2.Space.{Blocks, Chart, Decks, ImageFile, Schedule}
 
   @moduletag timeout: :infinity
   @moduletag capture_log: true
 
   @pages ~w(p1 p2 p3 p4)
-  @blocks ~w(b1 b2 b3 b4 b5)
+  @blocks ~w(b1 b2 b3 b4 b5 b6 b7 b8)
   @comments ~w(c1 c2 c3)
+  @saves ~w(s1 s2)
   @decks ~w(d1 d2 d3)
   @slides ~w(s1 s2 s3 s4)
   @images ~w(i1 i2 i3)
@@ -67,6 +80,7 @@ defmodule HalC2.SpacePropTest do
         Process.put(:space, space["id"])
         File.mkdir_p!(HalC2.Attachments.dir())
         Process.put(:names, %{})
+        Process.put(:saves, %{})
         Process.delete(:links)
         Process.delete(:tokens)
         {history, state, result} = run_commands(__MODULE__, cmds)
@@ -79,25 +93,56 @@ defmodule HalC2.SpacePropTest do
     end
   end
 
+  property "a link's removal is the deleter's edit, whoever wrote the link",
+    numtests: HalC2.Prop.numtests(20) do
+    forall {writer, deleter} <- {author(), author()} do
+      home = HalC2.Prop.scratch_home("space")
+
+      HalC2.Prop.start_services([
+        {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
+        HalC2.Streams
+      ])
+
+      {:ok, space} = Space.create("Prop")
+      {:ok, %{"id" => holder}} = Space.create_page(space["id"], "Holder", nil)
+      {:ok, %{"id" => linked}} = Space.create_page(space["id"], "Linked", nil)
+      spec = %{"kind" => "subpage_link", "linkedPageId" => linked}
+      {:ok, _} = Space.insert_block(space["id"], holder, spec, :last, writer)
+      {:ok, _} = Space.trash_page(space["id"], linked)
+      {:ok, _} = Space.delete_page(space["id"], linked, deleter)
+      {:ok, %{versions: [newest | _]}} = Space.page_versions(space["id"], holder)
+      HalC2.Prop.stop_services()
+      newest.author == deleter
+    end
+  end
+
+  defp author, do: oneof([Space.user(), Space.agent("thread-1"), Space.agent("thread-2")])
+
   # --- model ----------------------------------------------------------------------
 
-  # pages: name => %{parent, trashed}; order: page => its block names in order;
-  # blocks: name => %{page, kind, checked, text, chart}; comments: name => %{block, resolved};
+  # pages: name => %{parent, trashed, update}, `update` whether it updates itself; order: page => its block names in order;
+  # blocks: name => %{page, kind, checked, text, chart}; comments: name => %{page, block, resolved};
+  # used: every block name so far, since a restore brings a deleted block back under its
+  # own; saves: name => %{page, order, blocks}, the page as it stood when remembered;
   # decks: name => %{title, trashed}; deck_order: deck => its slide names in order;
   # slides: name => %{deck, title, body}. A slide a deck is made with is "<deck>.<n>".
   # sites: page => %{shown, behind}, `shown` being what `view/2` said when it published.
-  # images: name => %{trashed}.
+  # images: name => %{trashed}. ran: the blocks a page's update has written, which a
+  # delete may first stamp as its deleter's (the model does not hold who wrote last).
   def initial_state do
     %{
       pages: %{},
       order: %{},
       blocks: %{},
       comments: %{},
+      used: [],
+      saves: %{},
       decks: %{},
       deck_order: %{},
       slides: %{},
       sites: %{},
-      images: %{}
+      images: %{},
+      ran: []
     }
   end
 
@@ -113,6 +158,14 @@ defmodule HalC2.SpacePropTest do
       [{3, {:call, __MODULE__, :create_page, [elements(@pages), parent(pages)]}}] ++
         if(pages == [],
           do: [],
+          else: [{2, {:call, __MODULE__, :set_update, [elements(pages), boolean()]}}]
+        ) ++
+        case runs(s) do
+          [] -> []
+          runs -> [{6, {:call, __MODULE__, :run_update, [elements(runs), elements(~w(G H))]}}]
+        end ++
+        if(pages == [],
+          do: [],
           else: [
             {2, {:call, __MODULE__, :move_page, [elements(pages), parent(pages)]}},
             {2, {:call, __MODULE__, :trash_page, [elements(pages)]}},
@@ -123,6 +176,8 @@ defmodule HalC2.SpacePropTest do
             {4,
              {:call, __MODULE__, :insert_block,
               [elements(@blocks), elements(pages), kind(), boolean(), after_block(blocks)]}},
+            {2, {:call, __MODULE__, :save_version, [elements(@saves), elements(pages)]}},
+            {1, {:call, __MODULE__, :read_history, [elements(pages)]}},
             {2,
              {:call, __MODULE__, :insert_chart,
               [elements(@blocks), elements(pages), title(), after_block(blocks)]}}
@@ -148,6 +203,10 @@ defmodule HalC2.SpacePropTest do
             {2, {:call, __MODULE__, :resolve_comment, [elements(comments)]}},
             {2, {:call, __MODULE__, :reopen_comment, [elements(comments)]}}
           ]
+        ) ++
+        if(s.saves == %{},
+          do: [],
+          else: [{3, {:call, __MODULE__, :restore_version, [elements(Map.keys(s.saves))]}}]
         ) ++
         [{2, {:call, __MODULE__, :create_deck, [elements(@decks)]}}] ++
         if(pages == [],
@@ -199,6 +258,16 @@ defmodule HalC2.SpacePropTest do
     )
   end
 
+  # What a run of each page that updates itself writes: `{block, page}`, the block being
+  # the page's generated part, or a name not used yet when it has none.
+  defp runs(s) do
+    fresh = Enum.find(Enum.map(1..(length(s.used) + 1), &"g#{&1}"), &(&1 not in s.used))
+    for {page, %{update: true}} <- s.pages, do: {generated_of(s, page) || fresh, page}
+  end
+
+  defp generated_of(s, page),
+    do: Enum.find(Map.get(s.order, page, []), &(s.blocks[&1].kind == "generated"))
+
   defp parent([]), do: nil
   defp parent(pages), do: frequency([{1, nil}, {3, elements(pages)}])
   # Mostly a page in the trash itself, sometimes one that is not.
@@ -219,17 +288,24 @@ defmodule HalC2.SpacePropTest do
   def precondition(s, {:call, _, :create_page, [name, parent]}),
     do: not Map.has_key?(s.pages, name) and (parent == nil or Map.has_key?(s.pages, parent))
 
+  # `HalC2.Space.Schedule.remove/2` releases what an update wrote, and only on a live page.
+  def precondition(s, {:call, _, :set_update, [page, on]}),
+    do: is_map_key(s.pages, page) and (on or generated_of(s, page) == nil or live?(s, page))
+
+  def precondition(s, {:call, _, :run_update, [{name, page}, _]}),
+    do: is_map_key(s.pages, page) and s.pages[page].update and {name, page} in runs(s)
+
   def precondition(s, {:call, _, :move_page, [name, parent]}),
     do: Map.has_key?(s.pages, name) and (parent == nil or Map.has_key?(s.pages, parent))
 
   def precondition(s, {:call, _, :insert_block, [name, page, _, _, after_id]}),
     do:
-      not Map.has_key?(s.blocks, name) and Map.has_key?(s.pages, page) and
+      name not in s.used and Map.has_key?(s.pages, page) and
         (after_id in [:last, nil] or Map.has_key?(s.blocks, after_id))
 
   def precondition(s, {:call, _, :insert_chart, [name, page, _, after_id]}),
     do:
-      not is_map_key(s.blocks, name) and is_map_key(s.pages, page) and
+      name not in s.used and is_map_key(s.pages, page) and
         (not is_binary(after_id) or is_map_key(s.blocks, after_id))
 
   def precondition(s, {:call, _, :replace_chart, [name, page, _]}),
@@ -253,6 +329,12 @@ defmodule HalC2.SpacePropTest do
 
   def precondition(s, {:call, _, cmd, [name]}) when cmd in [:resolve_comment, :reopen_comment],
     do: Map.has_key?(s.comments, name)
+
+  def precondition(s, {:call, _, cmd, [_, page]}) when cmd == :save_version,
+    do: Map.has_key?(s.pages, page)
+
+  def precondition(s, {:call, _, :read_history, [page]}), do: Map.has_key?(s.pages, page)
+  def precondition(s, {:call, _, :restore_version, [save]}), do: Map.has_key?(s.saves, save)
 
   def precondition(s, {:call, _, :create_deck, [name]}), do: not Map.has_key?(s.decks, name)
 
@@ -284,7 +366,7 @@ defmodule HalC2.SpacePropTest do
 
   def precondition(s, {:call, _, :place_image, [name, page, image]}),
     do:
-      not Map.has_key?(s.blocks, name) and Map.has_key?(s.pages, page) and
+      name not in s.used and Map.has_key?(s.pages, page) and
         Map.has_key?(s.images, image)
 
   def precondition(_s, {:call, _, :restart, []}), do: true
@@ -322,7 +404,8 @@ defmodule HalC2.SpacePropTest do
   defp view(s, page) do
     for name <- Map.get(s.order, page, []) do
       block = s.blocks[name]
-      {block.kind, block.text, if(block.kind == "checklist", do: block.checked == true)}
+      kind = if block.kind == "generated", do: "paragraph", else: block.kind
+      {kind, block.text, if(block.kind == "checklist", do: block.checked == true)}
     end
   end
 
@@ -330,7 +413,7 @@ defmodule HalC2.SpacePropTest do
   # when either is right).
   defp step(s, :create_page, [name, parent]) do
     if parent == nil or live?(s, parent) do
-      page = %{parent: parent, trashed: false}
+      page = %{parent: parent, trashed: false, update: false}
       {:ok, %{s | pages: Map.put(s.pages, name, page), order: Map.put(s.order, name, [])}, 1}
     else
       {:trashed, s, 0}
@@ -357,7 +440,9 @@ defmodule HalC2.SpacePropTest do
     case s.pages[name] do
       %{trashed: true, parent: parent} ->
         parent = if parent != nil and live?(s, parent), do: parent
-        {:ok, put_in(s.pages[name], %{parent: parent, trashed: false}), 1}
+
+        {:ok,
+         %{s | pages: %{s.pages | name => %{s.pages[name] | parent: parent, trashed: false}}}, 1}
 
       _ ->
         {:invalid, s, 0}
@@ -368,14 +453,16 @@ defmodule HalC2.SpacePropTest do
     if s.pages[name].trashed do
       pages = [name | descendants(s, name)]
       blocks = for {block, %{page: page}} <- s.blocks, page in pages, do: block
-      comments = for {comment, %{block: block}} <- s.comments, block in blocks, do: comment
+      comments = for {comment, %{page: page}} <- s.comments, page in pages, do: comment
+      saves = for {save, %{page: page}} <- s.saves, page in pages, do: save
 
       next = %{
         s
         | pages: Map.drop(s.pages, pages),
           order: Map.drop(s.order, pages),
           blocks: Map.drop(s.blocks, blocks),
-          comments: Map.drop(s.comments, comments)
+          comments: Map.drop(s.comments, comments),
+          saves: Map.drop(s.saves, saves)
       }
 
       {:ok, next, length(pages) + length(blocks) + length(comments)}
@@ -402,7 +489,14 @@ defmodule HalC2.SpacePropTest do
         }
 
         order = place(s.order[page], after_id, name)
-        {:ok, %{s | blocks: Map.put(s.blocks, name, block), order: %{s.order | page => order}}, 1}
+
+        {:ok,
+         %{
+           s
+           | blocks: Map.put(s.blocks, name, block),
+             order: %{s.order | page => order},
+             used: [name | s.used]
+         }, 1}
     end
   end
 
@@ -417,7 +511,14 @@ defmodule HalC2.SpacePropTest do
       true ->
         block = %{page: page, kind: "chart", checked: false, text: summary(title), chart: title}
         order = place(s.order[page], after_id, name)
-        {:ok, %{s | blocks: Map.put(s.blocks, name, block), order: %{s.order | page => order}}, 1}
+
+        {:ok,
+         %{
+           s
+           | blocks: Map.put(s.blocks, name, block),
+             order: %{s.order | page => order},
+             used: [name | s.used]
+         }, 1}
     end
   end
 
@@ -475,7 +576,7 @@ defmodule HalC2.SpacePropTest do
 
     cond do
       not live?(s, block.page) -> {:trashed, s, 0}
-      text != nil and block.kind == "chart" -> {:invalid, s, 0}
+      text != nil and block.kind in ~w(chart generated) -> {:invalid, s, 0}
       checked != nil and block.kind != "checklist" -> {:invalid, s, 0}
       next == block -> {:ok, s, 0}
       true -> {:ok, put_in(s.blocks[name], next), 1}
@@ -495,15 +596,18 @@ defmodule HalC2.SpacePropTest do
           comments: Map.drop(s.comments, comments)
       }
 
-      {:ok, next, 1 + length(comments)}
+      writes = if name in s.ran, do: [1, 2], else: [1]
+      {:ok, next, Enum.map(writes, &(&1 + length(comments)))}
     else
       {:trashed, s, 0}
     end
   end
 
   defp step(s, :add_comment, [name, block]) do
-    if live?(s, s.blocks[block].page),
-      do: {:ok, put_in(s.comments[name], %{block: block, resolved: false}), 1},
+    page = s.blocks[block].page
+
+    if live?(s, page),
+      do: {:ok, put_in(s.comments[name], %{page: page, block: block, resolved: false}), 1},
       else: {:trashed, s, 0}
   end
 
@@ -512,9 +616,97 @@ defmodule HalC2.SpacePropTest do
     resolved = cmd == :resolve_comment
 
     cond do
-      not live?(s, s.blocks[comment.block].page) -> {:trashed, s, 0}
+      not live?(s, comment.page) -> {:trashed, s, 0}
       comment.resolved == resolved -> {:ok, s, 0}
       true -> {:ok, put_in(s.comments[name].resolved, resolved), 1}
+    end
+  end
+
+  defp step(s, :save_version, [save, page]) do
+    blocks = Map.new(s.order[page], &{&1, s.blocks[&1]})
+    {:ok, put_in(s.saves[save], %{page: page, order: s.order[page], blocks: blocks}), 0}
+  end
+
+  defp step(s, :read_history, [_page]), do: {:ok, s, 0}
+
+  # The events it takes are two or three on the page and one a block that changes, and
+  # any block can differ by its order key alone, which the model does not hold. The
+  # page's generated part stays as it is, and is then moved last (`restore_version/1`),
+  # which may be one more.
+  defp step(s, :restore_version, [save]) do
+    %{page: page, order: order, blocks: blocks} = s.saves[save]
+    kept = generated_of(s, page)
+
+    {order, blocks} =
+      if s.pages[page].update do
+        order = Enum.reject(order, &(blocks[&1].kind == "generated"))
+        {order, Map.take(blocks, order)}
+      else
+        {order, Map.new(blocks, &released/1)}
+      end
+
+    if live?(s, page) do
+      now = s.order[page] -- List.wrap(kept)
+      gone = now -- order
+      changed = for name <- order, s.blocks[name] != blocks[name], do: name
+      moved = if now -- gone == order -- (order -- now), do: 0, else: 1
+      least = length(gone) + length(changed)
+      most = length(Enum.uniq(now ++ order))
+
+      next = %{
+        s
+        | blocks: s.blocks |> Map.drop(gone) |> Map.merge(blocks),
+          order: %{s.order | page => order ++ List.wrap(kept)}
+      }
+
+      writes =
+        if least + moved == 0,
+          do: [0 | Enum.to_list(3..(3 + most))],
+          else: Enum.to_list((2 + least + moved)..(3 + most))
+
+      writes = if kept, do: Enum.uniq(Enum.flat_map(writes, &[&1, &1 + 1])), else: writes
+      {:ok, next, writes}
+    else
+      {:trashed, s, 0}
+    end
+  end
+
+  # Removing it releases the generated part in the same step: one more event.
+  defp step(s, :set_update, [page, on]) do
+    cond do
+      s.pages[page].update == on ->
+        {:ok, s, 0}
+
+      on or generated_of(s, page) == nil ->
+        {:ok, put_in(s.pages[page].update, on), 1}
+
+      true ->
+        {name, block} = released({generated_of(s, page), s.blocks[generated_of(s, page)]})
+        {:ok, %{put_in(s.pages[page].update, false) | blocks: %{s.blocks | name => block}}, 2}
+    end
+  end
+
+  # The page's `writtenAt`, and its generated part: a new one, or the one it has, which
+  # a run within the same millisecond as the last with the same words leaves as it is.
+  defp step(s, :run_update, [{name, page}, text]) do
+    cond do
+      not live?(s, page) ->
+        {:trashed, s, 0}
+
+      Map.has_key?(s.blocks, name) ->
+        {:ok, %{put_in(s.blocks[name].text, text) | ran: [name | s.ran]}, [0, 1, 2]}
+
+      true ->
+        block = %{page: page, kind: "generated", checked: false, text: text, chart: nil}
+
+        {:ok,
+         %{
+           s
+           | blocks: Map.put(s.blocks, name, block),
+             order: %{s.order | page => s.order[page] ++ [name]},
+             used: [name | s.used],
+             ran: [name | s.ran]
+         }, [1, 2]}
     end
   end
 
@@ -676,13 +868,26 @@ defmodule HalC2.SpacePropTest do
       true ->
         block = %{page: page, kind: "image", checked: false, text: name, chart: nil}
         order = s.order[page] ++ [name]
-        {:ok, %{s | blocks: Map.put(s.blocks, name, block), order: %{s.order | page => order}}, 1}
+
+        {:ok,
+         %{
+           s
+           | blocks: Map.put(s.blocks, name, block),
+             order: %{s.order | page => order},
+             used: [name | s.used]
+         }, 1}
     end
   end
 
   defp step(s, :restart, []), do: {:ok, s, 0}
 
   defp summary(title), do: Chart.summary(chart(title))
+
+  # A run's words, one paragraph here, as the block they read as with no update.
+  defp released({name, %{kind: "generated"} = block}),
+    do: {name, %{block | kind: "paragraph", checked: false}}
+
+  defp released(entry), do: entry
 
   # A deck `name` with a slide for each `{title, body}`, named "<deck>.<n>".
   defp made(s, name, title, specs) do
@@ -766,6 +971,48 @@ defmodule HalC2.SpacePropTest do
     do: act(name, &Space.create_page(&1, "Page #{name}", id(parent)))
 
   def move_page(name, parent), do: act(&Space.move_page(&1, id(name), id(parent)))
+
+  # The page's view of an update as the scheduler shows it; the scheduler itself is not
+  # running, so ending one is what `HalC2.Space.Schedule.remove/2` writes to the page.
+  def set_update(name, true) do
+    view = %{
+      "instruction" => "Summarise",
+      "cadence" => %{"type" => "interval", "everyMs" => 3_600_000},
+      "enabled" => true
+    }
+
+    act(fn space ->
+      :ok = Schedule.show(%{"spaceId" => space, "pageId" => id(name)}, view)
+      {:ok, nil}
+    end)
+  end
+
+  def set_update(name, false) do
+    page_id = id(name)
+
+    act(fn space ->
+      Space.transact(space, fn state ->
+        page = Space.Pages.get(state, page_id)
+
+        if page["schedule"] == nil do
+          {[], {:ok, nil}}
+        else
+          specs =
+            case generated(state, page_id) do
+              nil -> []
+              block -> Space.written(state, block["text"])
+            end
+
+          released = Blocks.release_generated(state, page_id, specs, %{"type" => "schedule"})
+
+          {[{"page", page_id, %{"s" => %{"schedule" => nil, "writtenAt" => nil}}} | released],
+           {:ok, nil}}
+        end
+      end)
+    end)
+  end
+
+  def run_update({name, page}, text), do: act(name, &Schedule.write(&1, id(page), text))
   def trash_page(name), do: act(&Space.trash_page(&1, id(name)))
   def restore_page(name), do: act(&Space.restore_page(&1, id(name)))
   def delete_page(name), do: act(&Space.delete_page(&1, id(name)))
@@ -812,6 +1059,62 @@ defmodule HalC2.SpacePropTest do
 
   def resolve_comment(name), do: act(&Space.resolve_comment(&1, id(name)))
   def reopen_comment(name), do: act(&Space.reopen_comment(&1, id(name)))
+
+  # Any point in the log is a version, so this remembers the next one to be asked for.
+  def save_version(save, page) do
+    saved = %{version: Streams.sequence(stream()), page: id(page)}
+    Process.put(:saves, Map.put(Process.get(:saves), save, saved))
+    act(fn _ -> {:ok, nil} end)
+  end
+
+  # A restore that writes the page's generated part is a failure. The model holds no
+  # order keys, so the part is then moved last for it to know where it is.
+  def restore_version(save) do
+    %{version: version, page: page} = Map.fetch!(Process.get(:saves), save)
+
+    act(fn space ->
+      kept = generated(Streams.state(stream()), page)
+      reply = Space.restore_page_version(space, page, version)
+
+      cond do
+        kept == nil or elem(reply, 0) != :ok ->
+          reply
+
+        generated(Streams.state(stream()), page) != kept ->
+          {:error, :generated_written, nil}
+
+        true ->
+          {:ok, _} = Space.move_block(space, kept["id"], :last)
+          reply
+      end
+    end)
+  end
+
+  defp generated(state, page_id),
+    do: Enum.find(Blocks.of_page(state, page_id), &(&1["kind"] == "generated"))
+
+  # Replies :ok when the versions go back in time and the newest reads as the page does.
+  def read_history(page) do
+    act(fn space ->
+      {:ok, %{versions: versions}} = Space.page_versions(space, id(page))
+      seqs = Enum.map(versions, & &1.version)
+      {:ok, newest} = Space.page_version(space, id(page), hd(seqs))
+      state = Streams.state(stream())
+      content = &Map.take(&1, ~w(id kind text checked linkedPageId imageId chart order))
+
+      cond do
+        seqs != seqs |> Enum.uniq() |> Enum.sort(:desc) ->
+          {:error, :versions_out_of_order, nil}
+
+        Enum.map(newest.blocks, content) !=
+            Enum.map(Blocks.of_page(state, id(page)), content) ->
+          {:error, :newest_is_not_the_page, nil}
+
+        true ->
+          {:ok, nil}
+      end
+    end)
+  end
 
   def create_deck(name), do: act_deck(name, &Space.create_deck(&1, name))
 
@@ -905,15 +1208,8 @@ defmodule HalC2.SpacePropTest do
 
   defp read_back do
     state = Streams.state(stream())
-
-    ids =
-      for kind <- ~w(page block comment deck slide image),
-          id <- Map.keys(StreamState.get(state, kind)),
-          do: id
-
-    names = Map.filter(Process.get(:names), fn {_, id} -> id in ids end)
-    Process.put(:names, names)
-    name = Map.new(names, fn {name, id} -> {id, name} end)
+    # Named things that are gone stay named: a restore can bring a block back.
+    name = Map.new(Process.get(:names), fn {name, id} -> {id, name} end)
     name = &Map.get(name, &1, &1)
     pages = StreamState.list(state, "page")
     sites = StreamState.list(state, "site")
@@ -932,7 +1228,8 @@ defmodule HalC2.SpacePropTest do
           {name.(page["id"]),
            %{
              parent: page["parentPageId"] && name.(page["parentPageId"]),
-             trashed: page["trashedAt"] != nil
+             trashed: page["trashedAt"] != nil,
+             update: page["schedule"] != nil
            }}
         end),
       order: Map.new(order, fn {page, blocks} -> {page, Enum.map(blocks, &name.(&1["id"]))} end),
@@ -950,7 +1247,11 @@ defmodule HalC2.SpacePropTest do
       comments:
         Map.new(StreamState.list(state, "comment"), fn comment ->
           {name.(comment["id"]),
-           %{block: name.(comment["blockId"]), resolved: comment["resolvedAt"] != nil}}
+           %{
+             page: name.(comment["pageId"]),
+             block: name.(comment["blockId"]),
+             resolved: comment["resolvedAt"] != nil
+           }}
         end),
       decks:
         Map.new(decks, fn deck ->

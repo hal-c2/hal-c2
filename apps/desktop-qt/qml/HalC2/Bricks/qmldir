@@ -111,6 +111,8 @@ SpaceBlockImage 1.0 SpaceBlockImage.qml
 SpaceImages 1.0 SpaceImages.qml
 SpaceImageDialog 1.0 SpaceImageDialog.qml
 SpaceComments 1.0 SpaceComments.qml
+SpaceHistoryPanel 1.0 SpaceHistoryPanel.qml
+SpaceVersionView 1.0 SpaceVersionView.qml
 UsageChart 1.0 UsageChart.qml
 ProvidersSettings 1.0 ProvidersSettings.qml
 ArchivedThreads 1.0 ArchivedThreads.qml

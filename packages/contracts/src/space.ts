@@ -2,6 +2,8 @@ import * as Schema from "effect/Schema";
 
 import {
   IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
   SpaceBlockId,
   SpaceCommentId,
   SpaceDeckId,
@@ -461,6 +463,63 @@ export type SpaceCommentRef = typeof SpaceCommentRef.Type;
 
 export const SpaceCommentResult = Schema.Struct({ comment: SpaceComment });
 export type SpaceCommentResult = typeof SpaceCommentResult.Type;
+
+// A page's history (read on demand; never on the stream)
+
+/**
+ * Names a version: the event-log position of its last edit. Any position reads the
+ * page as it stood there, so a name stays good when its run of edits grows.
+ */
+export const SpacePageVersionId = NonNegativeInt;
+export type SpacePageVersionId = typeof SpacePageVersionId.Type;
+
+/** For `space.page.history`: from the newest version, or `before` the one given. */
+export const SpacePageHistoryInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  before: Schema.optional(SpacePageVersionId),
+  /** How many versions to send; the MC caps it. */
+  limit: Schema.optional(PositiveInt),
+});
+export type SpacePageHistoryInput = typeof SpacePageHistoryInput.Type;
+
+/** One author's run of edits on a page. */
+export const SpacePageVersion = Schema.Struct({
+  version: SpacePageVersionId,
+  /** When its last edit was written. */
+  at: IsoDateTime,
+  author: SpaceAuthor,
+  /** The title of the agent's thread, while it still exists. */
+  threadTitle: Schema.NullOr(Schema.String),
+  /** When the version this one restored was written, if it is a restore. */
+  restoredFromAt: Schema.NullOr(IsoDateTime),
+});
+export type SpacePageVersion = typeof SpacePageVersion.Type;
+
+export const SpacePageHistoryResult = Schema.Struct({
+  /** Newest first. */
+  versions: Schema.Array(SpacePageVersion),
+  /** What to pass as `before` for the next stretch; null at the oldest. */
+  nextBefore: Schema.NullOr(SpacePageVersionId),
+});
+export type SpacePageHistoryResult = typeof SpacePageHistoryResult.Type;
+
+/** Names one version for `space.page.version` and `space.page.restoreVersion`. */
+export const SpacePageVersionRef = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  version: SpacePageVersionId,
+});
+export type SpacePageVersionRef = typeof SpacePageVersionRef.Type;
+
+/** A version's title and blocks, without its comments, which are not versioned. */
+export const SpacePageVersionContent = Schema.Struct({
+  version: SpacePageVersionId,
+  at: IsoDateTime,
+  title: Schema.String,
+  blocks: Schema.Array(SpaceBlock),
+});
+export type SpacePageVersionContent = typeof SpacePageVersionContent.Type;
 
 // Decks
 

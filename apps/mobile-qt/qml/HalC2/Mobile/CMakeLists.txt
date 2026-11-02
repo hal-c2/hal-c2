@@ -22,6 +22,7 @@ qt_add_qml_module(hal_c2_mobile
     SpaceBlockRow.qml
     SpaceCommentsView.qml
     SpaceDeckView.qml
+    SpaceHistoryView.qml
     SpaceListRow.qml
     SpacePageView.qml
     SpaceImagesView.qml
@@ -30,6 +31,7 @@ qt_add_qml_module(hal_c2_mobile
     SpaceSheet.qml
     SpaceSlideRow.qml
     SpaceTextDialog.qml
+    SpaceVersionScreen.qml
     ThreadScreen.qml
   RESOURCES
     qmldir

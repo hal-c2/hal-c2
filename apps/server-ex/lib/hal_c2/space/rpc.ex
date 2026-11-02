@@ -52,6 +52,28 @@ defmodule HalC2.Space.Rpc do
   defp call("page.createFromThread", %{"spaceId" => s, "threadId" => t} = i),
     do: page(Space.create_page_from_thread(s, t, i["parentPageId"]))
 
+  defp call("page.history", %{"spaceId" => s, "pageId" => p} = i) do
+    with {:ok, %{versions: versions, next_before: next}} <-
+           Space.page_versions(s, p, i["before"], i["limit"]) do
+      {:ok, %{"versions" => Enum.map(versions, &version/1), "nextBefore" => next}}
+    end
+  end
+
+  defp call("page.version", %{"spaceId" => s, "pageId" => p, "version" => v}) do
+    with {:ok, read} <- Space.page_version(s, p, v) do
+      {:ok,
+       %{
+         "version" => read.version,
+         "at" => read.at,
+         "title" => read.title,
+         "blocks" => read.blocks
+       }}
+    end
+  end
+
+  defp call("page.restoreVersion", %{"spaceId" => s, "pageId" => p, "version" => v}),
+    do: page(Space.restore_page_version(s, p, v))
+
   defp call("page.schedule.set", %{"spaceId" => s, "pageId" => p} = i)
        when is_map_key(i, "instruction") and is_map_key(i, "cadence"),
        do: page(Schedule.set(s, p, i["instruction"], i["cadence"]))
@@ -151,7 +173,7 @@ defmodule HalC2.Space.Rpc do
 
   @methods ~w(list create rename delete page.create page.rename page.move page.trash
     page.restore page.delete page.publish page.unpublish page.exportMarkdown page.importMarkdown
-    page.createFromThread
+    page.createFromThread page.history page.version page.restoreVersion
     page.schedule.set page.schedule.setEnabled page.schedule.runNow page.schedule.remove
     block.insert block.update block.setChecked block.move block.delete block.visualize
     comment.add comment.resolve comment.reopen deck.create deck.createFromPage deck.rename
@@ -160,6 +182,16 @@ defmodule HalC2.Space.Rpc do
 
   @doc "The methods after `space.`."
   def methods, do: @methods
+
+  defp version(version) do
+    %{
+      "version" => version.version,
+      "at" => version.at,
+      "author" => version.author,
+      "threadTitle" => version.thread_title,
+      "restoredFromAt" => version.restored_from_at
+    }
+  end
 
   defp space(result), do: with({:ok, space} <- result, do: {:ok, %{"space" => space}})
   defp page(result), do: with({:ok, page} <- result, do: {:ok, %{"page" => page}})

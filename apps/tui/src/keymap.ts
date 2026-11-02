@@ -169,6 +169,7 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "l", description: "Spaces: link a subpage", chords: ["l"] },
       { keys: "u", description: "Spaces: give a page an update", chords: ["u"] },
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
+      { keys: "h", description: "Spaces: a page's history", chords: ["h"] },
       {
         keys: "g",
         description: "Spaces: ask for a chart, or ask again for the selected one",
@@ -403,6 +404,7 @@ export const KEYMAP_LAYERS = {
     d: "space.delete",
     "shift+d": "space.deleteForGood",
     r: "space.restore",
+    h: "space.history",
     "space, x": "space.tick",
     c: "space.comment",
     l: "space.link",

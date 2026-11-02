@@ -8,7 +8,7 @@ import HalC2.Shell
 import HalC2.Bricks
 
 // The Spaces in the phone layout, one step at a time: the list of Spaces, a
-// Space's pages and decks or images, a page, its comments, a deck. Everything shown is SpaceController's
+// Space's pages and decks or images, a page, its comments or its history, a deck. Everything shown is SpaceController's
 // (`Spaces`) and everything done is its actions; which step shows is the only
 // thing kept here, because the controller always has a page selected, opened
 // by the user or not.
@@ -38,6 +38,7 @@ Item {
     readonly property string pageId: Spaces.pageId
     readonly property string deckId: Spaces.deckId
     readonly property string error: (Shell.state.space ?? {}).error ?? ""
+    readonly property bool readingVersion: Spaces.history.reading
     // Signing an address for every image lasts only as long as they are on screen.
     readonly property bool browsingImages: view === "images" && visible
 
@@ -54,7 +55,10 @@ Item {
         forceActiveFocus();
         if (Spaces.presenting)
             Shell.dispatch("space.deck.leave", {});
-        else if (view === "comments")
+        else if (view === "version") {
+            Shell.dispatch("space.history.back", {});
+            view = "history";
+        } else if (view === "comments" || view === "history")
             view = "page";
         else if (view === "page" || view === "deck")
             view = "pages";
@@ -117,6 +121,18 @@ Item {
         view = "comments";
         if (blockId !== "")
             comments.showBlock(blockId);
+    }
+
+    // The history of the page `id`, whichever list or screen asked for it.
+    function showHistory(id) {
+        openPage(id);
+        Shell.dispatch("space.history.open", { pageId: id });
+        view = "history";
+    }
+
+    function readVersion(version) {
+        Shell.dispatch("space.history.read", { version: version });
+        view = "version";
     }
 
     function askNewSpace() {
@@ -201,6 +217,7 @@ Item {
             { id: "into", label: qsTr("Move into…"), icon: "folder" },
             { id: "top", label: qsTr("Move to the top"), icon: "arrow-up", enabled: parentPageId !== "" },
             { id: "copy", label: qsTr("Copy as Markdown"), icon: "copy" },
+            { id: "history", label: qsTr("History"), icon: "clock" },
             { id: "deck", label: qsTr("Make a deck"), icon: "play" }
         ].concat(updateRows(id), [
             { id: "trash", label: qsTr("Move to trash"), icon: "trash", destructive: true }
@@ -231,6 +248,8 @@ Item {
                 Shell.dispatch("space.page.move", { pageId: id, parentPageId: "" });
             } else if (choice === "copy") {
                 Shell.dispatch("space.page.copyMarkdown", { pageId: id });
+            } else if (choice === "history") {
+                showHistory(id);
             } else if (choice === "deck") {
                 deckExpected = true;
                 Shell.dispatch("space.deck.createFromPage", { pageId: id });
@@ -263,8 +282,14 @@ Item {
     function trashMenu(id) {
         sheet.ask([
             { id: "restore", label: qsTr("Restore"), icon: "archive-restore" },
+            { id: "history", label: qsTr("History"), icon: "clock" },
             { id: "delete", label: qsTr("Delete for good"), icon: "trash", destructive: true }
-        ], choice => Shell.dispatch(choice === "restore" ? "space.page.restore" : "space.page.delete", { pageId: id }));
+        ], choice => {
+            if (choice === "history")
+                showHistory(id);
+            else
+                Shell.dispatch(choice === "restore" ? "space.page.restore" : "space.page.delete", { pageId: id });
+        });
     }
 
     // The block menu: `afterBlockId` is where a new block goes (undefined: last).
@@ -460,7 +485,14 @@ Item {
         openedPageId = resumeStep.pageId;
         openedDeckId = resumeStep.deckId ?? "";
         const selected = resumeStep.view === "deck" ? resumeStep.deckId === deckId : resumeStep.pageId === pageId;
-        view = resumeStep.view === "pages" || resumeStep.view === "images" || selected ? resumeStep.view : "pages";
+        const wanted = resumeStep.view === "pages" || resumeStep.view === "images" || selected ? resumeStep.view : "pages";
+        // The controller may have closed what the step was showing.
+        if (wanted === "version" && !readingVersion)
+            view = Spaces.history.shown ? "history" : "page";
+        else if (wanted === "history" && !Spaces.history.shown)
+            view = "page";
+        else
+            view = wanted;
     }
 
     function openArrived() {
@@ -477,7 +509,7 @@ Item {
         if (pageId !== "" && (pageExpected || pageId === awaitedPageId)) {
             pageExpected = false;
             openArrived();
-        } else if ((view === "page" || view === "comments") && pageId !== openedPageId) {
+        } else if (["page", "comments", "history", "version"].includes(view) && pageId !== openedPageId) {
             // The page went (another client deleted it): not some other page in its place.
             view = "pages";
         }
@@ -498,6 +530,16 @@ Item {
     onSpaceIdChanged: {
         if (settled && !pageExpected && !deckExpected && awaitedPageId === "" && view !== "spaces" && spaceId !== openedSpaceId)
             view = "spaces";
+    }
+    // Every way out of the history closes it, so nothing keeps asking the MC for it.
+    onViewChanged: {
+        if (view !== "history" && view !== "version" && Spaces.history.shown)
+            Shell.dispatch("space.history.close", {});
+    }
+    // A restore landed, or the controller stopped reading: back to the versions.
+    onReadingVersionChanged: {
+        if (!readingVersion && view === "version")
+            view = "history";
     }
     onStepChanged: {
         if (settled)
@@ -619,6 +661,18 @@ Item {
 
         anchors.fill: parent
         visible: screen.view === "comments"
+        screen: screen
+    }
+
+    SpaceHistoryView {
+        anchors.fill: parent
+        visible: screen.view === "history"
+        screen: screen
+    }
+
+    SpaceVersionScreen {
+        anchors.fill: parent
+        visible: screen.view === "version"
         screen: screen
     }
 

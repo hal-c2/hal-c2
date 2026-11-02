@@ -353,6 +353,8 @@ import {
   SpacePageCreateInput,
   SpacePageDeleteResult,
   SpacePageExportMarkdownResult,
+  SpacePageHistoryInput,
+  SpacePageHistoryResult,
   SpacePagePublishInput,
   SpacePagePublishResult,
   SpacePageUnpublishResult,
@@ -365,6 +367,8 @@ import {
   SpacePageResult,
   SpacePageScheduleSetEnabledInput,
   SpacePageScheduleSetInput,
+  SpacePageVersionContent,
+  SpacePageVersionRef,
   SpaceRenameInput,
   SpaceResult,
   SpaceBlockVisualizeInput,
@@ -551,6 +555,9 @@ export const WS_METHODS = {
   spacePageExportMarkdown: "space.page.exportMarkdown",
   spacePageImportMarkdown: "space.page.importMarkdown",
   spacePageCreateFromThread: "space.page.createFromThread",
+  spacePageHistory: "space.page.history",
+  spacePageVersion: "space.page.version",
+  spacePageRestoreVersion: "space.page.restoreVersion",
   spacePageScheduleSet: "space.page.schedule.set",
   spacePageScheduleSetEnabled: "space.page.schedule.setEnabled",
   spacePageScheduleRunNow: "space.page.schedule.runNow",
@@ -1911,6 +1918,24 @@ const WsSpacePageCreateFromThreadRpc = Rpc.make(WS_METHODS.spacePageCreateFromTh
   error: Schema.Union([SpaceError, SpaceTextGenerationError, EnvironmentAuthorizationError]),
 });
 
+const WsSpacePageHistoryRpc = Rpc.make(WS_METHODS.spacePageHistory, {
+  payload: SpacePageHistoryInput,
+  success: SpacePageHistoryResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageVersionRpc = Rpc.make(WS_METHODS.spacePageVersion, {
+  payload: SpacePageVersionRef,
+  success: SpacePageVersionContent,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageRestoreVersionRpc = Rpc.make(WS_METHODS.spacePageRestoreVersion, {
+  payload: SpacePageVersionRef,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
 const WsSpacePageScheduleSetRpc = Rpc.make(WS_METHODS.spacePageScheduleSet, {
   payload: SpacePageScheduleSetInput,
   success: SpacePageResult,
@@ -2179,6 +2204,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageExportMarkdownRpc,
   WsSpacePageImportMarkdownRpc,
   WsSpacePageCreateFromThreadRpc,
+  WsSpacePageHistoryRpc,
+  WsSpacePageVersionRpc,
+  WsSpacePageRestoreVersionRpc,
   WsSpacePageScheduleSetRpc,
   WsSpacePageScheduleSetEnabledRpc,
   WsSpacePageScheduleRunNowRpc,

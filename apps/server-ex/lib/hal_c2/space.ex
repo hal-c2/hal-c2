@@ -26,6 +26,7 @@ defmodule HalC2.Space do
     Blocks,
     Chart,
     Decks,
+    History,
     ImageFile,
     ImageGeneration,
     Images,
@@ -185,8 +186,8 @@ defmodule HalC2.Space do
   def restore_page(space_id, id),
     do: transact(space_id, &Pages.restore(&1, id)) |> settle_schedules(space_id)
 
-  def delete_page(space_id, id),
-    do: transact(space_id, &Pages.delete(&1, id)) |> settle_schedules(space_id)
+  def delete_page(space_id, id, author \\ @user),
+    do: transact(space_id, &Pages.delete(&1, id, author)) |> settle_schedules(space_id)
 
   # The trash decides whether a page's update runs, and the scheduler is told after the
   # stream's step is over: it writes to this stream, so it cannot be waited on inside one.
@@ -212,7 +213,8 @@ defmodule HalC2.Space do
   def move_block(space_id, id, after_id, author \\ @user),
     do: transact(space_id, &Blocks.move(&1, id, after_id, author))
 
-  def delete_block(space_id, id), do: transact(space_id, &Blocks.delete(&1, id))
+  def delete_block(space_id, id, author \\ @user),
+    do: transact(space_id, &Blocks.delete(&1, id, author))
 
   @doc """
   Draws a chart that answers `request` on a page (`HalC2.Space.Visualize`): a new block
@@ -279,6 +281,26 @@ defmodule HalC2.Space do
              comments: Blocks.comments(state, page_id)
            }}
       end
+    end
+  end
+
+  # --- history -------------------------------------------------------------------------
+
+  @doc "See `HalC2.Space.History.versions/4`."
+  defdelegate page_versions(space_id, page_id, before \\ nil, limit \\ nil),
+    to: History,
+    as: :versions
+
+  @doc "See `HalC2.Space.History.read/3`."
+  defdelegate page_version(space_id, page_id, version), to: History, as: :read
+
+  @doc """
+  Makes the page look like `version` again, as a new edit (`HalC2.Space.History`). The
+  version is read before the stream decides: what it held never changes.
+  """
+  def restore_page_version(space_id, page_id, version, author \\ @user) do
+    with {:ok, read} <- History.read(space_id, page_id, version) do
+      transact(space_id, &History.restore(&1, page_id, read, author))
     end
   end
 

@@ -3,6 +3,7 @@
 #include <QAbstractListModel>
 #include <QDateTime>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
@@ -80,6 +81,101 @@ private:
   QList<QVariantMap> m_rows;
 };
 
+// A page's history as the user looks through it: its versions a stretch at a
+// time, and the one being read. The MC keeps it (features/space/page-history.feature)
+// and it is never on the stream, so this holds only what was asked for. It sends
+// nothing itself: what changes it hands back the request to send, whose answer
+// comes back with its token. An answer to anything since replaced is dropped, and
+// only one stretch is asked for at a time, so a refresh wanted meanwhile follows
+// the answer, however many were wanted.
+//
+// Rows:
+//   versions {id, version, at, byAgent, byUpdate, threadTitle, restoredFromAt}: newest
+//            first, the first being the page as it is now
+//   blocks   the version being read, as SpacePages' blocks
+class SpaceHistory : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(bool shown READ shown NOTIFY changed)
+  Q_PROPERTY(QString pageId READ pageId NOTIFY changed)
+  Q_PROPERTY(SpaceRows* versions READ versions CONSTANT)
+  Q_PROPERTY(SpaceRows* blocks READ blocks CONSTANT)
+  Q_PROPERTY(bool loading READ loading NOTIFY changed)
+  // The last stretch asked for did not come.
+  Q_PROPERTY(bool failed READ failed NOTIFY changed)
+  Q_PROPERTY(bool hasMore READ hasMore NOTIFY changed)
+  // A version was chosen; `version` is {version, at, title} once it has come.
+  Q_PROPERTY(bool reading READ reading NOTIFY changed)
+  Q_PROPERTY(QVariantMap version READ version NOTIFY changed)
+
+public:
+  struct Request {
+    int token = 0;
+    QJsonObject payload;
+  };
+  using Next = std::optional<Request>;
+
+  // `imageFields` is what a block showing an image says of it (SpacePages::imageFields).
+  SpaceHistory(std::function<QString(const QString& pageId)> titleOf,
+               std::function<QVariantMap(const QString& imageId)> imageFields, QObject* parent = nullptr);
+
+  bool shown() const { return !m_pageId.isEmpty(); }
+  QString pageId() const { return m_pageId; }
+  SpaceRows* versions() const { return m_versions; }
+  SpaceRows* blocks() const { return m_blocks; }
+  bool loading() const { return m_listToken != 0; }
+  bool failed() const { return m_failed; }
+  bool hasMore() const { return m_nextBefore >= 0; }
+  bool reading() const { return m_reading; }
+  QVariantMap version() const { return m_version; }
+
+  // Starts over on the newest versions of `pageId`.
+  Next open(const QString& pageId);
+  void close();
+  // The next stretch, when there is one and none is on its way.
+  Next more();
+  // The versions held, anew: the page was written. Waits for a stretch on its way.
+  Next refresh();
+  // The answer to a `space.page.history`, and what to ask next.
+  Next receive(int token, const QJsonObject& result);
+  Next failed(int token);
+
+  // Asks for one version to read, and leaves the one being read.
+  Request read(qint64 version);
+  void stopReading();
+  // The answer to a `space.page.version`. A failed one goes back to the list.
+  void receiveVersion(int token, const QJsonObject& result);
+  void failedVersion(int token);
+  // The images of the version being read, which want addresses as the page's own do.
+  QStringList imagesRead() const;
+  // The version's rows anew: a title, an image or its address moved on.
+  void repaint();
+
+signals:
+  void changed();
+  // A version with images came: they want addresses.
+  void imagesArrived();
+
+private:
+  Next settled();
+
+  std::function<QString(const QString&)> m_titleOf;
+  std::function<QVariantMap(const QString&)> m_imageFields;
+  SpaceRows* m_versions;
+  SpaceRows* m_blocks;
+  QString m_pageId;
+  int m_tokens = 0;
+  int m_listToken = 0;
+  int m_readToken = 0;
+  bool m_appending = false;
+  bool m_stale = false;
+  bool m_failed = false;
+  bool m_reading = false;
+  qint64 m_nextBefore = -1;
+  bool m_refreshing = false;
+  QVariantMap m_version;
+  QJsonArray m_read;
+};
+
 // What the Space view shows of the MC's Space streams: the Spaces, the
 // selected Space's page tree, decks and trash, the selected page's blocks and
 // comments, and the selected deck's slides. A selected deck is shown instead of
@@ -98,8 +194,9 @@ private:
 //            openComments, imageId, imageState, imageUrl, imageWidth,
 //            imageHeight}: the page's blocks by their `order`; imageState is
 //            shown, trashed or deleted on an image block, else ""
-//   comments {id, blockId, blockText, body, resolved, byAgent, createdAt}:
-//            the page's comments, open ones first
+//   comments {id, blockId, blockText, blockGone, body, resolved, byAgent,
+//            createdAt}: the page's comments, open ones first; blockGone when
+//            the block it is on has left the page, as a restore can do
 //   decks     {id, title}: decks out of the trash, in the order they were made
 //   deckTrash {id, title, trashedAt}: trashed decks, the latest first
 //   slides    {id, title, body}: the selected deck's slides by their `order`
@@ -117,6 +214,7 @@ class SpacePages : public QObject {
   Q_PROPERTY(SpaceRows* trash READ trash CONSTANT)
   Q_PROPERTY(SpaceRows* blocks READ blocks CONSTANT)
   Q_PROPERTY(SpaceRows* comments READ comments CONSTANT)
+  Q_PROPERTY(SpaceHistory* history READ history CONSTANT)
   Q_PROPERTY(SpaceRows* decks READ decks CONSTANT)
   Q_PROPERTY(SpaceRows* deckTrash READ deckTrash CONSTANT)
   Q_PROPERTY(SpaceRows* slides READ slides CONSTANT)
@@ -152,6 +250,7 @@ public:
   SpaceRows* trash() const { return m_trash; }
   SpaceRows* blocks() const { return m_blocks; }
   SpaceRows* comments() const { return m_comments; }
+  SpaceHistory* history() const { return m_history; }
   SpaceRows* decks() const { return m_decks; }
   SpaceRows* deckTrash() const { return m_deckTrash; }
   SpaceRows* slides() const { return m_slides; }
@@ -260,6 +359,9 @@ private:
   // Keeps the presenter on a slide of the deck as it stands.
   void followPresenter();
   // The images whose address should now be asked for, marked as asked.
+  // {imageId, imageState, imageUrl, imageWidth, imageHeight} of a block showing an
+  // image; imageState is shown, trashed or deleted, and all are empty for no image.
+  QVariantMap imageFields(const QString& imageId) const;
   QStringList imagesToSign(const QSet<QString>& wanted);
   void armAddressRefresh(const QSet<QString>& wanted);
 
@@ -303,6 +405,7 @@ private:
   SpaceRows* m_slides;
   SpaceRows* m_images;
   SpaceRows* m_imageTrash;
+  SpaceHistory* m_history;
 };
 
 // The Space view (route kind `space`): follows the `spaces` index and the
@@ -335,11 +438,14 @@ private:
 // `space.block.setChecked {blockId, checked}`, `space.block.move {blockId,
 // afterBlockId}`, `space.block.delete {blockId}`, `space.comment.add {pageId,
 // blockId, body}`, `space.comment.resolve {commentId}`, `space.comment.reopen
-// {commentId}`, `space.selectDeck {deckId}`, `space.deck.create {title}`,
-// `space.deck.createFromPage {pageId}`, `space.deck.rename {deckId, title}`,
-// `space.deck.trash {deckId}`, `space.deck.restore {deckId}`, `space.deck.delete
-// {deckId}`, `space.slide.insert {deckId, title, body, afterSlideId}` (afterSlideId:
-// "" first, absent last), `space.slide.update {slideId, title, body}`,
+// {commentId}`, `space.history.open {pageId}`, `space.history.close`,
+// `space.history.more`, `space.history.read {version}`, `space.history.back`,
+// `space.history.restore {version}`, `space.selectDeck {deckId}`,
+// `space.deck.create {title}`, `space.deck.createFromPage {pageId}`,
+// `space.deck.rename {deckId, title}`, `space.deck.trash {deckId}`,
+// `space.deck.restore {deckId}`, `space.deck.delete {deckId}`,
+// `space.slide.insert {deckId, title, body, afterSlideId}` (afterSlideId: "" first,
+// absent last), `space.slide.update {slideId, title, body}`,
 // `space.slide.move {slideId, afterSlideId}`, `space.slide.delete {slideId}`,
 // `space.deck.present {deckId}`, `space.deck.step {by}`, `space.deck.leave`,
 // `space.images.show {shown}`, `space.image.providers`,
@@ -352,6 +458,7 @@ class SpaceController : public SpacePages, public NativeController {
 public:
   static inline const QString kOpen = QStringLiteral("space.open");
   static inline const QString kPageFromThread = QStringLiteral("space.pageFromThread");
+  static inline const QString kHistory = QStringLiteral("space.history.open");
   static inline const QString kDeckFromPage = QStringLiteral("space.deck.fromOpenPage");
   static inline const QString kPresentDeck = QStringLiteral("space.deck.presentOpen");
 
@@ -386,6 +493,12 @@ private:
   void exportPage(const QString& pageId, std::function<void(const QString& markdown)> done);
   void importMarkdown(const QString& markdown);
   void pageFromThread(const QString& threadKey);
+  void openHistory(const QString& pageId);
+  // The history follows the open page, and asks again a moment after the page is
+  // written (at most once in `kHistoryRefreshMs`, however fast it is written). A
+  // deck opening closes it, since the page and what is beside it give way.
+  void followHistory();
+  void askHistory(const SpaceHistory::Next& request);
   void presentDeck(const QString& id);
   void signImages(const QStringList& imageIds);
   void addImageFile(const QString& url);
@@ -415,4 +528,6 @@ private:
   QVariantMap m_imageProviders;
   // The page last written from a thread.
   QString m_written;
+  QTimer* m_historyRefresh;
+  qint64 m_historyOffset = -1;
 };

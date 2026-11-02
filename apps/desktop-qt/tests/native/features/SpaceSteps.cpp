@@ -41,8 +41,21 @@ struct Answer {
   QJsonObject detail;
 };
 
+// A page's version as the MC reads it from its log: one author's run of edits.
+struct FakeVersion {
+  int version = 0;
+  QString at;
+  QJsonObject author;
+  QString restoredFromAt;
+  QJsonObject content;
+};
+
 // The MC's Spaces, beside the streams that hold them.
 struct FakeSpaces {
+  // Each page's versions, oldest first, and whether the next edit comes after
+  // long enough to start a new one.
+  QHash<QString, QList<FakeVersion>> versions;
+  bool paused = false;
   int ids = 0;
   int clock = 0;
   // Threads with something to summarise.
@@ -183,6 +196,8 @@ Answer refused(const QString& reason, const QString& message, const QString& tag
 }
 
 const QJsonObject kUser{{QStringLiteral("type"), QStringLiteral("user")}};
+// A page's update writes as itself, whoever ran it.
+const QJsonObject kSchedule{{QStringLiteral("type"), QStringLiteral("schedule")}};
 
 QJsonObject agent(const QString& threadId) {
   return {{QStringLiteral("type"), QStringLiteral("agent")}, {QStringLiteral("threadId"), threadId}};
@@ -534,6 +549,108 @@ void seed(FakeMc& mc) {
   if (all(mc, kIndex, QStringLiteral("space")).isEmpty()) makeSpace(mc, QStringLiteral("Personal"));
 }
 
+// What a version holds of a block: all but who last wrote it and when.
+QJsonObject versioned(QJsonObject block) {
+  block.remove(QLatin1String("updatedBy"));
+  block.remove(QLatin1String("updatedAt"));
+  return block;
+}
+
+QJsonObject contentOf(FakeMc& mc, const QString& space, const QJsonObject& page) {
+  QJsonArray blocks;
+  for (const QJsonObject& block : blocksOf(mc, space, text(page, QLatin1String("id")))) blocks.append(versioned(block));
+  return {{QStringLiteral("title"), page.value(QLatin1String("title"))}, {QStringLiteral("blocks"), blocks}};
+}
+
+// Whatever the last write did to a page is its author's version: the last one
+// grown, or a new one after a pause, another author or a restore.
+void noteEdits(FakeMc& mc, const QString& space, const QJsonObject& author) {
+  FakeSpaces& spaces = fake(mc);
+  for (const QJsonObject& page : all(mc, streamOf(space), QStringLiteral("page"))) {
+    QList<FakeVersion>& versions = spaces.versions[text(page, QLatin1String("id"))];
+    const QJsonObject content = contentOf(mc, space, page);
+    if (!versions.isEmpty() && versions.last().content == content) continue;
+    const bool grows = !versions.isEmpty() && !spaces.paused && versions.last().restoredFromAt.isEmpty() && versions.last().author == author;
+    if (!grows) versions.append(FakeVersion{});
+    versions.last() = {++spaces.ids, stamp(mc), author, QString(), content};
+    spaces.paused = false;
+  }
+}
+
+Answer historyCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
+  const QString space = text(in, QLatin1String("spaceId"));
+  const QString pageId = text(in, QLatin1String("pageId"));
+  const QJsonObject page = one(mc, streamOf(space), QStringLiteral("page"), pageId);
+  if (page.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no page %1 in this Space.").arg(pageId));
+  QList<FakeVersion>& versions = fake(mc).versions[pageId];
+
+  if (method == QLatin1String("page.history")) {
+    const int before = in.value(QLatin1String("before")).toInt(-1);
+    const int limit = in.value(QLatin1String("limit")).toInt(30);
+    QJsonArray shown;
+    QJsonValue next(QJsonValue::Null);
+    for (auto it = versions.crbegin(); it != versions.crend(); ++it) {
+      if (before >= 0 && it->version >= before) continue;
+      if (shown.size() == limit) {
+        next = shown.last().toObject().value(QLatin1String("version"));
+        break;
+      }
+      const QString thread = text(it->author, QLatin1String("threadId"));
+      shown.append(QJsonObject{{QStringLiteral("version"), it->version},
+                               {QStringLiteral("at"), it->at},
+                               {QStringLiteral("author"), it->author},
+                               {QStringLiteral("threadTitle"), thread.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(mc.threads.value(thread).value(QLatin1String("title")).toString())},
+                               {QStringLiteral("restoredFromAt"), it->restoredFromAt.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(it->restoredFromAt)}});
+    }
+    return {{{QStringLiteral("versions"), shown}, {QStringLiteral("nextBefore"), next}}};
+  }
+
+  const int wanted = in.value(QLatin1String("version")).toInt(-1);
+  const auto found = std::find_if(versions.cbegin(), versions.cend(), [wanted](const FakeVersion& version) { return version.version == wanted; });
+  if (found == versions.cend()) return refused(QStringLiteral("notFound"), QStringLiteral("This page has no version %1.").arg(wanted));
+  const FakeVersion version = *found;
+
+  if (method == QLatin1String("page.version")) {
+    return {{{QStringLiteral("version"), version.version},
+             {QStringLiteral("at"), version.at},
+             {QStringLiteral("title"), version.content.value(QLatin1String("title"))},
+             {QStringLiteral("blocks"), version.content.value(QLatin1String("blocks"))}}};
+  }
+
+  if (const auto why = writable(mc, space, pageId)) return *why;
+  const QJsonObject before = contentOf(mc, space, page);
+  const QString stream = streamOf(space);
+  // HalC2.Space.History.restore/5 never writes a generated part: the page's stays as it
+  // is, a page that updates itself takes none of a version's, and any other gets it back
+  // as the block it reads as.
+  const bool updates = page.value(QLatin1String("schedule")).isObject();
+  QSet<QString> kept;
+  for (const QJsonValue& value : version.content.value(QLatin1String("blocks")).toArray()) {
+    QJsonObject block = value.toObject();
+    if (text(block, QLatin1String("kind")) == QLatin1String("generated")) {
+      if (updates) continue;
+      const QJsonObject first = parseMarkdown(text(block, QLatin1String("text"))).second.value(0);
+      block.insert(QStringLiteral("kind"), text(first, QLatin1String("kind")));
+      block.insert(QStringLiteral("text"), text(first, QLatin1String("text")));
+    }
+    const QString id = text(block, QLatin1String("id"));
+    kept.insert(id);
+    if (versioned(one(mc, stream, QStringLiteral("block"), id)) == block) continue;
+    block.insert(QStringLiteral("updatedBy"), kUser);
+    block.insert(QStringLiteral("updatedAt"), stamp(mc));
+    set(mc, stream, QStringLiteral("block"), id, block);
+  }
+  for (const QJsonObject& block : blocksOf(mc, space, pageId)) {
+    const QString id = text(block, QLatin1String("id"));
+    if (text(block, QLatin1String("kind")) != QLatin1String("generated") && !kept.contains(id)) remove(mc, stream, QStringLiteral("block"), id);
+  }
+  if (page.value(QLatin1String("title")) != version.content.value(QLatin1String("title")))
+    set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("title"), version.content.value(QLatin1String("title"))}});
+  const QJsonObject after = contentOf(mc, space, one(mc, stream, QStringLiteral("page"), pageId));
+  if (after != before) versions.append(FakeVersion{++fake(mc).ids, stamp(mc), kUser, version.at, after});
+  return {{{QStringLiteral("page"), one(mc, streamOf(space), QStringLiteral("page"), pageId)}}};
+}
+
 const QString kGenerated = QStringLiteral("generated");
 
 QJsonObject generatedOf(FakeMc& mc, const QString& space, const QString& pageId) {
@@ -698,10 +815,10 @@ Answer schedule(FakeMc& mc, const QString& method, const QString& space, const Q
   }
   if (block.isEmpty()) {
     const Answer inserted = insertBlock(mc, space, pageId, {{QStringLiteral("kind"), QStringLiteral("paragraph")}, {QStringLiteral("text"), fake(mc).writes}},
-                                        QJsonValue::Undefined, {{QStringLiteral("type"), QStringLiteral("schedule")}});
+                                        QJsonValue::Undefined, kSchedule);
     set(mc, stream, QStringLiteral("block"), text(inserted.result.value(QLatin1String("block")).toObject(), QLatin1String("id")), {{QStringLiteral("kind"), kGenerated}});
   } else {
-    set(mc, stream, QStringLiteral("block"), text(block, QLatin1String("id")), {{QStringLiteral("text"), fake(mc).writes}, {QStringLiteral("updatedAt"), at}});
+    set(mc, stream, QStringLiteral("block"), text(block, QLatin1String("id")), {{QStringLiteral("text"), fake(mc).writes}, {QStringLiteral("updatedBy"), kSchedule}, {QStringLiteral("updatedAt"), at}});
   }
   set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("writtenAt"), at}});
   show({{QStringLiteral("lastRunAt"), at}, {QStringLiteral("lastRunStatus"), QStringLiteral("succeeded")}, {QStringLiteral("lastRunError"), QJsonValue::Null}});
@@ -733,9 +850,11 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in);
 // A change, with what it means for the Space's sites: the site of a page gone or
 // in the trash comes down, and the others are behind when publishing would change them.
 Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
-  const Answer answer = decide(mc, method, in);
+  const bool history = method == QLatin1String("page.history") || method == QLatin1String("page.version") || method == QLatin1String("page.restoreVersion");
+  const Answer answer = history ? historyCall(mc, method, in) : decide(mc, method, in);
   const QString space = text(in, QLatin1String("spaceId"));
   if (space.isEmpty()) return answer;
+  if (!history && answer.error.isEmpty()) noteEdits(mc, space, method == QLatin1String("page.schedule.runNow") ? kSchedule : kUser);
   const QString stream = streamOf(space);
   for (const QJsonObject& site : all(mc, stream, QStringLiteral("site"))) {
     const QJsonObject page = one(mc, stream, QStringLiteral("page"), text(site, QLatin1String("pageId")));
@@ -1261,6 +1380,31 @@ QVariantList toasts(World& world) {
   return world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
 }
 
+// The history asked for has come.
+void settleHistory(World& world) {
+  world.waitFor([&] { return !viewOf(world)->history()->loading(); }, [&] { return QStringLiteral("the history to come; %1").arg(describe(world)); });
+}
+
+// The history of the page `id`, open beside it.
+void showHistory(World& world, const QString& id) {
+  lookAtPage(world, id);
+  if (viewOf(world)->history()->pageId() != id) act(world, SpaceController::kHistory, {{QStringLiteral("pageId"), id}});
+  settleHistory(world);
+}
+
+// The version `back` versions before the newest of the page `title`.
+QVariant versionBack(World& world, const QString& title, int back) {
+  showHistory(world, idOfPage(world, title));
+  SpaceRows* versions = viewOf(world)->history()->versions();
+  world.waitFor([&] { return versions->rowCount() > back; }, [&] { return QStringLiteral("%1 versions; %2").arg(back + 1).arg(show(listOf(versions))); });
+  return versions->get(back).value(QStringLiteral("version"));
+}
+
+void readVersion(World& world, const QVariant& version) {
+  act(world, QStringLiteral("space.history.read"), {{QStringLiteral("version"), version}});
+  world.waitFor([&] { return !viewOf(world)->history()->version().isEmpty(); }, [&] { return QStringLiteral("the version to come; %1").arg(describe(world)); });
+}
+
 bool toldOf(World& world, const QString& start) {
   for (const QVariant& toast : toasts(world)) {
     if (toast.toMap().value(QStringLiteral("title")).toString().startsWith(start)) return true;
@@ -1447,6 +1591,14 @@ std::optional<QVariantMap> imageBlock(World& world, const QString& said) {
     if (block.value(QStringLiteral("kind")) == QLatin1String("image") && block.value(QStringLiteral("text")) == said) return block;
   }
   return std::nullopt;
+}
+
+// The block of the version being read that shows the image; empty when none does.
+QVariantMap versionImage(World& world, const QString& said) {
+  for (const QVariantMap& block : viewOf(world)->history()->blocks()->rows()) {
+    if (block.value(QStringLiteral("kind")) == QLatin1String("image") && block.value(QStringLiteral("text")) == said) return block;
+  }
+  return {};
 }
 
 void expectImageState(World& world, const QString& page, const QString& said, const QString& state) {
@@ -1887,6 +2039,91 @@ const Steps steps([] {
     expect(texts.contains(c[0]), QStringLiteral("the second client shows the blocks %1").arg(show(texts)));
   });
 
+  // A page's history.
+  step(QStringLiteral("a while passes"), [](World& world, const Captures&, const Table&) { fake(world.mc).paused = true; });
+  step(QStringLiteral("the agent in %1 adds the block %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject author = agent(threadNamed(world, c[0]));
+    insertBlock(world.mc, current(world), idOfPage(world, c[2]), {{QStringLiteral("kind"), QStringLiteral("paragraph")}, {QStringLiteral("text"), c[1]}, {QStringLiteral("checked"), false}},
+                QJsonValue::Undefined, author);
+    noteEdits(world.mc, current(world), author);
+    world.sync();
+  });
+  step(QStringLiteral("the user opens the history of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    showHistory(world, idOfPage(world, c[0]));
+  });
+  step(QStringLiteral("the history has (\\d+) versions?"), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, [&] { return viewOf(world)->history()->versions()->rowCount() == c[0].toInt(); }, QStringLiteral("the history to have %1 versions").arg(c[0]));
+  });
+  step(QStringLiteral("each version says when it was written and by the user"), [](World& world, const Captures&, const Table&) {
+    for (const QVariantMap& row : viewOf(world)->history()->versions()->rows()) {
+      expect(!row.value(QStringLiteral("at")).toString().isEmpty() && !row.value(QStringLiteral("byAgent")).toBool() && !row.value(QStringLiteral("byUpdate")).toBool(), QStringLiteral("a version says %1").arg(show(row)));
+    }
+  });
+  step(QStringLiteral("the newest version is the page as it is now"), [](World& world, const Captures&, const Table&) {
+    SpaceHistory* history = viewOf(world)->history();
+    readVersion(world, history->versions()->rows().first().value(QStringLiteral("version")));
+    expect(column(history->blocks(), QStringLiteral("text")) == column(viewOf(world)->blocks(), QStringLiteral("text")), QStringLiteral("the newest version reads %1").arg(show(listOf(history->blocks()))));
+    act(world, QStringLiteral("space.history.back"), {});
+  });
+  step(QStringLiteral("the newest version was written by the thread %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap newest = viewOf(world)->history()->versions()->get(0);
+    expect(newest.value(QStringLiteral("byAgent")).toBool() && newest.value(QStringLiteral("threadTitle")).toString() == c[0], QStringLiteral("the newest version says %1").arg(show(newest)));
+  });
+  step(QStringLiteral("the newest version was written by the page's update"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap newest = viewOf(world)->history()->versions()->get(0);
+    expect(newest.value(QStringLiteral("byUpdate")).toBool() && !newest.value(QStringLiteral("byAgent")).toBool(), QStringLiteral("the newest version says %1").arg(show(newest)));
+  });
+  step(QStringLiteral("the user reads the version (\\d+) back on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    readVersion(world, versionBack(world, c[1], c[0].toInt()));
+  });
+  step(QStringLiteral("the version reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QStringList texts = column(viewOf(world)->history()->blocks(), QStringLiteral("text"));
+    expect(texts == listed(c[0]), QStringLiteral("the version reads %1").arg(show(texts)));
+  });
+  step(QStringLiteral("the version draws a chart of %1 (\\d+) and %1 (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    SpaceRows* blocks = viewOf(world)->history()->blocks();
+    const QVariantList labels{c[0], c[2]};
+    const QVariantList values{c[1].toDouble(), c[3].toDouble()};
+    for (const QVariantMap& row : blocks->rows()) {
+      if (row.value(QStringLiteral("kind")) != QLatin1String("chart")) continue;
+      const QVariantMap chart = row.value(QStringLiteral("chart")).toMap();
+      expect(chart.value(QStringLiteral("labels")).toList() == labels && chart.value(QStringLiteral("series")).toList().value(0).toMap().value(QStringLiteral("values")).toList() == values, QStringLiteral("the version's chart reads %1").arg(show(chart.value(QStringLiteral("labels")).toStringList())));
+      return;
+    }
+    expect(false, QStringLiteral("no chart in the version"));
+  });
+  step(QStringLiteral("the version shows the image %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, [&] {
+      const QVariantMap block = versionImage(world, c[0]);
+      return block.value(QStringLiteral("imageState")) == QLatin1String("shown") && block.value(QStringLiteral("imageUrl")).toString().contains(QLatin1String("/assets/space/"));
+    }, QStringLiteral("the version to show the image %1").arg(c[0]));
+  });
+  step(QStringLiteral("the version says the image %1 is in the trash").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, [&] { return versionImage(world, c[0]).value(QStringLiteral("imageState")) == QLatin1String("trashed"); }, QStringLiteral("the version to say the image %1 is in the trash").arg(c[0]));
+  });
+  step(QStringLiteral("the user goes back to the list of versions"), [](World& world, const Captures&, const Table&) {
+    act(world, QStringLiteral("space.history.back"), {});
+  });
+  step(QStringLiteral("the history is closed"), [](World& world, const Captures&, const Table&) {
+    expectShown(world, [&] { return !viewOf(world)->history()->shown(); }, QStringLiteral("the history to close"));
+  });
+  step(QStringLiteral("no version is being read"), [](World& world, const Captures&, const Table&) {
+    expect(!viewOf(world)->history()->reading() && viewOf(world)->history()->blocks()->rowCount() == 0, QStringLiteral("a version is still being read"));
+  });
+  step(QStringLiteral("the user restores the version (\\d+) back on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    act(world, QStringLiteral("space.history.restore"), {{QStringLiteral("version"), versionBack(world, c[1], c[0].toInt())}});
+    settleHistory(world);
+  });
+  step(QStringLiteral("the newest version says it restored an earlier one"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap newest = viewOf(world)->history()->versions()->get(0);
+    expect(!newest.value(QStringLiteral("restoredFromAt")).toString().isEmpty(), QStringLiteral("the newest version says %1").arg(show(newest)));
+  });
+  step(QStringLiteral("the user cannot restore a version of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(viewOf(world)->page().value(QStringLiteral("trashed")).toBool(), QStringLiteral("the page does not say it is in the trash, which takes away its Restore"));
+    act(world, QStringLiteral("space.history.restore"), {{QStringLiteral("version"), versionBack(world, c[0], 1)}});
+    const FakeSpaces& spaces = fake(world.mc);
+    expect(!spaces.last.error.isEmpty() && toldOf(world, spaces.last.error), QStringLiteral("the user is not told the restore was refused; toasts %1").arg(show(toasts(world))));
+  });
   // Sites (features/space/sites.feature).
   step(QStringLiteral("the user publishes the page %1 as a site").arg(q), [](World& world, const Captures& c, const Table&) {
     actOnPage(world, idOfPage(world, c[0]), QStringLiteral("space.page.publish"), {});
