@@ -140,8 +140,8 @@ defmodule HalC2.Space.Visualize do
   # --- what this MC counts -----------------------------------------------------------
 
   # `{labels, series name, values, source}`, or nil with nothing to count. A turn is a
-  # message a user typed; these are this MC's threads only, not a cluster peer's, and
-  # none of the workers the sidebar leaves out.
+  # message a user typed; these are this MC's threads only, not a cluster peer's or one
+  # that moved away, and none of the workers the sidebar leaves out.
   defp counted(id, today) do
     threads = threads()
     since = today |> Date.add(-7 * (@weeks - 1)) |> Date.beginning_of_week()
@@ -169,7 +169,7 @@ defmodule HalC2.Space.Visualize do
 
   defp threads do
     for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
-        mc == node() and row["deletedAt"] == nil,
+        mc == node() and row["deletedAt"] == nil and row["movedTo"] == nil,
         get_in(row, ["lineage", "relationshipToParent"]) != "subagent",
         into: %{},
         do: {id, row}
