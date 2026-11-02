@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QJsonArray>
+#include <QSet>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -15,6 +17,10 @@
 // into it, so a 10 MB diff costs one scan (files and counts) up front and a
 // file's lines are only split when it is expanded. Expanding and collapsing a
 // file inserts and removes its rows; nothing else moves.
+//
+// A review cut short lists its files without their changes (setFiles):
+// opening one asks for them (fileWanted) and they come with setFilePatch, or
+// the file says why not (setFileState).
 //
 // `split` pairs each run of removed lines with the added lines that follow
 // it, for a side-by-side view: a line row then has a left (old) and a right
@@ -54,6 +60,14 @@ public:
     // The right side of a split row.
     RightTextRole,
     RightSignRole,
+    // A file listed without its changes: "unloaded", "loading", "error",
+    // "missing" (no patch for it) or "gone" (the checkout no longer has this
+    // diff); "" once they are here.
+    StateRole,
+    // Why the file shows no changes, for its state.
+    NoteRole,
+    // The file's changes are cut short; its counts are whole.
+    PartialRole,
   };
 
   // Up to this many changed and context lines, every file starts expanded.
@@ -68,6 +82,15 @@ public:
   // file collapsed.
   void setCollapsedByDefault(bool collapsed) { m_collapsedByDefault = collapsed; }
   void clear() { setPatch({}); }
+  // A review's files without their changes: [{path, previousPath, additions,
+  // deletions}], each closed until opened.
+  void setFiles(const QJsonArray& files);
+  // `file`'s changes, from a patch that has them (one of `patch`'s files has
+  // its path); false when none does. `partial`: they are cut short.
+  bool setFilePatch(int file, const QString& patch, bool partial);
+  void setFileState(int file, const QString& state, const QString& note = {});
+  // The MC's patch without the mark it ends a cut patch with.
+  static QString withoutTruncatedMarker(const QString& patch);
 
   int fileCount() const { return int(m_files.size()); }
   int additions() const { return m_additions; }
@@ -78,12 +101,20 @@ public:
   bool allExpanded() const;
 
   QStringList paths() const;
-  // The changed files by folder, for a tree beside the diff: folders before
-  // files, each sorted by name; [{kind: "folder"|"file", name, path, depth,
-  // file (a file's index), additions, deletions}].
+  // The changed files by folder, for a tree beside the diff, in the order the
+  // diff has them: a folder where its first file is. A path the diff has
+  // twice (a file replaced by a link) is listed once, as modified.
+  // [{kind: "folder"|"file", name, path, depth, file (a file's index),
+  // change, additions, deletions, open (a folder's), shown (no folder above
+  // it is closed)}].
   Q_INVOKABLE QVariantList tree() const;
+  // Closes or opens a folder of the tree; it stays so across patches.
+  Q_INVOKABLE void toggleFolder(const QString& path);
+  Q_INVOKABLE bool folderOpen(const QString& path) const { return !m_closedFolders.contains(path); }
   // The file's path, and whether it is expanded.
   Q_INVOKABLE QString path(int file) const { return file >= 0 && file < fileCount() ? m_files[file].path : QString(); }
+  QString previousPath(int file) const { return file >= 0 && file < fileCount() ? m_files[file].previousPath : QString(); }
+  Q_INVOKABLE QString state(int file) const { return file >= 0 && file < fileCount() ? m_files[file].state : QString(); }
   bool expanded(int file) const { return file >= 0 && file < fileCount() && m_files[file].expanded; }
   // The header row of `file`, or -1.
   // The lines `first` to `last` of one side of `file` ("old": removed lines
@@ -108,6 +139,10 @@ signals:
   void splitChanged();
   // allExpanded changed.
   void expansionChanged();
+  // A folder of the tree was opened or closed.
+  void treeChanged();
+  // `file`, listed without its changes, was opened.
+  void fileWanted(int file);
 
 private:
   struct Line {
@@ -133,6 +168,9 @@ private:
     int deletions = 0;
     int lineCount = 0;
     bool expanded = false;
+    QString state;
+    QString note;
+    bool partial = false;
     // Split on first expansion.
     bool parsed = false;
     std::vector<Line> lines;
@@ -144,6 +182,9 @@ private:
   };
 
   void parse();
+  // The files of m_patch from `from` on; widens m_maxColumns to their lines.
+  std::vector<File> parseFrom(qsizetype from);
+  bool waiting(const File& file) const { return !file.state.isEmpty(); }
   // Inserts or removes the file's rows; the callers say when allExpanded changes.
   void expandOne(int file, bool expand);
   void ensureLines(File& file);
@@ -160,4 +201,5 @@ private:
   int m_maxColumns = 0;
   bool m_split = false;
   bool m_collapsedByDefault = false;
+  QSet<QString> m_closedFolders;
 };
