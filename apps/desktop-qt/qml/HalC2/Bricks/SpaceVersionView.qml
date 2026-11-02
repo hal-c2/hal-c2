@@ -99,6 +99,10 @@ Rectangle {
                 level: model.level ?? 0
                 language: model.language ?? ""
                 chart: model.chart ?? ({})
+                markdownAbove: model.markdownAbove ?? ""
+                markdownLead: model.markdownLead ?? ""
+                markdownTail: model.markdownTail ?? ""
+                markdownBelow: model.markdownBelow ?? ""
                 readOnly: true
             }
         }

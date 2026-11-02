@@ -450,8 +450,10 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
                    const QJsonObject& author) {
   if (const auto why = writable(mc, space, pageId)) return *why;
   static const QStringList kinds{QStringLiteral("paragraph"), QStringLiteral("heading"), QStringLiteral("checklist"),
-                                 QStringLiteral("callout"), QStringLiteral("subpage_link"), QStringLiteral("image"),
-                                 QStringLiteral("raw"), QStringLiteral("table"), QStringLiteral("code")};
+                                 QStringLiteral("bullet"), QStringLiteral("numbered"), QStringLiteral("callout"),
+                                 QStringLiteral("divider"), QStringLiteral("subpage_link"), QStringLiteral("image"),
+                                 QStringLiteral("raw"), QStringLiteral("table"), QStringLiteral("code"),
+                                 QStringLiteral("footnote"), QStringLiteral("details"), QStringLiteral("details_end")};
   const QString kind = text(spec, QLatin1String("kind"));
   if (!kinds.contains(kind)) return refused(QStringLiteral("invalid"), QStringLiteral("There is no block kind %1.").arg(kind));
   const QJsonValue level = spec.value(QLatin1String("level"));
@@ -464,7 +466,8 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
   }
   const QString imageId = text(spec, QLatin1String("imageId"));
   const QJsonObject image = one(mc, streamOf(space), QStringLiteral("image"), imageId);
-  if (kind == QLatin1String("image")) {
+  const QString url = text(spec, QLatin1String("url"));
+  if (kind == QLatin1String("image") && url.isEmpty()) {
     if (image.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no image %1 in this Space.").arg(imageId));
     if (trashed(image)) return refused(QStringLiteral("trashed"), QStringLiteral("The image \"%1\" is in the trash.").arg(text(image, QLatin1String("name"))));
   }
@@ -484,12 +487,29 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
   if (kind == QLatin1String("checklist")) block.insert(QStringLiteral("checked"), spec.value(QLatin1String("checked")).toBool());
   if (kind == QLatin1String("subpage_link")) block.insert(QStringLiteral("linkedPageId"), linked);
   if (kind == QLatin1String("heading") && !level.isUndefined()) block.insert(QStringLiteral("level"), level.toInt());
-  for (const QLatin1String extra : {QLatin1String("language"), QLatin1String("fence"), QLatin1String("info")}) {
-    if (kind == QLatin1String("code") && !text(spec, extra).isEmpty()) block.insert(extra, spec.value(extra));
-  }
-  if (kind == QLatin1String("image")) {
+  if (kind == QLatin1String("image") && !url.isEmpty()) {
+    block.insert(QStringLiteral("url"), url);
+  } else if (kind == QLatin1String("image")) {
     block.insert(QStringLiteral("imageId"), imageId);
     if (text(block, QLatin1String("text")).isEmpty()) block.insert(QStringLiteral("text"), image.value(QLatin1String("name")));
+  }
+  // The fields only some kinds keep, as the MC's `with_extras` keeps them.
+  const bool code = kind == QLatin1String("code");
+  const bool item = kind == QLatin1String("bullet") || kind == QLatin1String("numbered") || kind == QLatin1String("checklist");
+  const std::pair<QLatin1String, bool> extras[] = {
+      {QLatin1String("language"), code},
+      {QLatin1String("fence"), code},
+      {QLatin1String("info"), code},
+      {QLatin1String("depth"), item && spec.value(QLatin1String("depth")).toInt() != 0},
+      {QLatin1String("indent"), item},
+      {QLatin1String("marker"), QStringList{QStringLiteral("bullet"), QStringLiteral("numbered"), QStringLiteral("divider"), QStringLiteral("callout"),
+                                            QStringLiteral("details")}.contains(kind)},
+      {QLatin1String("start"), kind == QLatin1String("numbered") && spec.value(QLatin1String("start")).toInt(1) != 1},
+      {QLatin1String("alert"), kind == QLatin1String("callout")},
+      {QLatin1String("label"), kind == QLatin1String("footnote")},
+  };
+  for (const auto& [field, kept] : extras) {
+    if (kept && spec.contains(field) && !spec.value(field).isNull()) block.insert(field, spec.value(field));
   }
   set(mc, streamOf(space), QStringLiteral("block"), id, block);
   return {{{QStringLiteral("block"), block}}};
@@ -1590,6 +1610,37 @@ QQuickItem* findEditor(QQuickItem* item, const QString& objectName) {
   return nullptr;
 }
 
+// The visible blocks of a page, top to bottom, each as the lines of Markdown it shows.
+QStringList shownMarkdown(QQuickItem* root) {
+  QList<QQuickItem*> blocks;
+  const std::function<void(QQuickItem*)> collect = [&](QQuickItem* item) {
+    if (item->objectName().startsWith(QLatin1String("spaceBlock:")) && item->isVisible()) blocks.append(item);
+    for (QQuickItem* child : item->childItems()) collect(child);
+  };
+  collect(root);
+  std::sort(blocks.begin(), blocks.end(), [](QQuickItem* a, QQuickItem* b) { return a->mapToScene({}).y() < b->mapToScene({}).y(); });
+  QStringList lines;
+  for (QQuickItem* block : blocks) {
+    const QString said = block->property("text").toString();
+    const auto shown = [&](const QString& name) {
+      QQuickItem* item = findEditor(block, name + said);
+      return item && item->isVisible() ? item->property("text").toString() : QString();
+    };
+    QQuickItem* tick = findEditor(block, QStringLiteral("spaceTick:") + said);
+    const QString ticked = tick && tick->isVisible() ? (block->property("checked").toBool() ? QStringLiteral("- [x] ") : QStringLiteral("- [ ] ")) : QString();
+    QStringList own;
+    if (const QString above = shown(QStringLiteral("spaceMarkdownAbove:")); !above.isEmpty()) own.append(above);
+    own.append((shown(QStringLiteral("spaceMarkdownLead:")) + ticked + shown(QStringLiteral("spaceBlockEditor:")) + shown(QStringLiteral("spaceMarkdownTail:")))
+                   .split(QLatin1Char('\n')));
+    if (const QString below = shown(QStringLiteral("spaceMarkdownBelow:")); !below.isEmpty()) own.append(below);
+    for (const QString& line : own) {
+      if (line.isEmpty()) continue;
+      lines.append(block->property("kind").toString() == QLatin1String("callout") ? QStringLiteral("> ") + line : line);
+    }
+  }
+  return lines;
+}
+
 void expectShown(World& world, const std::function<bool()>& shown, const QString& wanted) {
   world.waitFor(shown, [&] { return QStringLiteral("%1; %2").arg(wanted, describe(world)); });
 }
@@ -2372,6 +2423,42 @@ const Steps steps([] {
       expect(editor->property("wrapMode").toInt() == 0, QStringLiteral("%1 wraps (wrapMode %2)").arg(said).arg(editor->property("wrapMode").toInt()));
       expect(editor->property("font").value<QFont>().family() == mono, QStringLiteral("%1 is not in %2").arg(said, mono));
     }
+  });
+  // Blocks as the MC keeps them, a field per column; `-` is a field the block does not have.
+  step(QStringLiteral("the page %1 holds the blocks:").arg(q), [](World& world, const Captures& c, const Table& table) {
+    const QStringList header = table.value(0);
+    for (const QStringList& row : table.mid(1)) {
+      QJsonObject block{{QStringLiteral("pageId"), givenPage(world, c[0])}};
+      for (qsizetype i = 0; i < header.size(); ++i) {
+        const QString& field = header.at(i);
+        const QString cell = row.value(i, QStringLiteral("-"));
+        if (cell == QLatin1String("-")) {
+          if (field == QLatin1String("text")) block.insert(field, QString());
+        } else if (field == QLatin1String("checked")) {
+          block.insert(field, cell == QLatin1String("true"));
+        } else if (field == QLatin1String("depth") || field == QLatin1String("start")) {
+          block.insert(field, cell.toInt());
+        } else {
+          block.insert(field, cell);
+        }
+      }
+      given(world, QStringLiteral("block.insert"), block);
+    }
+  });
+  // The page's lines as Markdown, from what each block shows: what the MC writes around its
+  // text, then a tick standing for `- [ ]` and a callout's tint for `> `.
+  step(QStringLiteral("each block is shown as this Markdown, line for line:"), [](World& world, const Captures&, const Table& table) {
+    QStringList wanted;
+    for (const QString& line : table.value(0).value(0).split(QLatin1Char('\n'))) {
+      if (!line.trimmed().isEmpty()) wanted.append(line);
+    }
+    Brick page(world, "import QtQuick\nimport HalC2.Bricks\nSpacePage { width: 900; height: 1600 }\n", QSize(900, 1600));
+    QStringList shown;
+    world.waitFor([&] {
+      page.grab();
+      shown = page.root() ? shownMarkdown(page.root()) : QStringList();
+      return shown == wanted;
+    }, [&] { return QStringLiteral("the page to show\n%1\nbut it shows\n%2").arg(wanted.join(QLatin1Char('\n')), shown.join(QLatin1Char('\n'))); });
   });
   step(QStringLiteral("the page %1 with headings of every level from 1 to 6").arg(q), [](World& world, const Captures& c, const Table&) {
     for (int level = 1; level <= 6; ++level) {
