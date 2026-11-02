@@ -100,6 +100,8 @@ SpaceWorkspace 1.0 SpaceWorkspace.qml
 SpaceSidebar 1.0 SpaceSidebar.qml
 SpaceDeck 1.0 SpaceDeck.qml
 SpacePage 1.0 SpacePage.qml
+SpacePageUpdate SpacePageUpdate.qml
+SpaceUpdateDialog SpaceUpdateDialog.qml
 SpacePresenter 1.0 SpacePresenter.qml
 SpaceBlock 1.0 SpaceBlock.qml
 SpaceChart 1.0 SpaceChart.qml

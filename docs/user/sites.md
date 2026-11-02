@@ -12,7 +12,7 @@ The site is a copy of the page at that moment. Later edits stay private, and the
 its site is behind. Choose **Publish again** to update the site; the link stays the same.
 
 In the terminal client these are keys on a page: `p` publishes or publishes again, `P` publishes over
-Tailscale, `Y` copies the link and `u` unpublishes. They are in the command palette too.
+Tailscale, `Y` copies the link and `U` unpublishes. They are in the command palette too.
 
 ## Stop publishing
 

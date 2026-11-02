@@ -5,9 +5,9 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The open page of the Space view (Spaces.page): its title, where it sits,
-// the thread it was made from, its blocks, and a composer that adds a block
-// of the kind a `/` picks or asks for a chart with `/visualize <request>`. A
-// trashed page is read only, with the way back.
+// the thread it was made from, its update, its blocks, and a composer that adds
+// a block of the kind a `/` picks or asks for a chart with `/visualize <request>`.
+// A trashed page is read only, with the way back.
 Rectangle {
     id: page
 
@@ -278,6 +278,14 @@ Rectangle {
             }
 
             ShellMenuItem {
+                objectName: "spaceUpdateMenu"
+                text: (page.current.schedule?.instruction ?? "") !== "" ? qsTr("Change its update…") : qsTr("Update itself…")
+                iconName: "clock"
+                enabled: !page.trashed
+                onTriggered: updateDialog.ask()
+            }
+
+            ShellMenuItem {
                 objectName: "spaceCopyMarkdown"
                 text: qsTr("Copy as Markdown")
                 iconName: "copy"
@@ -497,6 +505,11 @@ Rectangle {
             }
         }
 
+        SpacePageUpdate {
+            Layout.fillWidth: true
+            onChangeRequested: updateDialog.ask()
+        }
+
         ListView {
             id: blocks
 
@@ -644,6 +657,10 @@ Rectangle {
                     onChosen: kind => page.chooseKind(kind)
                 }
             }
+        }
+
+        SpaceUpdateDialog {
+            id: updateDialog
         }
 
         ShellMenu {

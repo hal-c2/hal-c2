@@ -167,6 +167,7 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["space", "x"],
       },
       { keys: "l", description: "Spaces: link a subpage", chords: ["l"] },
+      { keys: "u", description: "Spaces: give a page an update", chords: ["u"] },
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
       { keys: "h", description: "Spaces: a page's history", chords: ["h"] },
       {
@@ -185,9 +186,9 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["p", "shift+p"],
       },
       {
-        keys: "Y · u",
+        keys: "Y · U",
         description: "Spaces: copy a published page's link · unpublish it",
-        chords: ["shift+y", "u"],
+        chords: ["shift+y", "shift+u"],
       },
       {
         keys: "v",
@@ -407,11 +408,12 @@ export const KEYMAP_LAYERS = {
     "space, x": "space.tick",
     c: "space.comment",
     l: "space.link",
+    u: "space.update",
     y: "space.export",
     p: "space.presentOrPublish",
     "shift+p": "space.publishTailscale",
     "shift+y": "space.copySiteLink",
-    u: "space.unpublish",
+    "shift+u": "space.unpublish",
     i: "space.import",
     t: "space.fromThread",
     g: "space.visualize",

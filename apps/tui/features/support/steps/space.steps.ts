@@ -757,6 +757,161 @@ step("the thread {string} talked about a release plan", (ctx: SpaceWorld, title:
   threadNamed(ctx, title);
 });
 
+// --- a page that updates itself (space/self-updating-pages.feature) ---
+
+const updateRow = async (ctx: SpaceWorld, title: string, part: string) => {
+  await openPage(ctx, title);
+  return pane(ctx)
+    .rows.filter((row) => row.key === `label:update:${part}`)
+    .map((row) => row.text.trim())
+    .join(" ");
+};
+
+/** The update asked for through its key: the instruction, then the cadence. */
+async function askUpdate(ctx: SpaceWorld, page: string, instruction: string) {
+  await openPage(ctx, page);
+  await press(ctx, "u");
+  if (mode(ctx) === "select") await choose(ctx, "Change it…");
+  await answer(ctx, instruction);
+}
+
+async function updateMenu(ctx: SpaceWorld, page: string, label: string) {
+  await openPage(ctx, page);
+  await press(ctx, "u");
+  await choose(ctx, label);
+}
+
+const onPage = (ctx: SpaceWorld, title: string) => ({
+  spaceId: currentSpaceId(ctx),
+  pageId: pageId(ctx, title),
+});
+
+const everyHours = (hours: number) => ({ type: "interval", everyMs: hours * 3_600_000 });
+
+step(
+  "the user has {string} update itself with {string} every {int} hours",
+  async (ctx: SpaceWorld, page: string, instruction: string, hours: number) => {
+    await askUpdate(ctx, page, instruction);
+    await choose(ctx, `Every ${hours} hours`);
+  },
+);
+
+step(
+  "the user has {string} update itself with {string} every day at {string}",
+  async (ctx: SpaceWorld, page: string, instruction: string, time: string) => {
+    await askUpdate(ctx, page, instruction);
+    await choose(ctx, "At a time of day…");
+    await answer(ctx, time);
+  },
+);
+
+step(
+  "{string} updates itself with {string} every {int} hours",
+  (ctx: SpaceWorld, page: string, instruction: string, hours: number) => {
+    mc(ctx).run("space.page.schedule.set", {
+      ...onPage(ctx, page),
+      instruction,
+      cadence: everyHours(hours),
+    });
+  },
+);
+
+step("the updates of {string} are paused", (ctx: SpaceWorld, page: string) => {
+  mc(ctx).run("space.page.schedule.setEnabled", { ...onPage(ctx, page), enabled: false });
+});
+
+step("the update of {string} has run", (ctx: SpaceWorld, page: string) => {
+  mc(ctx).run("space.page.schedule.runNow", onPage(ctx, page));
+});
+
+step("text generation writes {string}", (ctx: SpaceWorld, markdown: string) => {
+  mc(ctx).generation = { kind: "available", title: "", markdown };
+});
+
+step("the user pauses the updates of {string}", (ctx: SpaceWorld, page: string) =>
+  updateMenu(ctx, page, "Pause it"),
+);
+step("the user resumes the updates of {string}", (ctx: SpaceWorld, page: string) =>
+  updateMenu(ctx, page, "Resume it"),
+);
+step("the user runs the update of {string} now", (ctx: SpaceWorld, page: string) =>
+  updateMenu(ctx, page, "Run it now"),
+);
+step("the user removes the update of {string}", (ctx: SpaceWorld, page: string) =>
+  updateMenu(ctx, page, "Remove it, keeping what it wrote"),
+);
+
+// The pane says why without asking the MC, and leaves the part as it is.
+step(
+  "the user tries to edit the generated part of {string}",
+  async (ctx: SpaceWorld, page: string) => {
+    await openPage(ctx, page);
+    const part = pane(ctx).rows.find((row) => row.blockKind === "generated");
+    expect(part).toBeDefined();
+    await selectRow(ctx, part!.key);
+    await press(ctx, "e");
+    expect(mode(ctx)).not.toBe("ask");
+    expect(status(ctx).text).toStartWith("A page's update wrote this");
+  },
+);
+
+step(
+  "{string} shows the instruction {string}",
+  async (ctx: SpaceWorld, page: string, instruction) => {
+    expect(await updateRow(ctx, page, "instruction")).toBe(`⟳ ${instruction}`);
+  },
+);
+step("{string} shows no instruction", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "instruction")).toBe("");
+});
+step(
+  "{string} shows it updates every {int} hours",
+  async (ctx: SpaceWorld, page: string, hours: number) => {
+    expect(await updateRow(ctx, page, "when")).toStartWith(`Every ${hours} hours`);
+  },
+);
+step(
+  "{string} shows it updates every day at {string}",
+  async (ctx: SpaceWorld, page: string, time) => {
+    expect(await updateRow(ctx, page, "when")).toStartWith(`${time} every day`);
+  },
+);
+step("{string} shows when it next runs", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "when")).toContain("next run ");
+});
+step("{string} shows no next run", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "when")).not.toContain("next run ");
+});
+step("{string} has not been written yet", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "written")).toBe("Not written yet");
+});
+step("{string} shows when it was last written", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "written")).toStartWith("Last written ");
+});
+step("{string} shows its updates are paused", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "when")).toEndWith(" · paused");
+});
+step("{string} shows its updates are not paused", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "when")).not.toContain("paused");
+});
+step(
+  "{string} shows its last run failed with {string}",
+  async (ctx: SpaceWorld, page: string, message) => {
+    expect(await updateRow(ctx, page, "failed")).toBe(`Last run failed: ${message}`);
+  },
+);
+step(
+  "the generated part of {string} reads {string}",
+  async (ctx: SpaceWorld, page: string, text) => {
+    const rows = await blockRows(ctx, page);
+    expect(rows.filter((row) => row.blockKind === "generated").map(blockText)).toEqual([text]);
+  },
+);
+step("{string} has no generated part", async (ctx: SpaceWorld, page: string) => {
+  const rows = await blockRows(ctx, page);
+  expect(rows.filter((row) => row.blockKind === "generated")).toEqual([]);
+});
+
 step("text generation is available", (ctx: SpaceWorld) => {
   mc(ctx).generation = { kind: "available", title: SUMMARY_TITLE, markdown: SUMMARY };
 });
@@ -1424,7 +1579,7 @@ step("the site link of the page {string} is on the clipboard", (ctx: SpaceWorld,
 
 step("the user unpublishes the page {string}", async (ctx: SpaceWorld, title: string) => {
   await openPage(ctx, title);
-  await press(ctx, "u");
+  await press(ctx, "U");
 });
 
 step("the page {string} shows it is not published", async (ctx: SpaceWorld, title: string) => {
