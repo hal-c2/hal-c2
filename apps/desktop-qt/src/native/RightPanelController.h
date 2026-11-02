@@ -8,6 +8,7 @@
 #include "AgentsModel.h"
 #include "NativeController.h"
 #include "PullRequestReview.h"
+#include "PullRequestThreadLinks.h"
 #include "ThreadDiff.h"
 #include "ThreadPreviews.h"
 #include "ThreadDevices.h"
@@ -106,6 +107,7 @@ public:
   ThreadPullRequests* pullRequests() { return &m_pullRequests; }
   ThreadPreviews* previews() { return &m_previews; }
   PullRequestReview* review() { return &m_review; }
+  PullRequestThreadLinks* reviewThreads() { return &m_reviewThreads; }
   ThreadDevices* device() { return &m_devices; }
 
   bool isOpen() const;
@@ -205,6 +207,7 @@ private:
   ThreadPullRequests m_pullRequests;
   ThreadPreviews m_previews;
   PullRequestReview m_review;
+  PullRequestThreadLinks m_reviewThreads;
   ThreadDevices m_devices;
   bool m_active = false;
   // The thread the panel shows; kept while the route is elsewhere (settings)
