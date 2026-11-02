@@ -11,7 +11,7 @@
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (delegate_task, task_status, task_cancel)
 #   apps/server/src/orchestration-v2/ (delegated task reactor and completion delivery)
 #   apps/server/src/orchestration-v2/Orchestrator.ts (wake policy, completion cohorts, at most two
-#     wakes per turn), Notification.ts, NotificationMailbox.ts, SubagentProjection.ts (notification
+#     wakes per turn, dropped in hal-c2/hal-c2#892), Notification.ts, NotificationMailbox.ts, SubagentProjection.ts (notification
 #     summaries, result fallbacks, work states, subagent thread titles)
 #   apps/server/src/mcp/ (orchestrator toolkit)
 Feature: Delegating tasks to subagents
@@ -210,11 +210,10 @@ Feature: Delegating tasks to subagents
     And the message runs after the caller's active turn
     And the task delivery is "delivered"
 
-  # A caller's turn is woken at most twice for the tasks it started (below), so a
-  # completion that lands after the second wake has ended wakes nobody. Here the
-  # later two land while the caller is busy, and ride one wake.
+  # The later two land while the caller is busy, so they ride one wake whatever the
+  # timing (#634).
   @mc
-  Scenario: Later completions that land while the caller works share its second wake
+  Scenario: Later completions that land while the caller works share one wake
     Given the agent in "parent" delegated tasks "one", "two" and "three" without waiting
     And "parent" was woken for the completion of "one"
     When "two" and "three" complete afterwards, while "parent" works on another turn
@@ -537,7 +536,9 @@ Feature: Delegating tasks to subagents
     Then they are not added to the running wake
     And when that turn ends "parent" is woken once more, for "two" and "three" together
 
-  @mc
+  # Dropped (#892): a result that landed after the second wake reached no one, though
+  # the agent is told every task wakes it when done.
+  @mc @dropped
   Scenario: A caller's turn is woken at most twice for the tasks it started
     Given the tasks of one turn of "parent" already woke it twice
     When another task of that turn finishes
@@ -545,7 +546,29 @@ Feature: Delegating tasks to subagents
     And the task's result stays readable from its status
 
   @mc
-  Scenario: Wakes cancelled before they ran do not count toward the wake limit
+  Scenario: Every task that finishes after the caller's last wake ended wakes it again
+    Given the tasks of one turn of "parent" already woke it twice
+    When "three" and then "four" finish, each after the wake before it ended
+    Then "parent" is woken four times, once for each task
+
+  @mc
+  Scenario: Completions that land while the caller is busy share one wake, however many came before
+    Given the tasks of one turn of "parent" already woke it twice
+    When "three" and "four" complete afterwards, while "parent" works on another turn
+    Then "parent" is woken again for them
+    And completions that arrive together share one wake turn
+
+  @mc
+  Scenario: Each delegated result reaches its caller exactly once
+    Given the agent in "parent" delegated tasks "one", "two", "three" and "four" without waiting
+    And "parent" was woken for the completion of "one"
+    When "two" and "three" complete afterwards, while "parent" works on another turn
+    And "four" finishes after the wake for them ended
+    Then each task's result reached "parent" in exactly one wake turn
+    And every task's delivery is "delivered"
+
+  @mc
+  Scenario: A task that finishes after its siblings' wakes were cancelled is still woken
     Given the agent in "parent" delegated tasks "one", "two" and "three" without waiting
     When task "one" of the same turn finishes
     And the agent acknowledges the result of "one"
