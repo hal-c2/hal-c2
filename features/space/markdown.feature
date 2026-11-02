@@ -164,7 +164,7 @@ Feature: GitHub Markdown in a page
         """
 
     # https://github.com/hal-c2/hal-c2/issues/847
-    @shared @backlog-desktop
+    @shared
     Scenario: Markdown a page keeps as written is shown as its source
       Given the page "Plan" holds a table the page does not model yet
       When the user opens "Plan"
@@ -245,7 +245,7 @@ Feature: GitHub Markdown in a page
       Then "Steps" is shown as a level 3 heading
 
     # https://github.com/hal-c2/hal-c2/issues/847
-    @shared @backlog-desktop
+    @shared
     Scenario: Each heading level is shown in its own size
       Given the page "Plan" with headings of every level from 1 to 6
       When the user opens "Plan"

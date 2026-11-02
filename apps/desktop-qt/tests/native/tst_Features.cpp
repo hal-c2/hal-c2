@@ -654,6 +654,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("space/sites.feature"),
     QStringLiteral("space/images.feature"),
     QStringLiteral("space/presence.feature"),
+    QStringLiteral("space/markdown.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

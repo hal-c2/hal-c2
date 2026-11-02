@@ -81,6 +81,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> World.cli_rules([
       %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
       %{"args" => ["pr list"], "stdout" => []},
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestList"], "pulls" => []},
       Shared.permissions_rule("WRITE"),
       %{"args" => ["--method POST", "pulls/"], "stdout" => "{}"},
       # The pull request's reviews, read before a post: none yet.
@@ -1376,7 +1377,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     World.cli_rules(context, [
       Map.put(signed_out, "args", ["api user"]),
-      Map.put(signed_out, "args", ["pr list"])
+      Map.merge(signed_out, %{"args" => ["api graphql"], "stdin" => ["PullRequestList"]})
     ])
   end
 
@@ -1853,10 +1854,16 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     listed =
       if context[:unlisted],
-        do: %{"args" => ["pr list"], "stderr" => "HTTP 502: Bad Gateway\n", "exit" => 1},
+        do: %{
+          "args" => ["api graphql"],
+          "stdin" => ["PullRequestList"],
+          "stderr" => "HTTP 502: Bad Gateway\n",
+          "exit" => 1
+        },
         else: %{
-          "args" => ["pr list"],
-          "stdout" => prs |> Map.values() |> Enum.sort_by(& &1["number"])
+          "args" => ["api graphql"],
+          "stdin" => ["PullRequestList"],
+          "pulls" => prs |> Map.values() |> Enum.sort_by(& &1["number"])
         }
 
     context
@@ -1864,7 +1871,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> Map.put(:prs, prs)
   end
 
-  # GitHub's answer when pull request `pr` (as `gh pr list` gives it) is read on its own.
+  # GitHub's answer when pull request `pr` (as `gh pr list --json` gives it) is read on its own.
   defp detail_rule(pr) do
     graphql =
       Map.merge(pr, %{

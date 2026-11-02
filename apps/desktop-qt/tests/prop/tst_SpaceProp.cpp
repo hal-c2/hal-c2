@@ -632,6 +632,7 @@ struct Write : Command {
       offer(2, "block.check");
       offer(1, "block.replace");
       offer(1, "block.chart");
+      offer(2, "block.level");
       offer(1, "block.delete");
       if (comments.size() < kMaxComments) offer(2, "comment.create");
     }
@@ -682,6 +683,9 @@ struct Write : Command {
       flag = *rc::gen::arbitrary<bool>();
     } else if (op == QLatin1String("block.text") || op == QLatin1String("block.replace")) {
       value = pick({QStringLiteral("One"), QStringLiteral("Two"), QString()});
+    } else if (op == QLatin1String("block.level")) {
+      // A level in range, one the client must not trust, or none (unset).
+      value = pick({QStringLiteral("1"), QStringLiteral("3"), QStringLiteral("6"), QStringLiteral("9"), QString()});
     } else if (op == QLatin1String("block.append")) {
       value = pick({QStringLiteral(" more"), QStringLiteral("!")});
     } else if (op == QLatin1String("block.order")) {
@@ -797,6 +801,14 @@ struct Write : Command {
       return Made{kind, after, {{QStringLiteral("a"), QJsonObject{{QStringLiteral("text"), value}}}, {QStringLiteral("s"), QJsonObject{{QStringLiteral("updatedAt"), at}}}}};
     }
     if (op == QLatin1String("block.order")) return set({{QStringLiteral("order"), value}, {QStringLiteral("updatedAt"), at}});
+    if (op == QLatin1String("block.level")) {
+      // On any kind: the row carries whatever level the block holds, and only a heading reads it.
+      if (!value.isEmpty()) return set({{QStringLiteral("level"), value.toInt()}, {QStringLiteral("updatedAt"), at}});
+      QJsonObject after = current;
+      after.remove(QStringLiteral("level"));
+      after.insert(QStringLiteral("updatedAt"), at);
+      return Made{kind, after, {{QStringLiteral("u"), QJsonArray{QStringLiteral("level")}}, {QStringLiteral("s"), QJsonObject{{QStringLiteral("updatedAt"), at}}}}};
+    }
     if (op == QLatin1String("block.check")) {
       return set({{QStringLiteral("checked"), !current.value(QLatin1String("checked")).toBool()}, {QStringLiteral("updatedAt"), at}});
     }
