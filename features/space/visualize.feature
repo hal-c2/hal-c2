@@ -219,6 +219,20 @@ Feature: Charts on a page
       When the operator imports the thread file with no MC up
       Then the MC counts 1 turn for the imported thread "filed"
 
+    Scenario: A thread file with one message fewer takes it from the count
+      Given this MC's threads took turns this week
+      And a thread of "shop" kept two turns here
+      And that thread moved away, and a thread file holds it with one turn fewer
+      When the operator imports the thread file with no MC up
+      Then the MC counts 1 turn for the thread that came back
+
+    Scenario: A previous server's thread file that reverted a turn takes it from the count
+      Given this MC's threads took turns this week
+      And a thread of "shop" kept two turns here
+      And that thread moved away, and a previous server's thread file reverts its last turn
+      When the operator imports the thread file with no MC up
+      Then the MC counts 1 turn for the thread that came back
+
     Scenario: A thread that moved away is no longer one of this MC's
       Given this MC's threads took turns this week
       And a thread of "shop" moved to another MC

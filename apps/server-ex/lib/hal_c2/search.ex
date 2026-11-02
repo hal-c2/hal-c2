@@ -49,15 +49,24 @@ defmodule HalC2.Search do
   def read_again, do: Store.delete_meta(@read)
 
   @doc """
-  Runs `write`, which stores a thread and indexes it (`index_thread/2`) with no stream to
-  do it. Should it not get that far, the next start reads every thread again.
+  Runs `write`, which stores the thread `id` with no stream to index it, then indexes what
+  the thread holds and returns its state. What `write` may drop is forgotten first: should
+  it not get that far, the next start reads every thread again, and that only adds.
   """
-  def unread_during(write) do
+  def storing_thread(id, write) do
     read? = read?()
     if read?, do: :ok = read_again()
-    result = write.()
+
+    gone =
+      for message <- StreamState.list(StreamState.load(Store.path(), id), "message"),
+          do: {message["id"], :deleted}
+
+    if gone != [], do: Store.index_messages(id, gone)
+    write.()
+    state = StreamState.load(Store.path(), id)
+    :ok = index_thread(id, state)
     if read?, do: Store.put_meta(@read, "1")
-    result
+    state
   end
 
   @doc "Indexes all of a thread's messages from its loaded `state`, as an import needs."

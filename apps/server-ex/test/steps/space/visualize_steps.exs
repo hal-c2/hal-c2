@@ -156,36 +156,81 @@ defmodule HalC2.Steps.Space.Visualize do
     }
 
     events =
-      for {type, payload} <- [
-            {"thread.created",
-             %{"id" => id, "projectId" => project.id, "title" => "Filed", "createdAt" => at}},
-            {"message.updated", payload}
-          ] do
-        %{
-          "aggregateKind" => "thread",
-          "streamId" => id,
-          "eventType" => type,
-          "occurredAt" => at,
-          "payloadJson" => JSON.encode!(payload),
-          "applicationEventVersion" => 2
-        }
-      end
+      Enum.map(
+        [
+          {"thread.created",
+           %{"id" => id, "projectId" => project.id, "title" => "Filed", "createdAt" => at}},
+          {"message.updated", payload}
+        ],
+        &v1_event(id, at, &1)
+      )
 
-    archive = %{
-      "format" => "hal-c2-thread-export",
-      "version" => 1,
-      "thread" => %{
-        "id" => id,
-        "title" => "Filed",
-        "sourceProjectId" => project.id,
-        "sourceWorkspaceRoot" => project.root
-      },
-      "events" => events,
-      "attachments" => [],
-      "terminalLogs" => []
-    }
+    thread_file(context, JSON.encode!(v1_archive(id, "Filed", project, events)))
+  end
 
-    thread_file(context, JSON.encode!(archive))
+  # A forwarding record that kept a copy, which `changes/3` allows for in a thread coming back.
+  step "a thread of {string} kept two turns here", %{args: [project]} = context do
+    context =
+      context
+      |> World.create_thread("Coming back", project)
+      |> World.add_message("Coming back", "user", "kept", nil, %{"id" => "msg-kept"})
+      |> World.add_message("Coming back", "user", "gone", nil, %{"id" => "msg-gone"})
+
+    Store.put_meta("test.flush", "1")
+    context
+  end
+
+  step "that thread moved away, and a thread file holds it with one turn fewer", context do
+    id = World.thread_id(context, "Coming back")
+    {:ok, archive} = HalC2.ThreadArchive.build(id)
+    entities = Enum.reject(archive["entities"], &match?(["message", "msg-gone", _], &1))
+    assert length(entities) < length(archive["entities"])
+    moved_away(context)
+    thread_file(context, HalC2.ThreadArchive.encode(%{archive | "entities" => entities}))
+  end
+
+  step "that thread moved away, and a previous server's thread file reverts its last turn",
+       context do
+    id = World.thread_id(context, "Coming back")
+    project = World.project(context, "shop")
+    at = "2026-09-01T00:00:00.000Z"
+
+    sent = fn message, turn ->
+      {"thread.message-sent",
+       %{
+         "messageId" => message,
+         "role" => "user",
+         "text" => message,
+         "turnId" => turn,
+         "createdAt" => at
+       }}
+    end
+
+    done = fn turn, count ->
+      {"thread.turn-diff-completed", %{"turnId" => turn, "checkpointTurnCount" => count}}
+    end
+
+    events =
+      Enum.map(
+        [
+          {"thread.created",
+           %{
+             "threadId" => id,
+             "projectId" => project.id,
+             "title" => "Coming back",
+             "createdAt" => at
+           }},
+          sent.("msg-kept", "t1"),
+          done.("t1", 1),
+          sent.("msg-gone", "t2"),
+          done.("t2", 2),
+          {"thread.reverted", %{"turnCount" => 1}}
+        ],
+        &v1_event(id, at, &1, 1)
+      )
+
+    moved_away(context)
+    thread_file(context, JSON.encode!(v1_archive(id, "Coming back", project, events)))
   end
 
   # `mix hal_c2.thread.import` as the operator runs it.
@@ -210,10 +255,60 @@ defmodule HalC2.Steps.Space.Visualize do
     %{context | mc: mc, clients: %{}}
   end
 
+  defp moved_away(context) do
+    thread = World.thread(context, "Coming back")
+
+    World.put_entity(context, "Coming back", "thread", thread["id"], %{
+      "s" => Map.put(thread, "movedTo", %{"label" => "elsewhere"})
+    })
+
+    Store.put_meta("test.flush", "1")
+  end
+
+  defp v1_event(id, at, {type, payload}, version \\ 2) do
+    %{
+      "aggregateKind" => "thread",
+      "streamId" => id,
+      "eventType" => type,
+      "occurredAt" => at,
+      "payloadJson" => JSON.encode!(payload),
+      "applicationEventVersion" => version
+    }
+  end
+
+  defp v1_archive(id, title, project, events) do
+    %{
+      "format" => "hal-c2-thread-export",
+      "version" => 1,
+      "thread" => %{
+        "id" => id,
+        "title" => title,
+        "sourceProjectId" => project.id,
+        "sourceWorkspaceRoot" => project.root
+      },
+      "events" => events,
+      "attachments" => [],
+      "terminalLogs" => []
+    }
+  end
+
   defp thread_file(context, contents) do
     file = Path.join(Mc.tmp_dir(context.mc, "thread-file"), "filed.hal-c2-thread")
     File.write!(file, contents)
     Map.put(context, :thread_file, file)
+  end
+
+  step "the MC counts {int} turn(s) for the thread that came back",
+       %{args: [count]} = context do
+    id = World.thread_id(context, "Coming back")
+    Store.put_meta("test.flush", "1")
+
+    assert [{^id, _day, ^count}] =
+             Store.path()
+             |> Store.typed_messages_since("2000-01-01")
+             |> Enum.filter(&(elem(&1, 0) == id))
+
+    context
   end
 
   step "the MC counts {int} turn(s) for {string}", %{args: [count, title]} = context do
