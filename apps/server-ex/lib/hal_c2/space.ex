@@ -491,8 +491,10 @@ defmodule HalC2.Space do
 
   @doc """
   `spec` as a block of this Space: a link to a page it does not have is a paragraph, and
-  so is an image it does not have or that is in the trash.
+  so is an image it does not have or that is in the trash. An image by its address stays.
   """
+  def links(_state, %{"kind" => "image", "url" => url} = spec) when is_binary(url), do: spec
+
   def links(state, %{"kind" => "image"} = spec) do
     case Images.fetch_live(state, spec["imageId"]) do
       {:ok, _} ->

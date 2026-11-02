@@ -62,8 +62,8 @@ Row {
                 radius: controls.trafficLights ? height / 2 : 6
                 readonly property color hoverColor: button.isClose ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("accentSurface", "#27272a")
                 color: controls.trafficLights ? button.light : Qt.alpha(hoverColor, button.hovered ? hoverColor.a : 0)
-                border.width: controls.trafficLights ? 1 : 0
-                border.color: Qt.darker(button.light, 1.25)
+                border.width: controls.trafficLights || button.visualFocus ? 1 : 0
+                border.color: button.visualFocus ? Theme.palette.color("focus", "#3b82f6") : Qt.darker(button.light, 1.25)
 
                 Behavior on color {
                     ColorAnimation {

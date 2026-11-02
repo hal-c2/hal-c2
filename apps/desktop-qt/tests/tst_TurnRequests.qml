@@ -78,7 +78,7 @@ Item {
             const requests = createTemporaryObject(requestsComponent, root);
             Shell.publishTurn({});
             waitForRendering(root);
-            verify(!requests.visible);
+            verify(!requests.pending);
             compare(requests.implicitHeight, 0);
         }
 
@@ -88,14 +88,15 @@ Item {
                 threadKey: "thread-b",
                 approvals: [approval("request-1")]
             });
-            verify(!requests.visible);
+            verify(!requests.pending);
+            compare(requests.implicitHeight, 0);
         }
 
         function test_approvalOptionAnswersTheRequest() {
             const requests = createTemporaryObject(requestsComponent, root);
             Shell.publishTurn({ approvals: [approval("request-1")] });
             waitForRendering(root);
-            verify(requests.visible);
+            verify(requests.pending);
             mouseClick(findChild(requests, "approvalOption-decline"));
             compare(lastAction().action, "composer.approval.respond");
             compare(lastAction().payload.requestId, "request-1");
@@ -187,7 +188,7 @@ Item {
                     }]
             });
             waitForRendering(root);
-            verify(requests.visible, "the card shows");
+            verify(requests.pending, "the card shows");
             const submit = findChild(requests, "questionSubmit");
             verify(submit.mapToItem(root, 0, submit.height).y <= root.height, "the answer button is inside the window");
             mouseClick(findChild(requests, "questionOption-First 0 (Recommended)"));

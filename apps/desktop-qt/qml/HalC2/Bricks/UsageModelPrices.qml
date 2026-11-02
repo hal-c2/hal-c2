@@ -70,13 +70,14 @@ Rectangle {
                 Label {
                     Layout.fillWidth: true
                     text: target.modelData.label
+                    wrapMode: Text.Wrap
                     color: dialog.foreground
                     font.pixelSize: Math.round(13 * Theme.fontScale)
                 }
 
                 Label {
                     text: target.modelData.status
-                    color: target.modelData.error.length > 0 ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#22c55e")
+                    color: target.modelData.error.length > 0 ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("success", "#22c55e")
                     font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
             }
@@ -173,7 +174,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: text.length > 0
             text: dialog.model ? dialog.model.error : ""
-            color: Theme.palette.color("error", "#f87171")
+            color: Theme.palette.color("errorForeground", "#f87171")
             font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }

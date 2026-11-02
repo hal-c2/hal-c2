@@ -633,8 +633,12 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     ];
   };
 
-  /** A placed image in words. Its caption names it once the image is gone from the stream. */
+  /**
+   * A placed image in words. Its caption names it once the image is gone from the stream.
+   * An image by its address is never fetched: its caption and where it is.
+   */
   const imagePlaceholder = (block: SpaceBlock): string => {
+    if (block.url) return `[image${block.text ? `: ${block.text}` : ""}] ${block.url}`;
     const image = imageById(block.imageId);
     if (!image) return `[image: ${block.text} was deleted]`;
     if (image.trashedAt !== null) return `[image: ${image.name} is in the trash]`;

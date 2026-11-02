@@ -1029,6 +1029,20 @@ describe("images", () => {
     ]);
   });
 
+  test("an image by its address is its caption and where it is, never fetched", () => {
+    const byAddress = (id: string, text: string) =>
+      [
+        "block",
+        id,
+        { ...block(id, "p1", text, id)[2], kind: "image", url: "https://x.test/a.png" },
+      ] as const;
+    const t = onPage([byAddress("a", "A cat"), byAddress("b", "")]);
+    expect(t.texts("block")).toEqual([
+      "[image: A cat] https://x.test/a.png",
+      "[image] https://x.test/a.png",
+    ]);
+  });
+
   test("Esc from the images goes back to where they were opened", () => {
     const t = onPage([]);
     t.controller.dispatch("space.images", {});

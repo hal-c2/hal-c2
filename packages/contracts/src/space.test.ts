@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import {
   SpaceAuthor,
+  SpaceBlockInsertInput,
   SpaceBlockMoveInput,
   SpaceCreateInput,
   SpaceDeckCreateInput,
@@ -16,6 +17,7 @@ const decodeAuthor = Schema.decodeUnknownSync(SpaceAuthor);
 const decodeDeck = Schema.decodeUnknownSync(SpaceDeckCreateInput);
 const decodeSlideMove = Schema.decodeUnknownSync(SpaceSlideMoveInput);
 const decodeAsk = Schema.decodeUnknownSync(SpacePageAskAgentInput);
+const decodeInsert = Schema.decodeUnknownSync(SpaceBlockInsertInput);
 
 describe("Space contracts", () => {
   it("refuses a Space with a blank name", () => {
@@ -40,6 +42,22 @@ describe("Space contracts", () => {
       null,
     );
     expect(decodeSlideMove({ spaceId: "s", slideId: "x" })).not.toHaveProperty("afterSlideId");
+  });
+
+  it("takes a footnote's label and an image's address only as Markdown writes them", () => {
+    const at = { spaceId: "s", pageId: "p" };
+    expect(decodeInsert({ ...at, kind: "footnote", label: "note-1" })).toHaveProperty(
+      "label",
+      "note-1",
+    );
+    expect(() => decodeInsert({ ...at, kind: "footnote", label: "two words" })).toThrow();
+    expect(() => decodeInsert({ ...at, kind: "footnote", label: "[1]" })).toThrow();
+    expect(decodeInsert({ ...at, kind: "image", url: "https://x.test/a.png" })).toHaveProperty(
+      "url",
+      "https://x.test/a.png",
+    );
+    expect(() => decodeInsert({ ...at, kind: "image", url: "a (b).png" })).toThrow();
+    expect(() => decodeInsert({ ...at, kind: "image", url: "space-image:abc" })).toThrow();
   });
 
   it("names the thread of an agent author", () => {

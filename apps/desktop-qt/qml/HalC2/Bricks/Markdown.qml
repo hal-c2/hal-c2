@@ -43,9 +43,9 @@ Item {
     readonly property string monoFamily: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
     readonly property bool light: Theme.appearance === "light"
     readonly property int codeSize: Theme.fontSizeCode
-    // The head every rich text segment carries; a theme change restyles the
-    // segments without parsing the reply again.
-    readonly property string styleHead: Md.styleHead({
+    // What the head of every rich text segment styles, by what it styles; a
+    // theme change restyles the segments without parsing the reply again.
+    readonly property var styleRules: Md.styleRules({
         link: css(Theme.link),
         heading: css(headingColor),
         muted: css(mutedColor),
@@ -55,6 +55,7 @@ Item {
         mono: monoFamily,
         rule: css(borderColor)
     })
+    readonly property string styleHead: Md.styleHead(styleRules)
 
     // What opens every rich text, made once per theme and not per segment.
     readonly property string richHead: "<html><head>" + styleHead + "</head><body>"
@@ -80,7 +81,7 @@ Item {
     }
 
     function rich(html) {
-        return richHead + html + "</body></html>";
+        return richHead + Md.inlineStyles(html, styleRules) + "</body></html>";
     }
 
     // A segment's item, whose functions are the delegate's own.
@@ -129,6 +130,27 @@ Item {
         edit.deselect();
         if (selector)
             cited(selector);
+    }
+
+    // Copy and Select All for `edit`'s text, at `position` in it. Made when
+    // it opens: a menu for every reply would cost a long thread more than
+    // its text.
+    function openTextMenu(edit, position) {
+        const menu = textMenu.createObject(root, {
+            editor: edit
+        });
+        menu.openAt(position.x, position.y);
+    }
+
+    Component {
+        id: textMenu
+
+        TextEditMenu {
+            id: menu
+
+            objectName: "textMenu"
+            onClosed: menu.destroy()
+        }
     }
 
     // Puts plain text on the clipboard.
@@ -258,6 +280,9 @@ Item {
         }
 
         textFormat: TextEdit.RichText
+        // TODO(ljos#159): Qt names a TextEdit by its text already; `ljos check` wants it said.
+        // Its plain text, since `text` here is the HTML document.
+        Accessible.name: getText(0, length)
         wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
         readOnly: true
         selectByMouse: true
@@ -282,6 +307,7 @@ Item {
             acceptedButtons: Qt.LeftButton
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
             acceptedModifiers: Qt.ControlModifier
+            // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
             onTapped: eventPoint => richText.follow(eventPoint)
         }
         // Offers what can be done with the link under a point.
@@ -299,15 +325,22 @@ Item {
         TapHandler {
             id: touchLink
             acceptedDevices: PointerDevice.TouchScreen
+            // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
             onTapped: eventPoint => richText.follow(eventPoint)
             onLongPressed: richText.linkMenu(touchLink.point.position, touchLink.point.scenePosition)
         }
-        // The secondary button on a link offers what can be done with it
-        // (a finger has no buttons, and would count as it).
+        // The secondary button on a link offers what can be done with it,
+        // and elsewhere copying the text (a finger has no buttons, and
+        // would count as it).
         TapHandler {
             acceptedButtons: Qt.RightButton
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-            onTapped: eventPoint => richText.linkMenu(eventPoint.position, eventPoint.scenePosition)
+            onTapped: eventPoint => {
+                if (richText.linkAt(eventPoint.position.x, eventPoint.position.y).length > 0)
+                    richText.linkMenu(eventPoint.position, eventPoint.scenePosition);
+                else
+                    root.openTextMenu(richText, eventPoint.position);
+            }
         }
         HoverHandler {
             cursorShape: parent.hoveredLink.startsWith("task:") ? Qt.PointingHandCursor : Qt.IBeamCursor
@@ -565,6 +598,7 @@ Item {
                                 TextEdit {
                                     id: codeText
                                     objectName: "codeText"
+                                    Accessible.name: seg.language.length > 0 ? qsTr("%1 code").arg(seg.language) : qsTr("Code")
                                     x: 14.4
                                     y: 12.8
                                     width: block.wrapped ? body.width - 28.8 : Math.max(implicitWidth, body.width - 28.8)
@@ -578,6 +612,12 @@ Item {
                                     color: Theme.palette.color("codeForeground", "#f5f5f5")
                                     font.family: root.monoFamily
                                     font.pixelSize: root.codeSize
+
+                                    TapHandler {
+                                        acceptedButtons: Qt.RightButton
+                                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                        onTapped: root.openTextMenu(codeText, point.position)
+                                    }
                                 }
                             }
 
@@ -831,11 +871,11 @@ Item {
                         // GitHub's alert kinds: label, icon, and the title and
                         // rule colours (tailwind 600 on light, 400 on dark).
                         readonly property var kinds: ({
-                            note: ["Note", "info", "#3b82f6", "#2563eb", "#60a5fa"],
-                            tip: ["Tip", "lightbulb", "#10b981", "#059669", "#34d399"],
-                            important: ["Important", "message-square-warning", "#a855f7", "#9333ea", "#c084fc"],
-                            warning: ["Warning", "triangle-alert", "#f59e0b", "#d97706", "#f59e0b"],
-                            caution: ["Caution", "octagon-alert", "#ef4444", "#dc2626", "#f87171"]
+                            note: [qsTr("Note"), "info", "#3b82f6", "#2563eb", "#60a5fa"],
+                            tip: [qsTr("Tip"), "lightbulb", "#10b981", "#059669", "#34d399"],
+                            important: [qsTr("Important"), "message-square-warning", "#a855f7", "#9333ea", "#c084fc"],
+                            warning: [qsTr("Warning"), "triangle-alert", "#f59e0b", "#d97706", "#f59e0b"],
+                            caution: [qsTr("Caution"), "octagon-alert", "#ef4444", "#dc2626", "#f87171"]
                         })
                         readonly property var kindOf: kinds[seg.alert] ?? null
                         readonly property color titleColor: kindOf ? (root.light ? kindOf[3] : kindOf[4]) : root.textColor
@@ -867,7 +907,7 @@ Item {
                             Text {
                                 objectName: "alertTitle"
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: quoteBox.kindOf ? qsTr(quoteBox.kindOf[0]) : ""
+                                text: quoteBox.kindOf ? quoteBox.kindOf[0] : ""
                                 color: quoteBox.titleColor
                                 font.family: root.uiFamily
                                 font.pixelSize: Math.round(14 * Theme.fontScale)

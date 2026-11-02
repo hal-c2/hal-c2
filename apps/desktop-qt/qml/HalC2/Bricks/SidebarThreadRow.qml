@@ -128,7 +128,7 @@ Item {
         }
         switch (item.status) {
         case "approval":
-            return Theme.palette.color("warning", "#f59e0b");
+            return Theme.palette.color("warningForeground", "#f59e0b");
         case "input":
             return Theme.palette.color("accent", "#818cf8");
         case "working":
@@ -136,12 +136,12 @@ Item {
         case "waiting":
             return row.secondaryColor;
         case "limited":
-            return Theme.palette.color("warning", "#f59e0b");
+            return Theme.palette.color("warningForeground", "#f59e0b");
         case "failed":
-            return Theme.palette.color("error", "#f87171");
+            return Theme.palette.color("errorForeground", "#f87171");
         }
         if (row.woke) {
-            return Theme.palette.color("warning", "#f59e0b");
+            return Theme.palette.color("warningForeground", "#f59e0b");
         }
         if (item.unread === true) {
             return Theme.palette.color("success", "#34d399");
@@ -197,6 +197,8 @@ Item {
     implicitHeight: slim ? 36 : 78
     Accessible.role: Accessible.ListItem
     Accessible.name: item.title
+    // The keyboard opens a row from the Sidebar's list (Enter at its cursor).
+    Accessible.onPressAction: row.activated()
     // A pooled delegate (the list reuses them) is hidden but stays a child of
     // the list; without this a screen reader reads it with the live rows.
     Accessible.ignored: !row.visible
@@ -214,7 +216,8 @@ Item {
 
         Behavior on color {
             ColorAnimation {
-                duration: 120
+                duration: 100
+                easing.type: Easing.OutCubic
             }
         }
     }
@@ -502,6 +505,7 @@ Item {
             Behavior on opacity {
                 NumberAnimation {
                     duration: 120
+                    easing.type: Easing.OutCubic
                 }
             }
         }
@@ -509,7 +513,7 @@ Item {
         Text {
             Layout.fillWidth: true
             text: row.oneLineTitle
-            color: Qt.alpha(row.secondaryColor, 0.7)
+            color: row.secondaryColor
             font.pixelSize: Math.round(14 * Theme.fontScale)
             elide: Text.ElideRight
         }

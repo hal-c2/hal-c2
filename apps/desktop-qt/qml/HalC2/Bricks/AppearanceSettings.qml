@@ -95,7 +95,7 @@ SettingsPage {
         background: Rectangle {
             radius: Math.min(Theme.radius, 8)
             color: choice.checked || choice.hovered || choice.down ? choice.accentSurface : Qt.alpha(choice.accentSurface, 0)
-            border.width: choice.checked || choice.visualFocus ? 1 : 0
+            border.width: choice.visualFocus ? 2 : choice.checked ? 1 : 0
             border.color: choice.visualFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("accent", "#2563eb")
         }
 
@@ -189,7 +189,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 text: Theme.lastError
-                color: Theme.palette.color("error", "#f87171")
+                color: Theme.palette.color("errorForeground", "#f87171")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -377,7 +377,7 @@ SettingsPage {
     ShellButton {
         objectName: "removeSelected"
         visible: page.selected.length > 0
-        tint: Theme.palette.color("error", "#ef4444")
+        tint: Theme.palette.color("errorForeground", "#ef4444")
         text: qsTr("Remove selected (%1)").arg(page.selected.length)
         onClicked: {
             Themes.requestRemoveMany(page.selected);
@@ -410,6 +410,7 @@ SettingsPage {
             Label {
                 Layout.fillWidth: true
                 text: halfRow.modelData.label
+                wrapMode: Text.Wrap
                 color: page.foreground
                 font.pixelSize: Math.round(13 * Theme.fontScale)
             }

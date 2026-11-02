@@ -124,7 +124,8 @@ defmodule HalC2.Space.Sites do
   # What a site shows of the page: never its comments or authors, and of a link to
   # another page only that page's title, unless it is out of reach in the trash. An image
   # is its caption: the picture's file is not published (`features/space/sites.feature`).
-  # A list item shows how deep it is, and a numbered one its number.
+  # A list item shows how deep it is, and a numbered one its number. An image by its
+  # address is its caption too: nothing is fetched.
   defp snapshot(state, page) do
     blocks = state |> Blocks.of_page(page["id"]) |> Enum.flat_map(&ordinary(state, &1))
 
@@ -181,6 +182,9 @@ defmodule HalC2.Space.Sites do
   defp published(_state, %{"kind" => "callout"} = block),
     do: [%{"kind" => "callout", "text" => block["text"] || ""} |> put_if("alert", block["alert"])]
 
+  defp published(_state, %{"kind" => "footnote"} = block),
+    do: [%{"kind" => "footnote", "text" => block["text"] || "", "label" => block["label"]}]
+
   defp published(_state, block), do: [%{"kind" => block["kind"], "text" => block["text"] || ""}]
 
   # 192 bits from the system's strong random source, URL-safe.
@@ -232,11 +236,25 @@ defmodule HalC2.Space.Sites do
       "</style></head><body><main><h1>",
       esc(title),
       "</h1>",
-      blocks |> Enum.chunk_by(&(&1["kind"] in @lists)) |> Enum.map(&section/1),
+      blocks |> closed() |> Enum.chunk_by(&(&1["kind"] in @lists)) |> Enum.map(&section/1),
       "</main><footer>Published ",
       esc(String.slice(site["publishedAt"], 0, 10)),
       "</footer></body></html>\n"
     ]
+  end
+
+  # Each collapsed section closed once: an end with none open is dropped, and one left
+  # open closes at the end of the page.
+  defp closed(blocks) do
+    {blocks, open} =
+      Enum.flat_map_reduce(blocks, 0, fn
+        %{"kind" => "details"} = block, open -> {[block], open + 1}
+        %{"kind" => "details_end"}, 0 -> {[], 0}
+        %{"kind" => "details_end"} = block, open -> {[block], open - 1}
+        block, open -> {[block], open}
+      end)
+
+    blocks ++ List.duplicate(%{"kind" => "details_end", "text" => ""}, open)
   end
 
   defp section([%{"kind" => kind} | _] = items) when kind in @lists,
@@ -265,6 +283,14 @@ defmodule HalC2.Space.Sites do
 
   defp block(%{"kind" => "code", "text" => text}),
     do: ["<pre><code>", esc(text), "</code></pre>"]
+
+  defp block(%{"kind" => "footnote", "text" => text, "label" => label}),
+    do: ["<p><sup>", esc(label), "</sup> ", esc(text), "</p>"]
+
+  defp block(%{"kind" => "details", "text" => text}),
+    do: ["<details><summary>", esc(text), "</summary>"]
+
+  defp block(%{"kind" => "details_end"}), do: "</details>"
 
   defp block(%{"kind" => "table", "table" => %{"align" => align, "rows" => [head | body]}}) do
     [

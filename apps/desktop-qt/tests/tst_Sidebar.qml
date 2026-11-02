@@ -403,6 +403,7 @@ Item {
             const empty = findChild(sidebar, "emptyText");
             compare(empty.visible, true);
             compare(empty.text, data.message);
+            compare(list.activeFocusOnTab, false);
         }
 
         // Scenario: Adding a project from the thread list (features/threads/sidebar-list.feature)

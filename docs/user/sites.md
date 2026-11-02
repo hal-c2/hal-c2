@@ -40,6 +40,7 @@ MC off the tailnet, see [Tailscale HTTPS](remote-access.md#tailscale-https).
 
 ## What a site shows
 
-Text, headings, bulleted, numbered and checklist items at their depth, callouts and alerts, and
-dividers, as a plain page. Links to other pages show as plain text, an image shows as its caption,
-not the picture, and a chart shows as its words.
+Text, headings, bulleted, numbered and checklist items at their depth, callouts and alerts,
+dividers, footnotes and collapsed sections, as a plain page. Links to other pages show as plain
+text, an image shows as its caption, not the picture (an image from the web is never fetched), and
+a chart shows as its words.
