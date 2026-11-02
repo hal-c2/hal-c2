@@ -7,9 +7,12 @@ import HalC2.Bricks
 // A thread, or a new thread's draft: the way back and its title, the route's
 // centre (the timeline, or the draft's opening line that picks its project),
 // and the composer, which carries the thread's approvals and questions. The
-// Files tab, which the desktop draws beside the thread, takes the screen under
-// the same bar; the way back closes it (MobileShell.stepBack). Files dropped
-// anywhere on the centre or the composer join the draft.
+// tabs the desktop draws beside the thread that a phone shows (its Files, its
+// linked pull requests and a pull request's review) take the screen under the
+// same bar; the way back closes them (MobileShell.stepBack). The pull requests
+// are the phone's git overview: where they are linked, refreshed and opened,
+// and where a thread is started on one. Files dropped anywhere on the centre
+// or the composer join the draft.
 Item {
     id: screen
 
@@ -17,7 +20,14 @@ Item {
     readonly property var notifications: Shell.state.notifications ?? null
     readonly property string threadKey: route !== null && route.kind === "thread" ? (route.threadKey ?? "") : ""
     readonly property var panel: Shell.state.panel ?? null
-    readonly property bool filesOpen: panel !== null && panel.isOpen && panel.activeId === "files"
+    // The kind of the right panel's tab that takes the screen, "" for none.
+    readonly property string panelKind: {
+        if (panel === null || !panel.isOpen)
+            return "";
+        const kind = (panel.activeId ?? "").split(":")[0];
+        return kind === "files" || kind === "pull-requests" || kind === "pull-request" ? kind : "";
+    }
+    readonly property bool panelShown: panelKind.length > 0
     readonly property bool muted: notifications !== null && (notifications.muted ?? []).indexOf(threadKey) >= 0
 
     signal backRequested
@@ -47,10 +57,27 @@ Item {
 
             MobileIconButton {
                 objectName: "openFiles"
-                visible: !screen.filesOpen && screen.threadKey.length > 0
+                visible: !screen.panelShown && screen.threadKey.length > 0
                 iconName: "files"
                 label: qsTr("Files")
                 onClicked: Shell.dispatch("rightPanel.add", { kind: "files" })
+            }
+
+            MobileIconButton {
+                objectName: "openPullRequests"
+                visible: !screen.panelShown && screen.threadKey.length > 0
+                iconName: "git-pull-request"
+                label: qsTr("Pull requests")
+                onClicked: Shell.dispatch("rightPanel.add", { kind: "pull-requests" })
+            }
+
+            // A new thread on a pull request, checked out here or in a worktree.
+            MobileIconButton {
+                objectName: "startPullRequestThread"
+                visible: screen.panelKind === "pull-requests"
+                iconName: "git-branch"
+                label: qsTr("Start a thread on a pull request")
+                onClicked: Shell.dispatch("pullRequestThread.open", {})
             }
 
             MobileIconButton {
@@ -71,8 +98,16 @@ Item {
             objectName: "centreHost"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: !screen.filesOpen
+            visible: !screen.panelShown
             kind: screen.route?.kind ?? ""
+
+            // A finger has no hover: a message's actions always show.
+            Binding {
+                target: centre.item
+                when: centre.item instanceof ThreadView
+                property: "alwaysShowMeta"
+                value: true
+            }
         }
         // A thread with no conversation yet suggests what to ask, as the web phone did.
         Binding {
@@ -89,12 +124,9 @@ Item {
         Loader {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            active: screen.filesOpen
+            active: screen.panelShown
             visible: active
-            sourceComponent: FilesPanel {
-                objectName: "filesPanel"
-                source: Panel.files
-            }
+            sourceComponent: screen.panelKind === "files" ? files : screen.panelKind === "pull-requests" ? pullRequests : review
         }
 
         Composer {
@@ -103,7 +135,7 @@ Item {
             objectName: "composer"
             takesDrops: false
             Layout.fillWidth: true
-            visible: ready && !screen.filesOpen
+            visible: ready && !screen.panelShown
             conversationScrolled: centre.conversationScrolled
         }
     }
@@ -114,5 +146,30 @@ Item {
         height: composerView.y + composerView.height - centre.y
         visible: composerView.visible
         composer: composerView
+    }
+
+    Component {
+        id: files
+
+        FilesPanel {
+            objectName: "filesPanel"
+            source: Panel.files
+        }
+    }
+
+    Component {
+        id: pullRequests
+
+        PullRequestsPanel {
+            source: Panel.pullRequests
+        }
+    }
+
+    Component {
+        id: review
+
+        PullRequestReviewPanel {
+            source: Panel.review
+        }
     }
 }

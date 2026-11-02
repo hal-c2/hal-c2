@@ -24,8 +24,8 @@ class ShellBridge;
 class ShellStore;
 class TimelineModel;
 
-// The composer on the thread or new-thread draft the window shows (the
-// route), against the MC: the draft itself (text, caret, model, options,
+// The composer on the thread, new-thread draft or Space page the window shows
+// (the route), against the MC: the draft itself (text, caret, model, options,
 // modes, images, terminal excerpts, quoted replies), what the picker offers, the @ $ / suggestions, sending,
 // follow-ups while a turn runs, stop, the thread's pending approvals and
 // questions, and its proposed plan.
@@ -68,6 +68,18 @@ class TimelineModel;
 // applied: the brick adopts published text only when it answers its newest
 // edit, so its own typing is never overwritten by an older echo, while the
 // shell's changes (a suggestion, a cleared send, a restored failure) land.
+//
+// A Space page (SpaceController::promptPage) has a draft of its own too,
+// keyed pageKey(pageId), which no thread key or draft id can be. Its prompt
+// writes on the page: plain text goes to the page's bricks as
+// `space.prompt.write` {pageId, text} (the page decides the kind of block and
+// clears the prompt), and `@agent …` asks an agent to work on the page
+// (SpaceController::askAgent) with the prompt's model, options, modes,
+// attachments and the project picked for it (`composer.project.set
+// {projectId}`, else the MC's `space.page.agentTarget`); a refused ask keeps
+// everything. Stop stops the page's agent. A page's composer has no checkout,
+// queue, follow-ups, several models or excerpts. `composer.ask` starts an ask
+// in the page's prompt, ahead of what is there.
 //
 // Actions: composer.text.set {target, text, cursor, edit},
 // composer.suggest.select {id}, composer.suggest.dismiss,
@@ -161,6 +173,8 @@ public:
   // Whether `target`'s draft has files still on their way to the MC, or a
   // send in flight that carries the draft's attachments.
   bool attachmentsPending(const QString& target) const;
+  // The draft key of a Space page; never a thread key (env:id) or a draft id (a uuid).
+  static QString pageKey(const QString& pageId) { return QStringLiteral("page#") + pageId; }
   // More than one model is chosen for the draft, each to get a thread of its own.
   bool choseSeveralModels(const QString& draftId) const { return m_drafts.value(draftId).multipleModels.has_value(); }
   // Adds `text` after the route's draft, a space apart from what is there
@@ -247,6 +261,8 @@ private:
     // A new thread's prompt goes to each of these instead: one thread per
     // model, each in its own worktree.
     std::optional<QList<QJsonObject>> multipleModels;
+    // A Space page's: the project an ask runs in, as picked.
+    QString projectId;
     QList<Attachment> attachments;
     QList<Excerpt> excerpts;
   };
@@ -327,6 +343,23 @@ private:
                             const std::optional<QString>& error);
   // The model a thread (its own) or a draft (the project's default) starts from.
   QJsonObject baseSelection(const QString& key) const;
+  // What a new thread in the project starts with.
+  QJsonObject newThreadSelection(const QString& environmentId, const QString& projectId) const;
+  QString newThreadRuntimeMode(const QString& projectId) const;
+  // The Space page on show, when no thread or draft is.
+  QString openPage() const;
+  bool onPage() const { return !m_pageId.isEmpty(); }
+  // The project the page's ask runs in: picked, else the MC's default.
+  QString pageProject() const;
+  // Asks the MC where the page's ask would run, once it is connected.
+  void askPageProject();
+  // A page's send: an ask, or words for the page to write.
+  bool submitPage(const QString& target, const QString& text);
+  // `@agent` ahead of the page's prompt, and the keyboard to it.
+  void startAsk();
+  // Whether the page's agent is at work, which makes the send button stop it.
+  bool pageAgentRunning() const;
+  void followPage();
   // The message and the mode changes before it; empty `text` implements the plan.
   bool sendTurn(const QString& target, const QString& text, const QString& mode, bool planFollowUp, bool fromDraft);
   void sendNext(const QString& target);
@@ -412,6 +445,8 @@ private:
   // Searches the workspace for an @ query the menu has no answer for yet.
   void searchPaths(const QString& target);
   bool canSearchPaths(const QString& target) const;
+  std::pair<QString, QString> searchPlace(const QString& target) const;
+  std::optional<composer::Trigger> triggerOf(const QString& target) const;
   void refreshPathSearch();
 
   // The catalogue of the route's environment.
@@ -481,6 +516,12 @@ private:
   // The route thread (or draft) and its stream.
   QString m_thread;
   QString m_draftId;
+  // The Space page on show instead, and the project its asks run in unless
+  // one is picked (`space.page.agentTarget`).
+  QString m_pageId;
+  QString m_pageProject;
+  bool m_pageProjectAsked = false;
+  bool m_pageRunning = false;
   QPointer<TimelineModel> m_timeline;
   QMetaObject::Connection m_timelineConnection;
   QMetaObject::Connection m_timelineStatus;

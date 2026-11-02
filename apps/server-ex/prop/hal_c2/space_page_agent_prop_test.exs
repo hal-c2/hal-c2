@@ -13,13 +13,17 @@ defmodule HalC2.SpacePageAgentPropTest do
 
   - a page has at most one agent, and an ask while it is at work is refused and writes
     nothing, as is one on a page in the trash;
+  - an image an ask sends inline is saved for its thread and reaches its launch, and a
+    refused ask leaves no image behind, nor one whose thread could not start or whose
+    launch the crash lost;
   - an agent ends only by its own thread ending or a stop: a report from a thread an
     earlier ask started, or one with its run still going, writes nothing;
   - an agent ended says what its run ended as, and whether its thread edited the page;
   - nothing can leave an agent working once its thread has nothing left to do: a deleted
     or moved thread settles it with the reason, a move given up reports what it held
     back, and the reconciliation settles every lost launch and report, but never a run
-    still going, a thread moving or one about to continue;
+    still going, a thread moving or one about to continue, nor an ask taken since the MC
+    started, whose launch may still be under way;
   - a queued run held for the user is not work: it does not keep the page working or
     decide how the agent ended, and neither does one the user cancelled;
   - background work its run left keeps an agent working until it ends, unless a stop was
@@ -47,6 +51,15 @@ defmodule HalC2.SpacePageAgentPropTest do
   @active ~w(running stopping)
   @background_item "background-command"
   @ended %{"completed" => "completed", "failed" => "failed", "interrupted" => "stopped"}
+  # A one-pixel PNG, as a client sends an image inline.
+  @image %{
+    "type" => "image",
+    "name" => "sketch.png",
+    "mimeType" => "image/png",
+    "sizeBytes" => 68,
+    "dataUrl" =>
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII="
+  }
 
   property "the agents of a Space's pages follow the model",
     numtests: HalC2.Prop.numtests(100),
@@ -64,10 +77,12 @@ defmodule HalC2.SpacePageAgentPropTest do
         Application.put_env(:hal_c2, :page_agent_launch, &fake_thread(&1, test))
         {:ok, space} = Space.create("Prop")
         Process.put(:space, space["id"])
+        :persistent_term.erase({PageAgent, :boot})
         Process.put(:names, %{})
         Process.put(:threads, %{})
         {history, state, result} = run_commands(__MODULE__, cmds)
         Application.delete_env(:hal_c2, :page_agent_launch)
+        :persistent_term.erase({PageAgent, :boot})
         HalC2.Prop.stop_services()
 
         (result == :ok)
@@ -83,8 +98,11 @@ defmodule HalC2.SpacePageAgentPropTest do
   # wrote, said, run, moving}: it wrote as it edits, and says edited once it ends; said is
   # whether it gave a reason; run is what its run is (nil before a launch that never
   # came); moving is whether its thread is in a move. asks counts this page's threads, so
-  # a report can name an old one.
-  def initial_state, do: %{pages: %{}}
+  # a report can name an old one. image is whether its ask sent one. boot is the start of
+  # the MC that took the ask, which the reconciliation of that start leaves alone.
+  # images counts the images saved for the threads of asks; boot is the MC's start, nil
+  # before it has one, as asks from before there were tokens have none.
+  def initial_state, do: %{pages: %{}, images: 0, boot: nil}
 
   def command(s) do
     pages = Map.keys(s.pages)
@@ -95,8 +113,10 @@ defmodule HalC2.SpacePageAgentPropTest do
           do: [],
           else: [
             {5,
-             {:call, __MODULE__, :ask, [elements(pages), elements(["tidy", "@agent tidy", " "])]}},
-            {1, {:call, __MODULE__, :ask_lost, [elements(pages)]}},
+             {:call, __MODULE__, :ask,
+              [elements(pages), elements(["tidy", "@agent tidy", " "]), boolean()]}},
+            {1, {:call, __MODULE__, :ask_lost, [elements(pages), boolean()]}},
+            {1, {:call, __MODULE__, :ask_unstartable, [elements(pages), boolean()]}},
             {4, {:call, __MODULE__, :lose_report, [elements(pages), elements(Map.keys(@ended))]}},
             {2, {:call, __MODULE__, :hold_message, [elements(pages)]}},
             {3, {:call, __MODULE__, :cancel_message, [elements(pages)]}},
@@ -122,12 +142,18 @@ defmodule HalC2.SpacePageAgentPropTest do
             {1, {:call, __MODULE__, :delete, [elements(pages)]}}
           ]
         ) ++
-        [{1, {:call, __MODULE__, :restart, []}}, {2, {:call, __MODULE__, :reconcile, []}}]
+        [
+          {1, {:call, __MODULE__, :restart, []}},
+          {1, {:call, __MODULE__, :start, []}},
+          {2, {:call, __MODULE__, :reconcile, []}}
+        ]
     )
   end
 
   def precondition(s, {:call, _, :create_page, [name]}), do: not Map.has_key?(s.pages, name)
-  def precondition(_s, {:call, _, cmd, []}) when cmd in [:restart, :reconcile], do: true
+
+  def precondition(_s, {:call, _, cmd, []}) when cmd in [:restart, :start, :reconcile],
+    do: true
 
   def precondition(s, {:call, _, :edit, [name]}),
     do: going?(s, name) and not s.pages[name].trashed
@@ -191,24 +217,56 @@ defmodule HalC2.SpacePageAgentPropTest do
   defp step(s, :create_page, [name]),
     do: {:ok, put(s, name, %{trashed: false, blocks: 0, asks: 0, agent: nil}), nil}
 
-  defp step(s, :ask, [name, request]) do
+  defp step(s, :ask, [name, request, image]) do
     page = s.pages[name]
 
     cond do
-      String.trim(String.replace(request, "@agent", "")) == "" -> {:invalid, s, 0}
-      page.trashed -> {:trashed, s, 0}
-      active?(s, name) -> {:invalid, s, 0}
-      true -> {:ok, put(s, name, %{page | asks: page.asks + 1, agent: agent("running")}), 1}
+      String.trim(String.replace(request, "@agent", "")) == "" ->
+        {:invalid, s, 0}
+
+      page.trashed ->
+        {:trashed, s, 0}
+
+      active?(s, name) ->
+        {:invalid, s, 0}
+
+      true ->
+        asked = put(s, name, %{page | asks: page.asks + 1, agent: agent("running", image, s)})
+        {:ok, %{asked | images: s.images + if(image, do: 1, else: 0)}, 1}
     end
   end
 
-  defp step(s, :ask_lost, [name]) do
+  # Its image stays until the reconciliation settles it: a launch could still be writing.
+  defp step(s, :ask_lost, [name, image]) do
     page = s.pages[name]
 
     cond do
-      page.trashed -> {:trashed, s, 0}
-      active?(s, name) -> {:invalid, s, 0}
-      true -> {:ok, put(s, name, %{page | asks: page.asks + 1, agent: agent(nil)}), 1}
+      page.trashed ->
+        {:trashed, s, 0}
+
+      active?(s, name) ->
+        {:invalid, s, 0}
+
+      true ->
+        asked = put(s, name, %{page | asks: page.asks + 1, agent: agent(nil, image, s)})
+        {:ok, %{asked | images: s.images + if(image, do: 1, else: 0)}, 1}
+    end
+  end
+
+  # The provider cannot start: the page says why, and the image goes.
+  defp step(s, :ask_unstartable, [name, _image]) do
+    page = s.pages[name]
+
+    cond do
+      page.trashed ->
+        {:trashed, s, 0}
+
+      active?(s, name) ->
+        {:invalid, s, 0}
+
+      true ->
+        failed = %{agent(nil, false, s) | status: "failed", said: true}
+        {:ok, put(s, name, %{page | asks: page.asks + 1, agent: failed}), 1}
     end
   end
 
@@ -319,11 +377,15 @@ defmodule HalC2.SpacePageAgentPropTest do
 
   defp step(s, :restart, []), do: {:ok, s, 0}
 
+  # Every ask so far was before this start, whatever the clock says.
+  defp step(s, :start, []), do: {:ok, %{s | boot: (s.boot || 0) + 1}, 0}
+
   # A thread about to go on is left, whatever else settles, unless it was asked to stop.
   defp reconcile(s, continuing) do
     next =
       for {name, _} <- s.pages,
           active?(s, name),
+          s.boot == nil or s.pages[name].agent.boot != s.boot,
           name != continuing or s.pages[name].agent.status == "stopping",
           reduce: s do
         acc -> if stops_now?(acc.pages[name].agent), do: run_over(acc, name), else: acc
@@ -332,8 +394,10 @@ defmodule HalC2.SpacePageAgentPropTest do
     {:ok, next, if(next == s, do: 0, else: 1)}
   end
 
-  defp agent(run) do
+  defp agent(run, image, s) do
     %{
+      image: image,
+      boot: s.boot,
       status: "running",
       edited: false,
       wrote: false,
@@ -367,11 +431,16 @@ defmodule HalC2.SpacePageAgentPropTest do
   defp stops_now?(%{run: "requeued", status: "stopping"}), do: true
   defp stops_now?(agent), do: over?(agent)
 
-  # What its run ended as: a lost launch fails with a reason, as a failed run does.
+  # What its run ended as: a lost launch fails with a reason, as a failed run does, and
+  # takes its image with it.
   defp run_over(s, name) do
-    case s.pages[name].agent.run do
-      nil -> settle(s, name, "failed", true)
-      ended -> settle(s, name, @ended[ended], ended in ["failed", "interrupted"])
+    case s.pages[name].agent do
+      %{run: nil, image: image} ->
+        settled = settle(s, name, "failed", true)
+        %{settled | images: s.images - if(image, do: 1, else: 0)}
+
+      %{run: ended} ->
+        settle(s, name, @ended[ended], ended in ["failed", "interrupted"])
     end
   end
 
@@ -392,9 +461,12 @@ defmodule HalC2.SpacePageAgentPropTest do
   end
 
   defp snapshot(s) do
-    for {name, %{agent: %{} = agent}} <- s.pages,
-        into: %{},
-        do: {name, {agent.status, agent.edited, agent.said}}
+    agents =
+      for {name, %{agent: %{} = agent}} <- s.pages,
+          into: %{},
+          do: {name, {agent.status, agent.edited, agent.said}}
+
+    {agents, s.images}
   end
 
   # --- commands -------------------------------------------------------------------
@@ -407,12 +479,17 @@ defmodule HalC2.SpacePageAgentPropTest do
     end)
   end
 
-  def ask(name, request) do
+  def ask(name, request, image) do
     act(fn space ->
-      case PageAgent.ask(space, id(name), request, &nowhere/0) do
+      case PageAgent.ask(space, id(name), request, choices(image), &nowhere/1) do
         {:ok, %{"threadId" => thread}} ->
           receive do
-            {:launched, ^thread} -> :ok
+            {:launched, ^thread, attachments} ->
+              # The launch names the image as saved for its thread, and nothing else.
+              saved = for a <- attachments, HalC2.Attachments.path(a), do: a["name"]
+
+              if saved != if(image, do: ["sketch.png"], else: []),
+                do: flunk("launched #{inspect(attachments)}")
           after
             5_000 -> flunk("the thread was never launched")
           end
@@ -431,16 +508,16 @@ defmodule HalC2.SpacePageAgentPropTest do
   end
 
   # An ask whose launch dies with the MC: no thread is ever written.
-  def ask_lost(name) do
+  def ask_lost(name, image) do
     act(fn space ->
       test = self()
       Application.put_env(:hal_c2, :page_agent_launch, &lost_launch(&1, test))
 
       reply =
-        case PageAgent.ask(space, id(name), "tidy", &nowhere/0) do
+        case PageAgent.ask(space, id(name), "tidy", choices(image), &nowhere/1) do
           {:ok, %{"threadId" => thread}} ->
             receive do
-              {:launched, ^thread} -> :ok
+              {:launched, ^thread, _attachments} -> :ok
             after
               5_000 -> flunk("the launch never ran")
             end
@@ -460,6 +537,62 @@ defmodule HalC2.SpacePageAgentPropTest do
       reply
     end)
   end
+
+  # An ask whose provider cannot start a thread; done once the page says it failed.
+  def ask_unstartable(name, image) do
+    act(fn space ->
+      test = self()
+      stream = Space.stream_id(space)
+      :ok = Streams.subscribe(stream, self(), nil)
+      Application.put_env(:hal_c2, :page_agent_launch, fn _ -> {:error, "No provider."} end)
+
+      reply =
+        case PageAgent.ask(space, id(name), "tidy", choices(image), &nowhere/1) do
+          {:ok, %{"threadId" => thread}} ->
+            await_failed(stream, id(name), thread)
+
+            Process.put(
+              :threads,
+              Map.update(Process.get(:threads), name, [thread], &[thread | &1])
+            )
+
+            :ok
+
+          {:error, reason, _} ->
+            reason
+        end
+
+      Streams.unsubscribe(stream, self())
+      flush(stream)
+      Application.put_env(:hal_c2, :page_agent_launch, &fake_thread(&1, test))
+      reply
+    end)
+  end
+
+  defp await_failed(stream, page_id, thread) do
+    case StreamState.get(Streams.state(stream), "pageAgent")[page_id] do
+      %{"threadId" => ^thread, "status" => "failed"} ->
+        :ok
+
+      _ ->
+        receive do
+          {:hal_c2_stream, ^stream, _} -> await_failed(stream, page_id, thread)
+        after
+          5_000 -> flunk("the page never said its agent failed")
+        end
+    end
+  end
+
+  defp flush(stream) do
+    receive do
+      {:hal_c2_stream, ^stream, _} -> flush(stream)
+    after
+      0 -> :ok
+    end
+  end
+
+  defp choices(true), do: %{"attachments" => [@image]}
+  defp choices(false), do: %{}
 
   def edit(name) do
     act(fn space ->
@@ -667,6 +800,14 @@ defmodule HalC2.SpacePageAgentPropTest do
   def reconcile, do: act(fn _ -> PageAgent.reconcile() end)
   def reconcile_continuing(name), do: act(fn _ -> PageAgent.reconcile([thread(name)]) end)
 
+  # A start of the MC, as `HalC2.Orchestration.Recovery` takes before it listens.
+  def start do
+    act(fn _ ->
+      PageAgent.boot()
+      :ok
+    end)
+  end
+
   def report_running(name), do: act(fn _ -> PageAgent.report(thread(name)) end)
   def report_old(name), do: act(fn _ -> PageAgent.report(List.last(threads(name))) end)
 
@@ -700,8 +841,11 @@ defmodule HalC2.SpacePageAgentPropTest do
     stream = Space.stream_id(space)
     before = Streams.sequence(stream)
     reply = fun.(space)
-    {reply, Streams.sequence(stream) - before, agents(stream)}
+    {reply, Streams.sequence(stream) - before, {agents(stream), images()}}
   end
+
+  defp images,
+    do: HalC2.Attachments.dir() |> Path.join("*") |> Path.wildcard() |> length()
 
   defp agents(stream) do
     names = Map.new(Process.get(:names), fn {name, id} -> {id, name} end)
@@ -728,10 +872,11 @@ defmodule HalC2.SpacePageAgentPropTest do
     end)
   end
 
-  defp nowhere, do: {:ok, %{project_id: nil, model: nil, runtime_mode: nil}}
+  defp nowhere(_choices),
+    do: {:ok, %{project_id: nil, model: nil, runtime_mode: nil, interaction_mode: nil}}
 
   defp lost_launch(input, test) do
-    send(test, {:launched, input["threadId"]})
+    send(test, {:launched, input["threadId"], []})
     {:ok, %{}}
   end
 
@@ -762,7 +907,7 @@ defmodule HalC2.SpacePageAgentPropTest do
        ], :ok}
     end)
 
-    send(test, {:launched, thread_id})
+    send(test, {:launched, thread_id, input["initialMessage"]["attachments"]})
     {:ok, %{"threadId" => thread_id}}
   end
 end

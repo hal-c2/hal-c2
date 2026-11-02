@@ -9,10 +9,11 @@ import { TextAttributes } from "@opentui/core";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { type SpaceAuthor, ThreadId } from "@hal-c2/contracts";
+import { type ServerProvider, type SpaceAuthor, ThreadId } from "@hal-c2/contracts";
 
 import { createHost, type Host } from "../../../src/host/host.ts";
-import type { TuiSelectState } from "../../../src/host/composerState.ts";
+import { flattenModelOptions } from "../../../src/models.ts";
+import type { TuiComposerState, TuiSelectState } from "../../../src/host/composerState.ts";
 import type { TuiFilesState } from "../../../src/host/filesState.ts";
 import {
   SITE_BEHIND_HINT,
@@ -22,8 +23,16 @@ import {
 } from "../../../src/host/spaceState.ts";
 import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
-import { addThread, change, env, projectNamed, threadNamed, ui } from "../environment.ts";
-import { fakeClient, thread } from "../fakeClient.ts";
+import {
+  addProject,
+  addThread,
+  change,
+  env,
+  projectNamed,
+  threadNamed,
+  ui,
+} from "../environment.ts";
+import { fakeClient, PROVIDERS, thread } from "../fakeClient.ts";
 import {
   BROKEN_FLOWCHART,
   GROWN_FLOWCHART,
@@ -38,6 +47,8 @@ import { presenceOverSession, type PresenceOverSession } from "../presenceOverSe
 import { chooseCommand, palette, selectThread } from "../threadUi.ts";
 import { message } from "../threadWorld.ts";
 import { findObject, pressKey, settle, typeText, type World } from "../world.ts";
+import { PNG } from "./composer.steps.ts";
+import { chooseInPicker, runPaletteCommand } from "./controls.steps.ts";
 import { selectRow as selectFileRow } from "./files.steps.ts";
 import type { MermaidWorld } from "./mermaid.steps.ts";
 
@@ -86,6 +97,11 @@ function mc(ctx: SpaceWorld): FakeSpaceMc {
     titleOf: (threadId) =>
       env(ctx).threads.find((candidate) => candidate.id === threadId)?.title ?? null,
     agentThreadId: () => threadNamed(ctx, AGENT_THREAD).id,
+    // The MC names the project the user last worked in: the Background's thread's.
+    agentProjectId: () =>
+      env(ctx).threads.find((candidate) => candidate.title === AGENT_THREAD)?.projectId ??
+      env(ctx).projects[0]?.id ??
+      null,
   });
   return ctx.spaceMc;
 }
@@ -150,6 +166,8 @@ const words = (row: TuiSpaceRow) => row.text.slice(2).trim();
 
 /** The client runs, connected, its Spaces served by the MC. */
 async function start(ctx: SpaceWorld) {
+  // The prompt's Ctrl+Shift chords need a terminal that tells them apart from Enter.
+  if (!ctx.app) ctx.kittyKeyboard = true;
   await ui(ctx);
   if (ctx.fake!.settings.streams === null) mc(ctx).attach(ctx.fake!.settings);
 }
@@ -194,11 +212,19 @@ const treeKey = (ctx: SpaceWorld, title: string) => {
     : `page:${page.id}`;
 };
 
-async function openPage(ctx: SpaceWorld, title: string) {
+/**
+ * Opens the page with the page's keys; `prompt` leaves the keys where they are, as when
+ * reading what the page or its prompt shows.
+ */
+async function openPage(ctx: SpaceWorld, title: string, keys: "page" | "any" = "page") {
   await start(ctx);
   const page = mc(ctx).pageNamed(title);
   const view = pane(ctx);
-  if (view.open && view.view === "page" && view.title.startsWith(`page · ${title}`)) return;
+  const there = view.open && view.view === "page" && view.title.startsWith(`page · ${title}`);
+  if (there && keys === "any") return;
+  // Leaving goes through the page's keys: Esc in its prompt would clear the draft.
+  if (mode(ctx) === "pagePrompt") await press(ctx, "Ctrl+P");
+  if (there) return;
   await openSpace(
     ctx,
     mc(ctx)
@@ -249,23 +275,35 @@ const listed = (rows: ReadonlyArray<TuiSpaceRow>, kind: TuiSpaceRow["kind"]) =>
 
 const list = (text: string) => (text === "" ? [] : text.split(", "));
 
-/** The rows of a page's blocks, each block once. */
+/** The rows of a page's blocks, each block once: the row of its words, under what is above them. */
 async function blockRows(ctx: SpaceWorld, title: string) {
   await openPage(ctx, title);
-  return pane(ctx).rows.filter((row) => row.kind === "block" && row.first);
+  return pane(ctx).rows.filter(
+    (row, index, rows) =>
+      row.kind === "block" && (row.first ? !row.above : rows[index - 1]?.above === true),
+  );
 }
 
-/** The mark each kind draws before a block's words: tick box, bar, arrow, `#`s or gutter. */
+/**
+ * The mark each kind draws before a block's words: `#`s, gutter, a list item's marker, a
+ * footnote's label or a section's summary tag; else a bar or an arrow.
+ */
 const BLOCK_MARK: Partial<Record<string, RegExp>> = {
   heading: /^#{1,6} /,
   raw: /^│ /,
+  bullet: /^[-*+] /,
+  numbered: /^\d+[.)] /,
+  checklist: /^[-*+] \[[ x]\] /,
+  footnote: /^\[\^[^\]]*\]: /,
+  details: /^<summary>/,
 };
 
 /** A block's words, after its mark and before the agent that wrote it. */
 const blockText = (row: TuiSpaceRow) =>
   words(row)
-    .replace((row.blockKind && BLOCK_MARK[row.blockKind]) ?? /^(\[[ x]\] |▌ |↳ )/, "")
-    .replace(/ {2}· .*$/, "");
+    .replace((row.blockKind && BLOCK_MARK[row.blockKind]) ?? /^(▌ |↳ )/, "")
+    .replace(/ {2}· .*$/, "")
+    .replace(/<\/summary>$/, "");
 
 // --- Spaces ---
 
@@ -722,13 +760,13 @@ const blockRow = (ctx: World, key: string) =>
 step("{string} is ticked", async (ctx: SpaceWorld, text: string) => {
   const row = blockRow(ctx, blockKey(ctx, text));
   expect(row?.checked).toBe(true);
-  expect(words(row!)).toBe(`[x] ${text}`);
+  expect(words(row!)).toBe(`- [x] ${text}`);
 });
 
 step("{string} is not ticked", async (ctx: SpaceWorld, text: string) => {
   const row = blockRow(ctx, blockKey(ctx, text));
   expect(row?.checked).toBe(false);
-  expect(words(row!)).toBe(`[ ] ${text}`);
+  expect(words(row!)).toBe(`- [ ] ${text}`);
 });
 
 step(
@@ -1519,14 +1557,17 @@ step("the user cannot restore a version of {string}", async (ctx: SpaceWorld, ti
 // --- an agent in a page ---
 
 const agentSays = async (ctx: SpaceWorld, page: string) => {
-  await openPage(ctx, page);
+  await openPage(ctx, page, "any");
   return pane(ctx).message;
 };
 
+// A puts "@agent " in the page's prompt; the words go after it.
 step("the user asks {string} on the page {string}", async (ctx: SpaceWorld, ask: string, page) => {
   await openPage(ctx, page);
   await press(ctx, "A");
-  await answer(ctx, ask);
+  expect(mode(ctx)).toBe("pagePrompt");
+  await typeText(ctx, ask.replace(/^@agent\s*/i, ""));
+  await press(ctx, "Enter");
 });
 
 step(
@@ -1538,6 +1579,7 @@ step(
 
 step("{string} links to its agent's thread", async (ctx: SpaceWorld, page: string) => {
   expect(await agentSays(ctx, page)).toContain(`o opens “${AGENT_THREAD}”`);
+  await openPage(ctx, page);
   await press(ctx, "o");
   expect(pane(ctx).open).toBe(false);
   expect(mode(ctx)).toBe("compose");
@@ -1551,7 +1593,8 @@ step(
   },
 );
 
-step("the user follows the agent of {string} to its thread", async (ctx: SpaceWorld) => {
+step("the user follows the agent of {string} to its thread", async (ctx: SpaceWorld, page) => {
+  await openPage(ctx, page);
   await press(ctx, "o");
 });
 
@@ -1613,8 +1656,9 @@ step("the MC refuses the next ask", (ctx: SpaceWorld) => {
 });
 
 step("the words {string} are kept to ask again", (ctx: SpaceWorld, words: string) => {
-  expect(mode(ctx)).toBe("ask");
-  expect(ctx.host!.state.get("ask")).toMatchObject({ value: words });
+  expect(mode(ctx)).toBe("pagePrompt");
+  expect(prompt(ctx).text).toBe(`@agent ${words}`);
+  expect(prompt(ctx).notice).toContain("An agent is already working on this page.");
 });
 
 step("the agent of {string} does not stop when asked", (ctx: SpaceWorld) => {
@@ -1666,6 +1710,308 @@ step("the user dismisses the agent of {string}", async (ctx: SpaceWorld, page: s
 
 step("{string} says nothing about an agent", async (ctx: SpaceWorld, page: string) => {
   expect(await agentSays(ctx, page)).toBe("");
+});
+
+// --- the page's prompt (space/prompt.feature) ---
+
+const prompt = (ctx: World) => ctx.host!.state.get("composer") as TuiComposerState;
+
+/** Opens the page with its prompt holding the keys (^P). */
+async function onPrompt(ctx: SpaceWorld, title: string) {
+  await openPage(ctx, title, "any");
+  if (mode(ctx) !== "pagePrompt") await press(ctx, "Ctrl+P");
+  expect(mode(ctx)).toBe("pagePrompt");
+}
+
+/** The models of every provider, with their efforts. */
+const withModels = (ctx: World) =>
+  ctx.fake!.override("listModels", async () => flattenModelOptions(PROVIDERS) as never);
+
+/** The project has the image, read through the MC as a pasted path is. */
+async function attachImage(ctx: World, image: string) {
+  ctx.fake!.workspaceFiles.set(image, PNG);
+  ctx.host!.dispatch("composer.attach", { path: image });
+  await settle(ctx);
+  expect(prompt(ctx).attachments.map((attached) => attached.name)).toEqual([image]);
+}
+
+/** Codex has the skill "review", and the project the file README.md. */
+async function withSkillsAndFiles(ctx: World) {
+  const providers = PROVIDERS.map((provider) =>
+    provider.instanceId === "codex"
+      ? {
+          ...provider,
+          skills: [{ name: "review", path: "/skills/review", enabled: true }],
+        }
+      : provider,
+  ) as unknown as ServerProvider[];
+  ctx.fake!.server.providers = providers;
+  ctx.fake!.override(
+    "getServerConfig",
+    async () => ({ settings: ctx.fake!.server.settings, providers }) as never,
+  );
+  ctx.fake!.override("listEntries", async () => [{ path: "README.md", kind: "file" }] as never);
+  await chooseCommand(ctx, "Refresh providers");
+  await settle(ctx);
+}
+
+step(
+  "the user sends {string} from the prompt of {string}",
+  async (ctx: SpaceWorld, words: string, page: string) => {
+    await onPrompt(ctx, page);
+    await typeText(ctx, words);
+    await press(ctx, "Enter");
+  },
+);
+
+step(
+  "the user typed {string} in the prompt of {string}",
+  async (ctx: SpaceWorld, words: string, page: string) => {
+    await onPrompt(ctx, page);
+    await typeText(ctx, words);
+    await settle(ctx);
+    expect(prompt(ctx).text).toBe(words);
+  },
+);
+
+step("the user types {string} in the prompt of {string}", async (ctx: SpaceWorld, typed, page) => {
+  await onPrompt(ctx, page);
+  expect(prompt(ctx).text).toBe("");
+  await typeText(ctx, typed);
+  await settle(ctx);
+});
+
+// A chart is asked for in words, so "/" offers "Visualize" in its place.
+step("the user is offered the kinds of block, and {string}", (ctx: World, visualize: string) => {
+  expect(select(ctx)).toMatchObject({ open: true, title: "kind of block" });
+  expect(select(ctx).options.map((option) => option.label)).toEqual([
+    "Paragraph",
+    "Heading",
+    "Checklist item",
+    "Callout",
+    "Link to a subpage",
+    visualize,
+    "Image",
+  ]);
+});
+
+step(
+  "the thread {string} of the project {string} runs on another model",
+  (ctx: SpaceWorld, title: string, project: string) =>
+    change(ctx, () => {
+      // No default model of its own, so an ask there takes its last thread's.
+      (addProject(ctx, project) as { defaultModelSelection: unknown }).defaultModelSelection = null;
+      addThread(ctx, title, {
+        project,
+        modelSelection: { instanceId: "codex", model: "gpt-5-codex" },
+      });
+    }),
+);
+
+step("the user starts an ask on {string}", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page);
+  await press(ctx, "A");
+  expect(mode(ctx)).toBe("pagePrompt");
+  expect(prompt(ctx).text).toBe("@agent ");
+});
+
+step(
+  "the prompt of {string} says the ask runs in the project {string} on the model of {string}",
+  async (ctx: SpaceWorld, page: string, project: string, thread: string) => {
+    await openPage(ctx, page, "any");
+    expect(prompt(ctx).context?.workspace).toBe(`ask runs in ${project} ▾`);
+    const { modelSelection } = threadNamed(ctx, thread);
+    expect(prompt(ctx).selectedInstanceId).toBe(modelSelection.instanceId);
+    expect(prompt(ctx).selectedModel).toBe(modelSelection.model);
+  },
+);
+
+// Each choice through the prompt's own keys, as on a thread's prompt.
+const CHOICES: Record<string, (ctx: SpaceWorld) => Promise<void>> = {
+  "another model": async (ctx) => {
+    withModels(ctx);
+    await press(ctx, "Ctrl+Shift+M");
+    await chooseInPicker(ctx, "GPT-5 Codex");
+  },
+  "high effort": async (ctx) => {
+    withModels(ctx);
+    await press(ctx, "Ctrl+Shift+E");
+    await chooseInPicker(ctx, "High");
+  },
+  planning: async (ctx) => {
+    await press(ctx, "Ctrl+B");
+    expect(prompt(ctx).interactionMode).toBe("plan");
+  },
+  "approval for each action": async (ctx) => {
+    await press(ctx, "Ctrl+O");
+    await chooseInPicker(ctx, "Supervised");
+  },
+  'the project "docs"': async (ctx) => {
+    change(ctx, () => addProject(ctx, "docs"));
+    await settle(ctx);
+    // The keyboard's way to the "ask runs in" chip.
+    await runPaletteCommand(ctx, "Change where an ask runs");
+    expect(select(ctx).title).toBe("ask runs in");
+    await chooseInPicker(ctx, "docs");
+    expect(prompt(ctx).context?.workspace).toBe("ask runs in docs ▾");
+  },
+  'the image "sketch.png"': (ctx) => attachImage(ctx, "sketch.png"),
+  'a mention of "README.md"': async (ctx) => {
+    await typeText(ctx, "@");
+    await settle(ctx);
+    await chooseInPicker(ctx, "README.md");
+    expect(prompt(ctx).text).toBe("@agent @README.md ");
+  },
+  'the skill "review"': async (ctx) => {
+    await typeText(ctx, "$");
+    await settle(ctx);
+    await chooseInPicker(ctx, "$review");
+    expect(prompt(ctx).text).toBe("@agent $review ");
+  },
+};
+
+step(
+  /^the user chooses (.+) in the prompt of "([^"]*)"$/,
+  async (ctx: SpaceWorld, choice: string, page: string) => {
+    const make = CHOICES[choice];
+    if (!make) throw new Error(`no way to choose ${choice} in a page's prompt`);
+    if (choice.startsWith("a mention") || choice.startsWith("the skill")) {
+      await withSkillsAndFiles(ctx);
+    }
+    await onPrompt(ctx, page);
+    await make(ctx);
+    expect(mode(ctx)).toBe("pagePrompt");
+  },
+);
+
+/** What the MC was sent with the page's last ask. */
+const lastAsk = (ctx: SpaceWorld, page: string) => {
+  const ask = mc(ctx).asks.findLast((entry) => entry.pageId === pageId(ctx, page));
+  expect(ask).toBeDefined();
+  return ask!;
+};
+
+const ASKED: Record<string, (ctx: SpaceWorld, ask: Record<string, any>) => void> = {
+  "another model": (_ctx, ask) =>
+    expect(ask.modelSelection).toMatchObject({ instanceId: "codex", model: "gpt-5-codex" }),
+  "high effort": (_ctx, ask) =>
+    expect(ask.modelSelection.options).toContainEqual({ id: "reasoningEffort", value: "high" }),
+  planning: (_ctx, ask) => expect(ask.interactionMode).toBe("plan"),
+  "approval for each action": (_ctx, ask) => expect(ask.runtimeMode).toBe("approval-required"),
+  'the project "docs"': (ctx, ask) => expect(ask.projectId).toBe(projectNamed(ctx, "docs").id),
+  'the image "sketch.png"': (_ctx, ask) =>
+    expect(ask.attachments).toEqual([
+      expect.objectContaining({ type: "image", name: "sketch.png" }),
+    ]),
+  'a mention of "README.md"': (_ctx, ask) => expect(ask.request).toBe("@README.md tidy this"),
+  'the skill "review"': (_ctx, ask) => expect(ask.request).toBe("$review tidy this"),
+};
+
+step(/^the agent's thread of "([^"]*)" has (.+)$/, (ctx: SpaceWorld, page: string, choice) => {
+  const check = ASKED[choice];
+  if (!check) throw new Error(`no way to read ${choice} from an ask`);
+  const ask = lastAsk(ctx, page);
+  check(ctx, ask);
+  // The words after @agent are what is asked.
+  expect(ask.request).toEndWith("tidy this");
+});
+
+const ENTRIES: Record<string, (ctx: SpaceWorld) => Promise<void>> = {
+  "the page's menu": async (ctx) => {
+    await press(ctx, "n");
+    await choose(ctx, "Ask an agent");
+  },
+  "the command palette": (ctx) => runPaletteCommand(ctx, "Ask an agent about this page"),
+  "its keybinding": (ctx) => press(ctx, "A"),
+};
+
+step(
+  /^the user asks an agent about "([^"]*)" from (the page's menu|the command palette|its keybinding)$/,
+  async (ctx: SpaceWorld, page: string, entry: string) => {
+    await openPage(ctx, page);
+    await ENTRIES[entry]!(ctx);
+  },
+);
+
+step("the prompt of {string} is ready to ask an agent", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page, "any");
+  expect(mode(ctx)).toBe("pagePrompt");
+  expect(prompt(ctx).text).toBe("@agent ");
+  expect(prompt(ctx).inputFocused).toBe(true);
+});
+
+step("the prompt of {string} reads {string}", async (ctx: SpaceWorld, page: string, words) => {
+  await openPage(ctx, page, "any");
+  expect(prompt(ctx).text).toBe(words);
+});
+
+step(
+  "the prompt of {string} reads {string} with the image {string}",
+  async (ctx: SpaceWorld, page: string, words: string, image: string) => {
+    await openPage(ctx, page, "any");
+    expect(prompt(ctx).text).toBe(words);
+    expect(prompt(ctx).attachments.map((attached) => attached.name)).toEqual([image]);
+  },
+);
+
+step("the prompt of {string} is empty", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page, "any");
+  expect(prompt(ctx).text).toBe("");
+  expect(prompt(ctx).attachments).toEqual([]);
+});
+
+step(
+  "the user takes {string} out of the prompt of {string} and sends {string}",
+  async (ctx: SpaceWorld, taken: string, page: string, words: string) => {
+    await onPrompt(ctx, page);
+    expect(prompt(ctx).text).toStartWith(taken);
+    for (const _ of prompt(ctx).text) await pressKey(ctx, "Backspace");
+    await settle(ctx);
+    expect(prompt(ctx).text).toBe("");
+    await typeText(ctx, words);
+    await press(ctx, "Enter");
+  },
+);
+
+// Esc on an empty prompt stops what runs, as it stops a thread's turn.
+step("the user stops from the prompt of {string}", async (ctx: SpaceWorld, page: string) => {
+  await onPrompt(ctx, page);
+  expect(prompt(ctx).text).toBe("");
+  await press(ctx, "Esc");
+});
+
+step(
+  "the user attached the image {string} in the prompt of {string}",
+  async (ctx: SpaceWorld, image: string, page: string) => {
+    await onPrompt(ctx, page);
+    await attachImage(ctx, image);
+  },
+);
+
+step("the page {string} in the Space {string}", (ctx: SpaceWorld, page: string, name: string) => {
+  seedSpace(ctx, name);
+  seedPage(ctx, page);
+});
+
+step(
+  "the user opens {string} and comes back to {string}",
+  async (ctx: SpaceWorld, other: string, page: string) => {
+    await openPage(ctx, other);
+    await openPage(ctx, page);
+  },
+);
+
+step("the user opens the thread {string}", async (ctx: SpaceWorld, title: string) => {
+  while (pane(ctx).open) {
+    await press(ctx, mode(ctx) === "pagePrompt" ? "Ctrl+P" : "Esc");
+  }
+  await selectThread(ctx, title);
+  await settle(ctx);
+});
+
+step("the prompt of {string} does not read {string}", (ctx: SpaceWorld, title: string, words) => {
+  expect(prompt(ctx).target).toContain(threadNamed(ctx, title).id);
+  expect(prompt(ctx).text).not.toBe(words);
 });
 
 // --- decks ---
@@ -1913,7 +2259,6 @@ step("the site link of the page {string} starts with {string}", (ctx: SpaceWorld
 
 const IMAGE_UNAVAILABLE = "No image generation provider is set up.";
 const IMAGE_FAILED = "The provider left no image.";
-const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 async function openImages(ctx: SpaceWorld, name = ctx.spaceName!) {
   await openSpace(ctx, name);
@@ -2356,6 +2701,50 @@ step(
   },
 );
 
+// Blocks as the MC keeps them, a field per column; `-` is a field the block does not have.
+const blockSpecs = (table: string[][]) => {
+  const [header = [], ...rows] = table;
+  return rows.map((row) =>
+    Object.fromEntries(
+      header.flatMap((field, index): Array<[string, unknown]> => {
+        const cell = row[index] ?? "-";
+        if (cell === "-") return field === "text" ? [[field, ""]] : [];
+        if (field === "checked") return [[field, cell === "true"]];
+        if (field === "depth" || field === "start") return [[field, Number(cell)]];
+        return [[field, cell]];
+      }),
+    ),
+  );
+};
+
+step("the page {string} holds the blocks:", (ctx: SpaceWorld, title: string, table) => {
+  for (const spec of blockSpecs(table as string[][])) {
+    mc(ctx).run("space.block.insert", {
+      spaceId: currentSpaceId(ctx),
+      pageId: seedPage(ctx, title),
+      ...spec,
+    });
+  }
+});
+
+// The page's lines as Markdown: a callout's bar stands for `> `, the gutter of what is shown
+// as source is not part of it, and an image by its address reads `[image: caption] url`.
+step("each block is shown as this Markdown, line for line:", (ctx: SpaceWorld, markdown) => {
+  const shown = pane(ctx)
+    .rows.filter((row) => row.kind === "block")
+    .map((row) => {
+      const line = row.text
+        .slice(2)
+        .replace(/ {2}· .*$/, "")
+        .trimEnd();
+      if (row.blockKind === "callout") return line.replace(/^▌ /, "> ");
+      if (row.blockKind === "code") return line.replace(/^│ /, "");
+      if (row.blockKind === "image") return line.replace(/^\[image: (.*)\] (\S+)$/, "![$1]($2)");
+      return line;
+    });
+  expect(shown).toEqual((markdown as string).split("\n").filter((line) => line.trim() !== ""));
+});
+
 step(
   "the page {string} with headings of every level from 1 to 6",
   (ctx: SpaceWorld, title: string) => {
@@ -2669,7 +3058,7 @@ step(
   async (ctx: SpaceWorld, project: string, path: string) => {
     await startWithFiles(ctx);
     await press(ctx, "f");
-    await chooseIfAsked(ctx, "Add a page from the files of which project?", project);
+    await chooseIfAsked(ctx, "Edit a file of which project as a page?", project);
     await choose(ctx, path);
   },
 );

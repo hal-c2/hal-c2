@@ -5,7 +5,10 @@ defmodule HalC2.Space do
 
   The `spaces` stream indexes the Spaces, one `space` entity each, and each Space's
   own `space:<id>` stream holds its `page`, `block`, `comment`, `image`, `site`, `deck`, `slide`
-  and `pageAgent` entities. Every change is a `HalC2.Streams.transact/3` on one of them, so the
+  and `pageAgent` entities. A project's files are pages in the project's own Space, a
+  `projectSpace` entity in the index carrying its `projectId` (`project_space/2`): the
+  project's, not the user's, so `list/0` and the clients' Space lists leave it out.
+  Every change is a `HalC2.Streams.transact/3` on one of them, so the
   event log is the only record and clients follow both streams through the stream shape.
   The decisions live in `HalC2.Space.Pages`, `HalC2.Space.Blocks`, `HalC2.Space.Images`,
   `HalC2.Space.Sites` and `HalC2.Space.Decks`.
@@ -129,6 +132,47 @@ defmodule HalC2.Space do
     end)
   end
 
+  @doc """
+  The Space the project's files are pages in, made the first time one is opened and
+  named after the project. It is in the index as a `projectSpace`, so it is no Space of
+  the user's: it is never listed, renamed or deleted as one, and never counts for Personal.
+  """
+  def project_space(project_id, name) when is_binary(project_id) do
+    Streams.transact(@index, :space, fn state ->
+      case project_space_of(state, project_id) do
+        nil ->
+          space = Map.put(new_space(name), "projectId", project_id)
+          {[{"projectSpace", space["id"], Patch.diff(nil, space)}], {:ok, space}}
+
+        space ->
+          {[], {:ok, space}}
+      end
+    end)
+  end
+
+  @doc "The id of the project's Space, or nil before any of its files was opened."
+  def project_space_id(project_id) do
+    case project_space_of(Streams.state(@index), project_id) do
+      %{"id" => id} -> id
+      nil -> nil
+    end
+  end
+
+  defp project_space_of(state, project_id),
+    do: Enum.find(StreamState.list(state, "projectSpace"), &(&1["projectId"] == project_id))
+
+  @doc "Every Space's id, the user's and the projects', for what follows each of their pages."
+  def ids do
+    state = Streams.state(@index)
+    for kind <- ~w(space projectSpace), space <- StreamState.list(state, kind), do: space["id"]
+  end
+
+  @doc "The name of the Space `id`, the user's or a project's."
+  def name_of(id), do: (index_entry(id) || %{})["name"]
+
+  defp index_entry(id),
+    do: Streams.get(@index, "space", id) || Streams.get(@index, "projectSpace", id)
+
   defp new_space(name) do
     at = Entities.now()
     %{"id" => HalC2.Environment.uuid4(), "name" => name, "createdAt" => at, "updatedAt" => at}
@@ -154,7 +198,7 @@ defmodule HalC2.Space do
   def transact(space_id, fun) when is_binary(space_id) do
     Streams.transact(stream_id(space_id), :space, fn state ->
       # The index is asked from inside the Space's stream: a delete decides there too.
-      if Streams.get(@index, "space", space_id),
+      if index_entry(space_id),
         do: fun.(state) |> and_files(state) |> and_sites(state),
         else: {[], no_space(space_id)}
     end)
@@ -180,18 +224,15 @@ defmodule HalC2.Space do
 
   @doc "The Space's stream state, for reads."
   def state(space_id) do
-    if Streams.get(@index, "space", space_id),
+    if index_entry(space_id),
       do: {:ok, Streams.state(stream_id(space_id))},
       else: no_space(space_id)
   end
 
-  @doc "The page of a project's file in this Space, or wherever it already is (`HalC2.Space.Files`)."
-  def open_file(space_id, project_id, relative) do
-    with {:ok, _} <- state(space_id), do: Files.open(space_id, project_id, relative)
-  end
+  @doc "The page of a project's file, in the project's Space (`HalC2.Space.Files`)."
+  def open_file(project_id, relative), do: Files.open(project_id, relative)
 
   def sync_file(space_id, id), do: transact(space_id, &Files.sync(&1, id))
-  def unlink_file(space_id, id), do: transact(space_id, &Files.unlink(&1, id))
 
   def create_page(space_id, title, parent_id \\ nil),
     do: transact(space_id, &Pages.create(&1, space_id, title, parent_id))
@@ -329,8 +370,8 @@ defmodule HalC2.Space do
 
   # --- the agent of a page ----------------------------------------------------------------
 
-  @doc "See `HalC2.Space.PageAgent.ask/3`."
-  defdelegate ask_page_agent(space_id, page_id, request), to: PageAgent, as: :ask
+  @doc "See `HalC2.Space.PageAgent.ask/5`."
+  defdelegate ask_page_agent(space_id, page_id, request, choices \\ %{}), to: PageAgent, as: :ask
 
   @doc "See `HalC2.Space.PageAgent.stop/2`."
   defdelegate stop_page_agent(space_id, page_id), to: PageAgent, as: :stop
@@ -430,7 +471,7 @@ defmodule HalC2.Space do
   anyone can ask, and only this one entity is read from it.
   """
   def site(space_id, token) do
-    if Streams.get(@index, "space", space_id), do: Streams.get(stream_id(space_id), "site", token)
+    if index_entry(space_id), do: Streams.get(stream_id(space_id), "site", token)
   end
 
   defp reached(where) do

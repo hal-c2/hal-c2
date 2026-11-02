@@ -19,6 +19,8 @@ bool sendKey(World& world, QEvent::Type type, int key, Qt::KeyboardModifiers mod
 // Where the keyboard is for the scenario's next key presses ({terminal,
 // composer, editable}; empty for the native chrome), connecting the shell first.
 void setKeyFocus(World& world, const QVariantMap& focus);
+// Binds `key` to `command` in keybindings.json, as the Keybindings settings do.
+void bindKey(World& world, const QString& key, const QString& command);
 // Presses a key as keybindings.json spells it ("mod+z"), as "the user presses" does.
 void pressKey(World& world, const QString& key);
 // Whether the last press ran `command`, and what it did, for a failure.

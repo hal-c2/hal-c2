@@ -89,6 +89,7 @@ function setup(origin?: string) {
           if (lists.fails) return Promise.reject(new Error("The connection to the MC was lost."));
           return Promise.resolve({ spaces: [] } as T);
         }
+        if (method === "space.page.agentTarget") return Promise.resolve({ projectId: "p1" } as T);
         return new Promise<T>((resolve, reject) => {
           const waiting = replies.get(method) ?? [];
           waiting.push(resolve as (value: unknown) => void);
@@ -914,6 +915,98 @@ describe("a page's agent", () => {
   });
 });
 
+describe("a page's prompt", () => {
+  const onRoadmap = () => {
+    const t = inResearch([page("p1", "Roadmap")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+  const words = (text: string, attachments: ReadonlyArray<never> = []) => ({
+    text,
+    attachments,
+    projectId: "p1",
+    modelSelection: null,
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+  });
+  const sent = (t: ReturnType<typeof setup>, method: string) =>
+    t.calls.filter((call) => call.method === method).map((call) => call.payload);
+
+  test("aims at the open page, and ^P moves the keys to it and back", async () => {
+    const t = onRoadmap();
+    await t.controller.settled();
+    expect(t.controller.prompt()).toMatchObject({
+      key: "page:s1:p1",
+      title: "Roadmap",
+      writes: "writes a paragraph",
+      defaultProjectId: "p1",
+    });
+    expect(t.controller.mode()).toBe("space");
+    t.controller.dispatch("space.prompt", {});
+    expect(t.controller.mode()).toBe("pagePrompt");
+    t.controller.dispatch("space.focus", {});
+    expect(t.controller.mode()).toBe("space");
+    t.controller.dispatch("space.back", {});
+    expect(t.controller.prompt()).toBeNull();
+  });
+
+  test("plain words write a block of the kind / chose, and a heading is one block", async () => {
+    const t = onRoadmap();
+    const prompt = t.controller.prompt()!;
+    expect(prompt.kinds.map((kind) => kind.label)).toContain("Visualize");
+    expect(prompt.kinds.map((kind) => kind.label)).not.toContain("Chart");
+    expect(prompt.chooseKind("heading")).toBe("");
+    expect(t.controller.prompt()!.writes).toBe("writes a heading");
+    const written = t.controller.prompt()!.submit(words("Plans"));
+    t.reply("space.block.insert", { block: block("b1", "p1", "Plans", "a0")[2] });
+    expect(await written).toBeNull();
+    expect(sent(t, "space.block.insert")).toEqual([
+      { spaceId: "s1", pageId: "p1", kind: "heading", text: "Plans" },
+    ]);
+    expect(t.controller.prompt()!.writes).toBe("writes a paragraph");
+    expect(prompt.chooseKind("chart")).toBe("/visualize ");
+  });
+
+  test("@agent asks with the prompt's choices, and a refusal comes back as words", async () => {
+    const t = onRoadmap();
+    const asked = t.controller.prompt()!.submit(words("@agent tidy this"));
+    t.refuse("space.page.askAgent", new Error("That model cannot run here."));
+    expect(await asked).toBe("That model cannot run here.");
+    expect(sent(t, "space.page.askAgent")).toEqual([
+      {
+        spaceId: "s1",
+        pageId: "p1",
+        request: "tidy this",
+        projectId: "p1",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      },
+    ]);
+  });
+
+  test("images go only with an ask", async () => {
+    const t = onRoadmap();
+    const upload = { type: "image", name: "a.png" } as never;
+    expect(await t.controller.prompt()!.submit(words("Plans", [upload]))).toBe(
+      "Images go with an ask: start the prompt with @agent.",
+    );
+  });
+
+  test("/visualize lets go of the prompt while the chart is drawn, and says why one was not", async () => {
+    const t = onRoadmap();
+    // The prompt is free before the MC answers: a model draws the chart.
+    expect(await t.controller.prompt()!.submit(words("/visualize sales by month"))).toBeNull();
+    expect(sent(t, "space.block.visualize")).toEqual([
+      { spaceId: "s1", pageId: "p1", request: "sales by month" },
+    ]);
+    expect(t.statuses.at(-1)).toBe("Drawing a chart…");
+    t.refuse("space.block.visualize", new Error("No numbers to chart."));
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toBe("No numbers to chart.");
+  });
+});
+
 describe("images", () => {
   const image = (id: string, name: string, trashedAt: string | null = null) =>
     ["image", id, { id, spaceId: "s1", name, prompt: null, trashedAt }] as const;
@@ -997,23 +1090,43 @@ describe("images", () => {
 });
 
 describe("project files", () => {
-  test("with no Space to open into, opening a file says so and asks nothing", async () => {
+  test("a file opens as a page of its project's Space, with no Space of the user's", async () => {
     const t = setup();
     t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", { spaceId: "ps1", page: page("g1", "Guide")[2], created: true });
     await t.controller.settled();
-    expect(t.statuses.at(-1)).toBe(
-      "There is no Space to open it in: make one first (^X p, then n).",
-    );
-    expect(t.calls.map((call) => call.method)).toEqual(["space.list"]);
+    // The pane it shows asks for its Spaces afterwards; nothing is asked before the file.
+    expect(t.calls[0]).toEqual({
+      method: "space.page.openFile",
+      payload: { projectId: "p1", relativePath: "docs/guide.md" },
+    });
+    expect(t.statuses.at(-1)).toBe("Opened docs/guide.md as the page “Guide”.");
   });
 
-  test("Spaces that could not be listed say why, not to make one", async () => {
+  test("the project's Space stays open once the Spaces arrive without it", async () => {
     const t = setup();
-    t.lists.fails = true;
     t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", { spaceId: "ps1", page: page("g1", "Guide")[2], created: true });
     await t.controller.settled();
-    expect(t.statuses).toEqual(["The connection to the MC was lost."]);
-    expect(t.calls.map((call) => call.method)).toEqual(["space.list"]);
+    const shop = { id: "ps1", projectId: "p1", name: "shop", createdAt: at, updatedAt: at };
+    t.send("spaces", snapshot(1, [space("s1", "Research"), ["projectSpace", "ps1", shop]]));
+    t.send("space:ps1", snapshot(10, [page("g1", "Guide")]));
+    expect(t.statuses).not.toContain("The Space was deleted.");
+    expect(t.view().title).toBe("page · Guide");
+    t.controller.dispatch("space.back", {});
+    expect(t.view().title).toBe("space · shop");
+  });
+
+  test("a file opened again is the page it already is", async () => {
+    const t = setup();
+    t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", {
+      spaceId: "ps1",
+      page: page("g1", "Guide")[2],
+      created: false,
+    });
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toBe("docs/guide.md is the page “Guide”.");
   });
 
   test("a project of another machine is not asked of this MC", async () => {
