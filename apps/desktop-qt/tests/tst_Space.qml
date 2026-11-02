@@ -843,6 +843,16 @@ Item {
             compare(dispatched("space.files.pickClose"), [{}]);
         }
 
+        function test_the_file_picker_says_why_a_refused_list_has_no_files() {
+            const view = picking({ config: "", paths: {}, error: "The project could not be read." });
+            const picker = findChild(view, "spaceFilePicker");
+            tryVerify(() => picker.opened);
+            const empty = findChild(picker.contentItem, "spaceFilePickerEmpty");
+            verify(empty.visible);
+            compare(empty.text, "The files of Shop could not be listed: The project could not be read.");
+            picker.close();
+        }
+
         function test_a_trashed_page_offers_no_publishing() {
             const view = root.research({ page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: true, sourceThreadId: "", sourceThreadTitle: "" } });
             mouseClick(findChild(view, "spacePageActions"));

@@ -566,7 +566,7 @@ Feature: Project files as Space pages
 
   # The clients: every way in, the indicator and the way out. Each client asks the MC that
   # has the project; none reads or writes the file itself.
-  @shared @backlog-mobile
+  @shared
   Rule: Opening project files from the clients
 
     Background:
@@ -672,7 +672,8 @@ Feature: Project files as Space pages
 
     # The TUI's Space pane follows only its own MC's Spaces (#860).
     # The desktop's Space view shows only its own MC's Spaces (#865).
-    @backlog-tui @backlog-desktop
+    # The phone's Space screen follows only its own MC's Spaces (#860).
+    @backlog-tui @backlog-desktop @backlog-mobile
     Scenario: A project on another machine opens its files in that machine's Space
       Given the project "shop" is on another connected environment
       When the user opens "docs/guide.md" in a Space from its menu
