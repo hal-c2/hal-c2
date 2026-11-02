@@ -277,7 +277,7 @@ const Steps steps([] {
   // --- Stepping through a message's images.
   step(QStringLiteral("a message carries (one image|three images)(?: and the user opened the (second|third))?"), [](World& world, const Captures& c, const Table&) {
     messageWithImages(world, c[0] == QLatin1String("one image") ? 1 : 3);
-    if (c.size() > 1) openImage(world, c[1] == QLatin1String("second") ? 2 : 3);
+    if (!c[1].isEmpty()) openImage(world, c[1] == QLatin1String("second") ? 2 : 3);
   });
   step(QStringLiteral("a message carries three images and the user zoomed the second"), [](World& world, const Captures&, const Table&) {
     messageWithImages(world, 3);
@@ -318,7 +318,7 @@ const Steps steps([] {
   step(QStringLiteral("the user presses the (right|left) arrow key( twice)?"), [](World& world, const Captures& c, const Table&) {
     const Qt::Key which = c[0] == QLatin1String("right") ? Qt::Key_Right : Qt::Key_Left;
     key(world, which);
-    if (c.size() > 1) key(world, which);
+    if (!c[1].isEmpty()) key(world, which);
   });
 
   // --- Zooming.
