@@ -26,6 +26,7 @@ import {
   workingStartedAt,
 } from "../timeline.ts";
 import { linkifyTimelineUrls } from "../timelineLinks.ts";
+import { commandDisplayText, summarizeToolCalls, workspaceRelative } from "../toolSummary.ts";
 import {
   workLogIcon,
   workLogLabel,
@@ -59,6 +60,7 @@ export function resolveTimelineWindow(
 
 /** View state the host keeps per thread for the timeline. */
 export interface TimelineView {
+  /** Work groups the user flipped from how they start (a stopped turn's start open). */
   readonly expandedGroups: ReadonlySet<string>;
   /** Turn folds the user flipped from how they start (folded, or open for `openTurns`). */
   readonly expandedFolds: ReadonlySet<string>;
@@ -185,6 +187,8 @@ export interface TimelineInput {
   readonly cellPixels?: CellPixels | null;
   /** What the MC drew of a reply's Mermaid diagram (`mermaidDiagrams.ts`); without it they are code. */
   readonly diagrams?: (source: string) => MermaidRenderResult | undefined;
+  /** Where the thread works; a file change in it is named relative to it. */
+  readonly workspaceRoot?: string | null;
 }
 
 const line = (
@@ -258,6 +262,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     attachments: input.attachments ?? (() => UNAVAILABLE_ATTACHMENT),
     cellPixels: input.cellPixels ?? FALLBACK_CELL_PIXELS,
     diagrams: input.diagrams ?? null,
+    workspaceRoot: input.workspaceRoot ?? null,
   };
 
   const items: TimelineItem[] = [];
@@ -445,6 +450,7 @@ interface RowContext {
   readonly attachments: (attachmentId: string) => AttachmentPreview;
   readonly cellPixels: CellPixels;
   readonly diagrams: ((source: string) => MermaidRenderResult | undefined) | null;
+  readonly workspaceRoot: string | null;
 }
 
 const UNAVAILABLE_ATTACHMENT: AttachmentPreview = {
@@ -553,17 +559,24 @@ function pushRow(items: TimelineItem[], row: TimelineRow, ctx: RowContext): void
       { marginTop: 1 },
     ),
   );
-  if (expanded) for (const hidden of row.hiddenRows) pushFoldable(items, hidden, ctx);
+  // The work of a turn that starts open starts open too: it shows where the turn stopped.
+  const settled = { startsOpen: ctx.openTurns.has(row.turnId) };
+  if (expanded) for (const hidden of row.hiddenRows) pushFoldable(items, hidden, ctx, settled);
 }
 
-function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext): void {
+/** A row of the conversation; a `settled` turn's work reads as a summary. */
+function pushFoldable(
+  items: TimelineItem[],
+  row: FoldableRow,
+  ctx: RowContext,
+  settled: { readonly startsOpen: boolean } | null = null,
+): void {
   const { palette, width } = ctx;
   if (row.kind === "work") {
-    items.push(
-      item(row.id, "work", width, workGroupLines(row.id, row.groupedEntries, ctx), {
-        marginBottom: 1,
-      }),
-    );
+    const lines = settled
+      ? summarizedGroupLines(row.id, row.groupedEntries, ctx, settled.startsOpen)
+      : workGroupLines(row.id, row.groupedEntries, ctx);
+    items.push(item(row.id, "work", width, lines, { marginBottom: 1 }));
     return;
   }
   const message = row.message;
@@ -807,15 +820,7 @@ function workGroupLines(
   const expanded = ctx.view.expandedGroups.has(id);
   const visible = hasOverflow && !expanded ? entries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES) : entries;
   const hidden = entries.length - visible.length;
-  // A subagent's row opens the thread it works in.
-  // A file change's row opens its diff.
-  const lines = visible.map((entry) =>
-    entry.childThreadId
-      ? line(toolRow(entry, ctx), "thread.open", { key: threadKey(entry.childThreadId) })
-      : entry.diff
-        ? line(toolRow(entry, ctx), "diff.item", { id: entry.id })
-        : line(toolRow(entry, ctx)),
-  );
+  const lines = visible.map((entry) => callLine(entry, toolRow(entry, ctx)));
   if (hasOverflow) {
     lines.push(
       line(
@@ -835,11 +840,78 @@ function workGroupLines(
   return lines;
 }
 
+// A subagent's row opens the thread it works in.
+// A file change's row opens its diff.
+const callLine = (entry: WorkLogEntry, text: StyledText): TimelineLine =>
+  entry.childThreadId
+    ? line(text, "thread.open", { key: threadKey(entry.childThreadId) })
+    : entry.diff
+      ? line(text, "diff.item", { id: entry.id })
+      : line(text);
+
+/**
+ * A finished turn's group of calls: what they did in one sentence, marked when
+ * one failed, which opens into every call, labelled by what it did.
+ */
+function summarizedGroupLines(
+  id: string,
+  entries: ReadonlyArray<WorkLogEntry>,
+  ctx: RowContext,
+  startsOpen: boolean,
+): TimelineLine[] {
+  const { palette } = ctx;
+  const summary = summarizeToolCalls(entries.map((entry) => entry.item ?? {}));
+  const expanded = ctx.view.expandedGroups.has(id) !== startsOpen;
+  const head = line(
+    styled(
+      chunk(`${expanded ? "▾" : "▸"} ${summary.text}`, { fg: palette.dim }),
+      summary.failed && chunk(` ${STATUS_ICONS.failure.glyph}`, { fg: palette.error }),
+    ),
+    "timeline.workGroup.toggle",
+    { id },
+  );
+  if (!expanded) return [head];
+  return [
+    head,
+    ...entries.map((entry) => callLine(entry, toolRow(entry, ctx, callShown(entry, ctx)))),
+  ];
+}
+
+/** How an opened group shows a call: a command as it was typed with its exit code, a file in the workspace relative to it. */
+function callShown(
+  entry: WorkLogEntry,
+  ctx: RowContext,
+): { label: string; preview: string | null } | undefined {
+  const item = entry.item;
+  if (item?.type === "command_execution" && typeof item.input === "string") {
+    return {
+      label: commandDisplayText(item.input),
+      preview: typeof item.exitCode === "number" ? `exit ${item.exitCode}` : null,
+    };
+  }
+  if (item?.type === "file_change" && typeof item.fileName === "string") {
+    return {
+      label: workspaceRelative(item.fileName, ctx.workspaceRoot),
+      preview: entry.detail ?? null,
+    };
+  }
+  if (item?.type === "dynamic_tool" && item.input != null) {
+    return { label: workLogLabel(entry), preview: JSON.stringify(item.input) };
+  }
+  return undefined;
+}
+
 /** icon · label · status glyph · muted preview (port of ToolRow). */
-function toolRow(entry: WorkLogEntry, ctx: RowContext): StyledText {
+function toolRow(
+  entry: WorkLogEntry,
+  ctx: RowContext,
+  shown: { label: string; preview: string | null } = {
+    label: workLogLabel(entry),
+    preview: workLogPreview(entry),
+  },
+): StyledText {
   const { palette, width } = ctx;
-  const label = workLogLabel(entry);
-  const preview = workLogPreview(entry);
+  const { label, preview } = shown;
   const status = workLogStatusKind(entry);
   const word = workLogStatusLabel(entry);
   // A call that neither succeeded nor failed (declined, stopped) is the neutral dash.

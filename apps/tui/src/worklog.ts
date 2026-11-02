@@ -5,6 +5,7 @@ import {
 } from "@hal-c2/contracts";
 
 import { TOOL_ICONS } from "./icons.ts";
+import type { TurnItemRecord } from "./toolSummary.ts";
 
 // Derive the per-turn "work log" (tool calls / thinking) from a thread's activity
 // stream — a trimmed port of the web client's session-logic.deriveWorkLogEntries.
@@ -37,6 +38,8 @@ export interface WorkLogEntry {
   readonly childThreadId?: string;
   /** A file change's own diff; its row opens it in the diff viewer. */
   readonly diff?: string;
+  /** The call as the MC sent it (a turn item), which a settled group's summary reads. */
+  readonly item?: TurnItemRecord;
   // Internal lifecycle bookkeeping kept for collapsing consecutive updates.
   readonly activityKind: string;
   readonly collapseKey?: string;
@@ -278,6 +281,8 @@ function toEntry(activity: OrchestrationThreadActivity): MutableEntry {
   if (statusLabel) entry.statusLabel = statusLabel;
   const childThreadId = asTrimmedString(payload?.childThreadId);
   if (childThreadId) entry.childThreadId = childThreadId;
+  const item = asRecord(payload?.turnItem);
+  if (item) entry.item = item;
 
   let status = extractToolLifecycleStatus(payload);
   if (!status && activity.kind === "tool.completed") status = "completed";
