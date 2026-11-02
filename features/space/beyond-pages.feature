@@ -16,11 +16,6 @@ Feature: Spaces beyond Pages
     Then the answer cites the page "Roadmap"
 
   @mc @shared
-  Scenario: The user asks an agent from inside a page
-    When the user asks "@agent tidy this page" on the page "Roadmap"
-    Then an agent edits "Roadmap" and its edits name its thread
-
-  @mc @shared
   Scenario: A Space is shared across the cluster
     Given a cluster of two MCs
     When the user opens the Space "Research" from the other MC

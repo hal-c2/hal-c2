@@ -2167,6 +2167,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     if ended and state.turn == nil do
       thread_id = state.thread_id
       Task.start(fn -> Orchestration.Delegation.report(thread_id, nil, nil) end)
+      Task.start(fn -> HalC2.Space.PageAgent.report(thread_id) end)
     end
 
     wire = %{wire | dir: dir, offsets: offsets, pending: Enum.reverse(waiting), timer: timer}
@@ -2323,6 +2324,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     if ended != state and ended.turn == nil do
       thread_id = state.thread_id
       Task.start(fn -> Orchestration.Delegation.report(thread_id, nil, nil) end)
+      Task.start(fn -> HalC2.Space.PageAgent.report(thread_id) end)
     end
 
     ended

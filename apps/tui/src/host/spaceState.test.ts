@@ -73,6 +73,7 @@ function setup(origin?: string) {
   const calls: Array<{ method: string; payload: unknown }> = [];
   const statuses: string[] = [];
   const menus: PickRequest[] = [];
+  const opened: string[] = [];
   const onPage = new Set<string>();
   const tellPage: Array<(viewers: ReadonlyArray<SpacePresenceViewer>) => void> = [];
   const asks: AskSpec[] = [];
@@ -118,6 +119,7 @@ function setup(origin?: string) {
     ask: (spec) => asks.push(spec),
     menu: (spec) => menus.push(spec),
     threads: () => [{ id: "t1", title: "Work" }],
+    openThread: (threadId) => opened.push(threadId),
     ...(origin ? { origin } : {}),
   });
   /** Send a frame on `stream`; `subscription` picks an older follow of the same stream. */
@@ -143,6 +145,7 @@ function setup(origin?: string) {
     asks,
     uploads,
     streams,
+    opened,
     onPage,
     tellPage,
   };
@@ -702,6 +705,126 @@ describe("refusalText", () => {
       detail: { _tag: "SpaceError", reason: "cycle" },
     });
     expect(refusalText(error)).toBe("A page cannot move inside itself.");
+  });
+});
+
+describe("a page's agent", () => {
+  const agent = (fields: Record<string, unknown> = {}) =>
+    [
+      "pageAgent",
+      "p1",
+      {
+        id: "p1",
+        pageId: "p1",
+        threadId: "t1",
+        request: "tidy this",
+        status: "running",
+        edited: false,
+        error: null,
+        startedAt: at,
+        endedAt: null,
+        ...fields,
+      },
+    ] as const;
+
+  const onRoadmap = (...rows: Array<readonly [string, string, Record<string, unknown>]>) => {
+    const t = inResearch([page("p1", "Roadmap"), ...rows]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+
+  test("it can open the thread it runs in, and says when that thread is gone", () => {
+    const t = onRoadmap(agent());
+    t.controller.dispatch("space.openAgentThread", {});
+    expect(t.opened).toEqual(["t1"]);
+    t.send("space:s1", events([11, "pageAgent", "p1", { s: { threadId: "gone" } }]));
+    expect(t.view().message).toContain("o opens its thread");
+    t.controller.dispatch("space.openAgentThread", {});
+    expect(t.opened).toEqual(["t1"]);
+    expect(t.statuses).toEqual(["The agent's thread is not available."]);
+  });
+
+  test("a second ask is not started while one is working", () => {
+    const t = onRoadmap(agent());
+    t.controller.dispatch("space.askAgent", {});
+    expect(t.statuses).toEqual(["An agent is already working on this page: s stops it."]);
+  });
+
+  test("a page without an agent has nothing to stop", () => {
+    const t = onRoadmap();
+    t.controller.dispatch("space.stopAgent", {});
+    expect(t.calls.some((call) => call.method === "space.page.stopAgent")).toBe(false);
+    expect(t.statuses).toEqual(["No agent was asked on this page: A asks one."]);
+  });
+
+  test("an error that ends its own sentence is not given a second full stop", () => {
+    const failed = onRoadmap(agent({ status: "failed", error: "The agent's turn failed." }));
+    expect(failed.view().message).toStartWith(
+      "The agent failed: The agent's turn failed. The page stays as it last wrote it.",
+    );
+    const stopped = onRoadmap(agent({ status: "stopped", error: "It was cut off.\n" }));
+    expect(stopped.view().message).toStartWith("The agent stopped: It was cut off. ·");
+  });
+
+  test("a long request is clipped, and the rows make room for a wrapped message", () => {
+    const blocks = Array.from({ length: 40 }, (_, index) =>
+      block(`b${index}`, "p1", `Block ${index}`, `a${String(index).padStart(2, "0")}`),
+    );
+    const t = onRoadmap(...blocks, agent({ request: "tidy ".repeat(100) }));
+    const said = t.view().message;
+    expect(said.length).toBeLessThan(120);
+    expect(said).toContain("…");
+    const fitsOneLine = onRoadmap(...blocks).view().rows.length;
+    expect(t.view().rows.length).toBeLessThan(fitsOneLine);
+  });
+
+  test("a page down under a wrapped message steps by the rows on show", () => {
+    const blocks = Array.from({ length: 40 }, (_, index) =>
+      block(`b${index}`, "p1", `Block ${index}`, `a${String(index).padStart(2, "0")}`),
+    );
+    const t = onRoadmap(...blocks, agent({ request: "tidy ".repeat(100) }));
+    const selected = () =>
+      t
+        .view()
+        .rows.find((row) => row.selected)!
+        .text.slice(2)
+        .trim();
+    t.select("block:b0");
+    const onShow = t.view().rows.length;
+    t.controller.dispatch("space.pageDown", {});
+    expect(selected()).toBe(`Block ${onShow}`);
+  });
+
+  test("an entry taller than the pane under a wrapped message scrolls a row at a time to its end", () => {
+    const tall = `${Array.from({ length: 800 }, (_, index) => `w${index}`).join(" ")} end`;
+    const t = onRoadmap(
+      block("b0", "p1", tall, "a0"),
+      block("b1", "p1", "After", "a1"),
+      agent({ request: "tidy ".repeat(100) }),
+    );
+    t.select("block:b0");
+    const shown = () => t.view().rows.map((row) => row.text);
+    let before = shown();
+    for (let step = 0; step < 200 && !before.some((text) => text.endsWith(" end")); step += 1) {
+      t.controller.dispatch("space.next", {});
+      const after = shown();
+      expect(after[0]).toBe(before[1]);
+      before = after;
+    }
+    expect(before.some((text) => text.endsWith(" end"))).toBe(true);
+  });
+
+  test("the palette offers the way out that fits what the agent is doing", () => {
+    const titles = (t: ReturnType<typeof onRoadmap>) =>
+      t.controller.commands().map((command) => command.action);
+    const working = titles(onRoadmap(agent()));
+    expect(working).toContain("space.stopAgent");
+    expect(working).not.toContain("space.askAgent");
+    const ended = titles(onRoadmap(agent({ status: "completed", endedAt: at })));
+    expect(ended).toContain("space.dismissAgent");
+    expect(ended).toContain("space.askAgent");
+    expect(titles(onRoadmap())).not.toContain("space.openAgentThread");
   });
 });
 

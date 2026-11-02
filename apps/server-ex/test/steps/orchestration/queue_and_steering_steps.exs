@@ -349,6 +349,23 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context |> Map.put(:thread, thread) |> Map.put(:repeat_command, command)
   end
 
+  # As a real stop goes: `Recovery.stopping?/0` holds, and the runtime, which cannot read
+  # its shutdown while it waits on the provider, is killed at the limit. The next boot's
+  # `Recovery.run/0` ends the stop.
+  step "the MC restarts while its runtime for {string} is stuck on the provider",
+       %{args: [thread]} = context do
+    HalC2.Orchestration.Recovery.leaving(true)
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Orchestration.Recovery.leaving(false) end)
+
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, thread))
+    gone = Process.monitor(runtime)
+    Process.exit(runtime, :kill)
+    assert_receive {:DOWN, ^gone, :process, _, _}, 5_000
+    _ = :sys.get_state(HalC2.Orchestration.TurnWatch)
+
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
+  end
+
   step "the running turn of {string} ends", %{args: [thread]} = context do
     thread_id = World.thread_id(context, thread)
 

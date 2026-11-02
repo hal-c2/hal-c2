@@ -793,6 +793,124 @@ Item {
             compare(root.dispatched("space.page.rename"), [{ pageId: "page-1", title: "P" }]);
         }
 
+        function test_the_composer_asks_an_agent_and_writes_no_block() {
+            const view = root.research({});
+            findChild(view, "spaceComposer").forceActiveFocus();
+            for (const key of "@agent tidy")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.agent.ask"), [{ pageId: "page-1", request: "@agent tidy" }]);
+            compare(root.dispatched("space.block.insert"), []);
+            compare(findChild(view, "spaceComposer").text, "@agent tidy");
+            Spaces.agentAskAnswered("page-1", "@agent tidy", true);
+            compare(findChild(view, "spaceComposer").text, "");
+        }
+
+        function test_an_ask_the_mc_refuses_keeps_its_words() {
+            const view = root.research({});
+            findChild(view, "spaceComposer").forceActiveFocus();
+            for (const key of "@agent tidy")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            Spaces.agentAskAnswered("page-1", "@agent tidy", false);
+            compare(findChild(view, "spaceComposer").text, "@agent tidy");
+        }
+
+        function test_words_changed_while_an_ask_is_answered_are_kept() {
+            const view = root.research({});
+            findChild(view, "spaceComposer").forceActiveFocus();
+            for (const key of "@agent tidy")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            keyClick("!");
+            Spaces.agentAskAnswered("page-1", "@agent tidy", true);
+            compare(findChild(view, "spaceComposer").text, "@agent tidy!");
+        }
+
+        function test_a_word_that_only_starts_like_the_mention_is_a_block() {
+            const view = root.research({});
+            findChild(view, "spaceComposer").forceActiveFocus();
+            for (const key of "@agents")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.agent.ask"), []);
+            compare(root.dispatched("space.block.insert").length, 1);
+        }
+
+        function test_an_ask_the_page_cannot_take_yet_keeps_its_words() {
+            const view = root.research({ agent: { status: "running", request: "tidy", threadId: "t9" } });
+            const composer = findChild(view, "spaceComposer");
+            composer.forceActiveFocus();
+            for (const key of "@agent more")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            compare(composer.text, "@agent more");
+        }
+
+        function test_the_way_in_starts_the_words_of_an_ask() {
+            const view = root.research({});
+            Spaces.agentAskRequested();
+            const composer = findChild(view, "spaceComposer");
+            compare(composer.text, "@agent ");
+            verify(composer.activeFocus);
+        }
+
+        function test_the_way_in_keeps_a_draft() {
+            const view = root.research({});
+            const composer = findChild(view, "spaceComposer");
+            composer.text = "the plan";
+            Spaces.agentAskRequested();
+            compare(composer.text, "@agent the plan");
+            compare(composer.cursorPosition, "@agent ".length);
+            Spaces.agentAskRequested();
+            compare(composer.text, "@agent the plan");
+            verify(composer.activeFocus);
+        }
+
+        function test_a_working_agent_can_be_followed_and_stopped() {
+            const view = root.research({ agent: { status: "running", request: "tidy this", threadId: "t9" } });
+            compare(findChild(view, "spaceAgentText").text, "An agent is working on “tidy this”.");
+            verify(!findChild(view, "spaceAgentDismiss").visible);
+            mouseClick(findChild(view, "spaceAgentStop"));
+            compare(root.dispatched("space.agent.stop").length, 1);
+            mouseClick(findChild(view, "spaceAgentOpenThread"));
+            compare(root.dispatched("space.agent.openThread").length, 1);
+        }
+
+        function test_a_stopping_agent_can_be_stopped_again() {
+            const view = root.research({ agent: { status: "stopping", request: "tidy", threadId: "t9" } });
+            compare(findChild(view, "spaceAgentText").text, "Stopping the agent…");
+            mouseClick(findChild(view, "spaceAgentStop"));
+            compare(root.dispatched("space.agent.stop").length, 1);
+            verify(findChild(view, "spaceAgentOpenThread").visible);
+        }
+
+        function test_an_ended_agent_says_how_and_can_be_dismissed() {
+            const says = [
+                [{ status: "completed", edited: true }, "The agent finished and changed this page."],
+                [{ status: "completed", edited: false }, "The agent finished without changing this page."],
+                [{ status: "stopped" }, "The agent was stopped."],
+                [{ status: "stopped", error: "its thread was deleted" }, "The agent stopped: its thread was deleted."],
+                [{ status: "stopped", error: "It was cut off.\n" }, "The agent stopped: It was cut off."],
+                [{ status: "failed", error: "The agent's turn failed." }, "The agent failed: The agent's turn failed. The page stays as it last wrote it."],
+                [{ status: "failed", error: "out of credits" }, "The agent failed: out of credits. The page stays as it last wrote it."]
+            ];
+            const view = root.research({});
+            for (const [agent, text] of says) {
+                Spaces.agent = Object.assign({ request: "tidy", threadId: "t9" }, agent);
+                compare(findChild(view, "spaceAgentText").text, text);
+                verify(!findChild(view, "spaceAgentStop").visible);
+                verify(findChild(view, "spaceAgentHistory").visible);
+                mouseClick(findChild(view, "spaceAgentDismiss"));
+            }
+            compare(root.dispatched("space.agent.dismiss").length, says.length);
+        }
+
+        function test_a_page_with_no_agent_says_nothing() {
+            const view = root.research({});
+            verify(!findChild(view, "spaceAgentStrip").visible);
+        }
+
         function update(more) {
             return { schedule: Object.assign({ instruction: "Summarise", cadence: { type: "interval", everyMs: 7200000 }, cadenceLabel: "Every 2 hours", enabled: true, nextRunAt: "2026-11-01T09:00:00.000Z", lastRunStatus: "never" }, more), writtenAt: "" };
         }

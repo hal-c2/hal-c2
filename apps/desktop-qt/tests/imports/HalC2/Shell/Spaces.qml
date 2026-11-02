@@ -8,6 +8,9 @@ QtObject {
     property string spaceName: ""
     property string pageId: ""
     property var page: ({})
+    property var agent: ({})
+    signal agentAskRequested
+    signal agentAskAnswered(string pageId, string request, bool taken)
     property string deckId: ""
     property var deck: ({})
     property bool presenting: false
@@ -50,6 +53,7 @@ QtObject {
         spaceId = state.spaceId ?? "";
         spaceName = state.spaceName ?? "";
         status = state.status ?? "live";
+        agent = state.agent ?? {};
         viewers = state.viewers ?? {};
         fill(spaces, state.spaces);
         fill(pages, state.pages);

@@ -93,6 +93,14 @@ ColumnLayout {
                 font.pixelSize: Math.round(13 * Theme.fontScale)
             }
 
+            SpaceAgentStrip {
+                Layout.fillWidth: true
+                Layout.margins: 16
+                Layout.bottomMargin: 4
+                buttonHeight: 44
+                onHistoryRequested: view.screen.showHistory(Spaces.pageId)
+            }
+
             Label {
                 objectName: "spaceTrashedNotice"
                 Layout.fillWidth: true

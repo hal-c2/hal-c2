@@ -40,6 +40,7 @@ namespace {
 
 const QString kSpace = QStringLiteral("space-1");
 const QString kPage = QStringLiteral("page");
+const QString kAgent = QStringLiteral("pageAgent");
 const QString kBlock = QStringLiteral("block");
 const QString kComment = QStringLiteral("comment");
 const QString kDeck = QStringLiteral("deck");
@@ -331,6 +332,17 @@ QVariantMap pageOf(const Model& model) {
           {QStringLiteral("site"), siteShownOf(model)}};
 }
 
+QVariantMap agentOf(const Model& model) {
+  const QJsonObject agent = model.held.value(keyOf(kAgent, model.selected));
+  if (agent.isEmpty()) return {};
+  return {{QStringLiteral("status"), str(agent, "status")},
+          {QStringLiteral("request"), str(agent, "request")},
+          {QStringLiteral("threadId"), str(agent, "threadId")},
+          {QStringLiteral("threadTitle"), QStringLiteral("a thread")},
+          {QStringLiteral("edited"), agent.value(QLatin1String("edited")).toBool()},
+          {QStringLiteral("error"), str(agent, "error")}};
+}
+
 // The decks out of the trash as they were made.
 QList<QVariantMap> decksOf(const Entities& held) {
   QList<QJsonObject> decks;
@@ -510,7 +522,7 @@ struct Sut {
 
   void check(const Model& model) {
     RC_ASSERT(pages.spaceId() == kSpace);
-    for (const QString& kind : {kPage, kBlock, kComment, kDeck, kSlide, kSite}) {
+    for (const QString& kind : {kPage, kBlock, kComment, kAgent, kDeck, kSlide, kSite}) {
       QMap<QString, QJsonObject> got;
       for (auto it = pages.space().of(kind).cbegin(); it != pages.space().of(kind).cend(); ++it) got.insert(it.key(), *it);
       RC_ASSERT(got == ofKind(model.held, kind));
@@ -523,6 +535,7 @@ struct Sut {
     RC_ASSERT(pages.blocks()->rows() == blocksOf(model));
     RC_ASSERT(pages.comments()->rows() == commentRowsOf(model));
     RC_ASSERT(pages.page() == pageOf(model));
+    RC_ASSERT(pages.agent() == agentOf(model));
     RC_ASSERT(pages.deckId() == model.deck);
     RC_ASSERT(pages.decks()->rows() == decksOf(model.held));
     RC_ASSERT(pages.deckTrash()->rows() == deckTrashOf(model.held));
@@ -607,6 +620,9 @@ struct Write : Command {
       offer(1, "page.delete");
       offer(2, "page.schedule");
       if (blocks.size() < kMaxBlocks) offer(4, "block.create");
+      offer(1, "pageAgent.create");
+      offer(2, "pageAgent.status");
+      offer(1, "pageAgent.delete");
     }
     if (!blocks.isEmpty()) {
       offer(2, "block.text");
@@ -643,7 +659,7 @@ struct Write : Command {
     op = *rc::gen::elementOf(ops);
     const QString kind = op.section(QLatin1Char('.'), 0, 0);
     const bool creates = op.endsWith(QLatin1String(".create"));
-    id = creates ? unused(model, kind, kind == kPage ? kMaxPages : kind == kBlock ? kMaxBlocks : kind == kComment ? kMaxComments : kind == kDeck ? kMaxDecks : kind == kSite ? kMaxSites : kMaxSlides)
+    id = kind == kAgent ? pick(pages) : creates ? unused(model, kind, kind == kPage ? kMaxPages : kind == kBlock ? kMaxBlocks : kind == kComment ? kMaxComments : kind == kDeck ? kMaxDecks : kind == kSite ? kMaxSites : kMaxSlides)
                  : pick(kind == kPage ? pages : kind == kBlock ? blocks : kind == kComment ? comments : kind == kDeck ? decks : kind == kSite ? sites : slides);
     if (op == QLatin1String("page.create")) {
       value = pick({QStringLiteral("Roadmap"), QStringLiteral("Q3"), QStringLiteral("  "), QString()});
@@ -667,6 +683,9 @@ struct Write : Command {
       value = pick({QStringLiteral(" more"), QStringLiteral("!")});
     } else if (op == QLatin1String("block.order")) {
       value = pick({QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("c")});
+    } else if (op == QLatin1String("pageAgent.status")) {
+      value = pick({QStringLiteral("stopping"), QStringLiteral("completed"), QStringLiteral("failed"), QStringLiteral("stopped")});
+      flag = *rc::gen::arbitrary<bool>();
     } else if (op == QLatin1String("deck.create") || op == QLatin1String("deck.rename")) {
       value = pick({QStringLiteral("Pitch"), QStringLiteral("Review")});
     } else if (op == QLatin1String("slide.create")) {
@@ -746,6 +765,15 @@ struct Write : Command {
       QJsonObject after = current;
       after.remove(QStringLiteral("trashedAt"));
       return Made{kind, after, {{QStringLiteral("u"), QJsonArray{QStringLiteral("trashedAt")}}}};
+    }
+    if (op == QLatin1String("pageAgent.create")) {
+      return set({{QStringLiteral("id"), id}, {QStringLiteral("pageId"), id}, {QStringLiteral("threadId"), QStringLiteral("thread-1")},
+                  {QStringLiteral("request"), QStringLiteral("tidy")}, {QStringLiteral("status"), QStringLiteral("running")},
+                  {QStringLiteral("edited"), false}, {QStringLiteral("error"), QJsonValue::Null}});
+    }
+    if (op == QLatin1String("pageAgent.status")) {
+      return set({{QStringLiteral("status"), value}, {QStringLiteral("edited"), flag},
+                  {QStringLiteral("error"), nullable(value == QLatin1String("failed") ? QStringLiteral("out of credits") : QString())}});
     }
     if (op.endsWith(QLatin1String(".delete"))) return Made{kind, std::nullopt, {{QStringLiteral("d"), true}}};
     if (op == QLatin1String("block.create")) {

@@ -46,6 +46,39 @@ defmodule HalC2.SpaceTest do
     Enum.map(blocks, & &1["text"])
   end
 
+  describe "the agent asked on a page" do
+    # A second stop found the first still waiting for the run, and wrote an empty patch
+    # that took the Space's stream down.
+    test "stopping twice while its run ends leaves the page saying stopping", %{space: space} do
+      page = page!(space, "Roadmap")
+      test = self()
+
+      launch = fn %{"threadId" => thread} ->
+        run = %{"id" => "run", "threadId" => thread, "ordinal" => 1, "status" => "running"}
+
+        Streams.transact(thread, :thread, fn _ ->
+          {[
+             {"thread", thread, HalC2.Patch.diff(nil, %{"id" => thread})},
+             {"run", "run", HalC2.Patch.diff(nil, run)}
+           ], :ok}
+        end)
+
+        send(test, :launched)
+        {:ok, %{}}
+      end
+
+      Application.put_env(:hal_c2, :page_agent_launch, launch)
+      on_exit(fn -> Application.delete_env(:hal_c2, :page_agent_launch) end)
+      target = fn -> {:ok, %{project_id: nil, model: nil, runtime_mode: nil}} end
+
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", target)
+      assert_receive :launched
+
+      assert {:ok, %{"status" => "stopping"}} = Space.stop_page_agent(space, page)
+      assert {:ok, %{"status" => "stopping"}} = Space.stop_page_agent(space, page)
+    end
+  end
+
   describe "Spaces" do
     test "Personal is made with the first Space, and again only when none are left",
          %{space: space} do

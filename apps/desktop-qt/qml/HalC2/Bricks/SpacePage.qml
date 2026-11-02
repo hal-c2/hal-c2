@@ -95,6 +95,26 @@ Rectangle {
         page.replacing = "";
     }
 
+    Connections {
+        target: Spaces
+        function onAgentAskRequested() {
+            page.startAsk();
+        }
+        function onAgentAskAnswered(pageId, request, taken) {
+            if (taken && pageId === Spaces.pageId && composer.text.trim() === request)
+                composer.clear();
+        }
+    }
+
+    // Starts the words of an ask in the composer, ahead of a draft already there.
+    function startAsk() {
+        if (!composer.text.trim().startsWith("@agent")) {
+            composer.text = "@agent " + composer.text;
+            composer.cursorPosition = "@agent ".length;
+        }
+        composer.forceActiveFocus();
+    }
+
     // Asks the MC to draw a chart for `/visualize <request>`, in place of the
     // chart being replaced or where a new block goes.
     function visualize(request) {
@@ -117,7 +137,8 @@ Rectangle {
     }
 
     // Writes the composer's text as a block of the chosen kind, asks for the
-    // chart it names, or opens the kinds when it starts with `/`.
+    // chart it names, opens the kinds when it starts with `/`, or asks an agent
+    // when it starts with `@agent`. An ask keeps its words until the MC takes it.
     function submit() {
         if (slash.visible) {
             slash.choose();
@@ -126,6 +147,10 @@ Rectangle {
         const text = composer.text.trim();
         if (text.length === 0 || text === "/visualize")
             return;
+        if (/^@agent(\s|$)/i.test(text)) {
+            Shell.dispatch("space.agent.ask", { pageId: Spaces.pageId, request: text });
+            return;
+        }
         if (text.startsWith("/visualize ")) {
             page.visualize(text);
             composer.clear();
@@ -271,6 +296,14 @@ Rectangle {
             }
 
             ShellMenuItem {
+                objectName: "spaceAskAgent"
+                text: qsTr("Ask an agent…")
+                iconName: "sparkles"
+                enabled: !page.trashed
+                onTriggered: page.startAsk()
+            }
+
+            ShellMenuItem {
                 objectName: "spaceHistoryOpen"
                 text: qsTr("History")
                 iconName: "clock"
@@ -371,6 +404,13 @@ Rectangle {
             text: qsTr("Made from the thread “%1”").arg(page.current.sourceThreadTitle ?? "")
             color: page.muted
             font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        SpaceAgentStrip {
+            id: agentStrip
+
+            Layout.fillWidth: true
+            onHistoryRequested: Shell.dispatch("space.history.open", { pageId: Spaces.pageId })
         }
 
         // The page's site: where it is, whether it is behind the page, and the ways on and back.
@@ -621,7 +661,7 @@ Rectangle {
 
                 objectName: "spaceComposer"
                 Layout.fillWidth: true
-                placeholderText: qsTr("Write, or type / for a kind of block")
+                placeholderText: qsTr("Write, type / for a kind of block, or @agent to ask an agent")
                 onTextChanged: {
                     if (text.startsWith("/") && !text.startsWith("/visualize ")) {
                         slash.query = text.slice(1);

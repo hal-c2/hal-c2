@@ -74,6 +74,15 @@ defmodule HalC2.Space.Rpc do
   defp call("page.restoreVersion", %{"spaceId" => s, "pageId" => p, "version" => v}),
     do: page(Space.restore_page_version(s, p, v))
 
+  defp call("page.askAgent", %{"spaceId" => s, "pageId" => p, "request" => request}),
+    do: agent(Space.ask_page_agent(s, p, request))
+
+  defp call("page.stopAgent", %{"spaceId" => s, "pageId" => p}),
+    do: agent(Space.stop_page_agent(s, p))
+
+  defp call("page.dismissAgent", %{"spaceId" => s, "pageId" => p}),
+    do: with({:ok, _} <- Space.dismiss_page_agent(s, p), do: {:ok, %{"pageId" => p}})
+
   defp call("page.schedule.set", %{"spaceId" => s, "pageId" => p} = i)
        when is_map_key(i, "instruction") and is_map_key(i, "cadence"),
        do: page(Schedule.set(s, p, i["instruction"], i["cadence"]))
@@ -175,10 +184,14 @@ defmodule HalC2.Space.Rpc do
     page.restore page.delete page.publish page.unpublish page.exportMarkdown page.importMarkdown
     page.createFromThread page.history page.version page.restoreVersion
     page.schedule.set page.schedule.setEnabled page.schedule.runNow page.schedule.remove
-    block.insert block.update block.setChecked block.move block.delete block.visualize
-    comment.add comment.resolve comment.reopen deck.create deck.createFromPage deck.rename
-    deck.trash deck.restore deck.delete slide.insert slide.update slide.move slide.delete
-    image.add image.generate image.trash image.restore image.delete image.providers)
+    page.askAgent page.stopAgent page.dismissAgent block.insert block.update block.setChecked
+    block.move block.delete block.visualize comment.add comment.resolve comment.reopen
+    deck.create deck.createFromPage deck.rename deck.trash deck.restore deck.delete
+    slide.insert slide.update slide.move slide.delete image.add image.generate image.trash
+    image.restore image.delete image.providers)
+
+  defp agent({:ok, agent}), do: {:ok, %{"agent" => agent}}
+  defp agent(refused), do: refused
 
   @doc "The methods after `space.`."
   def methods, do: @methods

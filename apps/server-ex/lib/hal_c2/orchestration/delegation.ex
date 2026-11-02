@@ -470,6 +470,15 @@ defmodule HalC2.Orchestration.Delegation do
   """
   def quiet?(child), do: not working?(StreamState.list(child, "run")) and owed(child) == []
 
+  @doc """
+  As `quiet?/1`, except that a queued run held for the user to resume the queue
+  (`queueHeld`) is not work under way: nothing starts it until the user does.
+  """
+  def settled?(child) do
+    runs = child |> StreamState.list("run") |> Enum.reject(&(&1["queueHeld"] == true))
+    not working?(runs) and owed(child) == []
+  end
+
   # The child's owed background work, as its sidebar row shows it, read from its stream.
   # A task of its own whose result is still to reach it (a `pending` delivery) is
   # owed too: the child is not done until the wake about it has run.

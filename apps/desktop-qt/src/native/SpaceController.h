@@ -227,6 +227,9 @@ class SpacePages : public QObject {
   // or empty. `site` is what the page has published, {url, localOnly, behind,
   // publishedAt}, or empty.
   Q_PROPERTY(QVariantMap page READ page NOTIFY changed)
+  // What the open page says about the agent asked to work on it: {status (running, stopping,
+  // completed, failed, stopped), request, threadId, threadTitle, edited, error}, or empty.
+  Q_PROPERTY(QVariantMap agent READ agent NOTIFY changed)
   Q_PROPERTY(QString deckId READ deckId NOTIFY changed)
   // {id, title, trashed}, or empty.
   Q_PROPERTY(QVariantMap deck READ deck NOTIFY changed)
@@ -263,6 +266,7 @@ public:
   // sourceThreadTitle, schedule, writtenAt}. `schedule` is what the MC shows of
   // the page's update plus its `cadenceLabel`, empty when it has none.
   QVariantMap page() const;
+  QVariantMap agent() const;
   QString deckId() const { return m_deckId; }
   bool imagesShown() const { return m_imagesShown; }
   QVariantMap deck() const;
@@ -333,6 +337,10 @@ public:
 
 signals:
   void changed();
+  // The command to ask an agent was run: the page takes the words.
+  void agentAskRequested();
+  // The MC answered an ask: whoever holds its words lets them go only if it took it.
+  void agentAskAnswered(const QString& pageId, const QString& request, bool taken);
   // The selected Space changed: its stream is followed anew.
   void spaceSelected(const QString& id);
   void viewersChanged();
@@ -440,7 +448,9 @@ private:
 // blockId, body}`, `space.comment.resolve {commentId}`, `space.comment.reopen
 // {commentId}`, `space.history.open {pageId}`, `space.history.close`,
 // `space.history.more`, `space.history.read {version}`, `space.history.back`,
-// `space.history.restore {version}`, `space.selectDeck {deckId}`,
+// `space.history.restore {version}`, `space.agent.ask {pageId, request}`, `space.agent.stop
+// {pageId}`, `space.agent.dismiss {pageId}`, `space.agent.openThread` (the open page's agent),
+// `space.selectDeck {deckId}`,
 // `space.deck.create {title}`, `space.deck.createFromPage {pageId}`,
 // `space.deck.rename {deckId, title}`, `space.deck.trash {deckId}`,
 // `space.deck.restore {deckId}`, `space.deck.delete {deckId}`,
@@ -459,6 +469,7 @@ public:
   static inline const QString kOpen = QStringLiteral("space.open");
   static inline const QString kPageFromThread = QStringLiteral("space.pageFromThread");
   static inline const QString kHistory = QStringLiteral("space.history.open");
+  static inline const QString kAskAgent = QStringLiteral("space.agent.focus");
   static inline const QString kDeckFromPage = QStringLiteral("space.deck.fromOpenPage");
   static inline const QString kPresentDeck = QStringLiteral("space.deck.presentOpen");
 

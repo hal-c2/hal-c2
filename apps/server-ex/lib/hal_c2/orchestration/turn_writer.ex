@@ -705,6 +705,8 @@ defmodule HalC2.Orchestration.TurnWriter do
     # A delegated task reports back to the thread that asked for it, apart from the
     # rest so their failures cannot lose the report.
     Task.start(fn -> HalC2.Orchestration.Delegation.report(thread_id, ids.run, status) end)
+    # So does an agent asked from a page, to the page.
+    Task.start(fn -> HalC2.Space.PageAgent.report(thread_id) end)
 
     :ok
   end

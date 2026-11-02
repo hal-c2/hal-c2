@@ -369,6 +369,10 @@ import {
   SpacePageScheduleSetInput,
   SpacePageVersionContent,
   SpacePageVersionRef,
+  SpacePageAskAgentInput,
+  SpacePageAgentRef,
+  SpacePageAgentResult,
+  SpacePageDismissAgentResult,
   SpaceRenameInput,
   SpaceResult,
   SpaceBlockVisualizeInput,
@@ -558,6 +562,9 @@ export const WS_METHODS = {
   spacePageHistory: "space.page.history",
   spacePageVersion: "space.page.version",
   spacePageRestoreVersion: "space.page.restoreVersion",
+  spacePageAskAgent: "space.page.askAgent",
+  spacePageStopAgent: "space.page.stopAgent",
+  spacePageDismissAgent: "space.page.dismissAgent",
   spacePageScheduleSet: "space.page.schedule.set",
   spacePageScheduleSetEnabled: "space.page.schedule.setEnabled",
   spacePageScheduleRunNow: "space.page.schedule.runNow",
@@ -1930,6 +1937,24 @@ const WsSpacePageVersionRpc = Rpc.make(WS_METHODS.spacePageVersion, {
   error: SpaceRpcError,
 });
 
+const WsSpacePageAskAgentRpc = Rpc.make(WS_METHODS.spacePageAskAgent, {
+  payload: SpacePageAskAgentInput,
+  success: SpacePageAgentResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageStopAgentRpc = Rpc.make(WS_METHODS.spacePageStopAgent, {
+  payload: SpacePageAgentRef,
+  success: SpacePageAgentResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageDismissAgentRpc = Rpc.make(WS_METHODS.spacePageDismissAgent, {
+  payload: SpacePageAgentRef,
+  success: SpacePageDismissAgentResult,
+  error: SpaceRpcError,
+});
+
 const WsSpacePageRestoreVersionRpc = Rpc.make(WS_METHODS.spacePageRestoreVersion, {
   payload: SpacePageVersionRef,
   success: SpacePageResult,
@@ -2207,6 +2232,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageHistoryRpc,
   WsSpacePageVersionRpc,
   WsSpacePageRestoreVersionRpc,
+  WsSpacePageAskAgentRpc,
+  WsSpacePageStopAgentRpc,
+  WsSpacePageDismissAgentRpc,
   WsSpacePageScheduleSetRpc,
   WsSpacePageScheduleSetEnabledRpc,
   WsSpacePageScheduleRunNowRpc,

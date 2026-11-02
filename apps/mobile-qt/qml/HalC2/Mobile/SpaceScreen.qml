@@ -158,6 +158,23 @@ Item {
         });
     }
 
+    // What an agent should do to the page `id`, which opens to show the agent working.
+    // An ask the MC refuses comes back with its words (`words`).
+    function askAgent(id, words) {
+        text.ask({ title: qsTr("Ask an agent"), placeholder: qsTr("What should it do to this page?"), action: qsTr("Ask"), multiline: true, text: words ?? "" }, request => {
+            openPage(id);
+            Shell.dispatch("space.agent.ask", { pageId: id, request: request });
+        });
+    }
+
+    Connections {
+        target: Spaces
+        function onAgentAskAnswered(pageId, request, taken) {
+            if (!taken)
+                screen.askAgent(pageId, request);
+        }
+    }
+
     function askImport() {
         text.ask({ title: qsTr("Import Markdown"), placeholder: qsTr("Paste Markdown here"), action: qsTr("Import"), multiline: true }, markdown => {
             pageExpected = true;
@@ -214,6 +231,7 @@ Item {
         sheet.ask(siteRows.concat([
             { id: "rename", label: qsTr("Rename"), icon: "pencil" },
             { id: "subpage", label: qsTr("New subpage"), icon: "plus" },
+            { id: "agent", label: qsTr("Ask an agent…"), icon: "sparkles" },
             { id: "into", label: qsTr("Move into…"), icon: "folder" },
             { id: "top", label: qsTr("Move to the top"), icon: "arrow-up", enabled: parentPageId !== "" },
             { id: "copy", label: qsTr("Copy as Markdown"), icon: "copy" },
@@ -242,6 +260,8 @@ Item {
                 text.ask({ title: qsTr("Rename page"), placeholder: qsTr("Title"), text: title, action: qsTr("Rename") }, renamed => Shell.dispatch("space.page.rename", { pageId: id, title: renamed }));
             } else if (choice === "subpage") {
                 askNewPage(id);
+            } else if (choice === "agent") {
+                askAgent(id);
             } else if (choice === "into") {
                 pickParent(id);
             } else if (choice === "top") {

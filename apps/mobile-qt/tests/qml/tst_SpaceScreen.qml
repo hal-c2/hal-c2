@@ -711,6 +711,62 @@ Item {
             compare(update.text, "Final");
         }
 
+        function test_aPageMenuAsksAnAgentAndOpensThePage() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.pageMenu("p2", "Q3", "p1");
+            sheetOf(screen).choose("agent");
+            dialogOf(screen).then("tidy this");
+            compare(dispatched("space.agent.ask"), [{ pageId: "p2", request: "tidy this" }]);
+            compare(screen.view, "page");
+            compare(screen.openedPageId, "p2");
+        }
+
+        function test_anAskTheMcRefusesComesBackWithItsWords() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            Spaces.agentAskAnswered("p2", "tidy this", true);
+            verify(!findChild(screen, "spaceTextDialog").opened);
+            Spaces.agentAskAnswered("p2", "tidy this", false);
+            tryVerify(() => findChild(screen, "spaceTextDialog").opened);
+            compare(findChild(screen, "spaceTextField").text, "tidy this");
+            findChild(screen, "spaceTextDialog").close();
+        }
+
+        function test_aStoppingAgentCanBeStoppedAgain() {
+            const screen = makeScreen({ agent: { status: "stopping", request: "tidy this", threadId: "t9" } });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            mouseClick(findChild(screen, "spaceAgentStop"));
+            compare(dispatched("space.agent.stop"), [{ pageId: "p1" }]);
+        }
+
+        function test_aWorkingAgentCanBeFollowedAndStopped() {
+            const screen = makeScreen({ agent: { status: "running", request: "tidy this", threadId: "t9" } });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            waitForRendering(screen);
+            compare(findChild(screen, "spaceAgentText").text, "An agent is working on “tidy this”.");
+            verify(!findChild(screen, "spaceAgentDismiss").visible);
+            mouseClick(findChild(screen, "spaceAgentStop"));
+            compare(dispatched("space.agent.stop"), [{ pageId: "p1" }]);
+            mouseClick(findChild(screen, "spaceAgentOpenThread"));
+            compare(dispatched("space.agent.openThread").length, 1);
+        }
+
+        function test_aFailedAgentLeadsToTheHistoryAndCanBeDismissed() {
+            const screen = makeScreen({ agent: { status: "failed", error: "out of credits", request: "tidy", threadId: "t9" } });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            waitForRendering(screen);
+            compare(findChild(screen, "spaceAgentText").text, "The agent failed: out of credits. The page stays as it last wrote it.");
+            verify(!findChild(screen, "spaceAgentStop").visible);
+            mouseClick(findChild(screen, "spaceAgentDismiss"));
+            compare(dispatched("space.agent.dismiss"), [{ pageId: "p1" }]);
+            mouseClick(findChild(screen, "spaceAgentHistory"));
+            compare(screen.view, "history");
+        }
+
         function test_whatWasWrittenIsNotLostWithTheScreen() {
             const screen = makeScreen({ blocks: [root.block("b1", "Draft")] });
             screen.openSpace("s1");

@@ -4,8 +4,8 @@ defmodule HalC2.Space do
   (`features/space/`).
 
   The `spaces` stream indexes the Spaces, one `space` entity each, and each Space's
-  own `space:<id>` stream holds its `page`, `block`, `comment`, `image`, `site`, `deck` and
-  `slide` entities. Every change is a `HalC2.Streams.transact/3` on one of them, so the
+  own `space:<id>` stream holds its `page`, `block`, `comment`, `image`, `site`, `deck`, `slide`
+  and `pageAgent` entities. Every change is a `HalC2.Streams.transact/3` on one of them, so the
   event log is the only record and clients follow both streams through the stream shape.
   The decisions live in `HalC2.Space.Pages`, `HalC2.Space.Blocks`, `HalC2.Space.Images`,
   `HalC2.Space.Sites` and `HalC2.Space.Decks`.
@@ -31,6 +31,7 @@ defmodule HalC2.Space do
     ImageGeneration,
     Images,
     Markdown,
+    PageAgent,
     Pages,
     Sites,
     Visualize
@@ -303,6 +304,17 @@ defmodule HalC2.Space do
       transact(space_id, &History.restore(&1, page_id, read, author))
     end
   end
+
+  # --- the agent of a page ----------------------------------------------------------------
+
+  @doc "See `HalC2.Space.PageAgent.ask/3`."
+  defdelegate ask_page_agent(space_id, page_id, request), to: PageAgent, as: :ask
+
+  @doc "See `HalC2.Space.PageAgent.stop/2`."
+  defdelegate stop_page_agent(space_id, page_id), to: PageAgent, as: :stop
+
+  @doc "See `HalC2.Space.PageAgent.dismiss/2`."
+  defdelegate dismiss_page_agent(space_id, page_id), to: PageAgent, as: :dismiss
 
   # --- images --------------------------------------------------------------------------
 

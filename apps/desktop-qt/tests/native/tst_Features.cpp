@@ -644,6 +644,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("planning/planner.feature"),
     QStringLiteral("space/pages.feature"),
     QStringLiteral("space/page-history.feature"),
+    QStringLiteral("space/agent-in-page.feature"),
     QStringLiteral("space/self-updating-pages.feature"),
     QStringLiteral("space/visualize.feature"),
     QStringLiteral("space/slides.feature"),

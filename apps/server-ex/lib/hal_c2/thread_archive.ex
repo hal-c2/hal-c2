@@ -574,7 +574,7 @@ defmodule HalC2.ThreadArchive do
 
     entity =
       entity
-      |> Map.drop(["movedTo", "moving", "plugin"])
+      |> Map.drop(["movedTo", "moving", "plugin", "spacePage"])
       |> Map.put("worktreePath", worktree)
       |> then(&if(arrived, do: Map.put(&1, "arrived", arrived), else: &1))
 

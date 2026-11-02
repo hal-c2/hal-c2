@@ -20,8 +20,8 @@ import { ScheduledTaskRunStatus, ScheduledTaskUpsertSchedule } from "./scheduled
  * Spaces hold Pages that people and agents write together, and slide decks. Clients
  * read them from streams, the same subscribe/resume path as projects and threads:
  * `SPACES_STREAM_ID` holds one `space` entity per Space, and `spaceStreamId(id)`
- * holds that Space's `page`, `block`, `comment`, `image`, `site`, `deck` and `slide` entities.
- * The RPCs below change them. An image's bytes are never on a stream: fetch them on
+ * holds that Space's `page`, `block`, `comment`, `image`, `site`, `deck`, `slide` and `pageAgent`
+ * entities. The RPCs below change them. An image's bytes are never on a stream: fetch them on
  * demand from the address `assets.createUrl` signs for a `space-image`.
  */
 export const SPACES_STREAM_ID = "spaces";
@@ -463,6 +463,56 @@ export type SpaceCommentRef = typeof SpaceCommentRef.Type;
 
 export const SpaceCommentResult = Schema.Struct({ comment: SpaceComment });
 export type SpaceCommentResult = typeof SpaceCommentResult.Type;
+
+// The agent asked from inside a page
+
+/** An agent's state on its page: `stopping` until the runs it was stopped in have ended. */
+export const SpacePageAgentStatus = Schema.Literals([
+  "running",
+  "stopping",
+  "completed",
+  "failed",
+  "stopped",
+]);
+export type SpacePageAgentStatus = typeof SpacePageAgentStatus.Type;
+
+/** A `pageAgent` entity, keyed by its page: the agent asked last on that page. */
+export const SpacePageAgent = Schema.Struct({
+  id: SpacePageId,
+  pageId: SpacePageId,
+  /** An ordinary thread, which the page links to. */
+  threadId: ThreadId,
+  request: Schema.String,
+  status: SpacePageAgentStatus,
+  /** Set when the agent ends: whether page history holds an edit of its thread. */
+  edited: Schema.Boolean,
+  /** Why it failed, or why it stopped when the user did not stop it. */
+  error: Schema.NullOr(Schema.String),
+  startedAt: IsoDateTime,
+  endedAt: Schema.NullOr(IsoDateTime),
+});
+export type SpacePageAgent = typeof SpacePageAgent.Type;
+
+export const SpacePageAskAgentInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  /** What the agent should do; a leading `@agent` is not part of it. */
+  request: Schema.String,
+});
+export type SpacePageAskAgentInput = typeof SpacePageAskAgentInput.Type;
+
+/** Names a page for `space.page.stopAgent` and `space.page.dismissAgent`. */
+export const SpacePageAgentRef = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+});
+export type SpacePageAgentRef = typeof SpacePageAgentRef.Type;
+
+export const SpacePageAgentResult = Schema.Struct({ agent: SpacePageAgent });
+export type SpacePageAgentResult = typeof SpacePageAgentResult.Type;
+
+export const SpacePageDismissAgentResult = Schema.Struct({ pageId: SpacePageId });
+export type SpacePageDismissAgentResult = typeof SpacePageDismissAgentResult.Type;
 
 // A page's history (read on demand; never on the stream)
 

@@ -593,6 +593,8 @@ defmodule HalC2.Orchestration do
         HalC2.Orchestration.Effects.drop_thread(thread_id)
         HalC2.Orchestration.Effects.enqueue(thread_id, "terminal.cleanup", %{})
         HalC2.Orchestration.Effects.enqueue(thread_id, "attachment.cleanup", %{})
+        # A page that asked this thread to work says it no longer is.
+        Task.start(fn -> HalC2.Space.PageAgent.report(thread_id) end)
       end
 
       # Archiving is a terminal detach: the thread's agent loses its tools at
@@ -1501,7 +1503,7 @@ defmodule HalC2.Orchestration do
       Entities.thread(Map.put(input, "threadId", thread_id), at)
       |> Map.merge(workspace_fields(strategy))
       # A delegated task's thread is a subagent of the thread that asked for it.
-      |> Map.merge(Map.take(input, ["lineage"]))
+      |> Map.merge(Map.take(input, ["lineage", "spacePage"]))
       |> then(&if(mark = opts[:plugin], do: Map.put(&1, "plugin", mark), else: &1))
       |> then(&if(titling, do: Map.put(&1, "titleRegeneration", titling), else: &1))
 
@@ -1900,11 +1902,11 @@ defmodule HalC2.Orchestration do
     start_next(thread_id)
 
     # A child that never starts has no turn to report; a task waiting on it ends here.
-    if result == :ok,
-      do:
-        Task.start(fn ->
-          HalC2.Orchestration.Delegation.report(thread_id, run_id, status)
-        end)
+    # Apart, so that one failing cannot lose the other's report.
+    if result == :ok do
+      Task.start(fn -> HalC2.Orchestration.Delegation.report(thread_id, run_id, status) end)
+      Task.start(fn -> HalC2.Space.PageAgent.report(thread_id) end)
+    end
 
     result
   end
@@ -2323,10 +2325,23 @@ defmodule HalC2.Orchestration do
       "provider-thread.rollback" ->
         HalC2.Orchestration.Rollback.run(args["command"])
 
+      # A page's agent keeps working for the continuation a restart promised it
+      # (`HalC2.Space.PageAgent.reconcile/1`), so it hears when that cannot happen: on a
+      # refusal, which is never retried, and on the last try of a crash.
       "provider-runtime.continue" ->
-        case dispatch(args["command"]) do
-          {:ok, _} -> :ok
-          {:error, message} -> {:error, message}
+        try do
+          dispatch(args["command"])
+        catch
+          kind, reason ->
+            unless will_retry, do: HalC2.Space.PageAgent.report(thread_id)
+            :erlang.raise(kind, reason, __STACKTRACE__)
+        else
+          {:ok, _} ->
+            :ok
+
+          {:error, message} ->
+            HalC2.Space.PageAgent.report(thread_id)
+            {:error, message}
         end
 
       "checkpoint.capture" ->
