@@ -706,6 +706,8 @@ defmodule HalC2.Web.Router do
     _, _ -> {:error, 502, "The MC holding this file is unavailable."}
   end
 
+  # `/api/device-hub/*` never reaches this router: `HalC2.Web.Entry` serves it, so a
+  # route under it here would never match.
   match _ do
     send_resp(conn, 404, "not found")
   end
