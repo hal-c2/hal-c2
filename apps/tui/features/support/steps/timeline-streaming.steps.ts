@@ -6,11 +6,12 @@ import * as DateTime from "effect/DateTime";
 import { step } from "../../steps.ts";
 import { advance, pressKey, snapshot } from "../world.ts";
 import { project } from "../fakeClient.ts";
-import { chooseCommand, palette } from "../threadUi.ts";
+import { chooseCommand, palette, statusText } from "../threadUi.ts";
 import { clickText, hostState, plain, recorded, settle } from "../threadWorld.ts";
 import {
   addCommand,
   addItem,
+  currentRun,
   itemsOf,
   lastOf,
   linesOf,
@@ -22,6 +23,7 @@ import {
   startRun,
   sync,
   turns,
+  type ShownLine,
   type TurnWorld,
 } from "../turnWorld.ts";
 
@@ -446,4 +448,74 @@ step("the code block offers no run action", async (ctx: StreamWorld) => {
   const answer = messageItem(ctx, "answer");
   expect(answer.lines.some((line) => line.right && plain(line.right.text) === "▶ Run")).toBe(false);
   expect(await snapshot(ctx)).not.toContain("▶ Run");
+});
+
+// --- message times and actions ---------------------------------------------------------
+
+const COPY = "⧉ Copy";
+
+/** Whether a message's item ends with its time-and-copy row. */
+function showsMeta(ctx: StreamWorld, id: string): boolean {
+  return messageItem(ctx, id).lines.some((line) => {
+    const parts = (line as { parts?: ReadonlyArray<{ text: ShownLine["text"] }> | null }).parts;
+    return parts?.some((part) => plain(part.text) === COPY) ?? false;
+  });
+}
+
+step("the agent commented, ran a tool call and then answered", async (ctx: StreamWorld) => {
+  await startRun(ctx);
+  await addItem(ctx, "assistant_message", { id: "comment", text: "Looking at the cart." });
+  await addCommand(ctx, 1);
+  await addItem(ctx, "assistant_message", { id: "answer", text: ANSWER });
+});
+
+step("neither message shows its time and actions while the agent works", (ctx: StreamWorld) => {
+  expect(showsMeta(ctx, "comment")).toBe(false);
+  expect(showsMeta(ctx, "answer")).toBe(false);
+});
+
+step("only the answer shows its time and actions", async (ctx: StreamWorld) => {
+  expect(showsMeta(ctx, "comment")).toBe(false);
+  expect(showsMeta(ctx, "answer")).toBe(true);
+  const screen = await snapshot(ctx);
+  expect(screen.split(COPY).length - 1).toBe(1);
+});
+
+step("this device's {string} is set to {string}", async (ctx: StreamWorld, _key, format) => {
+  await turns(ctx);
+  ctx.host!.dispatch("timestampFormat.set", { format });
+  await settle();
+});
+
+const SENT_ON: Record<string, (now: Date) => Date> = {
+  today: (now) => now,
+  yesterday: (now) => new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1),
+  "on September 20": (now) => new Date(now.getFullYear(), 8, 20),
+  "on December 30, 2025": () => new Date(2025, 11, 30),
+};
+
+step(
+  /^the user sent a message (today|yesterday|on September 20|on December 30, 2025) at 9:05 in the morning$/,
+  async (ctx: StreamWorld, when: string) => {
+    const day = SENT_ON[when]!(new Date(NOW_MS));
+    const sentMs = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 5).getTime();
+    await startRun(ctx, 0, "running", sentMs);
+    await settleRun(ctx, "completed", 30);
+  },
+);
+
+const stampOf = (ctx: StreamWorld) => {
+  const item = shownItems(ctx).find((entry) => entry.key === `stamp:message:${currentRun(ctx)}`);
+  if (!item) throw new Error("the user's message shows no time");
+  return item;
+};
+
+step("the message is stamped {string}", async (ctx: StreamWorld, stamp: string) => {
+  expect(linesOf(stampOf(ctx))).toEqual([stamp]);
+  expect(await snapshot(ctx)).toContain(stamp);
+});
+
+step("its full time reads {string}", async (ctx: StreamWorld, full: string) => {
+  await clickText(ctx, linesOf(stampOf(ctx))[0]!);
+  expect(statusText(ctx)).toBe(full);
 });

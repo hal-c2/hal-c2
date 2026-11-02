@@ -149,11 +149,13 @@ Feature: Reading a thread in the terminal
                                                    ╭───────────────╮
                                                    │ Fix the build │
                                                    ╰───────────────╯
+                                                              <time>
 
       $ Ran command ✓  bun run build
 
 
       Fixed.
+      ⧉ Copy · <time>
       """
 
   @tui
@@ -178,6 +180,7 @@ Feature: Reading a thread in the terminal
       │ ⌄ Show full    │
       │ message        │
       ╰────────────────╯
+                  <time>
       """
 
   @tui
@@ -193,6 +196,7 @@ Feature: Reading a thread in the terminal
       const answer = 42;
 
       Done.
+      ⧉ Copy · <time>
       """
     And the list markers are bold in the accent colour
 

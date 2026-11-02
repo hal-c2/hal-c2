@@ -60,11 +60,9 @@ const encodeProjection = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2Thr
 function threadRows(ctx: SyncWorld): ThreadRow[] {
   const fixture = ctx.turns!;
   // Agent messages as the MC keeps them: the turn fixture leaves who made them out.
-  fixture.messages = fixture.messages.map((entry) => ({
-    createdBy: "agent",
-    creationSource: "provider",
-    ...entry,
-  }));
+  fixture.messages.forEach((entry, index) => {
+    fixture.messages[index] = { createdBy: "agent", creationSource: "provider", ...entry };
+  });
   const encoded = encodeProjection(projection(ctx)) as unknown as Record<string, unknown>;
   const thread = encoded.thread as Record<string, unknown>;
   const rows: ThreadRow[] = [["thread", String(thread.id), thread]];

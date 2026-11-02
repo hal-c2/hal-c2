@@ -214,7 +214,7 @@ Feature: Streaming the agent's reply
     Given the agent has started a reply and written nothing yet
     Then the reply shows no text and no "(empty response)"
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Only a turn's last reply carries its time and actions
     Given the agent commented, ran a tool call and then answered
     Then neither message shows its time and actions while the agent works
@@ -222,7 +222,7 @@ Feature: Streaming the agent's reply
     And the user opens the folded work
     Then only the answer shows its time and actions
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A message says when it was sent, in the time format the user chose
     Given this device's "timestampFormat" is set to "<format>"
     When the user sent a message today at 9:05 in the morning
@@ -234,7 +234,7 @@ Feature: Streaming the agent's reply
       | 12-hour | 9:05 AM |
       | 24-hour | 09:05   |
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A message from an earlier day also says which day it was sent
     When the user sent a message <when> at 9:05 in the morning
     Then the message is stamped "<stamp>"

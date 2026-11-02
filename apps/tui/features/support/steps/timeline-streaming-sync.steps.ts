@@ -91,7 +91,7 @@ step(
       () => reply(ctx)?.text.includes(`Reply line ${lines}.`) === true,
       "the part of the catch-up that arrived",
     );
-    state.offsetBefore = mc.subs.at(-1)!.sent.at(-1);
+    state.offsetBefore = mc.subs.at(-1)!.sent.at(-1)!;
     state.subsBefore = mc.subs.length;
     mc.drop();
   },
