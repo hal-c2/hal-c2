@@ -16,6 +16,7 @@ defmodule HalC2.Steps.Planning.Planner do
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
+  import ExUnit.Callbacks, only: [on_exit: 1]
 
   alias HalC2.Steps.Plugins.Fixtures
   alias HalC2.Steps.SourceControl.Shared
@@ -1783,6 +1784,49 @@ defmodule HalC2.Steps.Planning.Planner do
         "stderr" => "HTTP 502: Bad Gateway\n"
       }
     ])
+  end
+
+  step "GitHub never answers a read of the closed \#{int} alone", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["{ ...IssueFields", ~s("number":#{number})],
+        "sleep" => 617
+      }
+    ])
+  end
+
+  step "GitHub never answers a read of \#{int} of {string}",
+       %{args: [number, repository]} = context do
+    World.cli_rules(context, [
+      %{"args" => ["pr view #{number}", repository], "sleep" => 617}
+    ])
+  end
+
+  # The bound is cut to 5 seconds for this look only, which still leaves a healthy read
+  # room on a loaded machine, so the look after it reads as usual.
+  step "the plugin looks at GitHub, giving up on reads that hang", context do
+    Application.put_env(:hal_c2, :planner_read_timeout, 5_000)
+    on_exit(fn -> Application.delete_env(:hal_c2, :planner_read_timeout) end)
+    context = sync!(context)
+    Application.delete_env(:hal_c2, :planner_read_timeout)
+    context
+  end
+
+  step "the plugin reports that GitHub did not answer for \#{int}",
+       %{args: [number]} = context do
+    assert plan!(context)["sync"]["problem"] =~
+             "#{context.repository}##{number}: GitHub did not answer in time."
+
+    context
+  end
+
+  step "the plugin reports that GitHub did not answer for \#{int} of {string}",
+       %{args: [number, repository]} = context do
+    assert plan!(context)["sync"]["problem"] =~
+             "#{repository}##{number}: GitHub did not answer in time."
+
+    context
   end
 
   # Time passes for the planner's copies of the closed issues: the last full read is

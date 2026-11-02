@@ -757,6 +757,16 @@ Feature: Planner
       And the plugin looks at GitHub
       Then "API" is done
 
+    @mc
+    Scenario: A pull request read alone that hangs is given up on and read again at the next look
+      Given "API" is linked to #12 of "acme/web"
+      And GitHub never answers a read of #12 of "acme/web"
+      When the plugin looks at GitHub, giving up on reads that hang
+      Then the plugin reports that GitHub did not answer for #12 of "acme/web"
+      When #12 of "acme/web" is merged
+      And the plugin looks at GitHub
+      Then "API" is done
+
     # No project checks out "acme/other", so its pull request is read through a project on
     # the host its link names.
     @mc
@@ -1006,6 +1016,25 @@ Feature: Planner
       And the planner last read every closed issue alone over a day ago
       And GitHub fails to read the closed #7 alone
       And the plugin looks at GitHub again, with nothing there changed since
+      When the closed #7 is renamed on GitHub to "Rate limiting" with the description "Shipped in 2.4", which GitHub does not count as an update
+      And the plugin looks at GitHub again
+      Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
+      And that look read the closed #7 alone
+
+    # A read GitHub never answers is given up on, so it costs the look that one read.
+    @mc
+    Scenario: A closed issue whose read hangs holds up only itself
+      Given #7's task is in progress
+      And #8's task is in progress
+      And #7 is closed on GitHub
+      And #8 is closed on GitHub
+      And the plugin looks at GitHub
+      And the planner last read every closed issue alone over a day ago
+      And the closed #8 is renamed on GitHub to "Backpressure" with the description "Shipped in 2.5", which GitHub does not count as an update
+      And GitHub never answers a read of the closed #7 alone
+      When the plugin looks at GitHub, giving up on reads that hang
+      Then #8's task is named "Backpressure" with the notes "Shipped in 2.5"
+      And the plugin reports that GitHub did not answer for #7
       When the closed #7 is renamed on GitHub to "Rate limiting" with the description "Shipped in 2.4", which GitHub does not count as an update
       And the plugin looks at GitHub again
       Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
