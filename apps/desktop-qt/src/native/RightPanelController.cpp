@@ -293,6 +293,8 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     if (map.value(QStringLiteral("dock")).toString() == QLatin1String("panel")) {
       moveToPanel(id);
     } else {
+      // `focus`: with the timeline put away (Open in centre).
+      if (m_onThread && map.value(QStringLiteral("focus")).toBool() && panel().tabs.contains(id)) panel().stage.focus = true;
       moveToStage(id, map.value(QStringLiteral("pane"), -1).toInt(), map.value(QStringLiteral("zone"), QStringLiteral("center")).toString());
     }
   } else if (action == QLatin1String("stage.show")) {

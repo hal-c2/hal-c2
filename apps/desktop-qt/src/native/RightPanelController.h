@@ -62,7 +62,7 @@ class ShellStore;
 // `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.rename
 // {id, title}`, `rightPanel.unfloat`, `rightPanel.resize
 // {width?}` (no width: the default), `rightPanel.toggleMaximized` (Open in
-// centre), `rightPanel.dock {id, dock: "stage"|"panel", pane?, zone?}`,
+// centre), `rightPanel.dock {id, dock: "stage"|"panel", pane?, zone?, focus?}`,
 // `stage.show {id}`, `stage.layout {layout}`, `stage.focusPane {pane}`,
 // `stage.toggleFocus`, `stage.resize {width?}`, `stage.dismiss` (every stage
 // tab back to the panel),

@@ -16,6 +16,10 @@ DefaultShell 1.0 DefaultShell.qml
 GitActions 1.0 GitActions.qml
 Notifications 1.0 Notifications.qml
 RightPanel 1.0 RightPanel.qml
+Stage 1.0 Stage.qml
+PanelTabDrag 1.0 PanelTabDrag.qml
+PanelBodySlot 1.0 PanelBodySlot.qml
+PanelBodies 1.0 PanelBodies.qml
 SettingsNav 1.0 SettingsNav.qml
 ShellErrorOverlay 1.0 ShellErrorOverlay.qml
 ConnectionNotice 1.0 ConnectionNotice.qml

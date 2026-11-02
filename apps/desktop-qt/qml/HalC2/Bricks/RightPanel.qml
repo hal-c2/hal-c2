@@ -5,12 +5,13 @@ import QtQuick.Layouts
 import HalC2.Shell
 import "js/panelTabs.js" as PanelTabs
 
-// The right panel beside a thread: tabs from Shell.state.panel (the Panel
-// controller's) and a native body for each kind js/panelTabs.js lists. Its
-// left edge drags to resize it (a double click goes back to the default
-// width); the layout keeps the thread room of its own (`maximumWidth`), shows
-// the panel over the thread where there is none (`resizable` off), or hides
-// the thread for a maximized panel.
+// The right panel beside a thread: the tabs of Shell.state.panel (the Panel
+// controller's) docked here rather than on the stage, each drawn by its
+// kind's body (js/panelTabs.js) borrowed from `bodies`. Its left edge drags to
+// resize it (a double click goes back to the default width); the layout keeps
+// the thread room of its own (`maximumWidth`), or shows the panel over the
+// thread where there is none (`resizable` off). "Open in centre" moves the
+// shown tab to the stage, and a tab dragged from the stage docks back here.
 Rectangle {
     id: panel
 
@@ -19,16 +20,18 @@ Rectangle {
     readonly property bool open: available && model.isOpen
     readonly property string activeId: open ? model.activeId : ""
     readonly property var activeTab: open ? (model.tabs.find(tab => tab.id === activeId) ?? null) : null
-    readonly property bool maximized: open && model.maximized === true
+    // The tabs docked here; the rest are on the stage.
+    readonly property var docked: open ? model.tabs.filter(tab => tab.dock !== "stage") : []
+    // The bodies to show tabs with: the layout's, shared with its stage, or
+    // the panel's own.
+    property PanelBodies bodies: null
+    readonly property PanelBodies pool: bodies ?? (ownBodies.item as PanelBodies)
     // The width the controller keeps, or the one being dragged to.
     property int dragWidth: -1
     readonly property int openWidth: Math.max(minimumWidth, Math.min(dragWidth >= 0 ? dragWidth : (model?.width ?? 540), maximumWidth))
     readonly property int minimumWidth: 360
     // What the layout can give it; set by the layout.
     property real maximumWidth: Infinity
-    // Whether the layout hides the thread for a maximized panel
-    // (`maximized`); only then is filling the window offered.
-    property bool canMaximize: false
     // Whether its left edge drags. A layout showing the panel over the thread
     // gives it a width of its own, which is not the one to remember.
     property bool resizable: true
@@ -116,7 +119,7 @@ Rectangle {
                 readonly property bool overflowing: contentWidth > fullWidth
 
                 function showActive() {
-                    const index = (panel.model?.tabs ?? []).findIndex(entry => entry.id === panel.activeId);
+                    const index = panel.docked.findIndex(entry => entry.id === panel.activeId);
                     if (index < 0)
                         return;
                     positionViewAtIndex(index, ListView.Contain);
@@ -150,7 +153,16 @@ Rectangle {
                 spacing: 2
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                model: panel.open ? panel.model.tabs : []
+                // Scrolled by its buttons and the wheel: a drag moves a tab.
+                interactive: false
+                model: panel.docked
+
+                WheelHandler {
+                    onWheel: event => {
+                        const delta = event.angleDelta.x !== 0 ? event.angleDelta.x : event.angleDelta.y;
+                        tabs.contentX = Math.max(tabs.originX, Math.min(tabs.originX + tabs.contentWidth - tabs.width, tabs.contentX - delta / 2));
+                    }
+                }
 
                 delegate: AbstractButton {
                     id: tab
@@ -175,6 +187,14 @@ Rectangle {
                     background: Rectangle {
                         color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered || tab.visualFocus ? Theme.palette.color("surface", "#141416") : "transparent"
                         radius: 6
+                    }
+
+                    PanelTabDrag {
+                        anchors.fill: parent
+                        bodies: panel.pool
+                        tabId: tab.modelData.id
+                        title: tab.modelData.title
+                        iconName: tab.iconName
                     }
 
                     Row {
@@ -296,6 +316,7 @@ Rectangle {
                 }
             }
 
+            // Moves the shown tab to the stage, with the timeline put away.
             ShellButton {
                 id: maximizeButton
                 objectName: "panelMaximize"
@@ -305,12 +326,16 @@ Rectangle {
                 anchors.top: parent.top
                 width: 36
                 height: 36
-                iconName: panel.maximized ? "minimize-2" : "maximize-2"
+                iconName: "panel-left-open"
                 iconSize: 14
                 iconTint: panel.muted
-                visible: panel.open && panel.canMaximize
-                Accessible.name: panel.maximized ? qsTr("Show the thread beside the panel") : qsTr("Fill the window")
-                onClicked: Shell.dispatch("rightPanel.toggleMaximized")
+                visible: panel.open && panel.activeTab !== null
+                Accessible.name: qsTr("Open in centre")
+                onClicked: Shell.dispatch("rightPanel.dock", {
+                    id: panel.activeId,
+                    dock: "stage",
+                    focus: true
+                })
             }
 
             ShellButton {
@@ -431,41 +456,47 @@ Rectangle {
             }
         }
 
-        Item {
+        // The shown tab's body, kept while another tab shows (PanelBodies).
+        PanelBodySlot {
+            objectName: "panelBodySlot"
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: panel.open
-
-            // A native tab's body is made the first time it shows and kept,
-            // hidden, while another tab shows, so it keeps its scroll and what
-            // it loaded.
-            Repeater {
-                model: Object.keys(PanelTabs.tabs)
-
-                delegate: Loader {
-                    id: nativeBody
-
-                    required property string modelData
-                    readonly property var tab: PanelTabs.tabs[modelData]
-                    readonly property bool shown: panel.activeTab !== null && panel.activeTab.kind === modelData
-
-                    objectName: "panelBody-" + modelData
-                    anchors.fill: parent
-                    active: false
-                    visible: shown
-                    onShownChanged: if (shown)
-                        active = true
-                    Component.onCompleted: {
-                        setSource(Qt.resolvedUrl(tab.brick + ".qml"), {
-                            source: Qt.binding(() => nativeBody.tab.source ? Panel[nativeBody.tab.source] : null)
-                        });
-                        active = shown;
-                    }
-                }
-            }
+            bodies: panel.pool
+            tabId: panel.open ? panel.activeId : ""
         }
     }
 
+    Loader {
+        id: ownBodies
+
+        active: panel.bodies === null
+        sourceComponent: PanelBodies {}
+    }
+
+    // A tab dragged here from the stage docks back in the panel.
+    DropArea {
+        objectName: "panelDrop"
+        anchors.fill: parent
+        keys: ["hal-c2/panel-tab"]
+        enabled: panel.open && panel.pool !== null && panel.pool.dragging.length > 0 && !panel.docked.some(tab => tab.id === panel.pool.dragging)
+        onDropped: drop => {
+            const id = panel.pool.dragging;
+            drop.accept();
+            // After the drag has let go of the tab it moves.
+            Qt.callLater(() => Shell.dispatch("rightPanel.dock", {
+                    id: id,
+                    dock: "panel"
+                }));
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            visible: parent.containsDrag
+            color: Qt.alpha(Theme.palette.color("accent", "#2563eb"), 0.12)
+            border.color: Theme.palette.color("accent", "#2563eb")
+        }
+    }
     // The panel's leading edge, so it reads apart from the thread in themes
     // where `chrome` and `canvas` match.
     Rectangle {
@@ -475,7 +506,7 @@ Rectangle {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 1
-        visible: panel.open && !panel.maximized
+        visible: panel.open
         color: Theme.palette.color("border", "#27272a")
     }
 
@@ -491,7 +522,7 @@ Rectangle {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 6
-        visible: panel.open && !panel.maximized && panel.resizable
+        visible: panel.open && panel.resizable
         cursorShape: Qt.SplitHCursor
         preventStealing: true
         onPressed: mouse => {
