@@ -218,6 +218,17 @@ Item {
         });
     }
 
+    // What can be done with the open page's project file. Only the open page's is
+    // known, so the tree's menus do not offer it.
+    function fileRows(id) {
+        const file = Spaces.page.file ?? {};
+        if (view !== "page" || id !== Spaces.pageId || (file.path ?? "") === "")
+            return [];
+        return (file.missing === true ? [] : [{ id: "showFile", label: qsTr("Show the file"), icon: "file-text" }]).concat([
+            { id: "unlinkFile", label: qsTr("Stop following the file"), icon: "circle-x" }
+        ]);
+    }
+
     // `site`: the open page's site (SpaceController's `page.site`). Of a page only
     // listed nothing is known, so its site is reached by opening it.
     function pageMenu(id, title, parentPageId, site) {
@@ -237,11 +248,15 @@ Item {
             { id: "copy", label: qsTr("Copy as Markdown"), icon: "copy" },
             { id: "history", label: qsTr("History"), icon: "clock" },
             { id: "deck", label: qsTr("Make a deck"), icon: "play" }
-        ].concat(updateRows(id), [
+        ].concat(updateRows(id), fileRows(id), [
             { id: "trash", label: qsTr("Move to trash"), icon: "trash", destructive: true }
         ])), choice => {
             if (choice === "update") {
                 askUpdate();
+            } else if (choice === "showFile") {
+                Shell.dispatch("space.page.showFile", { pageId: id });
+            } else if (choice === "unlinkFile") {
+                Shell.dispatch("space.page.unlinkFile", { pageId: id });
             } else if (choice === "updateRun") {
                 Shell.dispatch("space.page.schedule.runNow", { pageId: id });
             } else if (choice === "updatePause") {
@@ -534,6 +549,11 @@ Item {
             view = "pages";
         }
     }
+    // A page already selected opens too: a file opened again, or one that is the page on show.
+    onAwaitedPageIdChanged: {
+        if (settled && awaitedPageId !== "" && pageId === awaitedPageId)
+            openArrived();
+    }
     onDeckIdChanged: {
         if (!settled)
             return;
@@ -711,6 +731,9 @@ Item {
     SpaceImageDialog {
         id: generate
     }
+
+    // Open while `space.picking` names a project: from the pages' bar or the palette.
+    SpaceFilePicker {}
 
     // On Android the system's picker answers with a content address.
     FileDialog {

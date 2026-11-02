@@ -14,6 +14,10 @@ In the terminal client, browse to the file (or open it in the viewer) and choose
 a Space" from the command palette; inside a Space, press `f` on the list of pages to pick one of a
 project's files.
 
+On the phone, press and hold a file in a thread's Files screen, or a file link in a chat, and choose
+**Open in a Space**; the file viewer has the same button, and a Space's list of pages has one to add
+a page from a project's files. The phone offers this only for projects on the machine it is paired with.
+
 Outside a Space, the file opens in the Space you last had open. Or ask an agent to open the file in
 a Space; it uses the `hal_c2_page_open_file` tool. Opening the same file again, from any Space, goes
 to the page it already is, and brings it back from the trash. A file opened from a thread's worktree

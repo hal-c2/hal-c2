@@ -143,6 +143,38 @@ Item {
             compare(linkSpy.count, 0);
         }
 
+        // A finger has no secondary button: holding a link offers its menu,
+        // where a tap would have opened it.
+        function test_aHeldLinkOffersItsMenu() {
+            Shell.reset();
+            const md = make("See the [guide](docs/guide.md) now.");
+            linkSpy.target = md;
+            linkSpy.clear();
+            const edit = prose(segmentsOf(md)[0]);
+            const rect = edit.positionToRectangle(plain(edit).indexOf("guide") + 2);
+            const y = rect.y + rect.height / 2;
+            const touch = touchEvent(edit);
+            touch.press(0, edit, rect.x + 1, y).commit();
+            tryVerify(() => Shell.dispatchedActions.some(a => a.action === "link.menu"), 3000);
+            touch.release(0, edit, rect.x + 1, y).commit();
+            const menu = Shell.dispatchedActions.find(a => a.action === "link.menu");
+            compare(menu.payload.url, "docs/guide.md");
+            compare(linkSpy.count, 0);
+        }
+
+        function test_aTappedLinkOpens() {
+            Shell.reset();
+            const md = make("See the [guide](docs/guide.md) now.");
+            linkSpy.target = md;
+            linkSpy.clear();
+            const edit = prose(segmentsOf(md)[0]);
+            const rect = edit.positionToRectangle(plain(edit).indexOf("guide") + 2);
+            const y = rect.y + rect.height / 2;
+            touchEvent(edit).press(0, edit, rect.x + 1, y).commit().release(0, edit, rect.x + 1, y).commit();
+            compare(linkSpy.count, 1);
+            verify(!Shell.dispatchedActions.some(a => a.action === "link.menu"));
+        }
+
         // The Files viewer draws a file's task boxes as links to be ticked with
         // a plain click; only a text it marks trusted keeps them.
         readonly property string checklist: "- [☐](task:0) Ship cart\n- [☑](task:1) Plan"

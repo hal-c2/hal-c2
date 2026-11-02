@@ -1018,13 +1018,20 @@ Rectangle {
                             else if (kind === "error")
                                 root.tree.retry(path);
                         }
+                        // A held press is a finger's right-click: it opens the menu
+                        // instead of the file.
+                        onPressAndHold: {
+                            if (kind === "file")
+                                menu();
+                        }
+                        function menu() {
+                            entryMenu.path = path;
+                            entryMenu.popup(entry);
+                        }
                         TapHandler {
                             acceptedButtons: Qt.RightButton
                             enabled: entry.kind === "file"
-                            onTapped: {
-                                entryMenu.path = entry.path;
-                                entryMenu.popup(entry);
-                            }
+                            onTapped: entry.menu()
                         }
                         background: Rectangle {
                             color: entry.selected ? Theme.palette.color("sidebarRowSelected", "#25314d") : entry.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"

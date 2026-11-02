@@ -220,6 +220,27 @@ Feature: Project files as Space pages
         ```
         """
 
+    Scenario: A list's nesting, an alert's kind and a rule's spelling the file changes stay in the file
+      When an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nInstall it.\n\n- one\n- two\n\n> [!NOTE]\n> Mind it.\n\n***\n\n* item" and its turn ends
+      And an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nInstall it.\n\n- one\n  - two\n\n> [!TIP]\n> Mind it.\n\n___\n\n> item" and its turn ends
+      And the user changes the block "Install it." to "Install it twice."
+      Then "docs/guide.md" of "shop" reads:
+        """
+        # Guide
+
+        Install it twice.
+
+        - one
+          - two
+
+        > [!TIP]
+        > Mind it.
+
+        ___
+
+        > item
+        """
+
     Scenario: A comment stays on a block the file keeps
       Given the user commented "Which version?" on the block "Install it."
       When an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nInstall it.\n\nThen run it." and its turn ends
@@ -566,7 +587,7 @@ Feature: Project files as Space pages
 
   # The clients: every way in, the indicator and the way out. Each client asks the MC that
   # has the project; none reads or writes the file itself.
-  @shared @backlog-mobile
+  @shared
   Rule: Opening project files from the clients
 
     Background:
@@ -672,7 +693,8 @@ Feature: Project files as Space pages
 
     # The TUI's Space pane follows only its own MC's Spaces (#860).
     # The desktop's Space view shows only its own MC's Spaces (#865).
-    @backlog-tui @backlog-desktop
+    # The phone's Space screen follows only its own MC's Spaces (#860).
+    @backlog-tui @backlog-desktop @backlog-mobile
     Scenario: A project on another machine opens its files in that machine's Space
       Given the project "shop" is on another connected environment
       When the user opens "docs/guide.md" in a Space from its menu

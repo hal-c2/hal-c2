@@ -2,7 +2,8 @@ defmodule HalC2.SpacePropTest do
   @moduledoc """
   A state machine over the pages, blocks and comments of one Space (`HalC2.Space`):
   pages made, moved, trashed, restored and deleted for good; blocks inserted, moved,
-  ticked, edited (a heading's level too, and a table's cells) and deleted; comments added, resolved and reopened; versions of a page
+  ticked, edited (a heading's level, a list item's depth, a callout's alert and a table's
+  cells too) and deleted; comments added, resolved and reopened; versions of a page
   remembered and restored; decks made blank or from a page, trashed, restored and deleted;
   slides added, edited, moved and deleted; images added, placed, trashed, restored and
   deleted for good; and the Space's streams restarting, which reads everything back from
@@ -17,8 +18,8 @@ defmodule HalC2.SpacePropTest do
     restored page whose parent is hidden goes to the top of the Space;
   - deleting a page for good takes its subpages, their blocks and comments with it;
   - a page's blocks are in the order inserted and moved, with strictly ordered keys;
-  - an edit of a block's text, tick and heading level together is refused whole, or
-    changes them all; a table's text is its Markdown, written again when a cell changes;
+  - an edit of a block's text, tick, heading level, list depth and alert together is
+    refused whole, or changes them all; a divider has no text; a table's text is its Markdown, written again when a cell changes;
   - a chart is drawn in a new block or in place of a chart, and only there: its text
     cannot be edited, and asking again keeps its place and its comments;
   - each command writes one event per entity it changes, and a refusal, a tick to
@@ -122,8 +123,8 @@ defmodule HalC2.SpacePropTest do
   # --- model ----------------------------------------------------------------------
 
   # pages: name => %{parent, trashed, update}, `update` whether it updates itself; order: page => its block names in order;
-  # blocks: name => %{page, kind, checked, text, chart} and a heading's `level` once one is
-  # set; a table is one cell, the block's name until it is edited; comments: name => %{page, block, resolved};
+  # blocks: name => %{page, kind, checked, text, chart} and a heading's `level`, a list
+  # item's `depth` and a callout's `alert` once one is set; a table is one cell, the block's name until it is edited; comments: name => %{page, block, resolved};
   # used: every block name so far, since a restore brings a deleted block back under its
   # own; saves: name => %{page, order, blocks}, the page as it stood when remembered;
   # decks: name => %{title, trashed}; deck_order: deck => its slide names in order;
@@ -196,7 +197,9 @@ defmodule HalC2.SpacePropTest do
                 elements(blocks),
                 oneof([nil, "x", "y"]),
                 oneof([nil, boolean()]),
-                oneof([nil, 1, 3])
+                oneof([nil, 1, 3]),
+                oneof([nil, 0, 1, 2]),
+                oneof([:keep, nil, "note", "warning"])
               ]}},
             {2, {:call, __MODULE__, :edit_table, [elements(blocks), elements(~w(x y))]}},
             {2,
@@ -286,7 +289,9 @@ defmodule HalC2.SpacePropTest do
     end
   end
 
-  defp kind, do: elements(~w(paragraph checklist heading callout table code))
+  defp kind,
+    do: elements(~w(paragraph checklist bullet numbered heading callout divider table code))
+
   defp title, do: elements(~w(T1 T2))
   defp after_block([]), do: oneof([:last, nil])
   defp after_block(blocks), do: oneof([:last, nil, elements(blocks)])
@@ -408,13 +413,53 @@ defmodule HalC2.SpacePropTest do
     {reply, next, Enum.map(List.wrap(writes), &(&1 + followed))}
   end
 
-  # What a site of `page` shows of its blocks.
+  # What a site of `page` shows of its blocks, a list item at the depth it is written at.
   defp view(s, page) do
-    for name <- Map.get(s.order, page, []) do
-      block = s.blocks[name]
+    blocks = Enum.map(Map.get(s.order, page, []), &s.blocks[&1])
+
+    for {block, item} <- Enum.zip(blocks, items(blocks)) do
       kind = if block.kind == "generated", do: "paragraph", else: block.kind
-      {kind, block.text, if(block.kind == "checklist", do: block.checked == true)}
+      depth = if item && item.depth > 0, do: item.depth
+
+      {kind, block.text, if(block.kind == "checklist", do: block.checked == true), depth,
+       block[:alert]}
     end
+  end
+
+  @lists ~w(bullet numbered checklist)
+
+  # Each list item as it is written, under the items open above it (nil for any other
+  # block): no deeper than one under the item above it, numbered on from the item before
+  # it in its list, its text at its parent's.
+  defp items(blocks) do
+    blocks
+    |> Enum.map_reduce([], fn
+      %{kind: kind} = block, open when kind in @lists ->
+        depth = min(block[:depth] || 0, length(open))
+        {closed, parents} = Enum.split_while(open, &(&1.depth >= depth))
+        sibling = List.last(closed)
+        list = if kind == "numbered", do: :numbered, else: :bullet
+        goes_on = sibling != nil and sibling.list == list
+        number = if list == :numbered, do: if(goes_on, do: sibling.number + 1, else: 1)
+        marker = if number, do: "#{number}.", else: "-"
+        indent = if parents == [], do: 0, else: hd(parents).column
+        mark = if kind == "checklist", do: if(block.checked, do: "[x] ", else: "[ ] "), else: ""
+        line = String.duplicate(" ", indent) <> marker <> " " <> mark <> block.text
+
+        item = %{
+          depth: depth,
+          list: list,
+          number: number,
+          column: indent + String.length(marker) + 1,
+          line: line
+        }
+
+        {item, [item | parents]}
+
+      _block, _open ->
+        {nil, []}
+    end)
+    |> elem(0)
   end
 
   # What a command replies, the model after it, and how many events it writes (a list
@@ -492,7 +537,12 @@ defmodule HalC2.SpacePropTest do
           page: page,
           kind: kind,
           checked: kind == "checklist" and checked,
-          text: if(kind == "table", do: table_text(name), else: name),
+          text:
+            case kind do
+              "table" -> table_text(name)
+              "divider" -> ""
+              _ -> name
+            end,
           chart: nil
         }
 
@@ -573,7 +623,7 @@ defmodule HalC2.SpacePropTest do
     end
   end
 
-  defp step(s, :edit_block, [name, text, checked, level]) do
+  defp step(s, :edit_block, [name, text, checked, level, depth, alert]) do
     block = s.blocks[name]
 
     next =
@@ -583,12 +633,19 @@ defmodule HalC2.SpacePropTest do
           checked: if(checked == nil, do: block.checked, else: checked)
       }
       |> then(&if(level, do: Map.put(&1, :level, level), else: &1))
+      |> then(&if(depth in [nil, 0], do: &1, else: Map.put(&1, :depth, depth)))
+      |> then(&if(depth == 0, do: Map.delete(&1, :depth), else: &1))
+      |> then(&if(alert == :keep, do: &1, else: Map.put(&1, :alert, alert)))
+      |> then(&if(&1[:alert] == nil, do: Map.delete(&1, :alert), else: &1))
 
     cond do
       not live?(s, block.page) -> {:trashed, s, 0}
       text != nil and block.kind in ~w(chart generated) -> {:invalid, s, 0}
       # Neither "x" nor "y" is a table's Markdown.
       text != nil and block.kind == "table" -> {:invalid, s, 0}
+      text != nil and block.kind == "divider" -> {:invalid, s, 0}
+      depth != nil and block.kind not in @lists -> {:invalid, s, 0}
+      alert != :keep and block.kind != "callout" -> {:invalid, s, 0}
       checked != nil and block.kind != "checklist" -> {:invalid, s, 0}
       level != nil and block.kind != "heading" -> {:invalid, s, 0}
       next == block -> {:ok, s, 0}
@@ -949,11 +1006,20 @@ defmodule HalC2.SpacePropTest do
        |> Enum.map(fn {text, under} -> {text, lines(under)} end))
   end
 
-  defp lines(blocks), do: Enum.map_join(blocks, "\n", &line/1)
+  defp lines(blocks) do
+    blocks
+    |> Enum.zip(items(blocks))
+    |> Enum.map_join("\n", fn
+      {block, nil} -> line(block)
+      {_block, item} -> item.line
+    end)
+  end
 
-  defp line(%{kind: "checklist", checked: true, text: text}), do: "- [x] " <> text
-  defp line(%{kind: "checklist", text: text}), do: "- [ ] " <> text
+  defp line(%{kind: "callout", alert: alert, text: text}),
+    do: "> [!#{String.upcase(alert)}]\n> " <> text
+
   defp line(%{kind: "callout", text: text}), do: "> " <> text
+  defp line(%{kind: "divider"}), do: "---"
   defp line(%{kind: "image", text: text}), do: "[image: " <> text <> "]"
   defp line(%{kind: "code", text: text}), do: "```\n" <> text <> "\n```"
   defp line(%{text: text}), do: text
@@ -1049,6 +1115,7 @@ defmodule HalC2.SpacePropTest do
 
   def insert_block(name, page, kind, checked, after_id) do
     spec = %{"kind" => kind, "text" => name, "checked" => checked}
+    spec = if kind == "divider", do: Map.delete(spec, "text"), else: spec
     spec = if kind == "table", do: Map.put(spec, "table", %{"rows" => [[name]]}), else: spec
     act(name, &Space.insert_block(&1, id(page), spec, id(after_id)))
   end
@@ -1076,8 +1143,9 @@ defmodule HalC2.SpacePropTest do
   def move_block(name, after_id), do: act(&Space.move_block(&1, id(name), id(after_id)))
   def set_checked(name, checked), do: act(&Space.set_checked(&1, id(name), checked))
 
-  def edit_block(name, text, checked, level) do
-    changes = %{"text" => text, "checked" => checked, "level" => level}
+  def edit_block(name, text, checked, level, depth, alert) do
+    changes = %{"text" => text, "checked" => checked, "level" => level, "depth" => depth}
+    changes = if alert == :keep, do: changes, else: Map.put(changes, "alert", alert)
     act(&Space.edit_block(&1, id(name), changes))
   end
 
@@ -1138,7 +1206,10 @@ defmodule HalC2.SpacePropTest do
       state = Streams.state(stream())
 
       content =
-        &Map.take(&1, ~w(id kind text checked linkedPageId imageId level table chart order))
+        &Map.take(
+          &1,
+          ~w(id kind text checked linkedPageId imageId level table chart depth alert order)
+        )
 
       cond do
         seqs != seqs |> Enum.uniq() |> Enum.sort(:desc) ->
@@ -1281,7 +1352,9 @@ defmodule HalC2.SpacePropTest do
              text: block["text"],
              chart: block["chart"]["title"]
            }
-           |> then(&if(block["level"], do: Map.put(&1, :level, block["level"]), else: &1))}
+           |> then(&if(block["level"], do: Map.put(&1, :level, block["level"]), else: &1))
+           |> then(&if(block["depth"], do: Map.put(&1, :depth, block["depth"]), else: &1))
+           |> then(&if(block["alert"], do: Map.put(&1, :alert, block["alert"]), else: &1))}
         end),
       comments:
         Map.new(StreamState.list(state, "comment"), fn comment ->
@@ -1308,7 +1381,11 @@ defmodule HalC2.SpacePropTest do
           {name.(site["pageId"]),
            %{
              behind: site["behind"],
-             shown: Enum.map(site["snapshot"]["blocks"], &{&1["kind"], &1["text"], &1["checked"]})
+             shown:
+               Enum.map(
+                 site["snapshot"]["blocks"],
+                 &{&1["kind"], &1["text"], &1["checked"], &1["depth"], &1["alert"]}
+               )
            }}
         end),
       images:

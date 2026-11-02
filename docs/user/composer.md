@@ -288,7 +288,7 @@ Android opens a compatible installed file viewer.
 
 ## Mermaid diagrams
 
-On desktop, a `mermaid` code block is drawn as its diagram in replies, on pages in a Space, and in
-Markdown files, and a whole `.mmd` file is drawn in the file viewer. Switch to the source to read or
-copy it. A diagram that can't be drawn shows its source and says why, with the line of the mistake
-when there is one.
+On desktop and mobile, a `mermaid` code block is drawn as its diagram in replies, on pages in a
+Space, and in Markdown files, and a whole `.mmd` file is drawn in the file viewer. Switch to the
+source to read or copy it. A diagram that can't be drawn shows its source and says why, with the
+line of the mistake when there is one.

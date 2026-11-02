@@ -63,8 +63,8 @@ defmodule HalC2.SpaceMarkdownTest do
 
   describe "blocks" do
     test "a form a page does not model is a raw block of its source" do
-      list = "1. one\n2. two"
-      assert [%{"kind" => "raw", "text" => ^list}] = Markdown.blocks(list)
+      html = "<p align=\"center\">one</p>"
+      assert [%{"kind" => "raw", "text" => ^html}] = Markdown.blocks(html)
     end
 
     test "a table is its cells, how its columns align and how wide it was written" do
@@ -203,22 +203,170 @@ defmodule HalC2.SpaceMarkdownTest do
       assert kinds("Setext\n===") == ["raw"]
     end
 
-    test "a task list is checklist items; a list with anything else is raw" do
+    test "a task list is checklist items, beside other items or under them" do
       assert [
                %{"kind" => "checklist", "checked" => true, "text" => "MC"},
                %{"kind" => "checklist", "checked" => false, "text" => "QML"}
              ] = Markdown.blocks("- [x] MC\n- [ ] QML")
 
-      assert kinds("- [x] MC\n- QML") == ["raw"]
+      assert kinds("- [x] MC\n- QML") == ["checklist", "bullet"]
+      assert [_, %{"kind" => "checklist", "depth" => 1}] = Markdown.blocks("1. MC\n   - [ ] QML")
       assert kinds("- [X] MC") == ["raw"]
+      assert kinds("* [ ] MC") == ["raw"]
+    end
+
+    test "each list item is a block of its kind, depth, marker and start" do
+      assert [
+               %{"kind" => "bullet", "text" => "a"} = a,
+               %{"kind" => "numbered", "depth" => 1, "start" => 3, "marker" => ")"},
+               %{"kind" => "numbered", "depth" => 1, "text" => "c"} = c,
+               %{"kind" => "bullet", "depth" => 2, "indent" => 7, "marker" => "*"}
+             ] = Markdown.blocks("- a\n\n  3) b\n  4) c\n       * d")
+
+      refute Map.has_key?(a, "depth")
+      refute Map.has_key?(c, "start")
+    end
+
+    test "an item's text runs on in the lines under it, blank lines and code too" do
+      assert [%{"text" => "a\nmore\n\n```\n- x\n```"}, %{"text" => "b"}] =
+               Markdown.blocks("- a\n  more\n\n  ```\n  - x\n  ```\n- b")
+    end
+
+    test "a list keeps how it was written, or is raw" do
+      for written <- [
+            "* a\n* b\n\n+ c",
+            "1. a\n2. b\n\n3. c",
+            "- a\n    - b\n- c",
+            "-\n- b",
+            "- a\n---\n- b",
+            "- a\n\n  3. b",
+            "- a\n-\n- c"
+          ] do
+        assert round_trip(written) == written <> "\n"
+        refute "raw" in kinds(written), written
+      end
+
+      for written <- [
+            "- a\nlazy",
+            "1. a\n3. b",
+            "- a\n  - b\n  c",
+            "- a\n2. b",
+            "-\ta",
+            "- a\n\t- b",
+            "-\n  a",
+            "1. a\n   - b\n\n   more a\n2. c",
+            "- a\n  3. b",
+            "- a\n*"
+          ] do
+        assert round_trip(written) == written <> "\n"
+        assert kinds(written) == ["raw"], written
+      end
+    end
+
+    test "a list item is numbered after the one before it in its list" do
+      blocks = [
+        %{"kind" => "numbered", "text" => "a", "start" => 7},
+        %{"kind" => "numbered", "text" => "b"},
+        %{"kind" => "bullet", "text" => "c", "depth" => 1},
+        %{"kind" => "numbered", "text" => "d"},
+        %{"kind" => "numbered", "text" => "e", "marker" => ")"},
+        %{"kind" => "paragraph", "text" => "f"},
+        %{"kind" => "numbered", "text" => "g", "depth" => 3}
+      ]
+
+      assert Markdown.document(blocks, &none/1) ==
+               "7. a\n8. b\n   - c\n9. d\n1) e\n\nf\n\n1. g\n"
+    end
+
+    test "a list that would read as an item's text is written a blank line under it" do
+      a = %{"kind" => "bullet", "text" => "a"}
+
+      for {item, written} <- [
+            {%{"kind" => "numbered", "text" => "b", "start" => 3, "depth" => 1},
+             "- a\n\n  3. b\n"},
+            {%{"kind" => "bullet", "text" => "", "marker" => "*"}, "- a\n\n*\n"},
+            {%{"kind" => "numbered", "text" => "b", "depth" => 1}, "- a\n  1. b\n"},
+            {%{"kind" => "bullet", "text" => ""}, "- a\n-\n"}
+          ] do
+        assert Markdown.document([a, item], &none/1) == written
+        assert round_trip(written) == written
+      end
+
+      # The heading between them deleted, the second list keeps its gap of no blank line.
+      [item, _heading, third] = Markdown.blocks("- item\n# Title\n3) third")
+      written = Markdown.document([item, third], &none/1)
+      assert written == "- item\n\n3) third\n"
+      assert kinds(written) == ["bullet", "numbered"]
+
+      # A nested item's indent reads so only under its parent: alone it would be code, and
+      # the paragraph under it would seem apart.
+      [item, deeper, _heading, text] = Markdown.blocks("- item\n    1. deeper\n# Title\nText")
+      written = Markdown.document([item, deeper, text], &none/1)
+      assert written == "- item\n    1. deeper\n\nText\n"
+      assert kinds(written) == ["bullet", "numbered", "paragraph"]
     end
 
     test "a quote is a callout only when written as one would be" do
-      assert [%{"kind" => "callout", "text" => "Mind\nthe trash"}] =
+      assert [%{"kind" => "callout", "text" => "Mind\nthe trash"} = callout] =
                Markdown.blocks("> Mind\n> the trash")
 
+      refute Map.has_key?(callout, "alert")
       assert kinds(">lazy") == ["raw"]
-      assert kinds("> [!NOTE]\n> Alerts are quotes for now.") == ["callout"]
+    end
+
+    test "a quote keeps its blank lines written `> `, and a line's break of two spaces" do
+      assert [%{"text" => "Mind\n\nthe trash", "marker" => "> "}] =
+               Markdown.blocks("> Mind\n> \n> the trash")
+
+      assert [%{"text" => "Mind\n\nthe trash"} = plain] =
+               Markdown.blocks("> Mind\n>\n> the trash")
+
+      refute Map.has_key?(plain, "marker")
+      assert [%{"text" => "Mind  \nthe trash"}] = Markdown.blocks("> Mind  \n> the trash")
+
+      for written <- ["> Mind\n> \n> the trash", "> [!NOTE]\n> \n> Mind", "> Mind  \n> the trash"] do
+        assert round_trip(written) == written <> "\n"
+      end
+
+      assert kinds("> a\n>\n> b\n> \n> c") == ["raw"]
+    end
+
+    test "a GitHub alert is a callout of its kind" do
+      for alert <- Markdown.alerts() do
+        written = "> [!#{String.upcase(alert)}]\n> Mind\n> the trash"
+
+        assert [%{"kind" => "callout", "alert" => ^alert, "text" => "Mind\nthe trash"}] =
+                 Markdown.blocks(written)
+
+        assert round_trip(written) == written <> "\n"
+      end
+
+      assert [%{"text" => "[!TIP]"} = tip] = Markdown.blocks("> [!TIP]")
+      refute Map.has_key?(tip, "alert")
+      assert [%{"text" => "[!note]\nx"} = lower] = Markdown.blocks("> [!note]\n> x")
+      refute Map.has_key?(lower, "alert")
+    end
+
+    test "a rule is a divider that keeps how it was written; one with spaces around is raw" do
+      assert [_, %{"kind" => "divider"} = divider, _] = Markdown.blocks("a\n\n---\n\nb")
+      refute Map.has_key?(divider, "marker")
+
+      for rule <- ["***", "___", "- - -", "----", "* * *"] do
+        assert [_, %{"kind" => "divider", "marker" => ^rule}, _] =
+                 Markdown.blocks("a\n\n#{rule}\n\nb")
+
+        assert round_trip("a\n\n#{rule}\n\nb") == "a\n\n#{rule}\n\nb\n"
+      end
+
+      for rule <- [" ---", "***  ", "*\t*\t*"] do
+        assert kinds("a\n\n#{rule}\n\nb") == ["paragraph", "raw", "paragraph"], rule
+      end
+
+      assert kinds("+ a\n\n\n* * *") == ["bullet", "divider"]
+      assert round_trip("+ a\n\n\n* * *") == "+ a\n\n\n* * *\n"
+      assert kinds("a\n***") == ["paragraph", "divider"]
+      assert round_trip("a\n***") == "a\n***\n"
+      assert Markdown.document([%{"kind" => "divider", "text" => ""}], &none/1) == "---\n"
     end
 
     test "blank lines that are not the usual ones are the block's gap" do
