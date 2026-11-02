@@ -11,6 +11,8 @@ import HalC2.Bricks
 // by its box, a link opens its page and an image shows above its caption. Moving,
 // deleting and commenting are in the menu at its end, where a desktop's hover would
 // have them. A chart is not written in: it is drawn, and asked for again from the menu.
+// A raw block is Markdown the page keeps as written: shown and edited as its source,
+// in a fixed-width face, line for line, scrolled sideways rather than wrapped.
 Rectangle {
     id: row
 
@@ -35,6 +37,9 @@ Rectangle {
     readonly property string blockId: model.id
     // What a chart block draws; empty on the others.
     readonly property var chart: model.chart ?? ({})
+    // A heading's level, 1 to 6.
+    readonly property int level: model.level ?? 2
+    readonly property bool raw: kind === "raw"
     readonly property bool editing: editor.activeFocus
 
     signal menuRequested
@@ -104,34 +109,60 @@ Rectangle {
                 }
             }
 
-            TextEdit {
-                id: editor
+            // A raw block's lines keep their length: it scrolls sideways, the others wrap.
+            Flickable {
+                id: scroller
 
-                objectName: "spaceBlockEditor:" + row.text
                 Layout.fillWidth: true
+                Layout.preferredHeight: editor.height
                 visible: row.kind !== "subpage_link" && row.kind !== "chart" && row.kind !== "generated"
-                readOnly: row.readOnly
-                wrapMode: TextEdit.Wrap
-                color: Theme.palette.color("text", "#e4e4e7")
-                selectionColor: Theme.palette.color("accent", "#2563eb")
-                opacity: row.kind === "checklist" && row.checked ? 0.6 : 1
-                font.pixelSize: Math.round((row.kind === "heading" ? 20 : 15) * Theme.fontScale)
-                font.weight: row.kind === "heading" ? Font.DemiBold : Font.Normal
-                font.strikeout: row.kind === "checklist" && row.checked
-                Accessible.name: qsTr("Block text")
-                Component.onCompleted: text = row.text
-                onActiveFocusChanged: {
-                    if (activeFocus)
-                        return;
-                    row.commit();
-                    text = row.text;
-                }
-                // A heading or a checklist item is one line.
-                Keys.onReturnPressed: event => {
-                    if (row.kind === "heading" || row.kind === "checklist")
-                        editor.focus = false;
-                    else
-                        event.accepted = false;
+                contentWidth: editor.width
+                contentHeight: editor.height
+                flickableDirection: Flickable.HorizontalFlick
+                boundsBehavior: Flickable.StopAtBounds
+                interactive: contentWidth > width
+                clip: row.raw
+
+                TextEdit {
+                    id: editor
+
+                    objectName: "spaceBlockEditor:" + row.text
+                    width: row.raw ? Math.max(scroller.width, implicitWidth) : scroller.width
+                    readOnly: row.readOnly
+                    textFormat: TextEdit.PlainText
+                    wrapMode: row.raw ? TextEdit.NoWrap : TextEdit.Wrap
+                    color: Theme.palette.color("text", "#e4e4e7")
+                    selectionColor: Theme.palette.color("accent", "#2563eb")
+                    opacity: row.kind === "checklist" && row.checked ? 0.6 : 1
+                    font.family: row.raw ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Application.font.family
+                    // A second-level heading is the usual one; a first is larger and the rest step down.
+                    font.pixelSize: Math.round((row.kind === "heading" ? [24, 20, 18, 17, 16, 15][Math.min(Math.max(row.level, 1), 6) - 1] : row.raw ? 13 : 15) * Theme.fontScale)
+                    font.weight: row.kind === "heading" ? Font.DemiBold : Font.Normal
+                    font.strikeout: row.kind === "checklist" && row.checked
+                    Accessible.name: qsTr("Block text")
+                    Component.onCompleted: text = row.text
+                    onActiveFocusChanged: {
+                        if (activeFocus)
+                            return;
+                        row.commit();
+                        text = row.text;
+                    }
+                    // Typing in raw Markdown past the edge brings the cursor back into view.
+                    onCursorRectangleChanged: {
+                        if (!row.raw || !activeFocus)
+                            return;
+                        if (cursorRectangle.x < scroller.contentX)
+                            scroller.contentX = cursorRectangle.x;
+                        else if (cursorRectangle.x + cursorRectangle.width > scroller.contentX + scroller.width)
+                            scroller.contentX = cursorRectangle.x + cursorRectangle.width - scroller.width;
+                    }
+                    // A heading or a checklist item is one line.
+                    Keys.onReturnPressed: event => {
+                        if (row.kind === "heading" || row.kind === "checklist")
+                            editor.focus = false;
+                        else
+                            event.accepted = false;
+                    }
                 }
             }
 

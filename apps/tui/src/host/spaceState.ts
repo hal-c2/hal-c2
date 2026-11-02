@@ -8,9 +8,11 @@
 // RPCs. A page's history (h) is the exception: it is not on a stream, so it is asked
 // for while it is open, again when the Space's stream moves. The SpaceView brick
 // paints `space` and dispatches `space.*`. A chart block draws as text (`spaceChart.ts`)
-// and is asked for in words, and a raw block that is one Mermaid fence as the MC drew
-// it in characters (`mermaidDiagrams.ts`); an entry taller than the pane, as a chart
-// can be, scrolls through itself before the selection moves on.
+// and is asked for in words; Markdown a page keeps as written (a `raw` block) shows as
+// its source, line for line, unless it is one Mermaid fence, which shows as the MC drew
+// it in characters (`mermaidDiagrams.ts`); a heading carries its level's `#` marks. An
+// entry taller than the pane, as a chart can be, scrolls through itself before the
+// selection moves on.
 import * as NodePath from "node:path";
 
 import {
@@ -56,14 +58,7 @@ import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
 import { chartData, chartLines } from "./spaceChart.ts";
 import { createMermaidDiagrams, type MermaidDiagrams } from "./mermaidDiagrams.ts";
-import {
-  chunk,
-  mermaidFenceSource,
-  mermaidLines,
-  plainText,
-  styled,
-  type StyledText,
-} from "./styledText.ts";
+import { chunk, mermaidFenceSource, mermaidLines, styled, type StyledText } from "./styledText.ts";
 
 /** Rows the pane's border and header take. */
 export const SPACE_CHROME_ROWS = 3;
@@ -231,7 +226,10 @@ function when(iso: string): string {
 
 const UNTITLED = "(untitled)";
 
-/** A slide's body for the one-line field: a line break is `\n`, a backslash `\\`, all else as written. */
+/**
+ * A slide's body, or a raw block's Markdown, for the one-line field: a line break is
+ * `\n`, a backslash `\\`, all else as written.
+ */
 const bodyToField = (body: string) => body.replaceAll("\\", "\\\\").replaceAll("\n", "\\n");
 
 /** What `bodyToField` wrote, or typed: a backslash before anything else stays a backslash. */
@@ -241,6 +239,17 @@ const bodyFromField = (text: string) =>
 export const SITE_BEHIND_HINT = "Edited since it was published · p publishes again";
 export const SITE_LOCAL_ONLY_HINT =
   "Only this machine can open this link · P publishes over Tailscale";
+
+/** What sets a raw block's source apart from the page's own blocks. */
+const RAW_GUTTER = "│ ";
+
+/** A source line with its tabs as spaces to the next stop of four, as Markdown reads them. */
+const expandTabs = (line: string) => {
+  const [first = "", ...rest] = line.split("\t");
+  let out = first;
+  for (const part of rest) out += `${" ".repeat(4 - (Bun.stringWidth(out) % 4))}${part}`;
+  return out;
+};
 
 const BLOCK_KINDS: ReadonlyArray<{ readonly kind: SpaceBlockKind; readonly label: string }> = [
   { kind: "paragraph", label: "Paragraph" },
@@ -572,28 +581,34 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   /** A raw block that is one Mermaid fence: drawn in characters by the MC, or its source. */
   const diagramRows = (block: SpaceBlock, source: string): TuiSpaceRow[] => {
     const key = `block:${block.id}`;
-    const active = selected.page === key;
+    const active = selected[view] === key;
     const bg = active ? { bg: palette.selectedBg } : {};
     const room = width() - 2;
     const agent = agentOf(block);
     const { lines } = mermaidLines(source, diagrams.get(source), palette, room);
     return lines.map((line, index) => {
-      const lead = index === 0 ? marker(active) : "  ";
-      const by = index === 0 && agent ? `  · ${agent}` : "";
-      const chunks = [
-        chunk(lead, { fg: palette.dim, ...bg }),
-        ...line.chunks.map((part) => ({ ...part, ...bg })),
-        ...(by === "" ? [] : [chunk(by, { fg: palette.faint, ...bg })]),
-      ];
+      const first = index === 0;
+      const lead = first ? marker(active) : "  ";
+      const by = index === lines.length - 1 && agent ? `  · ${agent}` : "";
+      // A drawing fits the pane; a line of source or a reason is cut to it, as raw text is.
+      const parts =
+        line.chunks.length === 1
+          ? [{ ...line.chunks[0]!, text: clip(expandTabs(line.chunks[0]!.text), room) }]
+          : line.chunks;
+      const text = parts.map((part) => part.text).join("");
       return {
         key,
         kind: "block",
-        text: `${lead}${plainText(line)}${by}`,
-        line: { chunks },
+        text: `${lead}${text}${by}`,
+        line: styled(
+          chunk(lead, { fg: palette.dim, ...bg }),
+          ...parts.map((part) => ({ ...part, ...bg })),
+          by !== "" && chunk(by, { fg: palette.faint, ...bg }),
+        ),
         selected: active,
         blockKind: block.kind,
-        first: index === 0,
-      };
+        first,
+      } satisfies TuiSpaceRow;
     });
   };
 
@@ -610,25 +625,62 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   const imageText = (image: SpaceImage) =>
     image.prompt ? `${image.name}  · ${image.prompt}` : image.name;
 
+  /**
+   * Markdown the page keeps as written: a row per source line behind a gutter, with
+   * its leading spaces and never wrapped, so a table or code lines up as in the file.
+   * A line wider than the pane is cut short; the block's text stays whole.
+   */
+  const rawRows = (block: SpaceBlock): TuiSpaceRow[] => {
+    const key = `block:${block.id}`;
+    const active = selected[view] === key;
+    const bg = active ? { bg: palette.selectedBg } : {};
+    const agent = agentOf(block);
+    const room = width() - 2 - Bun.stringWidth(RAW_GUTTER);
+    const lines = block.text.split("\n").map(expandTabs);
+    return lines.map((source, index) => {
+      const first = index === 0;
+      const lead = `${first ? marker(active) : "  "}${RAW_GUTTER}`;
+      const text = clip(source, room);
+      const by = index === lines.length - 1 && agent ? `  · ${agent}` : "";
+      return {
+        key,
+        kind: "block",
+        text: `${lead}${text}${by}`,
+        line: styled(
+          chunk(lead, { fg: palette.faint, ...bg }),
+          chunk(text === "" ? " " : text, { fg: palette.text, ...bg }),
+          by !== "" && chunk(by, { fg: palette.faint, ...bg }),
+        ),
+        selected: active,
+        blockKind: block.kind,
+        first,
+      } satisfies TuiSpaceRow;
+    });
+  };
+
   const blockRows = (block: SpaceBlock): TuiSpaceRow[] => {
     // A chart this client cannot read shows what it says of itself, as any block does.
     const chart = block.kind === "chart" ? chartData(block.chart) : null;
     if (chart) return chartRows(block, chart);
     const diagram = block.kind === "raw" ? mermaidFenceSource(block.text) : null;
     if (diagram !== null) return diagramRows(block, diagram);
+    if (block.kind === "raw") return rawRows(block);
     const key = `block:${block.id}`;
     const active = selected[view] === key;
     const linked = block.kind === "subpage_link" ? pageById(block.linkedPageId) : undefined;
+    const level = block.kind === "heading" ? (block.level ?? 2) : 0;
     const prefix =
-      block.kind === "checklist"
-        ? block.checked
-          ? "[x] "
-          : "[ ] "
-        : block.kind === "callout"
-          ? "▌ "
-          : block.kind === "subpage_link"
-            ? "↳ "
-            : "";
+      block.kind === "heading"
+        ? `${"#".repeat(level)} `
+        : block.kind === "checklist"
+          ? block.checked
+            ? "[x] "
+            : "[ ] "
+          : block.kind === "callout"
+            ? "▌ "
+            : block.kind === "subpage_link"
+              ? "↳ "
+              : "";
     const body =
       block.kind === "subpage_link"
         ? (linked?.title ?? (block.text || "(a deleted page)"))
@@ -638,14 +690,21 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const agent = block.kind === "generated" ? "written by its update" : agentOf(block);
     const room = width() - 2 - Bun.stringWidth(prefix);
     const lines = wrapWords(body === "" ? " " : body, room);
+    // A terminal has one size of type, so a heading's weight steps down with its level.
     const fg =
-      block.kind === "heading" || block.kind === "subpage_link"
-        ? palette.accent
-        : block.kind === "callout"
-          ? palette.warning
-          : (block.kind === "checklist" && block.checked) || block.kind === "image"
-            ? palette.dim
-            : palette.text;
+      block.kind === "heading"
+        ? level <= 2
+          ? palette.accent
+          : level <= 4
+            ? palette.text
+            : palette.dim
+        : block.kind === "subpage_link"
+          ? palette.accent
+          : block.kind === "callout"
+            ? palette.warning
+            : (block.kind === "checklist" && block.checked) || block.kind === "image"
+              ? palette.dim
+              : palette.text;
     const bg = active ? { bg: palette.selectedBg } : {};
     return lines.map((text, index) => {
       const first = index === 0;
@@ -660,7 +719,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         text: `${lead}${text}${by}`,
         line: styled(
           chunk(lead, { fg: palette.dim, ...bg }),
-          chunk(text, { fg, bold: block.kind === "heading", ...bg }),
+          chunk(text, { fg, bold: block.kind === "heading", underline: level === 1, ...bg }),
           by !== "" && chunk(by, { fg: palette.faint, ...bg }),
         ),
         selected: active,
@@ -1910,6 +1969,25 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       }
       if (block?.kind === "chart") {
         visualize();
+        return;
+      }
+      if (block?.kind === "raw") {
+        // As written, spaces and all: a source line's indent is part of its Markdown.
+        const source = bodyToField(block.text);
+        options.ask({
+          label: "edit Markdown, \\n for a new line",
+          value: source,
+          untrimmed: true,
+          onSubmit: (text) => {
+            if (text !== source) {
+              void send(WS_METHODS.spaceBlockUpdate, {
+                spaceId: id,
+                blockId: entry.id,
+                text: bodyFromField(text),
+              });
+            }
+          },
+        });
         return;
       }
       options.ask({
