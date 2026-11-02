@@ -1017,6 +1017,54 @@ defmodule HalC2.PlannerTest do
       assert took.(synced)["misplaced"] == %{}
     end
 
+    test "an issue a correction put in the milestone of its task leaves when the task relinks" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      milestone = fn after_, synced ->
+        %{
+          "id" => "ms",
+          "title" => "Launch",
+          "due" => nil,
+          "after" => after_,
+          "projectId" => "p",
+          "milestone" => %{"repository" => @repo, "number" => 3},
+          "synced" => synced
+        }
+      end
+
+      # GitHub refused the milestone's push, so it has the task under #7, and took another
+      # milestone's correction, which put the task's #8 in it. Its push will only ask #7 out.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(7)}
+      }
+
+      before = %{
+        "ms" => milestone.(["t"], synced),
+        "t" => task(Map.put(issue.(8), "milestone", 3))
+      }
+
+      items = %{"ms" => before["ms"], "t" => task(issue.(9))}
+      marks = [%{"task" => "t", "issue" => issue.(8)}]
+      assert Sync.left(before, items) == %{"ms" => marks}
+
+      synced = Sync.left_behind(synced, marks)
+
+      asked =
+        for {"update", %{"number" => n, "milestone" => to}, _took} <-
+              Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects),
+            do: {n, to}
+
+      assert Enum.sort(asked) == [{7, nil}, {8, nil}, {9, 3}]
+
+      # A milestone GitHub has the task in under the issue it leaves asks by itself.
+      had_it = milestone.(["t"], %{synced | "refs" => %{"t" => issue.(8)}})
+      assert Sync.left(%{before | "ms" => had_it}, %{items | "ms" => had_it}) == %{}
+      assert Sync.left(%{before | "ms" => milestone.(["t"], nil)}, items) == %{}
+    end
+
     test "keeps a mark per issue, so a task that left two issues behind loses neither" do
       issue = fn n -> %{"repository" => @repo, "number" => n} end
       op = fn n -> {"t", {"update", issue.(n), nil}} end
