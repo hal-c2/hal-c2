@@ -361,7 +361,7 @@ Feature: Threads that work on or link pull requests
     When the user links "acme/shop" pull request 42 and "acme/api" pull request 7 to "Tax work"
     Then "Tax work" lists both pull requests
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: Each linked pull request names its repository, even when two share a number
     Given "Tax work" links pull request 42 of "acme/shop" and pull request 42 of "acme/api"
     When the user looks at the thread's linked pull requests
@@ -587,7 +587,7 @@ Feature: Threads that work on or link pull requests
     Then the user is told pull request 42 could not be linked
     And "Tax work" lists no pull requests
 
-  @backlog @desktop
+  @desktop
   Scenario: The link dialog asks for a reference before it links
     Given the user is linking a pull request to "Tax work"
     When the user types "tax" as the pull request to link
@@ -596,21 +596,21 @@ Feature: Threads that work on or link pull requests
     When the user clears the pull request to link
     Then the user is told "Paste a pull request URL or enter 123 / #123."
 
-  @backlog @desktop
+  @desktop
   Scenario: A bare number needs the thread's own project to be understood
     Given "Tax work" is not in a project
     When the user links "42" to "Tax work"
     Then the user is told "Paste a full URL to link a pull request from another repository."
     And the pull request cannot be linked
 
-  @backlog @desktop
+  @desktop
   Scenario: A bare number on a host with no pull request address
     Given the project of "Tax work" is on a host whose pull request addresses are not known
     When the user links "42" to "Tax work"
     Then the user is told "Paste a full URL; this project's host has no known pull request URL."
     And the pull request cannot be linked
 
-  @backlog @desktop
+  @desktop
   Scenario: Linking shows it is working and says why it failed
     Given the MC takes a while to link pull requests to "Tax work"
     When the user links pull request 42 to "Tax work"
@@ -619,7 +619,7 @@ Feature: Threads that work on or link pull requests
     When the user links pull request 42 to "Tax work" again
     Then the link dialog says the pull request could not be linked and stays open
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A linked pull request says how it came to be linked
     Given pull request 42 was <how> to "Tax work"
     When the user opens the pull requests of "Tax work"
@@ -633,66 +633,66 @@ Feature: Threads that work on or link pull requests
       | found in the stack of another layer  | Found in the stack        |
       | dismissed from the stack             | Dismissed                 |
 
-  @backlog @desktop
+  @desktop
   Scenario: A stack layer is dismissed from the thread rather than unlinked
     Given pull request 43 is a layer found in the stack of "Tax work"
     When the user opens the actions of pull request 43 in "Tax work"
     Then the action is "Dismiss from thread"
     And a pull request the user linked is offered "Unlink from thread" instead
 
-  @backlog @desktop
+  @desktop
   Scenario: A stack the thread's pull request belongs to says what merging does
     Given pull request 42 is a layer of a GitHub stack of 3
     When the user opens the pull requests of "Tax work"
     Then the user is told "GitHub stack of 3: merging a layer lands the ones below it."
 
-  @backlog @desktop
+  @desktop
   Scenario: Pull requests chained only by their base branches say so
     Given pull requests 42, 43 and 44 are chained by their base branches on a host with no stacks of its own
     When the user opens the pull requests of "Tax work"
     Then the user is told "3 pull requests chained by base branch."
 
-  @backlog @desktop
+  @desktop
   Scenario: A link the host has not been asked about yet shows what is known
     Given pull request 42 was just linked to "Tax work" and the host has not answered
     When the user opens the pull requests of "Tax work"
     Then pull request 42 is listed with its repository and "Waiting for host state"
 
-  @backlog @desktop
+  @desktop
   Scenario: A linked pull request says how and when it was linked
     Given pull request 42 was linked to "Tax work" by the user an hour ago
     When the user rests the pointer on the number of pull request 42
     Then the user is told "Linked by you" and how long ago
 
-  @backlog @desktop
+  @desktop
   Scenario: A linked pull request's link can be copied or opened from its row
     Given pull request 42 is linked to "Tax work"
     When the user opens the actions of pull request 42 in "Tax work"
     Then the user can copy its link
     And the user can open it
 
-  @backlog @desktop
+  @desktop
   Scenario: An environment without several links per thread says so
     Given the environment does not support several linked pull requests per thread
     When the user opens the pull requests of "Tax work"
     Then the user is told "Linked pull requests unavailable"
     And the user is told "This environment does not support multiple linked pull requests."
 
-  @backlog @desktop
+  @desktop
   Scenario: A thread without pull requests says so
     Given "Tax work" has no linked pull request
     When the user opens the pull requests of "Tax work"
     Then the user is told "No linked pull requests"
     And the user can link one
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request says how many threads work on it
     Given pull request 42 is linked to "Tax work" and to "Tax review"
     When the user reads pull request 42
     Then it says "Linked from 2 threads"
     And choosing it searches the threads for pull request 42
 
-  @backlog @desktop
+  @desktop
   Scenario: Linking a pull request to a thread chosen from a list
     Given pull request 42 is linked to no thread
     When the user chooses to link pull request 42 to a thread
@@ -701,14 +701,14 @@ Feature: Threads that work on or link pull requests
     When the user chooses "Tax work"
     Then "Tax work" lists pull request 42
 
-  @backlog @desktop
+  @desktop
   Scenario: A thread that already has the pull request cannot be chosen again
     Given pull request 42 is linked to "Tax work"
     When the user chooses to link pull request 42 to a thread
     Then "Tax work" is shown as "Linked" and cannot be chosen
     And the menu offers to unlink pull request 42 from this thread
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A link that could not be changed is reported
     Given the MC refuses to <change> pull request 42 <direction> "Tax work"
     When the user tries to <change> pull request 42 <direction> "Tax work"

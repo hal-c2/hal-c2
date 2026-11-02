@@ -20,6 +20,7 @@ Rectangle {
     property string section: "overview"
 
     readonly property var detail: source?.detail ?? ({})
+    readonly property var threads: source?.threads ?? null
     readonly property bool online: source !== null && source.online
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -106,6 +107,51 @@ Rectangle {
                     elide: Text.ElideRight
                     color: root.muted
                     font.pixelSize: Math.round(11 * Theme.fontScale)
+                }
+            }
+            // PullRequestThreadLinks: how many threads work on it, which opens
+            // the palette on them, and linking it to this thread or another.
+            ShellButton {
+                objectName: "reviewLinkedThreads"
+                subtle: true
+                iconName: "message-square"
+                text: root.threads && root.threads.count > 0 ? root.threads.count : ""
+                visible: root.threads !== null && root.threads.available && root.threads.count > 0
+                Accessible.name: root.threads?.label ?? ""
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("%1. Search in the command palette.").arg(Accessible.name)
+                onClicked: root.threads.search()
+            }
+            ShellButton {
+                objectName: "reviewThreadMenu"
+                subtle: true
+                iconName: "link"
+                visible: root.threads !== null && root.threads.available
+                enabled: root.online && !(root.threads?.pending ?? true)
+                Accessible.name: qsTr("Linked threads")
+                ToolTip.visible: hovered
+                ToolTip.text: Accessible.name
+                onClicked: threadMenu.open()
+
+                ShellMenu {
+                    id: threadMenu
+
+                    y: parent.height
+
+                    ShellMenuItem {
+                        objectName: "reviewThreadToggle"
+                        text: root.threads?.menuLabel ?? ""
+                        iconName: "link"
+                        enabled: !(root.threads?.pending ?? true)
+                        onTriggered: root.threads.toggleHere()
+                    }
+                    ShellMenuItem {
+                        objectName: "reviewThreadPick"
+                        text: qsTr("Link to another thread…")
+                        iconName: "message-square-plus"
+                        enabled: !(root.threads?.pending ?? true)
+                        onTriggered: root.threads.pickerOpen = true
+                    }
                 }
             }
             ShellButton {
@@ -706,6 +752,123 @@ Rectangle {
                     primary: true
                     text: stackConfirm.question.confirmLabel ?? qsTr("Confirm")
                     onClicked: root.source.confirmStack()
+                }
+            }
+        }
+    }
+
+    // The thread picker: the environment's active threads, newest first; one
+    // that already links the pull request shows "Linked" and cannot be chosen.
+    Dialog {
+        id: threadPicker
+
+        objectName: "reviewThreadPicker"
+        parent: Overlay.overlay
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(420, (parent?.width ?? 452) - 32)
+        padding: 8
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        visible: root.threads?.pickerOpen ?? false
+        onClosed: if (root.threads)
+            root.threads.pickerOpen = false
+        onOpened: threadSearch.forceActiveFocus()
+
+        background: Rectangle {
+            color: Theme.palette.color("surfaceOverlay", "#18181b")
+            border.color: root.borderColor
+            radius: Math.min(Theme.radius, 16)
+        }
+        contentItem: ColumnLayout {
+            spacing: 6
+
+            ShellTextField {
+                id: threadSearch
+
+                objectName: "reviewThreadSearch"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Search threads or projects...")
+                text: root.threads?.query ?? ""
+                enabled: !(root.threads?.pending ?? false)
+                onTextEdited: root.threads.query = text
+            }
+            Text {
+                objectName: "reviewThreadPickerEmpty"
+                Layout.fillWidth: true
+                Layout.topMargin: 16
+                Layout.bottomMargin: 16
+                visible: threadList.count === 0
+                horizontalAlignment: Text.AlignHCenter
+                text: qsTr("No active threads found.")
+                color: root.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+            }
+            ListView {
+                id: threadList
+
+                objectName: "reviewThreadList"
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, 320)
+                visible: count > 0
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: root.threads?.candidates ?? []
+
+                delegate: ItemDelegate {
+                    id: candidate
+
+                    required property var modelData
+
+                    objectName: "reviewThreadCandidate-" + modelData.id
+                    width: ListView.view.width
+                    enabled: !modelData.linked && !(root.threads?.pending ?? false)
+                    onClicked: root.threads.choose(modelData.id)
+
+                    background: Rectangle {
+                        color: candidate.hovered && candidate.enabled ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
+                        radius: 6
+                    }
+                    contentItem: RowLayout {
+                        spacing: 8
+
+                        ShellIcon {
+                            name: "message-square"
+                            size: 14
+                            color: root.muted
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: candidate.modelData.title
+                                elide: Text.ElideRight
+                                color: candidate.enabled ? root.foreground : root.muted
+                                font.pixelSize: Math.round(13 * Theme.fontScale)
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                visible: text.length > 0
+                                text: candidate.modelData.project
+                                elide: Text.ElideRight
+                                color: root.muted
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                            }
+                        }
+                        ShellIcon {
+                            visible: candidate.modelData.linked
+                            name: "check"
+                            size: 12
+                            color: root.muted
+                        }
+                        Text {
+                            visible: candidate.modelData.linked
+                            text: qsTr("Linked")
+                            color: root.muted
+                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                        }
+                    }
                 }
             }
         }

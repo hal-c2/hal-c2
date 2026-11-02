@@ -28,6 +28,7 @@
 #include "TerminalController.h"
 #include "ThreadStore.h"
 #include "ToastController.h"
+#include "CommandPaletteController.h"
 
 namespace {
 
@@ -123,7 +124,18 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
       m_review(
           client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
           [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this),
+      m_reviewThreads(
+          client, store, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
+          [this](const QString& query) {
+            // The threads that link it: the command palette searching its address.
+            if (auto* palette = NativeShell::of(this)->controller<CommandPaletteController>()) {
+              palette->show();
+              palette->setQuery(query);
+            }
+          },
+          this),
       m_devices(client, this) {
+  m_review.setThreads(&m_reviewThreads);
   m_previews.setConnectedHere([this] { return thisMachine::hosts(*m_store, *m_client, m_client->environment()); });
   // The pages this device opened from a browser tab, kept with its preferences.
   m_previews.setRecents(
@@ -746,6 +758,8 @@ void RightPanelController::update() {
     m_review.setPullRequest(m_thread.left(m_thread.indexOf(QLatin1Char(':'))),
                             m_store->threadRow(m_thread).value(QLatin1String("projectId")).toString(), reviewed.host, reviewed.repository,
                             reviewed.number);
+    m_reviewThreads.setTarget(environmentId(), m_thread.mid(m_thread.indexOf(QLatin1Char(':')) + 1), reviewed.host, reviewed.repository,
+                              reviewed.number, m_pullRequests.urlOf(activeTab().mid(kReviewTab.size())));
   }
   m_review.setActive(open && kindOf(activeTab()) == QLatin1String("pull-request"));
   publish();

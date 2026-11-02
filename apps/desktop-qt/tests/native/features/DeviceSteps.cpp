@@ -28,6 +28,7 @@
 
 #include "Brick.h"
 #include "DevicePanelSteps.h"
+#include "PullRequestSteps.h"
 #include "DeviceStream.h"
 #include "DeviceTools.h"
 #include "FFmpeg.h"
@@ -2102,6 +2103,8 @@ const Steps backlogSteps([] {
     }, [&] { return describe(world); });
   });
   step(QStringLiteral("it says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // How many threads a pull request's review says link it.
+    if (pullRequestReviewSays(world, c[0])) return;
     world.waitFor([&] { return devicePanel(world).shows(c[0]); }, [&] { return describe(world); });
   });
   step(QStringLiteral("the MC can retry a single machine"), [](World& world, const Captures&, const Table&) {

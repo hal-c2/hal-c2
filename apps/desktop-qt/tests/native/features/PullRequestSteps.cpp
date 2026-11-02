@@ -11,6 +11,7 @@
 
 #include <QQuickItem>
 #include <QTest>
+#include <algorithm>
 #include <memory>
 #include <optional>
 
@@ -23,6 +24,9 @@
 #include "Stream.h"
 #include "ThreadPullRequests.h"
 #include "World.h"
+#include "PullRequestSteps.h"
+#include "PullRequestThreadLinks.h"
+#include "CommandPaletteController.h"
 
 namespace {
 
@@ -50,6 +54,8 @@ struct FakePullRequests {
   // The host's stack: its base and its layers' numbers, bottom first.
   QString stackBase;
   QList<int> stack;
+  // The pull request whose row's actions the user opened.
+  int actionsOf = 0;
 };
 
 QString hostKey(const QJsonObject& reference) {
@@ -92,10 +98,22 @@ const FakeMc::Extension pullRequests([](FakeMc& mc) {
     QJsonArray links;
     bool known = false;
     for (const QJsonValue& value : row.value(QLatin1String("pullRequests")).toArray()) {
-      const QJsonObject link = value.toObject();
+      QJsonObject link = value.toObject();
       const bool same = hostKey(link) == hostKey(command) && link.value(QLatin1String("host")) == command.value(QLatin1String("host"));
       known = known || same;
-      if (!(same && type == QLatin1String("thread.pull-request.unlink"))) links.append(link);
+      const QString source = link.value(QLatin1String("source")).toString();
+      // A stack layer, or one the thread created, is dismissed rather than
+      // unlinked; linking a dismissed one again brings it back as the user's
+      // (orchestration.ex thread.pull-request.unlink / link).
+      if (same && type == QLatin1String("thread.pull-request.unlink") &&
+          (source == QLatin1String("stack") || source == QLatin1String("created"))) {
+        link.insert(QStringLiteral("source"), QStringLiteral("stack-dismissed"));
+      } else if (same && type == QLatin1String("thread.pull-request.link") && source == QLatin1String("stack-dismissed")) {
+        link.insert(QStringLiteral("source"), QStringLiteral("manual"));
+      } else if (same && type == QLatin1String("thread.pull-request.unlink")) {
+        continue;
+      }
+      links.append(link);
     }
     if (type == QLatin1String("thread.pull-request.link") && !known) {
       links.append(QJsonObject{{QStringLiteral("host"), command.value(QLatin1String("host"))},
@@ -111,6 +129,29 @@ const FakeMc::Extension pullRequests([](FakeMc& mc) {
     mc.threads.insert(threadId, row);
     // The MC reads a new link from its host at once (Sync.request).
     syncLinks(mc, threadId);
+  });
+  // The threads of this MC that link the pull request, newest first (pull_requests.ex linked_threads).
+  mc.onRpc(QStringLiteral("pullRequests.linkedThreads"), [&mc](const FakeMc::Rpc& rpc) {
+    if (mc.part<FakePullRequests>().thread.isEmpty()) return mc.passOn(rpc);
+    QList<QJsonObject> rows;
+    for (const QJsonObject& row : std::as_const(mc.threads)) {
+      for (const QJsonValue& value : row.value(QLatin1String("pullRequests")).toArray()) {
+        const QJsonObject link = value.toObject();
+        if (hostKey(link) == hostKey(rpc.payload) && link.value(QLatin1String("source")) != QLatin1String("stack-dismissed")) {
+          rows.append(row);
+          break;
+        }
+      }
+    }
+    std::sort(rows.begin(), rows.end(), [](const QJsonObject& a, const QJsonObject& b) {
+      return a.value(QLatin1String("updatedAt")).toString() > b.value(QLatin1String("updatedAt")).toString();
+    });
+    QJsonArray threads;
+    for (const QJsonObject& row : std::as_const(rows)) {
+      threads.append(QJsonObject{{QStringLiteral("id"), row.value(QLatin1String("id"))}, {QStringLiteral("projectId"), row.value(QLatin1String("projectId"))},
+                                 {QStringLiteral("title"), row.value(QLatin1String("title"))}, {QStringLiteral("archivedAt"), row.value(QLatin1String("archivedAt"))}});
+    }
+    mc.reply(rpc, QJsonObject{{QStringLiteral("threads"), threads}});
   });
   mc.onRpc(QStringLiteral("pullRequests.invalidate"), [&mc](const FakeMc::Rpc& rpc) {
     // The pull requests page's refresh names no reference (PullRequestListSteps).
@@ -164,6 +205,15 @@ void lookAt(World& world, const QString& title) {
   FakePullRequests& fake = world.mc.part<FakePullRequests>();
   if (!fake.thread.isEmpty()) return;
   fake.thread = kThread;
+  // What the tab says in place: why a reference does not link, and what each stack is.
+  world.toldInPlace = [&world] {
+    ThreadPullRequests& prs = model(world);
+    QStringList told{prs.problem()};
+    for (int row = 0; row < prs.rowCount(); ++row) {
+      if (prs.value(row, ThreadPullRequests::StackSizeRole).toInt() > 1) told.append(prs.value(row, ThreadPullRequests::StackNoteRole).toString());
+    }
+    return told;
+  };
   world.mc.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), title}, {QStringLiteral("projectId"), kProject},
                                       {QStringLiteral("pullRequests"), QJsonArray()},
                                       {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
@@ -917,8 +967,8 @@ const Steps reviewSteps([] {
     const QString wanted = QStringLiteral("Layer %1 of %2").arg(c[0], c[1]);
     world.waitFor([&] { return model(world).rowCount() == 1 && model(world).value(0, ThreadPullRequests::StackLabelRole) == wanted; },
                   [&] { return QStringLiteral("%1; the stack reads \"%2\"").arg(describe(world), model(world).rowCount() > 0 ? model(world).value(0, ThreadPullRequests::StackLabelRole).toString() : QString()); });
-    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\nPullRequestsPanel { source: Panel.pullRequests }\n", QSize(420, 500));
-    world.waitFor([&] { return world.brick->shows(QStringLiteral("acme/shop #42 · feature/tax → main · ") + wanted); }, QStringLiteral("the tab to draw the layer"));
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\nPullRequestsPanel { width: 420; height: 600; source: Panel.pullRequests }\n", QSize(420, 500));
+    world.waitFor([&] { return world.brick->shows(QStringLiteral("acme/shop · feature/tax → main · ") + wanted); }, QStringLiteral("the tab to draw the layer"));
   });
 
   // The branch's own pull request, from the composer's chip.
@@ -1097,4 +1147,465 @@ const Steps reviewSteps([] {
   });
 });
 
+
+// The Pull requests tab as drawn (PullRequestsPanel), and the threads of one
+// pull request from its review (PullRequestThreadLinks):
+// features/source-control/pull-request-threads.feature.
+PullRequestThreadLinks& reviewThreads(World& world) {
+  return *world.native().controller<RightPanelController>()->reviewThreads();
+}
+
+QString describeThreads(World& world) {
+  PullRequestThreadLinks& links = reviewThreads(world);
+  return QStringLiteral("the review's threads: %1 (%2), \"%3\", picker %4 %5")
+      .arg(links.label())
+      .arg(links.count())
+      .arg(links.menuLabel(), links.pickerOpen() ? QStringLiteral("open") : QStringLiteral("closed"), show(links.candidates()));
+}
+
+QJsonObject linkOf(const QString& repository, int number, const QString& source, const QString& linkedAt = QStringLiteral("2026-09-23T09:05:00Z")) {
+  return {{QStringLiteral("host"), QStringLiteral("github.com")}, {QStringLiteral("repository"), repository}, {QStringLiteral("number"), number},
+          {QStringLiteral("url"), QStringLiteral("https://github.com/%1/pull/%2").arg(repository).arg(number)},
+          {QStringLiteral("source"), source}, {QStringLiteral("linkedAt"), linkedAt},
+          {QStringLiteral("snapshot"), QJsonValue()}, {QStringLiteral("stack"), QJsonValue()}};
+}
+
+// The thread links `links` and nothing else, as the MC's sync sends them.
+void setLinks(World& world, const QString& threadId, const QJsonArray& links) {
+  QJsonObject row = world.mc.threads.value(threadId);
+  row.insert(QStringLiteral("pullRequests"), links);
+  world.mc.threads.insert(threadId, row);
+  syncLinks(world.mc, threadId);
+  world.sync();
+}
+
+// Another thread of the project, `updatedAt` newer than "Tax work".
+void addThread(World& world, const QString& id, const QString& title, const QJsonArray& links, bool archived = false) {
+  QJsonObject row{{QStringLiteral("id"), id}, {QStringLiteral("title"), title}, {QStringLiteral("projectId"), kProject},
+                  {QStringLiteral("pullRequests"), links},
+                  {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:30:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:30:00Z")}};
+  if (archived) row.insert(QStringLiteral("archivedAt"), QStringLiteral("2026-09-23T09:40:00Z"));
+  world.mc.threads.insert(id, row);
+  world.mc.sendRow(id, row);
+  world.sync();
+}
+
+void openPanel(World& world) {
+  if (world.brick) return;
+  world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\nPullRequestsPanel { width: 420; height: 600; source: Panel.pullRequests }\n",
+                                        QSize(420, 600));
+  world.sync();
+}
+
+void findAll(QQuickItem* item, const QString& name, QList<QQuickItem*>& found) {
+  if (item->objectName() == name) found.append(item);
+  for (QQuickItem* child : item->childItems()) findAll(child, name, found);
+}
+
+QQuickItem* rowItem(World& world, int number) {
+  QList<QQuickItem*> rows;
+  world.waitFor([&] {
+    rows.clear();
+    findAll(world.brick->window().contentItem(), QStringLiteral("pullRequestRow-%1").arg(number), rows);
+    return !rows.isEmpty();
+  }, [&] { return describe(world); });
+  return rows.first();
+}
+
+QQuickItem* inRow(QQuickItem* row, const QString& name) {
+  QList<QQuickItem*> found;
+  findAll(row, name, found);
+  expect(!found.isEmpty(), QStringLiteral("the row has no %1").arg(name));
+  return found.first();
+}
+
+bool menuShown(World& world) {
+  QList<QQuickItem*> items;
+  findAll(world.brick->window().contentItem(), QStringLiteral("pullRequestCopyLink"), items);
+  return std::any_of(items.cbegin(), items.cend(), [](QQuickItem* item) { return item->isVisible(); });
+}
+
+void openActions(World& world, int number) {
+  openPanel(world);
+  // A menu still closing would take the click.
+  world.waitFor([&] { return !menuShown(world); }, [] { return QStringLiteral("the row's menu stays open"); });
+  QQuickItem* button = inRow(rowItem(world, number), QStringLiteral("pullRequestMenu"));
+  QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(button));
+  world.sync();
+}
+
+// The visible menu entry `name` (each row has its own menu).
+QQuickItem* menuItem(World& world, const QString& name) {
+  QQuickItem* found = nullptr;
+  world.waitFor([&] {
+    QList<QQuickItem*> items;
+    findAll(world.brick->window().contentItem(), name, items);
+    for (QQuickItem* item : std::as_const(items)) {
+      if (item->isVisible()) found = item;
+    }
+    return found != nullptr;
+  }, [&] { return QStringLiteral("no %1 is shown").arg(name); });
+  return found;
+}
+
+// A review tab of pull request `number` of "acme/shop", linked to the thread or not.
+void reviewUnlinked(World& world, int number) {
+  serveReview(world.mc);
+  world.bridge().dispatch(QStringLiteral("rightPanel.reviewProject"), QVariantMap{{QStringLiteral("key"), QStringLiteral("github.com/acme/shop#%1").arg(number)}});
+  world.sync();
+  world.waitFor([&] { return reviewThreads(world).available() && reviewThreads(world).count() >= 0; }, [&] { return describeThreads(world); });
+}
+
+int linkCommands(World& world) {
+  int sent = 0;
+  for (const QJsonObject& command : std::as_const(world.mc.commands)) {
+    if (command.value(QLatin1String("type")).toString().startsWith(QLatin1String("thread.pull-request."))) ++sent;
+  }
+  return sent;
+}
+
+const Steps panelSteps([] {
+  const QString q = kQuoted;
+
+  // The link field.
+  step(QStringLiteral("the user is linking a pull request to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[0]);
+    world.native().controller<RightPanelController>()->linkPullRequest();
+    world.sync();
+    expect(model(world).linkOpen(), QStringLiteral("the link field is closed"));
+  });
+  step(QStringLiteral("the user types %1 as the pull request to link").arg(q), [](World& world, const Captures& c, const Table&) {
+    model(world).setReference(c[0]);
+  });
+  step(QStringLiteral("the user clears the pull request to link"), [](World& world, const Captures&, const Table&) {
+    model(world).setReference(QString());
+  });
+  step(QStringLiteral("%1 is not in a project").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[0]);
+    QJsonObject row = world.mc.threads.value(kThread);
+    row.insert(QStringLiteral("projectId"), QJsonValue());
+    world.mc.threads.insert(kThread, row);
+    world.mc.sendRow(kThread, row);
+    world.sync();
+  });
+  step(QStringLiteral("the project of %1 is on a host whose pull request addresses are not known").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject project = world.mc.projects.value(kProject);
+    project.insert(QStringLiteral("repositoryIdentity"),
+                   QJsonObject{{QStringLiteral("canonicalKey"), QStringLiteral("git.example.com/acme/shop")}, {QStringLiteral("displayName"), QStringLiteral("acme/shop")}});
+    world.mc.projects.insert(kProject, project);
+    world.mc.sendRow(kProject, project, QStringLiteral("project"));
+    world.sync();
+    lookAt(world, c[0]);
+  });
+  step(QStringLiteral("the user links %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[1]);
+    link(world, c[0]);
+  });
+  step(QStringLiteral("the MC takes a while to link pull requests to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[0]);
+    world.mc.hold(QStringLiteral("answers"));
+  });
+  step(QStringLiteral("the link dialog shows \"Linking...\" and cannot be submitted again"), [](World& world, const Captures&, const Table&) {
+    openPanel(world);
+    expect(model(world).linking() && !model(world).canLink(), describe(world));
+    world.waitFor([&] { return world.brick->shows(QStringLiteral("Linking...")); }, [&] { return describe(world); });
+    expect(!world.brick->item(QStringLiteral("pullRequestsLinkSubmit"))->isEnabled(), QStringLiteral("Linking... can be pressed"));
+    const int sent = linkCommands(world);
+    model(world).link(QStringLiteral("42"));
+    world.sync();
+    expect(linkCommands(world) == sent, QStringLiteral("a second link was sent"));
+  });
+  step(QStringLiteral("the user links pull request (\\d+) to %1 again").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.answerHeld();
+    world.sync();
+    world.waitFor([&] { return !model(world).linking(); }, [&] { return describe(world); });
+    link(world, c[0]);
+  });
+  step(QStringLiteral("the link dialog says the pull request could not be linked and stays open"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !model(world).linking(); }, [&] { return describe(world); });
+    expect(model(world).problem().startsWith(QLatin1String("Could not link the pull request")) && model(world).linkOpen(), describe(world));
+    world.waitFor([&] { return world.brick->shows(model(world).problem()); }, [&] { return describe(world); });
+  });
+
+  // How each link came to be, and what its row offers.
+  step(QStringLiteral("pull request (\\d+) was (linked by the user|created from the thread|linked by the agent|found in the stack of another layer|dismissed from "
+                      "the stack) to %1")
+           .arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         static const QHash<QString, QString> sources{{QStringLiteral("linked by the user"), QStringLiteral("manual")},
+                                                      {QStringLiteral("created from the thread"), QStringLiteral("created")},
+                                                      {QStringLiteral("linked by the agent"), QStringLiteral("agent")},
+                                                      {QStringLiteral("found in the stack of another layer"), QStringLiteral("stack")},
+                                                      {QStringLiteral("dismissed from the stack"), QStringLiteral("stack-dismissed")}};
+         lookAt(world, c[2]);
+         setLinks(world, kThread, {linkOf(QStringLiteral("acme/shop"), c[0].toInt(), sources.value(c[1]))});
+       });
+  step(QStringLiteral("the user opens the pull requests of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[0]);
+    openPanel(world);
+  });
+  step(QStringLiteral("pull request (\\d+) says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto says = [&] {
+      const int row = rowOf(world, c[0].toInt());
+      if (row >= 0) return model(world).value(row, ThreadPullRequests::SourceLabelRole).toString();
+      for (const QVariant& entry : model(world).dismissed()) {
+        if (entry.toMap().value(QStringLiteral("number")).toInt() == c[0].toInt()) return entry.toMap().value(QStringLiteral("sourceLabel")).toString();
+      }
+      return QString();
+    };
+    // A dismissed one is listed below the rest, its label after its title.
+    const auto shown = [&] {
+      if (world.brick->shows(c[1])) return true;
+      QList<QQuickItem*> dismissed;
+      findAll(world.brick->window().contentItem(), QStringLiteral("dismissedPullRequest-") + c[0], dismissed);
+      for (QQuickItem* row : std::as_const(dismissed)) {
+        for (QQuickItem* child : row->childItems()) {
+          if (row->isVisible() && child->property("text").toString().endsWith(QStringLiteral(" · ") + c[1])) return true;
+        }
+      }
+      return false;
+    };
+    world.waitFor([&] { return says() == c[1] && shown(); }, [&] { return describe(world) + QStringLiteral(", it says ") + says(); });
+  });
+  step(QStringLiteral("pull request (\\d+) is a layer found in the stack of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[1]);
+    setLinks(world, kThread, {linkOf(QStringLiteral("acme/shop"), 42, QStringLiteral("manual")), linkOf(QStringLiteral("acme/shop"), c[0].toInt(), QStringLiteral("stack"))});
+  });
+  step(QStringLiteral("the user opens the actions of pull request (\\d+) in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[1]);
+    waitForRow(world, c[0].toInt(), true);
+    openActions(world, c[0].toInt());
+    world.mc.part<FakePullRequests>().actionsOf = c[0].toInt();
+  });
+  step(QStringLiteral("the action is %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const int number = world.mc.part<FakePullRequests>().actionsOf;
+    expect(model(world).value(rowOf(world, number), ThreadPullRequests::UnlinkLabelRole) == c[0], describe(world));
+    expect(menuItem(world, QStringLiteral("pullRequestUnlink"))->property("text") == c[0], QStringLiteral("the menu does not offer %1").arg(c[0]));
+  });
+  step(QStringLiteral("a pull request the user linked is offered %1 instead").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(model(world).value(rowOf(world, 42), ThreadPullRequests::SourceRole) == QLatin1String("manual") &&
+               model(world).value(rowOf(world, 42), ThreadPullRequests::UnlinkLabelRole) == c[0],
+           describe(world));
+  });
+  step(QStringLiteral("pull request (\\d+) is a layer of a GitHub stack of 3"), [](World& world, const Captures& c, const Table&) {
+    FakePullRequests& fake = world.mc.part<FakePullRequests>();
+    lookAt(world, QStringLiteral("Tax work"));
+    fake.stackBase = QStringLiteral("main");
+    fake.stack = {c[0].toInt(), c[0].toInt() + 1, c[0].toInt() + 2};
+    QJsonArray links;
+    for (const int number : std::as_const(fake.stack)) {
+      links.append(linkOf(QStringLiteral("acme/shop"), number, number == c[0].toInt() ? QStringLiteral("manual") : QStringLiteral("stack")));
+    }
+    setLinks(world, kThread, links);
+  });
+  step(QStringLiteral("pull requests (\\d+), (\\d+) and (\\d+) are chained by their base branches on a host with no stacks of its own"),
+       [](World& world, const Captures& c, const Table&) {
+         FakePullRequests& fake = world.mc.part<FakePullRequests>();
+         lookAt(world, QStringLiteral("Tax work"));
+         QJsonArray links;
+         QString base = QStringLiteral("main");
+         for (int at = 0; at < 3; ++at) {
+           QJsonObject snapshot = fake.host.value(QStringLiteral("acme/shop#42"));
+           snapshot.insert(QStringLiteral("headBranch"), QStringLiteral("tax/%1").arg(at));
+           snapshot.insert(QStringLiteral("baseBranch"), base);
+           base = QStringLiteral("tax/%1").arg(at);
+           fake.host.insert(QStringLiteral("acme/shop#") + c[at], snapshot);
+           links.append(linkOf(QStringLiteral("acme/shop"), c[at].toInt(), QStringLiteral("manual")));
+         }
+         setLinks(world, kThread, links);
+       });
+  step(QStringLiteral("pull request (\\d+) was just linked to %1 and the host has not answered").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[1]);
+    world.mc.part<FakePullRequests>().host.remove(QStringLiteral("acme/shop#") + c[0]);
+    setLinks(world, kThread, {linkOf(QStringLiteral("acme/shop"), c[0].toInt(), QStringLiteral("manual"))});
+  });
+  step(QStringLiteral("pull request (\\d+) is listed with its repository and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* row = rowItem(world, c[0].toInt());
+    world.waitFor([&] { return inRow(row, QStringLiteral("pullRequestRepository"))->property("text").toString().contains(QLatin1String("acme/shop")) &&
+                               world.brick->shows(c[1]); },
+                  [&] { return describe(world) + QStringLiteral(", the row says ") + inRow(row, QStringLiteral("pullRequestRepository"))->property("text").toString(); });
+  });
+  step(QStringLiteral("pull request (\\d+) was linked to %1 by the user an hour ago").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[1]);
+    setLinks(world, kThread, {linkOf(QStringLiteral("acme/shop"), c[0].toInt(), QStringLiteral("manual"), world.now().addSecs(-3600).toString(Qt::ISODate))});
+  });
+  step(QStringLiteral("the user rests the pointer on the number of pull request (\\d+)"), [](World& world, const Captures& c, const Table&) {
+    openPanel(world);
+    QQuickItem* number = inRow(rowItem(world, c[0].toInt()), QStringLiteral("pullRequestNumber"));
+    QTest::mouseMove(&world.brick->window(), world.brick->at(number));
+    world.sync();
+  });
+  step(QStringLiteral("the user is told %1 and how long ago").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString note = c[0] + QStringLiteral(" · 1h ago");
+    world.waitFor([&] { return model(world).value(0, ThreadPullRequests::LinkedNoteRole) == note && world.brick->shows(note); },
+                  [&] { return describe(world) + QStringLiteral(", the note is ") + model(world).value(0, ThreadPullRequests::LinkedNoteRole).toString(); });
+  });
+  step(QStringLiteral("the user can copy its link"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* copy = menuItem(world, QStringLiteral("pullRequestCopyLink"));
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(copy));
+    world.sync();
+    expect(world.clipboard == QLatin1String("https://github.com/acme/shop/pull/42"), QStringLiteral("the clipboard holds \"%1\"").arg(world.clipboard));
+  });
+  step(QStringLiteral("the user can open it"), [](World& world, const Captures&, const Table&) {
+    openActions(world, 42);
+    QQuickItem* open = menuItem(world, QStringLiteral("pullRequestOpen"));
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(open));
+    world.sync();
+    expect(world.openedUrls.contains(QUrl(QStringLiteral("https://github.com/acme/shop/pull/42"))), show(QVariant::fromValue(world.openedUrls)));
+  });
+
+  // What the tab says with nothing to list.
+  step(QStringLiteral("the environment does not support several linked pull requests per thread"), [](World& world, const Captures&, const Table&) {
+    world.mc.capabilities.insert(QStringLiteral("threadPullRequests"), false);
+    world.mc.sendSnapshot();
+    world.sync();
+  });
+  step(QStringLiteral("%1 has no linked pull request").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[0]);
+    expect(model(world).count() == 0, describe(world));
+  });
+  step(QStringLiteral("the user can link one"), [](World& world, const Captures&, const Table&) {
+    world.brick->click(QStringLiteral("pullRequestsEmptyLink"));
+    world.sync();
+    expect(model(world).linkOpen(), QStringLiteral("the link field is closed"));
+  });
+
+  // The threads of one pull request, from its review.
+  step(QStringLiteral("pull request (\\d+) is linked to %1 and to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[1]);
+    setLinks(world, kThread, {linkOf(QStringLiteral("acme/shop"), c[0].toInt(), QStringLiteral("manual"))});
+    addThread(world, QStringLiteral("thread-2"), c[2], {linkOf(QStringLiteral("acme/shop"), c[0].toInt(), QStringLiteral("manual"))});
+    waitForRow(world, c[0].toInt(), true);
+  });
+  step(QStringLiteral("the user reads pull request (\\d+)"), [](World& world, const Captures& c, const Table&) {
+    serveReview(world.mc);
+    openReview(world, c[0].toInt());
+  });
+  step(QStringLiteral("choosing it searches the threads for pull request (\\d+)"), [](World& world, const Captures& c, const Table&) {
+    reviewThreads(world).search();
+    world.sync();
+    auto* palette = world.native().controller<CommandPaletteController>();
+    expect(palette->isOpen() && palette->query() == QStringLiteral("https://github.com/acme/shop/pull/") + c[0],
+           QStringLiteral("the palette is %1 searching \"%2\"").arg(palette->isOpen() ? QStringLiteral("open") : QStringLiteral("closed"), palette->query()));
+  });
+  step(QStringLiteral("pull request (\\d+) is linked to no thread"), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, QStringLiteral("Tax work"));
+    addThread(world, QStringLiteral("thread-2"), QStringLiteral("Tax review"), {});
+    addThread(world, QStringLiteral("thread-3"), QStringLiteral("Old tax work"), {}, true);
+    reviewUnlinked(world, c[0].toInt());
+  });
+  step(QStringLiteral("the user chooses to link pull request (\\d+) to a thread"), [](World& world, const Captures& c, const Table&) {
+    if (reviewThreads(world).count() < 0 || !world.native().controller<RightPanelController>()->review()->key().endsWith(QLatin1Char('#') + c[0])) {
+      serveReview(world.mc);
+      openReview(world, c[0].toInt());
+    }
+    reviewThreads(world).setPickerOpen(true);
+    expect(reviewThreads(world).pickerOpen(), describeThreads(world));
+  });
+  step(QStringLiteral("the user sees the active threads, newest first, with a way to search threads and projects"), [](World& world, const Captures&, const Table&) {
+    PullRequestThreadLinks& links = reviewThreads(world);
+    const auto titles = [&] {
+      QStringList titles;
+      for (const QVariant& candidate : links.candidates()) titles.append(candidate.toMap().value(QStringLiteral("title")).toString());
+      return titles;
+    };
+    expect(titles() == QStringList{QStringLiteral("Tax review"), QStringLiteral("Tax work")}, describeThreads(world));
+    links.setQuery(QStringLiteral("review"));
+    expect(titles() == QStringList{QStringLiteral("Tax review")}, describeThreads(world));
+    links.setQuery(kProject);
+    expect(titles().size() == 2, describeThreads(world));
+    links.setQuery(QString());
+  });
+  step(QStringLiteral("archived threads are not offered"), [](World& world, const Captures&, const Table&) {
+    for (const QVariant& candidate : reviewThreads(world).candidates()) {
+      expect(candidate.toMap().value(QStringLiteral("id")) != QLatin1String("thread-3"), describeThreads(world));
+    }
+  });
+  step(QStringLiteral("%1 is shown as %1 and cannot be chosen").arg(q), [](World& world, const Captures& c, const Table&) {
+    QVariantMap found;
+    for (const QVariant& candidate : reviewThreads(world).candidates()) {
+      if (candidate.toMap().value(QStringLiteral("title")) == c[0]) found = candidate.toMap();
+    }
+    expect(c[1] == QLatin1String("Linked") && found.value(QStringLiteral("linked")).toBool(), describeThreads(world));
+    const int sent = linkCommands(world);
+    reviewThreads(world).choose(found.value(QStringLiteral("id")).toString());
+    world.sync();
+    expect(linkCommands(world) == sent, QStringLiteral("a linked thread was chosen"));
+  });
+  step(QStringLiteral("the menu offers to unlink pull request (\\d+) from this thread"), [](World& world, const Captures&, const Table&) {
+    expect(reviewThreads(world).menuLabel() == QLatin1String("Unlink from this thread"), describeThreads(world));
+  });
+  step(QStringLiteral("the MC refuses to (link|unlink) pull request (\\d+) (?:to|from) %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[2]);
+    if (c[0] == QLatin1String("link")) {
+      reviewUnlinked(world, c[1].toInt());
+    } else {
+      setLinks(world, kThread, {linkOf(QStringLiteral("acme/shop"), c[1].toInt(), QStringLiteral("manual"))});
+      waitForRow(world, c[1].toInt(), true);
+      serveReview(world.mc);
+      openReview(world, c[1].toInt());
+    }
+    world.mc.refusals.insert(QStringLiteral("thread.pull-request.") + c[0], QStringLiteral("Thread is archived"));
+  });
+  step(QStringLiteral("the user tries to (link|unlink) pull request (\\d+) (?:to|from) %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(reviewThreads(world).linkedHere() == (c[0] == QLatin1String("unlink")), describeThreads(world));
+    reviewThreads(world).toggleHere();
+    world.sync();
+  });
+
+  // Two repositories' pull requests of one number.
+  step(QStringLiteral("%1 links pull request (\\d+) of %1 and pull request (\\d+) of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[0]);
+    setLinks(world, kThread, {linkOf(c[2], c[1].toInt(), QStringLiteral("manual")), linkOf(c[4], c[3].toInt(), QStringLiteral("manual"))});
+    world.waitFor([&] { return model(world).count() == 2; }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user looks at the thread's linked pull requests"), [](World& world, const Captures&, const Table&) { openPanel(world); });
+  step(QStringLiteral("each row names its pull request's repository"), [](World& world, const Captures&, const Table&) {
+    QStringList named;
+    world.waitFor([&] {
+      named.clear();
+      for (int row = 0; row < model(world).rowCount(); ++row) {
+        QList<QQuickItem*> rows;
+        findAll(world.brick->window().contentItem(), QStringLiteral("pullRequestRow-%1").arg(model(world).value(row, ThreadPullRequests::NumberRole).toInt()), rows);
+        for (QQuickItem* item : std::as_const(rows)) {
+          const QString text = inRow(item, QStringLiteral("pullRequestRepository"))->property("text").toString();
+          if (item->property("repository") == model(world).value(row, ThreadPullRequests::RepositoryRole) &&
+              text.contains(model(world).value(row, ThreadPullRequests::RepositoryRole).toString())) {
+            named.append(text);
+          }
+        }
+      }
+      return named.size() == 2;
+    }, [&] { return describe(world) + QStringLiteral(", the rows say ") + named.join(QStringLiteral("; ")); });
+  });
+});
+
 }  // namespace
+
+// Other domains' phrases this tab answers too (PullRequestSteps.h).
+bool pullRequestThreadChooses(World& world, const QString& what) {
+  auto* panel = world.native().controller<RightPanelController>();
+  if (!panel || !panel->reviewThreads()->pickerOpen()) return false;
+  for (const QVariant& candidate : panel->reviewThreads()->candidates()) {
+    if (candidate.toMap().value(QStringLiteral("title")) == what) {
+      panel->reviewThreads()->choose(candidate.toMap().value(QStringLiteral("id")).toString());
+      world.sync();
+      return true;
+    }
+  }
+  fail(QStringLiteral("the thread picker does not offer \"%1\"").arg(what));
+  return false;
+}
+
+bool pullRequestReviewSays(World& world, const QString& what) {
+  auto* panel = world.native().controller<RightPanelController>();
+  if (!panel || !panel->reviewThreads()->available() || !what.startsWith(QLatin1String("Linked from"))) return false;
+  world.waitFor([&] { return panel->reviewThreads()->label() == what; }, [&] { return describeThreads(world); });
+  return true;
+}
+
+bool pullRequestCannotBeLinked(World& world) {
+  if (world.mc.part<FakePullRequests>().thread.isEmpty()) return false;
+  expect(!model(world).canLink() && linkCommands(world) == 0, describe(world));
+  return true;
+}
