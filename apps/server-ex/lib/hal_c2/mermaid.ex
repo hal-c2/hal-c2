@@ -23,7 +23,9 @@ defmodule HalC2.Mermaid do
   wait for that drawing. At most `:limit` drawings run at once, the rest in the order
   asked for; one still waiting for its turn after `:wait` ms is dropped and its callers
   told the MC is busy, so every caller is answered well inside `render/2`'s call timeout.
-  A `"failed"` result is not kept, so the next caller tries again.
+  A diagram not started yet whose callers have all gone (their process ended) is
+  dropped; one being drawn is finished and kept. A `"failed"` result is not kept, so
+  the next caller tries again.
   """
   use GenServer
 
@@ -168,8 +170,10 @@ defmodule HalC2.Mermaid do
        # key => result, and the keys oldest first, to forget the oldest past cache_size
        cache: %{},
        order: :queue.new(),
-       # key => callers waiting for it, queued or being drawn
+       # key => {caller, monitor} waiting for it, queued or being drawn
        waiting: %{},
+       # monitor => key, for each waiting caller
+       callers: %{},
        # {key, request, ref} not started yet, oldest first; ref names its wait timer
        queued: :queue.new(),
        # task ref => {key, task pid, timer}
@@ -186,19 +190,13 @@ defmodule HalC2.Mermaid do
         {:reply, state.cache[key], state}
 
       Map.has_key?(state.waiting, key) ->
-        {:noreply, update_in(state.waiting[key], &[from | &1])}
+        {:noreply, wait(state, key, from)}
 
       true ->
         ref = make_ref()
         Process.send_after(self(), {:waited_too_long, ref}, state.wait)
-
-        state = %{
-          state
-          | waiting: Map.put(state.waiting, key, [from]),
-            queued: :queue.in({key, request, ref}, state.queued)
-        }
-
-        {:noreply, start_next(state)}
+        state = %{state | queued: :queue.in({key, request, ref}, state.queued)}
+        {:noreply, start_next(wait(state, key, from))}
     end
   end
 
@@ -216,6 +214,23 @@ defmodule HalC2.Mermaid do
       when is_map_key(state.running, ref),
       do: {:noreply, finish(state, ref, failed("The diagram renderer failed."), false)}
 
+  # A caller gone: no one to answer. A diagram not started with no one left is dropped.
+  def handle_info({:DOWN, monitor, :process, _pid, _reason}, state)
+      when is_map_key(state.callers, monitor) do
+    {key, callers} = Map.pop(state.callers, monitor)
+    left = Enum.reject(state.waiting[key], &match?({_, ^monitor}, &1))
+    state = %{state | callers: callers, waiting: Map.put(state.waiting, key, left)}
+
+    case {left, Enum.split_with(:queue.to_list(state.queued), &match?({^key, _, _}, &1))} do
+      {[], {[_], queued}} ->
+        {:noreply,
+         %{state | queued: :queue.from_list(queued), waiting: Map.delete(state.waiting, key)}}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   # Killing the task stops the helper with it (Exile).
   def handle_info({:too_long, ref}, state) when is_map_key(state.running, ref) do
     {_key, pid, _timer} = state.running[ref]
@@ -228,10 +243,8 @@ defmodule HalC2.Mermaid do
   def handle_info({:waited_too_long, ref}, state) do
     case Enum.split_with(:queue.to_list(state.queued), &match?({_, _, ^ref}, &1)) do
       {[{key, _, _}], queued} ->
-        {callers, waiting} = Map.pop(state.waiting, key, [])
         busy = failed("The MC is busy drawing other diagrams; try again.")
-        for caller <- callers, do: GenServer.reply(caller, busy)
-        {:noreply, %{state | queued: :queue.from_list(queued), waiting: waiting}}
+        {:noreply, answer(%{state | queued: :queue.from_list(queued)}, key, busy)}
 
       {[], _} ->
         {:noreply, state}
@@ -256,11 +269,32 @@ defmodule HalC2.Mermaid do
   defp finish(state, ref, result, keep?) do
     {{key, _pid, timer}, running} = Map.pop(state.running, ref)
     Process.cancel_timer(timer)
-    {callers, waiting} = Map.pop(state.waiting, key, [])
-    for caller <- callers, do: GenServer.reply(caller, result)
-    state = %{state | running: running, waiting: waiting}
+    state = answer(%{state | running: running}, key, result)
     state = if keep?, do: keep(state, key, result), else: state
     start_next(state)
+  end
+
+  # Watches the caller, so a caller gone does not keep its diagram queued.
+  defp wait(state, key, {pid, _} = from) do
+    monitor = Process.monitor(pid)
+
+    %{
+      state
+      | waiting: Map.update(state.waiting, key, [{from, monitor}], &[{from, monitor} | &1]),
+        callers: Map.put(state.callers, monitor, key)
+    }
+  end
+
+  defp answer(state, key, result) do
+    {waiters, waiting} = Map.pop(state.waiting, key, [])
+
+    for {from, monitor} <- waiters do
+      Process.demonitor(monitor, [:flush])
+      GenServer.reply(from, result)
+    end
+
+    monitors = Enum.map(waiters, &elem(&1, 1))
+    %{state | waiting: waiting, callers: Map.drop(state.callers, monitors)}
   end
 
   defp keep(state, key, result) do
