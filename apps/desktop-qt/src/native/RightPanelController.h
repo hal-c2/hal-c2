@@ -46,7 +46,8 @@ class ShellStore;
 // a kind follows the first of its tabs there.
 //
 // Publishes `panel` for the RightPanel and Stage bricks, null away from a thread:
-//   {threadKey, isOpen, activeId (a panel tab), tabs: [{id, kind, title,
+//   {threadKey, spaceProjectId (whose Space files it offers; this MC's only),
+//    onWorktree, isOpen, activeId (a panel tab), tabs: [{id, kind, title,
 //    dock: "panel"|"stage"}], width, detailsOpen, details,
 //    stage: {tabs: [{id, kind, title, dock}], panes: [tab id or ""], layout,
 //            focusedPane, focus, chatWidth},
@@ -118,6 +119,9 @@ public:
 
   ThreadDiff* diff() { return &m_diff; }
   WorkspaceFiles* files() { return &m_files; }
+  // The thread whose files the panel shows: its environment and project.
+  QString environmentId() const { return m_thread.left(m_thread.indexOf(QLatin1Char(':'))); }
+  QString projectId() const { return m_projectId; }
   AgentsModel* agents() { return &m_agents; }
   ThreadPullRequests* pullRequests() { return &m_pullRequests; }
   ThreadPreviews* previews() { return &m_previews; }
@@ -259,6 +263,12 @@ private:
   // The thread the panel shows; kept while the route is elsewhere (settings)
   // so coming back finds the tabs as they were.
   QString m_thread;
+  QString m_projectId;
+  // Whose files were last asked for (environment, project, the Space's MC): the
+  // store changes on every row frame, and the list only with the project.
+  QString m_listedFiles;
+  // The thread is on a worktree of its project, not the project folder.
+  bool m_onWorktree = false;
   bool m_onThread = false;
   QHash<QString, Panel> m_panels;
   // What was last opened proactively for each thread, so a panel the user

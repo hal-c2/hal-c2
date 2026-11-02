@@ -9,10 +9,11 @@ import { TextAttributes } from "@opentui/core";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { type SpaceAuthor, ThreadId } from "@hal-c2/contracts";
+import { type ServerProvider, type SpaceAuthor, ThreadId } from "@hal-c2/contracts";
 
 import { createHost, type Host } from "../../../src/host/host.ts";
-import type { TuiSelectState } from "../../../src/host/composerState.ts";
+import { flattenModelOptions } from "../../../src/models.ts";
+import type { TuiComposerState, TuiSelectState } from "../../../src/host/composerState.ts";
 import type { TuiFilesState } from "../../../src/host/filesState.ts";
 import {
   SITE_BEHIND_HINT,
@@ -22,16 +23,36 @@ import {
 } from "../../../src/host/spaceState.ts";
 import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
-import { addThread, change, env, projectNamed, threadNamed, ui } from "../environment.ts";
-import { fakeClient, thread } from "../fakeClient.ts";
+import {
+  addProject,
+  addThread,
+  change,
+  env,
+  projectNamed,
+  threadNamed,
+  ui,
+} from "../environment.ts";
+import { fakeClient, PROVIDERS, thread } from "../fakeClient.ts";
+import {
+  BROKEN_FLOWCHART,
+  GROWN_FLOWCHART,
+  MERMAID_SOURCES,
+  mermaidAsks,
+  mermaidDrawing,
+  mermaidFence,
+  serveMermaid,
+} from "../fakeMermaid.ts";
 import { fakeSpaceMc, type FakeSpaceMc } from "../fakeSpaceMc.ts";
 import { presenceOverSession, type PresenceOverSession } from "../presenceOverSession.ts";
 import { chooseCommand, palette, selectThread } from "../threadUi.ts";
 import { message } from "../threadWorld.ts";
 import { findObject, pressKey, settle, typeText, type World } from "../world.ts";
+import { PNG } from "./composer.steps.ts";
+import { chooseInPicker, runPaletteCommand } from "./controls.steps.ts";
 import { selectRow as selectFileRow } from "./files.steps.ts";
+import type { MermaidWorld } from "./mermaid.steps.ts";
 
-interface SpaceWorld extends World {
+interface SpaceWorld extends World, MermaidWorld {
   /** A thread's worktree by project: its folder and the files it has that differ. */
   worktrees?: Map<string, { readonly root: string; readonly files: Map<string, string> }>;
   /** The site link each page had when the scenario first saw it. */
@@ -76,6 +97,11 @@ function mc(ctx: SpaceWorld): FakeSpaceMc {
     titleOf: (threadId) =>
       env(ctx).threads.find((candidate) => candidate.id === threadId)?.title ?? null,
     agentThreadId: () => threadNamed(ctx, AGENT_THREAD).id,
+    // The MC names the project the user last worked in: the Background's thread's.
+    agentProjectId: () =>
+      env(ctx).threads.find((candidate) => candidate.title === AGENT_THREAD)?.projectId ??
+      env(ctx).projects[0]?.id ??
+      null,
   });
   return ctx.spaceMc;
 }
@@ -140,6 +166,8 @@ const words = (row: TuiSpaceRow) => row.text.slice(2).trim();
 
 /** The client runs, connected, its Spaces served by the MC. */
 async function start(ctx: SpaceWorld) {
+  // The prompt's Ctrl+Shift chords need a terminal that tells them apart from Enter.
+  if (!ctx.app) ctx.kittyKeyboard = true;
   await ui(ctx);
   if (ctx.fake!.settings.streams === null) mc(ctx).attach(ctx.fake!.settings);
 }
@@ -184,11 +212,19 @@ const treeKey = (ctx: SpaceWorld, title: string) => {
     : `page:${page.id}`;
 };
 
-async function openPage(ctx: SpaceWorld, title: string) {
+/**
+ * Opens the page with the page's keys; `prompt` leaves the keys where they are, as when
+ * reading what the page or its prompt shows.
+ */
+async function openPage(ctx: SpaceWorld, title: string, keys: "page" | "any" = "page") {
   await start(ctx);
   const page = mc(ctx).pageNamed(title);
   const view = pane(ctx);
-  if (view.open && view.view === "page" && view.title.startsWith(`page · ${title}`)) return;
+  const there = view.open && view.view === "page" && view.title.startsWith(`page · ${title}`);
+  if (there && keys === "any") return;
+  // Leaving goes through the page's keys: Esc in its prompt would clear the draft.
+  if (mode(ctx) === "pagePrompt") await press(ctx, "Ctrl+P");
+  if (there) return;
   await openSpace(
     ctx,
     mc(ctx)
@@ -1509,14 +1545,17 @@ step("the user cannot restore a version of {string}", async (ctx: SpaceWorld, ti
 // --- an agent in a page ---
 
 const agentSays = async (ctx: SpaceWorld, page: string) => {
-  await openPage(ctx, page);
+  await openPage(ctx, page, "any");
   return pane(ctx).message;
 };
 
+// A puts "@agent " in the page's prompt; the words go after it.
 step("the user asks {string} on the page {string}", async (ctx: SpaceWorld, ask: string, page) => {
   await openPage(ctx, page);
   await press(ctx, "A");
-  await answer(ctx, ask);
+  expect(mode(ctx)).toBe("pagePrompt");
+  await typeText(ctx, ask.replace(/^@agent\s*/i, ""));
+  await press(ctx, "Enter");
 });
 
 step(
@@ -1528,6 +1567,7 @@ step(
 
 step("{string} links to its agent's thread", async (ctx: SpaceWorld, page: string) => {
   expect(await agentSays(ctx, page)).toContain(`o opens “${AGENT_THREAD}”`);
+  await openPage(ctx, page);
   await press(ctx, "o");
   expect(pane(ctx).open).toBe(false);
   expect(mode(ctx)).toBe("compose");
@@ -1541,7 +1581,8 @@ step(
   },
 );
 
-step("the user follows the agent of {string} to its thread", async (ctx: SpaceWorld) => {
+step("the user follows the agent of {string} to its thread", async (ctx: SpaceWorld, page) => {
+  await openPage(ctx, page);
   await press(ctx, "o");
 });
 
@@ -1603,8 +1644,9 @@ step("the MC refuses the next ask", (ctx: SpaceWorld) => {
 });
 
 step("the words {string} are kept to ask again", (ctx: SpaceWorld, words: string) => {
-  expect(mode(ctx)).toBe("ask");
-  expect(ctx.host!.state.get("ask")).toMatchObject({ value: words });
+  expect(mode(ctx)).toBe("pagePrompt");
+  expect(prompt(ctx).text).toBe(`@agent ${words}`);
+  expect(prompt(ctx).notice).toContain("An agent is already working on this page.");
 });
 
 step("the agent of {string} does not stop when asked", (ctx: SpaceWorld) => {
@@ -1656,6 +1698,295 @@ step("the user dismisses the agent of {string}", async (ctx: SpaceWorld, page: s
 
 step("{string} says nothing about an agent", async (ctx: SpaceWorld, page: string) => {
   expect(await agentSays(ctx, page)).toBe("");
+});
+
+// --- the page's prompt (space/prompt.feature) ---
+
+const prompt = (ctx: World) => ctx.host!.state.get("composer") as TuiComposerState;
+
+/** Opens the page with its prompt holding the keys (^P). */
+async function onPrompt(ctx: SpaceWorld, title: string) {
+  await openPage(ctx, title, "any");
+  if (mode(ctx) !== "pagePrompt") await press(ctx, "Ctrl+P");
+  expect(mode(ctx)).toBe("pagePrompt");
+}
+
+/** The models of every provider, with their efforts. */
+const withModels = (ctx: World) =>
+  ctx.fake!.override("listModels", async () => flattenModelOptions(PROVIDERS) as never);
+
+/** The project has the image, read through the MC as a pasted path is. */
+async function attachImage(ctx: World, image: string) {
+  ctx.fake!.workspaceFiles.set(image, PNG);
+  ctx.host!.dispatch("composer.attach", { path: image });
+  await settle(ctx);
+  expect(prompt(ctx).attachments.map((attached) => attached.name)).toEqual([image]);
+}
+
+/** Codex has the skill "review", and the project the file README.md. */
+async function withSkillsAndFiles(ctx: World) {
+  const providers = PROVIDERS.map((provider) =>
+    provider.instanceId === "codex"
+      ? {
+          ...provider,
+          skills: [{ name: "review", path: "/skills/review", enabled: true }],
+        }
+      : provider,
+  ) as unknown as ServerProvider[];
+  ctx.fake!.server.providers = providers;
+  ctx.fake!.override(
+    "getServerConfig",
+    async () => ({ settings: ctx.fake!.server.settings, providers }) as never,
+  );
+  ctx.fake!.override("listEntries", async () => [{ path: "README.md", kind: "file" }] as never);
+  await chooseCommand(ctx, "Refresh providers");
+  await settle(ctx);
+}
+
+step(
+  "the user sends {string} from the prompt of {string}",
+  async (ctx: SpaceWorld, words: string, page: string) => {
+    await onPrompt(ctx, page);
+    await typeText(ctx, words);
+    await press(ctx, "Enter");
+  },
+);
+
+step(
+  "the user typed {string} in the prompt of {string}",
+  async (ctx: SpaceWorld, words: string, page: string) => {
+    await onPrompt(ctx, page);
+    await typeText(ctx, words);
+    await settle(ctx);
+    expect(prompt(ctx).text).toBe(words);
+  },
+);
+
+step("the user types {string} in the prompt of {string}", async (ctx: SpaceWorld, typed, page) => {
+  await onPrompt(ctx, page);
+  expect(prompt(ctx).text).toBe("");
+  await typeText(ctx, typed);
+  await settle(ctx);
+});
+
+// A chart is asked for in words, so "/" offers "Visualize" in its place.
+step("the user is offered the kinds of block, and {string}", (ctx: World, visualize: string) => {
+  expect(select(ctx)).toMatchObject({ open: true, title: "kind of block" });
+  expect(select(ctx).options.map((option) => option.label)).toEqual([
+    "Paragraph",
+    "Heading",
+    "Checklist item",
+    "Callout",
+    "Link to a subpage",
+    visualize,
+    "Image",
+  ]);
+});
+
+step("the user starts an ask on {string}", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page);
+  await press(ctx, "A");
+  expect(mode(ctx)).toBe("pagePrompt");
+  expect(prompt(ctx).text).toBe("@agent ");
+});
+
+step(
+  "the prompt of {string} says the ask runs in the project {string} on the model of {string}",
+  async (ctx: SpaceWorld, page: string, project: string, thread: string) => {
+    await openPage(ctx, page, "any");
+    expect(prompt(ctx).context?.workspace).toBe(`ask runs in ${project} ▾`);
+    const { modelSelection } = threadNamed(ctx, thread);
+    expect(prompt(ctx).selectedInstanceId).toBe(modelSelection.instanceId);
+    expect(prompt(ctx).selectedModel).toBe(modelSelection.model);
+  },
+);
+
+// Each choice through the prompt's own keys, as on a thread's prompt.
+const CHOICES: Record<string, (ctx: SpaceWorld) => Promise<void>> = {
+  "another model": async (ctx) => {
+    withModels(ctx);
+    await press(ctx, "Ctrl+Shift+M");
+    await chooseInPicker(ctx, "GPT-5 Codex");
+  },
+  "high effort": async (ctx) => {
+    withModels(ctx);
+    await press(ctx, "Ctrl+Shift+E");
+    await chooseInPicker(ctx, "High");
+  },
+  planning: async (ctx) => {
+    await press(ctx, "Ctrl+B");
+    expect(prompt(ctx).interactionMode).toBe("plan");
+  },
+  "approval for each action": async (ctx) => {
+    await press(ctx, "Ctrl+O");
+    await chooseInPicker(ctx, "Supervised");
+  },
+  'the project "docs"': async (ctx) => {
+    change(ctx, () => addProject(ctx, "docs"));
+    await settle(ctx);
+    // The keyboard's way to the "ask runs in" chip.
+    await runPaletteCommand(ctx, "Change where an ask runs");
+    expect(select(ctx).title).toBe("ask runs in");
+    await chooseInPicker(ctx, "docs");
+    expect(prompt(ctx).context?.workspace).toBe("ask runs in docs ▾");
+  },
+  'the image "sketch.png"': (ctx) => attachImage(ctx, "sketch.png"),
+  'a mention of "README.md"': async (ctx) => {
+    await typeText(ctx, "@");
+    await settle(ctx);
+    await chooseInPicker(ctx, "README.md");
+    expect(prompt(ctx).text).toBe("@agent @README.md ");
+  },
+  'the skill "review"': async (ctx) => {
+    await typeText(ctx, "$");
+    await settle(ctx);
+    await chooseInPicker(ctx, "$review");
+    expect(prompt(ctx).text).toBe("@agent $review ");
+  },
+};
+
+step(
+  /^the user chooses (.+) in the prompt of "([^"]*)"$/,
+  async (ctx: SpaceWorld, choice: string, page: string) => {
+    const make = CHOICES[choice];
+    if (!make) throw new Error(`no way to choose ${choice} in a page's prompt`);
+    if (choice.startsWith("a mention") || choice.startsWith("the skill")) {
+      await withSkillsAndFiles(ctx);
+    }
+    await onPrompt(ctx, page);
+    await make(ctx);
+    expect(mode(ctx)).toBe("pagePrompt");
+  },
+);
+
+/** What the MC was sent with the page's last ask. */
+const lastAsk = (ctx: SpaceWorld, page: string) => {
+  const ask = mc(ctx).asks.findLast((entry) => entry.pageId === pageId(ctx, page));
+  expect(ask).toBeDefined();
+  return ask!;
+};
+
+const ASKED: Record<string, (ctx: SpaceWorld, ask: Record<string, any>) => void> = {
+  "another model": (_ctx, ask) =>
+    expect(ask.modelSelection).toMatchObject({ instanceId: "codex", model: "gpt-5-codex" }),
+  "high effort": (_ctx, ask) =>
+    expect(ask.modelSelection.options).toContainEqual({ id: "reasoningEffort", value: "high" }),
+  planning: (_ctx, ask) => expect(ask.interactionMode).toBe("plan"),
+  "approval for each action": (_ctx, ask) => expect(ask.runtimeMode).toBe("approval-required"),
+  'the project "docs"': (ctx, ask) => expect(ask.projectId).toBe(projectNamed(ctx, "docs").id),
+  'the image "sketch.png"': (_ctx, ask) =>
+    expect(ask.attachments).toEqual([
+      expect.objectContaining({ type: "image", name: "sketch.png" }),
+    ]),
+  'a mention of "README.md"': (_ctx, ask) => expect(ask.request).toBe("@README.md tidy this"),
+  'the skill "review"': (_ctx, ask) => expect(ask.request).toBe("$review tidy this"),
+};
+
+step(/^the agent's thread of "([^"]*)" has (.+)$/, (ctx: SpaceWorld, page: string, choice) => {
+  const check = ASKED[choice];
+  if (!check) throw new Error(`no way to read ${choice} from an ask`);
+  const ask = lastAsk(ctx, page);
+  check(ctx, ask);
+  // The words after @agent are what is asked.
+  expect(ask.request).toEndWith("tidy this");
+});
+
+const ENTRIES: Record<string, (ctx: SpaceWorld) => Promise<void>> = {
+  "the page's menu": async (ctx) => {
+    await press(ctx, "n");
+    await choose(ctx, "Ask an agent");
+  },
+  "the command palette": (ctx) => runPaletteCommand(ctx, "Ask an agent about this page"),
+  "its keybinding": (ctx) => press(ctx, "A"),
+};
+
+step(
+  /^the user asks an agent about "([^"]*)" from (the page's menu|the command palette|its keybinding)$/,
+  async (ctx: SpaceWorld, page: string, entry: string) => {
+    await openPage(ctx, page);
+    await ENTRIES[entry]!(ctx);
+  },
+);
+
+step("the prompt of {string} is ready to ask an agent", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page, "any");
+  expect(mode(ctx)).toBe("pagePrompt");
+  expect(prompt(ctx).text).toBe("@agent ");
+  expect(prompt(ctx).inputFocused).toBe(true);
+});
+
+step("the prompt of {string} reads {string}", async (ctx: SpaceWorld, page: string, words) => {
+  await openPage(ctx, page, "any");
+  expect(prompt(ctx).text).toBe(words);
+});
+
+step(
+  "the prompt of {string} reads {string} with the image {string}",
+  async (ctx: SpaceWorld, page: string, words: string, image: string) => {
+    await openPage(ctx, page, "any");
+    expect(prompt(ctx).text).toBe(words);
+    expect(prompt(ctx).attachments.map((attached) => attached.name)).toEqual([image]);
+  },
+);
+
+step("the prompt of {string} is empty", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page, "any");
+  expect(prompt(ctx).text).toBe("");
+  expect(prompt(ctx).attachments).toEqual([]);
+});
+
+step(
+  "the user takes {string} out of the prompt of {string} and sends {string}",
+  async (ctx: SpaceWorld, taken: string, page: string, words: string) => {
+    await onPrompt(ctx, page);
+    expect(prompt(ctx).text).toStartWith(taken);
+    for (const _ of prompt(ctx).text) await pressKey(ctx, "Backspace");
+    await settle(ctx);
+    expect(prompt(ctx).text).toBe("");
+    await typeText(ctx, words);
+    await press(ctx, "Enter");
+  },
+);
+
+// Esc on an empty prompt stops what runs, as it stops a thread's turn.
+step("the user stops from the prompt of {string}", async (ctx: SpaceWorld, page: string) => {
+  await onPrompt(ctx, page);
+  expect(prompt(ctx).text).toBe("");
+  await press(ctx, "Esc");
+});
+
+step(
+  "the user attached the image {string} in the prompt of {string}",
+  async (ctx: SpaceWorld, image: string, page: string) => {
+    await onPrompt(ctx, page);
+    await attachImage(ctx, image);
+  },
+);
+
+step("the page {string} in the Space {string}", (ctx: SpaceWorld, page: string, name: string) => {
+  seedSpace(ctx, name);
+  seedPage(ctx, page);
+});
+
+step(
+  "the user opens {string} and comes back to {string}",
+  async (ctx: SpaceWorld, other: string, page: string) => {
+    await openPage(ctx, other);
+    await openPage(ctx, page);
+  },
+);
+
+step("the user opens the thread {string}", async (ctx: SpaceWorld, title: string) => {
+  while (pane(ctx).open) {
+    await press(ctx, mode(ctx) === "pagePrompt" ? "Ctrl+P" : "Esc");
+  }
+  await selectThread(ctx, title);
+  await settle(ctx);
+});
+
+step("the prompt of {string} does not read {string}", (ctx: SpaceWorld, title: string, words) => {
+  expect(prompt(ctx).target).toContain(threadNamed(ctx, title).id);
+  expect(prompt(ctx).text).not.toBe(words);
 });
 
 // --- decks ---
@@ -1903,7 +2234,6 @@ step("the site link of the page {string} starts with {string}", (ctx: SpaceWorld
 
 const IMAGE_UNAVAILABLE = "No image generation provider is set up.";
 const IMAGE_FAILED = "The provider left no image.";
-const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 async function openImages(ctx: SpaceWorld, name = ctx.spaceName!) {
   await openSpace(ctx, name);
@@ -2389,6 +2719,106 @@ step("each heading is smaller than the one of the level above it", (ctx: SpaceWo
     THEME.dim.toString(),
     THEME.dim.toString(),
   ]);
+});
+
+// --- Mermaid diagrams (space/markdown.feature; the MC's answers are fakeMermaid.ts) ---
+
+const DIAGRAM_PAGE = "Checkout flow";
+
+/** The page's diagram is the one on screen; its lines are its rows, after the marker. */
+const showsDiagram = (ctx: SpaceWorld, source: string) => {
+  ctx.diagram = {
+    source,
+    lines: async () => {
+      await settle(ctx);
+      return pane(ctx)
+        .rows.filter((row) => row.blockKind === "code")
+        .map((row) => row.text.slice(2));
+    },
+  };
+};
+
+/** The diagram's block, by its source: a code block in "mermaid". */
+const diagramBlock = (ctx: SpaceWorld, source: string) => mc(ctx).blockNamed(source);
+
+/** Import, from a file on this machine as the user would, a page holding the diagram. */
+async function importDiagram(ctx: SpaceWorld, source: string) {
+  serveMermaid(ctx);
+  if (!ctx.spaceName) seedSpace(ctx, "Personal");
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "space-import-"));
+  ctx.cleanups.push(() => NodeFS.rmSync(dir, { recursive: true, force: true }));
+  const file = NodePath.join(dir, "checkout.md");
+  NodeFS.writeFileSync(file, `# ${DIAGRAM_PAGE}\n\n${mermaidFence(source)}\n`);
+  await openSpace(ctx);
+  await press(ctx, "i");
+  await answer(ctx, file);
+  expect(pane(ctx).title).toBe(`page · ${DIAGRAM_PAGE}`);
+  showsDiagram(ctx, source);
+}
+
+step(
+  "the user imports a page holding a {string} Mermaid diagram",
+  (ctx: SpaceWorld, type: string) => importDiagram(ctx, MERMAID_SOURCES[type]!),
+);
+step("the user imports a page holding a flowchart with an unclosed bracket", (ctx: SpaceWorld) =>
+  importDiagram(ctx, BROKEN_FLOWCHART),
+);
+
+step("the page has a diagram block of the type {string}", (ctx: SpaceWorld, type: string) => {
+  const block = diagramBlock(ctx, MERMAID_SOURCES[type]!);
+  expect(block).toMatchObject({
+    kind: "code",
+    language: "mermaid",
+    pageId: mc(ctx).pageNamed(DIAGRAM_PAGE).id,
+  });
+});
+
+// Steps below it, so the selection can move past it and back.
+step("a page with a flowchart", async (ctx: SpaceWorld) => {
+  serveMermaid(ctx);
+  if (!ctx.spaceName) seedSpace(ctx, "Personal");
+  const source = MERMAID_SOURCES.flowchart!;
+  mc(ctx).run("space.block.insert", {
+    spaceId: currentSpaceId(ctx),
+    pageId: seedPage(ctx, DIAGRAM_PAGE),
+    kind: "code",
+    language: "mermaid",
+    text: source,
+  });
+  for (const step of ["Cart", "Checkout", "Paid"]) {
+    seedBlock(ctx, DIAGRAM_PAGE, "paragraph", `${step} is a step.`);
+  }
+  await openPage(ctx, DIAGRAM_PAGE);
+  showsDiagram(ctx, source);
+});
+
+step("the user adds a node to its source", async (ctx: SpaceWorld) => {
+  await selectRow(ctx, `block:${diagramBlock(ctx, ctx.diagram!.source).id}`);
+  await press(ctx, "e");
+  // The field holds the source on one line: a line break is \n.
+  const field = (source: string) => source.split("\n").join("\\n");
+  expect(findObject(ctx, "askInput").get("text")).toBe(field(ctx.diagram!.source));
+  await answer(ctx, field(GROWN_FLOWCHART));
+  showsDiagram(ctx, GROWN_FLOWCHART);
+});
+
+step("the diagram is drawn again with the new node", async (ctx: SpaceWorld) => {
+  const lines = await ctx.diagram!.lines();
+  expect(lines[0]).toBe("◇ flowchart diagram");
+  expect(lines.slice(1)).toEqual(mermaidDrawing(GROWN_FLOWCHART));
+  expect(mermaidAsks(ctx, GROWN_FLOWCHART)).toBe(1);
+});
+
+step("the export writes the new source", async (ctx: SpaceWorld) => {
+  await press(ctx, "y");
+  expect(ctx.clipboard?.at(-1)).toContain(`\n\n${mermaidFence(GROWN_FLOWCHART)}\n`);
+});
+
+step("the user scrolls the page past it and back", async (ctx: SpaceWorld) => {
+  const diagram = `block:${diagramBlock(ctx, ctx.diagram!.source).id}`;
+  await selectRow(ctx, `block:${mc(ctx).blockNamed("Paid is a step.").id}`);
+  await selectRow(ctx, diagram);
+  expect(await ctx.diagram!.lines()).toContain(mermaidDrawing(ctx.diagram!.source)[1]!);
 });
 
 // --- project files (project-files.feature) ---

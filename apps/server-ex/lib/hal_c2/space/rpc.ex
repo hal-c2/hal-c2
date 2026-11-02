@@ -7,7 +7,7 @@ defmodule HalC2.Space.Rpc do
   """
 
   alias HalC2.Space
-  alias HalC2.Space.Schedule
+  alias HalC2.Space.{PageAgent, Schedule}
 
   @doc "Answers `space.<method>` with `input`."
   def handle(method, input) when is_map(input), do: method |> call(input) |> reply()
@@ -87,8 +87,10 @@ defmodule HalC2.Space.Rpc do
   defp call("page.restoreVersion", %{"spaceId" => s, "pageId" => p, "version" => v}),
     do: page(Space.restore_page_version(s, p, v))
 
-  defp call("page.askAgent", %{"spaceId" => s, "pageId" => p, "request" => request}),
-    do: agent(Space.ask_page_agent(s, p, request))
+  defp call("page.askAgent", %{"spaceId" => s, "pageId" => p, "request" => request} = input),
+    do: agent(Space.ask_page_agent(s, p, request, Map.take(input, PageAgent.choices())))
+
+  defp call("page.agentTarget", _input), do: PageAgent.default_project()
 
   defp call("page.stopAgent", %{"spaceId" => s, "pageId" => p}),
     do: agent(Space.stop_page_agent(s, p))
@@ -111,12 +113,21 @@ defmodule HalC2.Space.Rpc do
     do: page(Schedule.remove(s, p))
 
   defp call("block.insert", %{"spaceId" => s, "pageId" => p, "kind" => _} = i) do
-    spec = Map.take(i, ~w(kind text checked linkedPageId imageId level table language))
+    spec =
+      Map.take(
+        i,
+        ~w(kind text checked linkedPageId imageId url level table language depth start alert
+           label)
+      )
+
     block(Space.insert_block(s, p, spec, Map.get(i, "afterBlockId", :last)))
   end
 
   defp call("block.update", %{"spaceId" => s, "blockId" => b} = i),
-    do: block(Space.edit_block(s, b, Map.take(i, ~w(text level language))))
+    do:
+      block(
+        Space.edit_block(s, b, Map.take(i, ~w(text level language depth start alert label url)))
+      )
 
   defp call("block.editTable", %{"spaceId" => s, "blockId" => b, "edit" => edit}),
     do: block(Space.edit_table(s, b, edit))
@@ -201,7 +212,7 @@ defmodule HalC2.Space.Rpc do
     page.createFromThread page.openFile page.syncFile page.unlinkFile files.list files.scan
     page.history page.version page.restoreVersion
     page.schedule.set page.schedule.setEnabled page.schedule.runNow page.schedule.remove
-    page.askAgent page.stopAgent page.dismissAgent block.insert block.update block.setChecked
+    page.askAgent page.agentTarget page.stopAgent page.dismissAgent block.insert block.update block.setChecked
     block.editTable block.move block.delete block.visualize comment.add comment.resolve comment.reopen
     deck.create deck.createFromPage deck.rename deck.trash deck.restore deck.delete
     slide.insert slide.update slide.move slide.delete image.add image.generate image.trash

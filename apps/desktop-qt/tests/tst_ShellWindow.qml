@@ -98,6 +98,22 @@ Item {
             compare(body.width, window.width);
         }
 
+        // The layout fits the sidebar to the room the content has, the
+        // window's width over the zoom: a zoom changes it as a resize does.
+        function test_reportsTheRoomOnZoom() {
+            const window = createTemporaryObject(windowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            const reported = () => {
+                const sent = Shell.dispatchedActions.filter(entry => entry.action === "layout.window");
+                return sent[sent.length - 1].payload.width;
+            };
+            compare(reported(), window.width);
+            Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1.5 } });
+            compare(reported(), Math.round(window.width / 1.5));
+            Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1 } });
+            compare(reported(), window.width);
+        }
+
         // Scenario: Context menus follow the zoomed app (features/navigation/windows.feature)
         function test_menuAtThePointerWhenZoomed() {
             Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1.5 } });

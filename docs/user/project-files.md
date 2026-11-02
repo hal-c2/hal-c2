@@ -6,14 +6,23 @@ the page. Agents and git keep working on one copy, the file.
 
 ## Open a file
 
+On the desktop, choose **Open in a Space** from a file's menu in the Files tab, from the file
+viewer, or from a file link in a chat, or add a page from a project's files in the Space view. The
+desktop offers this only for projects on the machine its Space view shows.
+
 In the terminal client, browse to the file (or open it in the viewer) and choose "Open this file in
 a Space" from the command palette; inside a Space, press `f` on the list of pages to pick one of a
-project's files. Outside a Space, the file opens in the Space you last had open.
+project's files.
 
-Or ask an agent to open the file in a Space; it uses the `hal_c2_page_open_file` tool. Opening the
-same file again, from any Space, goes to the page it already is, and brings it back from the trash.
-A file opened from a thread's worktree goes to the page of the project's own folder: a page follows
-the file in the project's folder, whatever branch is checked out there.
+On the phone, press and hold a file in a thread's Files screen, or a file link in a chat, and choose
+**Open in a Space**; the file viewer has the same button, and a Space's list of pages has one to add
+a page from a project's files. The phone offers this only for projects on the machine it is paired with.
+
+Outside a Space, the file opens in the Space you last had open. Or ask an agent to open the file in
+a Space; it uses the `hal_c2_page_open_file` tool. Opening the same file again, from any Space, goes
+to the page it already is, and brings it back from the trash. A file opened from a thread's worktree
+goes to the page of the project's own folder: a page follows the file in the project's folder,
+whatever branch is checked out there.
 
 A link in the project (`CLAUDE.md` linking to `AGENTS.md`, say) opens as the file it links to, and
 edits go to that file while the link stays a link. If the link and its file are both open as pages, an
@@ -30,7 +39,8 @@ section to the project's `hal-c2.json`:
 
 You don't have to write it yourself. A scan proposes the section from the Markdown the project has,
 leaving out hidden folders, and writes it into `hal-c2.json`, keeping the rest of the file and its
-comments. Ask an agent to run it (`hal_c2_space_files_scan`). A section someone already wrote is
+comments. Run **Scan project for Space files** from the command palette, or ask an agent to run
+it (`hal_c2_space_files_scan`). A section someone already wrote is
 kept unless you ask the scan to replace it. A section that doesn't match the format counts no files
 and leaves the rest of `hal-c2.json` working.
 

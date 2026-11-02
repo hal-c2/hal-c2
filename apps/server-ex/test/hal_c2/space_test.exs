@@ -8,6 +8,16 @@ defmodule HalC2.SpaceTest do
   alias HalC2.{Space, Streams}
   alias HalC2.Space.{Blocks, Decks, ImageFile, Images, Markdown, Order}
 
+  # A one-pixel PNG, as a client sends an image inline.
+  @image %{
+    "type" => "image",
+    "name" => "sketch.png",
+    "mimeType" => "image/png",
+    "sizeBytes" => 68,
+    "dataUrl" =>
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII="
+  }
+
   @moduletag :tmp_dir
   setup %{tmp_dir: dir} do
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
@@ -46,6 +56,23 @@ defmodule HalC2.SpaceTest do
     Enum.map(blocks, & &1["text"])
   end
 
+  defp page_agent(space, page),
+    do: HalC2.StreamState.get(Streams.state(Space.stream_id(space)), "pageAgent")[page]
+
+  defp await_page_agent(stream, page, status) do
+    case HalC2.StreamState.get(Streams.state(stream), "pageAgent")[page] do
+      %{"status" => ^status} ->
+        :ok
+
+      _ ->
+        receive do
+          {:hal_c2_stream, ^stream, _} -> await_page_agent(stream, page, status)
+        after
+          5_000 -> flunk("the page's agent never said #{status}")
+        end
+    end
+  end
+
   describe "the agent asked on a page" do
     # A second stop found the first still waiting for the run, and wrote an empty patch
     # that took the Space's stream down.
@@ -69,13 +96,155 @@ defmodule HalC2.SpaceTest do
 
       Application.put_env(:hal_c2, :page_agent_launch, launch)
       on_exit(fn -> Application.delete_env(:hal_c2, :page_agent_launch) end)
-      target = fn -> {:ok, %{project_id: nil, model: nil, runtime_mode: nil}} end
 
-      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", target)
+      target = fn _ ->
+        {:ok, %{project_id: nil, model: nil, runtime_mode: nil, interaction_mode: nil}}
+      end
+
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", %{}, target)
       assert_receive :launched
 
       assert {:ok, %{"status" => "stopping"}} = Space.stop_page_agent(space, page)
       assert {:ok, %{"status" => "stopping"}} = Space.stop_page_agent(space, page)
+    end
+
+    test "what the page's prompt chose reaches the thread, and a refused ask keeps no image",
+         %{space: space, tmp_dir: dir} do
+      page = page!(space, "Roadmap")
+      test = self()
+      home = Application.get_env(:hal_c2, :home)
+      Application.put_env(:hal_c2, :home, dir)
+      # The launch waits, so the page's agent is still at work for the second ask.
+      Application.put_env(:hal_c2, :page_agent_launch, fn input ->
+        send(test, {:launched, input})
+        receive do: (:never -> {:ok, nil})
+      end)
+
+      on_exit(fn ->
+        Application.put_env(:hal_c2, :home, home)
+        Application.delete_env(:hal_c2, :page_agent_launch)
+      end)
+
+      target = fn choices ->
+        {:ok,
+         %{
+           project_id: "shop",
+           model: choices["modelSelection"],
+           runtime_mode: choices["runtimeMode"],
+           interaction_mode: choices["interactionMode"]
+         }}
+      end
+
+      file = %{"type" => "file", "id" => "pending-x", "name" => "notes.pdf", "sizeBytes" => 3}
+      context = %{"version" => 1, "records" => [%{"kind" => "skill", "contextId" => "c1"}]}
+
+      choices = %{
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "approval-required",
+        "interactionMode" => "plan",
+        "attachments" => [@image, file],
+        "context" => context
+      }
+
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", choices, target)
+      assert_receive {:launched, input}
+
+      assert %{
+               "modelSelection" => %{"model" => "gpt-5.4"},
+               "runtimeMode" => "approval-required",
+               "interactionMode" => "plan",
+               "initialMessage" => %{
+                 "attachments" => [saved, ^file],
+                 "context" => ^context
+               }
+             } = input
+
+      assert %{"name" => "sketch.png", "sizeBytes" => 68} = saved
+      assert HalC2.Attachments.path(saved)
+      kept = Path.wildcard(Path.join(HalC2.Attachments.dir(), "*"))
+
+      # The page's agent is at work, so a second ask is refused, and its image with it.
+      assert {:error, :invalid, _} =
+               Space.PageAgent.ask(space, page, "again", %{"attachments" => [@image]}, target)
+
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == kept
+    end
+
+    test "an ask whose thread cannot start keeps no image", %{space: space, tmp_dir: dir} do
+      page = page!(space, "Roadmap")
+      home = Application.get_env(:hal_c2, :home)
+      Application.put_env(:hal_c2, :home, dir)
+      Application.put_env(:hal_c2, :page_agent_launch, fn _ -> {:error, "No provider."} end)
+
+      on_exit(fn ->
+        Application.put_env(:hal_c2, :home, home)
+        Application.delete_env(:hal_c2, :page_agent_launch)
+      end)
+
+      target = fn _ ->
+        {:ok, %{project_id: nil, model: nil, runtime_mode: nil, interaction_mode: nil}}
+      end
+
+      stream = Space.stream_id(space)
+      :ok = Streams.subscribe(stream, self(), nil)
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", %{"attachments" => [@image]}, target)
+      await_page_agent(stream, page, "failed")
+
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == []
+    end
+
+    # The MC listens before its reconciliation runs, so an ask can come in between, with
+    # its launch still writing the thread: the reconciliation took it for one a crash lost,
+    # said the agent failed and deleted its image. Going by the clock instead left an ask
+    # lost after the clock was pulled back working for good, and its page with it.
+    test "the reconciliation settles the asks of earlier starts, whatever the clock says",
+         %{space: space, tmp_dir: dir} do
+      page = page!(space, "Roadmap")
+      test = self()
+      home = Application.get_env(:hal_c2, :home)
+      Application.put_env(:hal_c2, :home, dir)
+
+      Application.put_env(:hal_c2, :page_agent_launch, fn _ ->
+        send(test, :launching)
+        receive do: (:never -> {:ok, nil})
+      end)
+
+      on_exit(fn ->
+        Application.put_env(:hal_c2, :home, home)
+        Application.delete_env(:hal_c2, :page_agent_launch)
+        :persistent_term.erase({Space.PageAgent, :boot})
+      end)
+
+      target = fn _ ->
+        {:ok, %{project_id: nil, model: nil, runtime_mode: nil, interaction_mode: nil}}
+      end
+
+      Space.PageAgent.boot()
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", %{"attachments" => [@image]}, target)
+      assert_receive :launching
+      saved = Path.wildcard(Path.join(HalC2.Attachments.dir(), "*"))
+
+      :ok = Space.PageAgent.reconcile()
+
+      assert %{"status" => "running"} = page_agent(space, page)
+      assert saved != []
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == saved
+
+      # The MC goes down with the launch, and comes back with its clock a day behind.
+      {:ok, _} =
+        Space.transact(space, fn state ->
+          agent = HalC2.StreamState.get(state, "pageAgent")[page]
+          later = DateTime.utc_now() |> DateTime.add(1, :day) |> DateTime.to_iso8601()
+
+          {[{"pageAgent", page, HalC2.Patch.diff(agent, %{agent | "startedAt" => later})}],
+           {:ok, nil}}
+        end)
+
+      Space.PageAgent.boot()
+      :ok = Space.PageAgent.reconcile()
+
+      assert %{"status" => "failed"} = page_agent(space, page)
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == []
     end
   end
 
@@ -575,6 +744,191 @@ defmodule HalC2.SpaceTest do
       {:ok, block} = Space.insert_block(space, page, %{spec | "level" => 4})
       assert block["level"] == 4
       assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n#### Deep\n"}
+    end
+
+    test "a list item is indented and outdented by its depth, and only a list item has one",
+         %{space: space} do
+      {:ok, page} = Space.import_markdown(space, "# Plan\n\n- a\n    - b\n- c\n\nd\n")
+      {:ok, %{blocks: [_a, b, c, d]}} = Space.page(space, page["id"])
+      assert b["indent"] == 4
+
+      {:ok, c} = Space.edit_block(space, c["id"], %{"depth" => 1})
+      assert c["depth"] == 1
+      {:ok, b} = Space.edit_block(space, b["id"], %{"depth" => 0})
+      refute Map.has_key?(b, "depth") or Map.has_key?(b, "indent")
+      assert Space.export_markdown(space, page["id"]) == {:ok, "# Plan\n\n- a\n- b\n  - c\n\nd\n"}
+
+      assert {:error, :invalid, "Only a list item has a depth."} =
+               Space.edit_block(space, d["id"], %{"depth" => 1})
+
+      assert {:error, :invalid, _} = Space.edit_block(space, c["id"], %{"depth" => -1})
+    end
+
+    test "a numbered list starts where its first item says", %{space: space} do
+      page = page!(space, "Plan")
+      {:ok, one} = Space.insert_block(space, page, %{"kind" => "numbered", "text" => "a"})
+      {:ok, two} = Space.insert_block(space, page, %{"kind" => "numbered", "text" => "b"})
+      {:ok, one} = Space.edit_block(space, one["id"], %{"start" => 4})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n4. a\n5. b\n"}
+
+      {:ok, one} = Space.edit_block(space, one["id"], %{"start" => nil})
+      refute Map.has_key?(one, "start")
+
+      # An item that continues its list keeps a start for when it begins one.
+      {:ok, _} = Space.edit_block(space, two["id"], %{"start" => 7})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n1. a\n2. b\n"}
+      {:ok, _} = Space.delete_block(space, one["id"])
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n7. b\n"}
+
+      {:ok, bullet} =
+        Space.insert_block(space, page, %{"kind" => "bullet", "text" => "c", "start" => 2})
+
+      refute Map.has_key?(bullet, "start")
+
+      assert {:error, :invalid, "Only a numbered item has a start."} =
+               Space.edit_block(space, bullet["id"], %{"start" => 2})
+    end
+
+    test "a callout's alert is one of GitHub's, and only a callout has one", %{space: space} do
+      page = page!(space, "Plan")
+
+      {:ok, callout} =
+        Space.insert_block(space, page, %{"kind" => "callout", "text" => "Mind", "alert" => "tip"})
+
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n> [!TIP]\n> Mind\n"}
+      {:ok, callout} = Space.edit_block(space, callout["id"], %{"alert" => nil})
+      refute Map.has_key?(callout, "alert")
+
+      assert {:error, :invalid, _} =
+               Space.edit_block(space, callout["id"], %{"alert" => "danger"})
+
+      {:ok, paragraph} =
+        Space.insert_block(space, page, %{"kind" => "paragraph", "text" => "x", "alert" => "note"})
+
+      refute Map.has_key?(paragraph, "alert")
+
+      assert {:error, :invalid, "Only a callout has an alert."} =
+               Space.edit_block(space, paragraph["id"], %{"alert" => "note"})
+    end
+
+    test "a divider has no text", %{space: space} do
+      page = page!(space, "Plan")
+      {:ok, divider} = Space.insert_block(space, page, %{"kind" => "divider"})
+      assert divider["text"] == ""
+      assert {:error, :invalid, _} = Space.edit_block(space, divider["id"], %{"text" => "x"})
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{"kind" => "divider", "text" => "x"})
+
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n---\n"}
+
+      {:ok, _} = Space.insert_block(space, page, %{"kind" => "divider", "marker" => "* * *"})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n---\n\n* * *\n"}
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{"kind" => "divider", "marker" => "**"})
+    end
+
+    test "a footnote has a label, and only a footnote has one", %{space: space} do
+      page = page!(space, "Plan")
+      spec = %{"kind" => "footnote", "text" => "A source.\nOn two lines."}
+      assert {:error, :invalid, _} = Space.insert_block(space, page, spec)
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, Map.put(spec, "label", "a b"))
+
+      {:ok, note} = Space.insert_block(space, page, Map.put(spec, "label", "1"))
+      {:ok, _} = Space.insert_block(space, page, %{"kind" => "footnote", "label" => "2"})
+
+      assert Space.export_markdown(space, page) ==
+               {:ok, "# Plan\n\n[^1]: A source.\n    On two lines.\n[^2]:\n"}
+
+      {:ok, note} = Space.edit_block(space, note["id"], %{"label" => "source"})
+      assert note["label"] == "source"
+      assert {:error, :invalid, _} = Space.edit_block(space, note["id"], %{"label" => "[x]"})
+
+      {:ok, paragraph} =
+        Space.insert_block(space, page, %{"kind" => "paragraph", "text" => "x", "label" => "1"})
+
+      refute Map.has_key?(paragraph, "label")
+
+      assert {:error, :invalid, "Only a footnote has a label."} =
+               Space.edit_block(space, paragraph["id"], %{"label" => "1"})
+    end
+
+    test "math keeps `$$` only while it is math", %{space: space} do
+      {:ok, page} = Space.import_markdown(space, "# Plan\n\n$$\nx^2\n$$\n")
+      {:ok, %{blocks: [math]}} = Space.page(space, page["id"])
+      assert {math["language"], math["fence"]} == {"math", "$$"}
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page["id"], %{"kind" => "code", "fence" => "$$"})
+
+      {:ok, code} = Space.edit_block(space, math["id"], %{"language" => "tex"})
+      refute Map.has_key?(code, "fence")
+      assert Space.export_markdown(space, page["id"]) == {:ok, "# Plan\n\n```tex\nx^2\n```\n"}
+    end
+
+    test "a collapsed section's summary is one line, and its end has no text", %{space: space} do
+      page = page!(space, "Plan")
+
+      # Found in review: a summary that closes the section would read back raw.
+      for summary <- ["a\nb", "a</details>", "x</summary>", "<details><summary>y"] do
+        assert {:error, :invalid, _} =
+                 Space.insert_block(space, page, %{"kind" => "details", "text" => summary})
+      end
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{"kind" => "details", "marker" => "<div>"})
+
+      {:ok, details} = Space.insert_block(space, page, %{"kind" => "details", "text" => "Logs"})
+      {:ok, _} = Space.insert_block(space, page, %{"kind" => "paragraph", "text" => "Inside"})
+      {:ok, ending} = Space.insert_block(space, page, %{"kind" => "details_end"})
+
+      assert Space.export_markdown(space, page) ==
+               {:ok, "# Plan\n\n<details>\n<summary>Logs</summary>\n\nInside\n\n</details>\n"}
+
+      assert {:error, :invalid, _} = Space.edit_block(space, details["id"], %{"text" => "a\nb"})
+
+      assert {:error, :invalid, _} =
+               Space.edit_block(space, details["id"], %{"text" => "a</DETAILS>"})
+
+      {:ok, %{"text" => "a <b>b</b>"}} =
+        Space.edit_block(space, details["id"], %{"text" => "a <b>b</b>"})
+
+      assert {:error, :invalid, _} = Space.edit_block(space, ending["id"], %{"text" => "x"})
+      {:ok, details} = Space.edit_block(space, details["id"], %{"text" => "All logs"})
+      assert details["text"] == "All logs"
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{"kind" => "details_end", "text" => "x"})
+    end
+
+    test "an image by its address keeps it, and is never one of the Space's", %{space: space} do
+      page = page!(space, "Plan")
+      spec = %{"kind" => "image", "text" => "A cat", "url" => "https://x.test/cat.png"}
+      {:ok, image} = Space.insert_block(space, page, spec)
+      assert {image["url"], image["imageId"]} == {"https://x.test/cat.png", nil}
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, Map.put(spec, "imageId", "img"))
+
+      assert {:error, :invalid, _} = Space.insert_block(space, page, %{spec | "url" => "a b"})
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{spec | "url" => "space-image:img"})
+
+      {:ok, image} = Space.edit_block(space, image["id"], %{"url" => "./cat.png"})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n![A cat](./cat.png)\n"}
+      assert {:error, :invalid, _} = Space.edit_block(space, image["id"], %{"url" => "a)b"})
+
+      {:ok, imported} = Space.import_markdown(space, "# Web\n\n![A dog](https://x.test/d.png)\n")
+      assert texts(space, imported["id"]) == ["A dog"]
+
+      {:ok, paragraph} = Space.insert_block(space, page, %{"kind" => "paragraph", "text" => "x"})
+
+      assert {:error, :invalid, "Only an image by its address has a url."} =
+               Space.edit_block(space, paragraph["id"], %{"url" => "a.png"})
     end
 
     test "a link to a page the Space lacks is imported as a paragraph", %{space: space} do

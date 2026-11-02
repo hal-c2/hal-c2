@@ -26,7 +26,7 @@ Rectangle {
     property bool explorerOpen: true
     // What the file's header takes with all its buttons out: its margins, then each
     // button and the gap before it. The path gives way to them, so it counts for nothing.
-    readonly property real headerFullWidth: 14 + [renderButton, editButton, copyButton, openInEditorButton, openPreviewButton, wrapButton, fileExplorerToggleButton, closeButton].reduce((sum, button) => sum + (button.wanted ? button.implicitWidth + 4 : 0), 0)
+    readonly property real headerFullWidth: 14 + [renderButton, editButton, copyButton, openInEditorButton, openPreviewButton, openInSpaceButton, wrapButton, fileExplorerToggleButton, closeButton].reduce((sum, button) => sum + (button.wanted ? button.implicitWidth + 4 : 0), 0)
     // The text buttons grow with the user's font scale and can outgrow any tab, while
     // the icon buttons cannot, so the text buttons move into a menu when they would
     // not fit. The toggle and Close, the way out of the file, stay on the header.
@@ -101,7 +101,7 @@ Rectangle {
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color borderColor: Theme.palette.color("border", "#27272a")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
 
     objectName: "filesPanel"
@@ -243,6 +243,23 @@ Rectangle {
                     onClicked: root.source.openInPreview()
                 }
                 ShellButton {
+                    id: openInSpaceButton
+
+                    // Only a file the project's spaces section covers (SpaceController's `files`).
+                    readonly property bool wanted: Shell.state.space?.files?.[Shell.state.panel?.spaceProjectId ?? ""]?.paths?.[root.source?.openPath ?? ""] !== undefined
+
+                    objectName: "fileOpenInSpace"
+                    subtle: true
+                    visible: wanted
+                    iconName: "book"
+                    iconSize: 13
+                    iconTint: root.muted
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    Accessible.name: Shell.state.panel?.onWorktree ? qsTr("Open the project's copy in a Space") : qsTr("Open in a Space")
+                    onClicked: Shell.dispatch("files.openInSpace", {path: root.source.openPath})
+                }
+                ShellButton {
                     id: wrapButton
 
                     readonly property bool wanted: root.mediaKind.length === 0
@@ -372,7 +389,7 @@ Rectangle {
                 Layout.bottomMargin: 4
                 visible: text.length > 0
                 text: root.source?.truncatedNotice ?? ""
-                color: Theme.palette.color("warning", "#f59e0b")
+                color: Theme.palette.color("warningForeground", "#f59e0b")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -458,10 +475,12 @@ Rectangle {
                                 acceptedButtons: Qt.LeftButton
                                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                 acceptedModifiers: Qt.ControlModifier
+                                // ljos-allow(focus-pointer-only): a link in an HTML page's text; Qt's Text has no keyboard path between links, and the Source view shows each link to read and copy
                                 onTapped: eventPoint => renderedPageText.follow(eventPoint)
                             }
                             TapHandler {
                                 acceptedDevices: PointerDevice.TouchScreen
+                                // ljos-allow(focus-pointer-only): a finger's tap on a link in an HTML page's text, as the Ctrl-click above
                                 onTapped: eventPoint => renderedPageText.follow(eventPoint)
                             }
                             // The secondary button offers opening or copying the link.
@@ -531,6 +550,7 @@ Rectangle {
                             id: image
 
                             objectName: "fileImage"
+                            Accessible.name: (root.source?.openPath ?? "").split("/").pop()
                             anchors.centerIn: parent
                             width: Math.min(parent.width, implicitWidth)
                             height: Math.min(parent.height, implicitHeight)
@@ -748,6 +768,7 @@ Rectangle {
                         Text {
                             width: glyph.advanceWidth * 6
                             horizontalAlignment: Text.AlignRight
+                            // ljos-allow(text-unbounded-dynamic): a line number, in a gutter six digits wide
                             text: line.number
                             color: root.muted
                             font.family: root.mono
@@ -870,6 +891,7 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     placeholderText: qsTr("Search files")
+                    Accessible.name: qsTr("Search files")
                     enabled: (root.source?.root ?? "").length > 0
                     text: root.source?.query ?? ""
                     onTextEdited: root.source.query = text
@@ -977,6 +999,8 @@ Rectangle {
                         required property bool ignored
                         required property string problem
                         required property bool selected
+                        // Set by a finger's long press on a file, whose lift still clicks.
+                        property bool held: false
 
                         objectName: "filesEntry-" + (kind === "file" || kind === "directory" ? path : kind + "-" + path)
                         width: treeView.width
@@ -988,7 +1012,14 @@ Rectangle {
                         ToolTip.visible: hovered && nameText.truncated
                         ToolTip.delay: 400
                         ToolTip.text: path
+                        onPressed: held = false
+                        onCanceled: held = false
                         onClicked: {
+                            // One click only: a lift the menu took may never click.
+                            if (held) {
+                                held = false;
+                                return;
+                            }
                             if (kind === "directory")
                                 root.tree.toggle(path);
                             else if (kind === "file")
@@ -996,16 +1027,30 @@ Rectangle {
                             else if (kind === "error")
                                 root.tree.retry(path);
                         }
+                        function menu() {
+                            entryMenu.path = path;
+                            entryMenu.popup(entry);
+                        }
+                        // A finger held on a file is its right-click: the menu instead of
+                        // the file. Only a finger: a slow mouse click, or a held folder or
+                        // error row, still clicks.
+                        TapHandler {
+                            acceptedDevices: PointerDevice.TouchScreen
+                            enabled: entry.kind === "file"
+                            onLongPressed: {
+                                entry.held = true;
+                                entry.menu();
+                            }
+                        }
                         TapHandler {
                             acceptedButtons: Qt.RightButton
                             enabled: entry.kind === "file"
-                            onTapped: {
-                                entryMenu.path = entry.path;
-                                entryMenu.popup(entry);
-                            }
+                            onTapped: entry.menu()
                         }
                         background: Rectangle {
                             color: entry.selected ? Theme.palette.color("sidebarRowSelected", "#25314d") : entry.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+                            border.width: entry.visualFocus ? 1 : 0
+                            border.color: Theme.palette.color("focus", "#3b82f6")
                         }
                         contentItem: RowLayout {
                             spacing: 6

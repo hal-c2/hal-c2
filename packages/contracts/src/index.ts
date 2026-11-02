@@ -51,6 +51,7 @@ export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
 export * from "./scheduledTask.ts";
 export * from "./space.ts";
+export * from "./mermaid.ts";
 export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
 export * from "./plugin.ts";

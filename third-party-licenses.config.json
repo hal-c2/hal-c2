@@ -290,6 +290,36 @@
     {
       "bundles": ["desktop-qt"],
       "license": "MIT",
+      "name": "mermaid-rs-renderer",
+      "sourceUrl": "https://github.com/1jehuang/mermaid-rs-renderer",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2026 mermaid-rs-renderer contributors"],
+          "preamble": [
+            "The HAL-C2 node bundled with the desktop app draws Mermaid diagrams with mermaid-rs-renderer, compiled into its diagram renderer."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop-qt"],
+      "license": "MIT",
+      "name": "mmdflux",
+      "sourceUrl": "https://github.com/kevinswiber/mmdflux",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2026 Kevin Swiber"],
+          "preamble": [
+            "The HAL-C2 node bundled with the desktop app checks Mermaid flowcharts and draws diagrams as text with mmdflux, compiled into its diagram renderer."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop-qt"],
+      "license": "MIT",
       "name": "Node.js",
       "sourceUrl": "https://github.com/nodejs/node",
       "generatedNotices": [

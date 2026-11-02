@@ -36,6 +36,7 @@ import { createComposer } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import { createFilesController, type TuiFilesState } from "./filesState.ts";
+import { createMermaidDiagrams } from "./mermaidDiagrams.ts";
 import { createSpaceController } from "./spaceState.ts";
 import {
   buildTuiLayoutState,
@@ -392,10 +393,13 @@ export function createHost(options: HostOptions): Host {
   // Republish a key only when what it is derived from changed, so bindings
   // on other keys are not re-evaluated by every store emit.
   let last: StoreState | null = null;
+  // Mermaid diagrams the MC drew, shared by replies, pages and the file viewer.
+  const diagrams = createMermaidDiagrams(client);
   const threadView = createThreadView({
     store,
     client,
     state,
+    diagrams,
     mode: () => mode,
     setMode: (next) => setMode(next),
     nowMs: () => Date.parse(now()),
@@ -734,6 +738,7 @@ export function createHost(options: HostOptions): Host {
   // The file browser and viewer take the conversation pane's place.
   const files = createFilesController({
     client,
+    diagrams,
     cwd: () => filesFor?.cwd ?? selectedWorkspace()?.cwd ?? null,
     height: () => layout.panesRows,
     width: () => layout.chatWidth,
@@ -770,6 +775,7 @@ export function createHost(options: HostOptions): Host {
   const home = options.homeDir ?? NodeOS.homedir();
   const space = createSpaceController({
     client,
+    diagrams,
     height: () => layout.panesRows,
     width: () => layout.chatWidth,
     setOpen: (open) => {
@@ -783,7 +789,7 @@ export function createHost(options: HostOptions): Host {
       }
       publishLayout();
       if (open) setMode("space");
-      else if (mode === "space") setMode(restingMode());
+      else if (mode === "space" || mode === "pagePrompt") setMode(restingMode());
       palette.sync();
     },
     publish: (next) => state.set("space", next),
@@ -831,6 +837,12 @@ export function createHost(options: HostOptions): Host {
       filesFor = null;
     },
     commandsChanged: () => palette.sync(),
+    // The prompt below the page writes on it: it re-aims, and ^P moves the keys.
+    promptChanged: () => {
+      if (mode === "space" || mode === "pagePrompt") setMode("compose");
+      composer?.relayout();
+    },
+    askInPrompt: () => composer?.dispatch("composer.page.ask"),
   });
   // Adding a project is a page over the conversation (mode "project").
   const addProject = createAddProjectController({
@@ -982,6 +994,7 @@ export function createHost(options: HostOptions): Host {
     client,
     store,
     state,
+    page: () => space.prompt(),
     mode: () => mode,
     setMode,
     chatWidth: () => layout.chatWidth,
@@ -1604,6 +1617,8 @@ export function createHost(options: HostOptions): Host {
     // A report belongs to the socket it was sent on: a new connection sends it again.
     if (phase === "connected") {
       clientActivity.renew();
+      // A diagram the lost connection refused is asked for again.
+      diagrams.retry();
       // Whether threads can move depends on the cluster this connection reaches.
       void cluster.refresh();
       // And the server may have come back on another version.

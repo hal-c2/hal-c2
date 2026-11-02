@@ -659,6 +659,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("space/images.feature"),
     QStringLiteral("space/presence.feature"),
     QStringLiteral("space/markdown.feature"),
+    QStringLiteral("space/project-files.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

@@ -44,6 +44,13 @@ add_executable(tst_ReleaseNotes tst_ReleaseNotes.cpp ../../src/native/DesktopUpd
 target_include_directories(tst_ReleaseNotes PRIVATE ../../src/native)
 target_link_libraries(tst_ReleaseNotes PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME ReleaseNotes COMMAND tst_ReleaseNotes)
+# The fake MC's code fences against what the MC itself reads and writes.
+add_executable(tst_CodeFence tst_CodeFence.cpp features/CodeFence.h)
+target_include_directories(tst_CodeFence PRIVATE features)
+target_compile_definitions(tst_CodeFence PRIVATE
+  HAL_C2_CODE_FENCES="${CMAKE_CURRENT_SOURCE_DIR}/../../../server-ex/test/fixtures/space/code-fences.json")
+target_link_libraries(tst_CodeFence PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME CodeFence COMMAND tst_CodeFence)
 add_executable(tst_BackendProcess tst_BackendProcess.cpp ../../src/BackendProcess.cpp)
 target_include_directories(tst_BackendProcess PRIVATE ../../src)
 target_link_libraries(tst_BackendProcess PRIVATE Qt6::Core Qt6::Test)

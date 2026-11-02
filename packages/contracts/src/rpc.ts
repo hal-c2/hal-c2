@@ -319,6 +319,7 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import { MermaidRenderInput, MermaidRenderResult } from "./mermaid.ts";
 import {
   SpaceBlockDeleteInput,
   SpaceBlockDeleteResult,
@@ -378,6 +379,8 @@ import {
   SpacePageVersionRef,
   SpacePageAskAgentInput,
   SpacePageAgentRef,
+  SpacePageAgentTarget,
+  SpacePageAgentTargetInput,
   SpacePageAgentResult,
   SpacePageDismissAgentResult,
   SpaceRenameInput,
@@ -575,6 +578,7 @@ export const WS_METHODS = {
   spacePageVersion: "space.page.version",
   spacePageRestoreVersion: "space.page.restoreVersion",
   spacePageAskAgent: "space.page.askAgent",
+  spacePageAgentTarget: "space.page.agentTarget",
   spacePageStopAgent: "space.page.stopAgent",
   spacePageDismissAgent: "space.page.dismissAgent",
   spacePageScheduleSet: "space.page.schedule.set",
@@ -607,6 +611,9 @@ export const WS_METHODS = {
   spaceImageRestore: "space.image.restore",
   spaceImageDelete: "space.image.delete",
   spaceImageProviders: "space.image.providers",
+
+  // Mermaid diagrams, drawn by the MC for every client
+  mermaidRender: "mermaid.render",
 
   // The cluster of this person's machines (MCs only)
   clusterStatus: "cluster.status",
@@ -1988,6 +1995,12 @@ const WsSpacePageAskAgentRpc = Rpc.make(WS_METHODS.spacePageAskAgent, {
   error: SpaceRpcError,
 });
 
+const WsSpacePageAgentTargetRpc = Rpc.make(WS_METHODS.spacePageAgentTarget, {
+  payload: SpacePageAgentTargetInput,
+  success: SpacePageAgentTarget,
+  error: SpaceRpcError,
+});
+
 const WsSpacePageStopAgentRpc = Rpc.make(WS_METHODS.spacePageStopAgent, {
   payload: SpacePageAgentRef,
   success: SpacePageAgentResult,
@@ -2186,6 +2199,12 @@ const WsSpaceImageProvidersRpc = Rpc.make(WS_METHODS.spaceImageProviders, {
   error: EnvironmentAuthorizationError,
 });
 
+const WsMermaidRenderRpc = Rpc.make(WS_METHODS.mermaidRender, {
+  payload: MermaidRenderInput,
+  success: MermaidRenderResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2289,6 +2308,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageVersionRpc,
   WsSpacePageRestoreVersionRpc,
   WsSpacePageAskAgentRpc,
+  WsSpacePageAgentTargetRpc,
   WsSpacePageStopAgentRpc,
   WsSpacePageDismissAgentRpc,
   WsSpacePageScheduleSetRpc,
@@ -2321,6 +2341,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpaceImageRestoreRpc,
   WsSpaceImageDeleteRpc,
   WsSpaceImageProvidersRpc,
+  WsMermaidRenderRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerReportDesktopUpdateStatusRpc,

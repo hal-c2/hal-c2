@@ -10,6 +10,7 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QRegularExpression>
 #include <QSet>
 #include <QTest>
@@ -20,7 +21,13 @@
 #include <utility>
 
 #include "Brick.h"
+#include "CodeFence.h"
+#include "CommandRegistry.h"
+#include "FakeFiles.h"
+#include "FilesWorkspace.h"
 #include "Harness.h"
+#include "KeybindingController.h"
+#include "Mermaid.h"
 #include "NavigationController.h"
 #include "Space.h"
 #include "SpaceController.h"
@@ -109,6 +116,16 @@ struct FakeSpaces {
   QHash<QString, QStringList> agents;
   // Whether a client asking who is on a page is turned down.
   bool viewersRefused = false;
+  // How the next scan of a project's files answers, and the files read again
+  // because a client showed their page.
+  QString scan = QStringLiteral("written");
+  int syncs = 0;
+  // How many times a client asked for a project's files.
+  int listings = 0;
+  // The link the agent's message has.
+  QString link;
+  // Whether the thread whose files the user browses works in a worktree of the project.
+  bool onWorktree = false;
 };
 
 FakeSpaces& fake(FakeMc& mc) {
@@ -323,6 +340,8 @@ QString exportMarkdown(FakeMc& mc, const QString& space, const QJsonObject& page
       QStringList quoted;
       for (const QString& part : said.split(QLatin1Char('\n'))) quoted.append((QStringLiteral("> ") + part).trimmed());
       line = quoted.join(QLatin1Char('\n'));
+    } else if (kind == QLatin1String("code")) {
+      line = codeFence::write(block);
     } else if (kind == QLatin1String("subpage_link")) {
       const QString linked = text(block, QLatin1String("linkedPageId"));
       const QString title = titleOf(mc, space, linked);
@@ -348,7 +367,7 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
   static const QRegularExpression heading(QStringLiteral("^#{2,6}\\s+(.*)$"));
   static const QRegularExpression item(QStringLiteral("^\\s*[-*]\\s+\\[([ xX])\\]\\s?(.*)$"));
   static const QRegularExpression link(QStringLiteral("^\\[(.+)\\]\\(#([\\w-]+)\\)$"));
-  static const QRegularExpression notParagraph(QStringLiteral("^(#{1,6}\\s|>|```|\\s*[-*]\\s+\\[[ xX]\\])"));
+  static const QRegularExpression notParagraph(QStringLiteral("^(#{1,6}\\s|>|\\s*[-*]\\s+\\[[ xX]\\])"));
   const auto block = [](const QString& kind, const QString& said) {
     return QJsonObject{{QStringLiteral("kind"), kind}, {QStringLiteral("text"), said}, {QStringLiteral("checked"), false},
                        {QStringLiteral("linkedPageId"), QJsonValue::Null}};
@@ -361,11 +380,10 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
     QRegularExpressionMatch match;
     if (line.trimmed().isEmpty()) {
       ++i;
-    } else if (line.startsWith(QLatin1String("```"))) {
-      QStringList code{line};
-      while (++i < lines.size() && !lines.at(i).startsWith(QLatin1String("```"))) code.append(lines.at(i));
-      if (i < lines.size()) code.append(lines.at(i++));
-      blocks.append(block(QStringLiteral("paragraph"), code.join(QLatin1Char('\n'))));
+    } else if (!codeFence::opens(line).isEmpty()) {
+      const auto [fenced, next] = codeFence::read(lines, i, block);
+      blocks.append(fenced);
+      i = next;
     } else if ((match = title.match(line)).hasMatch()) {
       // A `# ` heading anywhere but the top is an ordinary heading.
       if (blocks.isEmpty() && pageTitle.isNull()) {
@@ -397,7 +415,9 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
       blocks.append(block(QStringLiteral("callout"), quote.join(QLatin1Char('\n'))));
     } else {
       QStringList paragraph;
-      for (; i < lines.size() && !lines.at(i).trimmed().isEmpty() && !notParagraph.match(lines.at(i)).hasMatch(); ++i) {
+      for (; i < lines.size() && !lines.at(i).trimmed().isEmpty() && !notParagraph.match(lines.at(i)).hasMatch() &&
+             codeFence::opens(lines.at(i)).isEmpty();
+           ++i) {
         paragraph.append(lines.at(i));
       }
       blocks.append(block(QStringLiteral("paragraph"), paragraph.join(QLatin1Char('\n'))));
@@ -464,6 +484,9 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
   if (kind == QLatin1String("checklist")) block.insert(QStringLiteral("checked"), spec.value(QLatin1String("checked")).toBool());
   if (kind == QLatin1String("subpage_link")) block.insert(QStringLiteral("linkedPageId"), linked);
   if (kind == QLatin1String("heading") && !level.isUndefined()) block.insert(QStringLiteral("level"), level.toInt());
+  for (const QLatin1String extra : {QLatin1String("language"), QLatin1String("fence"), QLatin1String("info")}) {
+    if (kind == QLatin1String("code") && !text(spec, extra).isEmpty()) block.insert(extra, spec.value(extra));
+  }
   if (kind == QLatin1String("image")) {
     block.insert(QStringLiteral("imageId"), imageId);
     if (text(block, QLatin1String("text")).isEmpty()) block.insert(QStringLiteral("text"), image.value(QLatin1String("name")));
@@ -481,6 +504,118 @@ Answer importMarkdown(FakeMc& mc, const QString& space, const QString& markdown,
   const QString pageId = made.result.value(QLatin1String("page")).toObject().value(QLatin1String("id")).toString();
   for (const QJsonObject& block : blocks) insertBlock(mc, space, pageId, block, QJsonValue::Undefined, author);
   return made;
+}
+
+// --- Project files as pages (lib/hal_c2/space/files.ex) -----------------------
+
+// What a page takes from its file is the file's.
+const QJsonObject kFile{{QStringLiteral("type"), QStringLiteral("file")}};
+
+// The project's Markdown, as the spaces section the MC defaults to covers it.
+bool spaceFile(const QString& path) {
+  return path.endsWith(QLatin1String(".md"));
+}
+
+QString hashOf(const QString& contents) {
+  return QString::number(qHash(contents), 16);
+}
+
+// The page of any Space that is `path` of `project`, with its Space; none when no page is.
+std::pair<QString, QJsonObject> pageOfFile(FakeMc& mc, const QString& project, const QString& path) {
+  for (const QJsonObject& space : all(mc, kIndex, QStringLiteral("space"))) {
+    const QString id = text(space, QLatin1String("id"));
+    for (const QJsonObject& page : all(mc, streamOf(id), QStringLiteral("page"))) {
+      const QJsonObject file = page.value(QLatin1String("file")).toObject();
+      if (text(file, QLatin1String("projectId")) == project && text(file, QLatin1String("path")) == path) return {id, page};
+    }
+  }
+  return {};
+}
+
+// The page's blocks, made again from what its file says now, and the file as read.
+void takeFile(FakeMc& mc, const QString& space, const QString& pageId, const QJsonObject& changes = {}) {
+  QJsonObject file = one(mc, streamOf(space), QStringLiteral("page"), pageId).value(QLatin1String("file")).toObject();
+  const QString contents = fakeFiles(mc).files.value(text(file, QLatin1String("path")));
+  for (const QJsonObject& block : blocksOf(mc, space, pageId)) remove(mc, streamOf(space), QStringLiteral("block"), text(block, QLatin1String("id")));
+  for (const QJsonObject& block : parseMarkdown(contents).second) insertBlock(mc, space, pageId, block, QJsonValue::Undefined, kFile);
+  file.insert(QStringLiteral("hash"), hashOf(contents));
+  file.insert(QStringLiteral("size"), contents.toUtf8().size());
+  file.insert(QStringLiteral("missing"), false);
+  for (auto it = changes.begin(); it != changes.end(); ++it) file.insert(it.key(), it.value());
+  set(mc, streamOf(space), QStringLiteral("page"), pageId, {{QStringLiteral("file"), file}, {QStringLiteral("updatedAt"), stamp(mc)}});
+}
+
+// The file gone from under its page, which keeps what it said.
+void loseFile(FakeMc& mc, const QString& space, const QJsonObject& page) {
+  QJsonObject file = page.value(QLatin1String("file")).toObject();
+  if (file.value(QLatin1String("missing")).toBool()) return;
+  file.insert(QStringLiteral("missing"), true);
+  set(mc, streamOf(space), QStringLiteral("page"), text(page, QLatin1String("id")), {{QStringLiteral("file"), file}});
+}
+
+// `space.files.list` and `space.files.scan`: no Space's.
+Answer filesCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
+  const QString project = text(in, QLatin1String("projectId"));
+  if (!mc.projects.contains(project)) return refused(QStringLiteral("notFound"), QStringLiteral("There is no project %1 on this MC.").arg(project));
+  if (method == QLatin1String("files.list")) {
+    ++fake(mc).listings;
+    QJsonArray files;
+    const QMap<QString, QString>& contents = fakeFiles(mc).files;
+    for (auto it = contents.cbegin(); it != contents.cend(); ++it) {
+      if (!spaceFile(it.key())) continue;
+      const auto [space, page] = pageOfFile(mc, project, it.key());
+      const QJsonValue open = page.isEmpty() ? QJsonValue(QJsonValue::Null)
+                                             : QJsonValue(QJsonObject{{QStringLiteral("spaceId"), space}, {QStringLiteral("pageId"), page.value(QLatin1String("id"))},
+                                                                      {QStringLiteral("title"), page.value(QLatin1String("title"))}});
+      files.append(QJsonObject{{QStringLiteral("relativePath"), it.key()}, {QStringLiteral("kind"), QStringLiteral("page")}, {QStringLiteral("page"), open}});
+    }
+    return {{{QStringLiteral("config"), QStringLiteral("default")}, {QStringLiteral("files"), files}}};
+  }
+  if (method == QLatin1String("files.scan")) {
+    return {{{QStringLiteral("status"), fake(mc).scan},
+             {QStringLiteral("entries"), QJsonArray{QJsonObject{{QStringLiteral("path"), QStringLiteral("**/*.md")}, {QStringLiteral("kind"), QStringLiteral("page")}}}}}};
+  }
+  return refused(QStringLiteral("invalid"), QStringLiteral("space.%1 is missing a required field.").arg(method));
+}
+
+// `space.page.openFile`: the file's page, made in `space` unless a Space already has it.
+Answer openFile(FakeMc& mc, const QString& space, const QJsonObject& in) {
+  const QString project = text(in, QLatin1String("projectId"));
+  const QString path = text(in, QLatin1String("relativePath"));
+  if (path.startsWith(QLatin1Char('/')) || path.split(QLatin1Char('/')).contains(QStringLiteral(".."))) {
+    return refused(QStringLiteral("invalid"), QStringLiteral("%1 is outside the project.").arg(path));
+  }
+  if (!mc.projects.contains(project) || !fakeFiles(mc).files.contains(path)) {
+    return refused(QStringLiteral("notFound"), QStringLiteral("There is no file %1 in the project %2.").arg(path, project));
+  }
+  if (!spaceFile(path)) return refused(QStringLiteral("notSpaceFile"), QStringLiteral("%1 is not in the spaces section of the project.").arg(path));
+  if (const auto [where, page] = pageOfFile(mc, project, path); !page.isEmpty()) {
+    return {{{QStringLiteral("spaceId"), where}, {QStringLiteral("page"), page}, {QStringLiteral("created"), false}}};
+  }
+  const QString contents = fakeFiles(mc).files.value(path);
+  const QJsonObject file{{QStringLiteral("projectId"), project},  {QStringLiteral("path"), path},       {QStringLiteral("hash"), hashOf(contents)},
+                         {QStringLiteral("size"), contents.toUtf8().size()}, {QStringLiteral("missing"), false}, {QStringLiteral("conflictAt"), QJsonValue::Null}};
+  Answer made = importMarkdown(mc, space, contents, {}, QJsonValue::Null, {{QStringLiteral("file"), file}}, kFile);
+  if (!made.error.isEmpty()) return made;
+  made.result.insert(QStringLiteral("spaceId"), space);
+  made.result.insert(QStringLiteral("created"), true);
+  return made;
+}
+
+// `space.page.syncFile`: the file read again; what changed in it is the page's.
+Answer syncFile(FakeMc& mc, const QString& space, const QJsonObject& page) {
+  ++fake(mc).syncs;
+  const QJsonObject file = page.value(QLatin1String("file")).toObject();
+  if (file.isEmpty()) return refused(QStringLiteral("invalid"), QStringLiteral("The page is not a project file."));
+  const QString id = text(page, QLatin1String("id"));
+  const QMap<QString, QString>& files = fakeFiles(mc).files;
+  const QString path = text(file, QLatin1String("path"));
+  if (!files.contains(path)) {
+    loseFile(mc, space, page);
+  } else if (hashOf(files.value(path)) != text(file, QLatin1String("hash")) || file.value(QLatin1String("missing")).toBool()) {
+    takeFile(mc, space, id);
+  }
+  return {{{QStringLiteral("page"), one(mc, streamOf(space), QStringLiteral("page"), id)}}};
 }
 
 // The summary text generation writes of a thread.
@@ -913,7 +1048,10 @@ Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
   const Answer answer = history ? historyCall(mc, method, in) : decide(mc, method, in);
   const QString space = text(in, QLatin1String("spaceId"));
   if (space.isEmpty()) return answer;
-  if (!history && answer.error.isEmpty()) noteEdits(mc, space, method == QLatin1String("page.schedule.runNow") ? kSchedule : kUser);
+  const bool fromFile = method == QLatin1String("page.openFile") || method == QLatin1String("page.syncFile");
+  if (!history && answer.error.isEmpty()) {
+    noteEdits(mc, space, method == QLatin1String("page.schedule.runNow") ? kSchedule : fromFile ? kFile : kUser);
+  }
   const QString stream = streamOf(space);
   for (const QJsonObject& site : all(mc, stream, QStringLiteral("site"))) {
     const QJsonObject page = one(mc, stream, QStringLiteral("page"), text(site, QLatin1String("pageId")));
@@ -954,8 +1092,10 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
     return {{{QStringLiteral("providers"), QJsonArray{provider("codex", able ? "ready" : "unavailable", {}), provider("claudeAgent", "unsupported", QStringLiteral("Claude does not generate images here."))}},
              {QStringLiteral("selection"), able ? QJsonValue(QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}}) : QJsonValue(QJsonValue::Null)}}};
   }
+  if (method.startsWith(QLatin1String("files."))) return filesCall(mc, method, in);
   if (spaceOf(mc, space).isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no Space %1.").arg(space));
   if (method.startsWith(QLatin1String("image."))) return imageCall(mc, space, method, in);
+  if (method == QLatin1String("page.openFile")) return openFile(mc, space, in);
   if (method == QLatin1String("rename")) {
     if (blank(in.value(QLatin1String("name")))) return refused(QStringLiteral("invalid"), QStringLiteral("A Space needs a name."));
     set(mc, kIndex, QStringLiteral("space"), space, {{QStringLiteral("name"), text(in, QLatin1String("name")).trimmed()}, {QStringLiteral("updatedAt"), stamp(mc)}});
@@ -996,6 +1136,11 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
     if (page.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no page %1.").arg(pageId));
     const auto answer = [&] { return Answer{{{QStringLiteral("page"), one(mc, stream, QStringLiteral("page"), pageId)}}}; };
     if (method == QLatin1String("page.exportMarkdown")) return {{{QStringLiteral("markdown"), exportMarkdown(mc, space, page)}}};
+    if (method == QLatin1String("page.syncFile")) return syncFile(mc, space, page);
+    if (method == QLatin1String("page.unlinkFile")) {
+      set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("file"), QJsonValue::Null}, {QStringLiteral("updatedAt"), stamp(mc)}});
+      return answer();
+    }
     if (method == QLatin1String("page.restore")) {
       if (!trashed(page)) return refused(QStringLiteral("invalid"), QStringLiteral("The page is not in the trash."));
       // Back where it was, unless that page is gone or in the trash itself.
@@ -1431,6 +1576,11 @@ void actOnBlock(World& world, const QString& said, const QString& action, QVaria
   act(world, action, payload);
 }
 
+// The diagram a page holds, as its block's text is now.
+struct Diagram {
+  QString source;
+};
+
 // The item named `objectName` in `item`'s tree (a ListView's delegates are only its items' children).
 QQuickItem* findEditor(QQuickItem* item, const QString& objectName) {
   if (item->objectName() == objectName) return item;
@@ -1778,6 +1928,66 @@ bool spaceTick(World& world, const QString& said, bool checked) {
 
 namespace {
 
+// --- Project files, as the client offers them --------------------------------
+
+// The project `id` on this MC, with a thread of it the user could show its files in.
+void ensureProject(World& world, const QString& id) {
+  if (world.shellSubscriptions() == 0) world.connect();
+  if (!world.mc.projects.contains(id)) {
+    world.mc.projects.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), id}, {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + id},
+                                  {QStringLiteral("scripts"), QJsonArray()}});
+    world.mc.sendRow(id, world.mc.projects.value(id), QStringLiteral("project"));
+  }
+  if (!world.mc.threads.contains(kThread)) {
+    world.mc.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), QStringLiteral("Tax line")}, {QStringLiteral("projectId"), id},
+                                      {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
+    world.mc.sendRow(kThread, world.mc.threads.value(kThread));
+  }
+  world.sync();
+}
+
+// The Space files of `project` the client was last told of: {relativePath: {kind, spaceId, pageId, title}}.
+QVariantMap listedFiles(World& world, const QString& project) {
+  return at(world.state(QStringLiteral("space")), QStringLiteral("files")).toMap().value(project).toMap().value(QStringLiteral("paths")).toMap();
+}
+
+void waitForFiles(World& world, const QString& project) {
+  world.waitFor([&] { return !listedFiles(world, project).isEmpty(); },
+                [&] { return QStringLiteral("the Space files of %1 to be listed; %2").arg(project, describe(world)); });
+}
+
+// The Files tab of a thread of `project`, on a worktree of it when `worktree`, with its Space files known.
+void browseFiles(World& world, const QString& project, bool worktree = false) {
+  lookAtThread(world, project, worktree ? QJsonObject{{QStringLiteral("worktreePath"), QStringLiteral("/work/%1-worktree").arg(project)}} : QJsonObject());
+  filesteps::showPanel(world);
+  waitForFiles(world, project);
+}
+
+// The Space `name`, made when the MC has none, as the scenario's.
+QString spaceNamed(World& world, const QString& name) {
+  for (const QJsonObject& space : all(world.mc, kIndex, QStringLiteral("space"))) {
+    if (text(space, QLatin1String("name")) == name) return fake(world.mc).current = text(space, QLatin1String("id"));
+  }
+  givenSpace(world, name);
+  return current(world);
+}
+
+// The page open in the Space view is `title`, in the Space `space` when one is named.
+void expectOpened(World& world, const QString& title, const QString& space = {}) {
+  expectShown(world, [&] {
+    return world.native().controller<NavigationController>()->route().kind == QLatin1String("space") &&
+           viewOf(world)->page().value(QStringLiteral("title")).toString() == title && (space.isEmpty() || viewOf(world)->spaceName() == space);
+  }, QStringLiteral("the page %1 to be open%2").arg(title, space.isEmpty() ? QString() : QStringLiteral(" in ") + space));
+}
+
+QVariantMap shownFile(World& world) {
+  return viewOf(world)->page().value(QStringLiteral("file")).toMap();
+}
+
+void lookAtFilePage(World& world, const QString& title) {
+  lookAtPage(world, idOfPage(world, title));
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -2044,6 +2254,105 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("the page to show the block %1; %2").arg(said, describe(world)); });
     return editor;
   };
+  // Mermaid diagrams on a page: imported as the MC reads a "mermaid" fence (a
+  // code block in "mermaid" holding the bare source), and drawn by the page
+  // through the fake renderer (MermaidSteps.cpp).
+  static const QMap<QString, QString> kDiagrams{
+      {QStringLiteral("flowchart"), mermaid::kFlowchart},
+      {QStringLiteral("graph"), QStringLiteral("graph TD\n  Cart --> Pay")},
+      {QStringLiteral("sequenceDiagram"), QStringLiteral("sequenceDiagram\n  Cart->>Pay: order")},
+      {QStringLiteral("stateDiagram-v2"), QStringLiteral("stateDiagram-v2\n  [*] --> Cart")},
+      {QStringLiteral("gantt"), QStringLiteral("gantt\n  title Launch\n  section Build\n  MC :a1, 2026-11-01, 3d")},
+      {QStringLiteral("block-beta"), QStringLiteral("block-beta\n  columns 2\n  Cart Pay")}};
+  // Imports a page holding `source`, then `after` paragraphs, and shows it.
+  const auto importDiagram = [drawPage](World& world, const QString& source, int after) {
+    QString markdown = QStringLiteral("# Ordering\n\nHow an order is paid:\n\n```mermaid\n%1\n```\n").arg(source);
+    for (int step = 1; step <= after; ++step) markdown += QStringLiteral("\nStep %1 of paying.\n").arg(step);
+    world.mc.part<Diagram>().source = source;
+    look(world, current(world));
+    act(world, QStringLiteral("space.page.importMarkdown"), {{QStringLiteral("markdown"), markdown}});
+    expectShown(world, [&] { return column(viewOf(world)->blocks(), QStringLiteral("text")).contains(source); }, QStringLiteral("the imported page"));
+    world.brick = drawPage(world);
+  };
+  const auto sourceEditor = [](World& world) {
+    return findEditor(world.brick->root(), QStringLiteral("spaceBlockEditor:") + world.mc.part<Diagram>().source);
+  };
+  step(QStringLiteral("the user imports a page holding a %1 Mermaid diagram").arg(q), [importDiagram](World& world, const Captures& c, const Table&) {
+    expect(kDiagrams.contains(c[0]), QStringLiteral("no %1 diagram to import").arg(c[0]));
+    importDiagram(world, kDiagrams.value(c[0]), 0);
+  });
+  step(QStringLiteral("the user imports a page holding a flowchart with an unclosed bracket"), [importDiagram](World& world, const Captures&, const Table&) {
+    importDiagram(world, mermaid::kBrokenFlowchart, 0);
+  });
+  // Paragraphs after it, enough to scroll it out of the page.
+  step(QStringLiteral("a page with a flowchart"), [importDiagram](World& world, const Captures&, const Table&) {
+    importDiagram(world, mermaid::kFlowchart, 40);
+  });
+  step(QStringLiteral("the page has a diagram block of the type %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString source = world.mc.part<Diagram>().source;
+    expect(source.section(QLatin1Char('\n'), 0, 0).section(QLatin1Char(' '), 0, 0) == c[0], QStringLiteral("the page holds a %1 diagram, not %2").arg(c[0], source));
+    expectShown(world, [&] {
+      const QList<QVariantMap>& rows = viewOf(world)->blocks()->rows();
+      return std::any_of(rows.cbegin(), rows.cend(), [&](const QVariantMap& block) {
+        return block.value(QStringLiteral("kind")) == QLatin1String("code") && block.value(QStringLiteral("language")) == QLatin1String("mermaid") &&
+               block.value(QStringLiteral("text")) == source;
+      });
+    }, QStringLiteral("a code block in \"mermaid\" holding the diagram"));
+  });
+  step(QStringLiteral("on the desktop and the phone the diagram is drawn"), [sourceEditor](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, [&] { return QStringLiteral("the diagram to be drawn; %1").arg(describe(world)); });
+    expect(mermaid::drawn(world).first()->property("width").toReal() > 0, QStringLiteral("the diagram is drawn with no width"));
+    expect(!sourceEditor(world)->isVisible(), QStringLiteral("the diagram's source shows with its picture"));
+  });
+  step(QStringLiteral("the user is told %1 diagrams cannot be drawn yet").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString wanted = c[0] + QStringLiteral(" diagrams cannot be drawn yet.");
+    world.waitFor([&] {
+      const QList<QQuickItem*> notes = mermaid::shown(world, QStringLiteral("mermaidStatus"));
+      return notes.size() == 1 && notes.first()->property("text") == wanted;
+    }, QStringLiteral("the user to be told \"%1\"").arg(wanted));
+  });
+  step(QStringLiteral("the user adds a node to its source"), [sourceEditor](World& world, const Captures&, const Table&) {
+    Diagram& diagram = world.mc.part<Diagram>();
+    Brick& page = *world.brick;
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, QStringLiteral("the diagram to be drawn"));
+    QQuickItem* toggle = findEditor(page.root(), QStringLiteral("spaceDiagramSource:") + diagram.source);
+    expect(toggle && toggle->isVisible(), QStringLiteral("no way to the diagram's source"));
+    QTest::mouseClick(&page.window(), Qt::LeftButton, Qt::NoModifier, page.at(toggle));
+    QQuickItem* editor = sourceEditor(world);
+    world.waitFor([&] { return editor->isVisible(); }, QStringLiteral("the diagram's source to show"));
+    QTest::mouseClick(&page.window(), Qt::LeftButton, Qt::NoModifier, page.at(editor, 0.05, 0.2));
+    world.waitFor([&] { return editor->hasActiveFocus(); }, QStringLiteral("the source to take the keyboard"));
+    QTest::keyClick(&page.window(), Qt::Key_End, Qt::ControlModifier);
+    QTest::keyClick(&page.window(), Qt::Key_Return);
+    for (const QChar character : QStringLiteral("  Pay --> Done")) QTest::keyClick(&page.window(), character.toLatin1());
+    QTest::keyClick(&page.window(), Qt::Key_Return, Qt::ControlModifier);
+    diagram.source += QStringLiteral("\n  Pay --> Done");
+  });
+  step(QStringLiteral("the diagram is drawn again with the new node"), [sourceEditor](World& world, const Captures&, const Table&) {
+    const QString source = world.mc.part<Diagram>().source;
+    world.waitFor([&] {
+      const QList<QQuickItem*> drawn = mermaid::drawn(world);
+      return drawn.size() == 1 && findEditor(world.brick->root(), QStringLiteral("spaceDiagram:") + source) && !sourceEditor(world)->isVisible();
+    }, [&] { return QStringLiteral("the new source to be drawn; %1").arg(describe(world)); });
+    expect(mermaid::asked(world) == 2, QStringLiteral("the MC was asked %1 times, not for the first and the new source").arg(mermaid::asked(world)));
+  });
+  step(QStringLiteral("the export writes the new source"), [](World& world, const Captures&, const Table&) {
+    world.clipboard.clear();
+    actOnPage(world, viewOf(world)->pageId(), QStringLiteral("space.page.copyMarkdown"), {});
+    const QString fence = QStringLiteral("```mermaid\n%1\n```").arg(world.mc.part<Diagram>().source);
+    world.waitFor([&] { return world.clipboard.contains(fence); }, [&] { return QStringLiteral("the export to hold %1; it holds \"%2\"").arg(fence, world.clipboard); });
+  });
+  step(QStringLiteral("the user scrolls the page past it and back"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, QStringLiteral("the diagram to be drawn"));
+    QQuickItem* list = findEditor(world.brick->root(), QStringLiteral("spaceBlocks"));
+    QMetaObject::invokeMethod(list, "positionViewAtEnd");
+    world.waitFor([&] { return mermaid::drawn(world).isEmpty(); }, QStringLiteral("the page to scroll past the diagram"));
+    QMetaObject::invokeMethod(list, "positionViewAtBeginning");
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, QStringLiteral("the diagram to be back"));
+  });
+  step(QStringLiteral("the diagram is not drawn again"), [](World& world, const Captures&, const Table&) {
+    expect(mermaid::asked(world) == 1, QStringLiteral("the MC was asked to draw it %1 times").arg(mermaid::asked(world)));
+  });
   step(QStringLiteral("the page %1 holds a table the page does not model yet").arg(q), [](World& world, const Captures& c, const Table&) {
     givenBlock(world, c[0], QStringLiteral("raw"), kTable);
   });
@@ -3016,6 +3325,233 @@ const Steps steps([] {
   step(QStringLiteral("an address has been signed for %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return fake(world.mc).signedImages.contains(idOfImage(world, c[0])); }, [&] { return QStringLiteral("an address to be signed for %1").arg(c[0]); });
   });
+
+  // Project files as pages (features/space/project-files.feature, "Opening project files from the clients").
+  step(QStringLiteral("%1 has the file %1 reading %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureProject(world, c[0]);
+    fakeFiles(world.mc).files.insert(c[1], QString(c[2]).replace(QStringLiteral("\\n"), QStringLiteral("\n")));
+  });
+  step(QStringLiteral("the user is browsing the files of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    browseFiles(world, c[0], fake(world.mc).onWorktree);
+  });
+  step(QStringLiteral("the user opens %1 in a Space from its menu").arg(q), [](World& world, const Captures& c, const Table&) {
+    browseFiles(world, kProject);
+    filesteps::choose(world, c[0], QStringLiteral("fileEntryOpenInSpace"));
+    world.sync();
+  });
+  step(QStringLiteral("the Space shows the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectOpened(world, c[0]);
+  });
+  step(QStringLiteral("the user is reading %1 in the file viewer").arg(q), [](World& world, const Captures& c, const Table&) {
+    browseFiles(world, kProject);
+    filesteps::openFile(world, c[0]);
+  });
+  step(QStringLiteral("the user opens it in a Space"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return world.brick->item(QStringLiteral("fileOpenInSpace"))->isVisible(); }, QStringLiteral("the viewer to offer opening the file in a Space"));
+    world.brick->click(QStringLiteral("fileOpenInSpace"));
+    world.sync();
+  });
+  step(QStringLiteral("the agent's message in a thread of %1 links %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtThread(world, c[0]);
+    waitForFiles(world, c[0]);
+    addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("See [the guide](%1).").arg(c[1])}});
+    fake(world.mc).link = c[1];
+  });
+  step(QStringLiteral("the user opens that link in a Space"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("link.menu"), QVariantMap{{QStringLiteral("url"), fake(world.mc).link}, {QStringLiteral("x"), 10}, {QStringLiteral("y"), 10}});
+    world.waitFor([&] { return !at(world.state(QStringLiteral("menu")), QStringLiteral("items")).toList().isEmpty(); }, QStringLiteral("the link's menu to open"));
+    const QVariant menu = world.state(QStringLiteral("menu"));
+    const QVariantList items = at(menu, QStringLiteral("items")).toList();
+    expect(std::any_of(items.cbegin(), items.cend(), [](const QVariant& item) { return item.toMap().value(QStringLiteral("id")) == QLatin1String("open-in-space"); }),
+           QStringLiteral("the link's menu offers %1").arg(show(items)));
+    world.bridge().dispatch(QStringLiteral("menu.select"), QVariantMap{{QStringLiteral("requestId"), at(menu, QStringLiteral("requestId"))}, {QStringLiteral("id"), QStringLiteral("open-in-space")}});
+    world.sync();
+  });
+  step(QStringLiteral("the user is in the Space %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, spaceNamed(world, c[0]));
+  });
+  step(QStringLiteral("the user adds a page from the files of %1 and picks %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    act(world, SpaceController::kPickFile, {{QStringLiteral("projectId"), c[0]}});
+    world.waitFor([&] { return at(world.state(QStringLiteral("space")), QStringLiteral("picking")).toString() == c[0]; },
+                  [&] { return QStringLiteral("the files of %1 to be offered; %2").arg(c[0], describe(world)); });
+    waitForFiles(world, c[0]);
+    expect(listedFiles(world, c[0]).contains(c[1]), QStringLiteral("%1 is not offered: %2").arg(c[1], show(listedFiles(world, c[0]))));
+    act(world, QStringLiteral("space.openFile"), {{QStringLiteral("projectId"), c[0]}, {QStringLiteral("relativePath"), c[1]}});
+  });
+  step(QStringLiteral("the user asks the command palette to open %1 in a Space").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.native().controller<KeybindingController>()->commands()->run(SpaceController::kPickFile), QStringLiteral("the palette has no command to open a file in a Space"));
+    world.waitFor([&] { return !at(world.state(QStringLiteral("space")), QStringLiteral("picking")).toString().isEmpty(); },
+                  [&] { return QStringLiteral("a project's files to be offered; %1").arg(describe(world)); });
+    const QString project = at(world.state(QStringLiteral("space")), QStringLiteral("picking")).toString();
+    waitForFiles(world, project);
+    act(world, QStringLiteral("space.openFile"), {{QStringLiteral("projectId"), project}, {QStringLiteral("relativePath"), c[0]}});
+  });
+  step(QStringLiteral("the user asks the command palette to scan %1 for Space files").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureProject(world, c[0]);
+    expect(world.native().controller<KeybindingController>()->commands()->run(SpaceController::kScanFiles), QStringLiteral("the palette has no command to scan for Space files"));
+    world.sync();
+  });
+  step(QStringLiteral("the user is told the scan wrote the spaces section"), [](World& world, const Captures&, const Table&) {
+    expectShown(world, [&] { return toldOf(world, QStringLiteral("Wrote the spaces section")); }, QStringLiteral("a toast that the scan wrote the spaces section"));
+  });
+  step(QStringLiteral("%1 offers no way to open it in a Space").arg(q), [](World& world, const Captures& c, const Table&) {
+    QObject* menu = world.brick->root()->findChild<QObject*>(QStringLiteral("fileEntryMenu"));
+    expect(menu != nullptr, QStringLiteral("the Files tab has no entry menu"));
+    menu->setProperty("path", c[0]);
+    QQuickItem* item = filesteps::menuEntry(world, QStringLiteral("fileEntryMenu"), QStringLiteral("fileEntryOpenInSpace"));
+    expect(item == nullptr || (!item->isVisible() && !item->isEnabled()), QStringLiteral("the menu of %1 offers opening it in a Space").arg(c[0]));
+    // The Markdown beside it is offered, so the menu is not merely waiting.
+    menu->setProperty("path", QStringLiteral("docs/guide.md"));
+    expect(item != nullptr && item->isEnabled(), QStringLiteral("the menu of docs/guide.md does not offer opening it in a Space"));
+  });
+  step(QStringLiteral("every Space was deleted"), [](World& world, const Captures&, const Table&) {
+    for (const QJsonObject& space : all(world.mc, kIndex, QStringLiteral("space"))) remove(world.mc, kIndex, QStringLiteral("space"), text(space, QLatin1String("id")));
+  });
+  step(QStringLiteral("the user last had the Space %1 open").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, spaceNamed(world, c[0]));
+  });
+  step(QStringLiteral("the page %1 is in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectOpened(world, c[0], c[1]);
+  });
+  step(QStringLiteral("the user has opened %1 of %1 in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    spaceNamed(world, c[2]);
+    const QJsonObject page = given(world, QStringLiteral("page.openFile"), {{QStringLiteral("projectId"), c[1]}, {QStringLiteral("relativePath"), c[0]}})
+                                 .value(QLatin1String("page"))
+                                 .toObject();
+    name(world, QStringLiteral("page"), text(page, QLatin1String("title")), text(page, QLatin1String("id")));
+  });
+  step(QStringLiteral("the user shows the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtFilePage(world, c[0]);
+  });
+  step(QStringLiteral("the page says it is the file %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, [&] {
+      const QVariantMap file = shownFile(world);
+      return file.value(QStringLiteral("path")) == c[0] && file.value(QStringLiteral("projectTitle")) == c[1] && !file.value(QStringLiteral("missing")).toBool() &&
+             file.value(QStringLiteral("conflictAt")).toString().isEmpty();
+    }, QStringLiteral("the page to say it is %1 of %2").arg(c[0], c[1]));
+    world.waitFor([&] { return fake(world.mc).syncs >= 1; }, QStringLiteral("showing the page to read its file again"));
+  });
+  step(QStringLiteral("the user shows the file of the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString page = idOfPage(world, c[0]);
+    lookAtPage(world, page);
+    expectShown(world, [&] { return !shownFile(world).isEmpty(); }, QStringLiteral("the page to say it is a file"));
+    actOnPage(world, page, QStringLiteral("space.page.showFile"), {});
+  });
+  step(QStringLiteral("the file viewer shows %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      return world.native().controller<NavigationController>()->route().kind == QLatin1String("thread") && filesteps::panel(world)->projectId() == c[1] &&
+             filesteps::files(world).openPath() == c[0];
+    }, [&] { return QStringLiteral("the Files tab of %1 to show %2; it shows \"%3\" of %4").arg(c[1], c[0], filesteps::files(world).openPath(), filesteps::panel(world)->projectId()); });
+  });
+  step(QStringLiteral("the thread's row changes (\\d+) times"), [](World& world, const Captures& c, const Table&) {
+    fake(world.mc).listings = 0;
+    for (int i = 0; i < c[0].toInt(); ++i) {
+      QJsonObject row = world.mc.threads.value(kThread);
+      row.insert(QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:%1:00Z").arg(i + 1, 2, 10, QLatin1Char('0')));
+      world.mc.threads.insert(kThread, row);
+      world.mc.sendRow(kThread, row);
+    }
+    world.sync();
+  });
+  step(QStringLiteral("the MC is not asked for the files of %1 again").arg(q), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    if (fake(world.mc).listings != 0) fail(QStringLiteral("the MC was asked for them %1 more times").arg(fake(world.mc).listings));
+  });
+  step(QStringLiteral("a newer thread of %1 works in a worktree").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureProject(world, c[0]);
+    const QString id = QStringLiteral("thread-worktree");
+    world.mc.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), QStringLiteral("Draft")}, {QStringLiteral("projectId"), c[0]},
+                                 {QStringLiteral("worktreePath"), QStringLiteral("/work/%1-worktree").arg(c[0])},
+                                 {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T10:00:00Z")}});
+    world.mc.sendRow(id, world.mc.threads.value(id));
+    world.sync();
+  });
+  step(QStringLiteral("the file viewer shows the project's own %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = world.mc.environmentId + QLatin1Char(':') + kThread;
+    world.waitFor([&] {
+      const auto route = world.native().controller<NavigationController>()->route();
+      return route.kind == QLatin1String("thread") && route.threadKey == key && filesteps::files(world).openPath() == c[0];
+    }, [&] {
+      return QStringLiteral("the Files tab of %1's thread on its folder (%2) to show %3; the route is %4, showing \"%5\"")
+          .arg(c[1], key, c[0], world.native().controller<NavigationController>()->route().threadKey, filesteps::files(world).openPath());
+    });
+  });
+  step(QStringLiteral("an agent in %1 deleted %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeFiles(world.mc).files.remove(c[1]);
+    // As the MC's watcher sees it go.
+    const auto [space, page] = pageOfFile(world.mc, c[0], c[1]);
+    if (!page.isEmpty()) loseFile(world.mc, space, page);
+    world.sync();
+  });
+  step(QStringLiteral("the page says its file is gone"), [](World& world, const Captures&, const Table&) {
+    expectShown(world, [&] { return shownFile(world).value(QStringLiteral("missing")).toBool(); }, QStringLiteral("the page to say its file is gone"));
+  });
+  step(QStringLiteral("the file won over the user's edit of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], QStringLiteral("paragraph"), QStringLiteral("An edit of mine."));
+    const QString space = current(world);
+    const QString page = idOfPage(world, c[0]);
+    QString& contents = fakeFiles(world.mc).files[text(one(world.mc, streamOf(space), QStringLiteral("page"), page).value(QLatin1String("file")).toObject(), QLatin1String("path"))];
+    contents += QStringLiteral("\n\nAn agent's line.");
+    takeFile(world.mc, space, page, {{QStringLiteral("conflictAt"), stamp(world.mc)}});
+    noteEdits(world.mc, space, kFile);
+    world.sync();
+  });
+  step(QStringLiteral("the page says the file changed under the user's edit and the edit is in its history"), [](World& world, const Captures&, const Table&) {
+    expectShown(world, [&] { return !shownFile(world).value(QStringLiteral("conflictAt")).toString().isEmpty(); }, QStringLiteral("the page to say the file won"));
+    showHistory(world, viewOf(world)->pageId());
+    expectShown(world, [&] {
+      const QList<QVariantMap> versions = viewOf(world)->history()->versions()->rows();
+      return versions.size() >= 2 && versions.first().value(QStringLiteral("byFile")).toBool() && !versions.at(1).value(QStringLiteral("byFile")).toBool();
+    }, QStringLiteral("the history to hold the file's version over the user's edit"));
+  });
+  step(QStringLiteral("the user unlinks the page %1 from its file").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString page = idOfPage(world, c[0]);
+    lookAtPage(world, page);
+    expectShown(world, [&] { return !shownFile(world).isEmpty(); }, QStringLiteral("the page to say it is a file"));
+    actOnPage(world, page, QStringLiteral("space.page.unlinkFile"), {});
+  });
+  step(QStringLiteral("the page no longer says it is a file"), [](World& world, const Captures&, const Table&) {
+    expectShown(world, [&] { return shownFile(world).isEmpty(); }, QStringLiteral("the page to be an ordinary page"));
+    expect(fakeFiles(world.mc).files.contains(QStringLiteral("docs/guide.md")), QStringLiteral("unlinking the page deleted its file"));
+  });
+  step(QStringLiteral("%1 of %1 was rewritten outside HAL-C2 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeFiles(world.mc).files.insert(c[0], QString(c[2]).replace(QStringLiteral("\\n"), QStringLiteral("\n")));
+  });
+  // The worktree's copy is the thread's alone; the MC lists and opens the project folder's files.
+  step(QStringLiteral("a thread of %1 works in a worktree where %1 reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureProject(world, c[0]);
+    fake(world.mc).onWorktree = true;
+  });
+  step(QStringLiteral("the user opens the project's copy of %1 in a Space from its menu").arg(q), [](World& world, const Captures& c, const Table&) {
+    browseFiles(world, kProject, fake(world.mc).onWorktree);
+    filesteps::choose(world, c[0], QStringLiteral("fileEntryOpenInSpace"));
+    QQuickItem* item = filesteps::menuEntry(world, QStringLiteral("fileEntryMenu"), QStringLiteral("fileEntryOpenInSpace"));
+    expect(item != nullptr && item->property("text").toString().contains(QStringLiteral("project's copy")),
+           QStringLiteral("the entry did not say it opens the project's copy: %1").arg(item ? item->property("text").toString() : QString()));
+    world.sync();
+  });
+  step(QStringLiteral("the page %1 shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // Already open where the file opened it, which may be another Space than the scenario's.
+    if (viewOf(world)->page().value(QStringLiteral("title")).toString() != c[0]) lookAtFilePage(world, c[0]);
+    expectShown(world, [&] { return blockTexts(world).contains(c[1]); }, QStringLiteral("the page %1 to say %2").arg(c[0], c[1]));
+  });
 });
 
 }  // namespace
+
+namespace mermaid {
+
+bool onPage(World& world) {
+  return world.brick && findEditor(world.brick->root(), QStringLiteral("spaceBlocks"));
+}
+
+void expectPageSource(World& world) {
+  const QString source = world.mc.part<Diagram>().source;
+  world.waitFor([&] {
+    QQuickItem* editor = findEditor(world.brick->root(), QStringLiteral("spaceBlockEditor:") + source);
+    return editor && editor->isVisible() && editor->property("text") == source && asked(world) == 1;
+  }, [&] { return QStringLiteral("the diagram's source; %1").arg(describe(world)); });
+  expect(drawn(world).isEmpty(), QStringLiteral("a picture is drawn"));
+}
+
+}  // namespace mermaid

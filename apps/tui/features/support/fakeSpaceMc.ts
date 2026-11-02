@@ -105,6 +105,8 @@ export interface FakeSpaceMc {
   readonly agentThreadGone: (pageId: string) => void;
   /** The next ask is refused, as when another client asked first. */
   readonly refuseNextAsk: () => void;
+  /** What each ask the MC took was sent with, oldest first. */
+  readonly asks: Entity[];
   /** Stops from now on leave an agent stopping, as a provider that ignores them does. */
   readonly ignoreStops: () => void;
   /** How many stops the MC was asked for. */
@@ -192,6 +194,10 @@ function exportMarkdown(page: Entity, blocks: Entity[], titleOf: (id: string) =>
           .join("\n");
       case "subpage_link":
         return `[${titleOf(block.linkedPageId) ?? block.text}](#${block.linkedPageId})`;
+      case "code": {
+        const fence = block.fence ?? "```";
+        return `${fence}${block.language ?? ""}${block.info ?? ""}\n${block.text}\n${fence}`;
+      }
       default:
         return block.text;
     }
@@ -225,6 +231,26 @@ function parseMarkdown(markdown: string): { title: string | null; blocks: Entity
     } else if ((match = /^\s*[-*]\s+\[([ xX])\]\s?(.*)$/.exec(line))) {
       out.push(block("checklist", match[2]!, match[1] !== " "));
       index += 1;
+    } else if ((match = /^ {0,3}(`{3,}|~{3,})/.exec(line))) {
+      const close = new RegExp(`^ {0,3}\\${match[1]![0]}{${match[1]!.length},}\\s*$`);
+      const fenced = [line];
+      index += 1;
+      while (index < lines.length) {
+        fenced.push(lines[index]!);
+        index += 1;
+        if (close.test(fenced.at(-1)!)) break;
+      }
+      // A closed fence from the start of the line is a code block, its language the first
+      // word after the fence; any other is kept as written, a raw block.
+      const open = /^(`{3,}|~{3,})(?:(\S+)(.*))?$/.exec(line);
+      if (open && fenced.length > 1 && close.test(fenced.at(-1)!)) {
+        out.push({
+          ...block("code", fenced.slice(1, -1).join("\n")),
+          ...(open[1] !== "```" ? { fence: open[1] } : {}),
+          ...(open[2] ? { language: open[2] } : {}),
+          ...(open[3] ? { info: open[3] } : {}),
+        });
+      } else out.push(block("raw", fenced.join("\n")));
     } else if (line.startsWith(">")) {
       const quote: string[] = [];
       while (index < lines.length && lines[index]!.startsWith(">")) {
@@ -264,6 +290,8 @@ export function fakeSpaceMc(options: {
   readonly titleOf: (threadId: string) => string | null;
   /** The thread an ask on a page runs in; the real MC starts a new one. */
   readonly agentThreadId: () => string;
+  /** Where an ask naming no project runs (`space.page.agentTarget`). */
+  readonly agentProjectId?: () => string | null;
 }) {
   const spaces = new Map<string, Entity>();
   // Per Space: its pages, blocks and comments, each in creation order.
@@ -668,6 +696,9 @@ export function fakeSpaceMc(options: {
       linkedPageId: spec.kind === "subpage_link" ? spec.linkedPageId : null,
       ...(placed ? { imageId: placed.id } : {}),
       ...(level !== undefined ? { level } : {}),
+      ...(spec.kind === "code" && spec.language ? { language: spec.language } : {}),
+      ...(spec.kind === "code" && spec.fence ? { fence: spec.fence } : {}),
+      ...(spec.kind === "code" && spec.info ? { info: spec.info } : {}),
       order,
       createdBy: by,
       updatedBy: by,
@@ -803,6 +834,7 @@ export function fakeSpaceMc(options: {
   };
 
   let refusingAsk = false;
+  const asks: Entity[] = [];
   let ignoringStops = false;
   let stops = 0;
   const isRunning = (agent: Entity | undefined) => agent !== undefined && agent.endedAt === null;
@@ -840,8 +872,10 @@ export function fakeSpaceMc(options: {
           },
         ],
       ]);
+      asks.push(structuredClone(input));
       return { agent: table(input.spaceId, "pageAgent").get(found.id) };
     },
+    "space.page.agentTarget": () => ({ projectId: options.agentProjectId?.() ?? null }),
     "space.page.stopAgent": (input) => {
       if (!isRunning(table(input.spaceId, "pageAgent").get(input.pageId))) {
         refuse("invalid", "No agent is working on this page.");
@@ -1640,6 +1674,7 @@ export function fakeSpaceMc(options: {
     refuseNextAsk: () => {
       refusingAsk = true;
     },
+    asks,
     ignoreStops: () => {
       ignoringStops = true;
     },

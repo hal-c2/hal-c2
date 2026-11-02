@@ -58,6 +58,7 @@ Item {
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             text: wizard.recovery === "settings" ? qsTr("Could not read settings") : qsTr("Still connecting")
+            wrapMode: Text.Wrap
             font.pixelSize: Math.round(18 * Theme.fontScale)
             font.weight: Font.DemiBold
             color: wizard.foreground
@@ -328,6 +329,7 @@ Item {
                             objectName: "onboardingPairingUrl"
                             Layout.fillWidth: true
                             placeholderText: "https://your-server:5230/pair#token=…"
+                            Accessible.name: qsTr("Invite link")
                             readOnly: !!(wizard.onboarding && wizard.onboarding.pairing)
                             inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText | Qt.ImhUrlCharactersOnly
                             onAccepted: pairButton.clicked()
@@ -339,7 +341,7 @@ Item {
                             wrapMode: Text.Wrap
                             text: wizard.onboarding ? (wizard.onboarding.pairingDetail || wizard.onboarding.pairingError || "") : ""
                             font.pixelSize: Math.round(13 * Theme.fontScale)
-                            color: Theme.palette.color("error", "#ef4444")
+                            color: Theme.palette.color("errorForeground", "#ef4444")
                         }
                         RowLayout {
                             Layout.fillWidth: true
@@ -610,6 +612,7 @@ Item {
             Layout.preferredWidth: 28
             horizontalAlignment: Text.AlignRight
             text: parent.item.threadCount ?? 0
+            elide: Text.ElideRight
             font.pixelSize: Math.round(11 * Theme.fontScale)
             color: wizard.muted
         }
@@ -617,6 +620,7 @@ Item {
             Layout.preferredWidth: 28
             horizontalAlignment: Text.AlignRight
             text: parent.item.age ?? ""
+            elide: Text.ElideRight
             font.pixelSize: Math.round(11 * Theme.fontScale)
             color: wizard.muted
         }
@@ -726,6 +730,7 @@ Item {
                         objectName: "onboardingSelectedCount"
                         Layout.fillWidth: true
                         text: qsTr("%1 of %2 selected").arg(wizard.importState.selectedCount ?? 0).arg(wizard.importState.total ?? 0)
+                        wrapMode: Text.Wrap
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                         color: wizard.muted
                     }
@@ -925,7 +930,7 @@ Item {
                     wrapMode: Text.Wrap
                     text: wizard.importState.error ?? ""
                     font.pixelSize: Math.round(13 * Theme.fontScale)
-                    color: Theme.palette.color("error", "#ef4444")
+                    color: Theme.palette.color("errorForeground", "#ef4444")
                 }
 
                 RowLayout {

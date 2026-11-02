@@ -21,6 +21,10 @@ Item {
     property alias centreView: centreHost
     property alias composer: composerView
     property alias stage: stageView
+    // The conversation's own room, for drops on it: its width beside the
+    // stage, and where it starts under a stage over the timeline.
+    readonly property real conversationWidth: conversation.width
+    readonly property real conversationTop: stageView.visible && focusMode ? stageRoom.height : 0
 
     readonly property var stageModel: Shell.state.panel?.stage ?? null
     readonly property bool staged: routeKind === "thread" && (stageModel?.tabs ?? []).length > 0
@@ -137,6 +141,8 @@ Item {
         Composer {
             id: composerView
 
+            // ConversationDrop (DefaultLayout) takes files over the conversation.
+            takesDrops: false
             Layout.fillWidth: true
             visible: ready
             conversationScrolled: centreHost.conversationScrolled

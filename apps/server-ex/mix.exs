@@ -101,24 +101,27 @@ defmodule HalC2.MixProject do
     release
   end
 
-  # The machine-files helper (native/machine-files, HalC2.MachineFiles.Helper) and the
-  # orphan reaper's (native/pid-kill, HalC2.Subprocess.Orphans) in priv/bin. They are
-  # Linux-only: elsewhere the MC says machine files are not supported, and kills with
-  # `kill`.
+  # The machine-files helper (native/machine-files, HalC2.MachineFiles.Helper), the
+  # orphan reaper's (native/pid-kill, HalC2.Subprocess.Orphans) and the Mermaid renderer
+  # (native/mermaid, HalC2.Mermaid) in priv/bin. The first two are Linux-only: elsewhere
+  # the MC says machine files are not supported, and kills with `kill`.
   defp stage_native_helpers(release) do
-    if :os.type() == {:unix, :linux} do
-      root = Path.expand("../..", __DIR__)
-      target = Path.join([release.path, "lib", "hal_c2-#{release.version}", "priv", "bin"])
-      File.mkdir_p!(target)
+    crates =
+      if :os.type() == {:unix, :linux},
+        do: ~w(machine-files pid-kill mermaid),
+        else: ~w(mermaid)
 
-      for crate <- ~w(machine-files pid-kill) do
-        manifest = Path.join(root, "native/#{crate}/Cargo.toml")
-        run!("cargo", ["build", "--locked", "--release", "--manifest-path", manifest], root)
+    root = Path.expand("../..", __DIR__)
+    target = Path.join([release.path, "lib", "hal_c2-#{release.version}", "priv", "bin"])
+    File.mkdir_p!(target)
 
-        built = Path.join(root, "native/#{crate}/target/release/hal-c2-#{crate}")
-        File.cp!(built, Path.join(target, "hal-c2-#{crate}"))
-        File.chmod!(Path.join(target, "hal-c2-#{crate}"), 0o755)
-      end
+    for crate <- crates do
+      manifest = Path.join(root, "native/#{crate}/Cargo.toml")
+      run!("cargo", ["build", "--locked", "--release", "--manifest-path", manifest], root)
+
+      built = Path.join(root, "native/#{crate}/target/release/hal-c2-#{crate}")
+      File.cp!(built, Path.join(target, "hal-c2-#{crate}"))
+      File.chmod!(Path.join(target, "hal-c2-#{crate}"), 0o755)
     end
 
     release

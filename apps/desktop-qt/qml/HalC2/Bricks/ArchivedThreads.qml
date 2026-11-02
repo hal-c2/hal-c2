@@ -72,6 +72,7 @@ Rectangle {
                     color: page.foreground
                     font.pixelSize: Math.round(14 * Theme.fontScale)
                     font.weight: Font.DemiBold
+                    wrapMode: Text.Wrap
                 }
 
                 Label {
@@ -156,7 +157,7 @@ Rectangle {
                                     objectName: "delete"
                                     subtle: true
                                     // Permanent, so it reads as destructive.
-                                    tint: Theme.palette.color("error", "#ef4444")
+                                    tint: Theme.palette.color("errorForeground", "#ef4444")
                                     enabled: !row.modelData.busy
                                     text: qsTr("Delete")
                                     Accessible.name: qsTr("Delete %1").arg(row.modelData.title)

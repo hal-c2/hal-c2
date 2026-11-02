@@ -115,6 +115,8 @@ Item {
             property int closed: 0
             property bool outsideProject: false
             function closeFile() { closed += 1; }
+            property var opened: []
+            function openFile(path, line) { opened = opened.concat([path]); }
             signal revealRequested
         }
     }
@@ -133,6 +135,28 @@ Item {
             function rowOf(path) { return path === "src/app.ts" ? 0 : -1; }
             ListElement {
                 path: "src/app.ts"; name: "app.ts"; depth: 0; kind: "file"; expanded: false; ignored: false; problem: ""; selected: false
+            }
+        }
+    }
+
+    // A folder and a file at the root, keeping which folders were toggled.
+    Component {
+        id: fakeFolderTree
+        ListModel {
+            property string rootStatus: "ready"
+            property bool allExpanded: false
+            property string selectedPath: ""
+            property var toggled: []
+            function toggle(path) { toggled = toggled.concat([path]); }
+            function retry(path) {}
+            function collapseAll() {}
+            function expandAll() {}
+            function rowOf(path) { return -1; }
+            ListElement {
+                path: "src"; name: "src"; depth: 0; kind: "directory"; expanded: false; ignored: false; problem: ""; selected: false
+            }
+            ListElement {
+                path: "README.md"; name: "README.md"; depth: 0; kind: "file"; expanded: false; ignored: false; problem: ""; selected: false
             }
         }
     }
@@ -321,6 +345,19 @@ Item {
             verify(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].payload.width === undefined, "a double click resets it");
         }
 
+        function test_theKeyboardMovesTheEdgeWithinTheLayoutsRoom() {
+            Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
+            const panel = createTemporaryObject(panelComponent, root, { x: 450, maximumWidth: 550 });
+            const edge = findChild(panel, "panelEdge");
+            edge.forceActiveFocus();
+            keyClick(Qt.Key_Left);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].payload.width, 550, "Left widens the panel, as far as the thread's room");
+            keyClick(Qt.Key_Right);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].payload.width, 524, "Right narrows it");
+            keyClick(Qt.Key_Return);
+            verify(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].payload.width === undefined, "Enter resets it");
+        }
+
         // Scenario: The panel's tab opens in the thread's centre
         // (features/desktop/stage.feature).
         function test_openInCentreMovesTheActiveTabToTheStage() {
@@ -490,6 +527,17 @@ Item {
             mouseClick(findChild(details, "threadDetailsShowMore"));
             compare(details.hiddenCount, 0);
             verify(!findChild(details, "threadDetailsShowMore").visible);
+        }
+
+        function test_relationRowsCentreTheirLabels() {
+            const details = createTemporaryObject(detailsComponent, root, { details: { environment: "e", online: true, project: "p", folder: "", checkout: "Local", branch: "",
+                relations: [{ threadKey: "e:fork", title: "A fork", relation: "Fork", status: "running" }] } });
+            const row = findChild(details, "threadDetailsRelation");
+            verify(row);
+            const labels = row.contentItem.children[1];
+            const top = labels.mapToItem(row, 0, 0).y;
+            fuzzyCompare(top + labels.height / 2, row.height / 2, 1, "the two lines sit in the middle of the row");
+            verify(top >= 0 && top + labels.height <= row.height, "and inside it");
         }
 
         function test_renderedPageLinksOpenOnCtrlClickAndOfferTheirMenu() {
@@ -802,6 +850,89 @@ Item {
             tryVerify(() => entry && entry.visible);
             compare(entry.Accessible.name, "app.ts");
             compare(entry.Accessible.description, "src/app.ts");
+        }
+
+        // A mouse press held past the hold interval is still a click: it opens
+        // the folder or the file it was on, and no menu.
+        function test_aSlowClickOnATreeEntryStillOpensIt() {
+            const source = createTemporaryObject(fakeFiles, root);
+            source.tree = createTemporaryObject(fakeFolderTree, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const menu = findChild(files, "fileEntryMenu");
+            tryVerify(() => findChild(files, "filesEntry-src")?.visible && findChild(files, "filesEntry-README.md")?.visible);
+            const folder = findChild(files, "filesEntry-src");
+            const file = findChild(files, "filesEntry-README.md");
+            const held = Qt.styleHints.mousePressAndHoldInterval + 200;
+            mousePress(folder);
+            mouseRelease(folder, undefined, undefined, Qt.LeftButton, Qt.NoModifier, held);
+            compare(source.tree.toggled, ["src"]);
+            mousePress(file);
+            mouseRelease(file, undefined, undefined, Qt.LeftButton, Qt.NoModifier, held);
+            compare(source.opened, ["README.md"]);
+            verify(!menu.visible, "a held mouse press opens no menu");
+        }
+
+        // A finger held on a file opens its menu, and lifting it doesn't open
+        // the file as well; a tap still opens it.
+        function test_aFingerHeldOnAFileOffersItsMenuInsteadOfOpeningIt() {
+            const source = createTemporaryObject(fakeFiles, root);
+            source.tree = createTemporaryObject(fakeFolderTree, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const menu = findChild(files, "fileEntryMenu");
+            tryVerify(() => findChild(files, "filesEntry-README.md")?.visible);
+            const file = findChild(files, "filesEntry-README.md");
+            const touch = touchEvent(file);
+            touch.press(0, file).commit();
+            tryVerify(() => menu.visible, 3000, "the held file's menu opens");
+            touch.release(0, file).commit();
+            compare(menu.path, "README.md");
+            compare(source.opened, []);
+            menu.close();
+            tryVerify(() => !menu.visible);
+            touchEvent(file).press(0, file).commit().release(0, file).commit();
+            compare(source.opened, ["README.md"]);
+        }
+
+        // A long press is skipped once, however the lift ends: a click with no
+        // press before it (an accessibility press action) opens the file.
+        function test_aClickAfterAHeldFingerStillOpensTheFile() {
+            const source = createTemporaryObject(fakeFiles, root);
+            source.tree = createTemporaryObject(fakeFolderTree, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const menu = findChild(files, "fileEntryMenu");
+            tryVerify(() => findChild(files, "filesEntry-README.md")?.visible);
+            const file = findChild(files, "filesEntry-README.md");
+            const touch = touchEvent(file);
+            touch.press(0, file).commit();
+            tryVerify(() => menu.visible, 3000, "the held file's menu opens");
+            touch.release(0, file).commit();
+            menu.close();
+            tryVerify(() => !menu.visible);
+            compare(source.opened, []);
+            // `click()` presses first; an accessibility press only clicks.
+            file.clicked();
+            compare(source.opened, ["README.md"]);
+        }
+
+        // A finger that slides off the held row before lifting doesn't click it,
+        // and leaves nothing behind: its next press-less click opens the file.
+        function test_aFingerSlidOffAHeldRowLeavesItClickable() {
+            const source = createTemporaryObject(fakeFiles, root);
+            source.tree = createTemporaryObject(fakeFolderTree, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const menu = findChild(files, "fileEntryMenu");
+            tryVerify(() => findChild(files, "filesEntry-README.md")?.visible);
+            const file = findChild(files, "filesEntry-README.md");
+            const touch = touchEvent(file);
+            touch.press(0, file).commit();
+            tryVerify(() => menu.visible, 3000, "the held file's menu opens");
+            touch.move(0, file, file.width / 2, file.height * 4).commit();
+            touch.release(0, file, file.width / 2, file.height * 4).commit();
+            menu.close();
+            tryVerify(() => !menu.visible);
+            compare(source.opened, []);
+            file.clicked();
+            compare(source.opened, ["README.md"]);
         }
 
         // Hiding the tree from its toggle (here through the preference the

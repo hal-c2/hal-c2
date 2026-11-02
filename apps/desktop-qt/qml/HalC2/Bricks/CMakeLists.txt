@@ -10,6 +10,7 @@ set(hal_c2_bricks_qml_files
     ModelPicker.qml
     ProviderIcon.qml
     ComposerVimKeys.qml
+    ConversationDrop.qml
     ProjectFolderDrop.qml
     FolderExplorer.qml
     FolderOperationDialog.qml
@@ -112,6 +113,7 @@ set(hal_c2_bricks_qml_files
     RevertDialog.qml
     TerminalSplits.qml
     TerminalMenu.qml
+    TextEditMenu.qml
     Plugin.qml
     Contribution.qml
     PluginSlot.qml
@@ -134,7 +136,7 @@ set(hal_c2_bricks_qml_files
     ThreadDetailsPanel.qml
     CommandPalette.qml
     PullRequestsPage.qml HomePage.qml UsagePage.qml UsageChart.qml
-    SpaceWorkspace.qml SpaceSidebar.qml SpacePage.qml SpaceAgentStrip.qml SpaceViewers.qml SpaceBlock.qml SpaceSlashMenu.qml SpaceComments.qml SpaceBlockImage.qml SpaceImages.qml SpaceImageDialog.qml
+    SpaceWorkspace.qml SpaceSidebar.qml SpacePage.qml SpaceAgentStrip.qml SpaceViewers.qml SpaceBlock.qml SpaceSlashMenu.qml SpaceComments.qml SpaceBlockImage.qml SpaceImages.qml SpaceImageDialog.qml SpaceFilePicker.qml
     SpaceDeck.qml SpacePresenter.qml
     SpaceChart.qml SpaceHistoryPanel.qml SpacePageUpdate.qml SpaceUpdateDialog.qml SpaceVersionView.qml
     ProvidersSettings.qml
@@ -160,6 +162,7 @@ set(hal_c2_bricks_qml_files
     OnboardingTerminal.qml
     SnapShotSettings.qml
     Markdown.qml
+    MermaidDiagram.qml
     js/markdown.js
     BrowserPanel.qml
     BrowserDevicesView.qml

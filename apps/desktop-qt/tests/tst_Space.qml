@@ -20,7 +20,7 @@ Item {
     }
 
     function block(id, text, more) {
-        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, level: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more);
+        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, level: 0, language: "", imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more);
     }
 
     function pageRow(id, title, depth, parentPageId) {
@@ -57,13 +57,14 @@ Item {
         function init() {
             Shell.reset();
             Spaces.reset();
+            Diagrams.reset();
         }
 
         // "Roadmap" with its history open: "Final" now, "Draft" before it.
         function withHistory(more) {
             const versions = [
-                { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: true, byUpdate: false, threadTitle: "Work", restoredFromAt: "" },
-                { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" }
+                { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: true, byUpdate: false, byFile: false, threadTitle: "Work", restoredFromAt: "" },
+                { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, byFile: false, threadTitle: "", restoredFromAt: "" }
             ];
             return root.research({ history: Object.assign({ shown: true, pageId: "page-1", versions: versions }, more) });
         }
@@ -90,8 +91,8 @@ Item {
             const view = root.research({
                 page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: true, sourceThreadId: "", sourceThreadTitle: "" },
                 history: { shown: true, pageId: "page-1", versions: [
-                    { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" },
-                    { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" }
+                    { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: false, byUpdate: false, byFile: false, threadTitle: "", restoredFromAt: "" },
+                    { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, byFile: false, threadTitle: "", restoredFromAt: "" }
                 ] }
             });
             tryVerify(() => findChild(view, "spaceHistoryRow:1") !== null);
@@ -602,6 +603,97 @@ Item {
             verify(!findChild(view, "spaceInsertAfter").visible);
         }
 
+        // A diagram as the MC imports a "mermaid" fence: a code block in "mermaid"
+        // holding the bare source (HalC2.Space.Markdown; space/markdown.feature,
+        // Mermaid diagrams).
+        function mermaidBlock(source) {
+            return root.block("d1", source, { kind: "code", language: "mermaid" });
+        }
+
+        function test_a_mermaid_block_is_drawn_in_place_of_its_source() {
+            const source = "flowchart LR\n  A --> B";
+            const row = mermaidBlock(source);
+            const view = root.research({ blocks: [row] });
+            const note = findChild(findChild(view, "spaceDiagramNote:" + row.text), "mermaidStatus");
+            verify(note.visible);
+            compare(note.text, "Drawing the diagram…");
+            verify(findChild(view, "spaceBlockEditor:" + row.text).visible, "its source shows until it is drawn");
+
+            Diagrams.answer(source, "dark", { status: "drawn", kind: "flowchart", url: "", width: 200, height: 80 });
+            const diagram = findChild(view, "spaceDiagram:" + row.text);
+            verify(diagram.visible);
+            compare(findChild(diagram, "mermaidImage").width, 200);
+            verify(!findChild(view, "spaceBlockEditor:" + row.text).visible);
+            verify(!note.visible);
+
+            // The source is the way to edit it, and what is saved is drawn.
+            mouseClick(findChild(view, "spaceDiagramSource:" + row.text));
+            verify(findChild(view, "spaceBlockEditor:" + row.text).visible);
+            verify(!diagram.visible);
+            const edited = source + "\n  B --> C";
+            Spaces.blocks.setProperty(0, "text", edited);
+            verify(("dark\n" + edited) in Diagrams.asked, "the new source is asked for");
+            Diagrams.answer(edited, "dark", { status: "drawn", kind: "flowchart", url: "", width: 200, height: 120 });
+            verify(findChild(view, "spaceDiagram:" + edited).visible, "drawn again with the new node");
+        }
+
+        // Another client's or an agent's edit arriving mid-sentence neither
+        // hides the source nor takes the keyboard away.
+        function test_an_edit_from_elsewhere_leaves_the_diagram_source_being_written() {
+            const source = "flowchart LR\n  A --> B";
+            const row = mermaidBlock(source);
+            const view = root.research({ blocks: [row] });
+            Diagrams.answer(source, "dark", { status: "drawn", kind: "flowchart", url: "", width: 200, height: 80 });
+            mouseClick(findChild(view, "spaceDiagramSource:" + row.text));
+            const editor = findChild(view, "spaceBlockEditor:" + row.text);
+            editor.forceActiveFocus();
+            verify(editor.activeFocus);
+
+            const theirs = source + "\n  B --> C";
+            Spaces.blocks.setProperty(0, "text", theirs);
+            Diagrams.answer(theirs, "dark", { status: "drawn", kind: "flowchart", url: "", width: 200, height: 120 });
+            verify(editor.visible, "the source stays");
+            verify(editor.activeFocus, "the user is still writing");
+            compare(root.dispatched("space.block.update").length, 0);
+        }
+
+        function test_a_mermaid_block_with_a_mistake_shows_its_source_and_where() {
+            const source = "flowchart LR\n  A[open --> B";
+            const row = mermaidBlock(source);
+            const view = root.research({ blocks: [row] });
+            Diagrams.answer(source, "dark", { status: "invalid", kind: "flowchart", reason: "An unclosed bracket.", line: 2, column: 3 });
+            verify(findChild(view, "spaceBlockEditor:" + row.text).visible);
+            verify(!findChild(view, "spaceDiagram:" + row.text).visible);
+            const note = findChild(findChild(view, "spaceDiagramNote:" + row.text), "mermaidStatus");
+            verify(note.visible);
+            compare(note.text, "Line 2: An unclosed bracket.");
+            verify(!findChild(view, "spaceDiagramSource:" + row.text).visible);
+        }
+
+        // A fence the MC keeps as written (indented, or with a space before
+        // its language) is a raw block, and is drawn too.
+        function test_a_mermaid_fence_kept_as_written_is_drawn_too() {
+            const view = root.research({ blocks: [
+                root.block("r1", "``` mermaid\nflowchart LR\n  A --> B\n```", { kind: "raw" }),
+                root.block("r2", "  ~~~Mermaid\nsequenceDiagram\n  A->>B: hi\n  ~~~", { kind: "raw" })
+            ] });
+            tryVerify(() => findChild(view, "spaceBlockEditor:  ~~~Mermaid\nsequenceDiagram\n  A->>B: hi\n  ~~~"), 1000, "every block is on the page");
+            compare(Object.keys(Diagrams.asked).sort(), ["dark\nflowchart LR\n  A --> B", "dark\nsequenceDiagram\n  A->>B: hi"]);
+        }
+
+        function test_only_a_mermaid_code_block_or_fence_is_a_diagram() {
+            const view = root.research({ blocks: [
+                root.block("c1", "const a = 1;", { kind: "code", language: "js" }),
+                root.block("c2", "flowchart LR\n  A --> B", { kind: "code" }),
+                root.block("r1", "```js\nconst a = 1;\n```", { kind: "raw" }),
+                root.block("r2", "Before\n```mermaid\nflowchart LR\n  A --> B\n```", { kind: "raw" }),
+                root.block("p1", "```mermaid\nflowchart LR\n  A --> B\n```"),
+                root.block("t1", "| mermaid |\n| --- |", { kind: "table" })
+            ] });
+            tryVerify(() => findChild(view, "spaceBlockEditor:| mermaid |\n| --- |"), 1000, "every block is on the page");
+            compare(Object.keys(Diagrams.asked).length, 0);
+        }
+
         function test_return_writes_an_edited_block_and_escape_drops_the_edit() {
             const view = root.research({});
             const editor = findChild(view, "spaceBlockEditor:One");
@@ -758,6 +850,99 @@ Item {
             verify(findChild(view, "spaceSiteLocalOnly").visible);
             mouseClick(findChild(view, "spaceSiteTailscale"));
             compare(dispatched("space.page.publish"), [{ pageId: "page-1", tailscale: true }]);
+        }
+
+        // "Roadmap" as the file docs/roadmap.md of Shop (features/space/project-files.feature).
+        function filed(file) {
+            return Object.assign({ id: "page-1", title: "Roadmap", parentPageId: "", trashed: false, sourceThreadId: "", sourceThreadTitle: "",
+                                   file: Object.assign({ projectId: "shop", projectTitle: "Shop", path: "docs/roadmap.md", missing: false, unwritten: false, conflictAt: "" }, file) });
+        }
+
+        function test_a_page_that_is_a_file_says_which_with_the_ways_to_it_and_out() {
+            const view = root.research({ page: filed({}) });
+            verify(findChild(view, "spacePageFile").visible);
+            compare(findChild(view, "spacePageFilePath").text, "The file docs/roadmap.md of Shop");
+            verify(!findChild(view, "spacePageFileGone").visible);
+            verify(!findChild(view, "spacePageFileConflict").visible);
+            mouseClick(findChild(view, "spacePageFileShow"));
+            mouseClick(findChild(view, "spacePageActions"));
+            verify(findChild(view, "spaceShowFile").visible);
+            findChild(view, "spaceUnlinkFile").triggered();
+            compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.showFile", "space.page.unlinkFile"]);
+            compare(dispatched("space.page.unlinkFile"), [{ pageId: "page-1" }]);
+        }
+
+        function test_an_ordinary_page_says_nothing_of_a_file() {
+            const view = root.research();
+            verify(!findChild(view, "spacePageFile").visible);
+            mouseClick(findChild(view, "spacePageActions"));
+            verify(!findChild(view, "spaceShowFile").visible);
+            verify(!findChild(view, "spaceUnlinkFile").visible);
+        }
+
+        function test_a_page_whose_file_is_gone_says_so_and_whether_it_was_edited_since() {
+            const view = root.research({ page: filed({ missing: true }) });
+            const gone = findChild(view, "spacePageFileGone");
+            verify(gone.visible);
+            verify(!findChild(view, "spacePageFileShow").visible);
+            const untouched = gone.text;
+            Spaces.page = filed({ missing: true, unwritten: true });
+            verify(gone.text !== untouched);
+            verify(gone.text.indexOf("it wins") >= 0);
+        }
+
+        function test_a_file_that_won_over_an_edit_says_so_with_the_way_to_the_history() {
+            const view = root.research({ page: filed({ conflictAt: "2026-09-23T10:20:00Z" }) });
+            verify(findChild(view, "spacePageFileConflict").visible);
+            mouseClick(findChild(view, "spacePageFileHistory"));
+            compare(dispatched("space.history.open"), [{ pageId: "page-1" }]);
+        }
+
+        function picking(listed) {
+            Shell.state = Object.assign({}, Shell.state, { space: {
+                picking: "shop",
+                projects: [{ id: "shop", title: "Shop" }, { id: "docs", title: "Docs" }],
+                files: listed === undefined ? {} : { shop: listed }
+            } });
+            return root.research();
+        }
+
+        function test_the_file_picker_lists_the_projects_files_and_opens_one() {
+            const view = picking({ config: "default", paths: {
+                "docs/roadmap.md": { kind: "markdown", spaceId: "space-1", pageId: "page-1", title: "Roadmap" },
+                "README.md": { kind: "markdown", spaceId: "", pageId: "", title: "" }
+            } });
+            const picker = findChild(view, "spaceFilePicker");
+            tryVerify(() => picker.opened);
+            compare(findChild(picker.contentItem, "spaceFilePickerProject").text, "Shop");
+            tryVerify(() => findChild(picker.contentItem, "spaceFilePickerFile:docs/roadmap.md") !== null);
+            const opened = findChild(picker.contentItem, "spaceFilePickerFile:docs/roadmap.md");
+            compare(opened.text, "docs/roadmap.md (the page Roadmap)");
+            mouseClick(findChild(picker.contentItem, "spaceFilePickerFile:README.md"));
+            compare(dispatched("space.openFile"), [{ projectId: "shop", relativePath: "README.md" }]);
+        }
+
+        function test_the_file_picker_says_when_a_project_has_no_files_and_offers_the_scan() {
+            const view = picking({ config: "default", paths: {} });
+            const picker = findChild(view, "spaceFilePicker");
+            tryVerify(() => picker.opened);
+            const empty = findChild(picker.contentItem, "spaceFilePickerEmpty");
+            verify(empty.visible);
+            verify(empty.text.indexOf("Shop has no files") === 0);
+            mouseClick(findChild(picker.contentItem, "spaceFilePickerScan"));
+            compare(dispatched("space.files.scan"), [{ projectId: "shop" }]);
+            picker.close();
+            compare(dispatched("space.files.pickClose"), [{}]);
+        }
+
+        function test_the_file_picker_says_why_a_refused_list_has_no_files() {
+            const view = picking({ config: "", paths: {}, error: "The project could not be read." });
+            const picker = findChild(view, "spaceFilePicker");
+            tryVerify(() => picker.opened);
+            const empty = findChild(picker.contentItem, "spaceFilePickerEmpty");
+            verify(empty.visible);
+            compare(empty.text, "The files of Shop could not be listed: The project could not be read.");
+            picker.close();
         }
 
         function test_a_trashed_page_offers_no_publishing() {
