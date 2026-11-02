@@ -1341,8 +1341,39 @@ bool SpaceController::pageOnShow() const {
   return m_open && m_client->isReady() && deckId().isEmpty() && !imagesShown() && (!m_pageShownBySteps || m_pageShown);
 }
 
+QString SpaceController::promptPage() const {
+  // As pageOnShow, connected or not: the prompt keeps its words while the MC is away.
+  const bool shown = m_open && deckId().isEmpty() && !imagesShown() && (!m_pageShownBySteps || m_pageShown);
+  return shown && !page().value(QStringLiteral("trashed")).toBool() ? pageId() : QString();
+}
+
+void SpaceController::askAgent(const QString& pageId, const QJsonObject& ask, std::function<void(bool)> answered) {
+  QJsonObject payload = ask;
+  payload.insert(QStringLiteral("pageId"), pageId);
+  const QString request = ask.value(QLatin1String("request")).toString();
+  call(
+      QStringLiteral("page.askAgent"), payload,
+      [this, pageId, request, answered](const QJsonObject&) {
+        if (answered) answered(true);
+        emit agentAskAnswered(pageId, request, true);
+      },
+      [this, pageId, request, answered](const QJsonObject&) {
+        if (answered) answered(false);
+        emit agentAskAnswered(pageId, request, false);
+        return QString();
+      });
+}
+
+void SpaceController::agentTarget(std::function<void(const QString&)> done) {
+  m_client->call(this, m_client->environment(), QStringLiteral("space.page.agentTarget"), QJsonObject(),
+                 [done](const QJsonValue& result, const std::optional<QString>& error) {
+                   done(error ? QString() : result.toObject().value(QLatin1String("projectId")).toString());
+                 });
+}
+
 void SpaceController::followViewers() {
   syncShownFile();
+  emit promptPageChanged();
   const QString page = pageOnShow() ? pageId() : QString();
   if (page == m_followedViewers) return;
   if (m_viewersSubscription) m_client->unsubscribe(std::exchange(m_viewersSubscription, 0));
@@ -2035,14 +2066,7 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     m_historyRefresh->stop();
     history()->close();
   } else if (action == QLatin1String("space.agent.ask")) {
-    const QString request = field(QLatin1String("request"));
-    call(
-        QStringLiteral("page.askAgent"), {{QStringLiteral("pageId"), pageId}, {QStringLiteral("request"), request}},
-        [this, pageId, request](const QJsonObject&) { emit agentAskAnswered(pageId, request, true); },
-        [this, pageId, request](const QJsonObject&) {
-          emit agentAskAnswered(pageId, request, false);
-          return QString();
-        });
+    askAgent(pageId, {{QStringLiteral("request"), field(QLatin1String("request"))}}, {});
   } else if (action == QLatin1String("space.agent.stop")) {
     call(QStringLiteral("page.stopAgent"), {{QStringLiteral("pageId"), pageId}});
   } else if (action == QLatin1String("space.agent.dismiss")) {

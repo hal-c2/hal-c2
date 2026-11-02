@@ -1795,6 +1795,19 @@ step("the user is offered the kinds of block, and {string}", (ctx: World, visual
   ]);
 });
 
+step(
+  "the thread {string} of the project {string} runs on another model",
+  (ctx: SpaceWorld, title: string, project: string) =>
+    change(ctx, () => {
+      // No default model of its own, so an ask there takes its last thread's.
+      (addProject(ctx, project) as { defaultModelSelection: unknown }).defaultModelSelection = null;
+      addThread(ctx, title, {
+        project,
+        modelSelection: { instanceId: "codex", model: "gpt-5-codex" },
+      });
+    }),
+);
+
 step("the user starts an ask on {string}", async (ctx: SpaceWorld, page: string) => {
   await openPage(ctx, page);
   await press(ctx, "A");

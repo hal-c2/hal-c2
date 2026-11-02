@@ -5,9 +5,10 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The open page of the Space view (Spaces.page): its title, where it sits,
-// the thread it was made from, its update, its blocks, and a composer that adds
-// a block of the kind a `/` picks or asks for a chart with `/visualize <request>`.
-// A trashed page is read only, with the way back.
+// the thread it was made from, its update, its blocks, and the timeline's
+// prompt (Composer, aimed at the page by ComposerController): it adds a block
+// of the kind a `/` picks, asks for a chart with `/visualize <request>`, and
+// asks an agent with `@agent`. A trashed page is read only, with the way back.
 Rectangle {
     id: page
 
@@ -24,6 +25,9 @@ Rectangle {
     readonly property bool fileBacked: (file.path ?? "") !== ""
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    // What the prompt holds as typed.
+    readonly property string promptText: composer.editor.text
+    readonly property bool asking: /^@agent(\s|$)/i.test(promptText.trim())
     // The kind the composer adds, and the block it goes after ("" for the end).
     property string newKind: "paragraph"
     property string insertAfter: ""
@@ -98,24 +102,27 @@ Rectangle {
         page.replacing = "";
     }
 
+    // The words the prompt does not send to an agent come back to be written.
     Connections {
-        target: Spaces
-        function onAgentAskRequested() {
-            page.startAsk();
-        }
-        function onAgentAskAnswered(pageId, request, taken) {
-            if (taken && pageId === Spaces.pageId && composer.text.trim() === request)
-                composer.clear();
+        target: Shell
+        function onActionRequested(action, payload) {
+            if (action === "space.prompt.write" && payload.pageId === Spaces.pageId)
+                page.write(payload.text);
         }
     }
 
-    // Starts the words of an ask in the composer, ahead of a draft already there.
+    // Puts `text` in the prompt, the caret at its end and the keyboard on it.
+    function setPrompt(text) {
+        composer.editor.text = text;
+        composer.editor.cursorPosition = text.length;
+        composer.flushText();
+        composer.focusInput();
+    }
+
+    // Starts the words of an ask in the prompt, ahead of a draft already there.
     function startAsk() {
-        if (!composer.text.trim().startsWith("@agent")) {
-            composer.text = "@agent " + composer.text;
-            composer.cursorPosition = "@agent ".length;
-        }
-        composer.forceActiveFocus();
+        composer.flushText();
+        Shell.dispatch("composer.ask");
     }
 
     // Asks the MC to draw a chart for `/visualize <request>`, in place of the
@@ -135,43 +142,34 @@ Rectangle {
     function askAgain(blockId, request) {
         page.insertAfter = "";
         page.replacing = blockId;
-        composer.text = "/visualize " + request;
-        composer.forceActiveFocus();
+        page.setPrompt("/visualize " + request);
     }
 
-    // Writes the composer's text as a block of the chosen kind, asks for the
-    // chart it names, opens the kinds when it starts with `/`, or asks an agent
-    // when it starts with `@agent`. An ask keeps its words until the MC takes it.
-    function submit() {
+    // Writes the prompt's words (all but an ask, which the controller sends)
+    // as a block of the chosen kind, or asks for the chart they name.
+    function write(text) {
         if (slash.visible) {
             slash.choose();
             return;
         }
-        const text = composer.text.trim();
         if (text.length === 0 || text === "/visualize")
             return;
-        if (/^@agent(\s|$)/i.test(text)) {
-            Shell.dispatch("space.agent.ask", { pageId: Spaces.pageId, request: text });
-            return;
-        }
         if (text.startsWith("/visualize ")) {
             page.visualize(text);
-            composer.clear();
-            return;
+        } else {
+            page.insert(page.newKind, text, "");
+            if (page.newKind === "heading" || page.newKind === "callout")
+                page.newKind = "paragraph";
         }
-        page.insert(page.newKind, text, "");
-        composer.clear();
-        if (page.newKind === "heading" || page.newKind === "callout")
-            page.newKind = "paragraph";
+        page.setPrompt("");
     }
 
     function chooseKind(kind) {
-        composer.clear();
         if (kind === "chart") {
-            composer.text = "/visualize ";
-            composer.forceActiveFocus();
+            page.setPrompt("/visualize ");
             return;
         }
+        page.setPrompt("");
         if (kind === "subpage_link") {
             linkMenu.popup(kindButton, 0, -linkMenu.implicitHeight - 4);
             return;
@@ -181,16 +179,27 @@ Rectangle {
             return;
         }
         page.newKind = kind;
-        composer.forceActiveFocus();
+        composer.focusInput();
     }
 
+    // A `/` at the start opens the kinds of block, filtered by what follows.
+    onPromptTextChanged: {
+        if (promptText.startsWith("/") && !promptText.startsWith("/visualize ")) {
+            slash.query = promptText.slice(1);
+            if (!slash.visible)
+                slash.open();
+        } else if (slash.visible) {
+            slash.close();
+        }
+    }
+
+    // Each page keeps its own draft in the prompt (ComposerController).
     onCurrentChanged: {
         if ((current.id ?? "") !== titleField.pageId) {
             titleField.pageId = current.id ?? "";
             page.insertAfter = "";
             page.replacing = "";
             page.newKind = "paragraph";
-            composer.clear();
         }
         if (!titleField.activeFocus)
             titleField.text = current.title ?? "";
@@ -689,7 +698,7 @@ Rectangle {
                 onAddBelowRequested: blockId => {
                     page.insertAfter = blockId;
                     page.replacing = "";
-                    composer.forceActiveFocus();
+                    composer.focusInput();
                 }
             }
 
@@ -724,7 +733,7 @@ Rectangle {
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
                     page.replacing = "";
-                    composer.clear();
+                    page.setPrompt("");
                 }
             }
         }
@@ -743,70 +752,98 @@ Rectangle {
             }
         }
 
-        RowLayout {
+        // The timeline's prompt, aimed at the page. It has no checkout, queue
+        // or second model: those belong to a thread.
+        Composer {
+            id: composer
+
+            objectName: "spaceComposer"
             Layout.fillWidth: true
-            Layout.bottomMargin: 24
-            visible: !page.trashed
-            spacing: 6
+            Layout.leftMargin: -composer.gutter
+            Layout.rightMargin: -composer.gutter
+            Layout.bottomMargin: 4
+            visible: !page.trashed && ready && model.routeKind === "page"
+            color: "transparent"
+            editorActions: [
+                ShellButton {
+                    id: kindButton
 
-            ShellButton {
-                id: kindButton
+                    objectName: "spaceNewKind"
+                    subtle: true
+                    visible: !page.asking
+                    iconName: page.kindIcon(page.newKind)
+                    text: page.kindLabel(page.newKind)
+                    toolTip: qsTr("Kind of block")
+                    onClicked: {
+                        slash.query = "";
+                        slash.open();
+                    }
+                },
+                // Where the ask runs: the project the MC would pick, or the one picked.
+                ShellButton {
+                    id: projectButton
 
-                objectName: "spaceNewKind"
-                subtle: true
-                iconName: page.kindIcon(page.newKind)
-                text: page.kindLabel(page.newKind)
-                toolTip: qsTr("Kind of block")
-                onClicked: {
-                    slash.query = "";
-                    slash.open();
+                    objectName: "spaceAskProject"
+                    subtle: true
+                    visible: page.asking
+                    iconName: "folder"
+                    chevron: true
+                    text: composer.model?.project?.title ?? qsTr("No project")
+                    toolTip: qsTr("The project the agent runs in")
+                    onClicked: projectMenu.popup(projectButton, 0, -projectMenu.implicitHeight - 4)
+                }
+            ]
+            onEditorKeyPressed: event => {
+                if (event.accepted || event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))
+                    return;
+                if (slash.visible) {
+                    event.accepted = true;
+                    if (event.key === Qt.Key_Up)
+                        slash.move(-1);
+                    else if (event.key === Qt.Key_Down)
+                        slash.move(1);
+                    else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                        slash.choose();
+                    else if (event.key === Qt.Key_Escape) {
+                        slash.close();
+                        page.setPrompt("");
+                    } else
+                        event.accepted = false;
+                } else if (event.key === Qt.Key_Escape && page.insertAfter !== "") {
+                    event.accepted = true;
+                    page.insertAfter = "";
                 }
             }
 
-            ShellTextField {
-                id: composer
+            SpaceSlashMenu {
+                id: slash
 
-                objectName: "spaceComposer"
-                Layout.fillWidth: true
-                placeholderText: qsTr("Write, type / for a kind of block, or @agent to ask an agent")
-                onTextChanged: {
-                    if (text.startsWith("/") && !text.startsWith("/visualize ")) {
-                        slash.query = text.slice(1);
-                        if (!slash.visible)
-                            slash.open();
-                    } else if (slash.visible) {
-                        slash.close();
-                    }
-                }
-                onAccepted: page.submit()
-                Keys.onUpPressed: event => {
-                    event.accepted = slash.visible;
-                    if (slash.visible)
-                        slash.move(-1);
-                }
-                Keys.onDownPressed: event => {
-                    event.accepted = slash.visible;
-                    if (slash.visible)
-                        slash.move(1);
-                }
-                Keys.onEscapePressed: event => {
-                    if (slash.visible) {
-                        slash.close();
-                        composer.clear();
-                    } else if (page.insertAfter !== "") {
-                        page.insertAfter = "";
-                    } else {
-                        event.accepted = false;
-                    }
+                objectName: "spaceSlashMenu"
+                x: Math.max(composer.gutter, (composer.width - composer.maximumCardWidth) / 2)
+                y: -implicitHeight - 4
+                onChosen: kind => page.chooseKind(kind)
+            }
+        }
+
+        ShellMenu {
+            id: projectMenu
+
+            objectName: "spaceAskProjectMenu"
+
+            Instantiator {
+                model: projectMenu.visible ? (composer.model?.projects ?? []) : []
+
+                delegate: ShellMenuItem {
+                    required property var modelData
+
+                    text: modelData.title
+                    iconName: "folder"
+                    current: modelData.id === composer.model?.project?.id
+                    onTriggered: Shell.dispatch("composer.project.set", { projectId: modelData.id })
                 }
 
-                SpaceSlashMenu {
-                    id: slash
-
-                    objectName: "spaceSlashMenu"
-                    y: -implicitHeight - 4
-                    onChosen: kind => page.chooseKind(kind)
-                }
+                onObjectAdded: (index, object) => projectMenu.insertItem(index, object)
+                onObjectRemoved: (index, object) => projectMenu.removeItem(object)
             }
         }
 
