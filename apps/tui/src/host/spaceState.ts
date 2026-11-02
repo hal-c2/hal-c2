@@ -469,7 +469,12 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   // --- what the streams hold ---
 
   const spaceList = (): Space[] => entitiesOf(spaces, "space") as unknown as Space[];
-  const currentSpace = (): Space | undefined => spaceList().find((s) => s.id === spaceId);
+  // The open Space: one of the user's, or a project's own (its files' pages), which the
+  // index holds as a `projectSpace` and the list of Spaces leaves out.
+  const currentSpace = (): Space | undefined =>
+    [...spaceList(), ...(entitiesOf(spaces, "projectSpace") as unknown as Space[])].find(
+      (s) => s.id === spaceId,
+    );
   const pages = (): SpacePage[] => entitiesOf(space, "page") as unknown as SpacePage[];
   const pageById = (id: string | null) => pages().find((page) => page.id === id);
   const blocksOf = (id: string): SpaceBlock[] =>

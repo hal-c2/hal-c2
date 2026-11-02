@@ -1103,6 +1103,20 @@ describe("project files", () => {
     expect(t.statuses.at(-1)).toBe("Opened docs/guide.md as the page “Guide”.");
   });
 
+  test("the project's Space stays open once the Spaces arrive without it", async () => {
+    const t = setup();
+    t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", { spaceId: "ps1", page: page("g1", "Guide")[2], created: true });
+    await t.controller.settled();
+    const shop = { id: "ps1", projectId: "p1", name: "shop", createdAt: at, updatedAt: at };
+    t.send("spaces", snapshot(1, [space("s1", "Research"), ["projectSpace", "ps1", shop]]));
+    t.send("space:ps1", snapshot(10, [page("g1", "Guide")]));
+    expect(t.statuses).not.toContain("The Space was deleted.");
+    expect(t.view().title).toBe("page · Guide");
+    t.controller.dispatch("space.back", {});
+    expect(t.view().title).toBe("space · shop");
+  });
+
   test("a file opened again is the page it already is", async () => {
     const t = setup();
     t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
