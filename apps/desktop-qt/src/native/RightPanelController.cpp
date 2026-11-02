@@ -195,18 +195,29 @@ void RightPanelController::activate() {
     add(QStringLiteral("rightPanel.toggle"), [this] { toggle(); });
     // mod+w closes the innermost thing: the active tab, else the window.
     add(QStringLiteral("rightPanel.close"), [this] {
-      if (m_onThread && panel().open && !panel().active.isEmpty()) {
+      if (m_onThread && ((panel().open && !panel().active.isEmpty()) || !panel().stage.focusedTab().isEmpty())) {
         closeTab();
       } else {
         m_bridge->windowCommand(QStringLiteral("close"));
       }
     });
     add(QStringLiteral("rightPanel.toggleMaximized"), [this] { toggleMaximized(); });
+    // The stage: palette entries, and keys for moving a tab and the timeline.
+    add(QStringLiteral("stage.moveTab"), [this] { moveTab(); });
+    add(QStringLiteral("stage.toggleFocus"), [this] { toggleFocus(); });
+    add(QStringLiteral("stage.nextPane"), [this] {
+      if (m_onThread && !panel().stage.isEmpty()) focusPane((panel().stage.focused + 1) % panel().stage.panes.size());
+    });
+    add(QStringLiteral("stage.dismiss"), [this] { dismissStage(); });
+    for (const QString& layout : PanelStage::layouts) {
+      add(QStringLiteral("stage.layout.") + layout, [this, layout] { setStageLayout(layout); });
+    }
     add(QStringLiteral("threadPanel.toggle"), [this] { toggleDetails(); });
     add(QStringLiteral("diff.toggle"), [this] { toggleDiff(); });
     add(QStringLiteral("preview.toggle"), [this] { togglePreviews(); });
     add(QStringLiteral("pullRequest.copyNumber"), [this] {
-      if (isOpen() && kindOf(activeTab()) == QLatin1String("pull-request")) m_review.copyNumber();
+      const QStringList shown = shownTabs();
+      if (std::any_of(shown.begin(), shown.end(), [](const QString& id) { return kindOf(id) == QLatin1String("pull-request"); })) m_review.copyNumber();
     });
     keys->commands()->add(QStringLiteral("thread.showPullRequests"), QStringLiteral("Show linked pull requests"), [this] {
       if (m_pullRequests.count() > 0) showTab(QStringLiteral("pull-requests"));
@@ -277,6 +288,25 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     }
   } else if (action == QLatin1String("rightPanel.toggleMaximized")) {
     toggleMaximized();
+  } else if (action == QLatin1String("rightPanel.dock")) {
+    const QString id = map.value(QStringLiteral("id")).toString();
+    if (map.value(QStringLiteral("dock")).toString() == QLatin1String("panel")) {
+      moveToPanel(id);
+    } else {
+      moveToStage(id, map.value(QStringLiteral("pane"), -1).toInt(), map.value(QStringLiteral("zone"), QStringLiteral("center")).toString());
+    }
+  } else if (action == QLatin1String("stage.show")) {
+    showTab(map.value(QStringLiteral("id")).toString());
+  } else if (action == QLatin1String("stage.layout")) {
+    setStageLayout(map.value(QStringLiteral("layout")).toString());
+  } else if (action == QLatin1String("stage.focusPane")) {
+    focusPane(map.value(QStringLiteral("pane")).toInt());
+  } else if (action == QLatin1String("stage.toggleFocus")) {
+    toggleFocus();
+  } else if (action == QLatin1String("stage.resize")) {
+    setChatWidth(map.value(QStringLiteral("width")).toInt());
+  } else if (action == QLatin1String("stage.dismiss")) {
+    dismissStage();
   } else if (action == QLatin1String("threadPanel.toggle")) {
     toggleDetails();
   } else if (action == QLatin1String("rightPanel.review")) {
@@ -419,10 +449,6 @@ QStringList RightPanelController::tabIds() const {
   return current().tabs;
 }
 
-bool RightPanelController::isMaximized() const {
-  return isOpen() && current().maximized;
-}
-
 bool RightPanelController::detailsOpen() const {
   return m_onThread && current().details;
 }
@@ -435,17 +461,21 @@ void RightPanelController::setOpen(bool open) {
   if (!m_onThread) return;
   Panel& state = panel();
   if (open) {
-    const QStringList ids = tabIds();
+    const QStringList ids = panelTabs(state);
     if (ids.isEmpty()) {
-      state.tabs.append(QStringLiteral("diff"));
-      state.active = QStringLiteral("diff");
+      // The Diff tab, or the first of these the stage does not have.
+      for (const QString kind : {QStringLiteral("diff"), QStringLiteral("agents"), QStringLiteral("previews")}) {
+        if (state.tabs.contains(kind)) continue;
+        state.tabs.append(kind);
+        state.active = kind;
+        break;
+      }
+      if (state.active.isEmpty()) return;
     } else if (!ids.contains(state.active)) {
       state.active = ids.first();
     }
   }
   state.open = open;
-  // A closed panel comes back beside the thread.
-  if (!open) state.maximized = false;
   update();
 }
 
@@ -491,27 +521,41 @@ void RightPanelController::showTab(const QString& id) {
     return;
   }
   if (state.floating == id) state.floating.clear();
-  state.active = id;
-  state.open = true;
+  // A tab on the stage shows there.
+  if (state.stage.contains(id)) {
+    state.stage.show(id);
+  } else {
+    state.active = id;
+    state.open = true;
+  }
   update();
 }
 
 // Takes `id` out of `state`; the next tab shows in its place.
 bool RightPanelController::removeTab(Panel& state, const QString& id) {
-  const QStringList before = state.tabs;
+  const QStringList before = panelTabs(state);
   if (!state.tabs.removeOne(id)) return false;
   state.titles.remove(id);
   if (state.floating == id) state.floating.clear();
   if (id.startsWith(kDeviceTab) && !state.dismissed.contains(id)) state.dismissed.append(id);
-  if (state.active == id) {
-    const qsizetype at = before.indexOf(id);
-    state.active = state.tabs.isEmpty() ? QString() : state.tabs.at(std::min(at, state.tabs.size() - 1));
-    if (state.tabs.isEmpty()) {
-      state.open = false;
-      state.maximized = false;
-    }
-  }
+  state.stage.remove(id);
+  if (state.active == id) nextActive(state, before);
   return true;
+}
+
+QStringList RightPanelController::panelTabs(const Panel& state) {
+  QStringList ids;
+  for (const QString& id : state.tabs) {
+    if (!state.stage.contains(id)) ids.append(id);
+  }
+  return ids;
+}
+
+void RightPanelController::nextActive(Panel& state, const QStringList& before) {
+  const QStringList after = panelTabs(state);
+  const qsizetype at = std::max<qsizetype>(before.indexOf(state.active), 0);
+  state.active = after.isEmpty() ? QString() : after.at(std::min(at, after.size() - 1));
+  if (after.isEmpty()) state.open = false;
 }
 
 void RightPanelController::closeTabIn(const QString& threadKey, const QString& id) {
@@ -533,7 +577,8 @@ void RightPanelController::openAddress(const QString& url) {
 void RightPanelController::closeTab(const QString& id) {
   if (!m_onThread) return;
   Panel& state = panel();
-  const QString closing = id.isEmpty() ? (state.open ? state.active : QString()) : id;
+  // The panel's tab, else the stage's focused one.
+  const QString closing = !id.isEmpty() ? id : state.open && !state.active.isEmpty() ? state.active : state.stage.focusedTab();
   if (closing.isEmpty() || !state.tabs.contains(closing)) return;
   auto* terminals = kindOf(closing) == QLatin1String("terminal") ? NativeShell::of(this)->controller<TerminalController>() : nullptr;
   if (!terminals) {
@@ -585,13 +630,14 @@ void RightPanelController::openDevice(const QString& id, bool automatic) {
   Panel& state = panel();
   if (automatic && (state.dismissed.contains(id) || state.tabs.contains(id))) return;
   state.dismissed.removeOne(id);
-  // The device takes the picker's place.
+  // The device takes the picker's place, on the panel or the stage.
   if (!state.tabs.contains(id)) {
     const qsizetype picker = state.tabs.indexOf(QStringLiteral("device"));
     if (picker >= 0) state.tabs[picker] = id;
   } else {
     state.tabs.removeOne(QStringLiteral("device"));
   }
+  state.stage.rename(QStringLiteral("device"), id);
   if (state.active == QLatin1String("device")) state.active = id;
   showTab(id);
 }
@@ -599,9 +645,11 @@ void RightPanelController::openDevice(const QString& id, bool automatic) {
 void RightPanelController::floatDevice(const QString& id) {
   if (!m_onThread || !panel().tabs.contains(id)) return;
   Panel& state = panel();
+  // A device on the stage floats from the panel.
+  state.stage.remove(id);
   state.floating = id;
   state.open = false;
-  state.maximized = false;
+  if (state.active.isEmpty() || state.stage.contains(state.active)) state.active = id;
   update();
 }
 
@@ -640,10 +688,91 @@ void RightPanelController::resetWidth() {
 }
 
 void RightPanelController::toggleMaximized() {
-  if (!isOpen()) return;
+  if (!m_onThread) return;
   Panel& state = panel();
-  state.maximized = !state.maximized;
+  if (state.stage.focus && !state.stage.focusedTab().isEmpty()) {
+    // Back: the tab returns to the panel, and the timeline shows.
+    state.stage.focus = false;
+    moveToPanel(state.stage.focusedTab());
+  } else if (isOpen() && !state.active.isEmpty()) {
+    const QString id = state.active;
+    state.stage.focus = true;
+    moveToStage(id);
+  } else if (!state.stage.isEmpty()) {
+    toggleFocus();
+  }
+}
+
+void RightPanelController::moveToStage(const QString& id, int pane, const QString& zone) {
+  if (!m_onThread) return;
+  Panel& state = panel();
+  if (!state.tabs.contains(id)) return;
+  const QStringList before = panelTabs(state);
+  if (state.floating == id) state.floating.clear();
+  state.stage.add(id, pane, zone);
+  if (state.active == id) nextActive(state, before);
   update();
+}
+
+void RightPanelController::moveToPanel(const QString& id) {
+  if (!m_onThread) return;
+  Panel& state = panel();
+  if (!state.stage.remove(id)) return;
+  state.active = id;
+  state.open = true;
+  update();
+}
+
+void RightPanelController::moveTab() {
+  if (!m_onThread) return;
+  const Panel& state = panel();
+  if (isOpen() && !state.active.isEmpty()) {
+    moveToStage(state.active);
+  } else if (!state.stage.focusedTab().isEmpty()) {
+    moveToPanel(state.stage.focusedTab());
+  }
+}
+
+void RightPanelController::setStageLayout(const QString& layout) {
+  if (!m_onThread) return;
+  panel().stage.setLayout(layout);
+  update();
+}
+
+void RightPanelController::focusPane(int pane) {
+  if (!m_onThread) return;
+  panel().stage.focusPane(pane);
+  update();
+}
+
+void RightPanelController::toggleFocus() {
+  if (!m_onThread || panel().stage.isEmpty()) return;
+  panel().stage.focus = !panel().stage.focus;
+  update();
+}
+
+void RightPanelController::setChatWidth(int width) {
+  if (!m_onThread) return;
+  panel().stage.chatWidth = std::max(width, 0);
+  update();
+}
+
+void RightPanelController::dismissStage() {
+  if (!m_onThread || panel().stage.isEmpty()) return;
+  Panel& state = panel();
+  const QString shown = state.stage.focusedTab();
+  state.stage.clear();
+  state.active = shown;
+  state.open = true;
+  update();
+}
+
+QStringList RightPanelController::shownTabs() const {
+  if (!m_onThread) return {};
+  const Panel state = current();
+  QStringList ids = state.stage.shown();
+  if (state.open && !state.active.isEmpty()) ids.append(state.active);
+  return ids;
 }
 
 void RightPanelController::toggleDetails() {
@@ -691,44 +820,50 @@ void RightPanelController::update() {
     // A terminal tab whose terminals all ended (here, in another client, or
     // the MC's) goes: the next one shows.
     const QStringList groups = terminalGroups();
-    const QStringList before = tabIds();
-    state.tabs.removeIf([&groups](const QString& id) {
-      return kindOf(id) == QLatin1String("terminal") && !groups.contains(id.mid(kTerminalTab.size()));
-    });
-    if (kindOf(state.active) == QLatin1String("terminal") && !state.tabs.contains(state.active)) {
-      const QStringList after = tabIds();
-      const qsizetype at = before.indexOf(state.active);
-      state.active = after.isEmpty() ? QString() : after.at(std::clamp<qsizetype>(at, 0, after.size() - 1));
-      if (after.isEmpty()) state.open = false;
+    const QStringList before = panelTabs(state);
+    const QStringList ended = state.tabs.filter(kTerminalTab);
+    for (const QString& id : ended) {
+      if (groups.contains(id.mid(kTerminalTab.size()))) continue;
+      state.tabs.removeOne(id);
+      state.stage.remove(id);
     }
-    if (!state.open) state.maximized = false;
+    if (!state.active.isEmpty() && !panelTabs(state).contains(state.active)) nextActive(state, before);
+    if (panelTabs(state).isEmpty()) state.open = false;
   }
-  const bool open = isOpen();
-  m_diff.setActive(open && activeTab() == QLatin1String("diff"));
-  m_files.setActive(open && activeTab() == QLatin1String("files"));
-  m_agents.setActive(open && activeTab() == QLatin1String("agents"));
-  m_previews.setActive(open && activeTab() == QLatin1String("previews"));
+  // Each body works while a tab of its kind shows; a body of one kind shows
+  // the first of its tabs.
+  const QStringList shown = shownTabs();
+  const auto first = [&shown](const QString& kind) {
+    for (const QString& id : shown) {
+      if (kindOf(id) == kind) return id;
+    }
+    return QString();
+  };
+  m_diff.setActive(shown.contains(QStringLiteral("diff")));
+  m_files.setActive(shown.contains(QStringLiteral("files")));
+  m_agents.setActive(shown.contains(QStringLiteral("agents")));
+  m_previews.setActive(shown.contains(QStringLiteral("previews")));
   // Each device tab streams while it shows: a floating device keeps
   // streaming while the panel is closed.
-  QStringList deviceTabs, shownTabs;
+  QStringList deviceTabs, shownDevices = shown;
   if (m_onThread) {
     for (const QString& id : current().tabs) {
       if (id.startsWith(kDeviceTab)) deviceTabs.append(id);
     }
-    if (!current().floating.isEmpty()) shownTabs.append(current().floating);
+    if (!current().floating.isEmpty()) shownDevices.append(current().floating);
   }
-  if (open && kindOf(activeTab()) == QLatin1String("device")) shownTabs.append(activeTab());
   m_devices.setTabs(deviceTabs);
-  m_devices.setShown(shownTabs);
-  // The review shows the active review tab's pull request, or the last one shown.
-  if (m_onThread && kindOf(activeTab()) == QLatin1String("pull-request")) {
-    const Reviewed reviewed = reviewedOf(activeTab().mid(kReviewTab.size()));
+  m_devices.setShown(shownDevices);
+  // The review shows the shown review tab's pull request, or the last one shown.
+  const QString reviewing = first(QStringLiteral("pull-request"));
+  if (!reviewing.isEmpty()) {
+    const Reviewed reviewed = reviewedOf(reviewing.mid(kReviewTab.size()));
     m_review.setOnline(m_pullRequests.online());
     m_review.setPullRequest(m_thread.left(m_thread.indexOf(QLatin1Char(':'))),
                             m_store->threadRow(m_thread).value(QLatin1String("projectId")).toString(), reviewed.host, reviewed.repository,
                             reviewed.number);
   }
-  m_review.setActive(open && kindOf(activeTab()) == QLatin1String("pull-request"));
+  m_review.setActive(!reviewing.isEmpty());
   publish();
   save();
   emit changed();
@@ -749,12 +884,16 @@ void RightPanelController::publish() {
   }
   m_publishedThread = m_thread;
   m_publishedOpen = state.open;
+  const auto tabOf = [this, &state](const QString& id) {
+    return QVariantMap{{QStringLiteral("id"), id},
+                       {QStringLiteral("kind"), kindOf(id)},
+                       {QStringLiteral("title"), state.titles.value(id, titleOf(id, m_devices))},
+                       {QStringLiteral("dock"), state.stage.contains(id) ? QStringLiteral("stage") : QStringLiteral("panel")}};
+  };
   QVariantList tabs;
-  for (const QString& id : state.tabs) {
-    tabs.append(QVariantMap{{QStringLiteral("id"), id},
-                            {QStringLiteral("kind"), kindOf(id)},
-                            {QStringLiteral("title"), state.titles.value(id, titleOf(id, m_devices))}});
-  }
+  for (const QString& id : state.tabs) tabs.append(tabOf(id));
+  QVariantList staged;
+  for (const QString& id : state.stage.tabs) staged.append(tabOf(id));
   // Terminals need the thread's place.
   auto* terminals = NativeShell::of(this)->controller<TerminalController>();
   const bool canTerminal = terminals && terminals->available() && terminals->threadKey() == m_thread;
@@ -767,7 +906,8 @@ void RightPanelController::publish() {
                         {QStringLiteral("floatingDevice"), state.floating.isEmpty() ? QVariant() : QVariant(state.floating)},
                         {QStringLiteral("tabs"), tabs},
                         {QStringLiteral("width"), m_width},
-                        {QStringLiteral("maximized"), state.open && state.maximized},
+                        {QStringLiteral("stage"), state.stage.toVariant(staged)},
+                        {QStringLiteral("shownTabs"), shownTabs()},
                         {QStringLiteral("detailsOpen"), state.details},
                         {QStringLiteral("details"), state.details ? QVariant(threadDetails()) : QVariant()},
 
@@ -845,7 +985,7 @@ QVariantMap RightPanelController::threadDetails() const {
 // --- Kept ----------------------------------------------------------------------------
 
 // The store: {width, threads: [{threadKey, open, tabs, active, details,
-// dismissed (device tabs the user closed)}]},
+// titles, stage (PanelStage::toJson), dismissed (device tabs the user closed)}]},
 // the thread shown latest last.
 
 void RightPanelController::setStorePath(const QString& path) {
@@ -868,9 +1008,11 @@ void RightPanelController::setStorePath(const QString& path) {
                                                                 : kind != QLatin1String("terminal") && nativeKinds.contains(kind);
       if (known && !state.tabs.contains(tab)) state.tabs.append(tab);
     }
+    state.stage = PanelStage::fromJson(thread.value(QLatin1String("stage")).toObject(), [&state](const QString& id) { return state.tabs.contains(id); });
+    const QStringList docked = panelTabs(state);
     state.active = thread.value(QLatin1String("active")).toString();
-    if (!state.tabs.contains(state.active)) state.active = state.tabs.value(0);
-    state.open = thread.value(QLatin1String("open")).toBool() && !state.tabs.isEmpty();
+    if (!docked.contains(state.active)) state.active = docked.value(0);
+    state.open = thread.value(QLatin1String("open")).toBool() && !docked.isEmpty();
     state.details = thread.value(QLatin1String("details")).toBool();
     for (const QJsonValue& id : thread.value(QLatin1String("dismissed")).toArray()) state.dismissed.append(id.toString());
     const QJsonObject titles = thread.value(QLatin1String("titles")).toObject();
@@ -898,12 +1040,17 @@ void RightPanelController::save() {
     const bool terminalShown = kindOf(state.active) == QLatin1String("terminal");
     QJsonObject titles;
     for (auto it = state.titles.begin(); it != state.titles.end(); ++it) titles.insert(it.key(), it.value());
+    PanelStage stage = state.stage;
+    for (const QString& id : state.stage.tabs) {
+      if (kindOf(id) == QLatin1String("terminal")) stage.remove(id);
+    }
     threads.prepend(QJsonObject{{QStringLiteral("threadKey"), threadKey},
                                 {QStringLiteral("open"), state.open},
                                 {QStringLiteral("tabs"), tabs},
                                 {QStringLiteral("active"), terminalShown ? QJsonValue() : QJsonValue(state.active)},
                                 {QStringLiteral("details"), state.details},
                                 {QStringLiteral("titles"), titles},
+                                {QStringLiteral("stage"), stage.toJson()},
                                 {QStringLiteral("dismissed"), QJsonArray::fromStringList(state.dismissed)}});
   }
   const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("width"), m_width}, {QStringLiteral("threads"), threads}})
