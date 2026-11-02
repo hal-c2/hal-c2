@@ -544,6 +544,36 @@ Feature: In-app preview browser
       When the user picks the "Pixel 7" device size
       Then the page renders at that device's size
 
+    @desktop
+    Scenario: The user sees the page at several sizes side by side
+      Given a browser tab that fills its space
+      When the user opens the Devices view
+      Then the page shows side by side at a phone, a tablet, and a desktop size
+
+    @desktop
+    Scenario: The devices view follows the page where it goes
+      Given a browser tab showing the Devices view
+      When the user navigates to another page
+      Then every device in the view shows that page
+
+    @desktop
+    Scenario: The user picks which devices appear in the Devices view
+      Given a browser tab showing the Devices view
+      When the user adds the "Pixel 7" device to the view
+      Then the view also shows a "Pixel 7" frame
+      When the user removes the "Desktop" device from the view
+      Then the view no longer shows a "Desktop" frame
+
+    # DeviceBody3D needs QtQuick3D, which this build does not have
+    # (tst_Browser.qml's test_deviceBody3dFailsToLoadWithoutQtQuick3D proves
+    # it is absent here); no step here can show a device on its 3D body
+    # until a build with QtQuick3D runs this feature.
+    @desktop @backlog-desktop
+    Scenario: The user views devices on their 3D bodies
+      Given a browser tab showing the Devices view
+      When the user turns on 3D devices
+      Then the phone and the tablet show on their 3D bodies
+
     # BrowserPage::setViewport undoes the size after five seconds without the
     # MC's answer; a refused resize is undone at once (tst_TimelinePreviewsProp).
     @desktop @backlog-desktop

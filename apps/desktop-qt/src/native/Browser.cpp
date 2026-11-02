@@ -23,6 +23,9 @@ constexpr int kResizeTimeoutMs = 5000;
 
 const QString kDockKey = QStringLiteral("browserDevToolsDock");
 const QString kShareKey = QStringLiteral("browserDevToolsShare");
+const QString kDevicesViewKey = QStringLiteral("browserDevicesView");
+const QString kDevicesPresetIdsKey = QStringLiteral("browserDevicesPresetIds");
+const QString kDevices3dKey = QStringLiteral("browserDevices3d");
 
 void registerBrowser() {
   qmlRegisterSingletonType<Browser>("HalC2.Shell", 1, 0, "Browser", [](QQmlEngine*, QJSEngine*) -> QObject* {
@@ -76,13 +79,40 @@ void Browser::setDevToolsShare(qreal share) {
   emit devToolsChanged();
 }
 
+void Browser::setDevicesView(bool shown) {
+  if (shown == m_devicesView) return;
+  m_devicesView = shown;
+  if (m_write) m_write(kDevicesViewKey, m_devicesView);
+  emit devicesViewChanged();
+}
+
+void Browser::setDevicesPresetIds(const QStringList& ids) {
+  if (ids == m_devicesPresetIds) return;
+  m_devicesPresetIds = ids;
+  if (m_write) m_write(kDevicesPresetIdsKey, m_devicesPresetIds);
+  emit devicesViewChanged();
+}
+
+void Browser::setDevices3d(bool shown) {
+  if (shown == m_devices3d) return;
+  m_devices3d = shown;
+  if (m_write) m_write(kDevices3dKey, m_devices3d);
+  emit devicesViewChanged();
+}
+
 void Browser::setStore(std::function<QVariant(const QString&)> read, std::function<void(const QString&, const QVariant&)> write) {
   m_write = nullptr;
   if (read) {
     const QVariant dock = read(kDockKey);
     const QVariant share = read(kShareKey);
+    const QVariant devicesView = read(kDevicesViewKey);
+    const QVariant devicesPresetIds = read(kDevicesPresetIdsKey);
+    const QVariant devices3d = read(kDevices3dKey);
     if (dock.isValid()) setDevToolsDock(dock.toString());
     if (share.isValid()) setDevToolsShare(share.toDouble());
+    if (devicesView.isValid()) setDevicesView(devicesView.toBool());
+    if (devicesPresetIds.isValid()) setDevicesPresetIds(devicesPresetIds.toStringList());
+    if (devices3d.isValid()) setDevices3d(devices3d.toBool());
   }
   m_write = std::move(write);
 }

@@ -18,7 +18,8 @@ class BrowserPage;
 // it (QtWebEngine, found at build time like the terminal's module; main.cpp
 // says so), the profile its pages share (persistent under the desktop's data
 // directory; none in tests, whose pages use the engine's off-the-record
-// default), and how DevTools dock (remembered on this device).
+// default), and how DevTools dock and the Devices view look (remembered on
+// this device).
 //
 // It also finds a thread's pages: every BrowserPage registers under its MC
 // tab id while it exists, for what drives pages from C++ (the preview
@@ -30,6 +31,12 @@ class Browser : public QObject {
   // "bottom" or "right", and the share of the page DevTools take (0.2-0.8).
   Q_PROPERTY(QString devToolsDock READ devToolsDock WRITE setDevToolsDock NOTIFY devToolsChanged)
   Q_PROPERTY(qreal devToolsShare READ devToolsShare WRITE setDevToolsShare NOTIFY devToolsChanged)
+  // Whether a browser tab opens showing its Devices view, which presets it
+  // shows there (js/browser.js's preset ids, plus "desktop"), and whether it
+  // shows them on their 3D bodies.
+  Q_PROPERTY(bool devicesView READ devicesView WRITE setDevicesView NOTIFY devicesViewChanged)
+  Q_PROPERTY(QStringList devicesPresetIds READ devicesPresetIds WRITE setDevicesPresetIds NOTIFY devicesViewChanged)
+  Q_PROPERTY(bool devices3d READ devices3d WRITE setDevices3d NOTIFY devicesViewChanged)
 
 public:
   static Browser* instance();
@@ -44,7 +51,13 @@ public:
   qreal devToolsShare() const { return m_share; }
   void setDevToolsDock(const QString& dock);
   void setDevToolsShare(qreal share);
-  // Where the DevTools layout is kept: read now, written on each change.
+  bool devicesView() const { return m_devicesView; }
+  void setDevicesView(bool shown);
+  QStringList devicesPresetIds() const { return m_devicesPresetIds; }
+  void setDevicesPresetIds(const QStringList& ids);
+  bool devices3d() const { return m_devices3d; }
+  void setDevices3d(bool shown);
+  // Where the DevTools and Devices view layout are kept: read now, written on each change.
   void setStore(std::function<QVariant(const QString&)> read, std::function<void(const QString&, const QVariant&)> write);
 
   // The page showing MC tab `tabId`, or null while none does.
@@ -53,6 +66,7 @@ public:
 
 signals:
   void devToolsChanged();
+  void devicesViewChanged();
   // A page came or went.
   void pagesChanged();
 
@@ -64,6 +78,9 @@ private:
 
   QString m_dock = QStringLiteral("bottom");
   qreal m_share = 0.4;
+  bool m_devicesView = false;
+  QStringList m_devicesPresetIds{QStringLiteral("iphone-12-pro"), QStringLiteral("ipad-air"), QStringLiteral("desktop")};
+  bool m_devices3d = false;
   std::function<void(const QString&, const QVariant&)> m_write;
   QHash<QString, QPointer<BrowserPage>> m_pages;
 };

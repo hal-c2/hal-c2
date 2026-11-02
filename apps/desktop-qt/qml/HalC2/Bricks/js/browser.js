@@ -34,6 +34,9 @@ var presets = [
 // has no desktop preset, so the MC hears it as a freeform size.
 var desktop = { id: "desktop", label: "Desktop", width: 1440, height: 900, dpr: 1, kind: "desktop" };
 
+// The Devices view's starting set: a phone, a tablet, and the desktop width.
+var defaultDevicesPresetIds = ["iphone-12-pro", "ipad-air", "desktop"];
+
 // The contract's viewport bounds (PREVIEW_VIEWPORT_*).
 var minSide = 240;
 var maxSide = 3840;
@@ -156,6 +159,41 @@ function fit(width, height, areaWidth, areaHeight, margin) {
         x: (areaWidth - shownWidth) / 2,
         y: (areaHeight - shownHeight) / 2
     };
+}
+
+// The Devices view's frames, side by side: one equal-width column per id in
+// `ids`, each device's viewport fit into its column (never scaled up) and
+// centred below a `labelHeight` strip, so every frame's label sits at the
+// same height. {id, label, kind, dpr, width, height (the device's CSS
+// viewport), scale, frameWidth, frameHeight, x, y}.
+function layoutDevices(ids, areaWidth, areaHeight, spacing, margin, labelHeight) {
+    var gap = spacing === undefined ? 0 : spacing;
+    var label = labelHeight === undefined ? 0 : labelHeight;
+    var pad = margin === undefined ? 0 : margin;
+    var n = ids.length;
+    if (n === 0)
+        return [];
+    var columnWidth = Math.max(1, (areaWidth - gap * (n - 1)) / n);
+    var frameAreaHeight = Math.max(1, areaHeight - label);
+    var frames = [];
+    for (var i = 0; i < n; ++i) {
+        var device = preset(ids[i]) || desktop;
+        var shown = fit(device.width, device.height, columnWidth, frameAreaHeight, pad);
+        frames.push({
+            id: device.id,
+            label: device.label,
+            kind: device.kind,
+            dpr: device.dpr,
+            width: device.width,
+            height: device.height,
+            scale: shown.scale,
+            frameWidth: shown.width,
+            frameHeight: shown.height,
+            x: i * (columnWidth + gap) + (columnWidth - shown.width) / 2,
+            y: label + shown.y
+        });
+    }
+    return frames;
 }
 
 // The contract's viewport setting for a preset or freeform size, clamped to

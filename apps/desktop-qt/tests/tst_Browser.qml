@@ -112,4 +112,40 @@ TestCase {
         compare(clamped.width, 240);
         compare(clamped.height, 3840);
     }
+
+    function test_layoutDevicesEmpty() {
+        compare(BrowserJs.layoutDevices([], 1000, 1000, 10, 10, 20).length, 0);
+    }
+
+    function test_layoutDevicesSplitsIntoEqualColumns() {
+        const frames = BrowserJs.layoutDevices(["iphone-12-pro", "ipad-air", "desktop"], 930, 1000, 15, 10, 20);
+        compare(frames.length, 3);
+        // Three columns of 300 (930 - 2 gaps of 15, divided by 3).
+        compare(frames[0].x < frames[1].x, true);
+        compare(frames[1].x < frames[2].x, true);
+        verify(frames[1].x - (frames[0].x + frames[0].frameWidth) >= 0);
+    }
+
+    function test_layoutDevicesNeverScalesUp() {
+        const frames = BrowserJs.layoutDevices(["iphone-12-pro"], 4000, 4000, 0, 10, 20);
+        compare(frames[0].scale, 1);
+        compare(frames[0].frameWidth, 390);
+        compare(frames[0].label, "iPhone 12 Pro");
+        compare(frames[0].kind, "phone");
+    }
+
+    function test_layoutDevicesScalesDownToFit() {
+        const frames = BrowserJs.layoutDevices(["desktop"], 400, 400, 0, 0, 0);
+        compare(frames[0].scale, 400 / 1440);
+        compare(frames[0].frameHeight, 900 * (400 / 1440));
+    }
+
+    // The Devices view's 3D toggle (BrowserDevicesView.qml) falls back to
+    // flat frames when DeviceBody3D.qml's "import QtQuick3D" cannot resolve;
+    // this build has no QtQuick3D, so that is exactly what happens here.
+    function test_deviceBody3dFailsToLoadWithoutQtQuick3D() {
+        const component = Qt.createComponent("../qml/HalC2/Bricks/DeviceBody3D.qml");
+        tryVerify(() => component.status !== Component.Loading);
+        compare(component.status, Component.Error);
+    }
 }

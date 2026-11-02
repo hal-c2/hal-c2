@@ -8,4 +8,7 @@ QtObject {
     readonly property var profile: null
     property string devToolsDock: "bottom"
     property real devToolsShare: 0.4
+    property bool devicesView: false
+    property var devicesPresetIds: []
+    property bool devices3d: false
 }
