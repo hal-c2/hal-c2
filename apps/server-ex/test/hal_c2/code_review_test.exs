@@ -749,6 +749,43 @@ defmodule HalC2.CodeReviewTest do
     _ = context
   end
 
+  # From the property model of claims between machines: a look that listed the new head
+  # was left alone for beginning before the run claimed, and nothing looked again, so
+  # the review showed the old head until the next look on the timer.
+  test "a look begun before a run claimed that lists another head is followed by a new look",
+       context do
+    at = System.monotonic_time()
+    review = start_review()
+    second = context.shas[2]
+    push!(context, 2)
+    rules!(context, head: 2)
+
+    entry =
+      review
+      |> Map.take(
+        ~w(key repository number projectId title url author headBranch baseBranch isDraft labels reviewRequested changedLines updatedAt)
+      )
+      |> Map.put("headSha", second)
+
+    found = %{
+      at: at,
+      problem: nil,
+      unwatched: [],
+      entries: [entry],
+      read: [],
+      sizes: %{},
+      unknown_sizes: [],
+      asked: %{},
+      closed: [],
+      elsewhere: %{}
+    }
+
+    send(Process.whereis(@server), {:polled, found})
+    :sys.get_state(@server)
+    settle()
+    assert %{"status" => "running", "headSha" => ^second} = review()
+  end
+
   # From the Maude model of claims between machines: while the plugin restarted, its
   # claims were gone with its server and a peer read them as none, so it started the
   # commit this machine's review thread was still on.
