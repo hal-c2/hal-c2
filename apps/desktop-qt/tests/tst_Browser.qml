@@ -39,6 +39,11 @@ TestCase {
         verify(result.error.length > 0);
     }
 
+    function test_otherSchemesAreNamed() {
+        compare(BrowserJs.normalizeAddress("file:///etc/passwd").error, "Only http and https pages open here.");
+        compare(BrowserJs.normalizeAddress("ftp://example.com").error, "Only http and https pages open here.");
+    }
+
     function test_zoomSteps_data() {
         return [
             { tag: "in from 100%", from: 1.0, direction: 1, to: 1.1 },
