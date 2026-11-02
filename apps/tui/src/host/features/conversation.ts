@@ -22,6 +22,23 @@ export function fileReferences(text: string): FileReference[] {
   return references;
 }
 
+/** A Markdown link's target, or a path with an extension standing on its own. */
+const FILE_PATH =
+  /\]\(((?:\.{1,2}\/)?[\w@.-]+(?:\/[\w@.-]+)*\.[A-Za-z0-9]+)(?:#[^)]*)?\)|(?<![\w/.:-])((?:\.{1,2}\/)?[\w@.-]+(?:\/[\w@.-]+)*\.[A-Za-z0-9]+)(?![\w/])/g;
+
+/**
+ * The relative paths a message names, in order, each once. Words that only look like
+ * paths come along too; the MC's list of a project's Space files sifts them.
+ */
+export function filePaths(text: string): string[] {
+  const paths = new Set<string>();
+  for (const match of text.matchAll(FILE_PATH)) {
+    const path = (match[1] ?? match[2])!.replace(/^\.\//, "");
+    if (!path.startsWith("../")) paths.add(path);
+  }
+  return [...paths];
+}
+
 /**
  * What the user takes out of the conversation: a message's text to the
  * clipboard, a link (copied, since a terminal client cannot open a browser on
@@ -89,6 +106,32 @@ export function createConversationFeature(kit: FeatureKit): Feature {
     });
   };
 
+  // Another machine's files open in its own Spaces, which the Space pane does not follow (#860).
+  const homeProject = () => {
+    const workspace = kit.workspace();
+    return workspace?.home ? workspace.projectId : null;
+  };
+
+  /** A file the conversation names, opened as a page of a Space (the newest first). */
+  const openInSpace = () => {
+    const projectId = homeProject();
+    const paths = [
+      ...new Set(
+        messages()
+          .toReversed()
+          .flatMap((message) => filePaths(message.text)),
+      ),
+    ];
+    if (projectId === null) {
+      kit.status(
+        "This thread's project is on another machine: its files open in its Spaces.",
+        "info",
+      );
+    } else if (paths.length === 0) {
+      kit.status("The conversation names no file.", "info");
+    } else kit.dispatch("space.openProjectFile", { projectId, paths });
+  };
+
   return {
     commands: () =>
       kit.store.getState().detail
@@ -105,6 +148,19 @@ export function createConversationFeature(kit: FeatureKit): Feature {
               keywords: "file location line editor",
               action: "reference.open",
             },
+            ...(homeProject() === null
+              ? []
+              : [
+                  {
+                    id: "reference.space",
+                    // A page follows the project's copy of a file, not the worktree's.
+                    title: kit.workspace()?.worktree
+                      ? "Open the project's copy of a file the conversation names in a Space…"
+                      : "Open a file the conversation names in a Space…",
+                    keywords: "page link markdown spaces",
+                    action: "reference.space",
+                  },
+                ]),
           ]
         : [],
     dispatch: (action, payload) => {
@@ -114,6 +170,9 @@ export function createConversationFeature(kit: FeatureKit): Feature {
           return true;
         case "reference.open":
           openReference();
+          return true;
+        case "reference.space":
+          openInSpace();
           return true;
         case "link.open": {
           const url = payloadField(payload, "url");

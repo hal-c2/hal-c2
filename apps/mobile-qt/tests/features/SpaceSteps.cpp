@@ -444,7 +444,7 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
                    const QJsonObject& author) {
   if (const auto why = writable(mc, space, pageId)) return *why;
   static const QStringList kinds{QStringLiteral("paragraph"), QStringLiteral("heading"), QStringLiteral("checklist"),
-                                 QStringLiteral("callout"), QStringLiteral("subpage_link"), QStringLiteral("image"), QStringLiteral("raw")};
+                                 QStringLiteral("callout"), QStringLiteral("subpage_link"), QStringLiteral("image"), QStringLiteral("raw"), QStringLiteral("table"), QStringLiteral("code")};
   const QString kind = text(spec, QLatin1String("kind"));
   if (!kinds.contains(kind)) return refused(QStringLiteral("invalid"), QStringLiteral("There is no block kind %1.").arg(kind));
   const QString linked = text(spec, QLatin1String("linkedPageId"));
@@ -2756,6 +2756,22 @@ const Steps steps([] {
     const QString edited = table + S("\n|   QA  | Grace | A pass on the phone |");
     world.waitFor([&] { return !findBlock(world, edited).isEmpty(); }, [&] { return S("the MC to hold the edited table; %1").arg(describe(world)); });
     expect(text(findBlock(world, edited), QLatin1String("kind")) == QLatin1String("raw"), S("the table is no longer kept as written"));
+  });
+  // A table and a code block, which the page shows as their source until #854 draws them.
+  static const QString modelledTable = S("| Step | Owner |\n| ---- | ----- |\n| MC   | Ada   |");
+  static const QString code = S("run()\n    done()");
+  step(S("the page %1 holds a table and a code block").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], S("table"), modelledTable);
+    givenBlock(world, c[0], S("code"), code);
+  });
+  step(S("the table and the code are each shown line for line in a fixed-width face"), [](World& world, const Captures&, const Table&) {
+    for (const QString& said : {modelledTable, code}) {
+      QQuickItem* editor = world.item(S("spaceBlockEditor:") + said);
+      expect(editor->property("text").toString() == said, S("the block shows as \"%1\"").arg(editor->property("text").toString()));
+      expect(editor->property("lineCount").toInt() == said.count(QLatin1Char('\n')) + 1,
+             S("%1 is shown in %2 lines").arg(said).arg(editor->property("lineCount").toInt()));
+      expect(QFontInfo(editor->property("font").value<QFont>()).fixedPitch(), S("%1 is not in a fixed-width face").arg(said));
+    }
   });
   step(S("the page %1 with headings of every level from 1 to 6").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString page = givenPage(world, c[0]);

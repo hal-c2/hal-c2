@@ -172,6 +172,13 @@ Feature: GitHub Markdown in a page
       Then the table is shown as its Markdown, exactly as written, in a fixed-width face
       And the user can edit it as text
 
+    # https://github.com/hal-c2/hal-c2/issues/854
+    @shared
+    Scenario: A table and code are shown as their source until they are drawn as such
+      Given the page "Plan" holds a table and a code block
+      When the user opens "Plan"
+      Then the table and the code are each shown line for line in a fixed-width face
+
   Rule: Headings
 
     @mc

@@ -431,7 +431,7 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
   if (const auto why = writable(mc, space, pageId)) return *why;
   static const QStringList kinds{QStringLiteral("paragraph"), QStringLiteral("heading"), QStringLiteral("checklist"),
                                  QStringLiteral("callout"), QStringLiteral("subpage_link"), QStringLiteral("image"),
-                                 QStringLiteral("raw")};
+                                 QStringLiteral("raw"), QStringLiteral("table"), QStringLiteral("code")};
   const QString kind = text(spec, QLatin1String("kind"));
   if (!kinds.contains(kind)) return refused(QStringLiteral("invalid"), QStringLiteral("There is no block kind %1.").arg(kind));
   const QJsonValue level = spec.value(QLatin1String("level"));
@@ -2046,6 +2046,23 @@ const Steps steps([] {
   };
   step(QStringLiteral("the page %1 holds a table the page does not model yet").arg(q), [](World& world, const Captures& c, const Table&) {
     givenBlock(world, c[0], QStringLiteral("raw"), kTable);
+  });
+  // A table and a code block, which the page shows as their source until #854 draws them.
+  static const QString kModelledTable = QStringLiteral("| Step | Owner |\n| ---- | ----- |\n| MC   | Ada   |");
+  static const QString kCode = QStringLiteral("run()\n    done()");
+  step(QStringLiteral("the page %1 holds a table and a code block").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], QStringLiteral("table"), kModelledTable);
+    givenBlock(world, c[0], QStringLiteral("code"), kCode);
+  });
+  step(QStringLiteral("the table and the code are each shown line for line in a fixed-width face"), [drawPage, editorOf](World& world, const Captures&, const Table&) {
+    const std::unique_ptr<Brick> page = drawPage(world);
+    const QString mono = world.theme().fontMono().isEmpty() ? QStringLiteral("monospace") : world.theme().fontMono();
+    for (const QString& said : {kModelledTable, kCode}) {
+      QQuickItem* editor = editorOf(*page, world, said);
+      expect(editor->property("text").toString() == said, QStringLiteral("the block reads %1").arg(show(editor->property("text"))));
+      expect(editor->property("wrapMode").toInt() == 0, QStringLiteral("%1 wraps (wrapMode %2)").arg(said).arg(editor->property("wrapMode").toInt()));
+      expect(editor->property("font").value<QFont>().family() == mono, QStringLiteral("%1 is not in %2").arg(said, mono));
+    }
   });
   step(QStringLiteral("the page %1 with headings of every level from 1 to 6").arg(q), [](World& world, const Captures& c, const Table&) {
     for (int level = 1; level <= 6; ++level) {
