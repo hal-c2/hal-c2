@@ -708,10 +708,18 @@ void RightPanelController::update() {
   m_files.setActive(open && activeTab() == QLatin1String("files"));
   m_agents.setActive(open && activeTab() == QLatin1String("agents"));
   m_previews.setActive(open && activeTab() == QLatin1String("previews"));
-  // A floating device keeps streaming while the panel is closed.
-  m_devices.setTab(m_onThread && !current().floating.isEmpty()        ? current().floating
-                   : open && kindOf(activeTab()) == QLatin1String("device") ? activeTab()
-                                                                              : QString());
+  // Each device tab streams while it shows: a floating device keeps
+  // streaming while the panel is closed.
+  QStringList deviceTabs, shownTabs;
+  if (m_onThread) {
+    for (const QString& id : current().tabs) {
+      if (id.startsWith(kDeviceTab)) deviceTabs.append(id);
+    }
+    if (!current().floating.isEmpty()) shownTabs.append(current().floating);
+  }
+  if (open && kindOf(activeTab()) == QLatin1String("device")) shownTabs.append(activeTab());
+  m_devices.setTabs(deviceTabs);
+  m_devices.setShown(shownTabs);
   // The review shows the active review tab's pull request, or the last one shown.
   if (m_onThread && kindOf(activeTab()) == QLatin1String("pull-request")) {
     const Reviewed reviewed = reviewedOf(activeTab().mid(kReviewTab.size()));

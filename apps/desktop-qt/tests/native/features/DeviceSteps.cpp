@@ -542,8 +542,28 @@ ThreadDevices& devices(World& world) {
   return *panel(world).device();
 }
 
+// The device tab the steps look at: the panel's active one, else the
+// floating device, else any device tab the panel has.
+DeviceTab* shownTab(World& world) {
+  ThreadDevices& all = devices(world);
+  const QVariant panel = world.state(QStringLiteral("panel"));
+  if (DeviceTab* tab = all.tab(at(panel, QStringLiteral("activeId")).toString())) return tab;
+  if (DeviceTab* tab = all.tab(at(panel, QStringLiteral("floatingDevice")).toString())) return tab;
+  const QVariantMap tabs = all.tabsView();
+  return tabs.isEmpty() ? nullptr : qobject_cast<DeviceTab*>(tabs.first().value<QObject*>());
+}
+
+// Its stream, or an idle one when no device tab is open.
 DeviceStream& deviceStream(World& world) {
-  return *devices(world).stream();
+  static auto* idle = new DeviceStream(nullptr);
+  DeviceTab* tab = shownTab(world);
+  return tab ? *tab->stream() : *idle;
+}
+
+// The shown tab's device, or an invalid variant.
+QVariant screenOf(World& world) {
+  DeviceTab* tab = shownTab(world);
+  return tab ? tab->screen() : QVariant();
 }
 
 QVariantMap view(World& world) {
@@ -575,7 +595,11 @@ void addDevice(World& world, const QString& platform, const QString& name, bool 
 // The Device tab as the desktop draws it, over the scenario's ThreadDevices.
 Brick& devicePanel(World& world) {
   if (!world.brick) {
-    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nDevicePanel {}\n", QSize(420, 900));
+    // The body of the tab the panel shows, as RightPanel gives it.
+    world.brick = std::make_unique<Brick>(world,
+                                          "import QtQuick\nimport HalC2.Bricks\nimport HalC2.Shell\n"
+                                          "DevicePanel { tabId: Shell.state.panel?.floatingDevice ?? Shell.state.panel?.activeId ?? \"\" }\n",
+                                          QSize(420, 900));
     world.brick->root()->setProperty("source", QVariant::fromValue<QObject*>(&devices(world)));
   }
   return *world.brick;
@@ -756,7 +780,9 @@ bool near(double value, double wanted) {
 }
 
 DeviceTools& tools(World& world) {
-  return *devices(world).tools();
+  static auto* none = new DeviceTools(nullptr);
+  DeviceTab* tab = shownTab(world);
+  return tab ? *tab->tools() : *none;
 }
 
 QVariantMap toolsView(World& world) {
@@ -965,7 +991,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the tab says it is connecting to the device"), [](World& world, const Captures&, const Table&) {
     world.sync();
-    expect(deviceStream(world).status() == QLatin1String("connecting") && view(world).value(QStringLiteral("screen")).isValid() &&
+    expect(deviceStream(world).status() == QLatin1String("connecting") && screenOf(world).isValid() &&
                devicePanel(world).item(QStringLiteral("deviceStatus"))->isVisible(),
            describe(world));
   });
@@ -1494,7 +1520,7 @@ const Steps backlogSteps([] {
     world.sync();
   });
   step(QStringLiteral("the tab's header reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] { return at(view(world).value(QStringLiteral("screen")), QStringLiteral("description")) == c[0] && devicePanel(world).shows(c[0]); },
+    world.waitFor([&] { return at(screenOf(world), QStringLiteral("description")) == c[0] && devicePanel(world).shows(c[0]); },
                   [&] { return describe(world); });
   });
 
@@ -2798,7 +2824,7 @@ const Steps backlogSteps([] {
   };
   const auto showIn3d = [bodyItem](World& world) {
     // The device's own tab first, when the Given only opened it.
-    if (!view(world).value(QStringLiteral("screen")).isValid()) {
+    if (!screenOf(world).isValid()) {
       FakeHub& hub = fakeHub(world);
       if (!hub.sessions.isEmpty()) {
         const QString id = hub.sessions.last().toObject().value(QLatin1String("deviceId")).toString();
@@ -2899,7 +2925,7 @@ const Steps backlogSteps([] {
     openSession(world.mc, deviceNamed(fakeHub(world), QStringLiteral("iPad Pro 13-inch")));
     showDeviceTab(world, QStringLiteral("iPad Pro 13-inch"));
     waitForScreen(world, QStringLiteral("iPad Pro 13-inch"));
-    if (attached) devicePanel(world).root()->setProperty("keyboardAttached", true);
+    if (attached) shownTab(world)->setKeyboardAttached(true);
     if (in3d) showIn3d(world);
     world.sync();
   };
@@ -3018,14 +3044,14 @@ bool deviceChooses(World& world, const QString& what) {
     if (!devices(world).view().value(QStringLiteral("wizard")).isValid()) return false;
     devicePanel(world).click(QStringLiteral("wizardBack"));
   } else if (what == QLatin1String("Dark") || what == QLatin1String("Light") || what == QLatin1String("Clear") || what == QLatin1String("Tinted")) {
-    if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+    if (!tools(world).view().value(QStringLiteral("open")).toBool()) return false;
     const QString control = what == QLatin1String("Dark") || what == QLatin1String("Light") ? QStringLiteral("Appearance") : QStringLiteral("Liquid Glass");
     devicePanel(world).click(QStringLiteral("toolsChoice-") + control + QLatin1Char('-') + what);
   } else if (what == QLatin1String("Close tools")) {
-    if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+    if (!tools(world).view().value(QStringLiteral("open")).toBool()) return false;
     devicePanel(world).click(QStringLiteral("toolsClose"));
   } else if (what == QLatin1String("Terminate") || what == QLatin1String("Relaunch") || what == QLatin1String("Set") || what == QLatin1String("Clear")) {
-    if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+    if (!tools(world).view().value(QStringLiteral("open")).toBool()) return false;
     devicePanel(world).click(what == QLatin1String("Terminate")   ? QStringLiteral("toolsTerminate")
                              : what == QLatin1String("Relaunch") ? QStringLiteral("toolsRelaunch")
                              : what == QLatin1String("Set")      ? QStringLiteral("toolsLocationSet")
@@ -3044,7 +3070,7 @@ bool deviceOpens(World& world, const QString& what) {
   // named "Tools" has no session in the fake hub. The hub is only looked
   // at: fakeHub() would set one up (and rename the MC) in every world.
   const FakeHub& hub = world.mc.part<FakeHub>();
-  const bool showing = controller->device()->view().value(QStringLiteral("screen")).isValid();
+  const bool showing = screenOf(world).isValid();
   if (!showing && (!hub.used || hub.sessions.isEmpty())) return false;
   // The device's own tab first, when the scenario only opened the device.
   if (!showing) {
@@ -3082,7 +3108,7 @@ bool deviceOpens(World& world, const QString& what) {
 
 bool checkDeviceCannotChoose(World& world, const QString& what) {
   if (!world.brick || what != QLatin1String("Send")) return false;
-  if (!devices(world).tools()->view().value(QStringLiteral("open")).toBool()) return false;
+  if (!tools(world).view().value(QStringLiteral("open")).toBool()) return false;
   expect(!devicePanel(world).item(QStringLiteral("toolsPushSend"))->isEnabled(), describe(world));
   return true;
 }

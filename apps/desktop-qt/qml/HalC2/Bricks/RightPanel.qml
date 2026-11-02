@@ -456,9 +456,12 @@ Rectangle {
                     onShownChanged: if (shown)
                         active = true
                     Component.onCompleted: {
-                        setSource(Qt.resolvedUrl(tab.brick + ".qml"), {
+                        const properties = {
                             source: Qt.binding(() => nativeBody.tab.source ? Panel[nativeBody.tab.source] : null)
-                        });
+                        };
+                        if (tab.perTab)
+                            properties.tabId = Qt.binding(() => nativeBody.shown ? panel.activeTab.id : "");
+                        setSource(Qt.resolvedUrl(tab.brick + ".qml"), properties);
                         active = shown;
                     }
                 }

@@ -5,7 +5,8 @@
 // line here plus the kind in RightPanelController::nativeKinds. A kind can
 // have many tabs (terminal: one per `terminal:<group>`, pull-request: one per
 // `pull-request:<key>`, device: the picker and one per `device:<host>:<id>`);
-// its body shows for any of them.
+// its body shows for any of them. A `perTab` kind gets a body per tab id,
+// given `tabId` as well, so several of its tabs show at once.
 var tabs = {
     diff: { label: "Diff", icon: "file-diff", brick: "DiffPanel", source: "diff" },
     files: { label: "Files", icon: "files", brick: "FilesPanel", source: "files" },
@@ -14,7 +15,7 @@ var tabs = {
     "pull-requests": { label: "Pull requests", icon: "link-2", brick: "PullRequestsPanel", source: "pullRequests" },
     previews: { label: "Previews", icon: "monitor", brick: "PreviewsPanel", source: "previews" },
     "pull-request": { label: "Pull request review", icon: "git-pull-request-arrow", brick: "PullRequestReviewPanel", source: "review" },
-    device: { label: "Device", icon: "smartphone", brick: "DevicePanel", source: "device" }
+    device: { label: "Device", icon: "smartphone", brick: "DevicePanel", source: "device", perTab: true }
 };
 
 function brickOf(kind) {
