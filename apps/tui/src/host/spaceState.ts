@@ -838,7 +838,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return [
       ...noteRows(
         "file:path",
-        `File: ${file.path} of ${projectTitle(file.projectId)} · f opens it · F unlinks`,
+        `File: ${file.path} of ${projectTitle(file.projectId)} · f opens it`,
         palette.dim,
       ),
       ...(file.missing
@@ -3004,35 +3004,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     } else options.showFile?.(file.projectId, file.path);
   };
 
-  /** The way out: the page stops following its file, which stays as it is. */
-  const unlinkFile = () => {
-    const page = view === "page" ? pageById(pageId) : undefined;
-    const file = page?.file;
-    if (!page || !file) {
-      options.status("This page is not a project file.", "info");
-      return;
-    }
-    const target = { spaceId, pageId: page.id };
-    options.menu({
-      title: `Stop “${page.title}” following ${file.path}? Opening the file again makes a new page.`,
-      options: [
-        { label: "Keep following it", value: "keep" },
-        { label: "Unlink it", value: "unlink" },
-      ],
-      onChoose: (choice) => {
-        if (choice !== "unlink") return;
-        void send(WS_METHODS.spacePageUnlinkFile, target).then((result) => {
-          if (result) {
-            options.status(
-              `“${page.title}” is an ordinary page; ${file.path} stays as it is.`,
-              "info",
-            );
-          }
-        });
-      },
-    });
-  };
-
   /** Proposes the project's spaces section and writes it, or offers replacing one someone wrote. */
   const scanFiles = (projectId: string, replace = false) => {
     const name = projectTitle(projectId);
@@ -3285,7 +3256,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.presentOrPublish": onPages(presentOrPublish),
     "space.images": onPages(showImages),
     "space.files": onPages(() => (view === "page" ? showPageFile() : fromFiles())),
-    "space.unlinkFile": onPages(unlinkFile),
     // From anywhere: the palette, the file browser and viewer, a message's links.
     "space.openProjectFile": (payload) => {
       openFileFrom(payload);
@@ -3419,10 +3389,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Images in this Space", action: "space.images" },
         );
         if (pageById(pageId)?.file) {
-          entries.push(
-            { title: "Show the page's file", action: "space.files" },
-            { title: "Unlink the page from its file", action: "space.unlinkFile" },
-          );
+          entries.push({ title: "Show the page's file", action: "space.files" });
         }
         const agent = agentOfPage(pageId);
         if (!agent || !isActive(agent)) {

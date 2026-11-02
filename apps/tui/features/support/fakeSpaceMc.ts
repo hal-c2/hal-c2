@@ -970,12 +970,6 @@ export function fakeSpaceMc(options: {
       }
       return { page: table(input.spaceId, "page").get(found.id) };
     },
-    "space.page.unlinkFile": (input) => {
-      const found = livePage(input.spaceId, input.pageId);
-      if (!found.file) refuse("invalid", "This page is not a project file.");
-      commit(`space:${input.spaceId}`, [["page", found.id, { s: { file: null } }]]);
-      return { page: table(input.spaceId, "page").get(found.id) };
-    },
     "space.list": () => {
       commit("spaces", seeded());
       return { spaces: [...spaces.values()] };
