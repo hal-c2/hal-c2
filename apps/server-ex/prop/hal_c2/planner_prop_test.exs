@@ -3608,7 +3608,6 @@ defmodule HalC2.PlannerPropTest do
     Process.put(:pl_lone_read, length(calls))
   end
 
-  # The gh calls so far, one JSON line each.
   # The assignee changes the pushes asked of each issue, in order, as `asks` in the model.
   defp assignee_asks do
     Enum.reduce(gh_calls(), %{}, fn line, asks ->
@@ -3623,6 +3622,7 @@ defmodule HalC2.PlannerPropTest do
     end)
   end
 
+  # The gh calls so far, one JSON line each.
   defp gh_calls do
     case File.read(System.get_env("FAKE_GH_LOG")) do
       {:ok, text} -> String.split(text, "\n", trim: true)
