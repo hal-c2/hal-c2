@@ -13,6 +13,8 @@ Rectangle {
     implicitHeight: 18
     radius: 9
     color: Theme.palette.color("secondary", "#27272a")
+    border.width: 1
+    border.color: Theme.palette.color("border", "#3f3f46")
 
     Text {
         id: pillText
