@@ -128,6 +128,29 @@ defmodule HalC2.TerminalRaceTest do
     assert session == {summary["threadId"], summary["terminalId"]}
   end
 
+  test "a detach queued behind a close does not follow the next process", %{input: input} do
+    {:ok, _} = Terminal.attach(input, self())
+    old = session(input)
+    down = Process.monitor(old)
+
+    # The detach reaches the hub before the close has told it anything to forget, and
+    # the terminal only after the close.
+    :sys.suspend(old)
+    ref = make_ref()
+    send(old, {:"$gen_call", {self(), ref}, {:close, false}})
+    :ok = Terminal.detach(input["threadId"], input["terminalId"], self())
+    :sys.resume(old)
+    assert_receive {^ref, {:ok, nil}}, 5_000
+    assert_receive {:DOWN, ^down, _, _, _}
+    flush_terminal_events()
+
+    # A follower handed over gets a snapshot as soon as the new process has it.
+    {:ok, _} = Terminal.open(input)
+    :sys.get_state(Hub)
+    :sys.get_state(session(input))
+    refute_received {:hal_c2_terminal, _, %{"type" => "snapshot"}}
+  end
+
   test "closing a terminal frees its shell before the call returns", %{input: input} do
     {:ok, %{"pid" => os_pid}} = Terminal.open(input)
     {:ok, nil} = Terminal.close(input)
@@ -202,6 +225,14 @@ defmodule HalC2.TerminalRaceTest do
     {:ok, %{"pid" => new}} = Terminal.restart(input)
     assert new != old
     refute File.exists?("/proc/#{old}")
+  end
+
+  defp flush_terminal_events do
+    receive do
+      {:hal_c2_terminal, _, _} -> flush_terminal_events()
+    after
+      0 -> :ok
+    end
   end
 
   defp receive_until(suffix, acc \\ "") do

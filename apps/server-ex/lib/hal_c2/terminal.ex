@@ -524,7 +524,6 @@ defmodule HalC2.Terminal do
   # one stays.
   def handle_info(:evict, %{os_pid: nil} = state), do: {:stop, :normal, retire(state, false)}
 
-  # From a restarted `HalC2.Terminal.Hub`, which lost its list.
   # Who followed this terminal when its last process closed.
   def handle_info({:followers, pids}, state) do
     state = flush_output(state)
@@ -544,6 +543,7 @@ defmodule HalC2.Terminal do
     {:noreply, %{state | subscribers: subscribers}}
   end
 
+  # From a restarted `HalC2.Terminal.Hub`, which lost its list.
   def handle_info(:report, state) do
     Hub.upsert(summary(state), self())
     {:noreply, state}
@@ -588,10 +588,22 @@ defmodule HalC2.Terminal do
 
   # The end of the process, its followers left with the hub for the next one.
   defp retire(state, delete_history) do
-    state = emit(state, %{"type" => "closed"})
+    state = state |> drop_detached() |> emit(%{"type" => "closed"})
     Hub.closed(state.thread_id, state.terminal_id, Map.keys(state.subscribers))
     unless delete_history, do: persist(state)
     %{state | persist_timer: nil, cwd: nil}
+  end
+
+  # Detaches that arrived while the close was stopping the shell: handled after it,
+  # they would never be, and their pids would follow the next process.
+  defp drop_detached(state) do
+    receive do
+      {:"$gen_cast", {:detach, subscriber}} ->
+        {:noreply, state} = handle_cast({:detach, subscriber}, state)
+        drop_detached(state)
+    after
+      0 -> state
+    end
   end
 
   # Starts the shell, or updates a running one, the way `terminal.open` does: a new
