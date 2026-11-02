@@ -38,6 +38,34 @@ defmodule HalC2.Steps.Space.PageTools do
     tool(context, thread, "hal_c2_page_block_insert", arguments)
   end
 
+  step "the agent in {string} adds the heading {string} to {string}",
+       %{args: [thread, text, title]} = context do
+    arguments = Map.merge(page_ref(context, title), %{"kind" => "heading", "text" => text})
+    tool(context, thread, "hal_c2_page_block_insert", arguments)
+  end
+
+  step "the agent in {string} makes {string} a level {int} heading",
+       %{args: [thread, text, level]} = context do
+    arguments = Map.put(block_ref(context, text), "level", level)
+    tool(context, thread, "hal_c2_page_block_update", arguments)
+  end
+
+  step "the heading {string} is of level {int}", %{args: [text, level]} = context do
+    assert %{"kind" => "heading", "level" => ^level} = block(context, text)
+    context
+  end
+
+  step "the agent in {string} links {string} from {string}",
+       %{args: [thread, linked, title]} = context do
+    arguments =
+      Map.merge(page_ref(context, title), %{
+        "kind" => "subpage_link",
+        "linkedPageId" => page_ref(context, linked)["pageId"]
+      })
+
+    tool(context, thread, "hal_c2_page_block_insert", arguments)
+  end
+
   step "the block {string} was written by the thread {string}",
        %{args: [text, thread]} = context do
     author = Space.agent(World.thread_id(context, thread))

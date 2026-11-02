@@ -15,6 +15,9 @@ QtObject {
     property var openedExternally: []
     property bool echoTextEdits: true
     property bool localFolderImportEnabled: false
+    // The clipboard: its text and the files clipboardFiles reads.
+    property string clipboard: ""
+    property var clipboardAttachments: []
 
     signal actionRequested(string action, var payload)
     signal windowCommandRequested(string command)
@@ -70,6 +73,8 @@ QtObject {
     function reset() {
         echoTextEdits = true;
         localFolderImportEnabled = false;
+        clipboard = "";
+        clipboardAttachments = [];
         dispatchedActions = [];
         dispatchCount = 0;
         openedExternally = [];
@@ -154,14 +159,15 @@ QtObject {
     }
 
     function clipboardFiles() {
-        return [];
+        return clipboardAttachments;
     }
 
     function clipboardText() {
-        return "";
+        return clipboard;
     }
 
     function setClipboardText(text) {
+        clipboard = text;
     }
 
     function pasteAttaches(text, promptLength) {

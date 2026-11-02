@@ -21,6 +21,29 @@ defmodule HalC2.AuthTest do
     %{port: port, path: Path.join(dir, "hal-c2.sqlite")}
   end
 
+  test "a device goes by its label, else its type, and a blank one is no name" do
+    cases = [
+      {"Phone", "mobile", "Phone"},
+      {" Phone ", nil, "Phone"},
+      {nil, "mobile", "mobile"},
+      {"", "mobile", "mobile"},
+      {" \t", " mobile ", "mobile"},
+      {"", "", nil},
+      {"  ", "  ", nil},
+      {nil, nil, nil}
+    ]
+
+    for {label, device_type, name} <- cases do
+      {:ok, %{"credential" => credential}} = HalC2.Auth.create_pairing_link(%{})
+
+      {:ok, access, _expires_in, _scopes} =
+        HalC2.Auth.exchange(credential, %{label: label, device_type: device_type})
+
+      {:ok, %{id: id}} = HalC2.Auth.session(access)
+      assert HalC2.Auth.device_name(id) == name
+    end
+  end
+
   # The same requests, in the same order, the client runtime makes when pairing.
   test "pairing token -> bearer token -> ws ticket -> socket", %{port: port, path: path} do
     pairing = HalC2.Auth.create_pairing_token(path)

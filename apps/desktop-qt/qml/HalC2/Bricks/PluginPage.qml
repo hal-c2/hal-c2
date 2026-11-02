@@ -35,7 +35,7 @@ Item {
         width: Math.min(parent.width - 48, 560)
         visible: host.problem.length > 0
         text: qsTr("%1 failed: %2").arg(host.page.pluginName || host.page.pluginId).arg(host.problem)
-        color: Theme.palette.color("error", "#ef4444")
+        color: Theme.palette.color("errorForeground", "#ef4444")
         wrapMode: Text.Wrap
         horizontalAlignment: Text.AlignHCenter
         font.pixelSize: Math.round(13 * Theme.fontScale)

@@ -1,4 +1,8 @@
-import type { OrchestrationCheckpointSummary, OrchestrationThread } from "@hal-c2/contracts";
+import type {
+  MermaidRenderResult,
+  OrchestrationCheckpointSummary,
+  OrchestrationThread,
+} from "@hal-c2/contracts";
 
 import type { TuiQueuedMessage, TuiThreadExtras } from "../orchestrationV2Adapter.ts";
 import { shouldCollapseUserMessage } from "@hal-c2/shared/chatMessages";
@@ -65,10 +69,13 @@ export interface TimelineView {
   readonly windowEnd: number | null;
   /** Tables whose cells are cut to one line, as `<message id>:table:<n>`. */
   readonly collapsedTables: ReadonlySet<string>;
+  /** Mermaid diagrams shown as their source, as `<message id>:diagram:<n>`. */
+  readonly diagramSources: ReadonlySet<string>;
 }
 
 export const EMPTY_TIMELINE_VIEW: TimelineView = {
   collapsedTables: new Set(),
+  diagramSources: new Set(),
   expandedGroups: new Set(),
   expandedFolds: new Set(),
   expandedMessages: new Set(),
@@ -176,6 +183,8 @@ export interface TimelineInput {
   readonly attachments?: (attachmentId: string) => AttachmentPreview;
   /** Sizes inline previews (default: `FALLBACK_CELL_PIXELS`). */
   readonly cellPixels?: CellPixels | null;
+  /** What the MC drew of a reply's Mermaid diagram (`mermaidDiagrams.ts`); without it they are code. */
+  readonly diagrams?: (source: string) => MermaidRenderResult | undefined;
 }
 
 const line = (
@@ -248,6 +257,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     checkpointByMessage,
     attachments: input.attachments ?? (() => UNAVAILABLE_ATTACHMENT),
     cellPixels: input.cellPixels ?? FALLBACK_CELL_PIXELS,
+    diagrams: input.diagrams ?? null,
   };
 
   const items: TimelineItem[] = [];
@@ -434,6 +444,7 @@ interface RowContext {
   readonly checkpointByMessage: Map<string, OrchestrationCheckpointSummary>;
   readonly attachments: (attachmentId: string) => AttachmentPreview;
   readonly cellPixels: CellPixels;
+  readonly diagrams: ((source: string) => MermaidRenderResult | undefined) | null;
 }
 
 const UNAVAILABLE_ATTACHMENT: AttachmentPreview = {
@@ -689,13 +700,25 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
 /**
  * A reply's Markdown as lines. A click on a code block copies its source; a
  * table is followed by a row that copies it as Markdown or CSV and cuts its
- * cells to one line or wraps them again. What was just copied shows it.
+ * cells to one line or wraps them again. A Mermaid diagram is drawn in
+ * characters when the MC can, its title switching to its source and back; a
+ * click on it copies its source. What was just copied shows it.
  */
 function replyLines(messageId: string, body: string, ctx: RowContext): TimelineLine[] {
   const { palette, width } = ctx;
   const tableKey = (index: number) => `${messageId}:table:${index}`;
-  const blocks = markdownBlockLines(body, palette, width, (index) =>
-    ctx.view.collapsedTables.has(tableKey(index)),
+  const diagramKey = (index: number) => `${messageId}:diagram:${index}`;
+  const blocks = markdownBlockLines(
+    body,
+    palette,
+    width,
+    (index) => ctx.view.collapsedTables.has(tableKey(index)),
+    ctx.diagrams
+      ? {
+          get: ctx.diagrams,
+          showSource: (index) => ctx.view.diagramSources.has(diagramKey(index)),
+        }
+      : undefined,
   );
   const lines: TimelineLine[] = [];
   blocks.forEach((block, position) => {
@@ -705,9 +728,23 @@ function replyLines(messageId: string, body: string, ctx: RowContext): TimelineL
         ctx.copied === key
           ? { chunks: block.text.chunks.map((part) => ({ ...part, fg: palette.success })) }
           : block.text;
-      lines.push(
-        line(text, "timeline.copy", { key, text: block.code.source, label: "Code block" }),
-      );
+      const label = block.diagram ? "Diagram source" : "Code block";
+      const toggle =
+        block.diagram?.title && block.diagram.drawable
+          ? {
+              text: styled(
+                chunk(
+                  ctx.view.diagramSources.has(diagramKey(block.diagram.index))
+                    ? "⇄ Drawing"
+                    : "⇄ Source",
+                  { fg: palette.dim },
+                ),
+              ),
+              action: "timeline.diagram.toggle",
+              payload: { key: diagramKey(block.diagram.index) },
+            }
+          : null;
+      lines.push(line(text, "timeline.copy", { key, text: block.code.source, label }, toggle));
       return;
     }
     lines.push(line(block.text));

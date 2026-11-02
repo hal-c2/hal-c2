@@ -72,7 +72,7 @@ Dialog {
                 objectName: "confirmAccept"
                 text: dialog.question?.confirmLabel ?? qsTr("Confirm")
                 primary: dialog.question?.destructive !== true
-                tint: dialog.question?.destructive === true ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("accentForeground", "#ffffff")
+                tint: dialog.question?.destructive === true ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("accentForeground", "#ffffff")
                 onClicked: dialog.answer(true)
             }
         }

@@ -16,6 +16,8 @@
     "build": "vp run --filter './apps/*' build",
     "build:marketing": "vp run --filter @hal-c2/marketing build",
     "build:machine-files": "cargo build --locked --release --manifest-path native/machine-files/Cargo.toml",
+    "build:mermaid": "cargo build --locked --release --manifest-path native/mermaid/Cargo.toml",
+    "build:pid-kill": "cargo build --locked --release --manifest-path native/pid-kill/Cargo.toml",
     "build:resource-monitor": "cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml",
     "typecheck": "vp run -r --concurrency-limit 2 typecheck",
     "tc": "vp run -r --concurrency-limit 2 typecheck",
@@ -25,6 +27,8 @@
     "knip:production": "knip --production --preprocessor ./scripts/knip-schemas.ts",
     "test": "vp run -r test",
     "test:machine-files": "cargo test --locked --manifest-path native/machine-files/Cargo.toml",
+    "test:mermaid": "cargo test --locked --manifest-path native/mermaid/Cargo.toml",
+    "test:pid-kill": "cargo test --locked --manifest-path native/pid-kill/Cargo.toml",
     "test:resource-monitor": "cargo test --locked --manifest-path native/resource-monitor/Cargo.toml",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
@@ -34,7 +38,7 @@
   "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@types/node": "catalog:",
-    "knip": "6.34.0",
+    "knip": "6.44.1",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   },

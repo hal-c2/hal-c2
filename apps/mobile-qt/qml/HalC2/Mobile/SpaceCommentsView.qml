@@ -55,7 +55,9 @@ ColumnLayout {
             id: comment
 
             required property var model
+            required property string blockId
             required property string blockText
+            required property bool blockGone
             required property string body
             required property bool resolved
             required property bool byAgent
@@ -66,12 +68,13 @@ ColumnLayout {
             opacity: resolved ? 0.6 : 1
 
             Label {
+                objectName: "spaceCommentBlock:" + comment.body
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
                 Layout.topMargin: 10
-                visible: comment.blockText !== ""
-                text: comment.blockText
+                visible: text !== ""
+                text: comment.blockGone ? qsTr("On a block no longer on this page") : comment.blockText
                 elide: Text.ElideRight
                 color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
@@ -81,7 +84,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 16
-                Layout.topMargin: comment.blockText !== "" ? 0 : 10
+                Layout.topMargin: comment.blockText !== "" || comment.blockGone ? 0 : 10
                 text: comment.body
                 wrapMode: Text.Wrap
                 font.pixelSize: Math.round(15 * Theme.fontScale)

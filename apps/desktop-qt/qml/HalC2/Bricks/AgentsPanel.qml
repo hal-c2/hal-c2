@@ -19,7 +19,7 @@ Rectangle {
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
 
     function dotColor(status) {
@@ -66,6 +66,7 @@ Rectangle {
             bottomPadding: 4
             leftPadding: 6
             text: section === "active" ? qsTr("Active") : qsTr("Finished")
+            elide: Text.ElideRight
             color: root.muted
             font.pixelSize: Math.round(11 * Theme.fontScale)
             font.weight: Font.Medium
@@ -100,6 +101,8 @@ Rectangle {
             background: Rectangle {
                 radius: 6
                 color: row.hovered || row.visualFocus ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+                border.width: row.visualFocus ? 1 : 0
+                border.color: Theme.palette.color("focus", "#3b82f6")
             }
 
             Rectangle {

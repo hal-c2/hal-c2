@@ -561,7 +561,8 @@ defmodule HalC2.Mcp.Tools.Threads do
   end
 
   # Why a provider cannot run a thread now; empty when it can.
-  defp constraints(provider) do
+  @doc "Why `provider` cannot start a thread right now; empty when it can."
+  def constraints(provider) do
     [
       provider["enabled"] == false && "Provider instance is disabled.",
       provider["installed"] == false && "Provider executable is not installed.",

@@ -7,6 +7,15 @@
       "layers": [
         {
           "glass": false,
+          "image-name": "dev-badge.svg",
+          "name": "Dev badge",
+          "position": {
+            "scale": 8,
+            "translation-in-points": [0, 0]
+          }
+        },
+        {
+          "glass": false,
           "image-name": "text.svg",
           "name": "Avatar",
           "position": {

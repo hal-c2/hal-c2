@@ -136,4 +136,31 @@ TestCase {
         const bottom = combo.mapToItem(null, 0, combo.popup.y + combo.popup.height).y;
         verify(bottom <= combo.mapToItem(null, 0, 0).y);
     }
+
+    // Room for an empty popup below but not for its rows: it opens upward by
+    // itself, not by Qt flipping it back inside the window (Ljós does not).
+    function test_opensUpWhenItsRowsWouldPassTheWindow() {
+        const combo = createTemporaryObject(comboComponent, testCase, {
+            y: testCase.height - 80
+        });
+        openCombo(combo);
+        verify(combo.popup.upward);
+        verify(combo.popup.y < 0, "popup.y " + combo.popup.y);
+    }
+
+    // Each row's label is centred on the fill drawn behind it, and the row is
+    // named by its label.
+    function test_rowLabelsAreCentredAndNamed() {
+        const combo = createTemporaryObject(comboComponent, testCase, {
+            y: 20
+        });
+        openCombo(combo);
+        const items = rows(combo);
+        compare(items.map(row => row.Accessible.name), ["Low", "Medium", "High"]);
+        for (const row of items) {
+            const label = row.contentItem.children[0];
+            const centre = label.mapToItem(row, 0, label.height / 2).y;
+            fuzzyCompare(centre, row.background.height / 2, 1, "label centre " + centre);
+        }
+    }
 }

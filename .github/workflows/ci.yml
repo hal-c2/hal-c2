@@ -149,14 +149,29 @@ jobs:
           sudo apt-get update && sudo apt-get install -y fuse3
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
+      # The orphan reaper kills through it, and with `kill` without it (HalC2.Subprocess.Orphans).
+      - name: Test the pid-kill helper
+        run: |
+          cargo test --locked --manifest-path ../../native/pid-kill/Cargo.toml
+          cargo build --locked --release --manifest-path ../../native/pid-kill/Cargo.toml
+
+      # HalC2.Mermaid draws with it; its tests skip without it.
+      - name: Test the Mermaid helper
+        run: |
+          cargo fmt --check --manifest-path ../../native/mermaid/Cargo.toml
+          cargo test --locked --manifest-path ../../native/mermaid/Cargo.toml
+          cargo build --locked --release --manifest-path ../../native/mermaid/Cargo.toml
+
       - name: Test
         run: mix test
 
+  # The matrix jobs' names leave the matrix out: GitHub appends its values to a running
+  # job's name, and shows a skipped job's `${{ matrix.* }}` unexpanded.
   # GPL-3.0 (PropCheck), so in their own environment: apps/server-ex/prop/README.md.
   # They run the real code on sampled cases and take a quarter of an hour, split by file
   # so one failed property re-runs a part of that. New files join a partition on their own.
   mc_props:
-    name: MC properties (${{ matrix.partition }}/3)
+    name: MC properties
     needs: [changes, mc_check]
     if: needs.changes.outputs.props == 'true'
     runs-on: ubuntu-24.04
@@ -183,6 +198,9 @@ jobs:
           sudo apt-get update && sudo apt-get install -y fuse3
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
+      - name: Build the pid-kill helper
+        run: cargo build --locked --release --manifest-path ../../native/pid-kill/Cargo.toml
+
       - name: Property tests
         run: mix prop --partitions 3
         env:
@@ -193,12 +211,13 @@ jobs:
   # code. One job per proof, as model checking peaks at several GB and a proof's checks
   # run one after another.
   mc_proofs:
-    name: MC proofs (${{ matrix.proof }})
+    name: MC proofs
     needs: [changes, mc_check]
     if: needs.changes.outputs.proofs != '[]'
     runs-on: ubuntu-24.04
-    # code_review_claims has taken from 13 to over 30 minutes on the same model.
-    timeout-minutes: 45
+    # code_review_claims has taken from 13 to over 37 minutes on the same model, and its
+    # slowest search may use 30 of them (its proof's `timeout`).
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -226,7 +245,7 @@ jobs:
   # HAL_C2_FEATURES without `--only cucumber` keeps @backlog out (test_helper.exs);
   # naming scenarios_test.exs keeps the unit suite, which the mc job runs, out.
   mc_scenarios:
-    name: MC scenarios (${{ matrix.dirs }})
+    name: MC scenarios
     needs: [changes, mc_check]
     if: needs.changes.outputs.scenarios != '[]'
     runs-on: ubuntu-24.04
@@ -281,6 +300,11 @@ jobs:
           sudo apt-get update && sudo apt-get install -y fuse3
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
+      # space/diagrams.feature draws with the real helper.
+      - name: Build the Mermaid helper
+        if: matrix.dirs == 'rest'
+        run: cargo build --locked --release --manifest-path ../../native/mermaid/Cargo.toml
+
       - name: Scenarios
         env:
           DIRS: ${{ matrix.dirs }}
@@ -330,6 +354,16 @@ jobs:
       - name: Test
         working-directory: apps/tui
         run: bun test
+
+      # Some scenarios run against a real MC (apps/tui/features/support/realMc.ts).
+      - name: Setup the MC
+        uses: ./.github/actions/setup-mc
+
+      - name: Compile the MC
+        working-directory: apps/server-ex
+        env:
+          MIX_ENV: test
+        run: mix compile
 
       - name: "@tui and @shared scenarios"
         working-directory: apps/tui

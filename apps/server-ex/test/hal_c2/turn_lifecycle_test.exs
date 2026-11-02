@@ -112,6 +112,31 @@ defmodule HalC2.TurnLifecycleTest do
     await_statuses(thread_id, ["interrupted"])
   end
 
+  # A runtime stuck on its provider is killed at the MC's shutdown limit. Failing its run
+  # then left a steer it held pending for good, since boot recovery skips an ended run.
+  test "a runtime killed while the MC stops leaves its turn for boot recovery",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    await_statuses(thread_id, ["running"])
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    gone = Process.monitor(runtime)
+
+    HalC2.Orchestration.Recovery.leaving(true)
+    on_exit(fn -> HalC2.Orchestration.Recovery.leaving(false) end)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        Process.exit(runtime, :kill)
+        assert_receive {:DOWN, ^gone, :process, _, _}, 5_000
+        _ = :sys.get_state(TurnWatch)
+      end)
+
+    refute log =~ "lost its runtime"
+
+    HalC2.Orchestration.Recovery.settle(thread_id)
+    assert ["interrupted"] = statuses(thread_id)
+  end
+
   # A store write that waited past its minute exited the runtime making it, and
   # TurnWatch abandoned the run as one whose session ended (hal-c2/hal-c2#644).
   @tag capture_log: true

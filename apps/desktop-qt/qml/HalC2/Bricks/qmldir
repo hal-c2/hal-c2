@@ -9,6 +9,7 @@ ComposerAttachment 1.0 ComposerAttachment.qml
 ModelPicker 1.0 ModelPicker.qml
 ProviderIcon 1.0 ProviderIcon.qml
 ComposerVimKeys 1.0 ComposerVimKeys.qml
+ConversationDrop 1.0 ConversationDrop.qml
 ProjectFolderDrop 1.0 ProjectFolderDrop.qml
 ContextMenuHost 1.0 ContextMenuHost.qml
 DefaultLayout 1.0 DefaultLayout.qml
@@ -43,6 +44,7 @@ ShellChevron 1.0 ShellChevron.qml
 Sidebar 1.0 Sidebar.qml
 SidebarThreadRow 1.0 SidebarThreadRow.qml
 HalC2Wordmark 1.0 HalC2Wordmark.qml
+StagePill 1.0 StagePill.qml
 TerminalDrawer 1.0 TerminalDrawer.qml
 TitleBar 1.0 TitleBar.qml
 WindowControls 1.0 WindowControls.qml
@@ -77,6 +79,7 @@ DiffPanel 1.0 DiffPanel.qml
 FilesPanel 1.0 FilesPanel.qml
 FileEntryMenu 1.0 FileEntryMenu.qml
 AttachmentViewer 1.0 AttachmentViewer.qml
+ImageViewer 1.0 ImageViewer.qml
 FilePathTrail 1.0 FilePathTrail.qml
 ProjectActionEditor 1.0 ProjectActionEditor.qml
 ProjectIcon 1.0 ProjectIcon.qml
@@ -87,6 +90,7 @@ RevertDialog 1.0 RevertDialog.qml
 TerminalSplits 1.0 TerminalSplits.qml
 TerminalMenu 1.0 TerminalMenu.qml
 TerminalScrollbar 1.0 TerminalScrollbar.qml
+TextEditMenu 1.0 TextEditMenu.qml
 TerminalPanel 1.0 TerminalPanel.qml
 PullRequestsPanel 1.0 PullRequestsPanel.qml
 PullRequestReviewPanel 1.0 PullRequestReviewPanel.qml
@@ -98,10 +102,23 @@ HomePage 1.0 HomePage.qml
 UsagePage 1.0 UsagePage.qml
 SpaceWorkspace 1.0 SpaceWorkspace.qml
 SpaceSidebar 1.0 SpaceSidebar.qml
+SpaceDeck 1.0 SpaceDeck.qml
 SpacePage 1.0 SpacePage.qml
+SpaceAgentStrip 1.0 SpaceAgentStrip.qml
+SpaceViewers 1.0 SpaceViewers.qml
+SpacePageUpdate 1.0 SpacePageUpdate.qml
+SpaceUpdateDialog 1.0 SpaceUpdateDialog.qml
+SpacePresenter 1.0 SpacePresenter.qml
 SpaceBlock 1.0 SpaceBlock.qml
+SpaceChart 1.0 SpaceChart.qml
 SpaceSlashMenu 1.0 SpaceSlashMenu.qml
+SpaceBlockImage 1.0 SpaceBlockImage.qml
+SpaceImages 1.0 SpaceImages.qml
+SpaceImageDialog 1.0 SpaceImageDialog.qml
+SpaceFilePicker 1.0 SpaceFilePicker.qml
 SpaceComments 1.0 SpaceComments.qml
+SpaceHistoryPanel 1.0 SpaceHistoryPanel.qml
+SpaceVersionView 1.0 SpaceVersionView.qml
 UsageChart 1.0 UsageChart.qml
 ProvidersSettings 1.0 ProvidersSettings.qml
 ArchivedThreads 1.0 ArchivedThreads.qml
@@ -126,6 +143,7 @@ WelcomeWizard 1.0 WelcomeWizard.qml
 OnboardingTerminal 1.0 OnboardingTerminal.qml
 SnapShotSettings 1.0 SnapShotSettings.qml
 Markdown 1.0 Markdown.qml
+MermaidDiagram 1.0 MermaidDiagram.qml
 Plugin 1.0 Plugin.qml
 Contribution 1.0 Contribution.qml
 PluginSlot 1.0 PluginSlot.qml

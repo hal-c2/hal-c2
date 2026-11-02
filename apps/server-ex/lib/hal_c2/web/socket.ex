@@ -23,6 +23,7 @@ defmodule HalC2.Web.Socket do
 
   @behaviour WebSock
 
+  alias HalC2.Terminal.OutputWindow
   alias HalC2.Web.Protocol
 
   require Logger
@@ -31,7 +32,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 9
+  @state_version 10
 
   # The services `watch_spec/1` subscribes to as `{kind, mc}`, by kind.
   @services %{
@@ -54,7 +55,7 @@ defmodule HalC2.Web.Socket do
               hal_c2_devices hal_c2_slack hal_c2_project_clones hal_c2_scheduled_tasks
               hal_c2_background_policy hal_c2_pull_request_refreshes hal_c2_plugins
               hal_c2_plugin_topic hal_c2_worktree_setup hal_c2_provider_install
-              hal_c2_provider_auth hal_c2_vcs hal_c2_terminals)a
+              hal_c2_provider_auth hal_c2_vcs hal_c2_terminals hal_c2_space_presence)a
 
   @doc "How long a client RPC may run before it fails as timed out (`:rpc_timeout`)."
   def rpc_timeout, do: Application.get_env(:hal_c2, :rpc_timeout, :timer.minutes(10))
@@ -98,6 +99,8 @@ defmodule HalC2.Web.Socket do
       terminals: %{},
       # MC => the keys of its terminals lost with it, attached again when it is back.
       lost: %{},
+      # The subscription of a terminal client that acknowledges => its output window.
+      terminal_windows: %{},
       buffers: %{},
       shell: %{},
       flush_scheduled: false
@@ -131,6 +134,9 @@ defmodule HalC2.Web.Socket do
 
       {:ok, {:more, id, items}} ->
         {:ok, more(state, id, items)}
+
+      {:ok, {:ack, id, sequence}} ->
+        terminal_ack(state, id, sequence)
 
       {:ok, {:unsub, id}} ->
         {:ok, unsubscribe(state, id)}
@@ -463,6 +469,12 @@ defmodule HalC2.Web.Socket do
         method == "server.updateServer" and mc == node() ->
           {HalC2.Upgrade, :update, [payload || %{}, nil, socket]}
 
+        # The call runs in a process of its own that outlives this socket, so the
+        # Mermaid server watches the socket (on whichever MC draws): a diagram it asked
+        # for and is still waiting for when it goes is not drawn for nobody.
+        method == "mermaid.render" ->
+          {HalC2.Mermaid, :handle, [payload || %{}, socket]}
+
         true ->
           {HalC2.Rpc, :handle, [method, payload || %{}]}
       end
@@ -621,16 +633,25 @@ defmodule HalC2.Web.Socket do
   # here. Several subscriptions of this socket may follow one terminal (a page
   # in each window, or one made before the last is gone), each with the
   # sequence of the snapshot it was sent.
-  defp subscribe(state, id, {:terminal, mc, input}, _offset) do
+  defp subscribe(state, id, {:terminal, mc, input}, resume) do
     key = {input["threadId"], input["terminalId"]}
 
     case remote(mc, HalC2.Terminal, :attach, [input, self()]) do
       {:ok, {:ok, snapshot}} ->
         frame = %{"type" => "snapshot", "snapshot" => snapshot}
 
+        windows =
+          if match?(%{acks: true}, resume) do
+            {:send, window} = OutputWindow.offer(OutputWindow.new(), frame)
+            Map.put(state.terminal_windows, id, window)
+          else
+            Map.delete(state.terminal_windows, id)
+          end
+
         state = %{
           state
-          | subs: Map.put(state.subs, id, {:terminal, mc, key}),
+          | terminal_windows: windows,
+            subs: Map.put(state.subs, id, {:terminal, mc, key}),
             by_terminal:
               Map.update(
                 state.by_terminal,
@@ -713,6 +734,22 @@ defmodule HalC2.Web.Socket do
 
       {:error, reason} ->
         {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
+  # Being on a page: the service is told this socket's device, which only this MC can
+  # name, and monitored so that, if it starts again, the client follows the page anew
+  # (`handle_info/2`'s `:DOWN`, as for a stream) and is back on it.
+  defp subscribe(state, id, {:space_presence, mc, space, page}, offset) do
+    shape = {:space_presence, mc, space, page, device(state)}
+
+    case subscribe(state, id, shape, offset) do
+      {:push, _frame, %{subs: %{^id => ^shape}} = next} = pushed ->
+        monitor = Process.monitor({HalC2.Space.Presence, mc})
+        put_elem(pushed, 2, put_in(next.monitors[monitor], {id, HalC2.Space.Presence}))
+
+      other ->
+        other
     end
   end
 
@@ -996,6 +1033,10 @@ defmodule HalC2.Web.Socket do
     %{state | by_terminal: by_terminal, v: 8}
   end
 
+  # Version 10: a terminal subscription may acknowledge its output.
+  defp migrate(%{v: 9} = state),
+    do: state |> Map.merge(%{terminal_windows: %{}, v: 10}) |> migrate()
+
   # Version 9: followed terminals are monitored, and those lost with their MC kept.
   defp migrate(%{v: 8} = state),
     do: state |> Map.merge(%{terminals: %{}, lost: %{}, v: 9}) |> migrate()
@@ -1115,29 +1156,100 @@ defmodule HalC2.Web.Socket do
     held? = event["type"] in ~w(output snapshot restarted cleared exited closed activity)
     snapshot? = event["type"] == "snapshot"
 
-    {frames, subs} =
-      Enum.map_reduce(subs, subs, fn
+    {frames, {subs, windows}} =
+      Enum.map_reduce(subs, {subs, state.terminal_windows}, fn
         # A snapshot below the floor is a new incarnation of the terminal
         # (its process restarted its sequence at 0 after a close): the
         # subscription restarts from it instead of being starved until the
         # sequence climbs back past the old floor.
-        {id, floor}, acc
+        {id, floor}, {acc, windows}
         when snapshot? and is_integer(seq) and is_integer(floor) and seq < floor ->
-          {Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event}),
-           Map.put(acc, id, seq)}
+          {_, windows} = offer_window(windows, id, event)
+          {terminal_frame(id, event), {Map.put(acc, id, seq), windows}}
 
         {_id, floor}, acc
         when held? and is_integer(seq) and is_integer(floor) and seq <= floor ->
           {nil, acc}
 
-        {id, floor}, acc ->
-          acc = if is_integer(seq), do: Map.put(acc, id, max(floor || seq, seq)), else: acc
-          {Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event}), acc}
+        {id, floor}, {acc, windows} ->
+          acc =
+            cond do
+              # The terminal's next process counts its sequences from the start.
+              event["type"] == "closed" -> Map.put(acc, id, nil)
+              is_integer(seq) -> Map.put(acc, id, max(floor || seq, seq))
+              true -> acc
+            end
+
+          case offer_window(windows, id, event) do
+            {:send, windows} -> {terminal_frame(id, event), {acc, windows}}
+            {:hold, windows} -> {nil, {acc, windows}}
+          end
       end)
+
+    state = %{state | terminal_windows: windows}
+    state = if subs == %{}, do: state, else: put_in(state.by_terminal[key], subs)
+    state = if snapshot?, do: follow_process(state, key, subs), else: state
 
     case Enum.reject(frames, &is_nil/1) do
       [] -> {:ok, state}
-      frames -> {:push, frames, %{state | by_terminal: Map.put(state.by_terminal, key, subs)}}
+      frames -> {:push, frames, state}
+    end
+  end
+
+  # A snapshot nobody attached for can be a new process, the terminal having closed and
+  # opened again, which these subscriptions watch from now on.
+  defp follow_process(state, key, subs) do
+    with {id, _floor} <- Enum.at(subs, 0),
+         %{^id => {:terminal, mc, ^key}} <- state.subs do
+      watch_terminal(state, mc, key)
+    else
+      _ -> state
+    end
+  end
+
+  defp terminal_frame(id, event),
+    do: Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event})
+
+  # A subscription with no window does not acknowledge, and is sent everything.
+  defp offer_window(windows, id, event) do
+    case windows do
+      %{^id => window} ->
+        {verdict, window} = OutputWindow.offer(window, event)
+        {verdict, Map.put(windows, id, window)}
+
+      _ ->
+        {:send, windows}
+    end
+  end
+
+  # A subscription that caught up gets what it missed as a new snapshot, from the same
+  # attach a new subscription makes: its floor moves to the snapshot, so nothing the
+  # terminal is still sending is told twice. A terminal gone by then said so itself.
+  defp terminal_ack(state, id, sequence) do
+    with %{^id => window} <- state.terminal_windows,
+         {:caught_up, window} <- OutputWindow.ack(window, sequence),
+         %{^id => {:terminal, mc, {thread_id, terminal_id} = key}} <- state.subs,
+         input = %{"threadId" => thread_id, "terminalId" => terminal_id},
+         {:ok, {:ok, snapshot}} <- remote(mc, HalC2.Terminal, :attach, [input, self()]) do
+      frame = %{"type" => "snapshot", "snapshot" => snapshot}
+      {:send, window} = OutputWindow.offer(window, frame)
+
+      {:push, terminal_frame(id, frame),
+       %{
+         state
+         | terminal_windows: Map.put(state.terminal_windows, id, window),
+           by_terminal: put_in(state.by_terminal, [key, id], snapshot["sequence"])
+       }}
+    else
+      {:ok, %OutputWindow{} = window} ->
+        {:ok, put_in(state.terminal_windows[id], window)}
+
+      %{} ->
+        {:ok, state}
+
+      # Not caught up after all, or nothing left to attach to.
+      _gone ->
+        {:ok, %{state | terminal_windows: Map.delete(state.terminal_windows, id)}}
     end
   end
 
@@ -1248,6 +1360,7 @@ defmodule HalC2.Web.Socket do
         %{
           state
           | subs: Map.drop(state.subs, ids),
+            terminal_windows: Map.drop(state.terminal_windows, ids),
             by_terminal: Map.delete(state.by_terminal, key)
         },
         key
@@ -1328,6 +1441,8 @@ defmodule HalC2.Web.Socket do
   # `ordered?` is the terminal detach's: only an unsubscribe a later attach on
   # this socket could follow pays for the ordered call.
   defp unsubscribe(state, id, ordered? \\ true) do
+    state = %{state | terminal_windows: Map.delete(state.terminal_windows, id)}
+
     case Map.pop(state.subs, id) do
       {{:terminal, mc, {thread_id, terminal_id} = key}, subs} ->
         case Map.delete(Map.get(state.by_terminal, key, %{}), id) do
@@ -1391,6 +1506,15 @@ defmodule HalC2.Web.Socket do
       {{:preview_automation, mc, client_id} = key, subs} ->
         :erpc.cast(mc, HalC2.PreviewAutomation, :disconnect, [client_id, self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
+
+      {{:space_presence, _mc, _space, _page, _device} = shape, subs} ->
+        state = unwatch(%{state | subs: subs}, id, shape)
+
+        {monitor, _} =
+          Enum.find(state.monitors, {nil, nil}, fn {_, {sub, _}} -> sub == id end)
+
+        if monitor, do: Process.demonitor(monitor, [:flush])
+        %{state | monitors: Map.delete(state.monitors, monitor)}
 
       {{:stream, mc, stream_id}, _subs} ->
         # By its tag, so it ends no subscription that follows, whenever it arrives.
@@ -1464,6 +1588,11 @@ defmodule HalC2.Web.Socket do
       {{:worktree_setup, thread_id}, mc, HalC2.WorktreeSetup, :subscribe, :unsubscribe,
        [thread_id, self()]}
 
+  defp watch_spec({:space_presence, mc, space, page, device}),
+    do:
+      {{:space_presence, space, page}, mc, HalC2.Space.Presence, :subscribe, :unsubscribe,
+       [self(), space, page, device]}
+
   defp watch_spec({:provider_auth, mc, instance}),
     do:
       {{:provider_auth, instance}, mc, HalC2.ProviderAuth, :subscribe, :unsubscribe,
@@ -1499,6 +1628,9 @@ defmodule HalC2.Web.Socket do
 
   defp snapshot({:worktree_setup, _mc, thread_id}, setup),
     do: {:hal_c2_worktree_setup, thread_id, setup}
+
+  defp snapshot({:space_presence, _mc, space, page, _device}, view),
+    do: {:hal_c2_space_presence, space, page, view}
 
   defp snapshot({:provider_auth, _mc, instance}, {:ok, auth}),
     do: {:hal_c2_provider_auth, instance, auth}
@@ -1640,13 +1772,46 @@ defmodule HalC2.Web.Socket do
   defp watched_frame({:hal_c2_provider_install, instance, install}, _state),
     do: {{:provider_install, instance}, "providerInstall", %{"state" => install}}
 
+  defp watched_frame({:hal_c2_space_presence, space, page, view}, state),
+    do:
+      {{:space_presence, space, page}, "spacePresence",
+       %{"viewers" => space_viewers(view, device_key(state))}}
+
   defp watched_frame({:hal_c2_provider_auth, instance, auth}, _state),
     do: {{:provider_auth, instance}, "providerAuth", %{"state" => auth}}
 
-  # Drops a stream subscription here, telling its stream nothing.
-  defp forget_stream(state, id) do
-    {{:stream, _mc, stream_id}, subs} = Map.pop(state.subs, id)
+  # This socket's device on a page: its session's, or for the MC's own token, itself.
+  defp device(state) do
+    name = if state.session, do: HalC2.Auth.device_name(state.session)
+    %{key: device_key(state), label: name || "Another client"}
+  end
 
+  defp device_key(%{session: nil}), do: inspect(self())
+  defp device_key(%{session: session}), do: session
+
+  # Everyone on the page but this device; all of the user's devices are one viewer.
+  defp space_viewers(%{devices: devices, agents: agents}, own) do
+    labels = for(device <- devices, device.key != own, uniq: true, do: device.label)
+    user = if labels != [], do: [%{"type" => "user", "devices" => Enum.sort(labels)}], else: []
+
+    user ++
+      for agent <- agents,
+          do: %{"type" => "agent", "threadId" => agent.thread_id, "title" => agent.title}
+  end
+
+  # Drops a subscription whose service went away, telling that service nothing.
+  defp forget_stream(state, id) do
+    case Map.pop(state.subs, id) do
+      {{:space_presence, _mc, _space, _page, _device} = shape, subs} ->
+        unwatch(%{state | subs: subs}, id, shape)
+
+      {{:stream, _mc, stream_id}, subs} ->
+        forget_stream(state, id, stream_id, subs)
+    end
+  end
+
+  # Drops a stream subscription here, telling its stream nothing.
+  defp forget_stream(state, id, stream_id, subs) do
     %{
       state
       | subs: subs,

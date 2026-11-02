@@ -36,20 +36,24 @@ Feature: Terminal failures
       When a client opens a terminal in "/root/private"
       Then opening fails with "Failed to access terminal cwd: /root/private" and the reason
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (provider_env)
-    @backlog @mc
+    @mc
     Scenario: A terminal for a provider instance that is not configured is refused
       Given no provider instance "ghost" is configured and none is built in under that name
       When a client opens a terminal for the provider instance "ghost"
       Then the open fails with "Provider instance is not available: ghost"
       And no shell is started
 
-    @backlog @mc
-    Scenario: A terminal does not open when the instance's settings cannot be read
+    @mc
+    Scenario Outline: A terminal does not open when the instance's settings cannot be read
       Given the MC cannot read its provider settings
-      When a client opens a terminal for the provider instance "work"
-      Then the open fails
-      And no shell is started with a missing home or variables
+      When a client opens a terminal for the provider instance "<instance>"
+      Then the open fails saying the settings cannot be read
+      And no shell starts
+
+      Examples:
+        | instance |
+        | work     |
+        | codex    |
 
     @mc
     Scenario: A machine with no usable shell reports which shells it tried
@@ -92,7 +96,7 @@ Feature: Terminal failures
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (fails closed when attaching would create a missing
     #   provider terminal; attaches to a running provider terminal without resolving the provider again)
-    @backlog @mc
+    @mc
     Scenario: Attaching to a terminal that does not exist for a provider instance that is gone starts no shell
       Given no provider instance "deleted_instance" is configured
       And the thread has no terminal "term-2"
@@ -102,7 +106,7 @@ Feature: Terminal failures
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (attaches to a running provider terminal without
     #   resolving the provider again)
-    @backlog @mc
+    @mc
     Scenario: A running provider terminal can be attached to after its instance was removed
       Given a terminal running for the provider instance "work"
       And the provider instance "work" has since been removed
@@ -122,8 +126,7 @@ Feature: Terminal failures
       When a client lists the thread's terminals
       Then it receives terminals 1 and 2
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (list sorts term-N by number)
-    @backlog @mc
+    @mc
     Scenario: A thread's terminals are listed in the order of their numbers
       Given a thread with saved terminals "term-10", "term-2" and "default"
       When a client lists the thread's terminals

@@ -52,6 +52,7 @@ import {
   DiscoveredLocalServerList,
   PreviewError,
   ResourceTelemetrySnapshot,
+  SpacePresenceStreamEvent,
   PreviewEvent,
   PreviewInvalidUrlError,
   PreviewSessionLookupError,
@@ -120,6 +121,7 @@ import {
   ClusterSocket,
   type Shape,
   type ShapeFrame,
+  type TerminalShape,
   type WindowedSubscription,
 } from "./clusterSocket.ts";
 import { ShellShapeFold, type ShellRow } from "./shellShape.ts";
@@ -178,6 +180,7 @@ const decodeDeviceState = Schema.decodeUnknownSync(Schema.toCodecJson(DeviceServ
 const decodeDeviceError = Schema.decodeUnknownOption(DeviceError);
 const decodeClusterError = Schema.decodeUnknownOption(ClusterError);
 const decodeTelemetry = Schema.decodeUnknownSync(Schema.toCodecJson(ResourceTelemetrySnapshot));
+const decodeSpacePresence = Schema.decodeUnknownSync(Schema.toCodecJson(SpacePresenceStreamEvent));
 const decodeAuthAccess = Schema.decodeUnknownSync(Schema.toCodecJson(AuthAccessStreamEvent));
 const decodeSetupError = Schema.decodeUnknownOption(ProviderSetupError);
 const decodeTerminalError = Schema.decodeUnknownOption(TerminalError);
@@ -341,7 +344,7 @@ function entityStreamFrame(frame: ShapeFrame): ReadonlyArray<EntityStreamFrame> 
  * `error` frame fails the stream when `toError` is given.
  */
 function shapeStream<A, E = never>(
-  socket: ClusterSocket,
+  socket: Pick<ClusterSocket, "subscribe">,
   shape: Shape,
   fold: (frame: ShapeFrame) => ReadonlyArray<A>,
   toError?: (frame: ShapeFrame) => E,
@@ -770,9 +773,27 @@ export function makeV3Session(input: {
         terminalError(request, cause instanceof ClusterRpcError ? cause.detail : undefined),
       );
 
-    const terminalAttach = (request: TerminalRequest) =>
+    // What acknowledges each terminal attached with `acks`. A second attach of a terminal
+    // takes over; the first's acks then stop, and its window is what the MC holds back.
+    const terminalAcks = new Map<string, (sequence: number) => void>();
+    const acknowledgedTerminal = (request: TerminalRequest): Pick<ClusterSocket, "subscribe"> => ({
+      subscribe: (shape, onFrame) => {
+        const key = `${request.threadId}:${request.terminalId}`;
+        const { unsubscribe, ack } = socket.subscribeAcknowledged(shape as TerminalShape, onFrame);
+        terminalAcks.set(key, ack);
+        return () => {
+          if (terminalAcks.get(key) === ack) terminalAcks.delete(key);
+          unsubscribe();
+        };
+      },
+    });
+
+    const terminalAttach = ({
+      acks,
+      ...request
+    }: TerminalRequest & { readonly acks?: boolean | undefined }) =>
       shapeStream(
-        socket,
+        acks ? acknowledgedTerminal(request) : socket,
         { type: "terminal", mc, input: request },
         (frame) => (frame.t === "terminal" ? [frame.event] : []),
         (frame) => terminalError(request, frame.detail),
@@ -999,6 +1020,15 @@ export function makeV3Session(input: {
       WS_METHODS.serverGetBackgroundPolicy,
       (_request: object, message) => new ClusterRpcError(message, undefined),
     );
+
+    const spacePresence = (request: { readonly spaceId: string; readonly pageId: string }) =>
+      shapeStream(
+        socket,
+        { type: "spacePresence", mc, spaceId: request.spaceId, pageId: request.pageId },
+        (frame) =>
+          frame.t === "spacePresence" ? [decodeSpacePresence({ viewers: frame.viewers })] : [],
+        (frame) => new ClusterRpcError(String(frame.reason ?? "Presence is unavailable."), frame),
+      );
 
     // A new thread's worktree is prepared on its MC.
     const worktreeSetup = (request: { readonly threadId: string }) =>
@@ -1305,6 +1335,7 @@ export function makeV3Session(input: {
         ].map((tag) => [tag, forward(tag, (_request: object, _message, cause) => cause)]),
       ),
       [WS_METHODS.subscribeResourceTelemetry]: resourceTelemetry,
+      [WS_METHODS.subscribeSpacePresence]: spacePresence,
       [WS_METHODS.subscribeAuthAccess]: authAccess,
       [WS_METHODS.serverGetBackgroundPolicy]: backgroundPolicy,
       // MCs have no client-driven policy, so it never changes after the first read.
@@ -1556,6 +1587,8 @@ export function makeV3Session(input: {
       closed: Effect.never,
       mcCall,
       loadEarlierThread,
+      ackTerminal: (threadId, terminalId, sequence) =>
+        terminalAcks.get(`${threadId}:${terminalId}`)?.(sequence),
       callEnvironment: (environmentId, method, payload) =>
         Effect.tryPromise({
           try: () => socket.call(environmentId, method, payload),

@@ -139,6 +139,7 @@ Dialog {
             Layout.fillWidth: true
             visible: dialog.mode === "emoji"
             placeholderText: qsTr("Emoji")
+            Accessible.name: qsTr("Emoji")
             text: dialog.picker?.emoji ?? ""
             onTextEdited: dialog.set("emoji", text)
         }
@@ -152,6 +153,7 @@ Dialog {
                 objectName: "projectIconLetters"
                 Layout.preferredWidth: 96
                 placeholderText: qsTr("AB")
+                Accessible.name: qsTr("Letters")
                 text: dialog.picker?.letters ?? ""
                 onTextEdited: dialog.set("letters", text)
             }
@@ -224,7 +226,7 @@ Dialog {
             Layout.fillWidth: true
             visible: text.length > 0
             text: dialog.picker?.error ?? ""
-            color: Theme.palette.color("error", "#ef4444")
+            color: Theme.palette.color("errorForeground", "#ef4444")
             font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }

@@ -2,6 +2,7 @@ defmodule HalC2.Web.SocketTest do
   use ExUnit.Case, async: false
 
   alias HalC2.Test.{LateUnsubscribe, WsClient}
+  alias HalC2.Terminal.OutputWindow
 
   @moduletag :tmp_dir
 
@@ -498,7 +499,18 @@ defmodule HalC2.Web.SocketTest do
            } = error
   end
 
+  # The terminals run `cat`, which prints nothing of its own: a real shell's prompt comes
+  # whenever it has started, into a test that says exactly what the terminal told it.
   defp start_terminals do
+    previous_shell = System.get_env("SHELL")
+    System.put_env("SHELL", System.find_executable("cat"))
+
+    on_exit(fn ->
+      if previous_shell,
+        do: System.put_env("SHELL", previous_shell),
+        else: System.delete_env("SHELL")
+    end)
+
     start_supervised!({Registry, keys: :unique, name: HalC2.Terminal.Registry})
 
     start_supervised!(
@@ -574,10 +586,114 @@ defmodule HalC2.Web.SocketTest do
     assert {output, client} = terminal_output(client)
     assert Enum.sort(output) == [{1, "for-both\r\n"}, {2, "for-both\r\n"}]
 
+    # Nothing answers an unsub. The socket reads frames in order, so its pong says it has.
     client = WsClient.send_json(client, %{"t" => "unsub", "id" => 1})
+    assert {[], client} = terminal_output(client)
     print_terminal(input, "for-second\r\n")
     assert {output, _client} = terminal_output(client)
     assert output == [{2, "for-second\r\n"}]
+  end
+
+  # A slow client on one socket leaves the one beside it alone: the shell is not paused,
+  # the acking subscription is held at the limit and gets a snapshot once it catches up.
+  test "a terminal subscription that stops acknowledging is held until it catches up", %{
+    port: port,
+    tmp_dir: dir
+  } do
+    start_terminals()
+    input = %{"threadId" => "th-slow", "terminalId" => "term-1", "cwd" => dir}
+    line = String.duplicate("x", 40_000)
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+
+    {%{"status" => "running"}, client} = terminal_snapshot(client, 1)
+
+    client =
+      WsClient.send_json(client, %{
+        "t" => "sub",
+        "id" => 2,
+        "shape" => terminal_shape(input),
+        "acks" => true
+      })
+
+    {%{"sequence" => first}, client} = terminal_snapshot(client, 2)
+
+    print_terminal(input, line <> "\r\n")
+    assert {[{1, _}, {2, _}], client} = sorted_output(client)
+    print_terminal(input, line <> "\r\n")
+    {output, client} = sorted_output(client)
+    assert [{1, _}, {2, _}] = output
+    print_terminal(input, "held\r\n")
+    assert {[{1, "held\r\n"}], client} = terminal_output(client)
+
+    # A partial ack does not catch it up; acknowledging all it was sent does.
+    client = WsClient.send_json(client, %{"t" => "ack", "id" => 2, "sequence" => first})
+    print_terminal(input, "still-held\r\n")
+    assert {[{1, "still-held\r\n"}], client} = terminal_output(client)
+
+    seq = :sys.get_state(await_terminal(input)).seq
+    client = WsClient.send_json(client, %{"t" => "ack", "id" => 2, "sequence" => seq})
+    {%{"history" => history, "sequence" => caught_up}, client} = terminal_snapshot(client, 2)
+    assert history =~ "still-held"
+
+    client = WsClient.send_json(client, %{"t" => "ack", "id" => 2, "sequence" => caught_up})
+
+    {_pong, _frames, client} =
+      client |> WsClient.send_json(%{"t" => "ping"}) |> WsClient.recv_until(&(&1["t"] == "pong"))
+
+    print_terminal(input, "live-again\r\n")
+    assert {[{1, "live-again\r\n"}, {2, "live-again\r\n"}], _client} = sorted_output(client)
+  end
+
+  # Counting a snapshot's history against the window held the next output of a busy
+  # shell whenever the history was past the limit, and its ack brought another snapshot:
+  # a client keeping up saw nothing but snapshots.
+  test "output after a large snapshot reaches the client before it acknowledges", %{
+    port: port,
+    tmp_dir: dir
+  } do
+    start_terminals()
+    input = %{"threadId" => "th-large", "terminalId" => "term-1", "cwd" => dir}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+
+    {%{"status" => "running"}, client} = terminal_snapshot(client, 1)
+
+    print_terminal(input, String.duplicate("x", 2 * OutputWindow.limit()) <> "\r\n")
+    {[{1, _}], client} = sorted_output(client)
+
+    client =
+      WsClient.send_json(client, %{
+        "t" => "sub",
+        "id" => 2,
+        "shape" => terminal_shape(input),
+        "acks" => true
+      })
+
+    {%{"history" => history, "sequence" => sequence}, client} = terminal_snapshot(client, 2)
+    assert byte_size(history) > OutputWindow.limit()
+
+    print_terminal(input, "busy\r\n")
+    assert {[{1, "busy\r\n"}, {2, "busy\r\n"}], client} = sorted_output(client)
+
+    client = WsClient.send_json(client, %{"t" => "ack", "id" => 2, "sequence" => sequence})
+
+    {_pong, frames, client} =
+      client |> WsClient.send_json(%{"t" => "ping"}) |> WsClient.recv_until(&(&1["t"] == "pong"))
+
+    assert frames == []
+
+    print_terminal(input, "still-busy\r\n")
+    assert {[{1, "still-busy\r\n"}, {2, "still-busy\r\n"}], _client} = sorted_output(client)
+  end
+
+  defp sorted_output(client) do
+    {output, client} = terminal_output(client)
+    {Enum.sort(output), client}
   end
 
   # A terminal whose MC left the cluster for a moment dropped the socket as it
@@ -894,6 +1010,59 @@ defmodule HalC2.Web.SocketTest do
                }
              }
            } = reply
+  end
+
+  test "a closed socket's diagrams still waiting for their turn are not drawn", %{port: port} do
+    test = self()
+
+    draw = fn request ->
+      send(test, {:drawing, request.source, self()})
+
+      receive do
+        {:outcome, outcome} -> outcome
+      end
+    end
+
+    mermaid = start_supervised!({HalC2.Mermaid, draw: draw, limit: 1})
+    [{_mc, %{"environmentId" => environment}}] = HalC2.Shell.environments()
+
+    render = fn client, id, source ->
+      WsClient.send_json(client, %{
+        "t" => "rpc",
+        "id" => id,
+        "environment" => environment,
+        "method" => "mermaid.render",
+        "payload" => %{"source" => source}
+      })
+    end
+
+    open = connect(port) |> render.(1, "first")
+    assert_receive {:drawing, "first", drawer}, 5_000
+
+    closing = connect(port) |> render.(1, "a") |> render.(2, "b")
+    await_queued(mermaid, ["a", "b"])
+    Mint.HTTP.close(closing.conn)
+    await_queued(mermaid, [])
+
+    send(drawer, {:outcome, {:ok, %{"status" => "drawn", "svg" => "<svg/>"}}})
+    {reply, _, _open} = WsClient.recv_until(open, &(&1["t"] == "rpc.result"))
+    assert %{"id" => 1, "result" => %{"status" => "drawn"}} = reply
+    :sys.get_state(mermaid)
+    refute_received {:drawing, _, _}
+  end
+
+  # Each request runs in a task of its own, so nothing says when the server has it: the
+  # test looks, a bounded number of times.
+  defp await_queued(mermaid, sources, attempts \\ 400) do
+    queued =
+      for {_, %{source: source}, _} <- :queue.to_list(:sys.get_state(mermaid).queued),
+          do: source
+
+    cond do
+      Enum.sort(queued) == sources -> :ok
+      attempts <= 0 -> flunk("queued #{inspect(queued)}, never #{inspect(sources)}")
+      true -> receive after: (5 -> await_queued(mermaid, sources, attempts - 1))
+    end
   end
 
   test "a request that raises is logged and still answered", %{port: port} do

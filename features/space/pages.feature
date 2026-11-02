@@ -346,3 +346,12 @@ Feature: Pages in a Space
       Given the page "Roadmap" is in the trash
       When the agent in "Work" adds the block "Agent note" to "Roadmap"
       Then the agent is refused
+
+    # https://github.com/hal-c2/hal-c2/issues/854
+    @backlog-tui
+    Scenario: An agent changes a heading's level
+      When the agent in "Work" adds the heading "Goals" to "Roadmap"
+      And the agent in "Work" makes "Goals" a level 4 heading
+      Then the heading "Goals" is of level 4
+      When the agent in "Work" makes "Ship it" a level 4 heading
+      Then the agent is refused

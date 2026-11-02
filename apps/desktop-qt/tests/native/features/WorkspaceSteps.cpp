@@ -629,7 +629,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("%1 opens %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QList<QJsonObject>& calls = world.mc.part<FakeGit>().editorCalls;
-    expect(!calls.isEmpty() && calls.last().value(QLatin1String("editor")) == editorId(c[0]) && calls.last().value(QLatin1String("cwd")) == c[1],
+    expect(!calls.isEmpty() && calls.last().value(QLatin1String("editor")) == editorId(c[0]) && calls.last().value(QLatin1String("cwd")).toString().endsWith(c[1]),
            QStringLiteral("the MC was asked %1").arg(calls.isEmpty() ? QStringLiteral("nothing") : QString::fromUtf8(QJsonDocument(calls.last()).toJson(QJsonDocument::Compact))));
   });
   step(QStringLiteral("%1 is the editor offered first").arg(q), [](World& world, const Captures& c, const Table&) {

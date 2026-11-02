@@ -67,9 +67,16 @@ defmodule HalC2.Web.Protocol do
         (a stream also takes "handle": the one its offset came with, and "window":
         {"items": n} to start with the newest runs holding n turn items or
         {"floor": f} to keep the window it has; the shell takes "have":
-        {mc: [epoch, rev]}, each MC's rows as the client holds them)
+        {mc: [epoch, rev]}, each MC's rows as the client holds them; a terminal takes
+        "acks": true, to answer with "ack" and have its output held back when it falls
+        behind)
       {"t": "more", "id": 1, "items": n}
         (a windowed stream: the runs before its floor holding n turn items, as a page)
+      {"t": "ack", "id": 1, "sequence": n}
+        (a terminal subscribed with "acks": the client has handled its snapshot and
+        output up to that sequence. Past `HalC2.Terminal.OutputWindow.limit/0`
+        unacknowledged bytes no output is sent; acknowledging all it was sent brings
+        a new snapshot, which replaces what it shows)
       {"t": "unsub", "id": 1}
       {"t": "ping"}
       {"t": "rpc", "id": 1, "environment": id, "method": m, "payload": ...}
@@ -116,6 +123,7 @@ defmodule HalC2.Web.Protocol do
       {"t": "terminal", "id", "event"}   (TerminalAttachStreamEvent)
       {"t": "terminals", "id", "event"}  (TerminalMetadataStreamEvent)
       {"t": "vcs", "id", "event"}        (VcsStatusStreamEvent)
+      {"t": "spacePresence", "id", "viewers"} (SpacePresenceStreamEvent)
       {"t": "gitAction", "id", "event"}  (GitActionProgressEvent)
       {"t": "providerAuth", "id", "state"} (ProviderAuthState)
       {"t": "providerInstall", "id", "state"} (ProviderInstallState)
@@ -168,6 +176,7 @@ defmodule HalC2.Web.Protocol do
           | {:unsub, integer}
           | {:rpc, integer, String.t(), String.t(), term}
           | :ping
+          | {:ack, integer, integer}
 
   @typedoc """
   Where a subscription continues from: a stream's `offset`, `handle`, `window`
@@ -190,7 +199,7 @@ defmodule HalC2.Web.Protocol do
   # starts a clone on any environment with a routed rpc and follows it there. A
   # plugin's UI parts follow the environment the plugin is installed on.
   @routed ~w(stream terminal terminals config vcs gitAction worktreeSetup providerAuth
-             pullRequestRefreshes projectClones plugins plugin)
+             pullRequestRefreshes projectClones plugins plugin spacePresence)
 
   @doc "The shape types a client may name by environment rather than MC."
   def routed, do: @routed
@@ -217,6 +226,10 @@ defmodule HalC2.Web.Protocol do
       %{"t" => "more", "id" => id, "items" => items}
       when is_integer(id) and is_integer(items) and items > 0 ->
         {:ok, {:more, id, items}}
+
+      %{"t" => "ack", "id" => id, "sequence" => sequence}
+      when is_integer(id) and is_integer(sequence) ->
+        {:ok, {:ack, id, sequence}}
 
       %{"t" => "unsub", "id" => id} when is_integer(id) ->
         {:ok, {:unsub, id}}
@@ -355,6 +368,11 @@ defmodule HalC2.Web.Protocol do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:worktree_setup, mc, id}}
   end
 
+  defp decode_shape(%{"type" => "spacePresence", "mc" => mc, "spaceId" => s, "pageId" => p}, mcs)
+       when is_binary(s) and is_binary(p) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:space_presence, mc, s, p}}
+  end
+
   defp decode_shape(%{"type" => "providerAuth", "mc" => mc, "instanceId" => id}, mcs)
        when is_binary(id) do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:provider_auth, mc, id}}
@@ -384,7 +402,8 @@ defmodule HalC2.Web.Protocol do
       handle: if(is_binary(msg["handle"]), do: msg["handle"]),
       window: window(msg["window"]),
       kinds: kinds(shape["kinds"]),
-      have: have(msg["have"])
+      have: have(msg["have"]),
+      acks: msg["acks"] == true
     }
   end
 

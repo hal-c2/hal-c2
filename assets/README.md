@@ -12,7 +12,7 @@ The three Icon Composer projects are the source of truth for full application ic
 
 Each project uses `text.svg` for the avatar (the mark centred in the 128pt layer box) and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
 
-Run `vp run icons:export` from the repository root to regenerate the tracked `*-universal-1024.png` beside each project: the Qt desktop's window icon (`prod`, via `apps/desktop-qt/CMakeLists.txt`) and its Linux desktop entry. Run `vp run icons:check` to verify that they match their sources without changing files.
+Run `vp run icons:export` from the repository root to regenerate the tracked `*-universal-1024.png` beside each project: the Qt desktop's window icon (`prod`, via `apps/desktop-qt/CMakeLists.txt`, and `dev` for a development shell, read from the checkout) and its Linux desktop entry. Run `vp run icons:check` to verify that they match their sources without changing files.
 
 Exporting requires Icon Composer 2 or newer on macOS. The script selects the newest compatible exporter from Xcode or a standalone Icon Composer installation and pins design generation 26. Set `ICON_COMPOSER_TOOL` to the full path of `Icon Composer.app/Contents/Executables/ictool` to override automatic discovery.
 

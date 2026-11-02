@@ -110,6 +110,7 @@ Feature: Delegating tasks to subagents
     When the agent in "parent" delegates a task with workspace "{'type':'worktree'}"
     Then the task ends "failed" with the result "Workspace preparation failed"
     And the subagent never ran
+    And retrying the subagent's setup is refused
 
   @mc
   Scenario: Cancelling a worktree's preparation ends the task
@@ -209,13 +210,16 @@ Feature: Delegating tasks to subagents
     And the message runs after the caller's active turn
     And the task delivery is "delivered"
 
+  # A caller's turn is woken at most twice for the tasks it started (below), so a
+  # completion that lands after the second wake has ended wakes nobody. Here the
+  # later two land while the caller is busy, and ride one wake.
   @mc
-  Scenario: Each later completion wakes the caller again
+  Scenario: Later completions that land while the caller works share its second wake
     Given the agent in "parent" delegated tasks "one", "two" and "three" without waiting
     And "parent" was woken for the completion of "one"
-    When "two" and "three" complete afterwards
+    When "two" and "three" complete afterwards, while "parent" works on another turn
     Then "parent" is woken again for them
-    And completions that arrive together may share one wake turn
+    And completions that arrive together share one wake turn
 
   @mc
   Scenario: A completion delivered twice wakes the caller once
@@ -346,6 +350,15 @@ Feature: Delegating tasks to subagents
     Given the agent in "parent" delegated a task that is still working
     When the agent cancels the task
     Then the subagent's turn is interrupted
+    And the task is cancelled and its delivery disposed
+
+  # The end of the interrupted turn would otherwise start it, for a task that is over.
+  @mc
+  Scenario: Cancelling a task cancels what its subagent has queued
+    Given the agent in "parent" delegated a task that is still working
+    And a message is queued behind the subagent's turn
+    When the agent cancels the task
+    Then the subagent's turn is interrupted and the message behind it cancelled
     And the task is cancelled and its delivery disposed
 
   @mc

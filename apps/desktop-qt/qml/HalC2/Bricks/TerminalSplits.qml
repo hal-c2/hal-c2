@@ -143,6 +143,9 @@ FocusScope {
                 property string platform: Qt.platform.os
 
                 objectName: "HalC2Terminal"
+                // What the TapHandlers below do with a click on a link.
+                Accessible.role: Accessible.Terminal
+                Accessible.name: macModifiers ? qsTr("Terminal: Cmd-click a link to open it") : qsTr("Terminal: Ctrl-click a link to open it")
                 // Qt calls macOS's Cmd Control and its Ctrl Meta; programs get the real keys.
                 macModifiers: platform === "osx" || platform === "macos"
                 cursorBlink: !Terminals.reduceMotion

@@ -177,6 +177,7 @@ defmodule HalC2.Rpc do
   def handle("device.action", input), do: HalC2.Devices.action(input)
   def handle("slack." <> method, input), do: HalC2.Slack.handle(method, input)
   def handle("space." <> method, input), do: HalC2.Space.Rpc.handle(method, input)
+  def handle("mermaid.render", input), do: HalC2.Mermaid.handle(input)
   def handle("scheduledTasks.list", input), do: HalC2.ScheduledTasks.list(input)
   def handle("scheduledTasks.upsert", input), do: HalC2.ScheduledTasks.upsert(input)
   def handle("scheduledTasks.delete", input), do: HalC2.ScheduledTasks.delete(input)
@@ -198,6 +199,7 @@ defmodule HalC2.Rpc do
   def handle("attachments.delete", input), do: HalC2.Attachments.delete(input)
   def handle("assets.createUrl", input), do: HalC2.Attachments.create_url(input)
   def handle("worktreeSetup.cancel", input), do: HalC2.WorktreeSetup.cancel(input)
+  def handle("worktreeSetup.retry", input), do: HalC2.WorktreeSetup.retry(input)
   def handle("assets.persistChatAttachments", input), do: HalC2.Attachments.persist(input)
   def handle("projects.listEntries", input), do: HalC2.Workspace.list_entries(input)
   def handle("projects.readFile", input), do: HalC2.Workspace.read_file(input)
@@ -357,7 +359,8 @@ defmodule HalC2.Rpc do
     projects.searchContents projects.searchEntries filesystem.browse files.localPath
     agentSessions.scan
     assets.createUrl vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
-    slack.status slack.manifest space.list space.page.exportMarkdown
+    slack.status slack.manifest space.list space.files.list space.page.exportMarkdown space.page.history
+    space.page.version space.image.providers mermaid.render
   )
   @pull_request_writes ~w(
     runAction update comment updateComment submitReview replyToThread setThreadResolution
@@ -377,6 +380,9 @@ defmodule HalC2.Rpc do
       do: "terminal:operate",
       else: required_scope("projects.writeFile")
   end
+
+  # Publishing over Tailscale opens the whole MC to the tailnet, as a pairing link there does.
+  def required_scope("space.page.publish", %{"tailscale" => true}), do: "access:write"
 
   def required_scope(method, _payload), do: required_scope(method)
 

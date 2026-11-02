@@ -258,25 +258,50 @@ Feature: Appearance
         | 1.4.0                     | Alpha   |
         | 1.4.0-nightly.3           | Alpha   |
 
-    @backlog @desktop
-    Scenario: A development build is identified as Dev
+    @desktop
+    Scenario Outline: A development build is identified as Dev
       Given the app's own stage is "Dev"
-      And environment identification is set to "Version pill"
-      When the user looks at the app
-      Then the app shows a Dev version pill
+      When the user sets environment identification to "<mode>"
+      Then <outcome>
 
-    @backlog @desktop
+      Examples:
+        | mode         | outcome                                 |
+        | Artwork      | the app shows "DEV" by the wordmark     |
+        | Version pill | the app shows a Dev version pill        |
+        | None         | the app shows no environment marker     |
+
+    # A rice's sidebar can leave off the brand band (Sidebar.showBrand); the
+    # stage moves above the list then.
+    @desktop @mobile @backlog-mobile
+    Scenario Outline: A shell without the brand band still shows which build it is
+      Given the app's own stage is "Dev"
+      And the user's shell leaves off the sidebar's brand band
+      When the user sets environment identification to "<mode>"
+      Then <outcome>
+
+      Examples:
+        | mode         | outcome                                    |
+        | Artwork      | the sidebar shows a "Dev" pill above the list |
+        | Version pill | the sidebar shows a "Dev" pill above the list |
+        | None         | the sidebar shows no stage above the list  |
+
+    @desktop
     Scenario Outline: The app's name carries its stage unless it is the latest release
       Given the app's stage is "<stage>"
       When the user looks at the app's name
-      Then it reads "<name>"
+      Then the app's name reads "<name>"
 
       Examples:
         | stage   | name              |
         | Latest  | HAL-C2            |
         | Nightly | HAL-C2 (Nightly)  |
-        | Alpha   | HAL-C2 (Alpha)    |
         | Dev     | HAL-C2 (Dev)      |
+
+      # The desktop has no Alpha stage of its own yet.
+      @backlog
+      Examples: Not yet on the desktop
+        | stage   | name              |
+        | Alpha   | HAL-C2 (Alpha)    |
 
     # The hosted web app's channel is a browser-tab concern (apps/web/src/branding.ts,
     # VITE_HOSTED_APP_CHANNEL); the Qt desktop has no hosted build.

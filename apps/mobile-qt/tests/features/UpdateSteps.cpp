@@ -300,7 +300,11 @@ const Steps steps([] {
     world.mc.descriptors.insert(kOwn, descriptor);
     world.mc.announceEnvironment();
   });
-  step(S("the user is told %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) { awaitText(world, S("maintenanceOutcome-") + kOwn, c[0]); });
+  step(S("the user is told %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    // What a viewer open over everything says (FilesSteps.cpp), or how an update went.
+    if (world.state(S("attachmentViewer")).toMap().isEmpty()) return awaitText(world, S("maintenanceOutcome-") + kOwn, c[0]);
+    world.waitFor([&] { return world.shows(c[0], false); }, [&] { return S("\"%1\"; the screen says: %2").arg(c[0], world.texts().join(S(" | "))); });
+  });
   step(S("the update of %1 can be started again").arg(kQuoted), [](World& world, const Captures&, const Table&) {
     FakeUpdates& fake = world.mc.part<FakeUpdates>();
     fake.staysBehind = false;

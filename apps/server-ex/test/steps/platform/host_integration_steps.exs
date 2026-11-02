@@ -145,11 +145,15 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   defp server_config(context) do
     Mc.ensure(HalC2.Settings)
 
+    read_config(context, 9)
+  end
+
+  defp read_config(context, id) do
     client =
       World.client(context)
-      |> Mc.sub(9, %{"type" => "config", "environment" => context.mc.environment})
+      |> Mc.sub(id, %{"type" => "config", "environment" => context.mc.environment})
 
-    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 9))
+    {frame, client} = Mc.await_config(client, id)
     context |> World.put_client(client) |> Map.put(:server_config, frame["config"])
   end
 
@@ -384,14 +388,9 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   step "a client reads the MC's server config a second time", context do
-    context = Map.put(context, :queries_after_first, registry_queries(context))
-
-    client =
-      World.client(context)
-      |> Mc.sub(10, %{"type" => "config", "environment" => context.mc.environment})
-
-    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 10))
-    context |> World.put_client(client) |> Map.put(:server_config, frame["config"])
+    context
+    |> Map.put(:queries_after_first, registry_queries(context))
+    |> read_config(10)
   end
 
   step "the registry was not queried again", context do
@@ -519,6 +518,51 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   step "the host's xdg-mime never answers", context do
     context |> with_display() |> install_script("xdg-mime", "exec sleep 30") |> install("gio")
   end
+
+  step "the host's codex never answers", context do
+    World.put_app_env(:codex_version_retry_ms, 0)
+    hung_codex(context)
+  end
+
+  step "the host's codex never answers, and a minute has not passed since it was asked",
+       context do
+    hung_codex(context)
+  end
+
+  step "codex was asked for its version once", context do
+    assert File.read!(context.codex_log) |> String.split("\n", trim: true) == ["--version"]
+    context
+  end
+
+  # A codex that notes each run in `codex_log`, then hangs.
+  defp hung_codex(context) do
+    World.put_app_env(:codex_version_timeout_ms, 300)
+    context = bin(context)
+    log = Path.join(context.bin, "codex.log")
+    install_script(context, "codex", ~s(echo "$*" >> "#{log}"\nexec sleep 30))
+    Map.put(context, :codex_log, log)
+  end
+
+  step "Codex is listed with an unknown version", context do
+    assert codex_entry(context)["version"] == "unknown"
+    context
+  end
+
+  step "the host's codex answers with version {string}", %{args: [version]} = context do
+    install_script(context, "codex", "echo codex-cli #{version}")
+  end
+
+  step "a client reads the MC's server config again", context do
+    read_config(context, 11)
+  end
+
+  step "Codex is listed with version {string}", %{args: [version]} = context do
+    assert codex_entry(context)["version"] == version
+    context
+  end
+
+  defp codex_entry(context),
+    do: Enum.find(context.server_config["providers"], &(&1["instanceId"] == "codex"))
 
   step "the default editor is listed first", context do
     assert hd(context.server_config["availableEditors"]) == "default"

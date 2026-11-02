@@ -65,6 +65,29 @@ Rectangle {
         flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
     }
 
+    // Tab can focus a control below the fold; it is scrolled into view so
+    // it is never used unseen.
+    readonly property Item focusedItem: Window.activeFocusItem
+
+    function revealFocus(item) {
+        let inside = item;
+        while (inside !== null && inside !== column)
+            inside = inside.parent;
+        if (inside === null) return;
+        const top = item.mapToItem(flick.contentItem, 0, 0).y;
+        const bottom = top + item.height;
+        let y = flick.contentY;
+        if (top < y + 12 || bottom - top > flick.height - 24)
+            y = top - 12;
+        else if (bottom > y + flick.height - 12)
+            y = bottom - flick.height + 12;
+        else
+            return;
+        following = false;
+        flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
+    }
+
+    onFocusedItemChanged: if (focusedItem !== null) revealFocus(focusedItem)
     onTargetSeqChanged: Qt.callLater(reveal)
     Component.onCompleted: Qt.callLater(reveal)
     color: Theme.palette.color("canvas", "#0b0b0d")

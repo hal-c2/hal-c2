@@ -12,12 +12,17 @@ ScanScreen 1.0 ScanScreen.qml
 SettingsScreen 1.0 SettingsScreen.qml
 SpaceBlockRow 1.0 SpaceBlockRow.qml
 SpaceCommentsView 1.0 SpaceCommentsView.qml
+SpaceDeckView 1.0 SpaceDeckView.qml
+SpaceHistoryView 1.0 SpaceHistoryView.qml
 SpaceListRow 1.0 SpaceListRow.qml
 SpacePageView 1.0 SpacePageView.qml
+SpaceImagesView 1.0 SpaceImagesView.qml
 SpacePagesView 1.0 SpacePagesView.qml
 SpaceScreen 1.0 SpaceScreen.qml
 SpaceSheet 1.0 SpaceSheet.qml
+SpaceSlideRow 1.0 SpaceSlideRow.qml
 SpaceTextDialog 1.0 SpaceTextDialog.qml
+SpaceVersionScreen 1.0 SpaceVersionScreen.qml
 TerminalContextSheet 1.0 TerminalContextSheet.qml
 TerminalScreen 1.0 TerminalScreen.qml
 ThreadScreen 1.0 ThreadScreen.qml

@@ -12,7 +12,7 @@ ColumnLayout {
 
     readonly property var scope: Shell.state.settingsScope ?? null
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color warning: Theme.palette.color("warning", "#fbbf24")
+    readonly property color warning: Theme.palette.color("warningForeground", "#fbbf24")
 
     objectName: "settingsScope"
     Layout.fillWidth: true

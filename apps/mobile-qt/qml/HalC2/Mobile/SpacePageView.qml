@@ -6,14 +6,18 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// The open page: its blocks, the way to add one, its comments and what can be
-// done with it. A page in the trash is only read, and says so.
+// The open page: its update, its blocks, the way to add one, its comments and
+// what can be done with it. A page in the trash is only read, and says so.
 ColumnLayout {
     id: view
 
     required property Item screen
     readonly property var page: Spaces.page ?? ({})
     readonly property bool trashed: page.trashed === true
+    readonly property var site: page.site ?? ({})
+    readonly property string siteUrl: site.url ?? ""
+    // The project file the page is, or nothing.
+    readonly property var file: page.file ?? ({})
     // The row being written in, kept above the keyboard.
     property SpaceBlockRow editing: null
 
@@ -50,8 +54,15 @@ ColumnLayout {
             objectName: "spacePageActions"
             iconName: "ellipsis"
             label: qsTr("Page actions")
-            onClicked: view.trashed ? view.screen.trashMenu(Spaces.pageId) : view.screen.pageMenu(Spaces.pageId, view.page.title, view.page.parentPageId ?? "")
+            onClicked: view.trashed ? view.screen.trashMenu(Spaces.pageId) : view.screen.pageMenu(Spaces.pageId, view.page.title, view.page.parentPageId ?? "", view.site)
         }
+    }
+
+    SpaceViewers {
+        Layout.fillWidth: true
+        Layout.leftMargin: 16
+        Layout.rightMargin: 16
+        Layout.topMargin: 4
     }
 
     ListView {
@@ -84,6 +95,76 @@ ColumnLayout {
                 font.pixelSize: Math.round(13 * Theme.fontScale)
             }
 
+            // The project file the page is: where it is, and that it is gone or won over an edit.
+            ColumnLayout {
+                objectName: "spacePageFile"
+                Layout.fillWidth: true
+                Layout.margins: 16
+                Layout.bottomMargin: 4
+                visible: (view.file.path ?? "") !== ""
+                spacing: 4
+
+                Label {
+                    objectName: "spacePageFilePath"
+                    Layout.fillWidth: true
+                    elide: Text.ElideMiddle
+                    text: qsTr("The file %1 of %2").arg(view.file.path ?? "").arg(view.file.projectTitle ?? "")
+                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Label {
+                    objectName: "spacePageFileGone"
+                    Layout.fillWidth: true
+                    visible: view.file.missing === true
+                    wrapMode: Text.Wrap
+                    text: view.file.unwritten === true
+                        ? qsTr("The file is gone, and edits made since are on the page only. If the file comes back, it wins, and those edits stay in the page's history.")
+                        : qsTr("The file is gone. The page keeps what it last said; stop following the file to keep it as an ordinary page.")
+                    color: Theme.palette.color("warning", "#f59e0b")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Label {
+                    objectName: "spacePageFileConflict"
+                    Layout.fillWidth: true
+                    visible: (view.file.conflictAt ?? "") !== ""
+                    wrapMode: Text.Wrap
+                    text: qsTr("The file changed while you were editing, and the page now shows the file. Your edit is in the page's history.")
+                    color: Theme.palette.color("warning", "#f59e0b")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 4
+
+                    MobileButton {
+                        objectName: "spacePageFileShow"
+                        subtle: true
+                        visible: view.file.missing !== true
+                        text: qsTr("Show file")
+                        onClicked: Shell.dispatch("space.page.showFile", { pageId: Spaces.pageId })
+                    }
+
+                    MobileButton {
+                        objectName: "spacePageFileHistory"
+                        subtle: true
+                        visible: (view.file.conflictAt ?? "") !== ""
+                        text: qsTr("History")
+                        onClicked: view.screen.showHistory(Spaces.pageId)
+                    }
+                }
+            }
+
+            SpaceAgentStrip {
+                Layout.fillWidth: true
+                Layout.margins: 16
+                Layout.bottomMargin: 4
+                buttonHeight: 44
+                onHistoryRequested: view.screen.showHistory(Spaces.pageId)
+            }
+
             Label {
                 objectName: "spaceTrashedNotice"
                 Layout.fillWidth: true
@@ -95,6 +176,88 @@ ColumnLayout {
                 color: Theme.palette.color("error", "#ef4444")
                 font.pixelSize: Math.round(13 * Theme.fontScale)
             }
+
+            // Its actions are in the page's menu, a finger wide.
+            SpacePageUpdate {
+                Layout.fillWidth: true
+                Layout.margins: 12
+                Layout.bottomMargin: 4
+                actions: false
+            }
+
+            // The page's site: where it is, whether it is behind the page, and the ways on and back.
+            ColumnLayout {
+                objectName: "spaceSiteNotice"
+                Layout.fillWidth: true
+                Layout.margins: 16
+                Layout.bottomMargin: 4
+                visible: view.siteUrl !== ""
+                spacing: 4
+
+                Label {
+                    objectName: "spaceSiteStatus"
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    text: view.site.behind === true
+                        ? qsTr("Published. This page has changes the site does not show until you publish again.")
+                        : qsTr("Published. The site shows this page as it is now.")
+                    color: Theme.palette.color("text", "#e4e4e7")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Label {
+                    objectName: "spaceSiteLink"
+                    Layout.fillWidth: true
+                    elide: Text.ElideMiddle
+                    text: view.siteUrl
+                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Label {
+                    objectName: "spaceSiteLocalOnly"
+                    Layout.fillWidth: true
+                    visible: view.site.localOnly === true
+                    wrapMode: Text.Wrap
+                    text: qsTr("Only this machine can open this link: the MC listens on loopback.")
+                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 4
+
+                    MobileButton {
+                        objectName: "spaceSiteCopy"
+                        subtle: true
+                        text: qsTr("Copy link")
+                        onClicked: Shell.dispatch("space.page.copySiteLink", { pageId: Spaces.pageId })
+                    }
+
+                    MobileButton {
+                        objectName: "spaceSiteRepublish"
+                        subtle: true
+                        text: qsTr("Publish again")
+                        onClicked: Shell.dispatch("space.page.publish", { pageId: Spaces.pageId })
+                    }
+
+                    MobileButton {
+                        objectName: "spaceSiteUnpublish"
+                        subtle: true
+                        text: qsTr("Unpublish")
+                        onClicked: Shell.dispatch("space.page.unpublish", { pageId: Spaces.pageId })
+                    }
+
+                    MobileButton {
+                        objectName: "spaceSiteTailscale"
+                        visible: view.site.localOnly === true
+                        subtle: true
+                        text: qsTr("Publish over Tailscale")
+                        onClicked: Shell.dispatch("space.page.publish", { pageId: Spaces.pageId, tailscale: true })
+                    }
+                }
+            }
         }
 
         delegate: SpaceBlockRow {
@@ -102,6 +265,7 @@ ColumnLayout {
 
             width: ListView.view.width
             readOnly: view.trashed
+            onScreen: view.visible
             onEditingChanged: {
                 if (editing) {
                     view.editing = blockRow;
@@ -110,7 +274,7 @@ ColumnLayout {
                     view.editing = null;
                 }
             }
-            onMenuRequested: view.screen.blockMenu(blockRow.index, blockRow.blockId, blockRow.text)
+            onMenuRequested: view.screen.blockMenu(blockRow.index, blockRow.blockId, blockRow.text, blockRow.kind === "chart" ? blockRow.chart.request : undefined)
             onLinkOpened: view.screen.openPage(blockRow.linkedPageId)
             onCommentsRequested: view.screen.showComments(blockRow.blockId)
         }
@@ -141,5 +305,15 @@ ColumnLayout {
                 onClicked: view.screen.addBlockMenu(undefined)
             }
         }
+    }
+
+    Label {
+        objectName: "spaceDrawing"
+        Layout.fillWidth: true
+        Layout.margins: 12
+        visible: Shell.state.space?.drawing === true
+        text: qsTr("Drawing a chart…")
+        color: Theme.palette.color("textMuted", "#a1a1aa")
+        font.pixelSize: Math.round(13 * Theme.fontScale)
     }
 }

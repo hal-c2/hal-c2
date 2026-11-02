@@ -1,13 +1,7 @@
 # Pure-QML bricks. The qmldir is hand-written (no `prefer` line) so the same
 # directory works both compiled into the binary and as a disk import path for
 # hot reload.
-qt_add_qml_module(hal_c2_bricks
-  URI HalC2.Bricks
-  VERSION 1.0
-  STATIC
-  NO_GENERATE_QMLDIR
-  NO_PLUGIN_OPTIONAL
-  QML_FILES
+set(hal_c2_bricks_qml_files
     ClusterSettings.qml
     ConnectionsSettings.qml
     LoadBalancingGroup.qml
@@ -16,6 +10,7 @@ qt_add_qml_module(hal_c2_bricks
     ModelPicker.qml
     ProviderIcon.qml
     ComposerVimKeys.qml
+    ConversationDrop.qml
     ProjectFolderDrop.qml
     FolderExplorer.qml
     FolderOperationDialog.qml
@@ -54,6 +49,7 @@ qt_add_qml_module(hal_c2_bricks
     DesktopUpdateSettings.qml
     SidebarThreadRow.qml
     HalC2Wordmark.qml
+    StagePill.qml
     KeybindingsSettings.qml
     TerminalDrawer.qml
     TitleBar.qml
@@ -86,6 +82,9 @@ qt_add_qml_module(hal_c2_bricks
     FilesPanel.qml
     FileEntryMenu.qml
     AttachmentViewer.qml
+    DocumentView.qml
+    MediaPlayerView.qml
+    ImageViewer.qml
     FilePathTrail.qml
     ProjectActionEditor.qml
     ProjectIcon.qml
@@ -104,11 +103,13 @@ qt_add_qml_module(hal_c2_bricks
     js/panelTabs.js
     js/terminalLinks.js
     js/scheduledTasks.js
+    js/spaceChart.js
     js/usageChart.js
     RevertDialog.qml
     TerminalSplits.qml
     TerminalMenu.qml
     TerminalScrollbar.qml
+    TextEditMenu.qml
     Plugin.qml
     Contribution.qml
     PluginSlot.qml
@@ -131,7 +132,9 @@ qt_add_qml_module(hal_c2_bricks
     ThreadDetailsPanel.qml
     CommandPalette.qml
     PullRequestsPage.qml HomePage.qml UsagePage.qml UsageChart.qml
-    SpaceWorkspace.qml SpaceSidebar.qml SpacePage.qml SpaceBlock.qml SpaceSlashMenu.qml SpaceComments.qml
+    SpaceWorkspace.qml SpaceSidebar.qml SpacePage.qml SpaceAgentStrip.qml SpaceViewers.qml SpaceBlock.qml SpaceSlashMenu.qml SpaceComments.qml SpaceBlockImage.qml SpaceImages.qml SpaceImageDialog.qml SpaceFilePicker.qml
+    SpaceDeck.qml SpacePresenter.qml
+    SpaceChart.qml SpaceHistoryPanel.qml SpacePageUpdate.qml SpaceUpdateDialog.qml SpaceVersionView.qml
     ProvidersSettings.qml
     ProviderAuthTerminal.qml
     ProviderCustomModels.qml
@@ -155,8 +158,10 @@ qt_add_qml_module(hal_c2_bricks
     OnboardingTerminal.qml
     SnapShotSettings.qml
     Markdown.qml
+    MermaidDiagram.qml
     js/markdown.js
-  RESOURCES
+)
+set(hal_c2_bricks_resources
     qmldir
     plugin/Text.qml
     icons/antigravity.png
@@ -164,4 +169,17 @@ qt_add_qml_module(hal_c2_bricks
     models/phone.glb
     models/tablet.glb
     models/tablet-keyboard.glb
+)
+include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/QmldirCheck.cmake")
+hal_c2_check_qmldir(${hal_c2_bricks_qml_files} ${hal_c2_bricks_resources})
+qt_add_qml_module(hal_c2_bricks
+  URI HalC2.Bricks
+  VERSION 1.0
+  STATIC
+  NO_GENERATE_QMLDIR
+  NO_PLUGIN_OPTIONAL
+  QML_FILES
+    ${hal_c2_bricks_qml_files}
+  RESOURCES
+    ${hal_c2_bricks_resources}
 )

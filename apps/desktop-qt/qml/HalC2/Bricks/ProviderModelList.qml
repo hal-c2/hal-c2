@@ -38,6 +38,7 @@ ColumnLayout {
             objectName: "modelSummary"
             Layout.fillWidth: true
             text: list.provider.modelSummary ?? ""
+            wrapMode: Text.Wrap
             color: Theme.palette.color("textMuted", "#a1a1aa")
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }

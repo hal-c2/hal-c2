@@ -24,6 +24,11 @@ defmodule HalC2.TerminalTest do
       history = Enum.reduce(1..5, history, &History.append(&2, "line #{&1}\n"))
       assert History.value(history) == "line 3\nline 4\nline 5\n"
 
+      # A line that arrived in two chunks is kept whole when the first chunk is cut.
+      history = History.new("", max_lines: 2, max_bytes: 1_000)
+      history = Enum.reduce(["a\nb", "c\n", "d\n"], history, &History.append(&2, &1))
+      assert History.value(history) == "bc\nd\n"
+
       history = History.new("", max_lines: 100, max_bytes: 8)
       history = History.append(history, "ab€cdefgh")
       # Never cuts through a character.
@@ -58,6 +63,42 @@ defmodule HalC2.TerminalTest do
 
       start_supervised!(HalC2.Terminal.Hub)
       %{input: %{"threadId" => "thread-1", "terminalId" => "term-1", "cwd" => dir}}
+    end
+
+    test "a terminal id too long for a file name keeps its saved scrollback" do
+      long = String.duplicate("x", 200)
+      emoji = String.duplicate("🦀", 128)
+
+      for id <- [long, emoji], do: Terminal.put_scrollback("thread-1", id, "from #{id}\n")
+      Terminal.put_scrollback("thread-1", "term-1", "short\n")
+      Terminal.put_scrollback(long, "term-1", "long thread\n")
+
+      assert Enum.sort(Terminal.saved_scrollback("thread-1")) ==
+               Enum.sort([
+                 {long, "from #{long}\n"},
+                 {emoji, "from #{emoji}\n"},
+                 {"term-1", "short\n"}
+               ])
+
+      assert Terminal.saved_scrollback(long) == [{"term-1", "long thread\n"}]
+      assert {:ok, %{"terminalIds" => ids}} = Terminal.list(%{"threadId" => "thread-1"})
+      assert Enum.sort(ids) == Enum.sort([long, emoji, "term-1"])
+
+      Terminal.close(%{"threadId" => "thread-1", "terminalId" => long, "deleteHistory" => true})
+      refute List.keymember?(Terminal.saved_scrollback("thread-1"), long, 0)
+
+      Terminal.close(%{"threadId" => "thread-1", "deleteHistory" => true})
+      assert Terminal.saved_scrollback("thread-1") == []
+      assert Terminal.saved_scrollback(long) == [{"term-1", "long thread\n"}]
+    end
+
+    test "deleting the history of a terminal whose id is * leaves its siblings alone" do
+      Terminal.put_scrollback("thread-1", "*", "star\n")
+      Terminal.put_scrollback("thread-1", "term-1", "sibling\n")
+
+      Terminal.close(%{"threadId" => "thread-1", "terminalId" => "*", "deleteHistory" => true})
+
+      assert Terminal.saved_scrollback("thread-1") == [{"term-1", "sibling\n"}]
     end
 
     test "a state from before the attach capture gains its field on upgrade" do
@@ -130,7 +171,7 @@ defmodule HalC2.TerminalTest do
 
       # Opening an exited terminal starts a fresh shell.
       assert {:ok, %{"status" => "running"}} = Terminal.open(input)
-      assert_receive {:hal_c2_terminal, _, %{"type" => "snapshot"}}
+      assert_receive {:hal_c2_terminal, _, %{"type" => "restarted"}}
     end
 
     test "scrollback survives the terminal closing, unless deleted", %{input: input} do
@@ -149,6 +190,81 @@ defmodule HalC2.TerminalTest do
 
       {:ok, nil} = Terminal.close(Map.put(input, "deleteHistory", true))
       assert {:ok, %{"history" => ""}} = Terminal.open(input)
+    end
+
+    test "unreadable settings refuse a provider's terminal until they can be read",
+         %{input: input} do
+      settings = Path.join(HalC2.Paths.config_dir(), "settings.json")
+      File.mkdir_p!(Path.dirname(settings))
+      File.write!(settings, "{not json")
+      server = start_supervised!(HalC2.Settings)
+
+      for id <- ~w(codex work) do
+        assert {:error, %{"_tag" => "TerminalProviderEnvironmentError", "message" => message}} =
+                 Terminal.open(Map.put(input, "providerInstanceId", id))
+
+        assert message =~ "settings.json cannot be read"
+        assert Terminal.running("thread-1") == []
+      end
+
+      codex = Map.put(input, "providerInstanceId", "codex")
+
+      assert {:error, %{"_tag" => "TerminalProviderEnvironmentError"}} =
+               Terminal.restart(codex)
+
+      assert {:error, %{"_tag" => "TerminalProviderEnvironmentError"}} =
+               Terminal.attach(codex, self())
+
+      assert Terminal.running("thread-1") == []
+
+      # A terminal that names no provider needs nothing from them, and a client can
+      # come back to a live shell whatever it names.
+      assert {:ok, %{"pid" => shell}} = Terminal.open(input)
+      assert {:ok, %{"pid" => ^shell}} = Terminal.attach(codex, self())
+
+      # A shell that ended is not started again without the instance's variables.
+      {:ok, nil} = Terminal.write(Map.put(input, "data", "exit 3\n"))
+      assert_receive {:hal_c2_terminal, _, %{"type" => "exited", "exitCode" => 3}}, 5_000
+
+      assert {:ok, %{"status" => "exited", "pid" => nil}} =
+               Terminal.attach(Map.put(codex, "restartIfNotRunning", true), self())
+
+      {:ok, nil} = Terminal.close(input)
+
+      File.write!(settings, "{}")
+      send(server, :check)
+      _ = :sys.get_state(server)
+
+      assert {:ok, _} = Terminal.open(Map.put(input, "providerInstanceId", "codex"))
+    end
+
+    test "a settings file that could not be read at all stops refusing once removed",
+         %{input: input} do
+      settings = Path.join(HalC2.Paths.config_dir(), "settings.json")
+      File.mkdir_p!(settings)
+      server = start_supervised!(HalC2.Settings)
+      codex = Map.put(input, "providerInstanceId", "codex")
+
+      assert {:error, %{"_tag" => "TerminalProviderEnvironmentError"}} = Terminal.open(codex)
+
+      File.rmdir!(settings)
+      send(server, :check)
+      _ = :sys.get_state(server)
+
+      assert {:ok, _} = Terminal.open(codex)
+    end
+
+    test "settings that break while running keep the last document's terminals",
+         %{input: input} do
+      settings = Path.join(HalC2.Paths.config_dir(), "settings.json")
+      server = start_supervised!(HalC2.Settings)
+      {:ok, _} = HalC2.Settings.update(&Map.put(&1, "nativeSubagents", "provider"))
+
+      File.write!(settings, "{not json")
+      send(server, :check)
+      _ = :sys.get_state(server)
+
+      assert {:ok, _} = Terminal.open(Map.put(input, "providerInstanceId", "codex"))
     end
 
     test "a provider instance's shell has its variables and home, and an unknown one is refused",

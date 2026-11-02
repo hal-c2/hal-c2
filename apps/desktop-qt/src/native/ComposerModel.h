@@ -125,6 +125,8 @@ QList<Suggestion> pathItems(const QList<std::pair<QString, bool>>& entries);
 QString pathLink(const QString& path);
 // The text the empty menu shows for the trigger.
 QString emptyText(const QString& kind);
+// What the @ menu says when its search could not run, which is not "no match".
+QString pathSearchUnavailableText();
 
 // How well a value matches a query: lower is better, nothing is no match.
 std::optional<int> scoreQueryMatch(const QString& value, const QString& query, int exactBase, int prefixBase,

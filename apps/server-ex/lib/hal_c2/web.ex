@@ -10,7 +10,7 @@ defmodule HalC2.Web do
     _ = token()
 
     [
-      plug: HalC2.Web.Router,
+      plug: HalC2.Web.Entry,
       ip: ip,
       port: port,
       startup_log: false,
@@ -51,7 +51,8 @@ defmodule HalC2.Web do
   `"baseUrl"` when the caller names one, else with `"tailscale" => true` this MC's
   Tailscale Serve name (published if need be, on the MC's own port number when
   something else holds HTTPS 443, `{:error, {:tailscale, message}}` when it cannot be),
-  else the address the MC listens on. `localOnly` says only this machine can reach it.
+  else the address the MC listens on, or a network address of this machine when it
+  listens on every interface. `localOnly` says only this machine can reach it.
   """
   @spec address(map) :: {:ok, map} | {:error, {:tailscale, String.t()}}
   def address(input \\ %{})
@@ -66,19 +67,49 @@ defmodule HalC2.Web do
     end
   end
 
-  # An MC listening on every interface is reached at the address it reports to members.
+  # An MC listening on every interface is reached at the network address of this machine
+  # that others most likely share.
   def address(_input) do
-    wildcard? = Application.get_env(:hal_c2, :host, "127.0.0.1") in ["0.0.0.0", "::"]
-
-    with true <- wildcard?,
-         %{"clustered" => true, "addresses" => [address | _]} <- HalC2.Cluster.status(),
-         [ip | _] <- String.split(address, ":"),
-         false <- String.starts_with?(ip, "127.") do
-      {:ok, reached_at("http://#{ip}:#{port()}")}
+    if Application.get_env(:hal_c2, :host, "127.0.0.1") in ["0.0.0.0", "::"] do
+      case network_ip(:inet.getifaddrs()) do
+        nil -> {:ok, reached_at(base_url())}
+        ip -> {:ok, reached_at("http://#{ip}:#{port()}")}
+      end
     else
-      _ -> {:ok, reached_at(base_url())}
+      {:ok, reached_at(base_url())}
     end
   end
+
+  @virtual_interfaces ~w(docker br- virbr veth vmnet vboxnet podman cni lxcbr lxdbr bridge
+                         flannel kube- cilium incusbr mpqemubr)
+
+  @doc """
+  The IPv4 address of an interface that is up and running in `:inet.getifaddrs/0`'s answer, not
+  loopback, link-local or a bridge for this machine's containers and VMs, which nobody
+  else can reach: a home or office network first, a tailnet or public address last.
+  """
+  def network_ip({:ok, interfaces}) do
+    ips =
+      for {name, opts} <- interfaces,
+          not String.starts_with?(to_string(name), @virtual_interfaces),
+          flags = Keyword.get(opts, :flags, []),
+          :up in flags and :running in flags,
+          {:addr, {a, b, _, _} = ip} <- opts,
+          a != 127 and {a, b} != {169, 254},
+          do: ip
+
+    case Enum.sort_by(ips, &network_rank/1) do
+      [ip | _] -> List.to_string(:inet.ntoa(ip))
+      [] -> nil
+    end
+  end
+
+  def network_ip(_), do: nil
+
+  defp network_rank({192, 168, _, _}), do: 0
+  defp network_rank({10, _, _, _}), do: 1
+  defp network_rank({172, b, _, _}) when b in 16..31, do: 2
+  defp network_rank(_), do: 3
 
   defp reached_at(base),
     do: %{"address" => base, "localOnly" => loopback?(URI.parse(base).host)}

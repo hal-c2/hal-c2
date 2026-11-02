@@ -72,6 +72,9 @@ add_executable(tst_Features
   ../src/Pairing.h
   "${_harness}/FakeMc.cpp"
   "${_harness}/FakeMc.h"
+  "${_harness}/FakeFiles.cpp"
+  "${_harness}/FakeFiles.h"
+  "${_harness}/MediaFixtures.h"
   "${_harness}/Harness.h"
   "${_harness}/Runner.cpp"
   "${_harness}/Runner.h"

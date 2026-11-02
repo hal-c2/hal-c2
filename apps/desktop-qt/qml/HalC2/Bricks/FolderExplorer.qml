@@ -217,7 +217,7 @@ Pane {
             Layout.fillWidth: true
             visible: folders.error.length > 0 || explorer.statusText.length > 0
             text: folders.error.length > 0 ? folders.error : explorer.statusText
-            color: folders.error.length > 0 ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("textMuted", "#a1a1aa")
+            color: folders.error.length > 0 ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("textMuted", "#a1a1aa")
             wrapMode: Text.Wrap
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }

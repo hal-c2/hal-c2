@@ -176,6 +176,34 @@ defmodule HalC2.TerminalRaceTest do
     assert gone?(os_pid)
   end
 
+  # hal-c2/hal-c2#100: erlexec's own SIGKILL escalation runs in the loop that also reads
+  # its children's output, so a neighbour that keeps printing starves it, and a shell that
+  # ignores SIGTERM outlived the restart that replaced it.
+  test "a shell that ignores the stop request is gone when the restart returns, next to a busy neighbour",
+       %{input: input, tmp_dir: dir} do
+    System.put_env("SHELL", "/bin/sh")
+    busy = %{input | "terminalId" => "busy"}
+    {:ok, _} = Terminal.open(busy)
+    {:ok, _} = Terminal.attach(busy, self())
+
+    {:ok, nil} =
+      Terminal.write(Map.put(busy, "data", "while :; do echo tick; sleep 0.02; done\n"))
+
+    receive_until("tick\r\n")
+
+    stubborn = Path.join(dir, "stubborn")
+    File.write!(stubborn, "#!/bin/sh\ntrap '' TERM\necho ready\nwhile :; do sleep 0.1; done\n")
+    File.chmod!(stubborn, 0o755)
+    System.put_env("SHELL", stubborn)
+    {:ok, %{"pid" => old}} = Terminal.open(input)
+    {:ok, _} = Terminal.attach(input, self())
+    receive_until("ready\r\n")
+
+    {:ok, %{"pid" => new}} = Terminal.restart(input)
+    assert new != old
+    refute File.exists?("/proc/#{old}")
+  end
+
   defp receive_until(suffix, acc \\ "") do
     receive do
       {:hal_c2_terminal, _, %{"type" => "output", "data" => data}} ->

@@ -37,6 +37,8 @@ defmodule HalC2.DelegationProofTest do
     abstracts: %{
       "HalC2.Orchestration.Delegation.request/1" => @tool,
       "HalC2.Orchestration.Delegation.task_status/2" => "reads a task; changes nothing",
+      "HalC2.Orchestration.Delegation.settled?/1" =>
+        "reads whether a thread is quiet, for a page asking after its agent; changes nothing",
       "HalC2.Orchestration.Delegation.wait_budget/1" =>
         "how long a wait lasts; the model's wait may give up at any time",
       "HalC2.Orchestration.Delegation.wake_policy/1" => @policy,
@@ -57,6 +59,10 @@ defmodule HalC2.DelegationProofTest do
         "reads whether the child has a run or owed work; changes nothing",
       "HalC2.Orchestration.Delegation.hand_over_pull_requests/1" =>
         "moves a quiet child's pull request links to its caller; touches no task, run or delivery, so no part of how the task ends, and may be retried",
+      "HalC2.Orchestration.Recovery.leaving/1" =>
+        "stands in for :init stopping in a test; stopping?/0 is abstracted",
+      "HalC2.Orchestration.Recovery.start_reattach/0" =>
+        "connects to programs that outlive the MC, which here stop with it; Durable's own tests hold it",
       "HalC2.Orchestration.Recovery.start_link/0" => "starts the process that runs boot",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
         "tells the MC is shutting down; the model has crash"

@@ -200,17 +200,41 @@ defmodule HalC2.DevicesTest do
 
     conn =
       conn(:get, "#{base}/api/devices?hostId=local&token=#{HalC2.Web.token()}")
-      |> HalC2.Web.Router.call([])
+      |> HalC2.Web.Entry.call([])
 
     assert conn.status == 200
     # Credentials and the host stay on this side.
     assert Plug.Conn.get_resp_header(conn, "x-fake-hub-url") == ["/api/devices"]
     assert %{"simulators" => [], "emulators" => []} = JSON.decode!(conn.resp_body)
 
-    assert (conn(:get, "#{base}/api/devices") |> HalC2.Web.Router.call([])).status == 401
+    assert (conn(:get, "#{base}/api/devices") |> HalC2.Web.Entry.call([])).status == 401
 
     assert (conn(:get, "#{base}/vendor/serve-sim/exec?token=#{HalC2.Web.token()}")
-            |> HalC2.Web.Router.call([])).status == 404
+            |> HalC2.Web.Entry.call([])).status == 404
+  end
+
+  # Served from inside the router, an open stream kept `HalC2.Web.Router`'s frames, and
+  # a second hot reload of the router was refused while a client watched a device.
+  test "an open device stream runs none of the router's code" do
+    Application.put_env(:hal_c2, :port, 0)
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(start_supervised!(HalC2.Web))
+    {:ok, _} = HalC2.Devices.configure(%{"enabled" => true})
+
+    path =
+      "#{HalC2.Devices.hub_base_path()}/vendor/serve-sim/helper/SIM-1/stream.mjpeg?token=#{HalC2.Web.token()}"
+
+    {:ok, socket} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+    :ok = :gen_tcp.send(socket, "GET #{path} HTTP/1.1\r\nhost: localhost\r\n\r\n")
+    assert read_until(socket, "--frame", "") =~ "multipart/x-mixed-replace"
+
+    [stack] =
+      for pid <- Process.list(),
+          {:current_stacktrace, stack} <- [Process.info(pid, :current_stacktrace)],
+          Enum.any?(stack, &match?({HalC2.Devices.Proxy, :stream, _, _}, &1)),
+          do: stack
+
+    refute Enum.any?(stack, &match?({HalC2.Web.Router, _, _, _}, &1))
+    :gen_tcp.close(socket)
   end
 
   test "a stream's WebSocket is relayed to the hub frame by frame" do
@@ -323,5 +347,14 @@ defmodule HalC2.DevicesTest do
     File.mkdir_p!(Path.dirname(path))
     File.cp!(Path.join(@support, fake), path)
     File.chmod!(path, 0o755)
+  end
+
+  defp read_until(socket, marker, acc) do
+    if acc =~ marker do
+      acc
+    else
+      {:ok, data} = :gen_tcp.recv(socket, 0, 5_000)
+      read_until(socket, marker, acc <> data)
+    end
   end
 end
