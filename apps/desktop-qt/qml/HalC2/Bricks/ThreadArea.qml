@@ -144,7 +144,8 @@ Item {
             // ConversationDrop (DefaultLayout) takes files over the conversation.
             takesDrops: false
             Layout.fillWidth: true
-            visible: ready
+            // A Space page has the prompt on the page (SpacePage).
+            visible: ready && model.routeKind !== "page"
             conversationScrolled: centreHost.conversationScrolled
         }
     }

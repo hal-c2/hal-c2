@@ -75,6 +75,8 @@ struct Thread {
   QString pluginId;
   QString pluginKind;
   bool listed = true;
+  // Who started it: the user (or a row from before the field), a plugin or an agent.
+  QString createdBy;
 
   QString key() const { return environmentId + QLatin1Char(':') + id; }
 };

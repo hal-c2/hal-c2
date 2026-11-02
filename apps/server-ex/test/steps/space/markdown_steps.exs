@@ -201,6 +201,18 @@ defmodule HalC2.Steps.Space.Markdown do
     context
   end
 
+  # Each column is a block's field, `-` for one it does not have or that is empty.
+  step "the blocks of {string} are:", %{args: [title]} = context do
+    [header | rows] = context.datatable.raw
+
+    shown =
+      for block <- blocks(context, title),
+          do: Enum.map(header, &(block |> Map.get(&1) |> to_string() |> dash()))
+
+    assert shown == rows
+    context
+  end
+
   step "the user adds the numbered item {string} after {string}",
        %{args: [text, after_text]} = context do
     after_id = block_id(context, after_text)
@@ -334,6 +346,9 @@ defmodule HalC2.Steps.Space.Markdown do
 
   defp raw_block(context, title),
     do: Enum.find(blocks(context, title), &(&1["kind"] == "raw")) || flunk("no raw block")
+
+  defp dash(""), do: "-"
+  defp dash(field), do: field
 
   defp unescape(text), do: text |> String.replace("\\n", "\n") |> String.replace("\\r", "\r")
 end

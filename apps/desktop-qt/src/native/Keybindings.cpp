@@ -339,7 +339,8 @@ const QStringList& commands() {
     list.append({QStringLiteral("thread.stop"), QStringLiteral("thread.steerQueuedMessage"),
                  QStringLiteral("thread.editQueuedMessage"), QStringLiteral("thread.previous"),
                  QStringLiteral("thread.next"), QStringLiteral("thread.copyReference"), QStringLiteral("thread.settle"),
-                 QStringLiteral("thread.pin"), QStringLiteral("thread.undo"), QStringLiteral("space.open")});
+                 QStringLiteral("thread.pin"), QStringLiteral("thread.undo"), QStringLiteral("space.open"),
+                 QStringLiteral("space.agent.focus")});
     list.append({QStringLiteral("stage.moveTab"), QStringLiteral("stage.toggleFocus"), QStringLiteral("stage.nextPane"),
                  QStringLiteral("stage.dismiss"), QStringLiteral("stage.layout.single"), QStringLiteral("stage.layout.columns"),
                  QStringLiteral("stage.layout.rows"), QStringLiteral("stage.layout.grid")});
@@ -467,6 +468,7 @@ QString commandLabel(const QString& command) {
       {QStringLiteral("thread.editQueuedMessage"), QStringLiteral("Queue: Edit Last Queued Message")},
       {QStringLiteral("thread.copyReference"), QStringLiteral("Pull Request: Copy Link or Thread ID")},
       {QStringLiteral("space.open"), QStringLiteral("Space: Open")},
+      {QStringLiteral("space.agent.focus"), QStringLiteral("Space: Ask an Agent About the Page")},
       {QStringLiteral("stage.moveTab"), QStringLiteral("Stage: Move Tab to Centre or Side Panel")},
       {QStringLiteral("stage.toggleFocus"), QStringLiteral("Stage: Hide or Show the Timeline")},
       {QStringLiteral("stage.nextPane"), QStringLiteral("Stage: Focus Next Pane")},

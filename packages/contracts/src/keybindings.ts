@@ -98,6 +98,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "chat.newLocal",
   "editor.openFavorite",
   "space.open",
+  "space.agent.focus",
   "stage.moveTab",
   "stage.toggleFocus",
   "stage.nextPane",
