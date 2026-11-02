@@ -236,6 +236,10 @@ defmodule HalC2.Space.Blocks do
         block = new_block(page_id, spec, order, author, at)
         {[{"block", block["id"], Patch.diff(nil, block)}], {:ok, block}}
 
+      # The same words from the same author are no edit, and leave the block as it is.
+      %{"text" => ^markdown, "updatedBy" => ^author} = block ->
+        {[], {:ok, block}}
+
       block ->
         next = Map.merge(block, %{"text" => markdown, "updatedBy" => author, "updatedAt" => at})
         {[{"block", block["id"], Patch.diff(block, next)}], {:ok, next}}
