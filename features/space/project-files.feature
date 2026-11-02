@@ -220,6 +220,27 @@ Feature: Project files as Space pages
         ```
         """
 
+    Scenario: A list's nesting, an alert's kind and a rule's spelling the file changes stay in the file
+      When an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nInstall it.\n\n- one\n- two\n\n> [!NOTE]\n> Mind it.\n\n***\n\n* item" and its turn ends
+      And an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nInstall it.\n\n- one\n  - two\n\n> [!TIP]\n> Mind it.\n\n___\n\n> item" and its turn ends
+      And the user changes the block "Install it." to "Install it twice."
+      Then "docs/guide.md" of "shop" reads:
+        """
+        # Guide
+
+        Install it twice.
+
+        - one
+          - two
+
+        > [!TIP]
+        > Mind it.
+
+        ___
+
+        > item
+        """
+
     Scenario: A comment stays on a block the file keeps
       Given the user commented "Which version?" on the block "Install it."
       When an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nInstall it.\n\nThen run it." and its turn ends
