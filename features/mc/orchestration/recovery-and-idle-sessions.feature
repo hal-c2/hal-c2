@@ -11,6 +11,7 @@
 #   https://github.com/hal-c2/hal-c2/issues/451 (tracking set up late, reaping first)
 #   https://github.com/hal-c2/hal-c2/issues/380 (commands a provider that already exited left in its group)
 #   https://github.com/hal-c2/hal-c2/issues/387 (commands in a session of their own outlive that kill)
+#   https://github.com/hal-c2/hal-c2/issues/411 (a pid reused between the check and the kill)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (background subagents and commands, also between turns)
 #   https://github.com/hal-c2/hal-c2/issues/474 (a stop naming an earlier run ended what a later run left)
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts (task_started, task_notification, pendingBackgroundTasks)
