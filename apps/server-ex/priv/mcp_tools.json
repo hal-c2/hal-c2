@@ -4090,10 +4090,17 @@
         "pageId": { "type": "string" },
         "kind": {
           "type": "string",
-          "enum": ["paragraph", "heading", "checklist", "callout", "subpage_link", "image"]
+          "enum": ["paragraph", "heading", "checklist", "callout", "subpage_link", "image", "raw"],
+          "description": "raw is Markdown the page does not model (a table, a code block, a list), kept and shown as written."
         },
         "text": { "type": "string" },
         "checked": { "type": "boolean", "description": "For a checklist item." },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6,
+          "description": "For a heading: 1 to 6, as the number of # in Markdown. 2 when left out."
+        },
         "linkedPageId": {
           "type": "string",
           "description": "For a subpage_link: the page it links to."

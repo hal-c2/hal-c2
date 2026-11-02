@@ -18,6 +18,8 @@
 #   apps/web/src/fileContextMenu.ts, apps/web/src/editorPreferences.ts, apps/web/src/editorLabels.ts
 #   apps/web/src/components/files/fileSaveCoordinator.ts
 #   apps/web/src/components/files/fileEditorDismissal.ts
+#   https://mermaid.js.org/intro/syntax-reference.html (Mermaid in Markdown files and .mmd files)
+#   https://github.com/hal-c2/hal-c2/issues/843 (Mermaid)
 #   apps/web/src/components/files/filePreviewMode.ts
 #   apps/web/src/components/files/filePath.ts
 #   apps/web/src/components/files/fileContentRevision.ts
@@ -206,6 +208,29 @@ Feature: Viewing and editing files
         | README.md       |
         | data/orders.csv |
         | public/index.html |
+
+    # The same renderer draws diagrams in pages and replies
+    # (features/space/markdown.feature, features/timeline/markdown.feature).
+    @shared @backlog
+    Scenario Outline: Mermaid diagrams are drawn in a rendered file
+      Given "shop" holds the file "<path>" with a flowchart in it
+      When the user opens "<path>"
+      Then on the desktop and the phone the flowchart is drawn
+      And in the terminal the diagram's source is shown, named as a "flowchart" diagram
+      When the user switches to the source
+      Then the diagram's source is shown
+
+      Examples:
+        | path             | how it holds the flowchart |
+        | docs/flow.md     | a "mermaid" code block     |
+        | docs/flow.mmd    | the whole file             |
+
+    @shared @backlog
+    Scenario: A Mermaid file that cannot be drawn shows its source and says why
+      Given "shop" holds the file "docs/broken.mmd" with a flowchart with an unclosed bracket
+      When the user opens "docs/broken.mmd"
+      Then the file's text is shown
+      And the user is told where the mistake is
 
     # Legacy: packages/shared/src/delimitedPreview.ts (parseDelimitedPreview limits)
     @desktop

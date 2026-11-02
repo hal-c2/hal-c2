@@ -535,6 +535,34 @@ defmodule HalC2.SpaceTest do
       assert page["title"] == "Untitled"
     end
 
+    test "a page exports the Markdown it was imported from, spacing and all", %{space: space} do
+      markdown = "# Plan\nRight under\n\n\n| a |\n|---|\n\n```\ncode\n```\n\n### Three\n"
+      {:ok, page} = Space.import_markdown(space, markdown)
+      assert Space.export_markdown(space, page["id"]) == {:ok, markdown}
+    end
+
+    test "a moved block is apart by the usual blank line", %{space: space} do
+      {:ok, page} = Space.import_markdown(space, "# Plan\n\nOne\n\n\n\nTwo\n")
+      {:ok, %{blocks: [one, two]}} = Space.page(space, page["id"])
+      assert two["gap"] == "\n\n\n\n"
+
+      {:ok, _} = Space.move_block(space, two["id"], nil)
+      {:ok, %{blocks: [moved, _]}} = Space.page(space, page["id"])
+      refute Map.has_key?(moved, "gap")
+      assert one["text"] == "One"
+      assert Space.export_markdown(space, page["id"]) == {:ok, "# Plan\n\nTwo\n\nOne\n"}
+    end
+
+    test "a heading's level is 1 to 6", %{space: space} do
+      page = page!(space, "Plan")
+      spec = %{"kind" => "heading", "text" => "Deep", "level" => 7}
+      assert {:error, :invalid, _} = Space.insert_block(space, page, spec)
+
+      {:ok, block} = Space.insert_block(space, page, %{spec | "level" => 4})
+      assert block["level"] == 4
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n#### Deep\n"}
+    end
+
     test "a link to a page the Space lacks is imported as a paragraph", %{space: space} do
       {:ok, page} = Space.import_markdown(space, "[Old](#gone)", "Copy")
       assert texts(space, page["id"]) == ["[Old](#gone)"]

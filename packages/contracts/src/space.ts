@@ -79,7 +79,11 @@ export const SpacePage = Schema.Struct({
 });
 export type SpacePage = typeof SpacePage.Type;
 
-/** The kinds of block that can be written by hand. */
+/**
+ * The kinds of block that can be written by hand. A `raw` block is Markdown a page does
+ * not model, kept as its source and shown as written, so a page imported from Markdown
+ * exports exactly as it was.
+ */
 export const SpaceWritableBlockKind = Schema.Literals([
   "paragraph",
   "heading",
@@ -87,6 +91,7 @@ export const SpaceWritableBlockKind = Schema.Literals([
   "callout",
   "subpage_link",
   "image",
+  "raw",
 ]);
 export type SpaceWritableBlockKind = typeof SpaceWritableBlockKind.Type;
 
@@ -140,6 +145,8 @@ export const SpaceChart = Schema.Struct({
 });
 export type SpaceChart = typeof SpaceChart.Type;
 
+export const SpaceHeadingLevel = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 6 }));
+
 export const SpaceBlock = Schema.Struct({
   id: SpaceBlockId,
   pageId: SpacePageId,
@@ -149,6 +156,13 @@ export const SpaceBlock = Schema.Struct({
   checked: Schema.Boolean,
   /** The page a `subpage_link` block points at. */
   linkedPageId: Schema.NullOr(SpacePageId),
+  /** A heading's level, 1 to 6 as the number of `#` in Markdown; 2 when left out. */
+  level: Schema.optional(SpaceHeadingLevel),
+  /**
+   * The blank lines above a block imported from Markdown, when they are not the usual
+   * one, so its export writes them back. Clients do not show it.
+   */
+  gap: Schema.optional(Schema.String),
   /** What a `chart` block draws. Its `text` says what it is, for clients that do not draw it. */
   chart: Schema.optional(SpaceChart),
   /** The image an `image` block shows; its `text` is the caption. Only on image blocks. */
@@ -411,6 +425,8 @@ export const SpaceBlockInsertInput = Schema.Struct({
   linkedPageId: Schema.optional(SpacePageId),
   /** Required for `image`: an image of this Space not in the trash. */
   imageId: Schema.optional(SpaceImageId),
+  /** For `heading`: 1 to 6, 2 when left out. */
+  level: Schema.optional(SpaceHeadingLevel),
   afterBlockId: AfterBlockId,
 });
 export type SpaceBlockInsertInput = typeof SpaceBlockInsertInput.Type;
