@@ -132,6 +132,7 @@ mod CODE-REVIEW-CLAIMS is
   op repost : Id Id Sha -> Item [ctor] .
   op hurt : Id -> Item [ctor] .
 
+  --- A new item or phase needs an equation of renamedItem or renamed (symmetry, below).
   op empty : -> Conf [ctor] .
   op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
   op {_} : Conf -> Sys [ctor] .
@@ -759,7 +760,8 @@ mod CODE-REVIEW-CLAIMS is
   eq renamed(held(S, I), Pm) = held(S, idsAs(I, Pm)) .
   eq renamed(pwant(I), Pm) = pwant(idsAs(I, Pm)) .
   eq renamed(pheld(I, Sg), Pm) = pheld(idsAs(I, Pm), Sg) .
-  eq renamed(Ph, Pm) = Ph [owise] .
+  eq renamed(fetch, Pm) = fetch .
+  eq renamed(out(S), Pm) = out(S) .
   op renamed : Looks Perm -> Looks .
   eq renamed(nolook, Pm) = nolook .
   eq renamed(lk(K, Ms, Se, B) ; Ls, Pm) = lk(K, Ms, seenAs(Se, Pm), B) ; renamed(Ls, Pm) .
@@ -786,7 +788,20 @@ mod CODE-REVIEW-CLAIMS is
   eq renamedItem(posted(X, S), Pm) = posted(X @ Pm, S) .
   eq renamedItem(repost(X, Y, S), Pm) = repost(X @ Pm, Y @ Pm, S) .
   eq renamedItem(hurt(X), Pm) = hurt(X @ Pm) .
-  eq renamedItem(It, Pm) = It [owise] .
+  --- The items with no machine in them. Each constructor is listed rather than left to
+  --- owise, so a new one that names a machine stays a renamedItem term in the state.
+  eq renamedItem(gh(S), Pm) = gh(S) .
+  eq renamedItem(ghp(S), Pm) = ghp(S) .
+  eq renamedItem(periodic(Bu), Pm) = periodic(Bu) .
+  eq renamedItem(free, Pm) = free .
+  eq renamedItem(later, Pm) = later .
+  eq renamedItem(sym, Pm) = sym .
+  eq renamedItem(pushes(F), Pm) = pushes(F) .
+  eq renamedItem(crashes(F), Pm) = crashes(F) .
+  eq renamedItem(splits(F), Pm) = splits(F) .
+  eq renamedItem(bounces(F), Pm) = bounces(F) .
+  eq renamedItem(fails(F), Pm) = fails(F) .
+  eq renamedItem(limits(F), Pm) = limits(F) .
 
   --- Machine X's review, coded so that a renaming leaves the code alone: the other
   --- machines show only as others. The code leaves the rest of what X has out, as it
