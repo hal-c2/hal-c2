@@ -765,7 +765,8 @@ void RightPanelController::setChatWidth(int width) {
 void RightPanelController::dismissStage() {
   if (!m_onThread || panel().stage.isEmpty()) return;
   Panel& state = panel();
-  const QString shown = state.stage.focusedTab();
+  // The focused tab, else the first shown (the focused pane can be empty).
+  const QString shown = state.stage.shown().value(0);
   state.stage.clear();
   state.active = shown;
   state.open = true;
