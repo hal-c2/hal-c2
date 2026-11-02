@@ -136,15 +136,15 @@ Feature: Formatted messages
   # The same renderer draws diagrams in pages and the file viewer
   # (features/space/markdown.feature).
   # https://github.com/hal-c2/hal-c2/issues/843
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A Mermaid diagram in a reply is drawn
     When the agent answers with a "mermaid" code block holding a flowchart
     Then on the desktop and the phone the flowchart is drawn in place of the code block
-    And in the terminal the diagram's source is shown, named as a "flowchart" diagram
+    And in the terminal the diagram is drawn in characters, or its source is shown, named as a "flowchart" diagram
     And the user can switch to the diagram's source and copy it
 
   # https://github.com/hal-c2/hal-c2/issues/843
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A Mermaid diagram that cannot be drawn shows its source and says why
     When the agent answers with a "mermaid" code block holding a flowchart with an unclosed bracket
     Then the diagram's source is shown as a code block
@@ -152,7 +152,7 @@ Feature: Formatted messages
     And nothing claims the diagram is still being drawn
 
   # https://github.com/hal-c2/hal-c2/issues/843
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A Mermaid diagram being written is drawn once it is finished
     When the agent is still writing a "mermaid" code block
     Then the code written so far is shown as a code block

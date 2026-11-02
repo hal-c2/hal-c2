@@ -142,14 +142,16 @@ defmodule HalC2.Space.PageAgent do
   exist yet. A stop the crash cut short is finished here, as nothing else will repeat it:
   what the restart put back in the queue goes with it.
 
-  `started` is when this MC started, taken before it listened: an ask taken since then
-  has a launch of its own, which may still be writing its thread, and is left to it.
+  An ask this start of the MC took (`boot/0`) is left alone: the MC listens before this
+  runs, and its launch may still be writing its thread.
   """
-  def reconcile(continued \\ [], started \\ nil) do
+  def reconcile(continued \\ []) do
+    boot = :persistent_term.get({__MODULE__, :boot}, nil)
+
     for %{"id" => space_id} <- StreamState.list(Streams.state(Space.index()), "space"),
         %{"pageId" => page_id, "threadId" => thread_id, "status" => status} = agent <-
           working(space_id),
-        asked_before?(agent, started),
+        boot == nil or agent["boot"] != boot,
         status == "stopping" or thread_id not in continued do
       retrying(thread_id, fn ->
         if status == "stopping", do: stop_thread(thread_id)
@@ -163,18 +165,16 @@ defmodule HalC2.Space.PageAgent do
     :ok
   end
 
-  # The listener comes up after `started` was taken, so no ask of this MC's shares its
-  # millisecond.
-  defp asked_before?(_agent, nil), do: true
-
-  defp asked_before?(%{"startedAt" => at}, started) when is_binary(at) do
-    case DateTime.from_iso8601(at) do
-      {:ok, at, _} -> DateTime.compare(at, started) != :gt
-      _ -> true
-    end
+  @doc """
+  Takes a new token for this start of the MC, before it listens. Every ask is stamped
+  with it, so the reconciliation can tell the asks this start took from those it lost; one
+  from before there were tokens has none, and is from an earlier start.
+  """
+  def boot do
+    token = HalC2.Environment.uuid4()
+    :persistent_term.put({__MODULE__, :boot}, token)
+    token
   end
-
-  defp asked_before?(_agent, _started), do: true
 
   @doc "Whether the page `thread_id` works on asked it to stop: a restart does not start it again."
   def stopping?(thread_id) do
@@ -364,7 +364,8 @@ defmodule HalC2.Space.PageAgent do
           "edited" => false,
           "error" => nil,
           "startedAt" => at,
-          "endedAt" => nil
+          "endedAt" => nil,
+          "boot" => :persistent_term.get({__MODULE__, :boot}, nil)
         }
 
         previous = entity(state, page_id)

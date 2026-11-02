@@ -27,6 +27,10 @@ defmodule HalC2.Web.Router do
 
   defp cors(conn, _opts), do: merge_resp_headers(conn, @cors_headers)
 
+  @doc false
+  # For the device hub's responses, which `HalC2.Web.Entry` serves before this router.
+  def cors_headers, do: @cors_headers
+
   get "/.well-known/hal-c2/environment" do
     body =
       HalC2.Environment.public_descriptor()
@@ -653,7 +657,8 @@ defmodule HalC2.Web.Router do
 
           {:error, reason} ->
             json(conn, 409, %{
-              "reason" => if(is_binary(reason), do: reason, else: inspect(reason))
+              "reason" =>
+                if(is_binary(reason), do: reason, else: HalC2.Hot.describe_error(reason))
             })
         end
     end
@@ -701,9 +706,8 @@ defmodule HalC2.Web.Router do
     _, _ -> {:error, 502, "The MC holding this file is unavailable."}
   end
 
-  # Every MC's device hub, relayed to the MC that owns it (`HalC2.Devices.Proxy`).
-  match "/api/device-hub/*rest", do: HalC2.Devices.Proxy.serve(conn, rest)
-
+  # `/api/device-hub/*` never reaches this router: `HalC2.Web.Entry` serves it, so a
+  # route under it here would never match.
   match _ do
     send_resp(conn, 404, "not found")
   end

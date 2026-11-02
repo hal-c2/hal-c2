@@ -33,6 +33,15 @@ import {
   ui,
 } from "../environment.ts";
 import { fakeClient, PROVIDERS, thread } from "../fakeClient.ts";
+import {
+  BROKEN_FLOWCHART,
+  GROWN_FLOWCHART,
+  MERMAID_SOURCES,
+  mermaidAsks,
+  mermaidDrawing,
+  mermaidFence,
+  serveMermaid,
+} from "../fakeMermaid.ts";
 import { fakeSpaceMc, type FakeSpaceMc } from "../fakeSpaceMc.ts";
 import { presenceOverSession, type PresenceOverSession } from "../presenceOverSession.ts";
 import { chooseCommand, palette, selectThread } from "../threadUi.ts";
@@ -41,8 +50,9 @@ import { findObject, pressKey, settle, typeText, type World } from "../world.ts"
 import { PNG } from "./composer.steps.ts";
 import { chooseInPicker, runPaletteCommand } from "./controls.steps.ts";
 import { selectRow as selectFileRow } from "./files.steps.ts";
+import type { MermaidWorld } from "./mermaid.steps.ts";
 
-interface SpaceWorld extends World {
+interface SpaceWorld extends World, MermaidWorld {
   /** A thread's worktree by project: its folder and the files it has that differ. */
   worktrees?: Map<string, { readonly root: string; readonly files: Map<string, string> }>;
   /** The site link each page had when the scenario first saw it. */
@@ -2709,6 +2719,106 @@ step("each heading is smaller than the one of the level above it", (ctx: SpaceWo
     THEME.dim.toString(),
     THEME.dim.toString(),
   ]);
+});
+
+// --- Mermaid diagrams (space/markdown.feature; the MC's answers are fakeMermaid.ts) ---
+
+const DIAGRAM_PAGE = "Checkout flow";
+
+/** The page's diagram is the one on screen; its lines are its rows, after the marker. */
+const showsDiagram = (ctx: SpaceWorld, source: string) => {
+  ctx.diagram = {
+    source,
+    lines: async () => {
+      await settle(ctx);
+      return pane(ctx)
+        .rows.filter((row) => row.blockKind === "code")
+        .map((row) => row.text.slice(2));
+    },
+  };
+};
+
+/** The diagram's block, by its source: a code block in "mermaid". */
+const diagramBlock = (ctx: SpaceWorld, source: string) => mc(ctx).blockNamed(source);
+
+/** Import, from a file on this machine as the user would, a page holding the diagram. */
+async function importDiagram(ctx: SpaceWorld, source: string) {
+  serveMermaid(ctx);
+  if (!ctx.spaceName) seedSpace(ctx, "Personal");
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "space-import-"));
+  ctx.cleanups.push(() => NodeFS.rmSync(dir, { recursive: true, force: true }));
+  const file = NodePath.join(dir, "checkout.md");
+  NodeFS.writeFileSync(file, `# ${DIAGRAM_PAGE}\n\n${mermaidFence(source)}\n`);
+  await openSpace(ctx);
+  await press(ctx, "i");
+  await answer(ctx, file);
+  expect(pane(ctx).title).toBe(`page · ${DIAGRAM_PAGE}`);
+  showsDiagram(ctx, source);
+}
+
+step(
+  "the user imports a page holding a {string} Mermaid diagram",
+  (ctx: SpaceWorld, type: string) => importDiagram(ctx, MERMAID_SOURCES[type]!),
+);
+step("the user imports a page holding a flowchart with an unclosed bracket", (ctx: SpaceWorld) =>
+  importDiagram(ctx, BROKEN_FLOWCHART),
+);
+
+step("the page has a diagram block of the type {string}", (ctx: SpaceWorld, type: string) => {
+  const block = diagramBlock(ctx, MERMAID_SOURCES[type]!);
+  expect(block).toMatchObject({
+    kind: "code",
+    language: "mermaid",
+    pageId: mc(ctx).pageNamed(DIAGRAM_PAGE).id,
+  });
+});
+
+// Steps below it, so the selection can move past it and back.
+step("a page with a flowchart", async (ctx: SpaceWorld) => {
+  serveMermaid(ctx);
+  if (!ctx.spaceName) seedSpace(ctx, "Personal");
+  const source = MERMAID_SOURCES.flowchart!;
+  mc(ctx).run("space.block.insert", {
+    spaceId: currentSpaceId(ctx),
+    pageId: seedPage(ctx, DIAGRAM_PAGE),
+    kind: "code",
+    language: "mermaid",
+    text: source,
+  });
+  for (const step of ["Cart", "Checkout", "Paid"]) {
+    seedBlock(ctx, DIAGRAM_PAGE, "paragraph", `${step} is a step.`);
+  }
+  await openPage(ctx, DIAGRAM_PAGE);
+  showsDiagram(ctx, source);
+});
+
+step("the user adds a node to its source", async (ctx: SpaceWorld) => {
+  await selectRow(ctx, `block:${diagramBlock(ctx, ctx.diagram!.source).id}`);
+  await press(ctx, "e");
+  // The field holds the source on one line: a line break is \n.
+  const field = (source: string) => source.split("\n").join("\\n");
+  expect(findObject(ctx, "askInput").get("text")).toBe(field(ctx.diagram!.source));
+  await answer(ctx, field(GROWN_FLOWCHART));
+  showsDiagram(ctx, GROWN_FLOWCHART);
+});
+
+step("the diagram is drawn again with the new node", async (ctx: SpaceWorld) => {
+  const lines = await ctx.diagram!.lines();
+  expect(lines[0]).toBe("◇ flowchart diagram");
+  expect(lines.slice(1)).toEqual(mermaidDrawing(GROWN_FLOWCHART));
+  expect(mermaidAsks(ctx, GROWN_FLOWCHART)).toBe(1);
+});
+
+step("the export writes the new source", async (ctx: SpaceWorld) => {
+  await press(ctx, "y");
+  expect(ctx.clipboard?.at(-1)).toContain(`\n\n${mermaidFence(GROWN_FLOWCHART)}\n`);
+});
+
+step("the user scrolls the page past it and back", async (ctx: SpaceWorld) => {
+  const diagram = `block:${diagramBlock(ctx, ctx.diagram!.source).id}`;
+  await selectRow(ctx, `block:${mc(ctx).blockNamed("Paid is a step.").id}`);
+  await selectRow(ctx, diagram);
+  expect(await ctx.diagram!.lines()).toContain(mermaidDrawing(ctx.diagram!.source)[1]!);
 });
 
 // --- project files (project-files.feature) ---

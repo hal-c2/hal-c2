@@ -787,6 +787,8 @@ export const SpacePageAgent = Schema.Struct({
   error: Schema.NullOr(Schema.String),
   startedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
+  /** Which start of its MC took the ask; none on one from before there were tokens. */
+  boot: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type SpacePageAgent = typeof SpacePageAgent.Type;
 

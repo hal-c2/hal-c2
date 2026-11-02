@@ -1,3 +1,4 @@
+import type { MermaidRenderResult } from "@hal-c2/contracts";
 import { TextAttributes, type RGBA, type TextChunk } from "@opentui/core";
 
 import { parseMarkdownTable, type MarkdownTable } from "../markdownTable.ts";
@@ -185,8 +186,23 @@ function clipCells(text: string, width: number): string {
  * code colour and set off by a blank line on each side, quotes behind a faint
  * bar, rules and tables across `width`, inline emphasis, code spans and links.
  */
-export function markdownLines(markdown: string, palette: Palette, width = 24): StyledText[] {
-  return markdownBlockLines(markdown, palette, width).map((entry) => entry.text);
+export function markdownLines(
+  markdown: string,
+  palette: Palette,
+  width = 24,
+  diagrams?: MarkdownDiagrams,
+): StyledText[] {
+  return markdownBlockLines(markdown, palette, width, undefined, diagrams).map(
+    (entry) => entry.text,
+  );
+}
+
+/** How Markdown shows its `mermaid` code blocks; without it they are code blocks. */
+export interface MarkdownDiagrams {
+  /** What the MC said of a diagram's source; undefined until it answers (`mermaidDiagrams.ts`). */
+  readonly get: (source: string) => MermaidRenderResult | undefined;
+  /** The diagrams (counted from 0) the user switched to their source. */
+  readonly showSource?: (index: number) => boolean;
 }
 
 /** A line of rendered Markdown, with the code block or table it belongs to. */
@@ -198,6 +214,16 @@ export interface MarkdownLine {
   readonly table?: { readonly index: number; readonly table: MarkdownTable };
   /** The alert this line titles (`> [!NOTE]`). */
   readonly alert?: string;
+  /**
+   * The Mermaid diagram this line is part of (counted from 0); its lines carry `code`
+   * too, with the diagram's source. `title` is its first line; `drawable` when the
+   * user can switch between its drawing and its source.
+   */
+  readonly diagram?: {
+    readonly index: number;
+    readonly title: boolean;
+    readonly drawable: boolean;
+  };
 }
 
 const ALERT = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i;
@@ -208,6 +234,7 @@ export function markdownBlockLines(
   palette: Palette,
   width = 24,
   collapsedTables: (index: number) => boolean = () => false,
+  diagrams?: MarkdownDiagrams,
 ): MarkdownLine[] {
   const lines: MarkdownLine[] = [];
   const blankLast = () => lines.length === 0 || plainText(lines.at(-1)!.text) === "";
@@ -222,20 +249,45 @@ export function markdownBlockLines(
   let table: string[] = [];
   let tableCount = 0;
   let codeCount = 0;
+  let diagramCount = 0;
   // The open code block's lines: each carries the whole source once the block ends.
   let codeStart = -1;
-  const closeCode = () => {
+  // The open block is a `mermaid` one (and diagrams are drawn).
+  let mermaid = false;
+  const closeCode = (closed = false) => {
     if (codeStart < 0) return;
     const block = lines.slice(codeStart);
     const code = {
       index: codeCount,
       source: block.map((entry) => plainText(entry.text)).join("\n"),
     };
-    block.forEach((entry, offset) => {
-      lines[codeStart + offset] = { text: entry.text, code };
-    });
+    if (mermaid && closed && diagrams) {
+      // Drawn only once its fence closes: a diagram being written is code so far.
+      const index = diagramCount;
+      const shown = mermaidLines(
+        code.source,
+        diagrams.get(code.source),
+        palette,
+        width,
+        diagrams.showSource?.(index) ?? false,
+      );
+      lines.length = codeStart;
+      shown.lines.forEach((text, offset) => {
+        lines.push({
+          text,
+          code,
+          diagram: { index, title: offset === 0, drawable: shown.drawable },
+        });
+      });
+      diagramCount += 1;
+    } else {
+      block.forEach((entry, offset) => {
+        lines[codeStart + offset] = { text: entry.text, code };
+      });
+    }
     codeCount += 1;
     codeStart = -1;
+    mermaid = false;
   };
   let quoteOpen = false;
   const flushTable = () => {
@@ -259,7 +311,7 @@ export function markdownBlockLines(
         fenceMatch[1].length >= fence.length
       ) {
         fence = null;
-        closeCode();
+        closeCode(true);
         afterBlock = true;
         continue;
       }
@@ -276,6 +328,7 @@ export function markdownBlockLines(
     flushTable();
     if (fenceMatch?.[1]) {
       fence = fenceMatch[1];
+      mermaid = isMermaidInfo(raw.slice(fenceMatch[0].length));
       separate();
       codeStart = lines.length;
       continue;
@@ -340,6 +393,115 @@ export function markdownBlockLines(
   flushTable();
   while (lines.length > 0 && plainText(lines.at(-1)!.text) === "") lines.pop();
   return lines;
+}
+
+/** A fence's info string names Mermaid (` ```mermaid `). */
+const isMermaidInfo = (info: string) => info.trim().split(/\s+/)[0]?.toLowerCase() === "mermaid";
+
+/**
+ * The source of a Markdown text that is one `mermaid` code block and nothing else (a
+ * page keeps such a block as written), or null.
+ */
+export function mermaidFenceSource(markdown: string): string | null {
+  const lines = markdown.replace(/\r\n?/g, "\n").replace(/\n+$/, "").split("\n");
+  const open = lines[0]?.match(FENCE);
+  if (!open?.[1] || lines.length < 2 || !isMermaidInfo(lines[0]!.slice(open[0].length))) {
+    return null;
+  }
+  const fence = open[1];
+  const closes = (line: string) => {
+    const close = /^[ \t]{0,3}(`{3,}|~{3,})\s*$/.exec(line)?.[1];
+    return close !== undefined && close[0] === fence[0] && close.length >= fence.length;
+  };
+  const end = lines.findIndex((line, index) => index > 0 && closes(line));
+  return end === lines.length - 1 ? lines.slice(1, end).join("\n") : null;
+}
+
+/** The type a diagram's source names itself by: its first word past front matter and comments. */
+function mermaidKind(source: string): string | null {
+  let lines = source.split("\n").map((line) => line.trim());
+  if (lines.find((line) => line !== "") === "---") {
+    const start = lines.indexOf("---");
+    const end = lines.indexOf("---", start + 1);
+    lines = end < 0 ? [] : lines.slice(end + 1);
+  }
+  const first = lines.find((line) => line !== "" && !line.startsWith("%%"));
+  return first?.split(/\s+/)[0] ?? null;
+}
+
+/** A Mermaid diagram as the terminal shows it: a title line, then its drawing or its source. */
+export interface MermaidView {
+  readonly lines: StyledText[];
+  /** The MC drew it in characters that fit: the user may switch to the source and back. */
+  readonly drawable: boolean;
+}
+
+/**
+ * A Mermaid diagram from what the MC said of it (`result`, undefined while it is asked):
+ * its title names its type, then comes its drawing in characters when there is one that
+ * fits `width` and the user has not asked for the `source`, else the source under the
+ * reason it is not drawn, wrapped to `width`. Drawing and source are never wrapped.
+ */
+export function mermaidLines(
+  source: string,
+  result: MermaidRenderResult | undefined,
+  palette: Palette,
+  width: number,
+  showSource = false,
+): MermaidView {
+  const kind = result?.kind ?? mermaidKind(source) ?? "Mermaid";
+  const drawing =
+    result?.status === "drawn" && result.text !== undefined
+      ? result.text
+          .replace(/\s+$/, "")
+          .split("\n")
+          .map((line) => line.trimEnd())
+      : null;
+  const wide = drawing ? Math.max(0, ...drawing.map((line) => Bun.stringWidth(line))) : 0;
+  const drawable = drawing !== null && wide <= width;
+  const note = result === undefined ? " · drawing…" : drawable && showSource ? " · source" : "";
+  const title = styled(
+    chunk(`◇ ${kind} diagram`, { fg: palette.accent, bold: true }),
+    note !== "" && chunk(note, { fg: palette.dim }),
+  );
+  const sourceLines = source
+    .split("\n")
+    .map((line) => styled(chunk(line, { fg: palette.warning })));
+  if (drawable && !showSource) {
+    return {
+      drawable,
+      lines: [title, ...drawing.map((line) => styled(chunk(line, { fg: palette.text })))],
+    };
+  }
+  const reason =
+    result === undefined || drawable
+      ? null
+      : drawing
+        ? {
+            text: `Drawn ${wide} columns wide, wider than the ${width} here: its source instead.`,
+            fg: palette.dim,
+          }
+        : result.status === "drawn"
+          ? null
+          : {
+              text:
+                result.line != null
+                  ? `Line ${result.line}${result.column != null ? `, column ${result.column}` : ""}: ${result.reason}`
+                  : result.reason,
+              fg: result.status === "unsupported" ? palette.dim : palette.error,
+            };
+  return {
+    drawable,
+    lines: [
+      title,
+      ...(reason
+        ? wrapCell(reason.text, Math.max(8, width)).map((text) =>
+            styled(chunk(text, { fg: reason.fg })),
+          )
+        : []),
+      ...sourceLines,
+    ],
+  };
 }
 
 function alertColor(title: string, palette: Palette): RGBA {
