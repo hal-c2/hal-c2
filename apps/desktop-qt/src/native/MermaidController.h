@@ -24,7 +24,8 @@ class ShellBridge;
 // "failed", kind, reason, line?, column?}; `revision` changes with every
 // answer, so a binding that reads it asks again. Drawn, unsupported and invalid
 // answers are kept; a failed one (the MC could not draw it, or could not be
-// reached) is asked again by retry() and once the MC is back.
+// reached) is asked again by retry() and once the MC is back. Past 256 answers
+// the oldest go, never one a block has read since the last answer.
 class MermaidController : public QObject, public NativeController {
   Q_OBJECT
   Q_PROPERTY(int revision READ revision NOTIFY revisionChanged)
@@ -42,12 +43,11 @@ public:
   Q_INVOKABLE QVariantMap diagram(const QString& source, const QString& theme);
   Q_INVOKABLE void retry(const QString& source, const QString& theme);
 
-  // For tests: how the MC is asked, and the MC coming back.
+  // For tests: how the MC is asked, the MC coming back, and how many answers
+  // are kept.
   void setAsk(Ask ask) { m_ask = std::move(ask); }
   void reconnected();
-
-  // How many answers are kept; the oldest goes first.
-  static constexpr int kKept = 256;
+  void setKept(int kept) { m_kept = kept; }
 
 signals:
   void revisionChanged();
@@ -59,6 +59,8 @@ private:
     QVariantMap answer;
     bool pending = false;
     int request = 0;
+    // The revision it was last read in: one read in this one is on screen.
+    int seen = 0;
   };
 
   void ask(const QString& key);
@@ -69,4 +71,5 @@ private:
   QStringList m_order;              // keys, oldest first
   int m_revision = 0;
   int m_nextRequest = 1;
+  int m_kept = 256;
 };

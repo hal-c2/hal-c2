@@ -20,15 +20,19 @@ MermaidController::MermaidController(ShellBridge*, McClient* client, QObject* pa
 
 QVariantMap MermaidController::diagram(const QString& source, const QString& theme) {
   const QString key = keyOf(source, theme);
-  auto found = m_entries.constFind(key);
-  if (found != m_entries.constEnd()) {
+  auto found = m_entries.find(key);
+  if (found != m_entries.end()) {
+    found->seen = m_revision;
     return found->pending ? QVariantMap{{QStringLiteral("status"), QStringLiteral("drawing")}} : found->answer;
   }
-  m_entries.insert(key, {source, theme, {}, false, 0});
+  m_entries.insert(key, {source, theme, {}, false, 0, m_revision});
   m_order.append(key);
-  // Room for this one: the oldest answers go, never one still being asked for.
-  for (qsizetype i = 0; m_order.size() > kKept && i < m_order.size();) {
-    if (m_entries.value(m_order.at(i)).pending || m_order.at(i) == key) {
+  // Room for this one: the oldest answers go, never one still being asked for
+  // or one read since the last answer. That one is on screen, and dropping it
+  // would ask for it again at once, and its answer would push out the next.
+  for (qsizetype i = 0; m_order.size() > m_kept && i < m_order.size();) {
+    const Entry& entry = m_entries[m_order.at(i)];
+    if (entry.pending || entry.seen == m_revision) {
       ++i;
     } else {
       m_entries.remove(m_order.takeAt(i));
