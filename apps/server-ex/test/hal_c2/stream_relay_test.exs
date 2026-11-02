@@ -21,6 +21,10 @@ defmodule HalC2.StreamRelayTest do
     assert_receive {:relay, relay}
     assert_receive :sending
     ref = Process.monitor(relay)
+    # Signals keep their order only between the same two processes, and the kill reaches
+    # the relay by way of the stream. Asking the relay is ordered after the monitor, so
+    # the monitor is in place before the kill, and a relay dead this early fails here.
+    assert {:monitored_by, [self()]} == Process.info(relay, :monitored_by)
     Process.exit(stream, :kill)
     assert_receive {:DOWN, ^ref, :process, ^relay, :killed}
   end
