@@ -213,6 +213,32 @@ Feature: A page published as a site
       Then the document has a heading "Next", a note "Careful" and a ticked item "Done"
 
     @mc
+    Scenario: Lists, alerts and dividers read as plain HTML
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        1. Tag
+           - [x] Notes
+        2. Ship
+
+        ---
+
+        > [!WARNING]
+        > Not on Friday.
+        """
+      And the page "Plan" is published as a site
+      When a browser with no pairing opens the site link of the page "Plan"
+      Then the document holds each line of:
+        """
+        <li>1. Tag</li>
+        <li class="d1">☑ Notes</li>
+        <li>2. Ship</li>
+        <hr>
+        <aside><strong>Warning</strong>
+        """
+
+    @mc
     Scenario: A link to another page renders as plain text
       Given the page "Milestones" inside "Roadmap"
       And the user links "Milestones" from "Roadmap"

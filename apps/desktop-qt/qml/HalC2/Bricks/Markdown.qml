@@ -310,10 +310,24 @@ Item {
             // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
             onTapped: eventPoint => richText.follow(eventPoint)
         }
+        // Offers what can be done with the link under a point.
+        function linkMenu(position, scenePosition) {
+            const link = linkAt(position.x, position.y);
+            if (link.length > 0) {
+                Shell.dispatch("link.menu", {
+                    url: link,
+                    x: scenePosition.x,
+                    y: scenePosition.y
+                });
+            }
+        }
+        // A finger follows a link with a tap, and holds it for its menu.
         TapHandler {
+            id: touchLink
             acceptedDevices: PointerDevice.TouchScreen
             // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
             onTapped: eventPoint => richText.follow(eventPoint)
+            onLongPressed: richText.linkMenu(touchLink.point.position, touchLink.point.scenePosition)
         }
         // The secondary button on a link offers what can be done with it,
         // and elsewhere copying the text (a finger has no buttons, and
@@ -322,16 +336,10 @@ Item {
             acceptedButtons: Qt.RightButton
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
             onTapped: eventPoint => {
-                const link = richText.linkAt(eventPoint.position.x, eventPoint.position.y);
-                if (link.length > 0) {
-                    Shell.dispatch("link.menu", {
-                        url: link,
-                        x: eventPoint.scenePosition.x,
-                        y: eventPoint.scenePosition.y
-                    });
-                } else {
+                if (richText.linkAt(eventPoint.position.x, eventPoint.position.y).length > 0)
+                    richText.linkMenu(eventPoint.position, eventPoint.scenePosition);
+                else
                     root.openTextMenu(richText, eventPoint.position);
-                }
             }
         }
         HoverHandler {
