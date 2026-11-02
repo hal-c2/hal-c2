@@ -150,6 +150,9 @@ defmodule HalC2.Space.PageAgent do
         if status == "stopping", do: stop_thread(thread_id)
         settle(space_id, page_id, thread_id)
       end)
+
+      # No launch is under way at a start, so one with no thread never will be.
+      drop_unstarted(thread_id)
     end
 
     :ok
@@ -388,6 +391,13 @@ defmodule HalC2.Space.PageAgent do
     end)
   end
 
+  # Images the ask saved for a thread that was never written: nothing else would ever
+  # delete them. Not on a stop, which can come while the launch is still writing it.
+  defp drop_unstarted(thread_id) do
+    if Streams.get(thread_id, "thread", thread_id) == nil,
+      do: HalC2.Attachments.delete_thread(thread_id)
+  end
+
   defp launcher, do: Application.get_env(:hal_c2, :page_agent_launch, &launch_thread/1)
   defp launch_thread(input), do: Orchestration.launch_thread(input)
 
@@ -408,6 +418,8 @@ defmodule HalC2.Space.PageAgent do
   end
 
   defp not_started(space_id, %{"pageId" => page_id, "threadId" => thread_id}, reason) do
+    drop_unstarted(thread_id)
+
     retrying(thread_id, fn ->
       Space.transact(space_id, fn state ->
         case entity(state, page_id) do
@@ -527,12 +539,18 @@ defmodule HalC2.Space.PageAgent do
 
   defp project(nil), do: last_worked()
 
+  # A project the prompt picked, with the thread the user worked in last there, so its
+  # model is the one an ask that picked none would use in the same project.
   defp project(project_id) do
-    {_threads, projects} = local_rows()
+    {threads, projects} = local_rows()
 
     case Enum.find(projects, &(&1["id"] == project_id)) do
-      nil -> {:error, :invalid, "That project is not on this MC, so an agent cannot run in it."}
-      project -> {:ok, project_id, project, nil}
+      nil ->
+        {:error, :invalid, "That project is not on this MC, so an agent cannot run in it."}
+
+      project ->
+        last = threads |> Enum.filter(&(&1["projectId"] == project_id)) |> latest()
+        {:ok, project_id, project, last}
     end
   end
 

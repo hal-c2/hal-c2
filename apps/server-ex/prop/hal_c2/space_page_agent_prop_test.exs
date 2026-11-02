@@ -14,7 +14,8 @@ defmodule HalC2.SpacePageAgentPropTest do
   - a page has at most one agent, and an ask while it is at work is refused and writes
     nothing, as is one on a page in the trash;
   - an image an ask sends inline is saved for its thread and reaches its launch, and a
-    refused ask leaves no image behind;
+    refused ask leaves no image behind, nor one whose thread could not start or whose
+    launch the crash lost;
   - an agent ends only by its own thread ending or a stop: a report from a thread an
     earlier ask started, or one with its run still going, writes nothing;
   - an agent ended says what its run ended as, and whether its thread edited the page;
@@ -94,7 +95,7 @@ defmodule HalC2.SpacePageAgentPropTest do
   # wrote, said, run, moving}: it wrote as it edits, and says edited once it ends; said is
   # whether it gave a reason; run is what its run is (nil before a launch that never
   # came); moving is whether its thread is in a move. asks counts this page's threads, so
-  # a report can name an old one.
+  # a report can name an old one. image is whether its ask sent one.
   # images counts the images saved for the threads of asks.
   def initial_state, do: %{pages: %{}, images: 0}
 
@@ -109,7 +110,8 @@ defmodule HalC2.SpacePageAgentPropTest do
             {5,
              {:call, __MODULE__, :ask,
               [elements(pages), elements(["tidy", "@agent tidy", " "]), boolean()]}},
-            {1, {:call, __MODULE__, :ask_lost, [elements(pages)]}},
+            {1, {:call, __MODULE__, :ask_lost, [elements(pages), boolean()]}},
+            {1, {:call, __MODULE__, :ask_unstartable, [elements(pages), boolean()]}},
             {4, {:call, __MODULE__, :lose_report, [elements(pages), elements(Map.keys(@ended))]}},
             {2, {:call, __MODULE__, :hold_message, [elements(pages)]}},
             {3, {:call, __MODULE__, :cancel_message, [elements(pages)]}},
@@ -218,18 +220,42 @@ defmodule HalC2.SpacePageAgentPropTest do
         {:invalid, s, 0}
 
       true ->
-        asked = put(s, name, %{page | asks: page.asks + 1, agent: agent("running")})
+        asked = put(s, name, %{page | asks: page.asks + 1, agent: agent("running", image)})
         {:ok, %{asked | images: s.images + if(image, do: 1, else: 0)}, 1}
     end
   end
 
-  defp step(s, :ask_lost, [name]) do
+  # Its image stays until the reconciliation settles it: a launch could still be writing.
+  defp step(s, :ask_lost, [name, image]) do
     page = s.pages[name]
 
     cond do
-      page.trashed -> {:trashed, s, 0}
-      active?(s, name) -> {:invalid, s, 0}
-      true -> {:ok, put(s, name, %{page | asks: page.asks + 1, agent: agent(nil)}), 1}
+      page.trashed ->
+        {:trashed, s, 0}
+
+      active?(s, name) ->
+        {:invalid, s, 0}
+
+      true ->
+        asked = put(s, name, %{page | asks: page.asks + 1, agent: agent(nil, image)})
+        {:ok, %{asked | images: s.images + if(image, do: 1, else: 0)}, 1}
+    end
+  end
+
+  # The provider cannot start: the page says why, and the image goes.
+  defp step(s, :ask_unstartable, [name, _image]) do
+    page = s.pages[name]
+
+    cond do
+      page.trashed ->
+        {:trashed, s, 0}
+
+      active?(s, name) ->
+        {:invalid, s, 0}
+
+      true ->
+        failed = %{agent(nil, false) | status: "failed", said: true}
+        {:ok, put(s, name, %{page | asks: page.asks + 1, agent: failed}), 1}
     end
   end
 
@@ -353,8 +379,9 @@ defmodule HalC2.SpacePageAgentPropTest do
     {:ok, next, if(next == s, do: 0, else: 1)}
   end
 
-  defp agent(run) do
+  defp agent(run, image) do
     %{
+      image: image,
       status: "running",
       edited: false,
       wrote: false,
@@ -388,11 +415,16 @@ defmodule HalC2.SpacePageAgentPropTest do
   defp stops_now?(%{run: "requeued", status: "stopping"}), do: true
   defp stops_now?(agent), do: over?(agent)
 
-  # What its run ended as: a lost launch fails with a reason, as a failed run does.
+  # What its run ended as: a lost launch fails with a reason, as a failed run does, and
+  # takes its image with it.
   defp run_over(s, name) do
-    case s.pages[name].agent.run do
-      nil -> settle(s, name, "failed", true)
-      ended -> settle(s, name, @ended[ended], ended in ["failed", "interrupted"])
+    case s.pages[name].agent do
+      %{run: nil, image: image} ->
+        settled = settle(s, name, "failed", true)
+        %{settled | images: s.images - if(image, do: 1, else: 0)}
+
+      %{run: ended} ->
+        settle(s, name, @ended[ended], ended in ["failed", "interrupted"])
     end
   end
 
@@ -433,9 +465,7 @@ defmodule HalC2.SpacePageAgentPropTest do
 
   def ask(name, request, image) do
     act(fn space ->
-      choices = if image, do: %{"attachments" => [@image]}, else: %{}
-
-      case PageAgent.ask(space, id(name), request, choices, &nowhere/1) do
+      case PageAgent.ask(space, id(name), request, choices(image), &nowhere/1) do
         {:ok, %{"threadId" => thread}} ->
           receive do
             {:launched, ^thread, attachments} ->
@@ -462,13 +492,13 @@ defmodule HalC2.SpacePageAgentPropTest do
   end
 
   # An ask whose launch dies with the MC: no thread is ever written.
-  def ask_lost(name) do
+  def ask_lost(name, image) do
     act(fn space ->
       test = self()
       Application.put_env(:hal_c2, :page_agent_launch, &lost_launch(&1, test))
 
       reply =
-        case PageAgent.ask(space, id(name), "tidy", %{}, &nowhere/1) do
+        case PageAgent.ask(space, id(name), "tidy", choices(image), &nowhere/1) do
           {:ok, %{"threadId" => thread}} ->
             receive do
               {:launched, ^thread, _attachments} -> :ok
@@ -491,6 +521,62 @@ defmodule HalC2.SpacePageAgentPropTest do
       reply
     end)
   end
+
+  # An ask whose provider cannot start a thread; done once the page says it failed.
+  def ask_unstartable(name, image) do
+    act(fn space ->
+      test = self()
+      stream = Space.stream_id(space)
+      :ok = Streams.subscribe(stream, self(), nil)
+      Application.put_env(:hal_c2, :page_agent_launch, fn _ -> {:error, "No provider."} end)
+
+      reply =
+        case PageAgent.ask(space, id(name), "tidy", choices(image), &nowhere/1) do
+          {:ok, %{"threadId" => thread}} ->
+            await_failed(stream, id(name), thread)
+
+            Process.put(
+              :threads,
+              Map.update(Process.get(:threads), name, [thread], &[thread | &1])
+            )
+
+            :ok
+
+          {:error, reason, _} ->
+            reason
+        end
+
+      Streams.unsubscribe(stream, self())
+      flush(stream)
+      Application.put_env(:hal_c2, :page_agent_launch, &fake_thread(&1, test))
+      reply
+    end)
+  end
+
+  defp await_failed(stream, page_id, thread) do
+    case StreamState.get(Streams.state(stream), "pageAgent")[page_id] do
+      %{"threadId" => ^thread, "status" => "failed"} ->
+        :ok
+
+      _ ->
+        receive do
+          {:hal_c2_stream, ^stream, _} -> await_failed(stream, page_id, thread)
+        after
+          5_000 -> flunk("the page never said its agent failed")
+        end
+    end
+  end
+
+  defp flush(stream) do
+    receive do
+      {:hal_c2_stream, ^stream, _} -> flush(stream)
+    after
+      0 -> :ok
+    end
+  end
+
+  defp choices(true), do: %{"attachments" => [@image]}
+  defp choices(false), do: %{}
 
   def edit(name) do
     act(fn space ->

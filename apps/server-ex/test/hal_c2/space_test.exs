@@ -46,6 +46,20 @@ defmodule HalC2.SpaceTest do
     Enum.map(blocks, & &1["text"])
   end
 
+  defp await_page_agent(stream, page, status) do
+    case HalC2.StreamState.get(Streams.state(stream), "pageAgent")[page] do
+      %{"status" => ^status} ->
+        :ok
+
+      _ ->
+        receive do
+          {:hal_c2_stream, ^stream, _} -> await_page_agent(stream, page, status)
+        after
+          5_000 -> flunk("the page's agent never said #{status}")
+        end
+    end
+  end
+
   describe "the agent asked on a page" do
     # A second stop found the first still waiting for the run, and wrote an empty patch
     # that took the Space's stream down.
@@ -87,7 +101,11 @@ defmodule HalC2.SpaceTest do
       test = self()
       home = Application.get_env(:hal_c2, :home)
       Application.put_env(:hal_c2, :home, dir)
-      Application.put_env(:hal_c2, :page_agent_launch, &send(test, {:launched, &1}))
+      # The launch waits, so the page's agent is still at work for the second ask.
+      Application.put_env(:hal_c2, :page_agent_launch, fn input ->
+        send(test, {:launched, input})
+        receive do: (:never -> {:ok, nil})
+      end)
 
       on_exit(fn ->
         Application.put_env(:hal_c2, :home, home)
@@ -146,6 +164,37 @@ defmodule HalC2.SpaceTest do
                Space.PageAgent.ask(space, page, "again", %{"attachments" => [image]}, target)
 
       assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == kept
+    end
+
+    test "an ask whose thread cannot start keeps no image", %{space: space, tmp_dir: dir} do
+      page = page!(space, "Roadmap")
+      home = Application.get_env(:hal_c2, :home)
+      Application.put_env(:hal_c2, :home, dir)
+      Application.put_env(:hal_c2, :page_agent_launch, fn _ -> {:error, "No provider."} end)
+
+      on_exit(fn ->
+        Application.put_env(:hal_c2, :home, home)
+        Application.delete_env(:hal_c2, :page_agent_launch)
+      end)
+
+      target = fn _ ->
+        {:ok, %{project_id: nil, model: nil, runtime_mode: nil, interaction_mode: nil}}
+      end
+
+      image = %{
+        "type" => "image",
+        "name" => "sketch.png",
+        "mimeType" => "image/png",
+        "dataUrl" =>
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII="
+      }
+
+      stream = Space.stream_id(space)
+      :ok = Streams.subscribe(stream, self(), nil)
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", %{"attachments" => [image]}, target)
+      await_page_agent(stream, page, "failed")
+
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == []
     end
   end
 
