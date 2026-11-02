@@ -8,9 +8,10 @@
 // RPCs. A page's history (h) is the exception: it is not on a stream, so it is asked
 // for while it is open, again when the Space's stream moves. The SpaceView brick
 // paints `space` and dispatches `space.*`. A chart block draws as text (`spaceChart.ts`)
-// and is asked for in words; Markdown a page keeps as written (a `raw` block) shows as
-// its source, line for line, unless it is one Mermaid fence, which shows as the MC drew
-// it in characters (`mermaidDiagrams.ts`); a heading carries its level's `#` marks. An
+// and is asked for in words. A Mermaid diagram (a `code` block in "mermaid", or a `raw`
+// block that is one Mermaid fence the page keeps as written) shows as the MC drew it in
+// characters (`mermaidDiagrams.ts`). Any other `raw`, `table` or `code` block shows as
+// its source, line for line; a heading carries its level's `#` marks. An
 // entry taller than the pane, as a chart can be, scrolls through itself before the
 // selection moves on.
 import * as NodePath from "node:path";
