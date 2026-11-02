@@ -132,7 +132,8 @@ mod CODE-REVIEW-CLAIMS is
   op repost : Id Id Sha -> Item [ctor] .
   op hurt : Id -> Item [ctor] .
 
-  --- A new item or phase needs an equation of renamedItem or renamed (symmetry, below).
+  --- A new item, phase, review or looks needs an equation of renamedItem or renamed, and a
+  --- new Ref, Seen or Ids one an equation of refAs, seenAs or idsAs (symmetry, below).
   op empty : -> Conf [ctor] .
   op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
   op {_} : Conf -> Sys [ctor] .
@@ -811,6 +812,8 @@ mod CODE-REVIEW-CLAIMS is
   eq code(X, mc(X, P, N, R) C) = nr(X, R) .
   op nr : Id Review -> Nat .
   eq nr(X, unknown) = 0 .
+  --- A review left unrenamed codes as 0 so the renaming settles and unrenamed reports it.
+  eq nr(X, R) = 0 [owise] .
   eq nr(X, rv(St, Cl, Rd, Hd, E, Ho)) =
        1 + nt(St) + 7 * (nb(Cl) + 2 * (ns(Rd) + 3 * (ns(Hd) + 3 * (nf(X, E) + 5 * nh(Ho))))) .
   op nh : Hold -> Nat .
@@ -872,10 +875,13 @@ mod CODE-REVIEW-CLAIMS is
   eq reposted({ repost(X, Y, S) C }) = true .
   eq reposted({ C }) = false [owise] .
 
-  --- An item or phase the symmetry did not rename, which a new constructor without its
-  --- equation leaves: the search would go on without it, so it counts as bad.
+  --- An item, phase, review or looks the symmetry did not rename, which a new constructor
+  --- without its equation leaves: the search would go on without it, so it counts as bad.
+  --- A new Ref, Seen or Ids constructor needs refAs, seenAs or idsAs, which this misses.
   op unrenamed : Sys -> Bool .
   eq unrenamed({ renamedItem(It, Pm) C }) = true .
+  eq unrenamed({ mc(X, P, N, renamed(R, Pm)) C }) = true .
+  eq unrenamed({ looks(X, renamed(Ls, Pm)) C }) = true .
   eq unrenamed({ run(X, renamed(Ph, Pm)) C }) = true .
   eq unrenamed({ pub(X, S, renamed(Ph, Pm)) C }) = true .
   eq unrenamed({ C }) = false [owise] .
