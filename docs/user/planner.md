@@ -44,8 +44,8 @@ plan, so everyone connected to that MC sees the same ones.
 In the Gantt chart, drag a bar to move a task, or its end to change its due date.
 On the board, drag a card to another column. Click any task to open it: edit its
 fields and notes, see its issue, pull requests and threads, and run actions on it.
-To link a pull request by hand, give it as `owner/name#12` or paste its address.
-One on a GitHub Enterprise host needs the address, which tells the planner the host.
+To link a pull request by hand, enter `owner/name#12`, or paste its web address
+when it lives on a GitHub Enterprise host.
 
 ## Actions and their prompts
 

@@ -167,8 +167,8 @@ public:
   // (the Files tab's Add to chat); false with no thread or draft open.
   bool insertAtEnd(const QString& text);
   // A draft's attachment as this machine holds it, for a viewer: {id, name,
-  // mimeType, url (an image's bytes as a data URL), text (a file's, when it
-  // is text this machine can read)}; empty when it is gone.
+  // mimeType, url (an image's bytes as a data URL), text (a file's as captured,
+  // when it is text this machine can read), truncated}; empty when it is gone.
   QVariantMap attachmentPreview(const QString& id);
 
 private:
@@ -186,6 +186,10 @@ private:
     // Where a file's bytes are: a path on this machine, or a pasted text.
     QString path;
     QByteArray content;
+    // A picked file as it was when added, up to what a viewer shows: the file
+    // on disk may have changed since.
+    QByteArray captured;
+    bool capturedWhole = false;
     bool pastedText = false;
     // A file's upload: "uploading", "failed" (why, in `error`), or empty once
     // the MC has it as `remoteId` on `environmentId`.
@@ -407,6 +411,8 @@ private:
   QList<composer::Suggestion> suggestions(const QString& target, const std::optional<composer::Trigger>& trigger) const;
   // Searches the workspace for an @ query the menu has no answer for yet.
   void searchPaths(const QString& target);
+  bool canSearchPaths(const QString& target) const;
+  void refreshPathSearch();
 
   // The catalogue of the route's environment.
   void refreshCatalogue();
@@ -506,11 +512,14 @@ private:
   // This window's stash list is open.
   bool m_stashOpen = false;
   QList<composer::Instance> m_catalogue;
-  // The @ search the menu shows: its target and query, and what came back.
+  // The @ search the menu shows: its target, query and checkout, and what came back.
   struct PathSearch {
     QString target;
     QString query;
+    QString environmentId;
+    QString cwd;
     bool done = false;
+    bool failed = false;
     QList<std::pair<QString, bool>> entries;
     int request = 0;
   };

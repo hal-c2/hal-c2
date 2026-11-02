@@ -59,6 +59,24 @@ Feature: Errors stay on the terminal client's status line
     And the palette does not offer "Dismiss the status error"
 
   @tui
+  Scenario: The dismiss hint promises the palette key only where it opens the palette
+    Given the terminal is 160 columns wide
+    And pulling will fail with "offline"
+    And the user pulls the branch
+    Then the key hint row promises "click error or ^K to dismiss"
+    When the source-control panel has focus
+    Then the key hint row promises "click error to dismiss"
+
+  @tui
+  Scenario: Rebinding the palette in the client changes the key hints at once
+    Given the terminal is 160 columns wide
+    When the user rebinds the palette to "ctrl+j"
+    Then the key hint row promises "^J commands"
+    When pulling will fail with "offline"
+    And the user pulls the branch
+    Then the key hint row promises "click error or ^J to dismiss"
+
+  @tui
   Scenario: Clicking the error dismisses it
     Given the terminal is 160 columns wide
     And pulling will fail with "offline"

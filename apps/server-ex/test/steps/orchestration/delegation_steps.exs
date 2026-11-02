@@ -656,6 +656,17 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # Its caller has heard the task failed, and may have given the work to another agent.
+  step "retrying the subagent's setup is refused", context do
+    child = World.thread_id(context, "subagent")
+    {reply, context} = World.call(context, "worktreeSetup.retry", %{"threadId" => child})
+    assert {:ok, %{"retried" => false}} = reply
+
+    assert %{"stages" => stages} = HalC2.WorktreeSetup.subscribe(child, self())
+    assert Enum.find(stages, &(&1["id"] == "agent"))["status"] == "skipped"
+    context
+  end
+
   step "the subagent never ran", context do
     state = World.state(context, "subagent")
     assert StreamState.list(state, "provider-turn") == []
@@ -897,6 +908,17 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   step "the subagent's turn is interrupted", context do
     assert {:ok, _} = context.mcp_result
     World.await_runs(context, "subagent", ["interrupted"])
+    context
+  end
+
+  step "a message is queued behind the subagent's turn", context do
+    {{:ok, _}, context} = World.send_message(context, "subagent", "and another thing")
+    context
+  end
+
+  step "the subagent's turn is interrupted and the message behind it cancelled", context do
+    assert {:ok, _} = context.mcp_result
+    World.await_runs(context, "subagent", ["interrupted", "cancelled"])
     context
   end
 

@@ -356,6 +356,34 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     consume(context, %{"instanceId" => "codex"})
   end
 
+  step "a second Codex instance has a banked reset credit", context do
+    context = limits(context)
+    second_codex_instance(context, true)
+    :ok = HalC2.ProviderUsageLimits.refresh(["codex-work"])
+    {last, context} = usage_limits(context, "codex-work")
+    assert %{"availableCount" => 2} = last["resetCredits"]
+    context
+  end
+
+  step "the user uses the reset credit on the second Codex instance", context do
+    consume(context, %{"instanceId" => "codex-work"})
+  end
+
+  step "only the second Codex instance's account redeems it and shows the reset", context do
+    assert {:ok, %{"outcome" => "reset"}} = context.reply
+    assert [_key] = context |> second_consumed() |> File.read!() |> String.split()
+    refute File.exists?(consumed(context))
+
+    {work, context} = usage_limits(context, "codex-work")
+    assert %{"usedPercent" => 0} = window(work, "primary")
+    assert %{"availableCount" => 1} = work["resetCredits"]
+
+    {built_in, context} = usage_limits(context, "codex")
+    assert %{"usedPercent" => 42} = window(built_in, "primary")
+    assert %{"availableCount" => 2} = built_in["resetCredits"]
+    context
+  end
+
   # Codex failing the redemption stands in for a timeout: the MC keeps the attempt's
   # key after either.
   step "a reset credit redemption timed out", context do
@@ -380,7 +408,7 @@ defmodule HalC2.Steps.Providers.UsageLimits do
     context
   end
 
-  step ~r/^the user uses a reset credit on (?<target>Claude|a provider that is not set up|a hub that is disabled|a hub without naming a credit)$/,
+  step ~r/^the user uses a reset credit on (?<target>Claude|a provider that is not set up|a Codex instance that is off|a hub that is disabled|a hub without naming a credit)$/,
        %{args: [target]} = context do
     {input, context} =
       case target do
@@ -389,6 +417,11 @@ defmodule HalC2.Steps.Providers.UsageLimits do
 
         "a provider that is not set up" ->
           {%{"instanceId" => "codex_personal"}, context}
+
+        "a Codex instance that is off" ->
+          context = limits(context)
+          second_codex_instance(context, false)
+          {%{"instanceId" => "codex-work"}, context}
 
         "a hub that is disabled" ->
           context = add_hub(context, %{"enabled" => false})
@@ -735,6 +768,22 @@ defmodule HalC2.Steps.Providers.UsageLimits do
   end
 
   defp consumed(context), do: Path.join(context.fakes.dir, "consumed")
+  defp second_consumed(context), do: Path.join(context.fakes.dir, "consumed-work")
+
+  # A Codex instance settings add, whose redemptions the fake logs apart from the built-in's.
+  defp second_codex_instance(context, enabled) do
+    World.merge_settings(%{
+      "providerInstances" => %{
+        "codex-work" => %{
+          "driver" => "codex",
+          "enabled" => enabled,
+          "environment" => [
+            %{"name" => "FAKE_CODEX_CONSUME_LOG", "value" => second_consumed(context)}
+          ]
+        }
+      }
+    })
+  end
 
   defp script(context, name, body) do
     path = Path.join(context.fakes.dir, name)

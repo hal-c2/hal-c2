@@ -9,7 +9,8 @@
 //
 // Actions: `worktreeSetup.details {open}` shows or hides the steps and why
 // the setup failed; `worktreeSetup.cancel` stops a running setup
-// (`worktreeSetup.cancel`), told when it cannot.
+// (`worktreeSetup.cancel`), told when it cannot; `worktreeSetup.retry` runs a
+// failed one again.
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -48,6 +49,14 @@ public:
                        if (error || !result.toObject().value(QLatin1String("cancelled")).toBool()) {
                          NativeShell::of(this)->controller<ToastController>()->error(
                              QStringLiteral("Could not cancel the worktree setup"), error.value_or(QStringLiteral("The agent has already started.")));
+                       }
+                     });
+    } else if (action == QLatin1String("worktreeSetup.retry") && !m_thread.isEmpty()) {
+      m_client->call(this, environmentId(), QStringLiteral("worktreeSetup.retry"), QJsonObject{{QStringLiteral("threadId"), threadId()}},
+                     [this](const QJsonValue& result, const std::optional<QString>& error) {
+                       if (error || !result.toObject().value(QLatin1String("retried")).toBool()) {
+                         NativeShell::of(this)->controller<ToastController>()->error(
+                             QStringLiteral("Could not retry the worktree setup"), error.value_or(QStringLiteral("The thread has already moved on.")));
                        }
                      });
     }
@@ -96,11 +105,13 @@ private:
     const QString phase = m_snapshot.value(QLatin1String("phase")).toString();
     QVariantList stages;
     bool scriptFailed = false;
+    bool agentPending = false;
     for (const QJsonValue& value : m_snapshot.value(QLatin1String("stages")).toArray()) {
       const QJsonObject stage = value.toObject();
       const QString id = stage.value(QLatin1String("id")).toString();
       const QString status = stage.value(QLatin1String("status")).toString();
       scriptFailed = scriptFailed || status == QLatin1String("failed");
+      agentPending = agentPending || (id == QLatin1String("agent") && status == QLatin1String("pending"));
       stages.append(QVariantMap{{QStringLiteral("id"), id},
                                 {QStringLiteral("label"), stageLabel(id)},
                                 {QStringLiteral("status"), status},
@@ -123,6 +134,8 @@ private:
                                   {QStringLiteral("worktreePath"), m_snapshot.value(QLatin1String("worktreePath")).toString()},
                                   {QStringLiteral("script"), m_snapshot.value(QLatin1String("setupScript")).toObject().value(QLatin1String("name")).toString()},
                                   {QStringLiteral("canCancel"), phase == QLatin1String("running")},
+                                  // Failed before the agent: the MC's `worktreeSetup.retry` takes it.
+                                  {QStringLiteral("canRetry"), phase == QLatin1String("failed") && agentPending},
                                   {QStringLiteral("detailsOpen"), m_detailsOpen},
                                   {QStringLiteral("stages"), stages}});
   }

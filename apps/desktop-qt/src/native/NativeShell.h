@@ -88,6 +88,9 @@ class NativeShell : public QObject {
   Q_OBJECT
 
 public:
+  // How long quitting waits for the MC to answer the file viewers' writes.
+  static constexpr int quitWriteWaitMs = 3000;
+
   explicit NativeShell(ShellBridge* bridge, QObject* parent = nullptr);
   ~NativeShell() override;
 
@@ -138,6 +141,9 @@ public:
   // The user closed a window: it goes, with its route and panels, and the
   // others stay. The last one stays too, and says so (lastWindowClosed).
   void closeWindow(const QString& id);
+  // Writes the edits the file viewers still hold, waiting up to `waitMs` for
+  // the MC's answers. Runs as the app quits, before the MC it started stops.
+  void finishWrites(int waitMs);
 
   // The one T every window's controllers keep alike (DraftController's
   // drafts, ComposerController's text), made on first use.
@@ -206,6 +212,9 @@ private:
   std::vector<NativeControllerEntry> m_shared;
   std::unordered_map<std::type_index, std::shared_ptr<void>> m_common;
   std::vector<std::unique_ptr<NativeWindow>> m_windows;
+  // Closed, and kept until their file viewers' writes are answered: they go
+  // one at a time, and those still queued would go with the window.
+  std::vector<std::unique_ptr<NativeWindow>> m_closingWindows;
   NativeWindow* m_activeWindow = nullptr;
   QString m_stateDir;
   // Whether the first snapshot has landed and the controllers have started.

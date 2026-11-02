@@ -3827,7 +3827,7 @@
   },
   {
     "name": "task_cancel",
-    "description": "Interrupt a running delegated task and drop its pending result message. Fails with task_not_cancellable if the task already finished; use task_status for its result.",
+    "description": "Interrupt a running delegated task, drop its pending result message, and cancel what its child thread has queued, including messages a user sent it. Fails with task_not_cancellable if the task already finished; use task_status for its result.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -4090,13 +4090,17 @@
         "pageId": { "type": "string" },
         "kind": {
           "type": "string",
-          "enum": ["paragraph", "heading", "checklist", "callout", "subpage_link"]
+          "enum": ["paragraph", "heading", "checklist", "callout", "subpage_link", "image"]
         },
         "text": { "type": "string" },
         "checked": { "type": "boolean", "description": "For a checklist item." },
         "linkedPageId": {
           "type": "string",
           "description": "For a subpage_link: the page it links to."
+        },
+        "imageId": {
+          "type": "string",
+          "description": "For an image: an image of this Space, named in a page's Markdown as space-image:<id>."
         },
         "afterBlockId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
       },

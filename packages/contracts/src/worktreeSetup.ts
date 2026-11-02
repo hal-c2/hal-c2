@@ -100,6 +100,16 @@ export const WorktreeSetupCancelResult = Schema.Struct({
 });
 export type WorktreeSetupCancelResult = typeof WorktreeSetupCancelResult.Type;
 
+export const WorktreeSetupRetryInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type WorktreeSetupRetryInput = typeof WorktreeSetupRetryInput.Type;
+
+export const WorktreeSetupRetryResult = Schema.Struct({
+  retried: Schema.Boolean,
+});
+export type WorktreeSetupRetryResult = typeof WorktreeSetupRetryResult.Type;
+
 export const WORKTREE_SETUP_STAGE_ORDER: ReadonlyArray<WorktreeSetupStageId> = [
   "fetch",
   "checkout",

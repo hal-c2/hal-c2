@@ -27,7 +27,7 @@ import {
   type KeymapHandle,
   type PluginWorld,
 } from "../pluginWorld.ts";
-import { findObject, pressKey, QML_DIR, useClient } from "../world.ts";
+import { findObject, pressKey, QML_DIR, snapshot, useClient } from "../world.ts";
 
 const TUI_DIR = NodePath.resolve(import.meta.dir, "../../..");
 const ENTRY_TIMEOUT_MS = 10_000;
@@ -361,6 +361,16 @@ step(
 );
 
 // "the command palette opens" is keymap.steps.ts's: the palette is open on screen.
+
+step("the key hint row shows {string}", async (ctx: KeymapWorld, hint: string) => {
+  await (await startKeymaps(ctx)).renderOnce();
+  expect(await snapshot(ctx)).toContain(hint);
+});
+
+step("the key hint row does not show {string}", async (ctx: KeymapWorld, hint: string) => {
+  await (await startKeymaps(ctx)).renderOnce();
+  expect(await snapshot(ctx)).not.toContain(hint);
+});
 
 step("the keymap loads", async (ctx: KeymapWorld) => {
   await (await startKeymaps(ctx)).renderOnce();

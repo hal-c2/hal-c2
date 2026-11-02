@@ -258,6 +258,19 @@ defmodule HalC2.Settings do
      }}
   end
 
+  @doc """
+  Whether settings.json could not be read when the MC started and nothing has replaced
+  it since: `settings/0` then says nothing about what the file holds, and something
+  that needs a value from it should refuse rather than go on without. A file that
+  breaks later does not count, since the MC keeps the last document it read.
+  """
+  def unreadable? do
+    :ets.lookup_element(__MODULE__, :held, 2)
+  rescue
+    # An MC started without settings (tests, tools) has defaults.
+    ArgumentError -> false
+  end
+
   @doc "`{settings, version}`."
   def get do
     :ets.lookup_element(__MODULE__, :settings, 2)
@@ -357,7 +370,7 @@ defmodule HalC2.Settings do
     schedule_check()
 
     :ets.new(__MODULE__, [:named_table, :protected, read_concurrency: true])
-    publish(settings, 0)
+    publish(settings, 0, held)
 
     state = %{
       path: path,
@@ -613,12 +626,14 @@ defmodule HalC2.Settings do
   def handle_info({:DOWN, _ref, :process, pid, _}, state),
     do: {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
 
-  # The file changed under the MC: adopt it unless it is unreadable.
+  # The file changed under the MC: adopt it unless it is unreadable. While held it is
+  # tried every time: one that could not be read at all has no stamp, so its removal
+  # changes nothing the stamp can see.
   def handle_info(:check, state) do
     schedule_check()
     stamp = stamp(state.path)
 
-    with true <- stamp != state.stamp,
+    with true <- stamp != state.stamp or state.held,
          {:ok, settings} when settings != state.settings or state.held <- read(state.path) do
       # A deleted file is a machine starting over, as at start (`start_shared/1`).
       shared =
@@ -657,7 +672,7 @@ defmodule HalC2.Settings do
       )
 
     # Published before anything below reacts, so what it reads is the new settings.
-    publish(settings, state.version + 1)
+    publish(settings, state.version + 1, false)
 
     if keys_changed or settings["usageLimitSources"] != state.settings["usageLimitSources"],
       do: HalC2.UsageLimitSources.refresh_async()
@@ -706,14 +721,18 @@ defmodule HalC2.Settings do
   # A settings process updated in place (`HalC2.Hot`) does not run `init/1` again, so one
   # from before shared settings takes up their records here.
   @impl true
-  def code_change(_old, %{shared: _} = state, _extra), do: {:ok, state}
+  def code_change(_old, %{shared: _} = state, _extra) do
+    :ets.insert(__MODULE__, {:held, state.held})
+    {:ok, state}
+  end
 
   def code_change(_old, state, _extra) do
     state = Map.merge(state, %{id: HalC2.Environment.id(), shared: read_shared(), held: false})
     {:ok, start_shared(state)}
   end
 
-  defp publish(settings, version), do: :ets.insert(__MODULE__, {:settings, {settings, version}})
+  defp publish(settings, version, held),
+    do: :ets.insert(__MODULE__, [{:settings, {settings, version}}, {:held, held}])
 
   # Written to a temporary file and renamed, so a crash never leaves half a file.
   defp write!(path, settings), do: path |> stage!(settings) |> commit!()

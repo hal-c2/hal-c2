@@ -904,7 +904,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
 
   return {
     ...makeFeatureClient(runtime),
-    ...makeTuiSettingsClient(runtime),
+    ...makeTuiSettingsClient(runtime, origin),
     hostPlatform,
     browseFilesystem: (partialPath, cwd) =>
       runtime.runPromise(

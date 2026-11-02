@@ -49,8 +49,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.start_next/1" =>
         ~w(start-next decideNext begin-turn retry start-failed),
       "HalC2.Orchestration.release_session/1" => ~w(release-session release-idle keep-turn),
-      # An interrupt of each active run, then release_session/1 once none is left and the
-      # queue is empty (the model has no cancel of one queued run: it only shortens the queue).
+      # cancel_queued/1, an interrupt of each active run, then release_session/1 once none is
+      # left and the queue is empty.
       "HalC2.Orchestration.stop_plugin_thread/3" =>
         ~w(interrupt-any interrupt-undriven release-session release-idle keep-turn),
       "HalC2.Orchestration.runtime/1" => "begin-turn",
@@ -103,6 +103,10 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.release_prepared/2" => @preparing,
       "HalC2.Orchestration.progress_prepared/3" => @preparing,
       "HalC2.Orchestration.fail_prepared/4" => @preparing,
+      "HalC2.Orchestration.retry_prepared/2" => @preparing,
+      "HalC2.Orchestration.delegated?/1" => "reads a thread's lineage",
+      "HalC2.Orchestration.cancel_queued/1" =>
+        "the model has no cancel of one queued run: it only shortens the queue",
       "HalC2.Orchestration.warn_prepared/4" => @items,
       "HalC2.Orchestration.upsert/4" => @changes,
       "HalC2.Orchestration.create/3" => @changes,
@@ -145,6 +149,16 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWatch.start_link/1" =>
         "starts the process TurnWatch's rules run in",
       "HalC2.Orchestration.IdleSessions.start_link/1" => "starts the timer the idle rules run on",
+      "HalC2.Orchestration.Recovery.leaving/1" =>
+        "stands in for :init stopping in a test; stopping?/0 is abstracted",
+      "HalC2.Orchestration.Recovery.start_reattach/0" =>
+        "connects to programs that outlive the MC, which here stop with it; Durable's own tests hold it",
+      "HalC2.Codex.ThreadRuntime handle_call {:adopt, %{dir: _, snapshot: _}}" =>
+        "programs here stop with the MC; a failed adoption settles as restart does",
+      "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:checkpoint, _}}" =>
+        "saves state to a file for a later boot; no run changes",
+      "HalC2.Codex.ThreadRuntime handle_info :durable_save" =>
+        "saves state to a file for a later boot; no run changes",
       "HalC2.Orchestration.Recovery.start_link/0" => "runs run/0 at boot, as restart does",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
         "a runtime stopping with the MC leaves its turn to Recovery, as restart's wipe does"

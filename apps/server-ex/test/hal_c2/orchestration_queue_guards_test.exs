@@ -20,6 +20,7 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
     start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Shell)
+    start_supervised!(HalC2.Settings)
     start_supervised!({Registry, keys: :unique, name: HalC2.Codex.Registry})
     start_supervised!({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
 
@@ -163,6 +164,51 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     await_statuses(thread_id, ["interrupted", "running"])
   end
 
+  # #277: a limit stop on a queue the restart held is what the user resumes at the reset.
+  # The sweep hands the queue on once; the next finds a newer run and sends nothing.
+  test "a limit stop behind a restart-held queue resumes the queue once",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    await_statuses(thread_id, ["running"])
+    {:ok, _} = send_message(thread_id, "m2")
+    await_statuses(thread_id, ["running", "queued"])
+    restart(thread_id)
+
+    {:ok, _} = send_message(thread_id, "m3", "usage limit m3")
+    await_statuses(thread_id, ["interrupted", "failed", "queued"])
+    {:ok, _} = recover(thread_id)
+    restart(thread_id)
+
+    assert [%{"type" => "queue.resume"}] = sweep(thread_id)
+    await_statuses(thread_id, ["interrupted", "failed", "running"])
+    assert [] = sweep(thread_id)
+
+    assert ["m1", "m3", "m2"] = Enum.map(runs(current(thread_id)), & &1["userMessageId"])
+    assert ["m1", "m2", "m3"] = user_messages(thread_id)
+  end
+
+  # #277: the held message says "usage limit" too, so the resumed queue stops at once on
+  # a limit of its own, which nobody armed.
+  test "a held message that hits the limit again ends the recovery", %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    await_statuses(thread_id, ["running"])
+    {:ok, _} = send_message(thread_id, "m2", "usage limit m2")
+    await_statuses(thread_id, ["running", "queued"])
+    restart(thread_id)
+
+    {:ok, _} = send_message(thread_id, "m3", "usage limit m3")
+    await_statuses(thread_id, ["interrupted", "failed", "queued"])
+    {:ok, _} = recover(thread_id)
+    restart(thread_id)
+
+    assert [%{"type" => "queue.resume"}] = sweep(thread_id)
+    await_statuses(thread_id, ["interrupted", "failed", "failed"])
+    assert [] = sweep(thread_id)
+
+    assert ["m1", "m3", "m2"] = Enum.map(runs(current(thread_id)), & &1["userMessageId"])
+    assert ["m1", "m2", "m3"] = user_messages(thread_id)
+  end
+
   test "a deleted thread refuses messages, updates and queue commands", %{thread_id: thread_id} do
     {:ok, _} = Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread_id})
     deleted = "Thread #{thread_id} is deleted."
@@ -212,15 +258,50 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     await_statuses(thread_id, ["interrupted", "cancelled"])
   end
 
-  defp send_message(thread_id, message_id) do
+  defp send_message(thread_id, message_id, text \\ nil) do
     Orchestration.dispatch(%{
       "type" => "message.dispatch",
       "threadId" => thread_id,
       "messageId" => message_id,
-      "text" => "wait #{message_id}",
+      "text" => text || "wait #{message_id}",
       "attachments" => [],
       "dispatchMode" => %{"type" => "queue_after_active"}
     })
+  end
+
+  # What a restart does to one thread: its provider process goes with the MC, and boot
+  # recovery ends what ran and holds the queue.
+  defp restart(thread_id) do
+    for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
+        do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
+
+    HalC2.Orchestration.Recovery.settle(thread_id)
+  end
+
+  # Resume at the reset, as the limit banner asks for the thread's current stop.
+  defp recover(thread_id) do
+    shell = HalC2.Projection.Shell.thread_shell(current(thread_id))
+
+    Orchestration.dispatch(%{
+      "type" => "thread.metadata.update",
+      "threadId" => thread_id,
+      "limitRecovery" => %{
+        "runId" => shell["latestRunId"],
+        "resetAt" => shell["usageLimitResetAt"],
+        "autoResume" => true
+      }
+    })
+  end
+
+  # The recovery sweep a week on, past every reset the fake reports.
+  defp sweep(thread_id) do
+    HalC2.Streams.flush_shell(thread_id)
+    HalC2.Orchestration.LimitRecovery.sweep(System.system_time(:millisecond) + 7 * 86_400_000)
+  end
+
+  defp user_messages(thread_id) do
+    for {id, %{"role" => "user"}} <- StreamState.get(current(thread_id), "message"),
+        do: id
   end
 
   defp await_call(stream, from),

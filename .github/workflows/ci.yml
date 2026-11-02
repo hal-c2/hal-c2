@@ -149,6 +149,12 @@ jobs:
           sudo apt-get update && sudo apt-get install -y fuse3
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
+      # The orphan reaper kills through it, and with `kill` without it (HalC2.Subprocess.Orphans).
+      - name: Test the pid-kill helper
+        run: |
+          cargo test --locked --manifest-path ../../native/pid-kill/Cargo.toml
+          cargo build --locked --release --manifest-path ../../native/pid-kill/Cargo.toml
+
       - name: Test
         run: mix test
 
@@ -182,6 +188,9 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y fuse3
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
+
+      - name: Build the pid-kill helper
+        run: cargo build --locked --release --manifest-path ../../native/pid-kill/Cargo.toml
 
       - name: Property tests
         run: mix prop --partitions 3
