@@ -225,7 +225,7 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  @doc "`task_cancel`: interrupts a running task; its result, if any, stays."
+  @doc "`task_cancel`: cancels what the child has queued, a user's messages too, and interrupts a running task; its result, if any, stays."
   def cancel(thread_id, task_id) do
     with %{} = task <-
            subagent(thread_id, task_id) ||

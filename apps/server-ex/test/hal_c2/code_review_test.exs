@@ -1032,7 +1032,8 @@ defmodule HalC2.CodeReviewTest do
 
   # While the stop waits on the agent, which `hold_interrupts/1` keeps from answering, its
   # next pass cannot cancel what is queued. So `start_next/1`, which is what the end of a
-  # run calls, has to leave it there on its own.
+  # run calls, starts the message, and the stop's next pass interrupts it before the stop
+  # answers.
   defp assert_stop_stops_what_was_queued_meanwhile(review, thread_id, hold) do
     :ok = HalC2.Streams.watch(thread_id, self())
     stop = Task.async(fn -> HalC2.Orchestration.stop_plugin_thread(review["threadId"], @id) end)
