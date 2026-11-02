@@ -66,8 +66,10 @@ class ShellExamplesTest : public QObject {
   }
 
   // Drops a file from another application at `at`, as the platform delivers
-  // the drag, and says whether it joined the draft (composer.attach).
+  // the drag, and says whether it joined the draft (composer.attach). A frame
+  // first lays out what was just shown, so the drop lands on where it is drawn.
   bool dropAttaches(QQuickWindow* window, const QPointF& at) {
+    window->grabWindow();
     QFile file(dragged.filePath("notes.txt"));
     if (!file.open(QIODevice::WriteOnly)) return false;
     file.write("notes");
@@ -107,6 +109,9 @@ private slots:
                              "HalC2.Shell", 1, 0, "Panel");
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/PaletteModel.qml")),
                              "HalC2.Shell", 1, 0, "PaletteModel");
+    // The built-in layout's Device tab draws on this; the decoder is hal_c2_native's.
+    qmlRegisterType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/DeviceScreen.qml")),
+                    "HalC2.Shell", 1, 0, "DeviceScreen");
     runtime = std::make_unique<ShellRuntime>(
         ShellRuntime::Options{directory.path(), QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());
@@ -890,7 +895,7 @@ private slots:
     QCOMPARE(scrim->mapToScene(QPointF(0, 0)).x(), 208.0);
     // Files dropped on the list, or beside it, are not the draft's.
     bridge.publish("composer", threadComposer());
-    QTRY_VERIFY(findVisualItem(window->contentItem(), "composerDrop")->isVisible());
+    QTRY_VERIFY(findVisualItem(window->contentItem(), "composerDrop")->width() > 0);
     QVERIFY(!dropAttaches(window, QPointF(100, 200)));
     QVERIFY(!dropAttaches(window, QPointF(420, 200)));
     bridge.publish("composer", QVariant());
@@ -1048,7 +1053,7 @@ private slots:
     QCOMPARE(top(scrim), workspace->height());
     // Files dropped on it are not the draft's.
     bridge.publish("composer", threadComposer());
-    QTRY_VERIFY(findVisualItem(root, "composerDrop")->isVisible());
+    QTRY_VERIFY(findVisualItem(root, "composerDrop")->width() > 0);
     QVERIFY(!dropAttaches(window, QPointF(leftOf(side) + side->width() / 2, 500)));
     // Its width is the sheet's, not one to drag or to fill the window from.
     QVERIFY(!findVisualItem(side, "panelEdge")->isVisible());
