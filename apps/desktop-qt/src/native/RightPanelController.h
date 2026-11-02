@@ -7,6 +7,7 @@
 
 #include "AgentsModel.h"
 #include "NativeController.h"
+#include "PullRequestLinkPreviews.h"
 #include "PullRequestReview.h"
 #include "ThreadDiff.h"
 #include "ThreadPreviews.h"
@@ -75,6 +76,7 @@ class RightPanelController : public QObject, public NativeController {
   Q_PROPERTY(ThreadPreviews* previews READ previews CONSTANT)
   Q_PROPERTY(PullRequestReview* review READ review CONSTANT)
   Q_PROPERTY(ThreadDevices* device READ device CONSTANT)
+  Q_PROPERTY(PullRequestLinkPreviews* linkPreviews READ linkPreviews CONSTANT)
 
 public:
   // The tab kinds; each has a brick in js/panelTabs.js.
@@ -107,6 +109,7 @@ public:
   ThreadPreviews* previews() { return &m_previews; }
   PullRequestReview* review() { return &m_review; }
   ThreadDevices* device() { return &m_devices; }
+  PullRequestLinkPreviews* linkPreviews() { return &m_linkPreviews; }
 
   bool isOpen() const;
   QString activeTab() const;
@@ -206,6 +209,7 @@ private:
   ThreadPreviews m_previews;
   PullRequestReview m_review;
   ThreadDevices m_devices;
+  PullRequestLinkPreviews m_linkPreviews;
   bool m_active = false;
   // The thread the panel shows; kept while the route is elsewhere (settings)
   // so coming back finds the tabs as they were.

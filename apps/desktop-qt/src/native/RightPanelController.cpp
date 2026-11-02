@@ -123,7 +123,18 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
       m_review(
           client, [this](const QString& type, const QString& title, const QString& description) { toast(this, type, title, description); },
           [bridge](const QString& url) { bridge->openExternal(QUrl(url)); }, this),
-      m_devices(client, this) {
+      m_devices(client, this),
+      m_linkPreviews(
+          [this](const QString& environmentId, const QJsonObject& ref, PullRequestLinkPreviews::Reply reply) {
+            m_client->call(this, environmentId, QStringLiteral("pullRequests.preview"), ref,
+                           [reply = std::move(reply)](const QJsonValue& result, const std::optional<QString>& error) {
+                             reply(error || !result.isObject() ? std::nullopt : std::optional(result.toObject()));
+                           });
+          },
+          [this](const QString& key) {
+            if (m_onThread) showTab(kReviewTab + key);
+          },
+          [this](const QString& url) { m_bridge->openExternal(QUrl(url)); }, [this](const QString& url) { openAddress(url); }, this) {
   m_previews.setConnectedHere([this] { return thisMachine::hosts(*m_store, *m_client, m_client->environment()); });
   // The pages this device opened from a browser tab, kept with its preferences.
   m_previews.setRecents(
@@ -279,6 +290,24 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
             m_pullRequests.link(url);
           }
         });
+  } else if (action == QLatin1String("pullRequest.linkMenu")) {
+    // The right-click on a pull request's number: copy first, since that is
+    // why one right-clicks a number rather than clicks it, then its page,
+    // named for the host the user lands on.
+    const QString url = map.value(QStringLiteral("url")).toString();
+    const std::optional<PullRequestLink> link = PullRequestLinks::parse(url);
+    const QString provider = map.value(QStringLiteral("provider"), link ? link->provider : QString()).toString();
+    NativeShell::of(this)->controller<MenuController>()->open(
+        map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble(),
+        {{QStringLiteral("copy-link"), tr("Copy link"), QStringLiteral("copy")},
+         {QStringLiteral("open-external"), PullRequestLinks::openOnHostLabel(provider), QStringLiteral("external-link")}},
+        [this, url](const QString& id) {
+          if (id == QLatin1String("copy-link") && !m_bridge->setClipboardText(url)) {
+            toast(this, QStringLiteral("error"), tr("Could not copy the link"), {});
+          } else if (id == QLatin1String("open-external") && !m_bridge->openExternal(QUrl(url))) {
+            toast(this, QStringLiteral("error"), tr("Could not open the link"), {});
+          }
+        });
   } else if (action == QLatin1String("rightPanel.rename")) {
     renameTab(map.value(QStringLiteral("id")).toString(), map.value(QStringLiteral("title")).toString());
   } else if (action == QLatin1String("rightPanel.unfloat")) {
@@ -314,6 +343,10 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     openThread(map.value(QStringLiteral("threadKey")).toString());
   } else if (action == QLatin1String("panel.open")) {
     open(map.value(QStringLiteral("tab")).toString(), map);
+  } else if (action == QLatin1String("thread.openLink")) {
+    // A link in the conversation: a pull request opens beside the thread,
+    // anything else as an address (openAddress).
+    m_linkPreviews.follow(map.value(QStringLiteral("url")).toString(), map.value(QStringLiteral("external")).toBool());
   } else if (action == QLatin1String("thread.openAddress")) {
     // A web address in the conversation (ThreadView's openLink).
     openAddress(map.value(QStringLiteral("url")).toString());
@@ -367,6 +400,9 @@ void RightPanelController::retarget() {
     }
     m_previews.setConfigured(configured);
     m_devices.setThread(environmentId, threadId, m_store->mcServing(environmentId));
+    // Its pull request links read on the thread's environment.
+    const bool reads = m_store->supports(environmentId, QStringLiteral("pullRequests"));
+    m_linkPreviews.setContext(reads ? environmentId : QString(), reads ? m_store->projectRows(environmentId) : QList<QJsonObject>());
     openProactively();
   }
   presentCommands();
