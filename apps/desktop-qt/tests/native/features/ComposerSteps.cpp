@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 #include <QVariantMap>
 
+#include "FakeFiles.h"
 #include "ComposerController.h"
 #include "DraftController.h"
 #include "FakeConfig.h"
@@ -159,6 +160,16 @@ const Steps steps([] {
   step(QStringLiteral("the suggestion list says %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return shown(world).value(QStringLiteral("suggestionsEmptyText")) == c[0]; },
                   [&] { return QStringLiteral("the suggestion list to say \"%1\"; the composer shows %2").arg(c[0], show(shown(world))); });
+  });
+
+  step(QStringLiteral("the environment of the open thread is unreachable"), [](World& world, const Captures&, const Table&) {
+    fakeFiles(world.mc);
+    world.mc.setOnline(world.mc.environmentId, false);
+    world.sync();
+  });
+  step(QStringLiteral("the environment of the open thread is reachable again"), [](World& world, const Captures&, const Table&) {
+    world.mc.setOnline(world.mc.environmentId, true);
+    world.sync();
   });
 
   step(QStringLiteral("the composer is in %1 mode").arg(q), [](World& world, const Captures& c, const Table&) {

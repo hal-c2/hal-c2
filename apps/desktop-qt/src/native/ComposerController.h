@@ -411,6 +411,8 @@ private:
   QList<composer::Suggestion> suggestions(const QString& target, const std::optional<composer::Trigger>& trigger) const;
   // Searches the workspace for an @ query the menu has no answer for yet.
   void searchPaths(const QString& target);
+  bool canSearchPaths(const QString& target) const;
+  void refreshPathSearch();
 
   // The catalogue of the route's environment.
   void refreshCatalogue();
@@ -510,11 +512,14 @@ private:
   // This window's stash list is open.
   bool m_stashOpen = false;
   QList<composer::Instance> m_catalogue;
-  // The @ search the menu shows: its target and query, and what came back.
+  // The @ search the menu shows: its target, query and checkout, and what came back.
   struct PathSearch {
     QString target;
     QString query;
+    QString environmentId;
+    QString cwd;
     bool done = false;
+    bool failed = false;
     QList<std::pair<QString, bool>> entries;
     int request = 0;
   };
