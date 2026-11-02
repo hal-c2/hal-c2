@@ -75,9 +75,10 @@ Feature: Tool calls and file changes
     When the user reads the activity group
     Then the summary counts two messages sent
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile
+  # A lone call reads as itself; the thought, which is not counted, makes each group a summary.
+  @desktop @mobile @tui @backlog-mobile
   Scenario Outline: A summary says what kind of work the calls were
-    Given the activity group holds <calls>
+    Given the activity group holds a thought and <calls>
     When the user reads the activity group
     Then it reads "<summary>"
 
@@ -141,9 +142,9 @@ Feature: Tool calls and file changes
     And it ends with "Performed 4 other actions"
 
   # Legacy: packages/client-runtime/src/halC2ToolSummary.ts (summarizeHalC2ToolCalls)
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile
+  @desktop @mobile @tui @backlog-mobile
   Scenario Outline: A summary says what the agent did through HAL-C2's own tools
-    Given the activity group holds <calls>
+    Given the activity group holds a thought and <calls>
     When the user reads the activity group
     Then it reads "<summary>"
 

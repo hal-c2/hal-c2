@@ -295,6 +295,11 @@ async function finishTurn(ctx: TurnWorld, calls: ReadonlyArray<Call>): Promise<v
 /** The finished turn's group of calls, its summary first. */
 const group = (ctx: TurnWorld) => linesOf(lastOf(ctx, "work"));
 const summary = (ctx: TurnWorld) => group(ctx)[0]!.slice(2).replace(/ ✗$/, "");
+/** Whether the group is one call, which reads as itself instead of a summary. */
+const lone = (ctx: TurnWorld) => !/^[▸▾] /.test(group(ctx)[0]!);
+/** What the group reads as: its summary, or a lone call's label. */
+const groupLine = (ctx: TurnWorld) =>
+  lone(ctx) ? lastOf(ctx, "work").lines[0]!.text.chunks[1]!.text : summary(ctx);
 
 step("the agent ran two commands and sent messages to three threads", (ctx: TurnWorld) =>
   finishTurn(ctx, [command(1), command(2), ...times(3, (n) => sendMessage(`thread-${n}`, n))]),
@@ -318,11 +323,15 @@ step("the agent sent three messages and one of them failed", (ctx: TurnWorld) =>
   ]),
 );
 
-step(/^the activity group holds (.+)$/, (ctx: TurnWorld, calls: string) => {
-  const fixture = GROUPS[calls];
-  if (!fixture) throw new Error(`unknown activity group: ${calls}`);
-  return finishTurn(ctx, fixture);
-});
+// A thought, which a summary does not count, keeps a lone call from reading as itself.
+step(
+  /^the activity group holds (a thought and )?(.+)$/,
+  (ctx: TurnWorld, withThought: string | undefined, calls: string) => {
+    const fixture = GROUPS[calls];
+    if (!fixture) throw new Error(`unknown activity group: ${calls}`);
+    return finishTurn(ctx, withThought ? [thought, ...fixture] : fixture);
+  },
+);
 
 async function openFold(ctx: TurnWorld) {
   const fold = linesOf(lastOf(ctx, "fold"))[0]!;
@@ -331,9 +340,9 @@ async function openFold(ctx: TurnWorld) {
 
 step("the user reads the activity group", async (ctx: TurnWorld) => {
   await openFold(ctx);
-  // The group stays closed: one line saying what its calls did.
+  // The group stays closed: one line saying what its calls did, or a lone call's own.
   expect(group(ctx)).toHaveLength(1);
-  expect(group(ctx)[0]!.startsWith("▸ ")).toBe(true);
+  if (!lone(ctx)) expect(group(ctx)[0]!.startsWith("▸ ")).toBe(true);
 });
 
 async function toggleGroup(ctx: TurnWorld) {
@@ -346,7 +355,7 @@ step("the user opens the activity group", async (ctx: TurnWorld) => {
 });
 
 step("it reads {string}", async (ctx: TurnWorld, text: string) => {
-  expect(summary(ctx)).toBe(text);
+  expect(groupLine(ctx)).toBe(text);
   expect(await snapshot(ctx)).toContain(text);
 });
 
@@ -369,6 +378,11 @@ step("the summary counts two messages sent", async (ctx: TurnWorld) => {
 });
 
 step("the group is marked as having a failure", async (ctx: TurnWorld) => {
+  // A lone call is marked on its own row.
+  if (lone(ctx)) {
+    expect(plain(lastCall(ctx).text)).toContain("✗ Failed");
+    return;
+  }
   const head = lastOf(ctx, "work").lines[0]!.text.chunks;
   expect(head.at(-1)!.text).toBe(" ✗");
   expect(await snapshot(ctx)).toContain(`${summary(ctx)} ✗`);
@@ -394,9 +408,8 @@ step("the tool's answer says it is an error", async (ctx: TurnWorld) => {
   await settleRun(ctx, "completed", 30);
 });
 
-step("the call is shown as failed", async (ctx: TurnWorld) => {
-  expect(group(ctx)[0]).toBe("▸ Tried to read 1 thread ✗");
-  await toggleGroup(ctx);
+step("the call is shown as failed", (ctx: TurnWorld) => {
+  // The call is alone in its group, which reads as the call.
   expect(callRow(ctx, "Read a HAL-C2 thread")).toContain("✗ Failed");
 });
 
@@ -417,9 +430,10 @@ step("the command's output says {string}", async (ctx: TurnWorld, output: string
 });
 
 step(/^the command is shown as (failed|succeeded)$/, async (ctx: TurnWorld, how: string) => {
-  expect(group(ctx)[0]!.endsWith(" ✗")).toBe(how === "failed");
-  await toggleGroup(ctx);
-  expect(callRow(ctx, "cat src/x.ts")).toContain(how === "failed" ? "✗ Failed" : "✓");
+  // The command is alone in its group, which reads as the command.
+  const row = plain(lastCall(ctx).text);
+  expect(row).toContain(how === "failed" ? "✗ Failed" : "✓");
+  expect(row.includes("✗")).toBe(how === "failed");
 });
 
 // --- a call to one of HAL-C2's own tools ------------------------------------------------

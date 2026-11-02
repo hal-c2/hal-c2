@@ -271,8 +271,12 @@ void addCalls(World& world, const QString& calls) {
          addItem(world, QStringLiteral("command_execution"), {{QStringLiteral("input"), QStringLiteral("bun lint")}, {QStringLiteral("exitCode"), 2}});
        }},
   };
-  const auto found = known.constFind(calls);
+  // A thought, which a summary does not count, keeps a lone call from reading as itself.
+  const QLatin1String withThought("a thought and ");
+  const bool thinks = calls.startsWith(withThought);
+  const auto found = known.constFind(thinks ? calls.mid(withThought.size()) : calls);
   if (found == known.cend()) fail(QStringLiteral("no calls described as \"%1\"").arg(calls));
+  if (thinks) thought();
   (*found)();
 }
 

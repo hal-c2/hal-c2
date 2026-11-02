@@ -564,7 +564,10 @@ function pushRow(items: TimelineItem[], row: TimelineRow, ctx: RowContext): void
   if (expanded) for (const hidden of row.hiddenRows) pushFoldable(items, hidden, ctx, settled);
 }
 
-/** A row of the conversation; a `settled` turn's work reads as a summary. */
+/**
+ * A row of the conversation; a `settled` turn's work reads as a summary, unless
+ * it is one call, which reads as itself.
+ */
 function pushFoldable(
   items: TimelineItem[],
   row: FoldableRow,
@@ -573,9 +576,10 @@ function pushFoldable(
 ): void {
   const { palette, width } = ctx;
   if (row.kind === "work") {
-    const lines = settled
-      ? summarizedGroupLines(row.id, row.groupedEntries, ctx, settled.startsOpen)
-      : workGroupLines(row.id, row.groupedEntries, ctx);
+    const lines =
+      settled && row.groupedEntries.length > 1
+        ? summarizedGroupLines(row.id, row.groupedEntries, ctx, settled.startsOpen)
+        : workGroupLines(row.id, row.groupedEntries, ctx);
     items.push(item(row.id, "work", width, lines, { marginBottom: 1 }));
     return;
   }
