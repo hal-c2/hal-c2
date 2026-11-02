@@ -297,7 +297,11 @@ export class ThreadResumes {
     { readonly fold: ThreadShapeFold; readonly point: StreamResumePoint }
   >();
 
-  constructor(private readonly capacity = 32) {}
+  private readonly capacity: number;
+
+  constructor(capacity = 32) {
+    this.capacity = capacity;
+  }
 
   /** Keeps where a thread stream stopped. */
   put(key: string, fold: ThreadShapeFold, point: StreamResumePoint): void {
