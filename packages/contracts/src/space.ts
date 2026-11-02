@@ -80,6 +80,12 @@ export const SpacePageFile = Schema.Struct({
   /** True while the file is gone (deleted, or not on the branch checked out). */
   missing: Schema.Boolean,
   /**
+   * True when the page was edited while its file was gone. Should the file come back, it
+   * wins over those edits, and `conflictAt` says so. Absent, as on pages opened before
+   * it was recorded, means false.
+   */
+  unwritten: Schema.optional(Schema.Boolean),
+  /**
    * When the file last won over an edit on the page, the edit being a version in the
    * page's history; null once an edit reaches the file again.
    */
@@ -229,7 +235,11 @@ export const SpaceImageUrl = Schema.String.check(Schema.isPattern(/^[^\s()<>\\]+
 /** How far a list item is nested under the items above it; 0 is not nested. */
 export const SpaceListDepth = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
-/** The number a `numbered` item that begins a list starts it at. */
+/**
+ * The number a `numbered` item that begins a list starts it at. An item that continues a
+ * list counts on from the one above it and keeps its start for when it begins one, after
+ * the items above it are moved or deleted.
+ */
 export const SpaceListStart = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: 999_999_999 }),
 );
@@ -999,6 +1009,7 @@ export class SpaceError extends Schema.TaggedError<SpaceError>()("SpaceError", {
     "trashed",
     "notEmpty",
     "cycle",
+    /** Also: a page's file could not be read or written, so the edit was not made. */
     "unavailable",
     /** The project's `spaces` section does not count the file. */
     "notSpaceFile",

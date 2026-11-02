@@ -598,12 +598,18 @@ defmodule HalC2.SpaceTest do
     test "a numbered list starts where its first item says", %{space: space} do
       page = page!(space, "Plan")
       {:ok, one} = Space.insert_block(space, page, %{"kind" => "numbered", "text" => "a"})
-      {:ok, _} = Space.insert_block(space, page, %{"kind" => "numbered", "text" => "b"})
+      {:ok, two} = Space.insert_block(space, page, %{"kind" => "numbered", "text" => "b"})
       {:ok, one} = Space.edit_block(space, one["id"], %{"start" => 4})
       assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n4. a\n5. b\n"}
 
       {:ok, one} = Space.edit_block(space, one["id"], %{"start" => nil})
       refute Map.has_key?(one, "start")
+
+      # An item that continues its list keeps a start for when it begins one.
+      {:ok, _} = Space.edit_block(space, two["id"], %{"start" => 7})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n1. a\n2. b\n"}
+      {:ok, _} = Space.delete_block(space, one["id"])
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n7. b\n"}
 
       {:ok, bullet} =
         Space.insert_block(space, page, %{"kind" => "bullet", "text" => "c", "start" => 2})
