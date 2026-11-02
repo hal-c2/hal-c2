@@ -254,6 +254,24 @@ defmodule HalC2.TerminalPropTest do
     end
   end
 
+  property "a history cut to its line limit does not depend on how the output is chunked",
+    numtests: HalC2.Prop.numtests(100),
+    max_size: 60 do
+    forall {chunks, cuts, max_lines} <-
+             {list(resize(40, text_chunk())), list(integer(1, 7)), integer(1, 8)} do
+      fresh = History.new("", max_lines: max_lines)
+      whole = History.value(History.append(fresh, Enum.join(chunks)))
+
+      split =
+        Enum.join(chunks)
+        |> cut(cuts)
+        |> Enum.reduce(fresh, fn piece, h -> History.append(h, piece) end)
+        |> History.value()
+
+      (split == whole) |> when_fail(IO.inspect({split, whole}, label: "split, whole"))
+    end
+  end
+
   property "saved scrollback survives ids of any length",
     numtests: HalC2.Prop.numtests(100),
     max_size: 40 do
