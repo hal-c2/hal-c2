@@ -635,8 +635,12 @@ export function fakeSpaceMc(options: {
     order: string,
     by: SpaceAuthor,
   ) => {
-    const kinds = ["paragraph", "heading", "checklist", "callout", "subpage_link", "image"];
+    const kinds = ["paragraph", "heading", "checklist", "callout", "subpage_link", "image", "raw"];
     if (!kinds.includes(spec.kind)) refuse("invalid", `A block is one of ${kinds.join(", ")}.`);
+    const level = spec.kind === "heading" ? spec.level : undefined;
+    if (level !== undefined && !(Number.isInteger(level) && level >= 1 && level <= 6)) {
+      refuse("invalid", "A heading's level is 1 to 6.");
+    }
     if (spec.kind === "subpage_link" && !table(spaceId, "page").get(spec.linkedPageId)) {
       refuse("invalid", "A subpage link needs a page of this Space.");
     }
@@ -653,6 +657,7 @@ export function fakeSpaceMc(options: {
       checked: spec.kind === "checklist" && spec.checked === true,
       linkedPageId: spec.kind === "subpage_link" ? spec.linkedPageId : null,
       ...(placed ? { imageId: placed.id } : {}),
+      ...(level !== undefined ? { level } : {}),
       order,
       createdBy: by,
       updatedBy: by,

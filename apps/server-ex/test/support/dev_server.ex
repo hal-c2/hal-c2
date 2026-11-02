@@ -41,6 +41,31 @@ defmodule HalC2.Test.DevServer do
   def stop(server), do: send(server, :stop)
 
   @doc """
+  Calls `start` with a port free at this machine's 127.0.0.1 and ::1, held
+  there until `start` returns. A dev server it starts at that port on another
+  loopback address can then be forwarded at its own port: one the OS picks
+  there may already be taken at 127.0.0.1, by any socket of this machine.
+  """
+  def on_free_port(start) do
+    {:ok, v4} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
+    {:ok, port} = :inet.port(v4)
+
+    case :gen_tcp.listen(port, [:inet6, ip: {0, 0, 0, 0, 0, 0, 0, 1}, ipv6_v6only: true]) do
+      {:error, :eaddrinuse} ->
+        :gen_tcp.close(v4)
+        on_free_port(start)
+
+      v6 ->
+        try do
+          start.(port)
+        after
+          :gen_tcp.close(v4)
+          with {:ok, socket} <- v6, do: :gen_tcp.close(socket)
+        end
+    end
+  end
+
+  @doc """
   Watches `pid` on this MC from a process of its own, for a test on another MC
   that may be cut off from this one while it ends: `down/1` gives its reason.
   """

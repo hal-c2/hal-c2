@@ -15,6 +15,7 @@ import type { Environment } from "../environment.ts";
 import { project, shell } from "../fakeClient.ts";
 import { PREVIEW_FILES } from "../filePreviewFixtures.ts";
 import { chooseCommand } from "../threadUi.ts";
+import { spacePageOpener } from "./space.steps.ts";
 import { openRevertPicker } from "./timeline.steps.ts";
 import { boot, findObject, pressKey, settle, useClient, type World } from "../world.ts";
 
@@ -294,9 +295,12 @@ step("the tree groups them into the same folders as forward slashes", async (ctx
 
 // --- Opening files -----------------------------------------------------------------
 
-// One step for every "the user opens …": the revert picker by its palette title, else a file.
+// One step for every "the user opens …": the revert picker by its palette title, a Space's
+// page by its title, else a file.
 step("the user opens {string}", (ctx: FilesWorld, label: string) => {
   if (label === "Revert to checkpoint…") return openRevertPicker(ctx);
+  const page = spacePageOpener(ctx, label);
+  if (page) return page();
   // The files the viewer renders (files-viewer.steps.ts) are in the workspace when asked for.
   const preview = PREVIEW_FILES[label];
   if (preview) ctx.files = { ...(ctx.files ?? DEFAULT_FILES()), [label]: preview.contents };
