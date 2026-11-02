@@ -20,7 +20,7 @@ Item {
     }
 
     function block(id, text, more) {
-        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, level: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more);
+        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, level: 0, language: "", imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more);
     }
 
     function pageRow(id, title, depth, parentPageId) {
@@ -57,6 +57,7 @@ Item {
         function init() {
             Shell.reset();
             Spaces.reset();
+            Diagrams.reset();
         }
 
         // "Roadmap" with its history open: "Final" now, "Draft" before it.
@@ -600,6 +601,97 @@ Item {
             compare(inserts.length, 1);
             compare(inserts[0].afterBlockId, "b1");
             verify(!findChild(view, "spaceInsertAfter").visible);
+        }
+
+        // A diagram as the MC imports a "mermaid" fence: a code block in "mermaid"
+        // holding the bare source (HalC2.Space.Markdown; space/markdown.feature,
+        // Mermaid diagrams).
+        function mermaidBlock(source) {
+            return root.block("d1", source, { kind: "code", language: "mermaid" });
+        }
+
+        function test_a_mermaid_block_is_drawn_in_place_of_its_source() {
+            const source = "flowchart LR\n  A --> B";
+            const row = mermaidBlock(source);
+            const view = root.research({ blocks: [row] });
+            const note = findChild(findChild(view, "spaceDiagramNote:" + row.text), "mermaidStatus");
+            verify(note.visible);
+            compare(note.text, "Drawing the diagram…");
+            verify(findChild(view, "spaceBlockEditor:" + row.text).visible, "its source shows until it is drawn");
+
+            Diagrams.answer(source, "dark", { status: "drawn", kind: "flowchart", url: "", width: 200, height: 80 });
+            const diagram = findChild(view, "spaceDiagram:" + row.text);
+            verify(diagram.visible);
+            compare(findChild(diagram, "mermaidImage").width, 200);
+            verify(!findChild(view, "spaceBlockEditor:" + row.text).visible);
+            verify(!note.visible);
+
+            // The source is the way to edit it, and what is saved is drawn.
+            mouseClick(findChild(view, "spaceDiagramSource:" + row.text));
+            verify(findChild(view, "spaceBlockEditor:" + row.text).visible);
+            verify(!diagram.visible);
+            const edited = source + "\n  B --> C";
+            Spaces.blocks.setProperty(0, "text", edited);
+            verify(("dark\n" + edited) in Diagrams.asked, "the new source is asked for");
+            Diagrams.answer(edited, "dark", { status: "drawn", kind: "flowchart", url: "", width: 200, height: 120 });
+            verify(findChild(view, "spaceDiagram:" + edited).visible, "drawn again with the new node");
+        }
+
+        // Another client's or an agent's edit arriving mid-sentence neither
+        // hides the source nor takes the keyboard away.
+        function test_an_edit_from_elsewhere_leaves_the_diagram_source_being_written() {
+            const source = "flowchart LR\n  A --> B";
+            const row = mermaidBlock(source);
+            const view = root.research({ blocks: [row] });
+            Diagrams.answer(source, "dark", { status: "drawn", kind: "flowchart", url: "", width: 200, height: 80 });
+            mouseClick(findChild(view, "spaceDiagramSource:" + row.text));
+            const editor = findChild(view, "spaceBlockEditor:" + row.text);
+            editor.forceActiveFocus();
+            verify(editor.activeFocus);
+
+            const theirs = source + "\n  B --> C";
+            Spaces.blocks.setProperty(0, "text", theirs);
+            Diagrams.answer(theirs, "dark", { status: "drawn", kind: "flowchart", url: "", width: 200, height: 120 });
+            verify(editor.visible, "the source stays");
+            verify(editor.activeFocus, "the user is still writing");
+            compare(root.dispatched("space.block.update").length, 0);
+        }
+
+        function test_a_mermaid_block_with_a_mistake_shows_its_source_and_where() {
+            const source = "flowchart LR\n  A[open --> B";
+            const row = mermaidBlock(source);
+            const view = root.research({ blocks: [row] });
+            Diagrams.answer(source, "dark", { status: "invalid", kind: "flowchart", reason: "An unclosed bracket.", line: 2, column: 3 });
+            verify(findChild(view, "spaceBlockEditor:" + row.text).visible);
+            verify(!findChild(view, "spaceDiagram:" + row.text).visible);
+            const note = findChild(findChild(view, "spaceDiagramNote:" + row.text), "mermaidStatus");
+            verify(note.visible);
+            compare(note.text, "Line 2: An unclosed bracket.");
+            verify(!findChild(view, "spaceDiagramSource:" + row.text).visible);
+        }
+
+        // A fence the MC keeps as written (indented, or with a space before
+        // its language) is a raw block, and is drawn too.
+        function test_a_mermaid_fence_kept_as_written_is_drawn_too() {
+            const view = root.research({ blocks: [
+                root.block("r1", "``` mermaid\nflowchart LR\n  A --> B\n```", { kind: "raw" }),
+                root.block("r2", "  ~~~Mermaid\nsequenceDiagram\n  A->>B: hi\n  ~~~", { kind: "raw" })
+            ] });
+            tryVerify(() => findChild(view, "spaceBlockEditor:  ~~~Mermaid\nsequenceDiagram\n  A->>B: hi\n  ~~~"), 1000, "every block is on the page");
+            compare(Object.keys(Diagrams.asked).sort(), ["dark\nflowchart LR\n  A --> B", "dark\nsequenceDiagram\n  A->>B: hi"]);
+        }
+
+        function test_only_a_mermaid_code_block_or_fence_is_a_diagram() {
+            const view = root.research({ blocks: [
+                root.block("c1", "const a = 1;", { kind: "code", language: "js" }),
+                root.block("c2", "flowchart LR\n  A --> B", { kind: "code" }),
+                root.block("r1", "```js\nconst a = 1;\n```", { kind: "raw" }),
+                root.block("r2", "Before\n```mermaid\nflowchart LR\n  A --> B\n```", { kind: "raw" }),
+                root.block("p1", "```mermaid\nflowchart LR\n  A --> B\n```"),
+                root.block("t1", "| mermaid |\n| --- |", { kind: "table" })
+            ] });
+            tryVerify(() => findChild(view, "spaceBlockEditor:| mermaid |\n| --- |"), 1000, "every block is on the page");
+            compare(Object.keys(Diagrams.asked).length, 0);
         }
 
         function test_return_writes_an_edited_block_and_escape_drops_the_edit() {

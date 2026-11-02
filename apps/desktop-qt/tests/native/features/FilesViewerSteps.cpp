@@ -17,6 +17,7 @@
 #include "FilesViewer.h"
 #include "FilesWorkspace.h"
 #include "KeybindingController.h"
+#include "Mermaid.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
@@ -266,9 +267,30 @@ const Steps steps([] {
     world.brick->click(QStringLiteral("fileRender"));
   });
   step(QStringLiteral("the file's text is shown"), [](World& world, const Captures&, const Table&) {
+    showPanel(world);
+    // A diagram file the MC could not draw shows its text where the diagram would be.
+    if (files(world).renderKind() == QLatin1String("mermaid") && files(world).rendered()) {
+      const QString text = fakeFiles(world.mc).files.value(files(world).openPath()).chopped(1);
+      QString drawn;
+      world.waitFor([&] {
+        const QList<QQuickItem*> code = mermaid::shown(world, QStringLiteral("codeText"));
+        if (code.size() != 1) return false;
+        QMetaObject::invokeMethod(code.first(), "getText", Q_RETURN_ARG(QString, drawn), Q_ARG(int, 0), Q_ARG(int, code.first()->property("length").toInt()));
+        // Rich text reports a line break as a line separator.
+        drawn.replace(QChar(0x2028), QLatin1Char('\n'));
+        return drawn == text && mermaid::drawn(world).isEmpty();
+      }, [&] { return QStringLiteral("the diagram's text to be shown; it shows \"%1\"; %2").arg(drawn, describeViewer(world)); });
+      return;
+    }
     world.waitFor([&] { return !files(world).rendered() && shown(world, QStringLiteral("fileLines")); }, [&] { return describeViewer(world); });
     expect(!shown(world, QStringLiteral("fileRendered")) &&
                files(world).lines()->rowCount() == fakeFiles(world.mc).files.value(files(world).openPath()).count(QLatin1Char('\n')),
+           QStringLiteral("the viewer shows %1 lines").arg(files(world).lines()->rowCount()));
+  });
+  step(QStringLiteral("the diagram's source is shown"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !files(world).rendered() && shown(world, QStringLiteral("fileLines")) && mermaid::drawn(world).isEmpty(); },
+                  [&] { return describeViewer(world); });
+    expect(files(world).lines()->rowCount() == fakeFiles(world.mc).files.value(files(world).openPath()).count(QLatin1Char('\n')),
            QStringLiteral("the viewer shows %1 lines").arg(files(world).lines()->rowCount()));
   });
   step(QStringLiteral("the user switches back"), [](World& world, const Captures&, const Table&) {

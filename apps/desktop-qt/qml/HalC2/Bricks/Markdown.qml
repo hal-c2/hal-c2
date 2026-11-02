@@ -466,6 +466,11 @@ Item {
                         property bool copied: false
                         readonly property real lineHeight: Math.round(root.codeSize * 1.375 * 10) / 10
                         readonly property string code: seg.code
+                        // A Mermaid block is drawn once its fence is closed; the
+                        // user can switch back to its source.
+                        readonly property bool mermaid: seg.language.toLowerCase() === "mermaid" && !seg.open
+                        property bool showSource: false
+                        readonly property bool picture: mermaid && diagram.drawn && !showSource
 
                         function texts() {
                             return [codeText];
@@ -477,8 +482,8 @@ Item {
                             copiedTimer.restart();
                         }
 
-                        implicitWidth: codeText.implicitWidth + 28.8
-                        implicitHeight: 30 + body.height
+                        implicitWidth: picture ? diagram.implicitWidth : codeText.implicitWidth + 28.8
+                        implicitHeight: 30 + content.height
                         radius: Theme.radius
                         color: Theme.palette.color("codeBackground", "#111111")
                         border.color: root.borderColor
@@ -523,7 +528,15 @@ Item {
                             y: 6
                             spacing: 2
                             IconButton {
+                                objectName: "diagramSource"
+                                visible: block.mermaid && diagram.drawn
+                                iconName: block.showSource ? "image" : "code"
+                                label: block.showSource ? qsTr("Show the diagram") : qsTr("Show the source")
+                                onClicked: block.showSource = !block.showSource
+                            }
+                            IconButton {
                                 objectName: "wrapCode"
+                                visible: !block.picture
                                 iconName: "text-wrap"
                                 checked: block.wrapped
                                 label: block.wrapped ? qsTr("Disable line wrap") : qsTr("Wrap lines")
@@ -537,29 +550,47 @@ Item {
                             }
                         }
 
-                        SideScroll {
-                            id: body
+                        Column {
+                            id: content
                             y: 30
                             width: parent.width
-                            height: codeText.height + 25.6
-                            contentWidth: codeText.width + 28.8
 
-                            TextEdit {
-                                id: codeText
-                                objectName: "codeText"
-                                x: 14.4
-                                y: 12.8
-                                width: block.wrapped ? body.width - 28.8 : Math.max(implicitWidth, body.width - 28.8)
-                                textFormat: TextEdit.RichText
-                                text: Md.codeHtml(seg.code, block.lineHeight)
-                                wrapMode: block.wrapped ? TextEdit.WrapAtWordBoundaryOrAnywhere : TextEdit.NoWrap
-                                readOnly: true
-                                selectByMouse: true
-                                selectionColor: root.selectionColor
-                                onSelectedTextChanged: root.track(codeText)
-                                color: Theme.palette.color("codeForeground", "#f5f5f5")
-                                font.family: root.monoFamily
-                                font.pixelSize: root.codeSize
+                            SideScroll {
+                                id: body
+                                visible: !block.picture
+                                width: parent.width
+                                height: codeText.height + 25.6
+                                contentWidth: codeText.width + 28.8
+
+                                TextEdit {
+                                    id: codeText
+                                    objectName: "codeText"
+                                    x: 14.4
+                                    y: 12.8
+                                    width: block.wrapped ? body.width - 28.8 : Math.max(implicitWidth, body.width - 28.8)
+                                    textFormat: TextEdit.RichText
+                                    text: Md.codeHtml(seg.code, block.lineHeight)
+                                    wrapMode: block.wrapped ? TextEdit.WrapAtWordBoundaryOrAnywhere : TextEdit.NoWrap
+                                    readOnly: true
+                                    selectByMouse: true
+                                    selectionColor: root.selectionColor
+                                    onSelectedTextChanged: root.track(codeText)
+                                    color: Theme.palette.color("codeForeground", "#f5f5f5")
+                                    font.family: root.monoFamily
+                                    font.pixelSize: root.codeSize
+                                }
+                            }
+
+                            // The picture, or under the source why it is not one yet.
+                            MermaidDiagram {
+                                id: diagram
+                                objectName: "markdownDiagram"
+                                visible: block.mermaid && !(drawn && block.showSource)
+                                active: block.mermaid
+                                code: seg.code
+                                width: parent.width
+                                height: implicitHeight
+                                textColor: root.mutedColor
                             }
                         }
                     }
