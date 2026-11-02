@@ -7,10 +7,10 @@ defmodule HalC2.Mcp.Tools.Pages do
   """
 
   alias HalC2.{Space, StreamState}
-  alias HalC2.Space.{Pages, Presence}
+  alias HalC2.Space.{Files, Pages, Presence}
 
   @tools ~w(hal_c2_page_list hal_c2_page_read hal_c2_page_block_insert hal_c2_page_block_update
-            hal_c2_page_block_delete)
+            hal_c2_page_block_delete hal_c2_page_open_file hal_c2_space_files_scan)
 
   def tools, do: @tools
 
@@ -67,8 +67,30 @@ defmodule HalC2.Mcp.Tools.Pages do
     )
   end
 
+  def run("hal_c2_page_open_file", %{"spaceId" => s, "relativePath" => path} = args, caller) do
+    with {:ok, %{"spaceId" => s, "page" => page} = opened} <-
+           Space.open_file(s, project(args, caller), path) do
+      touched(caller, s, page["id"])
+      {:ok, opened}
+    end
+    |> reply()
+  end
+
+  def run("hal_c2_space_files_scan", args, caller),
+    do: args |> project(caller) |> Files.scan(args["replace"] == true) |> reply()
+
   def run(name, _args, _caller),
     do: {:error, "invalid_request", "#{name} is missing a required argument."}
+
+  # The project named, or the thread's own.
+  defp project(%{"projectId" => id}, _caller) when is_binary(id), do: id
+
+  defp project(_args, caller) do
+    case HalC2.Shell.row(node(), caller.thread_id) do
+      {"thread", %{"projectId" => id}} -> id
+      _ -> nil
+    end
+  end
 
   defp author(caller), do: Space.agent(caller.thread_id)
 

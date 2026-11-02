@@ -26,6 +26,7 @@ defmodule HalC2.Space do
     Blocks,
     Chart,
     Decks,
+    Files,
     History,
     ImageFile,
     ImageGeneration,
@@ -154,12 +155,15 @@ defmodule HalC2.Space do
     Streams.transact(stream_id(space_id), :space, fn state ->
       # The index is asked from inside the Space's stream: a delete decides there too.
       if Streams.get(@index, "space", space_id),
-        do: fun.(state) |> and_sites(state),
+        do: fun.(state) |> and_files(state) |> and_sites(state),
         else: {[], no_space(space_id)}
     end)
   end
 
   def transact(_space_id, _fun), do: {:error, :invalid, "spaceId is required."}
+
+  # A page that is a project file and its file change together (`HalC2.Space.Files`).
+  defp and_files({changes, reply}, state), do: {changes ++ Files.follow(state, changes), reply}
 
   # Whatever a command does to pages, their sites follow in the same step.
   defp and_sites({changes, reply}, state) do
@@ -174,6 +178,14 @@ defmodule HalC2.Space do
       do: {:ok, Streams.state(stream_id(space_id))},
       else: no_space(space_id)
   end
+
+  @doc "The page of a project's file in this Space, or wherever it already is (`HalC2.Space.Files`)."
+  def open_file(space_id, project_id, relative) do
+    with {:ok, _} <- state(space_id), do: Files.open(space_id, project_id, relative)
+  end
+
+  def sync_file(space_id, id), do: transact(space_id, &Files.sync(&1, id))
+  def unlink_file(space_id, id), do: transact(space_id, &Files.unlink(&1, id))
 
   def create_page(space_id, title, parent_id \\ nil),
     do: transact(space_id, &Pages.create(&1, space_id, title, parent_id))
@@ -464,8 +476,8 @@ defmodule HalC2.Space do
 
   def import_markdown(_, _, _, _, _, _), do: {:error, :invalid, "markdown is a string."}
 
-  # `state` as if `changes` were committed, to decide what follows them in one step.
-  defp with_changes(state, changes) do
+  @doc "`state` as if `changes` were committed, to decide what follows them in one step."
+  def with_changes(state, changes) do
     Enum.reduce(changes, state, fn {kind, id, patch}, state ->
       StreamState.apply_event(state, %{seq: state.seq, kind: kind, entity: id, patch: patch})
     end)

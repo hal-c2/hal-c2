@@ -1,4 +1,4 @@
-// Pages in a Space on the phone (features/space/pages.feature, self-updating-pages.feature, visualize.feature): the screens of
+// Pages in a Space on the phone (features/space/pages.feature, self-updating-pages.feature, visualize.feature, markdown.feature): the screens of
 // SpaceScreen.qml, tapped and typed into as the user does, against the MC's
 // `space.*` calls. The MC's side is the desktop's fake (its SpaceSteps.cpp) over
 // this client's streams (FakeThreads.h, served by ComposerSteps.cpp). What the
@@ -10,12 +10,15 @@
 #include <QBuffer>
 #include <QDateTime>
 #include <QFile>
+#include <QFontInfo>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
+#include <QQuickWindow>
 #include <QRegularExpression>
 #include <QSet>
+#include <QTest>
 
 #include <algorithm>
 #include <memory>
@@ -327,7 +330,7 @@ QString exportMarkdown(FakeMc& mc, const QString& space, const QJsonObject& page
     const QString said = text(block, QLatin1String("text"));
     QString line;
     if (kind == QLatin1String("heading")) {
-      line = QStringLiteral("## ") + said;
+      line = QString(block.value(QLatin1String("level")).toInt(2), QLatin1Char('#')) + QLatin1Char(' ') + said;
     } else if (kind == QLatin1String("checklist")) {
       line = (block.value(QLatin1String("checked")).toBool() ? QStringLiteral("- [x] ") : QStringLiteral("- [ ] ")) + said;
     } else if (kind == QLatin1String("callout")) {
@@ -441,7 +444,7 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
                    const QJsonObject& author) {
   if (const auto why = writable(mc, space, pageId)) return *why;
   static const QStringList kinds{QStringLiteral("paragraph"), QStringLiteral("heading"), QStringLiteral("checklist"),
-                                 QStringLiteral("callout"), QStringLiteral("subpage_link"), QStringLiteral("image")};
+                                 QStringLiteral("callout"), QStringLiteral("subpage_link"), QStringLiteral("image"), QStringLiteral("raw")};
   const QString kind = text(spec, QLatin1String("kind"));
   if (!kinds.contains(kind)) return refused(QStringLiteral("invalid"), QStringLiteral("There is no block kind %1.").arg(kind));
   const QString linked = text(spec, QLatin1String("linkedPageId"));
@@ -468,6 +471,7 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
                     {QStringLiteral("createdAt"), at},
                     {QStringLiteral("updatedAt"), at}};
   if (kind == QLatin1String("checklist")) block.insert(QStringLiteral("checked"), spec.value(QLatin1String("checked")).toBool());
+  if (kind == QLatin1String("heading") && spec.contains(QLatin1String("level"))) block.insert(QStringLiteral("level"), spec.value(QLatin1String("level")));
   if (kind == QLatin1String("subpage_link")) block.insert(QStringLiteral("linkedPageId"), linked);
   if (kind == QLatin1String("image")) {
     block.insert(QStringLiteral("imageId"), imageId);
@@ -2718,6 +2722,52 @@ const Steps steps([] {
     expectShown(world, [&] { return viewOf(world)->pageId() == page; }, S("%1 to open").arg(c[0]));
     const Table wanted = table.mid(1);
     expectShown(world, [&] { return blockTable(world) == wanted; }, S("the blocks %1").arg(show(tableOf(wanted))));
+  });
+
+  // Markdown the page keeps as written, and headings by level.
+  // A table wider than a phone, its cells padded to line up as people write them.
+  static const QString table = S("| Step  | Owner | Before it ships to everyone            |\n"
+                                 "| ----- | ----- | -------------------------------------- |\n"
+                                 "|   MC  | Ada   | The release notes and a signed build   |");
+  step(S("the page %1 holds a table the page does not model yet").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], S("raw"), table);
+  });
+  // A page's name, never a path: FilesSteps opens those.
+  step(S("the user opens \"([^\"./]*)\""), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, idOfPage(world, c[0]));
+  });
+  step(S("the table is shown as its Markdown, exactly as written, in a fixed-width face"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* editor = world.item(S("spaceBlockEditor:") + table);
+    expect(editor->property("text").toString() == table, S("the table shows as \"%1\"").arg(editor->property("text").toString()));
+    // One line on screen for each it was written in, however narrow the phone.
+    expect(editor->property("lineCount").toInt() == 3, S("the table is shown in %1 lines").arg(editor->property("lineCount").toInt()));
+    const QFont font = editor->property("font").value<QFont>();
+    expect(QFontInfo(font).fixedPitch(), S("the table is shown in %1, not a fixed-width face").arg(QFontInfo(font).family()));
+  });
+  step(S("the user can edit it as text"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* editor = world.item(S("spaceBlockEditor:") + table);
+    world.tap(editor);
+    world.waitFor([&] { return editor->hasActiveFocus(); }, S("the table to take the keyboard"));
+    editor->setProperty("cursorPosition", table.size());
+    QTest::keyClick(&world.window(), Qt::Key_Return);
+    world.type(S("|   QA  | Grace | A pass on the phone |"));
+    world.tap(S("spaceEditDone"));
+    world.sync();
+    const QString edited = table + S("\n|   QA  | Grace | A pass on the phone |");
+    world.waitFor([&] { return !findBlock(world, edited).isEmpty(); }, [&] { return S("the MC to hold the edited table; %1").arg(describe(world)); });
+    expect(text(findBlock(world, edited), QLatin1String("kind")) == QLatin1String("raw"), S("the table is no longer kept as written"));
+  });
+  step(S("the page %1 with headings of every level from 1 to 6").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString page = givenPage(world, c[0]);
+    for (int level = 1; level <= 6; ++level) {
+      given(world, S("block.insert"), {{S("pageId"), page}, {S("kind"), S("heading")}, {S("text"), S("Level %1").arg(level)}, {S("level"), level}});
+    }
+  });
+  step(S("each heading is smaller than the one of the level above it"), [](World& world, const Captures&, const Table&) {
+    const auto size = [&](int level) { return world.item(S("spaceBlockEditor:Level %1").arg(level))->property("font").value<QFont>().pixelSize(); };
+    for (int level = 2; level <= 6; ++level) {
+      expect(size(level) < size(level - 1), S("a level %1 heading is %2px, a level %3 one %4px").arg(level).arg(size(level)).arg(level - 1).arg(size(level - 1)));
+    }
   });
 
   // A page from a thread.

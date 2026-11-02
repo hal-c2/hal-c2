@@ -241,6 +241,7 @@ QList<QVariantMap> blocksOf(const Model& model) {
     rows.append({{QStringLiteral("id"), id},
                  {QStringLiteral("kind"), str(block, "kind")},
                  {QStringLiteral("text"), shown(QStringLiteral("text"), str(block, "text"))},
+                 {QStringLiteral("level"), block.value(QLatin1String("level")).toInt(2)},
                  {QStringLiteral("checked"), shown(QStringLiteral("checked"), block.value(QLatin1String("checked")).toBool()).toBool()},
                  {QStringLiteral("linkedPageId"), linked},
                  {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : titleOf(model.held, linked)},
@@ -674,7 +675,9 @@ struct Write : Command {
     } else if (op == QLatin1String("page.move")) {
       other = pick(pages + QStringList{QString()});
     } else if (op == QLatin1String("block.create")) {
-      value = pick({QStringLiteral("paragraph"), QStringLiteral("checklist"), QStringLiteral("heading"), QStringLiteral("link")});
+      // A heading may carry its level after a colon; one without shows as level 2.
+      value = pick({QStringLiteral("paragraph"), QStringLiteral("checklist"), QStringLiteral("heading"), QStringLiteral("heading:1"),
+                    QStringLiteral("heading:5"), QStringLiteral("raw"), QStringLiteral("link")});
       other = pick(pages);
       flag = *rc::gen::arbitrary<bool>();
     } else if (op == QLatin1String("block.text") || op == QLatin1String("block.replace")) {
@@ -778,11 +781,12 @@ struct Write : Command {
     if (op.endsWith(QLatin1String(".delete"))) return Made{kind, std::nullopt, {{QStringLiteral("d"), true}}};
     if (op == QLatin1String("block.create")) {
       if (!model.mc.contains(keyOf(kPage, other))) return std::nullopt;
-      QJsonObject block{{QStringLiteral("id"), id}, {QStringLiteral("pageId"), other}, {QStringLiteral("kind"), value},
+      QJsonObject block{{QStringLiteral("id"), id}, {QStringLiteral("pageId"), other}, {QStringLiteral("kind"), value.section(QLatin1Char(':'), 0, 0)},
                         {QStringLiteral("text"), QStringLiteral("New")}, {QStringLiteral("checked"), false},
                         {QStringLiteral("order"), QStringLiteral("b")}, {QStringLiteral("createdBy"), author(flag)},
                         {QStringLiteral("updatedAt"), at}};
       if (value == QLatin1String("link")) block.insert(QStringLiteral("linkedPageId"), other);
+      if (value.contains(QLatin1Char(':'))) block.insert(QStringLiteral("level"), value.section(QLatin1Char(':'), 1).toInt());
       return set(block);
     }
     if (op == QLatin1String("block.text")) return set({{QStringLiteral("text"), value}, {QStringLiteral("updatedAt"), at}});

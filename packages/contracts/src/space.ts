@@ -4,6 +4,7 @@ import {
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
+  ProjectId,
   SpaceBlockId,
   SpaceCommentId,
   SpaceDeckId,
@@ -28,11 +29,15 @@ export const SPACES_STREAM_ID = "spaces";
 
 export const spaceStreamId = (spaceId: SpaceId) => `space:${spaceId}`;
 
-/** Who wrote something: the user, the agent of a thread, or a page's own update. */
+/**
+ * Who wrote something: the user, the agent of a thread, a page's own update, or the
+ * project file a page is (what the page took from its file).
+ */
 export const SpaceAuthor = Schema.Union([
   Schema.Struct({ type: Schema.Literal("user") }),
   Schema.Struct({ type: Schema.Literal("agent"), threadId: ThreadId }),
   Schema.Struct({ type: Schema.Literal("schedule") }),
+  Schema.Struct({ type: Schema.Literal("file") }),
 ]);
 export type SpaceAuthor = typeof SpaceAuthor.Type;
 
@@ -61,6 +66,27 @@ export const SpacePageSchedule = Schema.Struct({
 });
 export type SpacePageSchedule = typeof SpacePageSchedule.Type;
 
+/**
+ * The project file a page is. The MC that has the project writes the page to the file
+ * and takes the file's changes onto the page; clients never touch the file.
+ */
+export const SpacePageFile = Schema.Struct({
+  projectId: ProjectId,
+  /** The file's path in the project's own folder, never a thread's worktree. */
+  path: TrimmedNonEmptyString,
+  /** The SHA-256 of what the page last read or wrote there, in lowercase hex. */
+  hash: Schema.String,
+  size: NonNegativeInt,
+  /** True while the file is gone (deleted, or not on the branch checked out). */
+  missing: Schema.Boolean,
+  /**
+   * When the file last won over an edit on the page, the edit being a version in the
+   * page's history; null once an edit reaches the file again.
+   */
+  conflictAt: Schema.NullOr(IsoDateTime),
+});
+export type SpacePageFile = typeof SpacePageFile.Type;
+
 export const SpacePage = Schema.Struct({
   id: SpacePageId,
   spaceId: SpaceId,
@@ -74,6 +100,8 @@ export const SpacePage = Schema.Struct({
   schedule: Schema.optional(Schema.NullOr(SpacePageSchedule)),
   /** When a run of its update last wrote the page's generated part. */
   writtenAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** The project file the page is, if it is one. */
+  file: Schema.optional(Schema.NullOr(SpacePageFile)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -418,6 +446,77 @@ export const SpacePageImportMarkdownInput = Schema.Struct({
   parentPageId: Schema.optional(Schema.NullOr(SpacePageId)),
 });
 export type SpacePageImportMarkdownInput = typeof SpacePageImportMarkdownInput.Type;
+
+// Project files as pages
+
+/**
+ * The page of a project file, made in `spaceId` when the file has none, or the page it
+ * already is wherever it is (brought back from the trash and read again). Only files
+ * the project's `spaces` section counts open. `relativePath` is in the project's folder.
+ */
+export const SpacePageOpenFileInput = Schema.Struct({
+  spaceId: SpaceId,
+  projectId: ProjectId,
+  relativePath: TrimmedNonEmptyString,
+});
+export type SpacePageOpenFileInput = typeof SpacePageOpenFileInput.Type;
+
+export const SpacePageOpenFileResult = Schema.Struct({
+  /** The Space the page is in, which is not `spaceId` when it was opened elsewhere. */
+  spaceId: SpaceId,
+  page: SpacePage,
+  created: Schema.Boolean,
+});
+export type SpacePageOpenFileResult = typeof SpacePageOpenFileResult.Type;
+
+/** Which of a project's files are Space content: `space.files.list`, `space.files.scan`. */
+export const SpaceFilesProjectInput = Schema.Struct({ projectId: ProjectId });
+export type SpaceFilesProjectInput = typeof SpaceFilesProjectInput.Type;
+
+/** A Space file kind the `spaces` section of hal-c2.json can name. */
+export const SpaceFileKind = Schema.Literals(["page"]);
+export type SpaceFileKind = typeof SpaceFileKind.Type;
+
+/** One entry of the `spaces` section: a path glob (`*`, `**`, `?`) and its kind. */
+export const SpaceFileEntry = Schema.Struct({ path: Schema.String, kind: SpaceFileKind });
+export type SpaceFileEntry = typeof SpaceFileEntry.Type;
+
+export const SpaceFilesListResult = Schema.Struct({
+  /**
+   * Where the entries come from: the project's `spaces` section, the default (every
+   * Markdown file a page) when it has none, or a section that does not match the format,
+   * which counts no files.
+   */
+  config: Schema.Literals(["project", "default", "invalid"]),
+  files: Schema.Array(
+    Schema.Struct({
+      relativePath: Schema.String,
+      kind: SpaceFileKind,
+      page: Schema.NullOr(
+        Schema.Struct({ spaceId: SpaceId, pageId: SpacePageId, title: Schema.String }),
+      ),
+    }),
+  ),
+});
+export type SpaceFilesListResult = typeof SpaceFilesListResult.Type;
+
+export const SpaceFilesScanInput = Schema.Struct({
+  projectId: ProjectId,
+  /** Write over a `spaces` section someone already wrote. */
+  replace: Schema.optional(Schema.Boolean),
+});
+export type SpaceFilesScanInput = typeof SpaceFilesScanInput.Type;
+
+/**
+ * What the scan proposed (`entries`) and did: `written` to hal-c2.json, `current` when
+ * the section already says it, `kept` when someone wrote a different one (re-run with
+ * `replace`), `empty` when the project has no Markdown and nothing was written.
+ */
+export const SpaceFilesScanResult = Schema.Struct({
+  status: Schema.Literals(["written", "current", "kept", "empty"]),
+  entries: Schema.Array(SpaceFileEntry),
+});
+export type SpaceFilesScanResult = typeof SpaceFilesScanResult.Type;
 
 /** A new page summarising a thread, written by text generation in the thread's project. */
 export const SpacePageCreateFromThreadInput = Schema.Struct({
@@ -816,7 +915,18 @@ export type SpaceImageProvidersResult = typeof SpaceImageProvidersResult.Type;
 /** A Space request the MC refused: something missing, a page in the trash, a move into itself. */
 export class SpaceError extends Schema.TaggedError<SpaceError>()("SpaceError", {
   message: Schema.String,
-  reason: Schema.Literals(["invalid", "notFound", "trashed", "notEmpty", "cycle", "unavailable"]),
+  reason: Schema.Literals([
+    "invalid",
+    "notFound",
+    "trashed",
+    "notEmpty",
+    "cycle",
+    "unavailable",
+    /** The project's `spaces` section does not count the file. */
+    "notSpaceFile",
+    /** What a page that is a file cannot have: a chart, an update of its own. */
+    "fileBacked",
+  ]),
 }) {}
 
 /**

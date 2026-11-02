@@ -168,8 +168,9 @@ defmodule HalC2.Steps.Preview.Forward do
   step "the client's MC stops listening on port 3000", context do
     ref = context.listener
     assert_receive {:DOWN, ^ref, :process, _, _}, 10_000
+    # Its listening sockets closed with it. No connect checks that: once free,
+    # the port can be any other socket's.
     assert HalC2.PreviewForward.listening() == []
-    assert {:error, :econnrefused} = :gen_tcp.connect({127, 0, 0, 1}, context.local_port, [])
     context
   end
 
@@ -213,18 +214,14 @@ defmodule HalC2.Steps.Preview.Forward do
 
   # --- helpers -------------------------------------------------------------------------------
 
-  # The second MC's web port is on 127.0.0.1, so the OS can give the dev server
-  # the same number on 127.0.0.2, which a real machine could not, and the MC
-  # rightly refuses to forward it. Such a dev server is put away for another.
+  # At a port free on this machine's loopback, so the forward can take it as it
+  # is. That also keeps it off the second MC's own ports, which listen on this
+  # machine too and which the MC rightly refuses to forward.
   defp dev_server(peer) do
-    {port, server} = :erpc.call(peer, DevServer, :websocket, [@machine, 0, self()])
+    {port, _server} =
+      DevServer.on_free_port(&:erpc.call(peer, DevServer, :websocket, [@machine, &1, self()]))
 
-    if port in :erpc.call(peer, HalC2.PreviewForward.Grant, :reserved, []) do
-      DevServer.stop(server)
-      dev_server(peer)
-    else
-      port
-    end
+    port
   end
 
   # Opens the tab on the thread's MC, then asks this MC for its dev server, as
