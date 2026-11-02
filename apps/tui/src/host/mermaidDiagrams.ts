@@ -65,6 +65,8 @@ export function createMermaidDiagrams(
     later(Math.min(RETRY_MS * 2 ** (count - 1), RETRY_MAX_MS), () => {
       if (answers.get(source) !== result) return;
       answers.delete(source);
+      // Off screen, it starts afresh if shown again.
+      if (!shown.has(source) && !shownBefore.has(source)) failures.delete(source);
       changed();
     });
   };

@@ -129,4 +129,26 @@ describe("createMermaidDiagrams", () => {
     expect(waits).toEqual([]);
     expect(mc.calls).toHaveLength(3);
   });
+
+  it("starts the wait afresh for a failed diagram shown again after it scrolled away", async () => {
+    const busy: MermaidRenderResult = { status: "failed", kind: null, reason: "busy" };
+    const mc = fakeMc(async (source) =>
+      source === "pie" ? busy : { status: "drawn", kind: "flowchart", text: source },
+    );
+    const waits: Array<() => void> = [];
+    const delays: number[] = [];
+    const diagrams = createMermaidDiagrams(mc, (ms, run) => {
+      delays.push(ms);
+      waits.push(run);
+    });
+    diagrams.get("pie");
+    await diagrams.settled();
+    // Two redraws without it: scrolled away.
+    diagrams.get("other");
+    await diagrams.settled();
+    waits.shift()!();
+    diagrams.get("pie");
+    await diagrams.settled();
+    expect(delays).toEqual([10_000, 10_000]);
+  });
 });
