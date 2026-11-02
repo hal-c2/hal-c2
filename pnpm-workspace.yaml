@@ -55,6 +55,9 @@ overrides:
   vite: "catalog:"
   # Security floors for transitive pins their parents have not raised yet.
   # Drop each one once `pnpm audit` stays clean without it.
+  # @vercel/config is written against zod 3 and gets zod 4 here, which is safe
+  # only while apps/marketing/vercel.ts imports it for types alone. Drop this
+  # floor before anything imports a value from it.
   "@vercel/config>zod": ^4.6.6
   "@vercel/routing-utils>path-to-regexp": 6.3.0
   "shell-quote@<1.11.0": ^1.12.0
