@@ -4,6 +4,8 @@
 #   packages/contracts/src/terminal.ts (TerminalWriteInput, TerminalResizeInput, TerminalClearInput, TerminalRestartInput, TerminalCloseInput, TerminalEvent)
 #   apps/server-ex/lib/hal_c2/terminal.ex (write, resize, clear, restart, close, exit status, output batching)
 #   apps/server-ex/lib/hal_c2/terminal/hub.ex (activity and running-command labels)
+#   apps/server-ex/lib/hal_c2/terminal/output_window.ex (the unacknowledged output window)
+#   apps/tui/src/host/terminalState.ts (acknowledging what the emulator has parsed)
 #   apps/server-ex/test/hal_c2/terminal_test.exs
 #   apps/tui/src/components/ChatView.tsx (clearActiveTerminal, restartActiveTerminal, onTerminalKey, onTerminalCopy)
 #   apps/tui/src/components/ThreadTerminalDrawer.tsx (paste, resize of the visible pane, scrollback)
@@ -42,13 +44,43 @@ Feature: Terminal input and output
       Then attached clients receive the lines in a few batched output events
       And no output is lost
 
-    @backlog @mc
-    Scenario: A client that falls behind pauses the shell's output instead of buffering it
+    @mc @tui
+    Scenario: A client that falls behind stops receiving the shell's output instead of buffering it
       Given a running terminal whose shell prints continuously
       When a client stops acknowledging the output it has received
       Then only a small amount of output waits unacknowledged for that client
       And the MC stops sending output to that client until it catches up
       And the shell itself keeps running
+
+    @tui
+    Scenario: A terminal the client has hidden costs nothing and catches up when shown
+      Given a running terminal whose shell prints continuously
+      When the terminal drawer is closed
+      Then the shell goes on printing with nothing reaching the client
+      When the terminal drawer opens again
+      Then the client catches up from a snapshot and follows the shell again
+
+    @tui
+    Scenario: A terminal in a background tab keeps taking its shell's output
+      Given a running terminal whose shell prints continuously
+      When another terminal opens in front of it
+      Then the terminal behind it goes on taking the shell's output
+
+    @tui
+    Scenario: Restarting a terminal lets a client that fell behind see the new shell
+      Given a running terminal whose shell prints continuously
+      And a client stops acknowledging the output it has received
+      And only a small amount of output waits unacknowledged for that client
+      When the terminal is restarted
+      Then the held back client shows the new shell
+
+    @tui
+    Scenario: A client that fell behind and reconnects starts over from a snapshot
+      Given a running terminal whose shell prints continuously
+      And a client stops acknowledging the output it has received
+      And only a small amount of output waits unacknowledged for that client
+      When the client's connection drops and it stops being held back
+      Then the client catches up from a snapshot and follows the shell again
 
     @mc
     Scenario: Resizing a terminal tells the running program its new size
@@ -72,7 +104,7 @@ Feature: Terminal input and output
       And every attached client is told the terminal restarted
       And the history starts empty
 
-    @backlog @mc
+    @mc
     Scenario: A shell that ignores the stop request is killed after a short grace period
       Given a running terminal whose shell ignores the stop request
       When a client closes it
@@ -81,8 +113,7 @@ Feature: Terminal input and output
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (scoped runtime shutdown stops active terminals
     #   cleanly)
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (terminate stops the shell)
-    @backlog @mc
+    @mc
     Scenario: Stopping the MC stops every running shell
       Given running terminals, one of whose shells ignores the stop request
       When the MC shuts down
@@ -123,7 +154,7 @@ Feature: Terminal input and output
       Then the terminal is no longer marked as running a command
       And its label returns to "Terminal 1"
 
-    @backlog @mc
+    @mc
     Scenario: A terminal keeps working when the MC cannot list running processes
       Given a running terminal
       And the MC cannot read the list of processes on its machine

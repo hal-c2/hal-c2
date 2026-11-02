@@ -67,9 +67,16 @@ defmodule HalC2.Web.Protocol do
         (a stream also takes "handle": the one its offset came with, and "window":
         {"items": n} to start with the newest runs holding n turn items or
         {"floor": f} to keep the window it has; the shell takes "have":
-        {mc: [epoch, rev]}, each MC's rows as the client holds them)
+        {mc: [epoch, rev]}, each MC's rows as the client holds them; a terminal takes
+        "acks": true, to answer with "ack" and have its output held back when it falls
+        behind)
       {"t": "more", "id": 1, "items": n}
         (a windowed stream: the runs before its floor holding n turn items, as a page)
+      {"t": "ack", "id": 1, "sequence": n}
+        (a terminal subscribed with "acks": the client has handled its snapshot and
+        output up to that sequence. Past `HalC2.Terminal.OutputWindow.limit/0`
+        unacknowledged bytes no output is sent; acknowledging all it was sent brings
+        a new snapshot, which replaces what it shows)
       {"t": "unsub", "id": 1}
       {"t": "ping"}
       {"t": "rpc", "id": 1, "environment": id, "method": m, "payload": ...}
@@ -168,6 +175,7 @@ defmodule HalC2.Web.Protocol do
           | {:unsub, integer}
           | {:rpc, integer, String.t(), String.t(), term}
           | :ping
+          | {:ack, integer, integer}
 
   @typedoc """
   Where a subscription continues from: a stream's `offset`, `handle`, `window`
@@ -217,6 +225,10 @@ defmodule HalC2.Web.Protocol do
       %{"t" => "more", "id" => id, "items" => items}
       when is_integer(id) and is_integer(items) and items > 0 ->
         {:ok, {:more, id, items}}
+
+      %{"t" => "ack", "id" => id, "sequence" => sequence}
+      when is_integer(id) and is_integer(sequence) ->
+        {:ok, {:ack, id, sequence}}
 
       %{"t" => "unsub", "id" => id} when is_integer(id) ->
         {:ok, {:unsub, id}}
@@ -384,7 +396,8 @@ defmodule HalC2.Web.Protocol do
       handle: if(is_binary(msg["handle"]), do: msg["handle"]),
       window: window(msg["window"]),
       kinds: kinds(shape["kinds"]),
-      have: have(msg["have"])
+      have: have(msg["have"]),
+      acks: msg["acks"] == true
     }
   end
 
