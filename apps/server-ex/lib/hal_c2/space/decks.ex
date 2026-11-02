@@ -8,7 +8,7 @@ defmodule HalC2.Space.Decks do
   """
 
   alias HalC2.Orchestration.Entities
-  alias HalC2.{Patch, StreamState}
+  alias HalC2.{Patch, Space, StreamState}
   alias HalC2.Space.{Blocks, Order, Pages}
 
   @doc "The deck `id`, or nil."
@@ -62,7 +62,7 @@ defmodule HalC2.Space.Decks do
   # A slide for each heading and what follows it. What comes before the first heading,
   # or a page with no heading at all, goes under the page's title.
   defp sections(state, page) do
-    blocks = Blocks.of_page(state, page["id"])
+    blocks = state |> Blocks.of_page(page["id"]) |> Enum.flat_map(&ordinary(state, &1))
     {lead, rest} = Enum.split_while(blocks, &(&1["kind"] != "heading"))
 
     lead =
@@ -85,6 +85,10 @@ defmodule HalC2.Space.Decks do
          %{"title" => heading["text"], "body" => body(state, Enum.reverse(blocks))}
        end))
   end
+
+  # A run's Markdown reads as the blocks removing the update would make of it.
+  defp ordinary(state, %{"kind" => "generated"} = block), do: Space.written(state, block["text"])
+  defp ordinary(_state, block), do: [block]
 
   defp body(state, blocks), do: Enum.map_join(blocks, "\n", &line(state, &1))
 

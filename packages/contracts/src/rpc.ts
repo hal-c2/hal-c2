@@ -361,6 +361,8 @@ import {
   SpacePageRef,
   SpacePageRenameInput,
   SpacePageResult,
+  SpacePageScheduleSetEnabledInput,
+  SpacePageScheduleSetInput,
   SpaceRenameInput,
   SpaceResult,
   SpaceBlockVisualizeInput,
@@ -547,6 +549,10 @@ export const WS_METHODS = {
   spacePageExportMarkdown: "space.page.exportMarkdown",
   spacePageImportMarkdown: "space.page.importMarkdown",
   spacePageCreateFromThread: "space.page.createFromThread",
+  spacePageScheduleSet: "space.page.schedule.set",
+  spacePageScheduleSetEnabled: "space.page.schedule.setEnabled",
+  spacePageScheduleRunNow: "space.page.schedule.runNow",
+  spacePageScheduleRemove: "space.page.schedule.remove",
   spaceBlockInsert: "space.block.insert",
   spaceBlockUpdate: "space.block.update",
   spaceBlockSetChecked: "space.block.setChecked",
@@ -1895,6 +1901,30 @@ const WsSpacePageCreateFromThreadRpc = Rpc.make(WS_METHODS.spacePageCreateFromTh
   error: Schema.Union([SpaceError, SpaceTextGenerationError, EnvironmentAuthorizationError]),
 });
 
+const WsSpacePageScheduleSetRpc = Rpc.make(WS_METHODS.spacePageScheduleSet, {
+  payload: SpacePageScheduleSetInput,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageScheduleSetEnabledRpc = Rpc.make(WS_METHODS.spacePageScheduleSetEnabled, {
+  payload: SpacePageScheduleSetEnabledInput,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageScheduleRunNowRpc = Rpc.make(WS_METHODS.spacePageScheduleRunNow, {
+  payload: SpacePageRef,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageScheduleRemoveRpc = Rpc.make(WS_METHODS.spacePageScheduleRemove, {
+  payload: SpacePageRef,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
 const WsSpaceBlockVisualizeRpc = Rpc.make(WS_METHODS.spaceBlockVisualize, {
   payload: SpaceBlockVisualizeInput,
   success: SpaceBlockResult,
@@ -2139,6 +2169,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageExportMarkdownRpc,
   WsSpacePageImportMarkdownRpc,
   WsSpacePageCreateFromThreadRpc,
+  WsSpacePageScheduleSetRpc,
+  WsSpacePageScheduleSetEnabledRpc,
+  WsSpacePageScheduleRunNowRpc,
+  WsSpacePageScheduleRemoveRpc,
   WsSpaceBlockInsertRpc,
   WsSpaceBlockUpdateRpc,
   WsSpaceBlockSetCheckedRpc,

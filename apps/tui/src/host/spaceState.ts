@@ -23,6 +23,7 @@ import {
   type SpaceImage,
   type SpaceImageProvidersResult,
   type SpacePage,
+  type SpacePageSchedule,
   type SpaceSite,
   type SpaceSlide,
   spaceStreamId,
@@ -42,6 +43,7 @@ import type { StatusKind } from "../store.ts";
 import { type Palette, THEME } from "../theme.ts";
 import type { AskSpec } from "./askState.ts";
 import type { PickRequest } from "./composerState.ts";
+import { scheduleLabel } from "./sections/scheduledTasks.ts";
 import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
 import { chartData, chartLines } from "./spaceChart.ts";
@@ -154,7 +156,7 @@ const HINTS: Record<TuiSpaceView, string> = {
   spaces: "  ⏎ open · n new · e rename · d delete · esc close",
   pages:
     "  ⏎ open · n new · s new deck · S deck from page · a subpage · e rename · m move · d trash · r restore · D delete · p present a deck, publish a page · i import · t from thread · v images · esc back",
-  page: "  ⏎ edit · n add · g chart · c comment · x tick/resolve · m move · d delete · l link · y copy · S deck · p publish · v images · esc back",
+  page: "  ⏎ edit · n add · g chart · c comment · x tick/resolve · m move · d delete · l link · u update · y copy · S deck · p publish · v images · esc back",
   deck: "  ⏎ edit · n add · m move · d delete · p present · r restore · v images · esc back",
   present: "  → next · ← back · pgup/pgdn scroll · esc leave",
   images: "  n generate · i add a file · d trash · r restore · D delete · esc back",
@@ -182,6 +184,21 @@ const BLOCK_KINDS: ReadonlyArray<{ readonly kind: SpaceBlockKind; readonly label
   { kind: "chart", label: "Chart" },
   { kind: "image", label: "Image" },
 ];
+
+const HOUR_MS = 3_600_000;
+
+/** How often a page's update runs. */
+function cadenceText(cadence: SpacePageSchedule["cadence"]): string {
+  if (cadence.type === "interval" && cadence.everyMs % HOUR_MS === 0) {
+    const hours = cadence.everyMs / HOUR_MS;
+    return hours === 1 ? "Every hour" : `Every ${hours} hours`;
+  }
+  return scheduleLabel(cadence);
+}
+
+/** The clock's time, not "5m ago", so a row nobody redraws does not go stale. */
+const clockText = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
 
 /** The contract error a refused RPC carries, wherever the client put it. */
 function refusal(error: unknown): {
@@ -498,7 +515,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         : block.kind === "image"
           ? imagePlaceholder(block)
           : block.text;
-    const agent = agentOf(block);
+    const agent = block.kind === "generated" ? "written by its update" : agentOf(block);
     const room = width() - 2 - Bun.stringWidth(prefix);
     const lines = wrapWords(body === "" ? " " : body, room);
     const fg =
@@ -532,6 +549,50 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         first,
       } satisfies TuiSpaceRow;
     });
+  };
+
+  /** What the open page's update is and how it last went, above its blocks. Not selectable. */
+  const updateRows = (page: SpacePage): TuiSpaceRow[] => {
+    const update = page.schedule;
+    if (!update) return [];
+    const note = (key: string, text: string, fg: typeof palette.text): TuiSpaceRow[] =>
+      wrapWords(text, width() - 2).map((line, index) => {
+        const drawn = `  ${line}`;
+        return {
+          key: `label:update:${key}`,
+          kind: "label",
+          text: drawn,
+          line: styled(chunk(drawn, { fg })),
+          selected: false,
+          first: index === 0,
+        };
+      });
+    const cadence = cadenceText(update.cadence);
+    const when = !isLive(page)
+      ? `${cadence} · stopped while this page is in the trash`
+      : !update.enabled
+        ? `${cadence} · paused`
+        : update.nextRunAt
+          ? `${cadence} · next run ${clockText(update.nextRunAt)}`
+          : cadence;
+    const written =
+      update.lastRunStatus === "running"
+        ? "Writing now…"
+        : page.writtenAt
+          ? `Last written ${clockText(page.writtenAt)}`
+          : "Not written yet";
+    return [
+      ...note("instruction", `⟳ ${update.instruction}`, palette.text),
+      ...note("when", when, palette.dim),
+      ...note("written", written, palette.dim),
+      ...(update.lastRunStatus === "failed"
+        ? note(
+            "failed",
+            `Last run failed: ${update.lastRunError ?? "unknown error"}`,
+            palette.error,
+          )
+        : []),
+    ];
   };
 
   const commentRow = (comment: SpaceComment): TuiSpaceRow => {
@@ -670,7 +731,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const id = pageId;
     if (id === null) return [];
     const comments = commentsOf(id);
-    const rows: TuiSpaceRow[] = siteRows(id);
+    const open = pageById(id);
+    const rows: TuiSpaceRow[] = [...(open ? updateRows(open) : []), ...siteRows(id)];
     for (const block of blocksOf(id)) {
       rows.push(...blockRows(block));
       for (const comment of comments.filter((entry) => entry.blockId === block.id)) {
@@ -1423,6 +1485,13 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         options.status("A link shows its page's title: rename the page instead.", "info");
         return;
       }
+      if (block?.kind === "generated") {
+        options.status(
+          "A page's update wrote this, so it cannot be edited: removing the update (u) keeps it to edit.",
+          "info",
+        );
+        return;
+      }
       if (block?.kind === "chart") {
         visualize();
         return;
@@ -1951,6 +2020,91 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     });
   };
 
+  const setUpdate = (id: string, instruction: string, cadence: unknown) => {
+    void send(WS_METHODS.spacePageScheduleSet, { spaceId, pageId: id, instruction, cadence });
+  };
+
+  /** The instruction, then the cadence. A time the MC cannot read comes back as its refusal. */
+  const askUpdate = (id: string, update: SpacePageSchedule | null | undefined) => {
+    options.ask({
+      label: update ? "change the update" : "have this page update itself",
+      placeholder: "Summarise yesterday's threads",
+      value: update?.instruction ?? "",
+      onSubmit: (instruction) => {
+        options.menu({
+          title: "How often?",
+          options: [
+            ...(update ? [{ label: `Keep: ${cadenceText(update.cadence)}`, value: "keep" }] : []),
+            ...[1, 2, 6, 12].map((hours) => ({
+              label: cadenceText({ type: "interval", everyMs: hours * HOUR_MS }),
+              value: String(hours),
+            })),
+            { label: "At a time of day…", value: "time" },
+          ],
+          onChoose: (choice) => {
+            const held = update?.cadence;
+            if (choice === "keep") setUpdate(id, instruction, held);
+            else if (choice === "time") {
+              const fixed = held?.type === "fixed_time" ? held : undefined;
+              options.ask({
+                label: "time of day",
+                placeholder: "09:00",
+                value: fixed?.timeOfDay ?? "09:00",
+                onSubmit: (timeOfDay) =>
+                  setUpdate(id, instruction, {
+                    type: "fixed_time",
+                    timeOfDay,
+                    weekdays: fixed?.weekdays ?? [],
+                  }),
+              });
+            } else
+              setUpdate(id, instruction, { type: "interval", everyMs: Number(choice) * HOUR_MS });
+          },
+        });
+      },
+    });
+  };
+
+  /** The open page's update: gives it one, or what can be done with the one it has. */
+  const pageUpdate = () => {
+    const open = view === "page" ? pageById(pageId) : undefined;
+    if (!open) {
+      options.status("Open a page to have it update itself.", "info");
+      return;
+    }
+    if (!isLive(open)) {
+      options.status("This page is in the trash: r restores it.", "info");
+      return;
+    }
+    const update = open.schedule;
+    if (!update) {
+      askUpdate(open.id, update);
+      return;
+    }
+    const target = { spaceId, pageId: open.id };
+    options.menu({
+      title: "This page's update",
+      options: [
+        { label: "Run it now", value: "run" },
+        { label: update.enabled ? "Pause it" : "Resume it", value: "pause" },
+        { label: "Change it…", value: "change" },
+        { label: "Remove it, keeping what it wrote", value: "remove" },
+      ],
+      onChoose: (choice) => {
+        if (choice === "change") askUpdate(open.id, update);
+        else if (choice === "pause") {
+          void send(WS_METHODS.spacePageScheduleSetEnabled, {
+            ...target,
+            enabled: !update.enabled,
+          });
+        } else if (choice === "remove") void send(WS_METHODS.spacePageScheduleRemove, target);
+        else if (update.lastRunStatus === "running") {
+          options.status("This page's update is running already.", "info");
+        } else void send(WS_METHODS.spacePageScheduleRunNow, target);
+      },
+    });
+  };
+
   const selectKey = (key: unknown) => {
     if (typeof key !== "string") return;
     const keys = entryKeys(allRows());
@@ -2026,6 +2180,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.unpublish": inView(unpublishSite),
     "space.import": inView(importMarkdown),
     "space.fromThread": inView(fromThread),
+    "space.update": inView(pageUpdate),
     "space.visualize": inView(visualize),
     "space.newDeck": inView(newDeck),
     "space.deckFromPage": inView(deckFromPage),
@@ -2126,6 +2281,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Tick / untick, resolve / reopen", action: "space.tick" },
           { title: "Comment on the block", action: "space.comment" },
           { title: "Link a subpage", action: "space.link" },
+          { title: "This page's update", action: "space.update" },
           { title: "Copy page as Markdown", action: "space.export" },
           { title: "Make a deck from this page", action: "space.deckFromPage" },
           { title: "Restore page from the trash", action: "space.restore" },
