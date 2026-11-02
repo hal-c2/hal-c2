@@ -155,12 +155,29 @@ const Steps steps([] {
 
   // Environment identification: how a development shell or a Nightly MC marks
   // the sidebar's brand band.
+  // The sidebar of a shell that leaves off the brand band.
+  struct Brandless {
+    bool on = false;
+  };
   const auto sidebar = [](World& world) -> Brick& {
     if (!world.brick) {
-      world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nSidebar { showBrand: true; height: 600 }\n", QSize(256, 600));
+      const bool brand = !world.mc.part<Brandless>().on;
+      world.brick = std::make_unique<Brick>(
+          world, QStringLiteral("import QtQuick\nimport HalC2.Bricks\nSidebar { showBrand: %1; height: 600 }\n").arg(brand ? "true" : "false").toUtf8(),
+          QSize(256, 600));
     }
     return *world.brick;
   };
+  step(QStringLiteral("the user's shell leaves off the sidebar's brand band"), [](World& world, const Captures&, const Table&) { world.mc.part<Brandless>().on = true; });
+  const auto badge = [sidebar](World& world, const QString& label) {
+    Brick& brick = sidebar(world);
+    brick.grab();
+    const bool shown = brick.item(QStringLiteral("stageBadge"))->isVisible();
+    expect(shown == !label.isEmpty() && (label.isEmpty() || brick.shows(label)),
+           QStringLiteral("the stage above the list: %1; the stage is %2").arg(shown).arg(show(world.state(QStringLiteral("stage")))));
+  };
+  step(QStringLiteral("the sidebar shows a %1 pill above the list").arg(kQuoted), [badge](World& world, const Captures& c, const Table&) { badge(world, c[0]); });
+  step(QStringLiteral("the sidebar shows no stage above the list"), [badge](World& world, const Captures&, const Table&) { badge(world, {}); });
   step(QStringLiteral("the user sets environment identification to %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     static const QHash<QString, QString> modes{{QStringLiteral("Artwork"), QStringLiteral("artwork")},
                                                {QStringLiteral("Version pill"), QStringLiteral("pill")},

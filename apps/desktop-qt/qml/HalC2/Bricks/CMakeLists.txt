@@ -48,6 +48,7 @@ set(hal_c2_bricks_qml_files
     DesktopUpdateSettings.qml
     SidebarThreadRow.qml
     HalC2Wordmark.qml
+    StagePill.qml
     KeybindingsSettings.qml
     TerminalDrawer.qml
     TitleBar.qml

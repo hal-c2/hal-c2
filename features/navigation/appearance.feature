@@ -270,6 +270,21 @@ Feature: Appearance
         | Version pill | the app shows a Dev version pill        |
         | None         | the app shows no environment marker     |
 
+    # A rice's sidebar can leave off the brand band (Sidebar.showBrand); the
+    # stage moves above the list then.
+    @desktop @mobile @backlog-mobile
+    Scenario Outline: A shell without the brand band still shows which build it is
+      Given the app's own stage is "Dev"
+      And the user's shell leaves off the sidebar's brand band
+      When the user sets environment identification to "<mode>"
+      Then <outcome>
+
+      Examples:
+        | mode         | outcome                                    |
+        | Artwork      | the sidebar shows a "Dev" pill above the list |
+        | Version pill | the sidebar shows a "Dev" pill above the list |
+        | None         | the sidebar shows no stage above the list  |
+
     @desktop
     Scenario Outline: The app's name carries its stage unless it is the latest release
       Given the app's stage is "<stage>"

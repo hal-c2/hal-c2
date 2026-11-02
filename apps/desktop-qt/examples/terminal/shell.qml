@@ -102,6 +102,15 @@ ShellWindow {
                     Layout.alignment: Qt.AlignVCenter
                     Layout.leftMargin: 14
                     size: 10
+                    // "DEV" after C2 in a development shell (StageController).
+                    dev: Shell.state.stage?.artwork === "dev"
+                }
+
+                // Any other stage the build is marked with, as a pill.
+                StagePill {
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.leftMargin: 8
+                    visible: !!Shell.state.stage?.pill || Shell.state.stage?.artwork === "nightly"
                 }
 
                 Segment {
@@ -203,6 +212,8 @@ ShellWindow {
 
                 Sidebar {
                     id: sidebar
+
+                    showStage: false
 
                     Layout.preferredWidth: root.sidebarCollapsed ? 0 : implicitWidth
                     Layout.minimumWidth: 0
