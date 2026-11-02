@@ -3,6 +3,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { ProjectScriptIcon } from "./project.ts";
+import { SpaceFileKind } from "./space.ts";
 import type { ProjectScopedServerSettingKey, ServerSettings } from "./settings.ts";
 
 /** File name of the checked-in HAL-C2 project file, resolved at the workspace root. */
@@ -75,6 +76,27 @@ export const HalC2ProjectFileScript = Schema.Struct({
 });
 export type HalC2ProjectFileScript = typeof HalC2ProjectFileScript.Type;
 
+export const HalC2ProjectFileSpaces = Schema.Struct({
+  files: Schema.Array(
+    Schema.Struct({
+      path: trimmedNonEmpty(
+        {
+          description:
+            'Glob of project files, relative to the repository root: "*" and "?" stay within a folder, "**" crosses folders (e.g. "docs/**/*.md").',
+        },
+        HAL_C2_PROJECT_FILE_PATH_MAX_LENGTH,
+      ),
+      kind: SpaceFileKind.annotate({
+        description: "What a matching file opens as in a Space.",
+      }),
+    }),
+  ).annotate({ description: "The first entry whose path matches a file decides its kind." }),
+}).annotate({
+  description:
+    "Which of the repository's files open as Space pages. Without this section every Markdown file does. HAL-C2's scan of the project writes it.",
+});
+export type HalC2ProjectFileSpaces = typeof HalC2ProjectFileSpaces.Type;
+
 export const HalC2ProjectFile = Schema.Struct({
   $schema: Schema.optionalKey(
     Schema.String.annotate({
@@ -109,6 +131,7 @@ export const HalC2ProjectFile = Schema.Struct({
       })
       .check(Schema.isMaxLength(HAL_C2_PROJECT_FILE_MAX_SCRIPTS)),
   ),
+  spaces: Schema.optionalKey(HalC2ProjectFileSpaces),
 }).annotate({
   title: "HAL-C2 project file",
   description:

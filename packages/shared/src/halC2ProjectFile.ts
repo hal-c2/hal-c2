@@ -1,7 +1,11 @@
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { HalC2ProjectFile, HAL_C2_PROJECT_FILE_SCHEMA_URL } from "@hal-c2/contracts";
+import {
+  HalC2ProjectFile,
+  HalC2ProjectFileSpaces,
+  HAL_C2_PROJECT_FILE_SCHEMA_URL,
+} from "@hal-c2/contracts";
 
 import { fromLenientJson } from "./schemaJson.ts";
 
@@ -11,16 +15,31 @@ import { fromLenientJson } from "./schemaJson.ts";
  */
 export const HalC2ProjectFileFromJson = fromLenientJson(HalC2ProjectFile);
 
-const decodeHalC2ProjectFile = Schema.decodeExit(HalC2ProjectFileFromJson);
+// The `spaces` section is read apart, as the MC reads it: one that does not match the
+// format counts no files and leaves the rest of the file as it is.
+const decodeHalC2ProjectFile = Schema.decodeExit(
+  fromLenientJson(
+    HalC2ProjectFile.mapFields((fields) => ({
+      ...fields,
+      spaces: Schema.optionalKey(Schema.Unknown),
+    })),
+  ),
+);
+const decodeSpaces = Schema.decodeUnknownExit(HalC2ProjectFileSpaces);
 
 /**
  * Decode raw `hal-c2.json` contents, treating invalid or malformed files as
  * absent. Clients use this to read optional defaults (scripts, thread env
- * mode) without surfacing decode errors to the user.
+ * mode) without surfacing decode errors to the user. A `spaces` section that
+ * does not match the format is left out.
  */
 export function parseHalC2ProjectFile(contents: string): HalC2ProjectFile | null {
   const decoded = decodeHalC2ProjectFile(contents);
-  return Exit.isSuccess(decoded) ? decoded.value : null;
+  if (!Exit.isSuccess(decoded)) return null;
+  const { spaces, ...rest } = decoded.value;
+  if (spaces === undefined) return rest;
+  const section = decodeSpaces(spaces);
+  return Exit.isSuccess(section) ? { ...rest, spaces: section.value } : rest;
 }
 
 /**
