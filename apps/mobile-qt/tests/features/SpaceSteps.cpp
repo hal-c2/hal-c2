@@ -4315,7 +4315,14 @@ const Steps promptSteps([] {
   step(S("the user asks an agent about %1 from (the page's menu|the command palette|its keybinding)").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* composer = promptOn(world, c[0]);
     if (c[1] == QLatin1String("the page's menu")) {
-      openPageMenu(world, idOfPage(world, c[0]), S("agent"));
+      // From the list of pages, where the prompt is no longer the page's: the ask has
+      // to open the page and aim the prompt at it before it starts.
+      const QString target = S("page#") + idOfPage(world, c[0]);
+      look(world, current(world));
+      world.waitFor([&] { return prompt(world).value(S("target")) != target; },
+                    [&] { return S("the prompt to leave the page on the list; it is %1").arg(show(prompt(world))); });
+      pageMenu(world, c[0], S("agent"));
+      expectStep(world, S("page"));
     } else if (c[1] == QLatin1String("the command palette")) {
       expect(world.native().controller<KeybindingController>()->commands()->run(SpaceController::kAskAgent), S("the palette has no way to ask an agent"));
     } else {
