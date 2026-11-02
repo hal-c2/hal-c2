@@ -393,6 +393,17 @@ Rectangle {
                 maximumLineCount: 1
                 color: root.muted
                 font.pixelSize: Math.round(11 * Theme.fontScale)
+
+                // The number's menu: copy its link, or open it on its host.
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    // ljos-allow(focus-pointer-only): the row's menu button offers the same from the keyboard
+                    onTapped: eventPoint => Shell.dispatch("pullRequest.linkMenu", {
+                            url: row.model.url ?? "",
+                            x: eventPoint.scenePosition.x,
+                            y: eventPoint.scenePosition.y
+                        })
+                }
             }
 
             Row {

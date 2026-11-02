@@ -142,6 +142,7 @@ WelcomeWizard 1.0 WelcomeWizard.qml
 OnboardingTerminal 1.0 OnboardingTerminal.qml
 SnapShotSettings 1.0 SnapShotSettings.qml
 Markdown 1.0 Markdown.qml
+PullRequestLinkCard 1.0 PullRequestLinkCard.qml
 MermaidDiagram 1.0 MermaidDiagram.qml
 Plugin 1.0 Plugin.qml
 Contribution 1.0 Contribution.qml

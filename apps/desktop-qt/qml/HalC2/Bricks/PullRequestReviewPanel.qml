@@ -106,6 +106,18 @@ Rectangle {
                     elide: Text.ElideRight
                     color: root.muted
                     font.pixelSize: Math.round(11 * Theme.fontScale)
+
+                    // The number's menu: copy its link, or open it on its host.
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        enabled: (root.detail.url ?? "").length > 0
+                        // ljos-allow(focus-pointer-only): the header's Open and Copy buttons offer the same from the keyboard
+                        onTapped: eventPoint => Shell.dispatch("pullRequest.linkMenu", {
+                                url: root.detail.url,
+                                x: eventPoint.scenePosition.x,
+                                y: eventPoint.scenePosition.y
+                            })
+                    }
                 }
             }
             ShellButton {
