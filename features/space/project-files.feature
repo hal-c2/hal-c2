@@ -285,6 +285,15 @@ Feature: Project files as Space pages
       Then "AGENTS.md" of "shop" reads "# Agents\n\nBe brief."
       And "CLAUDE.md" of "shop" still links to "AGENTS.md"
 
+    Scenario: A link and the file it links to, each a page, take each other's edits
+      Given the user has opened "CLAUDE.md" of "shop" in "Research"
+      And the user has opened "AGENTS.md" of "shop" in "Research"
+      When the user changes "Be kind." on the page of "CLAUDE.md" to "Be brief."
+      And the user changes "Be brief." on the page of "AGENTS.md" to "Be terse."
+      Then "AGENTS.md" of "shop" reads "# Agents\n\nBe terse."
+      And the page of "CLAUDE.md" shows "Be terse." and says nothing changed under an edit
+      And the page of "AGENTS.md" shows "Be terse." and says nothing changed under an edit
+
     Scenario: A link out of the project is not opened
       Given "NOTES.md" of "shop" links to a file outside the project
       When the user opens "NOTES.md" of "shop" in "Research"

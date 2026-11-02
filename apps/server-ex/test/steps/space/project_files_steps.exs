@@ -379,6 +379,31 @@ defmodule HalC2.Steps.Space.ProjectFiles do
     context
   end
 
+  # A link and its file can each be a page, both titled and reading the same: these name
+  # the page by its file. Anything the edit tells the server following the files is done
+  # once the step is.
+  step "the user changes {string} on the page of {string} to {string}",
+       %{args: [text, path, next]} = context do
+    page = file_page!(context, path)
+
+    block =
+      Enum.find(Blocks.of_page(state(context), page["id"]), &(&1["text"] == text)) ||
+        flunk("no block #{inspect(text)} on the page of #{path}")
+
+    payload = %{"spaceId" => context.space, "blockId" => block["id"], "text" => next}
+    {_, context} = World.call!(context, "space.block.update", payload)
+    :ok = Files.drain()
+    context
+  end
+
+  step "the page of {string} shows {string} and says nothing changed under an edit",
+       %{args: [path, text]} = context do
+    page = file_page!(context, path)
+    assert Enum.map(Blocks.of_page(state(context), page["id"]), & &1["text"]) == [text]
+    assert page["file"]["conflictAt"] == nil
+    context
+  end
+
   step "the user changes the paragraph starting {string} to {string}",
        %{args: [start, next]} = context do
     block =
@@ -708,6 +733,11 @@ defmodule HalC2.Steps.Space.ProjectFiles do
   defp page!(context, title) do
     Enum.find(StreamState.list(state(context), "page"), &(&1["title"] == title)) ||
       flunk("no page #{inspect(title)}")
+  end
+
+  defp file_page!(context, path) do
+    Enum.find(StreamState.list(state(context), "page"), &match?(%{"path" => ^path}, &1["file"])) ||
+      flunk("no page of #{inspect(path)}")
   end
 
   defp page_ref(context, title),

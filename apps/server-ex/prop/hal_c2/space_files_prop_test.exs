@@ -1,8 +1,8 @@
 defmodule HalC2.SpaceFilesPropTest do
   @moduledoc """
   A state machine over Space pages that are project files (`HalC2.Space.Files`): files
-  written, deleted, renamed and made read-only in the project's folder, each with or
-  without the signal that the checkout changed; files opened as pages and opened again; pages edited,
+  written, deleted, renamed and made read-only in the project's folder, and links made
+  to them and deleted, each with or without the signal that the checkout changed; files opened as pages and opened again; pages edited,
   read again from their file and unlinked; unlinked pages edited; and the server that
   follows the files restarting, which reads every file again.
 
@@ -17,7 +17,8 @@ defmodule HalC2.SpaceFilesPropTest do
   - an edit to a page whose file is read-only is refused, and neither changes;
   - an edit to a page whose file is gone stays on the page, and a file that comes back
     wins over it, and the page says so; an edit that reaches the file clears that;
-  - a page writing its file does not set the server following the folder;
+  - a page writing its file does not set the server following the folder, but another
+    page that is the same file through a link takes what it wrote; a link stays a link;
   - a linked page reads as what it last read or wrote, records that text's hash, and
     says whether its file is gone;
   - a file that vanished is followed to the one file no page has that reads the same,
@@ -36,11 +37,13 @@ defmodule HalC2.SpaceFilesPropTest do
   @moduletag timeout: :infinity
   @moduletag capture_log: true
 
-  @paths ~w(a.md b.md d/c.md)
+  @paths ~w(a.md b.md d/c.md l.md)
+  # Links are made at the top of the folder, to a file there, never to another link.
+  @tops ~w(a.md b.md l.md)
   @words ~w(alpha beta gamma)
 
   property "pages that are files follow them, and they follow the pages",
-    numtests: HalC2.Prop.numtests(300),
+    numtests: HalC2.Prop.numtests(600),
     max_size: 30 do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
@@ -83,12 +86,14 @@ defmodule HalC2.SpaceFilesPropTest do
 
   # --- model ----------------------------------------------------------------------
 
-  # disk: path => text in the folder; locked: the paths that are read-only. links:
+  # disk: path => text of the files in the folder; sym: path => path, its links;
+  # locked: the files that are read-only. links:
   # path => %{id, word, base, missing, unwritten, conflict}, the page of that file, the
   # word it shows, the text it last read or wrote, whether its file is gone, whether it
   # was edited since, and whether it says the file won over an edit. unlinked: pages
   # made ordinary, %{id, word}.
-  def initial_state, do: %{disk: %{}, locked: MapSet.new(), links: %{}, unlinked: []}
+  def initial_state,
+    do: %{disk: %{}, sym: %{}, locked: MapSet.new(), links: %{}, unlinked: []}
 
   def command(s) do
     linked = Map.keys(s.links)
@@ -97,12 +102,14 @@ defmodule HalC2.SpaceFilesPropTest do
       [
         {4, {:call, __MODULE__, :write, [path(), word(), boolean()]}},
         {3, {:call, __MODULE__, :open, [path()]}},
+        {2, {:call, __MODULE__, :symlink, [oneof(@tops), oneof(@tops), boolean()]}},
         {1, {:call, __MODULE__, :restart, []}}
       ] ++
         if(s.disk == %{},
           do: [],
           else: [
-            {2, {:call, __MODULE__, :delete, [oneof(Map.keys(s.disk)), boolean()]}},
+            {2,
+             {:call, __MODULE__, :delete, [oneof(Map.keys(s.disk) ++ Map.keys(s.sym)), boolean()]}},
             {2, {:call, __MODULE__, :rename, [oneof(Map.keys(s.disk)), path(), boolean()]}},
             {1, {:call, __MODULE__, :lock, [oneof(Map.keys(s.disk))]}}
           ]
@@ -129,11 +136,18 @@ defmodule HalC2.SpaceFilesPropTest do
   defp path, do: oneof(@paths)
   defp word, do: oneof(@words)
 
-  def precondition(s, {:call, _, name, [path | _]}) when name in [:delete, :lock],
-    do: Map.has_key?(s.disk, path)
+  def precondition(s, {:call, _, :delete, [path, _]}),
+    do: Map.has_key?(s.disk, path) or Map.has_key?(s.sym, path)
+
+  def precondition(s, {:call, _, :lock, [path]}), do: Map.has_key?(s.disk, path)
 
   def precondition(s, {:call, _, :rename, [from, to, _]}),
-    do: Map.has_key?(s.disk, from) and not Map.has_key?(s.disk, to)
+    do: Map.has_key?(s.disk, from) and free?(s, to)
+
+  def precondition(s, {:call, _, :symlink, [from, to, _]}),
+    do:
+      from != to and free?(s, from) and from not in Map.values(s.sym) and
+        not Map.has_key?(s.sym, to)
 
   def precondition(s, {:call, _, name, [path, id | _]}) when name in [:edit, :sync, :unlink],
     do: match?(%{id: ^id}, s.links[path])
@@ -143,7 +157,18 @@ defmodule HalC2.SpaceFilesPropTest do
 
   def precondition(_s, _call), do: true
 
+  defp free?(s, path), do: not Map.has_key?(s.disk, path) and not Map.has_key?(s.sym, path)
+
+  # The file `path` is: the one it links to, or itself.
+  defp resolve(s, path), do: Map.get(s.sym, path, path)
+  defp text(s, path), do: s.disk[resolve(s, path)]
+
+  # What reading each path in the folder gives, links followed.
+  defp view(s), do: for(path <- @paths, text = text(s, path), into: %{}, do: {path, text})
+
   def next_state(s, _res, {:call, _, :write, [path, word, notify]}) do
+    path = resolve(s, path)
+
     %{s | locked: MapSet.delete(s.locked, path)}
     |> put_in([:disk, path], doc(word))
     |> notified(notify)
@@ -151,8 +176,16 @@ defmodule HalC2.SpaceFilesPropTest do
 
   def next_state(s, _res, {:call, _, :delete, [path, notify]}),
     do:
-      %{s | disk: Map.delete(s.disk, path), locked: MapSet.delete(s.locked, path)}
+      %{
+        s
+        | disk: Map.delete(s.disk, path),
+          sym: Map.delete(s.sym, path),
+          locked: MapSet.delete(s.locked, path)
+      }
       |> notified(notify)
+
+  def next_state(s, _res, {:call, _, :symlink, [from, to, notify]}),
+    do: notified(put_in(s, [:sym, from], to), notify)
 
   def next_state(s, _res, {:call, _, :rename, [from, to, notify]}) do
     {text, disk} = Map.pop(s.disk, from)
@@ -167,9 +200,9 @@ defmodule HalC2.SpaceFilesPropTest do
   def next_state(s, res, {:call, _, :open, [path]}) do
     cond do
       link = s.links[path] ->
-        put_in(s, [:links, path], read(link, s.disk[path]))
+        put_in(s, [:links, path], read(link, text(s, path)))
 
-      text = s.disk[path] ->
+      text = text(s, path) ->
         link = %{id: res, word: word_of(text), base: text, missing: false}
         put_in(s, [:links, path], Map.merge(link, %{unwritten: false, conflict: false}))
 
@@ -179,11 +212,12 @@ defmodule HalC2.SpaceFilesPropTest do
   end
 
   def next_state(s, _res, {:call, _, :sync, [path, _id]}),
-    do: put_in(s, [:links, path], read(s.links[path], s.disk[path]))
+    do: put_in(s, [:links, path], read(s.links[path], text(s, path)))
 
   def next_state(s, _res, {:call, _, :edit, [path, _id, word]}) do
     link = s.links[path]
-    text = s.disk[path]
+    text = text(s, path)
+    file = resolve(s, path)
 
     cond do
       word == link.word ->
@@ -198,14 +232,23 @@ defmodule HalC2.SpaceFilesPropTest do
         put_in(s, [:links, path], %{link | word: word, missing: true, unwritten: true})
 
       # Read-only: refused.
-      MapSet.member?(s.locked, path) ->
+      MapSet.member?(s.locked, file) ->
         s
 
-      # Written, and nothing else read.
+      # Written; nothing else is read but the pages that are the same file by a link.
       true ->
-        s
-        |> put_in([:disk, path], doc(word))
-        |> put_in([:links, path], %{link | word: word, base: doc(word), conflict: false})
+        s = put_in(s.disk[file], doc(word))
+
+        links =
+          Map.new(s.links, fn
+            {^path, link} ->
+              {path, %{link | word: word, base: doc(word), conflict: false}}
+
+            {other, link} ->
+              {other, if(resolve(s, other) == file, do: read(link, doc(word)), else: link)}
+          end)
+
+        %{s | links: links}
     end
   end
 
@@ -231,7 +274,7 @@ defmodule HalC2.SpaceFilesPropTest do
       s.links
       |> Enum.sort_by(fn {path, _} -> path end)
       |> Enum.reduce({%{}, taken}, fn {path, link}, {links, taken} ->
-        text = s.disk[path]
+        text = text(s, path)
 
         cond do
           text != nil ->
@@ -240,8 +283,8 @@ defmodule HalC2.SpaceFilesPropTest do
           link.missing ->
             {Map.put(links, path, link), taken}
 
-          to = moved(s.disk, link.base, taken) ->
-            {Map.put(links, to, read(link, s.disk[to])), MapSet.put(taken, to)}
+          to = moved(view(s), link.base, taken) ->
+            {Map.put(links, to, read(link, text(s, to))), MapSet.put(taken, to)}
 
           true ->
             {Map.put(links, path, %{link | missing: true}), taken}
@@ -277,10 +320,10 @@ defmodule HalC2.SpaceFilesPropTest do
   # An edit the model refuses: to the page of a read-only file that is as it was read.
   defp refused?(s, {:call, _, :edit, [path, _id, word]}) do
     link = s.links[path]
-    text = s.disk[path]
+    text = text(s, path)
 
     word != link.word and text == link.base and not link.missing and
-      MapSet.member?(s.locked, path)
+      MapSet.member?(s.locked, resolve(s, path))
   end
 
   defp refused?(_s, _call), do: false
@@ -289,7 +332,7 @@ defmodule HalC2.SpaceFilesPropTest do
     expected =
       cond do
         link = s.links[path] -> res == link.id
-        s.disk[path] -> is_binary(res)
+        text(s, path) -> is_binary(res)
         true -> res == {:error, :not_found}
       end
 
@@ -331,7 +374,11 @@ defmodule HalC2.SpaceFilesPropTest do
         page["file"] == nil and words(state, page) == [u.word]
       end)
 
-    disk == s.disk and linked and unlinked and length(files) == length(Enum.uniq(files))
+    syms =
+      Enum.all?(s.sym, fn {path, to} -> File.read_link(Path.join(root, path)) == {:ok, to} end)
+
+    disk == view(s) and syms and linked and unlinked and
+      length(files) == length(Enum.uniq(files))
   end
 
   defp words(state, page), do: Enum.map(Blocks.of_page(state, page["id"]), & &1["text"])
@@ -353,6 +400,11 @@ defmodule HalC2.SpaceFilesPropTest do
   end
 
   def lock(path), do: File.chmod!(Path.join(Process.get(:root), path), 0o444)
+
+  def symlink(from, to, notify) do
+    File.ln_s!(to, Path.join(Process.get(:root), from))
+    notify(notify)
+  end
 
   def delete(path, notify) do
     File.rm!(Path.join(Process.get(:root), path))

@@ -81,9 +81,10 @@ export const SpacePageFile = Schema.Struct({
   missing: Schema.Boolean,
   /**
    * True when the page was edited while its file was gone. Should the file come back, it
-   * wins over those edits, and `conflictAt` says so.
+   * wins over those edits, and `conflictAt` says so. Absent, as on pages opened before
+   * it was recorded, means false.
    */
-  unwritten: Schema.Boolean,
+  unwritten: Schema.optional(Schema.Boolean),
   /**
    * When the file last won over an edit on the page, the edit being a version in the
    * page's history; null once an edit reaches the file again.

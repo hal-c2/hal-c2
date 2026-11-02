@@ -49,6 +49,10 @@ defmodule HalC2.Space.Files do
 
   def changed(_root), do: :ok
 
+  # A page wrote `path`, the real file under `root`: the other pages that are that file
+  # through a link take it. Nothing when the server is not running.
+  defp wrote(root, path), do: GenServer.cast(__MODULE__, {:wrote, root, path})
+
   @doc """
   The page of the project file `relative` in `space_id`, made when there is none, or the
   page it already is wherever it is (brought back from the trash). Replies with the
@@ -217,15 +221,17 @@ defmodule HalC2.Space.Files do
     do: {page["title"], Enum.map(Blocks.of_page(state, page["id"]), &key/1)}
 
   # The page written to its file, keeping how the file ends its lines and itself. The
-  # folder's listing is as it was and the page has the file's new hash, so nothing is
-  # told the folder changed.
+  # folder's listing is as it was and the page has the file's new hash, so the folder is
+  # not followed; only another page that is the same file through a link is told.
   defp write(state, page, original) do
     file = page["file"]
     text = markdown(state, page, original)
 
     with false <- text == original,
-         {:ok, path} <- locate(file),
+         {:ok, root} <- root(file["projectId"]),
+         {:ok, path} <- locate(root, file["path"]),
          :ok <- replace(path, text) do
+      wrote(root, path)
       next = Map.merge(file, %{"hash" => hash(text), "size" => byte_size(text)})
       [{"page", page["id"], Patch.diff(page, %{page | "file" => %{next | "conflictAt" => nil}})}]
     else
@@ -543,6 +549,19 @@ defmodule HalC2.Space.Files do
 
     {:noreply,
      %{state | generations: Map.put(state.generations, root, generation), waiters: waiting}}
+  end
+
+  def handle_cast({:wrote, root, path}, state) do
+    for {project_id, _} <- state.pages,
+        root(project_id) == {:ok, root},
+        {space_id, space, page} <- linked(state, project_id),
+        Pages.live?(space, page),
+        locate(root, page["file"]["path"]) == {:ok, path},
+        {:ok, text} <- [File.read(path)],
+        hash(text) != page["file"]["hash"] or page["file"]["missing"],
+        do: Space.transact(space_id, &sync(&1, page["id"]))
+
+    {:noreply, state}
   end
 
   @impl true

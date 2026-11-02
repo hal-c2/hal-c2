@@ -12,7 +12,8 @@ A file opened from a thread's worktree goes to the page of the project's own fol
 the file in the project's folder, whatever branch is checked out there.
 
 A link in the project (`CLAUDE.md` linking to `AGENTS.md`, say) opens as the file it links to, and
-edits go to that file while the link stays a link. A link that leads out of the project doesn't open.
+edits go to that file while the link stays a link. If the link and its file are both open as pages, an
+edit on either shows on the other. A link that leads out of the project doesn't open.
 
 ## Which files count
 
