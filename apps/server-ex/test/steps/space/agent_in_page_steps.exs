@@ -1,9 +1,10 @@
 defmodule HalC2.Steps.Space.AgentInPage do
   @moduledoc """
-  Steps for `features/space/agent-in-page.feature`. The agent is the fake Codex in a real
-  thread; a text with "wait" keeps its turn open until a step ends it. The thread of the
-  agent asked on a page goes by the title `agent of <page>` in the scenario's threads, so
-  the thread helpers of `HalC2.Test.Mc.World` take it like any other.
+  Steps for `features/space/agent-in-page.feature` and the MC's part of
+  `features/space/prompt.feature`. The agent is the fake Codex in a real thread; a text
+  with "wait" keeps its turn open until a step ends it. The thread of the agent asked on a
+  page goes by the title `agent of <page>` in the scenario's threads, so the thread helpers
+  of `HalC2.Test.Mc.World` take it like any other.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
@@ -11,29 +12,134 @@ defmodule HalC2.Steps.Space.AgentInPage do
   alias HalC2.{Space, StreamState, Streams}
   alias HalC2.Test.Mc.World
 
+  # One transparent pixel.
+  @pixel "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+
   step "the user asks {string} on the page {string}", %{args: [request, title]} = context do
-    context = World.providers(context)
-    id = page_id(context, title)
+    ask(context, request, title, %{})
+  end
 
-    payload = %{"spaceId" => context.space, "pageId" => id, "request" => request}
-    {reply, context} = World.call(context, "space.page.askAgent", payload)
-    context = Map.put(context, :space_reply, reply)
+  # --- what the page's prompt chose (`features/space/prompt.feature`) ------------------
 
-    case reply do
-      {:ok, %{"agent" => %{"threadId" => thread_id}}} ->
-        context = remember(context, title, id, thread_id)
+  step "the user asks {string} on the page {string} with another model at high effort",
+       %{args: [request, title]} = context do
+    ask(context, request, title, %{"modelSelection" => chosen_model()})
+  end
 
-        if String.contains?(request, "wait") and launches?() do
-          # A real start through the fake provider, slow on a loaded machine.
-          World.await_latest_run(context, thread(title), "running", 30_000)
-          World.await_row(thread_id, &is_binary(&1["title"]))
-        end
+  step "the user asks {string} on the page {string} planning, with approval for each action",
+       %{args: [request, title]} = context do
+    choices = %{"interactionMode" => "plan", "runtimeMode" => "approval-required"}
+    ask(context, request, title, choices)
+  end
 
-        context
+  step "the user asks {string} on the page {string} in the project {string}",
+       %{args: [request, title, project]} = context do
+    ask(context, request, title, %{"projectId" => World.project(context, project).id})
+  end
 
-      _ ->
-        context
-    end
+  step "the user asks {string} on the page {string} in a project that is not on this MC",
+       %{args: [request, title]} = context do
+    ask(context, request, title, %{"projectId" => "elsewhere"})
+  end
+
+  step "the user asks {string} on the page {string} on a model whose provider is turned off",
+       %{args: [request, title]} = context do
+    turn_off_provider(context)
+    ask(context, request, title, %{"modelSelection" => off_model()})
+  end
+
+  step "the user asks {string} on the page {string} with the image {string}",
+       %{args: [request, title, name]} = context do
+    image = %{
+      "type" => "image",
+      "name" => name,
+      "mimeType" => "image/png",
+      "sizeBytes" => 68,
+      "dataUrl" => "data:image/png;base64," <> @pixel
+    }
+
+    ask(context, request, title, %{"attachments" => [image]})
+  end
+
+  step "the user asks {string} on the page {string} mentioning the file {string}",
+       %{args: [request, title, name]} = context do
+    record = %{
+      "contextId" => "ctx_file",
+      "kind" => "file",
+      "attachmentId" => "att_file",
+      "name" => name,
+      "mimeType" => "text/markdown",
+      "sizeBytes" => 9
+    }
+
+    request = "#{request} [#{name}](hal-c2-context://v1/file/ctx_file)"
+    choices = %{"context" => %{"version" => 1, "records" => [record]}}
+    ask(context, request, title, choices)
+  end
+
+  step "the project {string}", %{args: [title]} = context do
+    World.create_project(context, title)
+  end
+
+  # A user's thread newer than "Work", in a project of its own.
+  step "the user worked in the thread {string} of the project {string} since",
+       %{args: [thread, project]} = context do
+    context = World.create_project(context, project)
+    context = World.create_thread(context, thread, project)
+    # Both could be made in the same millisecond.
+    later = DateTime.utc_now() |> DateTime.add(60) |> DateTime.truncate(:millisecond)
+    later = DateTime.to_iso8601(later)
+    World.patch_thread(context, thread, %{"updatedAt" => later})
+  end
+
+  step "the agent's thread of {string} uses the model and effort the user chose",
+       %{args: [title]} = context do
+    assert launched(context, title)["modelSelection"] == chosen_model()
+    context
+  end
+
+  step "the agent's thread of {string} plans, with approval for each action",
+       %{args: [title]} = context do
+    assert %{"interactionMode" => "plan", "runtimeMode" => "approval-required"} =
+             launched(context, title)
+
+    context
+  end
+
+  step "the agent's thread of {string} has a message with the image {string}",
+       %{args: [title, name]} = context do
+    launched(context, title)
+    %{"attachments" => [image]} = first_message(context, title)
+    assert %{"type" => "image", "name" => ^name, "id" => id} = image
+    assert [_] = Path.wildcard(Path.join(HalC2.Attachments.dir(), id <> "*"))
+    context
+  end
+
+  step "the agent's thread of {string} has a message that references the file {string}",
+       %{args: [title, name]} = context do
+    launched(context, title)
+    message = first_message(context, title)
+    assert message["text"] =~ "(hal-c2-context://v1/file/ctx_file)"
+    assert %{"records" => [%{"kind" => "file", "name" => ^name}]} = message["context"]
+    context
+  end
+
+  # The scenario's MC has its own home, and the ask that ran carried no attachment.
+  step "no attachment of the refused ask is kept", context do
+    assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == []
+    context
+  end
+
+  step "an ask from a page would run in the project {string}",
+       %{args: [project]} = context do
+    id = World.project(context, project).id
+    assert {{:ok, %{"projectId" => ^id}}, context} = World.call(context, "space.page.agentTarget")
+    context
+  end
+
+  step "an ask from a page would have nowhere to run", context do
+    assert {{:ok, %{"projectId" => nil}}, context} = World.call(context, "space.page.agentTarget")
+    context
   end
 
   step "the user stops the agent of {string}", %{args: [title]} = context do
@@ -416,7 +522,7 @@ defmodule HalC2.Steps.Space.AgentInPage do
 
   step "the agent's thread of {string} is in the project {string}",
        %{args: [title, project]} = context do
-    assert World.thread(context, thread(title))["projectId"] == project
+    assert launched(context, title)["projectId"] == project
     context
   end
 
@@ -463,6 +569,56 @@ defmodule HalC2.Steps.Space.AgentInPage do
   end
 
   # --- helpers ------------------------------------------------------------------------
+
+  defp ask(context, request, title, choices) do
+    context = World.providers(context)
+    id = page_id(context, title)
+
+    payload =
+      Map.merge(choices, %{"spaceId" => context.space, "pageId" => id, "request" => request})
+
+    {reply, context} = World.call(context, "space.page.askAgent", payload)
+    context = Map.put(context, :space_reply, reply)
+
+    case reply do
+      {:ok, %{"agent" => %{"threadId" => thread_id}}} ->
+        context = remember(context, title, id, thread_id)
+
+        if String.contains?(request, "wait") and launches?() do
+          # A real start through the fake provider, slow on a loaded machine.
+          World.await_latest_run(context, thread(title), "running", 30_000)
+          World.await_row(thread_id, &is_binary(&1["title"]))
+        end
+
+        context
+
+      _ ->
+        context
+    end
+  end
+
+  # Not the model of "Work" (`World.create_thread/4`), and at high effort.
+  defp chosen_model do
+    %{
+      "instanceId" => "codex",
+      "model" => "gpt-5.5",
+      "options" => [%{"id" => "reasoningEffort", "value" => "high"}]
+    }
+  end
+
+  # The agent's thread once its launch wrote it.
+  defp launched(context, title) do
+    id = World.thread_id(context, thread(title))
+    World.await_row(id, &is_binary(&1["title"]), 30_000)
+    World.thread(context, thread(title))
+  end
+
+  defp first_message(context, title) do
+    state =
+      World.await_state(context, thread(title), &(StreamState.list(&1, "message") != []), 30_000)
+
+    state |> StreamState.list("message") |> Enum.find(&(&1["role"] == "user"))
+  end
 
   defp thread(title), do: "agent of #{title}"
 

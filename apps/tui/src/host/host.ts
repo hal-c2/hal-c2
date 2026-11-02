@@ -789,7 +789,7 @@ export function createHost(options: HostOptions): Host {
       }
       publishLayout();
       if (open) setMode("space");
-      else if (mode === "space") setMode(restingMode());
+      else if (mode === "space" || mode === "pagePrompt") setMode(restingMode());
       palette.sync();
     },
     publish: (next) => state.set("space", next),
@@ -837,6 +837,12 @@ export function createHost(options: HostOptions): Host {
       filesFor = null;
     },
     commandsChanged: () => palette.sync(),
+    // The prompt below the page writes on it: it re-aims, and ^P moves the keys.
+    promptChanged: () => {
+      if (mode === "space" || mode === "pagePrompt") setMode("compose");
+      composer?.relayout();
+    },
+    askInPrompt: () => composer?.dispatch("composer.page.ask"),
   });
   // Adding a project is a page over the conversation (mode "project").
   const addProject = createAddProjectController({
@@ -988,6 +994,7 @@ export function createHost(options: HostOptions): Host {
     client,
     store,
     state,
+    page: () => space.prompt(),
     mode: () => mode,
     setMode,
     chatWidth: () => layout.chatWidth,

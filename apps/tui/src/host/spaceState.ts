@@ -35,6 +35,7 @@ import {
   type SpaceListResult,
   type SpacePage,
   type SpacePageAgent,
+  type SpacePageAgentTarget,
   type SpacePageHistoryResult,
   type SpacePageId,
   type SpacePageOpenFileResult,
@@ -59,7 +60,7 @@ import { clip } from "../format.ts";
 import type { StatusKind } from "../store.ts";
 import { type Palette, THEME } from "../theme.ts";
 import type { AskSpec } from "./askState.ts";
-import type { PickRequest } from "./composerState.ts";
+import type { ComposerPage, PagePrompt, PickRequest } from "./composerState.ts";
 import { scheduleLabel } from "./sections/scheduledTasks.ts";
 import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
@@ -173,6 +174,10 @@ export interface SpaceControllerOptions {
   readonly showFile?: (projectId: string, path: string) => void;
   /** The entries `commands` offers changed without the pane moving. */
   readonly commandsChanged?: () => void;
+  /** What `prompt` aims at changed, or whether the prompt has the page's keys. */
+  readonly promptChanged?: () => void;
+  /** Starts an ask in the page's prompt, keeping what is written there. */
+  readonly askInPrompt?: () => void;
 }
 
 /** A palette entry; one offered several times is told apart by its payload. */
@@ -187,7 +192,10 @@ export interface SpaceController {
   readonly dispatch: (action: string, payload: unknown) => boolean;
   readonly close: () => void;
   readonly isOpen: () => boolean;
-  readonly mode: () => "space";
+  /** "pagePrompt" while the open page's prompt has the keys (^P). */
+  readonly mode: () => "space" | "pagePrompt";
+  /** The open page, for the timeline's prompt to write on; null off a page. */
+  readonly prompt: () => ComposerPage | null;
   /** Republish after a resize or a theme change. */
   readonly sync: () => void;
   /** The connection is down: who is on the page is unknown until the MC's next frame. */
@@ -220,7 +228,7 @@ const HINTS: Record<TuiSpaceView, string> = {
   spaces: "  ⏎ open · n new · e rename · d delete · esc close",
   pages:
     "  ⏎ open · n new · s new deck · S deck from page · a subpage · e rename · m move · d trash · r restore · D delete · p present a deck, publish a page · i import · f from a project's files · t from thread · h history · v images · esc back",
-  page: "  ⏎ edit · n add · g chart · c comment · x tick/resolve · m move · d delete · l link · u update · y copy · S deck · p publish · h history · v images · A ask an agent · f its file · F unlink · esc back",
+  page: "  ^P write · ⏎ edit · n add · g chart · c comment · x tick/resolve · m move · d delete · l link · u update · y copy · S deck · p publish · h history · v images · A ask an agent · f its file · F unlink · esc back",
   deck: "  ⏎ edit · n add · m move · d delete · p present · r restore · v images · esc back",
   present: "  → next · ← back · pgup/pgdn scroll · esc leave",
   images: "  n generate · i add a file · d trash · r restore · D delete · esc back",
@@ -290,6 +298,25 @@ const BLOCK_KINDS: ReadonlyArray<{ readonly kind: SpaceBlockKind; readonly label
   { kind: "chart", label: "Chart" },
   { kind: "image", label: "Image" },
 ];
+
+/** What "/" in a page's prompt offers: a chart is asked for in words, so it is "Visualize". */
+const PROMPT_KINDS = BLOCK_KINDS.map((entry) =>
+  entry.kind === "chart"
+    ? { label: "Visualize", value: entry.kind }
+    : { label: entry.label, value: entry.kind },
+);
+
+/** What a page's prompt writes from plain words, after "/" chose it. */
+const PROMPT_WRITES: Partial<Record<SpaceBlockKind, string>> = {
+  paragraph: "writes a paragraph",
+  heading: "writes a heading",
+  checklist: "writes a checklist item",
+  callout: "writes a callout",
+};
+
+/** An ask in a page's prompt starts with the word @agent; the MC is sent what follows. */
+const ASK_PREFIX = /^@agent(?:\s+|$)/i;
+const VISUALIZE_PREFIX = /^\/visualize(?:\s+|$)/i;
 
 const HOUR_MS = 3_600_000;
 
@@ -426,6 +453,14 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   // One history request at a time; a refresh asked for meanwhile goes after it.
   let askAgain = false;
   let historyTimer: ReturnType<typeof setTimeout> | null = null;
+  // The open page's prompt: whether it has the keys, what its plain words write (as "/"
+  // chose), where an ask naming no project runs (as the MC last said), and what it
+  // last published, so the prompt is told only when that changes.
+  let prompting = false;
+  let nextKind: SpaceBlockKind = "paragraph";
+  let agentTarget: string | null = null;
+  let promptSignature = "";
+  let pagePrompt: ComposerPage | null = null;
 
   const track = <T>(promise: Promise<T>): Promise<T> => {
     pending.add(promise);
@@ -1180,6 +1215,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   const publish = () => {
     followViewers();
+    syncPrompt();
     if (!open) {
       options.publish(CLOSED);
       return;
@@ -1407,12 +1443,15 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (pageId !== id) {
       selected.page = null;
       selectedIndex.page = 0;
+      nextKind = "paragraph";
     }
     pageId = id;
+    prompting = false;
     selected.pages = key;
     view = "page";
     top = 0;
     publish();
+    askTarget();
     // A file may have changed with nothing watching it (an editor, a pull): read it again.
     // What it brings shows on the stream; a refusal leaves the page as it was.
     if (pageById(id)?.file && spaceId !== null) {
@@ -1498,6 +1537,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     spaceId = null;
     pageId = null;
     deckId = null;
+    prompting = false;
     view = "spaces";
     top = 0;
   };
@@ -1938,30 +1978,41 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return null;
   };
 
-  const insertBlock = (input: Record<string, unknown>) => {
+  /** Adds a block where a new one goes and selects it; rejects with the MC's refusal. */
+  const placeBlock = async (input: Record<string, unknown>) => {
     const id = spaceId;
     const page = pageId;
     if (id === null || page === null) return;
     const after = anchorBlock();
     const asked = generation;
-    void send<{ block: SpaceBlock }>(WS_METHODS.spaceBlockInsert, {
+    const result = await call<{ block: SpaceBlock }>(WS_METHODS.spaceBlockInsert, {
       spaceId: id,
       pageId: page,
       ...input,
       ...(after === null ? {} : { afterBlockId: after }),
-    }).then((result) => {
-      if (result && asked === generation && pageId === page) {
-        selected.page = `block:${result.block.id}`;
-        publish();
-      }
     });
+    if (asked === generation && pageId === page) {
+      selected.page = `block:${result.block.id}`;
+      publish();
+    }
+  };
+
+  const insertBlock = (input: Record<string, unknown>) => {
+    placeBlock(input).catch((error: unknown) => options.status(refusalText(error), "error"));
   };
 
   const addBlock = () => {
     options.menu({
       title: "Add a block",
-      options: BLOCK_KINDS.map((entry) => ({ label: entry.label, value: entry.kind })),
+      options: [
+        ...BLOCK_KINDS.map((entry) => ({ label: entry.label, value: entry.kind })),
+        { label: "Ask an agent", description: "about this page, in the prompt", value: "ask" },
+      ],
       onChoose: (value) => {
+        if (value === "ask") {
+          askAgent();
+          return;
+        }
         const kind = value as SpaceBlockKind;
         if (kind === "subpage_link") {
           link();
@@ -2008,25 +2059,40 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       label: replacing ? "ask again" : "chart",
       placeholder: "what should it show?",
       ...(replacing ? { value: chartData(replacing.chart)?.request ?? "" } : {}),
-      onSubmit: (request) => {
-        const after = replacing ? null : anchorBlock();
-        options.status("Drawing a chart…", "info");
-        void send<{ block: SpaceBlock }>(WS_METHODS.spaceBlockVisualize, {
-          spaceId: id,
-          pageId: page,
-          request,
-          ...(replacing ? { blockId: replacing.id } : {}),
-          ...(after === null ? {} : { afterBlockId: after }),
-        }).then((result) => {
-          if (!result) return;
-          options.status(`Drew “${chartData(result.block.chart)?.title ?? "a chart"}”.`, "info");
-          if (asked === generation && pageId === page) {
-            selected.page = `block:${result.block.id}`;
-            publish();
-          }
-        });
-      },
+      onSubmit: (request) => startChart(id, page, request, replacing?.id ?? null, asked),
     });
+  };
+
+  /**
+   * Draws a chart without waiting on it: a model draws it, so nothing holds the keys
+   * meanwhile. The status line says when it is drawn, or why it was not.
+   */
+  const startChart = (...args: Parameters<typeof drawChart>) => {
+    drawChart(...args).catch((error: unknown) => options.status(refusalText(error), "error"));
+  };
+
+  /** Asks the MC for a chart in `request`, replacing `blockId`'s; rejects with its refusal. */
+  const drawChart = async (
+    id: string,
+    page: string,
+    request: string,
+    blockId: string | null,
+    asked: number,
+  ) => {
+    const after = blockId === null ? anchorBlock() : null;
+    options.status("Drawing a chart…", "info");
+    const result = await call<{ block: SpaceBlock }>(WS_METHODS.spaceBlockVisualize, {
+      spaceId: id,
+      pageId: page,
+      request,
+      ...(blockId === null ? {} : { blockId }),
+      ...(after === null ? {} : { afterBlockId: after }),
+    });
+    options.status(`Drew “${chartData(result.block.chart)?.title ?? "a chart"}”.`, "info");
+    if (asked === generation && pageId === page) {
+      selected.page = `block:${result.block.id}`;
+      publish();
+    }
   };
 
   const link = () => {
@@ -2287,26 +2353,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   const isActive = (agent: SpacePageAgent) =>
     agent.status === "running" || agent.status === "stopping";
 
-  /**
-   * The MC takes the word @agent off what is asked, so the field takes it with or without.
-   * An ask it refuses comes back with its words.
-   */
-  const askFor = (page: string, words = "") => {
-    options.ask({
-      label: "ask an agent",
-      placeholder: "what to do to this page",
-      value: words,
-      onSubmit: async (request) => {
-        const asked = await send(WS_METHODS.spacePageAskAgent, {
-          spaceId,
-          pageId: page,
-          request,
-        });
-        if (asked === null && open && request !== "") askFor(page, request);
-      },
-    });
-  };
-
+  /** A, the palette and the add menu: the page's prompt takes the keys, as an ask. */
   const askAgent = () => {
     const page = pageId;
     if (view !== "page" || page === null) return;
@@ -2315,7 +2362,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       options.status("An agent is already working on this page: s stops it.", "info");
       return;
     }
-    askFor(page);
+    focusPrompt(true);
+    options.askInPrompt?.();
   };
 
   /** Runs `fn` on the open page's agent; a page without one says so. */
@@ -3098,6 +3146,121 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.leave": leavePresenter,
   };
 
+  // --- the page's prompt ---
+
+  const focusPrompt = (on: boolean) => {
+    if (prompting === on) return;
+    prompting = on;
+    publish();
+  };
+
+  /** Where the MC would run an ask that names no project; the prompt shows it. */
+  const askTarget = () => {
+    void call<SpacePageAgentTarget>(WS_METHODS.spacePageAgentTarget, {}).then(
+      (result) => {
+        if (result.projectId === agentTarget) return;
+        agentTarget = result.projectId;
+        publish();
+      },
+      () => {},
+    );
+  };
+
+  /** What "/" chose: the words that start the prompt, or null when a menu takes over. */
+  const chooseKind = (value: string): string | null => {
+    const kind = value as SpaceBlockKind;
+    if (kind === "chart") return "/visualize ";
+    if (kind === "subpage_link") {
+      link();
+      return null;
+    }
+    if (kind === "image") {
+      placeImage();
+      return null;
+    }
+    if (nextKind !== kind) {
+      nextKind = kind;
+      publish();
+    }
+    return "";
+  };
+
+  /**
+   * What the prompt sent: `@agent …` asks an agent with the prompt's choices, `/visualize …`
+   * asks for a chart, anything else is a block of the kind "/" chose. Resolves to why the
+   * page refused it, or null once it is written; the prompt keeps a refused draft.
+   */
+  const submitPrompt = async (page: string, input: PagePrompt): Promise<string | null> => {
+    const id = spaceId;
+    if (id === null || pageId !== page) return "The page is no longer open.";
+    try {
+      const ask = ASK_PREFIX.exec(input.text);
+      if (ask) {
+        const current = agentOfPage(page);
+        if (current && isActive(current)) {
+          return "An agent is already working on this page: s stops it.";
+        }
+        await call(WS_METHODS.spacePageAskAgent, {
+          spaceId: id,
+          pageId: page,
+          request: input.text.slice(ask[0].length),
+          ...(input.projectId === null ? {} : { projectId: input.projectId }),
+          ...(input.modelSelection === null ? {} : { modelSelection: input.modelSelection }),
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
+          ...(input.attachments.length > 0 ? { attachments: input.attachments } : {}),
+        });
+        return null;
+      }
+      if (input.attachments.length > 0) {
+        return "Images go with an ask: start the prompt with @agent.";
+      }
+      const chart = VISUALIZE_PREFIX.exec(input.text);
+      if (chart) {
+        startChart(id, page, input.text.slice(chart[0].length), null, generation);
+        return null;
+      }
+      const kind = nextKind;
+      await placeBlock({ kind, text: input.text });
+      // A heading or a callout is one block; a paragraph or a checklist goes on.
+      if (kind === "heading" || kind === "callout") {
+        nextKind = "paragraph";
+        publish();
+      }
+      return null;
+    } catch (error) {
+      return refusalText(error);
+    }
+  };
+
+  /** Rebuilds `pagePrompt`, telling the prompt when what it aims at changed. */
+  const syncPrompt = () => {
+    const page = open && view === "page" && spaceId !== null ? pageById(pageId) : undefined;
+    const agent = page ? agentOfPage(page.id) : undefined;
+    const agentActive = agent ? isActive(agent) : false;
+    const signature = page
+      ? [spaceId, page.id, page.title, nextKind, agentTarget, agentActive, prompting].join("\u0000")
+      : "";
+    if (signature === promptSignature) return;
+    promptSignature = signature;
+    pagePrompt = page
+      ? {
+          key: `page:${spaceId}:${page.id}`,
+          title: page.title || UNTITLED,
+          writes: PROMPT_WRITES[nextKind] ?? "writes a paragraph",
+          agentActive,
+          defaultProjectId: agentTarget,
+          projects: () => options.projects?.() ?? [],
+          kinds: PROMPT_KINDS,
+          chooseKind,
+          submit: (input) => submitPrompt(page.id, input),
+          stop: stopAgent,
+          leave: () => focusPrompt(false),
+        }
+      : null;
+    options.promptChanged?.();
+  };
+
   /** The actions that need the pane open on a level. */
   const inView = (fn: () => void) => () => {
     if (open) fn();
@@ -3124,6 +3287,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       close();
       return true;
     },
+    // ^P: on a page its prompt takes the keys, and gives them back; elsewhere it closes.
+    "space.prompt": inView(() => (pagePrompt ? focusPrompt(true) : close())),
+    "space.focus": inView(() => focusPrompt(false)),
     "space.previous": inView(() => move(-1)),
     "space.next": inView(() => move(1)),
     "space.pageUp": inView(() => page(-1)),
@@ -3196,7 +3362,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     },
     close,
     isOpen: () => open,
-    mode: () => "space",
+    mode: () => (prompting && pagePrompt ? "pagePrompt" : "space"),
+    prompt: () => pagePrompt,
     sync: () => {
       if (open) publish();
     },

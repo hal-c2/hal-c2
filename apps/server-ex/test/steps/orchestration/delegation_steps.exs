@@ -307,8 +307,16 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     Map.put(context, :first_wake, wake)
   end
 
-  step "{string} and {string} complete afterwards", %{args: [first, second]} = context do
-    context |> complete_named(first) |> complete_named(second) |> Map.put(:later, [first, second])
+  # The caller's busy turn holds the wake for `first` in its queue, so `second` joins
+  # it whatever the timing. Were the caller idle, that wake could run and end before
+  # `second` lands, and the wake limit would leave `second` unwoken (#634).
+  step "{string} and {string} complete afterwards, while {string} works on another turn",
+       %{args: [first, second, parent]} = context do
+    World.send_turn(context, parent, "wait for it")
+    World.await_runs(context, parent, ["completed", "completed", "running"])
+    context = context |> complete_named(first) |> complete_named(second)
+    World.send_turn(context, parent, "say Carrying on")
+    Map.put(context, :later, [first, second])
   end
 
   step "{string} is woken again for them", %{args: [parent]} = context do
@@ -317,9 +325,9 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     Map.put(context, :later_wakes, wakes)
   end
 
-  # Each result is delivered once; two that land together may ride one turn.
-  step "completions that arrive together may share one wake turn", context do
-    assert length(Enum.uniq_by(context.later_wakes, & &1["id"])) in 1..2
+  # Each result is delivered once, and two that land together ride one turn.
+  step "completions that arrive together share one wake turn", context do
+    assert [_] = Enum.uniq_by(context.later_wakes, & &1["id"])
 
     for name <- context.later do
       assert [_] =

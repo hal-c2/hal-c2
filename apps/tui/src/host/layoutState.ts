@@ -36,6 +36,8 @@ export type TuiMode =
   | "sectionConfirm"
   // Spaces and their pages (`spaceState.ts`).
   | "space"
+  // The prompt writes to the open Space page (`spaceState.ts`).
+  | "pagePrompt"
   // The file viewer's editor has the keys (`filesState.ts`).
   | "fileEdit"
   // A one-line question from a feature area, and the leader layer (^X).

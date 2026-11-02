@@ -15,6 +15,7 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRegularExpression>
@@ -26,9 +27,11 @@
 #include <optional>
 #include <utility>
 
+#include "CodeFence.h"
 #include "FakeFiles.h"
 #include "FakeThreads.h"
 #include "Harness.h"
+#include "Mermaid.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #include "Phone.h"
@@ -354,6 +357,8 @@ QString exportMarkdown(FakeMc& mc, const QString& space, const QJsonObject& page
       QStringList quoted;
       for (const QString& part : said.split(QLatin1Char('\n'))) quoted.append((QStringLiteral("> ") + part).trimmed());
       line = quoted.join(QLatin1Char('\n'));
+    } else if (kind == QLatin1String("code")) {
+      line = codeFence::write(block);
     } else if (kind == QLatin1String("subpage_link")) {
       const QString linked = text(block, QLatin1String("linkedPageId"));
       const QString title = titleOf(mc, space, linked);
@@ -379,7 +384,7 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
   static const QRegularExpression heading(QStringLiteral("^#{2,6}\\s+(.*)$"));
   static const QRegularExpression item(QStringLiteral("^\\s*[-*]\\s+\\[([ xX])\\]\\s?(.*)$"));
   static const QRegularExpression link(QStringLiteral("^\\[(.+)\\]\\(#([\\w-]+)\\)$"));
-  static const QRegularExpression notParagraph(QStringLiteral("^(#{1,6}\\s|>|```|\\s*[-*]\\s+\\[[ xX]\\])"));
+  static const QRegularExpression notParagraph(QStringLiteral("^(#{1,6}\\s|>|\\s*[-*]\\s+\\[[ xX]\\])"));
   const auto block = [](const QString& kind, const QString& said) {
     return QJsonObject{{QStringLiteral("kind"), kind}, {QStringLiteral("text"), said}, {QStringLiteral("checked"), false},
                        {QStringLiteral("linkedPageId"), QJsonValue::Null}};
@@ -392,11 +397,10 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
     QRegularExpressionMatch match;
     if (line.trimmed().isEmpty()) {
       ++i;
-    } else if (line.startsWith(QLatin1String("```"))) {
-      QStringList code{line};
-      while (++i < lines.size() && !lines.at(i).startsWith(QLatin1String("```"))) code.append(lines.at(i));
-      if (i < lines.size()) code.append(lines.at(i++));
-      blocks.append(block(QStringLiteral("paragraph"), code.join(QLatin1Char('\n'))));
+    } else if (!codeFence::opens(line).isEmpty()) {
+      const auto [fenced, next] = codeFence::read(lines, i, block);
+      blocks.append(fenced);
+      i = next;
     } else if ((match = title.match(line)).hasMatch()) {
       // A `# ` heading anywhere but the top is an ordinary heading.
       if (blocks.isEmpty() && pageTitle.isNull()) {
@@ -428,7 +432,9 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
       blocks.append(block(QStringLiteral("callout"), quote.join(QLatin1Char('\n'))));
     } else {
       QStringList paragraph;
-      for (; i < lines.size() && !lines.at(i).trimmed().isEmpty() && !notParagraph.match(lines.at(i)).hasMatch(); ++i) {
+      for (; i < lines.size() && !lines.at(i).trimmed().isEmpty() && !notParagraph.match(lines.at(i)).hasMatch() &&
+             codeFence::opens(lines.at(i)).isEmpty();
+           ++i) {
         paragraph.append(lines.at(i));
       }
       blocks.append(block(QStringLiteral("paragraph"), paragraph.join(QLatin1Char('\n'))));
@@ -1564,6 +1570,11 @@ QString threadNamed(World& world, const QString& title) {
 }
 
 // --- The client -------------------------------------------------------------
+
+// The diagram a page holds, as its block's text is now.
+struct Diagram {
+  QString source;
+};
 
 SpaceController* viewOf(World& world) {
   auto* controller = world.native().controller<SpaceController>();
@@ -3032,6 +3043,102 @@ const Steps steps([] {
     expectShown(world, [&] { return blockTable(world) == wanted; }, S("the blocks %1").arg(show(tableOf(wanted))));
   });
 
+  // Mermaid diagrams on a page: imported as the MC reads a "mermaid" fence (a
+  // code block in "mermaid" holding the bare source), and drawn by the page
+  // through the fake renderer (MermaidSteps.cpp).
+  static const QMap<QString, QString> kDiagrams{
+      {S("flowchart"), mermaid::kFlowchart},
+      {S("graph"), S("graph TD\n  Cart --> Pay")},
+      {S("sequenceDiagram"), S("sequenceDiagram\n  Cart->>Pay: order")},
+      {S("stateDiagram-v2"), S("stateDiagram-v2\n  [*] --> Cart")},
+      {S("gantt"), S("gantt\n  title Launch\n  section Build\n  MC :a1, 2026-11-01, 3d")},
+      {S("block-beta"), S("block-beta\n  columns 2\n  Cart Pay")}};
+  // Imports a page holding `source`, then `after` paragraphs, pasted as a
+  // phone's Markdown comes, and lands on it.
+  const auto importDiagram = [](World& world, const QString& source, int after) {
+    QString markdown = S("# Ordering\n\nHow an order is paid:\n\n```mermaid\n%1\n```\n").arg(source);
+    for (int step = 1; step <= after; ++step) markdown += S("\nStep %1 of paying.\n").arg(step);
+    world.mc.part<Diagram>().source = source;
+    look(world, current(world));
+    world.tap(S("spaceImport"));
+    world.awaitPopup(S("spaceTextDialog"));
+    world.item(S("spaceTextField"))->setProperty("text", markdown);
+    world.tap(S("spaceTextSave"));
+    settle(world);
+    expectStep(world, S("page"));
+    expectShown(world, [&] { return column(viewOf(world)->blocks(), S("text")).contains(source); }, S("the imported page"));
+  };
+  const auto sourceEditor = [](World& world) {
+    return world.item(S("spaceBlockEditor:") + world.mc.part<Diagram>().source);
+  };
+  step(S("the user imports a page holding a %1 Mermaid diagram").arg(q), [importDiagram](World& world, const Captures& c, const Table&) {
+    expect(kDiagrams.contains(c[0]), S("no %1 diagram to import").arg(c[0]));
+    importDiagram(world, kDiagrams.value(c[0]), 0);
+  });
+  step(S("the user imports a page holding a flowchart with an unclosed bracket"), [importDiagram](World& world, const Captures&, const Table&) {
+    importDiagram(world, mermaid::kBrokenFlowchart, 0);
+  });
+  // Paragraphs after it, enough to scroll it off the screen.
+  step(S("a page with a flowchart"), [importDiagram](World& world, const Captures&, const Table&) {
+    importDiagram(world, mermaid::kFlowchart, 40);
+  });
+  step(S("the page has a diagram block of the type %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString source = world.mc.part<Diagram>().source;
+    expect(source.section(QLatin1Char('\n'), 0, 0).section(QLatin1Char(' '), 0, 0) == c[0], S("the page holds a %1 diagram, not %2").arg(c[0], source));
+    expectShown(world, [&] {
+      const QList<QVariantMap>& rows = viewOf(world)->blocks()->rows();
+      return std::any_of(rows.cbegin(), rows.cend(), [&](const QVariantMap& block) {
+        return block.value(S("kind")) == QLatin1String("code") && block.value(S("language")) == QLatin1String("mermaid") && block.value(S("text")) == source;
+      });
+    }, S("a code block in \"mermaid\" holding the diagram"));
+  });
+  step(S("on the desktop and the phone the diagram is drawn"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, [&] { return S("the diagram to be drawn; %1").arg(describe(world)); });
+    const QQuickItem* image = mermaid::drawn(world).first();
+    expect(image->width() > 0 && image->x() + image->width() <= world.window().width(),
+           S("the diagram is %1 wide at %2 on a %3 wide screen").arg(image->width()).arg(image->x()).arg(world.window().width()));
+    expect(!world.find(S("spaceBlockEditor:") + world.mc.part<Diagram>().source), S("the diagram's source shows with its picture"));
+  });
+  step(S("the user adds a node to its source"), [sourceEditor](World& world, const Captures&, const Table&) {
+    Diagram& diagram = world.mc.part<Diagram>();
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, S("the diagram to be drawn"));
+    world.tap(S("spaceDiagramSource:") + diagram.source);
+    QQuickItem* editor = sourceEditor(world);
+    world.tap(editor);
+    world.waitFor([&] { return editor->hasActiveFocus(); }, S("the source to take the keyboard"));
+    editor->setProperty("cursorPosition", diagram.source.size());
+    QTest::keyClick(&world.window(), Qt::Key_Return);
+    world.type(S("  Pay --> Done"));
+    world.tap(S("spaceEditDone"));
+    world.sync();
+    diagram.source += S("\n  Pay --> Done");
+  });
+  step(S("the diagram is drawn again with the new node"), [](World& world, const Captures&, const Table&) {
+    const QString source = world.mc.part<Diagram>().source;
+    world.waitFor([&] {
+      return mermaid::drawn(world).size() == 1 && world.find(S("spaceDiagram:") + source) && !world.find(S("spaceBlockEditor:") + source);
+    }, [&] { return S("the new source to be drawn; %1").arg(describe(world)); });
+    expect(mermaid::asked(world) == 2, S("the MC was asked %1 times, not for the first and the new source").arg(mermaid::asked(world)));
+  });
+  step(S("the export writes the new source"), [](World& world, const Captures&, const Table&) {
+    world.clipboard.clear();
+    pageMenu(world, S("Ordering"), S("copy"));
+    settle(world);
+    const QString fence = S("```mermaid\n%1\n```").arg(world.mc.part<Diagram>().source);
+    world.waitFor([&] { return world.clipboard.contains(fence); }, [&] { return S("the export to hold %1; it holds \"%2\"").arg(fence, world.clipboard); });
+  });
+  step(S("the user scrolls the page past it and back"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, S("the diagram to be drawn"));
+    QQuickItem* list = world.item(S("spaceBlocks"));
+    QMetaObject::invokeMethod(list, "positionViewAtEnd");
+    world.waitFor([&] { return mermaid::drawn(world).isEmpty(); }, S("the page to scroll past the diagram"));
+    QMetaObject::invokeMethod(list, "positionViewAtBeginning");
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, S("the diagram to be back"));
+  });
+  step(S("the diagram is not drawn again"), [](World& world, const Captures&, const Table&) {
+    expect(mermaid::asked(world) == 1, S("the MC was asked to draw it %1 times").arg(mermaid::asked(world)));
+  });
+
   // Markdown the page keeps as written, and headings by level.
   // A table wider than a phone, its cells padded to line up as people write them.
   static const QString table = S("| Step  | Owner | Before it ships to everyone            |\n"
@@ -4005,3 +4112,20 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+namespace mermaid {
+
+bool onPage(World& world) {
+  return !world.mc.part<Diagram>().source.isEmpty();
+}
+
+void expectPageSource(World& world) {
+  const QString source = world.mc.part<Diagram>().source;
+  world.waitFor([&] {
+    QQuickItem* editor = world.find(QStringLiteral("spaceBlockEditor:") + source);
+    return editor && editor->property("text") == source && asked(world) == 1;
+  }, [&] { return QStringLiteral("the diagram's source; %1").arg(describe(world)); });
+  expect(drawn(world).isEmpty(), QStringLiteral("a picture is drawn"));
+}
+
+}  // namespace mermaid
