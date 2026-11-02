@@ -167,13 +167,16 @@ signals:
 private:
   void follow();
   void refresh();
+  void went(const QString& url);
 
   QPointer<ThreadPreviews> m_previews;
   QString m_tabId;
   QString m_enrolled;
   QJsonObject m_tab;
-  // The addresses the page reported lately: the MC saying them back is no news.
-  QStringList m_reported;
+  // Where the view is, and the addresses it went to that the MC has not said
+  // back yet, oldest first: saying them back is no news, anything else is.
+  QString m_at;
+  QStringList m_echoes;
   QJsonObject m_lastReport;
   // A size picked and not yet confirmed, and which pick it was.
   QJsonObject m_pendingViewport;

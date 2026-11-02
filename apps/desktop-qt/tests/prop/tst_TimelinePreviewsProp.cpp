@@ -16,6 +16,15 @@
 // page the browser opens is a link the user opened, at its address or at the
 // forward of a port the thread's MC granted; once every answer is in, each link
 // has opened or said why not.
+//
+// Some runs are embedded (the desktop has the in-app browser): a link to a
+// dev server opens as a tab of its thread's, and a page (BrowserPage) follows
+// one tab, while a fake view loads what the page asks it to and reports each page it is on,
+// which the MC holds as it does the rest (`preview.reportStatus`). The user
+// can follow a link inside the page. Only embedded is a tab asked to show,
+// and only one of the thread shown; a row that changed says so (tabChanged);
+// the page reads its tab's row; and once every answer is in, the view is on
+// the page the MC says its tab is at.
 
 #include "Prop.h"
 
@@ -25,6 +34,7 @@
 
 #include <memory>
 
+#include "Browser.h"
 #include "FakeMc.h"
 #include "McClient.h"
 #include "ThreadPreviews.h"
@@ -72,6 +82,7 @@ QString pick(const QStringList& values) {
 struct Model {
   QString thread;
   bool active = false;
+  bool embedded = false;
 };
 
 int modelTestFailures = 0;
@@ -147,6 +158,11 @@ struct Sut {
   // Whether the connected MC is on this machine.
   bool here = true;
   QList<Link> links;
+  // Links opened embedded as a tab of their thread's, not yet asked to show.
+  QList<Link> tabLinks;
+  QSet<QString> linked;    // tabs that answered a link this step
+  QSet<QString> userTabs;  // tabs preview.open made, not an agent's
+  bool opening = false;    // within openAddress
   QList<Forward> granted;
   // Links that said why they did not open; calls sent to an MC other than the thread's
   // (or a forward to one other than the connected one); pages opened for no link.
@@ -158,6 +174,12 @@ struct Sut {
   int resets = 0;
   int countSignals = 0;
   QList<Row> before;
+  // The page, and the address its view is on; since the step began, the tabs
+  // asked to show and the tabs said to have changed.
+  std::unique_ptr<BrowserPage> page;
+  QString viewUrl;
+  QStringList showRequests;
+  QStringList changed;
 
   Sut() {
     mc.environmentId = kEnvironment;
@@ -175,7 +197,8 @@ struct Sut {
       }
       held.append({rpc, {{QStringLiteral("sessions"), sessions}, {QStringLiteral("serverEpoch"), epoch}, {QStringLiteral("revision"), revision}}});
     });
-    for (const QString& method : {QStringLiteral("preview.close"), QStringLiteral("preview.open"), QStringLiteral("preview.forward")}) {
+    for (const QString& method : {QStringLiteral("preview.close"), QStringLiteral("preview.open"), QStringLiteral("preview.forward"),
+                                  QStringLiteral("preview.reportStatus")}) {
       mc.onRpc(method, [this](const FakeMc::Rpc& rpc) { held.append({rpc, {}}); });
     }
     client = std::make_unique<McClient>();
@@ -196,9 +219,36 @@ struct Sut {
                      });
     QObject::connect(previews.get(), &QAbstractItemModel::modelReset, previews.get(), [this] { ++resets; });
     QObject::connect(previews.get(), &ThreadPreviews::countChanged, previews.get(), [this] { ++countSignals; });
+    QObject::connect(previews.get(), &ThreadPreviews::showRequested, previews.get(), [this](const QString& tabId) {
+      showRequests.append(tabId);
+      const int at = indexOf(tabId);
+      // A link is answered by the tab it opened or the one it found, and
+      // that tab is asked to show by its "opened" event and by the reply.
+      if (at < 0 || linked.contains(tabId) || (!opening && !userTabs.contains(tabId))) return;
+      const QUrl url(tabs.at(at).value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString());
+      for (qsizetype link = 0; link < tabLinks.size(); ++link) {
+        if (tabLinks.at(link).thread == threadOf.value(tabId) && tabLinks.at(link).url.matches(url, QUrl::StripTrailingSlash)) {
+          tabLinks.removeAt(link);
+          linked.insert(tabId);
+          return;
+        }
+      }
+    });
+    QObject::connect(previews.get(), &ThreadPreviews::tabChanged, previews.get(), [this](const QString& tabId) { changed.append(tabId); });
+    page = std::make_unique<BrowserPage>();
+    page->setPreviews(previews.get());
+    // The view loads what it is asked to and says where it is, as the brick's does.
+    QObject::connect(page.get(), &BrowserPage::loadRequested, page.get(), [this](const QString& url) { go(url); });
+  }
+
+  // The page's view is at `url` now.
+  void go(const QString& url) {
+    viewUrl = url;
+    page->report(QStringLiteral("loaded"), url, QString(), 0, QString(), false, false);
   }
 
   ~Sut() {
+    page.reset();
     tester.reset();
     previews.reset();
     client.reset();
@@ -229,6 +279,8 @@ struct Sut {
     resets = 0;
     countSignals = 0;
     modelTestFailures = 0;
+    showRequests.clear();
+    changed.clear();
   }
 
   // A PreviewEvent to every watcher, as preview.ex emit/4.
@@ -282,6 +334,18 @@ struct Sut {
       misrouted.append(method + QLatin1Char(' ') + thread + QStringLiteral(" at ") + call.rpc.environment);
     }
     const int port = payload.value(QLatin1String("port")).toInt();
+    // A page's report is taken while its tab is there.
+    if (method == QLatin1String("preview.reportStatus")) {
+      const int index = indexOf(payload.value(QLatin1String("tabId")).toString());
+      if (index < 0) {
+        mc.refuse(call.rpc, QStringLiteral("no such tab"));
+        return;
+      }
+      tabs[index].insert(QStringLiteral("navStatus"), payload.value(QLatin1String("navStatus")));
+      emitEvent(tabs.at(index), QStringLiteral("navigated"), {{QStringLiteral("snapshot"), tabs.at(index)}});
+      mc.reply(call.rpc, QJsonValue::Null);
+      return;
+    }
     if (!ok || (method == QLatin1String("preview.open") && tabs.size() >= kMaxTabs) ||
         (method == QLatin1String("preview.forward") && !tabAt(thread, port))) {
       mc.refuse(call.rpc, QStringLiteral("no"));
@@ -297,7 +361,9 @@ struct Sut {
       granted.append({thread, port});
       mc.reply(call.rpc, QJsonObject{{QStringLiteral("port"), forwardPortOf(port)}});
     } else {
-      mc.reply(call.rpc, newTab(thread, payload.value(QLatin1String("url")).toString()));
+      const QJsonObject made = newTab(thread, payload.value(QLatin1String("url")).toString());
+      userTabs.insert(made.value(QLatin1String("tabId")).toString());
+      mc.reply(call.rpc, made);
     }
   }
 
@@ -330,12 +396,17 @@ struct Sut {
     RC_ASSERT(modelTestFailures == 0);
     RC_ASSERT(misrouted.isEmpty());
     RC_ASSERT(stray.isEmpty());
-    // Once nothing is held, every link opened or said why not.
+    // Once nothing is held, every link opened or said why not; one opened as
+    // a tab of a thread no longer shown may do neither.
     if (held.isEmpty()) {
-      RC_ASSERT(int(links.size()) == linkErrors);
+      const auto shown = int(std::count_if(tabLinks.cbegin(), tabLinks.cend(), [&](const Link& link) { return link.thread == model.thread; }));
+      RC_ASSERT(int(links.size()) + shown <= linkErrors);
+      RC_ASSERT(linkErrors <= int(links.size() + tabLinks.size()));
       links.clear();
+      tabLinks.clear();
       linkErrors = 0;
     }
+    linked.clear();
     RC_ASSERT(previews->property("count").toInt() == now.size());
     RC_ASSERT(now.size() == before.size() || countSignals > 0);
     RC_ASSERT(resets == 0 || now != before);  // a reset for nothing
@@ -350,6 +421,27 @@ struct Sut {
       if (was != before.cend() && *was == row) RC_ASSERT(!redrawn.contains(row.tabId));  // a repaint for nothing
     }
     RC_ASSERT(previews->emptyTab() == empty);
+    // Only embedded is a tab asked to show, and only one of the thread shown.
+    RC_ASSERT(model.embedded || showRequests.isEmpty());
+    for (const QString& tabId : std::as_const(showRequests)) RC_ASSERT(threadOf.value(tabId) == model.thread);
+    // A row that came, went or changed says so.
+    for (const Row& row : now) {
+      const auto was = std::find_if(before.cbegin(), before.cend(), [&](const Row& old) { return old.tabId == row.tabId; });
+      if (was == before.cend() || !(*was == row)) RC_ASSERT(changed.contains(row.tabId));
+    }
+    for (const Row& row : before) {
+      if (!ids.contains(row.tabId)) RC_ASSERT(changed.contains(row.tabId));
+    }
+    // The page reads its tab's row, and once every answer is in its view is
+    // where the MC says (only embedded do pages show, and follow the MC).
+    if (model.embedded && !page->tabId().isEmpty()) {
+      const auto row = std::find_if(now.cbegin(), now.cend(), [&](const Row& shown) { return shown.tabId == page->tabId(); });
+      RC_ASSERT(page->exists() == (row != now.cend()));
+      if (row != now.cend()) {
+        RC_ASSERT(page->url() == row->url);
+        if (held.isEmpty() && !row->url.isEmpty() && previews->status() == QStringLiteral("ready")) RC_ASSERT(viewUrl == row->url);
+      }
+    }
     if (!held.isEmpty() || !model.active || model.thread.isEmpty()) return;
     RC_ASSERT(previews->status() != QStringLiteral("loading"));
     if (previews->status() != QStringLiteral("ready")) return;
@@ -375,6 +467,27 @@ struct Step : Command {
   virtual void act(const Model& model, Sut& sut) const = 0;
 };
 
+// The page shows a tab (or none): its view starts where the MC's tab is.
+struct SetPage : Step {
+  QString tab = pick(QStringList(kTabs) << QString());
+  void apply(Model&) const override {}
+  void act(const Model&, Sut& sut) const override {
+    sut.page->setTabId(tab);
+    sut.viewUrl = sut.page->url();
+  }
+  void show(std::ostream& os) const override { os << "SetPage(" << tab.toStdString() << ")"; }
+};
+
+// The user follows a link inside the page.
+struct PageGo : Step {
+  QString url = pick(kUrls.mid(1));
+  void apply(Model&) const override {}
+  void act(const Model&, Sut& sut) const override {
+    if (sut.page->exists()) sut.go(url);
+  }
+  void show(std::ostream& os) const override { os << "PageGo(" << url.toStdString() << ")"; }
+};
+
 // The user opens a thread (or the one shown moves on).
 struct SetThread : Step {
   QString thread = pick(kThreads);
@@ -383,10 +496,13 @@ struct SetThread : Step {
   void show(std::ostream& os) const override { os << "SetThread(" << thread.toStdString() << ")"; }
 };
 
+// Embedded, the tabs are followed while a thread shows (RightPanelController).
 struct SetActive : Step {
   bool active = *rc::gen::arbitrary<bool>();
-  void apply(Model& model) const override { model.active = active; }
-  void act(const Model&, Sut& sut) const override { sut.previews->setActive(active); }
+  void apply(Model& model) const override {
+    if (!model.embedded) model.active = active;
+  }
+  void act(const Model& model, Sut& sut) const override { sut.previews->setActive(model.active); }
   void show(std::ostream& os) const override { os << "SetActive(" << active << ")"; }
 };
 
@@ -415,8 +531,16 @@ struct OpenLink : Step {
   void apply(Model&) const override {}
   void act(const Model& model, Sut& sut) const override {
     if (model.thread.isEmpty()) return;
-    sut.links.append({model.thread, QUrl(url), !sut.here});
+    // Embedded, a dev server on the thread's machine opens in a tab.
+    const bool forwarded = environmentOf(model.thread) != kEnvironment && sut.here;
+    if (model.embedded && loopback(QUrl(url)) && !forwarded) {
+      sut.tabLinks.append({model.thread, QUrl(url)});
+    } else {
+      sut.links.append({model.thread, QUrl(url), !sut.here});
+    }
+    sut.opening = true;
     sut.previews->openAddress(url);
+    sut.opening = false;
   }
   void show(std::ostream& os) const override { os << "OpenLink(" << url.toStdString() << ")"; }
 };
@@ -541,12 +665,19 @@ private slots:
   void cleanupTestCase() { qInstallMessageHandler(previousHandler); }
 
   void previews() {
-    QVERIFY(rc::check("the previews list is the MC's tabs of the thread shown, redrawn only where they changed, and a link opens where it should", [] {
+    QVERIFY(rc::check("the previews list is the MC's tabs of the thread shown, redrawn only where they changed, a link opens where it should, "
+                          "and a tab's page is where the MC says", [] {
       Model model;
       Sut sut;
+      // Whether this desktop has the in-app browser, for as long as it runs.
+      model.embedded = *rc::gen::arbitrary<bool>();
+      model.active = model.embedded;
+      sut.previews->setEmbedded(model.embedded);
+      sut.previews->setActive(model.active);
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<SetThread, SetActive, Reload, UserClose, UserNewTab, OpenLink, OpenLink, SetHere,
-                                                         Answer, Answer, AnswerAll, McOpen, McOpen, McNavigate, McFail, McClose, McRestart>());
+                       rc::state::gen::execOneOfWithArgs<SetThread, SetActive, SetPage, PageGo, Reload, UserClose, UserNewTab,
+                                                         OpenLink, OpenLink, SetHere, Answer, Answer, AnswerAll, McOpen, McOpen,
+                                                         McNavigate, McNavigate, McFail, McClose, McRestart>());
     }));
   }
 };

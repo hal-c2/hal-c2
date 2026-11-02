@@ -241,14 +241,15 @@ void ThreadPreviews::newTab() {
   if (m_thread.isEmpty()) return;
   const int generation = m_generation;
   m_client->call(this, m_environment, QStringLiteral("preview.open"), QJsonObject{{QStringLiteral("threadId"), m_thread}},
-                 [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (generation != m_generation) return;
+                 [this, generation, environmentId = m_environment, threadId = m_thread](const QJsonValue& result,
+                                                                                        const std::optional<QString>& error) {
+                   if (environmentId != m_environment || threadId != m_thread) return;
                    if (error) {
                      m_notify(QStringLiteral("error"), QStringLiteral("Could not open a browser tab"), *error);
                      return;
                    }
-                   // Its `opened` event may be behind the answer.
-                   if (result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
+                   // Its `opened` event may be behind the answer; a list read since has it.
+                   if (generation == m_generation && result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
                    if (m_embedded && result.isObject()) emit showRequested(result.toObject().value(QLatin1String("tabId")).toString());
                  });
 }
@@ -292,8 +293,11 @@ void ThreadPreviews::openAddress(const QString& address) {
   // one showing it, else a new one. Another MC's machine's goes through its
   // forward to the user's browser, as below.
   if (m_embedded && loopback(url) && !m_thread.isEmpty() && !forwards(url, m_environment, m_thread, m_mc)) {
+    // Rows being listed again (after a reconnect, say), or that a list failed
+    // to read again, may be tabs the MC no longer has.
+    const bool listed = m_status == QLatin1String("ready") && !m_listing;
     for (const QJsonObject& snapshot : std::as_const(m_rows)) {
-      if (QUrl(navOf(snapshot).value(QLatin1String("url")).toString()).matches(url, QUrl::StripTrailingSlash)) {
+      if (listed && QUrl(navOf(snapshot).value(QLatin1String("url")).toString()).matches(url, QUrl::StripTrailingSlash)) {
         emit showRequested(snapshot.value(QLatin1String("tabId")).toString());
         return;
       }
@@ -301,13 +305,15 @@ void ThreadPreviews::openAddress(const QString& address) {
     const int generation = m_generation;
     m_client->call(this, m_environment, QStringLiteral("preview.open"),
                    QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("url"), url.toString()}},
-                   [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
+                   [this, generation, environmentId = m_environment, threadId = m_thread](const QJsonValue& result,
+                                                                                          const std::optional<QString>& error) {
                      if (error) {
                        m_notify(QStringLiteral("error"), QStringLiteral("Could not open the page"), *error);
                        return;
                      }
-                     if (generation != m_generation || !result.isObject()) return;
-                     if (m_status == QLatin1String("ready")) upsert(result.toObject());
+                     // Shown while its thread is, though the list was read again meanwhile.
+                     if (environmentId != m_environment || threadId != m_thread || !result.isObject()) return;
+                     if (generation == m_generation && m_status == QLatin1String("ready")) upsert(result.toObject());
                      emit showRequested(result.toObject().value(QLatin1String("tabId")).toString());
                    });
     return;
@@ -558,6 +564,7 @@ void ThreadPreviews::close(const QString& tabId) {
                      m_rows.insert(at, snapshot);
                      endInsertRows();
                      emit countChanged();
+                     emit tabChanged(tabId);
                    }
                    m_notify(QStringLiteral("error"), QStringLiteral("Could not close the browser tab"), *error);
                  });

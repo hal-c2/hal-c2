@@ -16,8 +16,8 @@ QPointer<QObject> g_profile;
 // The contract's bounds on what the MC keeps of a page.
 constexpr qsizetype kMaxUrl = 2048;
 constexpr qsizetype kMaxTitle = 512;
-// How many reported addresses are remembered as the page's own.
-constexpr qsizetype kReported = 16;
+// How many addresses the page went to may wait for the MC to say them back.
+constexpr qsizetype kEchoes = 16;
 // How long the MC has to confirm a device size before it is undone.
 constexpr int kResizeTimeoutMs = 5000;
 
@@ -129,7 +129,6 @@ void BrowserPage::setPreviews(ThreadPreviews* previews) {
 void BrowserPage::setTabId(const QString& tabId) {
   if (tabId == m_tabId) return;
   m_tabId = tabId;
-  m_reported.clear();
   m_lastReport = {};
   emit tabIdChanged();
   follow();
@@ -147,8 +146,8 @@ void BrowserPage::follow() {
   }
   // What the MC has now is where the page starts: the brick loads `url`.
   m_tab = m_previews && !m_tabId.isEmpty() ? m_previews->tab(m_tabId) : QJsonObject();
-  const QString at = url();
-  if (!at.isEmpty()) m_reported = {at};
+  m_at = url();
+  m_echoes.clear();
   emit tabChanged();
   emit viewportChanged();
 }
@@ -166,11 +165,29 @@ void BrowserPage::refresh() {
     emit viewportChanged();
   }
   const QString at = url();
-  if (at.isEmpty() || m_reported.contains(at)) return;
+  // A tab gone, or not at a page yet: its page starts afresh when one comes.
+  if (at.isEmpty()) {
+    m_at.clear();
+    m_echoes.clear();
+    return;
+  }
+  // The MC saying back where the page went, in order.
+  if (const qsizetype echo = m_echoes.indexOf(at); echo >= 0) {
+    m_echoes.remove(0, echo + 1);
+    m_at = at;
+    return;
+  }
+  if (at == m_at) return;
   // Somewhere the page did not go by itself: an agent, or another window.
-  m_reported.append(at);
-  if (m_reported.size() > kReported) m_reported.removeFirst();
+  m_at = at;
   emit loadRequested(at);
+}
+
+void BrowserPage::went(const QString& url) {
+  m_at = url;
+  if (!m_echoes.isEmpty() && m_echoes.constLast() == url) return;
+  m_echoes.append(url);
+  if (m_echoes.size() > kEchoes) m_echoes.removeFirst();
 }
 
 QString BrowserPage::url() const {
@@ -249,17 +266,13 @@ void BrowserPage::report(const QString& phase, const QString& url, const QString
                            {QStringLiteral("canGoForward"), canGoForward}};
   if (report == m_lastReport) return;
   m_lastReport = report;
-  m_reported.removeAll(url);
-  m_reported.append(url);
-  if (m_reported.size() > kReported) m_reported.removeFirst();
+  went(url);
   m_previews->report(m_tabId, navStatus, canGoBack, canGoForward);
 }
 
 void BrowserPage::navigate(const QString& url) {
   if (!m_previews || m_tabId.isEmpty() || url.isEmpty()) return;
-  m_reported.removeAll(url);
-  m_reported.append(url);
-  if (m_reported.size() > kReported) m_reported.removeFirst();
+  went(url);
   m_previews->navigate(m_tabId, url);
 }
 
