@@ -1339,6 +1339,7 @@ Feature: Planner
       And an earlier MC run saw GitHub take a move of #7 at a time this run's clock has not reached
       When the user moves "Issue 7" from "Beta" to "Launch"
       Then GitHub is asked once to move #7 to the milestone "Launch"
+      And the plan knows GitHub has #7 in the milestone "Launch"
       And nothing in the plan is marked as not synced
 
     # The correction is the milestone's to send, so one GitHub refused goes again with

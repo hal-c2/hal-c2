@@ -2353,6 +2353,13 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the plan knows GitHub has \#{int} in the milestone {string}",
+       %{args: [number, title]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    assert task["issue"]["milestone"] == context.milestones[title]
+    context
+  end
+
   step "nothing in the plan is marked as not synced", context do
     assert for(
              %{"syncError" => error} = item when error != nil <- plan!(context)["items"],
