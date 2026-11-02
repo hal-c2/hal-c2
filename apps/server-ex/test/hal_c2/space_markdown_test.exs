@@ -5,7 +5,7 @@ defmodule HalC2.SpaceMarkdownTest do
   # only) and check each file comes back as it was.
   use ExUnit.Case, async: true
 
-  alias HalC2.Space.{Blocks, Markdown}
+  alias HalC2.Space.{Blocks, Markdown, Table}
 
   @fixtures Path.expand("../fixtures/markdown", __DIR__)
   defp none(_id), do: nil
@@ -63,15 +63,132 @@ defmodule HalC2.SpaceMarkdownTest do
 
   describe "blocks" do
     test "a form a page does not model is a raw block of its source" do
-      table = "| a | b |\n|---|---|\n| 1 | 2 |"
-      fence = "```ts\nconst a = 1\n\n// two\n```"
       list = "1. one\n2. two"
+      assert [%{"kind" => "raw", "text" => ^list}] = Markdown.blocks(list)
+    end
+
+    test "a table is its cells, how its columns align and how wide it was written" do
+      table = "| Step | Owner |\n| :--- | ----: |\n| MC   | Ada   |\n| QML  | Grace |"
 
       assert [
-               %{"kind" => "raw", "text" => ^table},
-               %{"kind" => "raw", "text" => ^fence},
-               %{"kind" => "raw", "text" => ^list}
-             ] = Markdown.blocks(Enum.join([table, fence, list], "\n\n"))
+               %{
+                 "kind" => "table",
+                 "text" => ^table,
+                 "table" => %{
+                   "align" => ["left", "right"],
+                   "rows" => [["Step", "Owner"], ["MC", "Ada"], ["QML", "Grace"]],
+                   "widths" => [4, 5]
+                 }
+               }
+             ] = Markdown.blocks(table)
+    end
+
+    test "a table comes back padded, compact or tight as it was written" do
+      for table <- [
+            "| a | b |\n|---|---|\n| 1 | 2 |",
+            "| a | b |\n| --- | --- |\n| 1 | 2 |",
+            "| Name     | Note |\n| --- | :-: |\n| x        | y    |\n| a longer one | four |",
+            "| Name | Note |\n|------|------|\n| x    | a longer note |",
+            "| a | b |\n|:-:|--:|\n| 1 | 2 |",
+            "| Pipe | Code |\n| ---- | ---- |\n| a \\| b | `x`  |"
+          ] do
+        assert kinds(table) == ["table"]
+        assert round_trip(table) == table <> "\n"
+      end
+
+      assert [%{"table" => %{"rows" => [_, ["a | b", "`x`"]]}}] =
+               Markdown.blocks("| Pipe | Code |\n| ---- | ---- |\n| a \\| b | `x`  |")
+    end
+
+    test "a table written another way is raw" do
+      for table <- [
+            "| a | b |\n| --- | --- |\n|  1 | 2 |",
+            "a | b\n--- | ---\n1 | 2",
+            "| a | b |\n|---|---|\n| 1 |",
+            "| Total |\n| ----: |\n|    12 |"
+          ] do
+        assert kinds(table) == ["raw"]
+        assert round_trip(table) == table <> "\n"
+      end
+    end
+
+    test "a table made in a page is padded to its widest cell" do
+      {:ok, table} = Table.cast(%{"rows" => [["Step", "Owner"], ["MC", "a | b"]]})
+
+      assert Table.markdown(table) ==
+               "| Step | Owner  |\n| ---- | ------ |\n| MC   | a \\| b |"
+
+      assert Table.read(String.split(Table.markdown(table), "\n")) == table
+    end
+
+    test "cells not padded stay so, whatever the rule row's width" do
+      [%{"table" => table}] = Markdown.blocks("| Step | Owner |\n| --- | --- |\n| MC | Ada |")
+      assert %{"widths" => [0, 0], "ruleWidths" => [3, 3]} = table
+
+      {:ok, edited} =
+        Table.edit(table, %{"type" => "setCell", "row" => 1, "column" => 1, "text" => "Barbara"})
+
+      assert Table.markdown(edited) == "| Step | Owner |\n| --- | --- |\n| MC | Barbara |"
+      {:ok, wider} = Table.edit(table, %{"type" => "insertColumn", "at" => 2})
+      {:ok, back} = Table.edit(wider, %{"type" => "deleteColumn", "column" => 2})
+      assert back == table
+    end
+
+    test "an edit rewrites only the rows it changes" do
+      [%{"table" => table}] =
+        Markdown.blocks("| Step | Owner |\n| ---- | ----- |\n| MC   | Ada   |\n| QML  | Grace |")
+
+      {:ok, edited} =
+        Table.edit(table, %{"type" => "setCell", "row" => 1, "column" => 1, "text" => "Barbara"})
+
+      assert Table.markdown(edited) ==
+               "| Step | Owner |\n| ---- | ----- |\n| MC   | Barbara |\n| QML  | Grace |"
+
+      {:ok, wider} = Table.edit(table, %{"type" => "insertColumn", "at" => 2, "align" => "right"})
+      assert hd(String.split(Table.markdown(wider), "\n")) == "| Step | Owner |     |"
+      assert Enum.at(String.split(Table.markdown(wider), "\n"), 1) == "| ---- | ----- | --: |"
+
+      assert {:ok, %{"rows" => [_, ["", ""], _, _]}} =
+               Table.edit(table, %{"type" => "insertRow", "at" => 1})
+
+      assert {:error, _} = Table.edit(table, %{"type" => "deleteRow", "row" => 0})
+      assert {:ok, one} = Table.edit(table, %{"type" => "deleteColumn", "column" => 0})
+      assert {:error, _} = Table.edit(one, %{"type" => "deleteColumn", "column" => 0})
+    end
+
+    test "code is its text, with the fence, language and info it was written with" do
+      assert [%{"kind" => "code", "text" => "const a = 1\n\n// two", "language" => "ts"} = code] =
+               Markdown.blocks("```ts\nconst a = 1\n\n// two\n```")
+
+      refute Map.has_key?(code, "fence") or Map.has_key?(code, "info")
+
+      assert [%{"fence" => "~~~~", "language" => "js", "info" => " filename=\"a.js\""}] =
+               Markdown.blocks("~~~~js filename=\"a.js\"\n~~~\n~~~~")
+
+      for code <- [
+            "```\n```",
+            "```mermaid\ngraph TD\n  A --> B\n```",
+            "````md\n```ts\nx\n```\n````",
+            "~~~\nplain\n~~~"
+          ] do
+        assert kinds(code) == ["code"]
+        assert round_trip(code) == code <> "\n"
+      end
+    end
+
+    test "a fence written another way is raw" do
+      for code <- ["  ```ts\n  x\n  ```", "``` ts\nx\n```", "```ts\nx\n````", "```ts\nx"] do
+        assert kinds(code) == ["raw"]
+        assert round_trip(code) == code <> "\n"
+      end
+    end
+
+    test "code whose text would close its fence is written with a longer one" do
+      block = %{"kind" => "code", "text" => "```\ninside\n```", "language" => "md"}
+      assert Markdown.render(block) == "````md\n```\ninside\n```\n````"
+
+      assert [%{"kind" => "code", "text" => "```\ninside\n```", "fence" => "````"}] =
+               Markdown.blocks(Markdown.render(block))
     end
 
     test "headings keep their level, and one written another way is raw" do

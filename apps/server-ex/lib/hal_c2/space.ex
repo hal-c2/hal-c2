@@ -226,8 +226,12 @@ defmodule HalC2.Space do
   def set_checked(space_id, id, checked, author \\ @user),
     do: transact(space_id, &Blocks.set_checked(&1, id, checked, author))
 
-  def edit_block(space_id, id, text, checked, author \\ @user),
-    do: transact(space_id, &Blocks.edit(&1, id, text, checked, author))
+  @doc "Changes a block's text, tick, heading level and code language, as `Blocks.edit/4`."
+  def edit_block(space_id, id, changes, author \\ @user),
+    do: transact(space_id, &Blocks.edit(&1, id, changes, author))
+
+  def edit_table(space_id, id, edit, author \\ @user),
+    do: transact(space_id, &Blocks.edit_table(&1, id, edit, author))
 
   def move_block(space_id, id, after_id, author \\ @user),
     do: transact(space_id, &Blocks.move(&1, id, after_id, author))
