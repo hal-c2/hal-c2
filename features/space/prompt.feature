@@ -7,7 +7,7 @@
 #   apps/server-ex/lib/hal_c2/space/page_agent.ex
 #   apps/desktop-qt/qml/HalC2/Bricks/SpacePage.qml and Composer.qml,
 #     apps/desktop-qt/src/native/ComposerController.h (drafts, stash and their targets)
-#   apps/mobile-qt/qml/HalC2/Mobile/SpaceScreen.qml (the phone's ask)
+#   apps/mobile-qt/qml/HalC2/Mobile/SpacePageView.qml and SpaceScreen.qml (the phone's page and its menu)
 #   apps/tui/src/host/spaceState.ts (space.askAgent), apps/tui/src/host/composerState.ts
 
 Feature: A page's prompt is the timeline's prompt
@@ -91,7 +91,7 @@ Feature: A page's prompt is the timeline's prompt
       Given no project is left on this MC
       Then an ask from a page would have nowhere to run
 
-  @shared @backlog-mobile
+  @shared
   Rule: The prompt on a page
 
     Scenario: Plain words on a page's prompt write a block
