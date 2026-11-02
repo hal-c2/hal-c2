@@ -26,8 +26,9 @@ Uploads begin when you add an attachment. All uploads must finish before the
 message can send. Retry or remove a failed upload. On desktop, reloading
 before an upload finishes requires you to attach that file again.
 
-You can drag or paste images into the desktop composer. HEIC and HEIF
-photos are converted to JPEG there and when selected from the mobile photo
+On desktop, you can paste images into the composer, or drop files anywhere
+over the conversation to attach them; a dropped folder is referenced by its
+path. HEIC and HEIF photos are converted to JPEG there and when selected from the mobile photo
 library; photos over the image limit are also resized to fit. On mobile, you can
 also send files to HAL-C2 through another app's system share sheet.
 
@@ -247,7 +248,10 @@ files show the copy that was attached to the message.
 ## Attached files
 
 Select a file chip in your draft or a sent message to preview it. Code and JSON use syntax
-highlighting; Markdown, HTML, CSV, and TSV offer rendered and raw views. Audio files have
+highlighting; Markdown, HTML, CSV, and TSV offer rendered and raw views. A Mermaid diagram, in a
+reply, a page or a rendered file, is drawn; one that can't be drawn shows its source and why, and
+the terminal client draws flowcharts, sequence, state and class diagrams in characters and shows
+other types as their source. Audio files have
 playback controls. Large text files show a limited preview; save the file to read it in full.
 
 On desktop, files open beside the conversation with the same controls as a workspace

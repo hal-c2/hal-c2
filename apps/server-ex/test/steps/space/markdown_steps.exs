@@ -248,6 +248,36 @@ defmodule HalC2.Steps.Space.Markdown do
     update_block(context, text, %{"alert" => nil})
   end
 
+  step "{string} has a paragraph holding:", %{args: [title]} = context do
+    assert Enum.find(blocks(context, title), &(&1["kind"] == "paragraph"))["text"] ==
+             context.docstring
+
+    context
+  end
+
+  step "{string} has the footnote {string} holding:", %{args: [title, label]} = context do
+    note = Enum.find(blocks(context, title), &(&1["label"] == label)) || flunk("no footnote")
+    assert {note["kind"], note["text"]} == {"footnote", context.docstring}
+    context
+  end
+
+  step "the user labels {string} as {string}", %{args: [text, label]} = context do
+    update_block(context, text, %{"label" => label})
+  end
+
+  step "the collapsed section of {string} is titled {string}",
+       %{args: [title, summary]} = context do
+    assert Enum.find(blocks(context, title), &(&1["kind"] == "details"))["text"] == summary
+    context
+  end
+
+  step "{string} has the image {string} from {string}",
+       %{args: [title, caption, url]} = context do
+    image = Enum.find(blocks(context, title), &(&1["kind"] == "image")) || flunk("no image")
+    assert {image["text"], image["url"], image["imageId"]} == {caption, url, nil}
+    context
+  end
+
   # An update whose reply a later step may check, as `context.reply`.
   defp update_block(context, text, fields) do
     payload =

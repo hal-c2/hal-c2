@@ -95,14 +95,20 @@ defmodule HalC2.SpaceMarkdownPropTest do
     "x^2",
     "<details>",
     "<summary>More</summary>",
+    "<details open><summary>Open</summary>",
+    "  <summary>Set in</summary>",
     "</details>",
     "<!-- note",
     "-->",
     "<div>html</div>",
     "<https://example.com>",
     "[^1]: A note.",
+    "[^long-note]:",
+    "    more of the note",
     "Text[^1] with a note.",
     "![Image](./a.png)",
+    "![A cat](https://example.com/cat.png)",
+    "![Titled](a.png \"T\")",
     "![Caption](space-image:img-1)",
     "[Linked](#page-1)",
     "[Linked](#page-1) and more",
@@ -514,6 +520,93 @@ defmodule HalC2.SpaceMarkdownPropTest do
 
       (Enum.map(read, &Map.take(&1, ~w(kind text alert marker))) == blocks)
       |> when_fail(IO.puts("blocks: #{inspect(blocks)}\nread: #{inspect(read)}"))
+    end
+  end
+
+  # --- footnotes, math, collapsed sections and images by address ------------------------
+
+  # A note whose first line starts with spaces reads back raw, so it is kept whole.
+  @note_texts ["A note.", "", "two\nlines", "a\n\nparagraph", "a\n    set in", "- not a list"]
+
+  defp footnote do
+    let [label, text] <- [elements(["1", "note", "a-b_2", "é"]), elements(@note_texts)] do
+      %{"kind" => "footnote", "text" => text, "label" => label}
+    end
+  end
+
+  # Math between `$$` lines holds no blank line and no `$$` line: those write as fences.
+  defp math do
+    let text <- elements(["x^2", "", "a\nb", "\\frac{1}{2}", "```", " $ "]) do
+      %{"kind" => "code", "text" => text, "language" => "math", "fence" => "$$"}
+    end
+  end
+
+  defp url_image do
+    let [text, url] <- [
+          elements(["A cat", "", "**b**"]),
+          elements([
+            "https://x.test/a.png",
+            "./a.png",
+            "a.png?x=1&y=2",
+            "data:image/png;base64,A="
+          ])
+        ] do
+      %{"kind" => "image", "text" => text, "url" => url}
+    end
+  end
+
+  @between %{"kind" => "paragraph", "text" => "Between"}
+
+  # A collapsed section: its opening, the blocks inside and its end.
+  defp section do
+    let [summary, marker, inside] <- [
+          elements(["Logs", "", "a <b>b</b>"]),
+          elements([
+            nil,
+            "<details open>\n<summary>",
+            "<details><summary>",
+            "<details>\n  <summary>"
+          ]),
+          resize(4, list(oneof([footnote(), math(), url_image(), exactly(@between)])))
+        ] do
+      details = %{"kind" => "details", "text" => summary}
+      details = if marker, do: Map.put(details, "marker", marker), else: details
+      [details | inside] ++ [%{"kind" => "details_end", "text" => ""}]
+    end
+  end
+
+  defp step3_blocks do
+    let parts <-
+          resize(
+            8,
+            list(
+              frequency([
+                {2, let(b <- footnote(), do: [b])},
+                {2, let(b <- math(), do: [b])},
+                {2, let(b <- url_image(), do: [b])},
+                {1, exactly([@between])},
+                {2, section()}
+              ])
+            )
+          ) do
+      Enum.concat(parts)
+    end
+  end
+
+  property "footnotes, math, collapsed sections and images read back as themselves",
+    numtests: HalC2.Prop.numtests(500) do
+    forall blocks <- step3_blocks() do
+      {written, read} = page(blocks)
+      fields = &Map.take(&1, ~w(kind text label language fence marker url))
+
+      (Enum.map(read, fields) == blocks and elem(page(read), 0) == written)
+      |> when_fail(
+        IO.puts("""
+        blocks:  #{inspect(blocks)}
+        written: #{inspect(written)}
+        read:    #{inspect(read)}
+        """)
+      )
     end
   end
 end

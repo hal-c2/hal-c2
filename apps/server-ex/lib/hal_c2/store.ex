@@ -589,21 +589,25 @@ defmodule HalC2.Store do
   defp checkpointer(path, store) do
     ref = Process.monitor(store)
     {:ok, db} = Sqlite3.open(path)
-    checkpoint_loop(db, ref)
+    __MODULE__.checkpoint_loop(db, ref)
   end
 
-  defp checkpoint_loop(db, ref) do
+  # Loops by name, so a hot reload (`HalC2.Hot`) moves the checkpointer to new code at
+  # its next tick: a local call would keep it on the version it started with, and that
+  # version could never be purged.
+  @doc false
+  def checkpoint_loop(db, ref) do
     receive do
       {:DOWN, ^ref, :process, _, _} ->
         Sqlite3.close(db)
 
       {:checkpoint, from} ->
         GenServer.reply(from, wal_checkpoint(db))
-        checkpoint_loop(db, ref)
+        __MODULE__.checkpoint_loop(db, ref)
     after
       @checkpoint_every ->
         wal_checkpoint(db)
-        checkpoint_loop(db, ref)
+        __MODULE__.checkpoint_loop(db, ref)
     end
   end
 

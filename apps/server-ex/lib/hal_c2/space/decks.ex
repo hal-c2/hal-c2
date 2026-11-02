@@ -100,8 +100,9 @@ defmodule HalC2.Space.Decks do
     end)
   end
 
-  defp line(_state, %{"kind" => kind} = b) when kind in ~w(callout divider code),
-    do: Markdown.render(b)
+  defp line(_state, %{"kind" => kind} = b)
+       when kind in ~w(callout divider code footnote details details_end),
+       do: Markdown.render(b)
 
   defp line(_state, %{"kind" => "image"} = b), do: "[image: " <> b["text"] <> "]"
 

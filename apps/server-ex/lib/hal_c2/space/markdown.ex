@@ -7,16 +7,25 @@ defmodule HalC2.Space.Markdown do
   `alert` one starting `> [!NOTE]` or another of GitHub's; a blank line is `>`, or `> ` for
   one that keeps that as its `marker`), a divider `---` (or the
   rule it was read from, kept as its `marker`, such as `***`), a link to a
-  subpage `[Title](#pageId)` and an image `![Caption](space-image:imageId)`. A table is
-  written as `HalC2.Space.Table` says, and code between fences: three backticks unless
-  the block keeps another `fence`, then its `language` and the rest of the fence's line as
-  `info`.
+  subpage `[Title](#pageId)` and an image `![Caption](space-image:imageId)`, or
+  `![Caption](url)` for one by its address. A table is written as `HalC2.Space.Table`
+  says, and code between fences: three backticks unless the block keeps another `fence`,
+  then its `language` and the rest of the fence's line as `info`. Math is code in `math`,
+  and keeps `$$` as its `fence` when it was written between `$$` lines.
+
+  A footnote is `[^label]: ` and its note, the note's further lines indented four spaces.
+  A collapsed section is a `details` block, `<details>` and its `<summary>` (its text),
+  then the blocks inside it, then a `details_end` block, `</details>`. An opening written
+  another way (on one line, `open`, or with its summary indented) is kept as its `marker`.
+
+  Inline formatting (emphasis, strikethrough, code spans, links, autolinks, footnote
+  references, inline math, inline images) is part of a block's text, kept as written.
 
   List items are a block each: a `bullet` `- `, a `numbered` `1. ` and a `checklist`
   `- [ ] ` or `- [x] `, nested by their `depth` (`list_items/1`). From Markdown a bullet
   keeps its `marker` when it is `*` or `+`, a numbered item a `)` one, and an item an
-  `indent` other than its parent's text's. A run of list items is one list; other blocks
-  are apart by a blank line.
+  `indent` other than its parent's text's. A run of list items is one list, and footnotes
+  follow one another line under line; other blocks are apart by a blank line.
 
   Anything else, and anything written in a way those forms would not give back exactly,
   is a `raw` block: its Markdown source, kept as written. A block whose blank lines
@@ -42,6 +51,10 @@ defmodule HalC2.Space.Markdown do
   alias HalC2.Space.{Chart, Table}
 
   @lists ~w(bullet numbered checklist)
+
+  # A `<details>` opening and its summary, written as a page writes them.
+  @details ~r/\A(<details(?: open)?>(?:\n *)?<summary>)(.*)<\/summary>\z/
+  @summary "<details>\n<summary>"
 
   @alerts Map.new(~w(note tip important warning caution), &{&1, "[!#{String.upcase(&1)}]"})
 
@@ -112,6 +125,7 @@ defmodule HalC2.Space.Markdown do
   # What is between a block and the one above it when it has no gap of its own.
   defp usual(:start, _kind), do: ""
   defp usual({above, _text}, kind) when above in @lists and kind in @lists, do: "\n"
+  defp usual({"footnote", _text}, "footnote"), do: "\n"
   defp usual(_above, _kind), do: "\n\n"
 
   # Whether `text` right under the block above, with no blank line between, still reads as
@@ -152,6 +166,16 @@ defmodule HalC2.Space.Markdown do
 
   def render(%{"kind" => "table", "table" => table}, _), do: Table.markdown(table)
 
+  def render(%{"kind" => "code", "fence" => "$$", "text" => text} = block, _) do
+    lines = if text == "", do: [], else: String.split(text, "\n")
+
+    # Math holding a `$$` line or a blank one is written between fences instead: the line
+    # would close it, and GitHub ends `$$` math at a blank line.
+    if Enum.any?(lines, &(String.trim(&1) in ["$$", ""])),
+      do: render(Map.delete(block, "fence")),
+      else: Enum.join(["$$" | lines] ++ ["$$"], "\n")
+  end
+
   def render(%{"kind" => "code", "text" => text} = block, _) do
     lines = if text == "", do: [], else: String.split(text, "\n")
     fence = fence_for(block["fence"] || "```", lines)
@@ -162,8 +186,22 @@ defmodule HalC2.Space.Markdown do
     )
   end
 
+  def render(%{"kind" => "image", "url" => url, "text" => text}, _),
+    do: "![#{String.replace(text, "\n", " ")}](#{url})"
+
   def render(%{"kind" => "image", "imageId" => id, "text" => text}, _),
     do: "![#{String.replace(text, "\n", " ")}](space-image:#{id})"
+
+  def render(%{"kind" => "footnote", "label" => label, "text" => text}, _) do
+    [first | rest] = String.split(text, "\n")
+    head = "[^#{label}]:" <> if(first == "", do: "", else: " " <> first)
+    Enum.join([head | Enum.map(rest, &if(&1 == "", do: "", else: "    " <> &1))], "\n")
+  end
+
+  def render(%{"kind" => "details", "text" => text} = block, _),
+    do: (block["marker"] || @summary) <> text <> "</summary>"
+
+  def render(%{"kind" => "details_end"}, _), do: "</details>"
 
   def render(%{"text" => text}, _), do: text
 
@@ -268,8 +306,10 @@ defmodule HalC2.Space.Markdown do
   @doc """
   Whether a code block's `fence`, `language` and `info` write a line that opens it again:
   three or more backticks or tildes, a language of no spaces, and the rest of the line
-  from a space on, with no backtick after backticks.
+  from a space on, with no backtick after backticks. `$$` is math's alone.
   """
+  def code?(%{"fence" => "$$"} = block), do: block["language"] == "math" and block["info"] == nil
+
   def code?(block) do
     fence = block["fence"] || "```"
     {language, info} = {block["language"], block["info"]}
@@ -280,6 +320,31 @@ defmodule HalC2.Space.Markdown do
       (is_nil(info) or language != nil) and
       fence(fence <> (language || "") <> (info || "")) == fence
   end
+
+  @doc "Whether a `details` block's `marker` opens it as a page reads it: nil is the usual."
+  def details?(marker),
+    do: marker == nil or (is_binary(marker) and Regex.match?(@details, marker <> "</summary>"))
+
+  @doc """
+  Whether a `details` block's summary writes on its opening line and reads back as it: one
+  line that opens and closes no section and no summary.
+  """
+  def summary?(text),
+    do:
+      is_binary(text) and not String.contains?(text, ["\n", "\r"]) and
+        not Regex.match?(~r/<details[\s>]|<\/details\s*>|<\/?summary[\s>]/i, text <> " ")
+
+  @doc "Whether a footnote's `label` writes `[^label]`: no spaces or brackets."
+  def label?(label), do: is_binary(label) and Regex.match?(~r/^[^\s\[\]]+$/u, label)
+
+  @doc """
+  Whether an image's `url` writes `![Caption](url)` that reads back as it: no spaces,
+  brackets, parentheses or backslashes, and not a Space image's.
+  """
+  def url?(url),
+    do:
+      is_binary(url) and Regex.match?(~r/^[^\s()<>\\]+$/u, url) and
+        not String.starts_with?(url, "space-image:")
 
   @doc "A heading's level, 1 to 6; a heading written before levels is a 2."
   def level(%{"level" => level}) when level in 1..6, do: level
@@ -336,8 +401,26 @@ defmodule HalC2.Space.Markdown do
     if blank?(line) do
       segments(rest, [line | blank], acc)
     else
-      {what, taken, rest} = segment(lines, acc == [] and blank == [])
-      segments(rest, [], [{Enum.reverse(blank), what, taken} | acc])
+      case segment(lines, acc == [] and blank == []) do
+        {:details, opener, inner, rest} ->
+          {tail, inside} = inner |> Enum.reverse() |> Enum.split_while(&blank?/1)
+          inside = Enum.reverse(inside)
+
+          # Right under what is inside, the closing must still read as a line of its own.
+          if tail == [] and
+               List.last(segments(inside ++ ["</details>"], [], [])) != {[], :raw, ["</details>"]} do
+            segments(rest, [], [
+              {Enum.reverse(blank), :raw, opener ++ inner ++ ["</details>"]} | acc
+            ])
+          else
+            parts = inside |> segments([], []) |> Enum.reverse()
+            close = {Enum.reverse(tail), :details_end, ["</details>"]}
+            segments(rest, [], [close | parts] ++ [{Enum.reverse(blank), :details, opener} | acc])
+          end
+
+        {what, taken, rest} ->
+          segments(rest, [], [{Enum.reverse(blank), what, taken} | acc])
+      end
     end
   end
 
@@ -351,15 +434,18 @@ defmodule HalC2.Space.Markdown do
         closed(lines, &closes_fence?(&1, fence), :code)
 
       String.trim(line) == "$$" ->
-        closed(lines, &(String.trim(&1) == "$$"))
+        closed(lines, &(String.trim(&1) == "$$"), :math)
 
       Regex.match?(~r/^ {0,3}<details[\s>]/i, line) ->
-        details(rest, details_depth(line), [line])
+        details(rest, details_depth(line), [line]) |> collapsed()
 
       Regex.match?(~r/^ {0,3}<!--/, line) ->
         if String.contains?(line, "-->"),
           do: {:raw, [line], rest},
           else: closed(lines, &String.contains?(&1, "-->"))
+
+      footnote?(line) ->
+        footnote(rest, [line])
 
       html?(line) ->
         until_blank(:raw, lines)
@@ -439,6 +525,54 @@ defmodule HalC2.Space.Markdown do
     opens = length(Regex.scan(~r/<details[\s>]/i, line))
     closes = length(Regex.scan(~r/<\/details\s*>/i, line))
     opens - closes
+  end
+
+  # A `<details>` element whose contents are Markdown, as its opening and summary, what is
+  # inside and its closing: opened on a line or two as a page writes them, then a blank
+  # line, closed by `</details>` alone with nothing right under it. Else raw whole, on to
+  # a blank line as HTML runs, so what follows reads the same however the element ends.
+  defp collapsed({:raw, [first | _] = lines, rest}) do
+    {opener, inner} = Enum.split(lines, if(String.contains?(first, "</summary>"), do: 1, else: 2))
+
+    with true <- Regex.match?(@details, Enum.join(opener, "\n")),
+         [open | _] <- inner,
+         true <- blank?(open),
+         "</details>" <- List.last(inner),
+         0 <- lines |> Enum.map(&details_depth/1) |> Enum.sum(),
+         true <- rest == [] or blank?(hd(rest)) do
+      {:details, opener, Enum.drop(inner, -1), rest}
+    else
+      _ ->
+        {more, rest} = Enum.split_while(rest, &(not blank?(&1)))
+        {:raw, lines ++ more, rest}
+    end
+  end
+
+  defp footnote?(line), do: Regex.match?(~r/^ {0,3}\[\^[^\s\[\]]+\]:/u, line)
+
+  # A footnote runs to a blank line or the next footnote, past blank lines while what
+  # follows is indented four spaces, taking lines that continue its text.
+  defp footnote([], acc), do: {:footnote, Enum.reverse(acc), []}
+
+  defp footnote([line | rest] = lines, acc) do
+    cond do
+      blank?(line) ->
+        {blank, after_blank} = Enum.split_while(lines, &blank?/1)
+
+        case after_blank do
+          ["    " <> _ | _] -> footnote(after_blank, Enum.reverse(blank) ++ acc)
+          _ -> {:footnote, Enum.reverse(acc), lines}
+        end
+
+      footnote?(line) ->
+        {:footnote, Enum.reverse(acc), lines}
+
+      String.starts_with?(line, "    ") or not interrupts?(line) ->
+        footnote(rest, [line | acc])
+
+      true ->
+        {:footnote, Enum.reverse(acc), lines}
+    end
   end
 
   defp until_blank(what, lines) do
@@ -771,6 +905,10 @@ defmodule HalC2.Space.Markdown do
         [_, text, id] = match
         Map.put(new("image", text), "imageId", id)
 
+      (match = Regex.run(~r/^!\[([^\[\]]*)\]\((.*)\)$/u, line)) && url?(Enum.at(match, 2)) ->
+        [_, text, url] = match
+        Map.put(new("image", text), "url", url)
+
       true ->
         new("paragraph", Enum.join(lines, "\n"))
     end
@@ -803,6 +941,46 @@ defmodule HalC2.Space.Markdown do
         raw(lines)
     end
   end
+
+  # Math between `$$` lines, each alone on its line, with no blank line between them.
+  defp block(:math, ["$$" | rest] = lines) do
+    case Enum.split(rest, -1) do
+      {inside, ["$$"]} ->
+        if Enum.any?(inside, &blank?/1),
+          do: raw(lines),
+          else:
+            "code"
+            |> new(Enum.join(inside, "\n"))
+            |> Map.merge(%{"language" => "math", "fence" => "$$"})
+
+      _ ->
+        raw(lines)
+    end
+  end
+
+  defp block(:math, lines), do: raw(lines)
+
+  # A footnote's further lines are its text indented four spaces.
+  defp block(:footnote, [first | rest] = lines) do
+    case Regex.run(~r/^\[\^([^\s\[\]]+)\]:(.*)$/u, first) do
+      [_, label, text] ->
+        "footnote"
+        |> new(
+          Enum.map_join([trim_one(text) | rest], "\n", &String.replace_prefix(&1, "    ", ""))
+        )
+        |> Map.put("label", label)
+
+      nil ->
+        raw(lines)
+    end
+  end
+
+  defp block(:details, lines) do
+    [_, marker, summary] = Regex.run(@details, Enum.join(lines, "\n"))
+    "details" |> new(summary) |> put_unless("marker", marker, @summary)
+  end
+
+  defp block(:details_end, _lines), do: new("details_end", "")
 
   defp block(:raw, lines), do: raw(lines)
 

@@ -114,11 +114,12 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   defp dev(mcs) do
     for mc <- mcs do
       case :erpc.call(mc, HalC2.Upgrade, :reload_checkout, [], 60_000) do
-        {:ok, %{changed: changed, needs_restart: restart}} ->
+        {:ok, %{changed: changed, needs_restart: restart} = report} ->
           loaded(mc, Enum.map(changed, &inspect/1), Enum.map(restart, &inspect/1))
+          lingering(mc, Enum.map(report[:lingering] || [], &inspect/1))
 
         {:error, reason} ->
-          Mix.shell().error("#{mc}: #{inspect(reason)}")
+          Mix.shell().error("#{mc}: #{HalC2.Hot.describe_error(reason)}")
       end
     end
   end
@@ -149,6 +150,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
       {:ok, {{_, 200, _}, _, body}} ->
         report = JSON.decode!(body)
         loaded(base, report["changed"], report["needsRestart"])
+        lingering(base, report["lingering"] || [])
 
       {:ok, {{_, 404, _}, _, _}} ->
         Mix.raise("The MC at #{base} runs from a release; update it with --release")
@@ -321,6 +323,16 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   defp loaded(mc, changed, restart) do
     Mix.shell().info("#{mc}: loaded #{length(changed)} modules")
     if restart != [], do: Mix.shell().info("#{mc}: restart for #{Enum.join(restart, ", ")}")
+  end
+
+  # A lingering module's next reload is refused until its old code is free (`HalC2.Hot`).
+  defp lingering(_mc, []), do: :ok
+
+  defp lingering(mc, modules) do
+    Mix.shell().error(
+      "#{mc}: old code of #{Enum.join(modules, ", ")} is still running; " <>
+        "the next reload of it fails unless those processes call into the new code first"
+    )
   end
 
   @doc false

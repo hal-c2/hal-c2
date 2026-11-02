@@ -51,7 +51,7 @@ SettingsPage {
             Layout.fillWidth: true
             visible: text.length > 0
             text: page.pairing !== null ? (page.pairing.error ?? "") : ""
-            color: Theme.palette.color("error", "#f87171")
+            color: Theme.palette.color("errorForeground", "#f87171")
             font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
@@ -65,7 +65,7 @@ SettingsPage {
 
         ShellButton {
             objectName: "environmentForget"
-            tint: Theme.palette.color("error", "#ef4444")
+            tint: Theme.palette.color("errorForeground", "#ef4444")
             text: qsTr("Forget this environment")
             onClicked: Shell.dispatch("pairing.askToForget")
         }

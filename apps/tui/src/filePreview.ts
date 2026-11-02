@@ -1,16 +1,18 @@
 import { tableToMarkdown } from "./markdownTable.ts";
 
 // Files the terminal can show rendered instead of as their text: Markdown as
-// laid-out Markdown, delimited data as a table, HTML as the words on the page.
-// Each becomes Markdown, which the timeline's renderer lays out.
+// laid-out Markdown, delimited data as a table, HTML as the words on the page, a
+// Mermaid file as its diagram. Each becomes Markdown, which the timeline's renderer
+// lays out.
 
-export type RenderedFileKind = "markdown" | "table" | "html";
+export type RenderedFileKind = "markdown" | "table" | "html" | "mermaid";
 
 export function renderedFileKind(path: string): RenderedFileKind | null {
   const extension = /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase();
   if (extension === "md" || extension === "markdown" || extension === "mdx") return "markdown";
   if (extension === "csv" || extension === "tsv") return "table";
   if (extension === "html" || extension === "htm") return "html";
+  if (extension === "mmd" || extension === "mermaid") return "mermaid";
   return null;
 }
 
@@ -83,6 +85,12 @@ function htmlMarkdown(contents: string): string {
 /** The Markdown a renderable file is shown as. */
 export function renderedFileMarkdown(path: string, kind: RenderedFileKind, contents: string) {
   if (kind === "markdown") return contents;
+  if (kind === "mermaid") {
+    // One `mermaid` code block, fenced longer than any run of backticks inside it.
+    const longest = Math.max(2, ...(contents.match(/`+/g) ?? []).map((run) => run.length));
+    const fence = "`".repeat(longest + 1);
+    return `${fence}mermaid\n${contents.replace(/\n$/, "")}\n${fence}`;
+  }
   if (kind === "table")
     return tableMarkdown(contents, path.toLowerCase().endsWith(".tsv") ? "\t" : ",");
   return htmlMarkdown(contents);

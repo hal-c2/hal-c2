@@ -84,7 +84,7 @@ const Steps steps([] {
            S("the diagram is %1 wide at %2 on a %3 wide screen").arg(image->width()).arg(image->x()).arg(world.window().width()));
   });
   // The terminal's; the phone draws the diagram.
-  step(S("in the terminal the diagram's source is shown, named as a %1 diagram").arg(q), [](World&, const Captures&, const Table&) {});
+  step(S("in the terminal the diagram is drawn in characters, or its source is shown, named as a %1 diagram").arg(q), [](World&, const Captures&, const Table&) {});
   step(S("the user switches to the source"), [](World& world, const Captures&, const Table&) { world.tap(S("fileRender")); });
   step(S("the diagram's source is shown"), [](World& world, const Captures&, const Table&) {
     if (mermaid::onPage(world)) return mermaid::expectPageSource(world);

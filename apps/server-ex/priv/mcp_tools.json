@@ -4102,9 +4102,12 @@
             "image",
             "table",
             "code",
+            "footnote",
+            "details",
+            "details_end",
             "raw"
           ],
-          "description": "A list item is a block: bullet, numbered or checklist, nested by depth. A divider has no text. A code block's text is the code. raw is Markdown the page does not model (HTML, footnotes), kept and shown as written."
+          "description": "A list item is a block: bullet, numbered or checklist, nested by depth. A divider has no text. A code block's text is the code; math is code in math. A footnote's text is the note of its label. A collapsed section is a details block, its text the summary (one line, with no details or summary tags), then the blocks inside it, then a details_end block, which has no text. Inline formatting such as **bold**, ~~struck~~ or $x^2$ is written in a block's text as Markdown. raw is Markdown the page does not model (other HTML), kept and shown as written."
         },
         "text": { "type": "string" },
         "table": {
@@ -4162,6 +4165,14 @@
           "type": "string",
           "description": "For an image: an image of this Space, named in a page's Markdown as space-image:<id>."
         },
+        "url": {
+          "type": "string",
+          "description": "For an image instead of imageId: its address, with no spaces, angle brackets, parentheses or backslashes, and not a space-image: one. Never fetched until a reader asks to see it."
+        },
+        "label": {
+          "type": "string",
+          "description": "For a footnote: its label, as in [^label], with no spaces or brackets."
+        },
         "afterBlockId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
       },
       "required": ["spaceId", "pageId", "kind"],
@@ -4170,7 +4181,7 @@
   },
   {
     "name": "hal_c2_page_block_update",
-    "description": "Change a block's text, tick or untick a checklist item, set a heading's level, a code block's language, a list item's depth, a numbered item's start or a callout's alert, written as this thread. What is given changes together. A table's text is its Markdown: give the whole table to change it.",
+    "description": "Change a block's text, tick or untick a checklist item, set a heading's level, a code block's language, a list item's depth, a numbered item's start, a callout's alert, a footnote's label or an image's url, written as this thread. What is given changes together. A table's text is its Markdown: give the whole table to change it.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -4203,6 +4214,14 @@
             { "type": "null" }
           ],
           "description": "For a callout: the kind of GitHub alert, or null for a plain quote."
+        },
+        "label": {
+          "type": "string",
+          "description": "For a footnote: its label, as in [^label], with no spaces or brackets."
+        },
+        "url": {
+          "type": "string",
+          "description": "For an image by its address (not one of this Space): the new address."
         }
       },
       "required": ["spaceId", "blockId"],
