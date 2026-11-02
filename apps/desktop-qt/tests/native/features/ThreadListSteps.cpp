@@ -17,6 +17,7 @@
 #include "McClient.h"
 #include "SettingsRows.h"
 #include "SharedSteps.h"
+#include "Space.h"
 #include "Stream.h"
 #include "ThreadList.h"
 #include "World.h"
@@ -229,6 +230,8 @@ const Steps steps([] {
     if (openPlannerView(world, c[0])) return;
     // The Device tab's Tools drawer and Event log (DeviceSteps).
     if (deviceOpens(world, c[0])) return;
+    // A page of the scenario's Space (SpaceSteps).
+    if (spaceOpens(world, c[0])) return;
     const QString key = ensureThread(world, c[0]);
     world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
   });

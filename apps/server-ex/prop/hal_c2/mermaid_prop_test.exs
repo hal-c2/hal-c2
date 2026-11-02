@@ -3,11 +3,16 @@ defmodule HalC2.MermaidPropTest do
   `HalC2.Mermaid` against a model of its promise: every caller is answered once, with
   what was drawn for its source; a source is drawn once while it is kept or being drawn;
   no more than the limit draw at once, the rest start in the order they were asked for;
-  and only what the renderer said is kept, the oldest forgotten past the cache's size.
+  only what the renderer said is kept, the oldest forgotten past the cache's size; a
+  source that waits too long for its turn is dropped, its callers told the MC is busy;
+  and a source not started yet whose callers have all gone is dropped, while one being
+  drawn is finished for whoever is left.
 
   Drawings are held by the test until it finishes them with an outcome: a drawing, a
-  failure the renderer reports, or a crash. Callers ask without waiting
-  (`:gen_server.send_request/2`), so many wait on one drawing at once.
+  failure the renderer reports, or a crash. The test also decides when a queued source
+  has waited too long, sending the server the message its own timer would. Callers ask without waiting
+  (`:gen_server.send_request/2`), so many wait on one drawing at once. Some callers are
+  processes of their own, so the test can kill them while they wait.
   """
 
   use ExUnit.Case, async: false
@@ -24,6 +29,7 @@ defmodule HalC2.MermaidPropTest do
   @limit 2
   @cache_size 2
   @failed %{"status" => "failed", "kind" => nil, "reason" => "no", "line" => nil, "column" => nil}
+  @busy "The MC is busy drawing other diagrams; try again."
 
   property "every caller gets what was drawn for its source, drawn once",
     numtests: HalC2.Prop.numtests(200),
@@ -60,13 +66,22 @@ defmodule HalC2.MermaidPropTest do
     end
 
     {:ok, server} =
-      Mermaid.start_link(name: nil, draw: draw, limit: @limit, cache_size: @cache_size)
+      Mermaid.start_link(
+        name: nil,
+        draw: draw,
+        limit: @limit,
+        cache_size: @cache_size,
+        # The test says when a source has waited too long, not the clock.
+        wait: 3_600_000
+      )
 
     Process.put(:server, server)
     # request id => source, for callers not answered yet
     Process.put(:asked, %{})
     # source => the drawing's process
     Process.put(:drawers, %{})
+    # id => {process, source}, for callers of their own not answered yet
+    Process.put(:apart, %{})
   end
 
   # Whatever a case left behind that it should not have: an answer nobody expected, a
@@ -80,13 +95,15 @@ defmodule HalC2.MermaidPropTest do
           {:reply, result} <- [:gen_server.wait_response(request, 0)],
           do: {:answered, source, result}
 
+    for {_id, {pid, _source}} <- Process.get(:apart), do: Process.exit(pid, :kill)
     GenServer.stop(server)
-    answered ++ stray_drawings()
+    answered ++ strays()
   end
 
-  defp stray_drawings do
+  defp strays do
     receive do
-      {:drawing, source, _pid} -> [{:drawing, source} | stray_drawings()]
+      {:drawing, source, _pid} -> [{:drawing, source} | strays()]
+      {:apart_answer, id, result} -> [{:answered_apart, id, result} | strays()]
     after
       0 -> []
     end
@@ -98,12 +115,22 @@ defmodule HalC2.MermaidPropTest do
 
   # kept: sources whose result is kept, oldest first, and what was kept for each.
   # running: sources being drawn. queued: sources waiting for a slot, oldest first.
-  # waiting: source => callers waiting for it.
-  def initial_state, do: %{kept: [], results: %{}, running: [], queued: [], waiting: %{}}
+  # waiting: source => callers waiting for it. apart: id => source, for callers of their
+  # own still waiting; next: the id of the next one.
+  def initial_state,
+    do: %{kept: [], results: %{}, running: [], queued: [], waiting: %{}, apart: %{}, next: 0}
 
   def command(state) do
     frequency(
       [{5, {:call, __MODULE__, :ask, [oneof(@sources)]}}] ++
+        case @sources -- state.kept do
+          [] -> []
+          new -> [{2, {:call, __MODULE__, :ask_apart, [oneof(new), state.next]}}]
+        end ++
+        if(state.apart == %{},
+          do: [],
+          else: [{2, {:call, __MODULE__, :leave, [oneof(Map.keys(state.apart))]}}]
+        ) ++
         if(state.running == [],
           do: [],
           else: [
@@ -111,11 +138,21 @@ defmodule HalC2.MermaidPropTest do
              {:call, __MODULE__, :finish,
               [oneof(state.running), oneof([:drawn, :drawn, :failed, :crash])]}}
           ]
+        ) ++
+        if(state.queued == [],
+          do: [],
+          else: [{1, {:call, __MODULE__, :wait_out, [oneof(state.queued)]}}]
         )
     )
   end
 
   def precondition(state, {:call, _, :finish, [source, _]}), do: source in state.running
+  def precondition(state, {:call, _, :wait_out, [source]}), do: source in state.queued
+
+  def precondition(state, {:call, _, :ask_apart, [source, id]}),
+    do: source not in state.kept and id == state.next
+
+  def precondition(state, {:call, _, :leave, [id]}), do: Map.has_key?(state.apart, id)
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :ask, [source]}) do
@@ -134,11 +171,31 @@ defmodule HalC2.MermaidPropTest do
     end
   end
 
+  def next_state(state, result, {:call, _, :ask_apart, [source, id]}) do
+    state = next_state(state, result, {:call, __MODULE__, :ask, [source]})
+    %{state | apart: Map.put(state.apart, id, source), next: id + 1}
+  end
+
+  # One caller fewer. A queued source with none left is dropped; one being drawn stays.
+  def next_state(state, _result, {:call, _, :leave, [id]}) do
+    {source, apart} = Map.pop(state.apart, id)
+    state = %{state | apart: apart, waiting: Map.update!(state.waiting, source, &(&1 - 1))}
+
+    if state.waiting[source] == 0 and source in state.queued,
+      do: %{
+        state
+        | queued: List.delete(state.queued, source),
+          waiting: Map.delete(state.waiting, source)
+      },
+      else: state
+  end
+
   def next_state(state, _result, {:call, _, :finish, [source, outcome]}) do
     state = %{
       state
       | running: List.delete(state.running, source),
-        waiting: Map.delete(state.waiting, source)
+        waiting: Map.delete(state.waiting, source),
+        apart: forget_apart(state.apart, source)
     }
 
     state = if outcome == :drawn, do: keep(state, source), else: state
@@ -148,6 +205,17 @@ defmodule HalC2.MermaidPropTest do
       [] -> state
     end
   end
+
+  def next_state(state, _result, {:call, _, :wait_out, [source]}) do
+    %{
+      state
+      | queued: List.delete(state.queued, source),
+        waiting: Map.delete(state.waiting, source),
+        apart: forget_apart(state.apart, source)
+    }
+  end
+
+  defp forget_apart(apart, source), do: Map.reject(apart, fn {_, s} -> s == source end)
 
   defp keep(state, source) do
     kept = state.kept ++ [source]
@@ -170,6 +238,16 @@ defmodule HalC2.MermaidPropTest do
       started == if(new? and length(state.running) < @limit, do: [source], else: [])
   end
 
+  def postcondition(state, {:call, _, :ask_apart, [source, _]}, started),
+    do: postcondition(state, {:call, __MODULE__, :ask, [source]}, {[], started})
+
+  # A caller leaving answers no one and starts nothing; the server's queue is the model's
+  # afterwards, so a source no one waits for is no longer queued.
+  def postcondition(state, {:call, _, :leave, [id]} = call, {queued, started}) do
+    queued == next_state(state, nil, call).queued and started == [] and
+      Map.has_key?(state.apart, id)
+  end
+
   # Every caller waiting for the source gets its outcome, and the oldest queued source
   # starts in the slot it frees.
   def postcondition(state, {:call, _, :finish, [source, outcome]}, {answers, started}) do
@@ -187,6 +265,14 @@ defmodule HalC2.MermaidPropTest do
           else: answer == expected
       end) and
       started == Enum.take(state.queued, 1)
+  end
+
+  # Everyone waiting for a source dropped from the queue is told the MC is busy, and
+  # nothing starts in its place.
+  def postcondition(state, {:call, _, :wait_out, [source]}, {answers, started}) do
+    length(answers) == state.waiting[source] and
+      Enum.all?(answers, &match?(%{"status" => "failed", "reason" => @busy}, &1)) and
+      started == []
   end
 
   # --- commands ---------------------------------------------------------------
@@ -212,18 +298,88 @@ defmodule HalC2.MermaidPropTest do
     {answers, started(server)}
   end
 
+  # A caller of its own, `id`, asks for `source` and waits. Returns the drawings it
+  # started. Its answer, when it comes, is sent to the test.
+  def ask_apart(source, id) do
+    server = Process.get(:server)
+    test = self()
+
+    pid =
+      spawn(fn ->
+        request = :gen_server.send_request(server, {:render, request(source)})
+        send(test, {:apart_asked, id})
+        {:reply, result} = :gen_server.receive_response(request, :infinity)
+        send(test, {:apart_answer, id, result})
+      end)
+
+    receive do
+      {:apart_asked, ^id} -> :ok
+    after
+      10_000 -> raise "a caller of its own never asked"
+    end
+
+    Process.put(:apart, Map.put(Process.get(:apart), id, {pid, source}))
+    started(server)
+  end
+
+  # The caller `id` goes before it is answered. Returns the sources the server still has
+  # queued, oldest first, and the drawings that started.
+  def leave(id) do
+    server = Process.get(:server)
+    {{pid, _source}, apart} = Map.pop!(Process.get(:apart), id)
+    Process.put(:apart, apart)
+    monitor = Process.monitor(pid)
+    Process.exit(pid, :kill)
+
+    receive do
+      {:DOWN, ^monitor, :process, _, _} -> :ok
+    end
+
+    noticed(server, pid, 100)
+
+    queued =
+      for {_, %{source: source}, _} <- :queue.to_list(:sys.get_state(server).queued), do: source
+
+    {queued, started(server)}
+  end
+
+  # Returns once the server no longer holds `pid`, a caller or a drawing gone. The test's
+  # word that it went and the server's are two signals in no promised order; each look at
+  # the state is one more turn for the server to read its own.
+  defp noticed(_server, pid, 0), do: raise("the server never noticed #{inspect(pid)} went")
+
+  defp noticed(server, pid, tries) do
+    state = :sys.get_state(server)
+    waiters = state.waiting |> Map.values() |> List.flatten()
+
+    if Enum.any?(waiters, &match?({{^pid, _}, _}, &1)) or
+         Enum.any?(Map.values(state.running), &match?({_, ^pid, _}, &1)),
+       do: noticed(server, pid, tries - 1),
+       else: :ok
+  end
+
   # The drawing of `source` ends with `outcome`. Returns the answers of everyone waiting
   # for it and the drawings that started in its place.
   def finish(source, outcome) do
     server = Process.get(:server)
     {drawer, drawers} = Map.pop!(Process.get(:drawers), source)
     Process.put(:drawers, drawers)
+    # With no one waiting for it there is no answer to wait on, so wait for the drawing.
+    monitor = Process.monitor(drawer)
     send(drawer, {:outcome, outcome})
 
+    receive do
+      {:DOWN, ^monitor, :process, _, _} -> noticed(server, drawer, 100)
+    end
+
+    {answers_for(source), started(server)}
+  end
+
+  defp answers_for(source) do
     {mine, others} = Enum.split_with(Process.get(:asked), fn {_, s} -> s == source end)
     Process.put(:asked, Map.new(others))
 
-    answers =
+    asked =
       for {request, _} <- mine do
         case :gen_server.wait_response(request, 10_000) do
           {:reply, result} -> result
@@ -231,7 +387,30 @@ defmodule HalC2.MermaidPropTest do
         end
       end
 
-    {answers, started(server)}
+    {apart, others} = Enum.split_with(Process.get(:apart), fn {_, {_, s}} -> s == source end)
+    Process.put(:apart, Map.new(others))
+
+    asked ++
+      for {id, _} <- apart do
+        receive do
+          {:apart_answer, ^id, result} -> result
+        after
+          10_000 -> raise "a caller of its own, of #{source}, was not answered"
+        end
+      end
+  end
+
+  # `source` has waited too long for its turn. Returns the answers of everyone waiting
+  # for it and the drawings that started.
+  def wait_out(source) do
+    server = Process.get(:server)
+
+    [ref] =
+      for {_key, %{source: ^source}, ref} <- :queue.to_list(:sys.get_state(server).queued),
+          do: ref
+
+    send(server, {:waited_too_long, ref})
+    {answers_for(source), started(server)}
   end
 
   # The drawings the server started since the last command. Every one it started has

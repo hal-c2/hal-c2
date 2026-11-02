@@ -1346,7 +1346,7 @@ defmodule HalC2.CodeReviewTest do
     }
 
     listing = if opts[:listed] == false, do: [], else: [pr]
-    list = %{"args" => ["pr list", "--repo github.com/acme/api"], "stdout" => listing}
+    list = %{"args" => ["api graphql"], "repository" => "acme/api", "pulls" => listing}
     list = if opts[:list], do: Map.put(list, "run", opts[:list]), else: list
 
     reviews =
