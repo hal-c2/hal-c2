@@ -4,11 +4,13 @@
 
 #include <QFont>
 #include <QJsonArray>
+#include <QQuickWindow>
 #include <QTest>
 
 #include "Brick.h"
 #include "Harness.h"
 #include "LayoutController.h"
+#include "Plugins.h"
 #include "Stream.h"
 #include "NavigationController.h"
 #include "RightPanelController.h"
@@ -166,35 +168,45 @@ const Steps steps([] {
     expect(modes.contains(c[0]), QStringLiteral("there is no \"%1\" mode").arg(c[0]));
     set(world, QStringLiteral("environmentIdentificationMode"), modes.value(c[0]));
   });
-  step(QStringLiteral("the environment is a Nightly build"), [](World& world, const Captures&, const Table&) {
-    // A release marks nothing, whatever the mode.
-    expect(world.state(QStringLiteral("stage")).toMap().value(QStringLiteral("label")).toString().isEmpty(), show(world.state(QStringLiteral("stage"))));
+  // The primary environment runs `version`; the stage waits for the label it gives.
+  const auto runs = [](World& world, const QString& version, const QString& label) {
     world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.environment")},
                      {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
                      {QStringLiteral("mc"), world.mc.name},
                      {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), world.mc.environmentId},
-                                                                 {QStringLiteral("serverVersion"), QStringLiteral("0.9.0-nightly.20260923.412")},
+                                                                 {QStringLiteral("serverVersion"), version},
                                                                  {QStringLiteral("capabilities"), world.mc.capabilities}}}});
     world.sync();
-    world.waitFor([&] { return world.state(QStringLiteral("stage")).toMap().value(QStringLiteral("label")) == QLatin1String("Nightly"); },
-                  [&] { return QStringLiteral("the Nightly stage; it is %1").arg(show(world.state(QStringLiteral("stage")))); });
+    world.waitFor([&] { return world.state(QStringLiteral("stage")).toMap().value(QStringLiteral("label")).toString() == label; },
+                  [&] { return QStringLiteral("the %1 stage; it is %2").arg(label, show(world.state(QStringLiteral("stage")))); });
+  };
+  step(QStringLiteral("the environment is a Nightly build"), [runs](World& world, const Captures&, const Table&) {
+    // A release marks nothing, whatever the mode.
+    expect(world.state(QStringLiteral("stage")).toMap().value(QStringLiteral("label")).toString().isEmpty(), show(world.state(QStringLiteral("stage"))));
+    runs(world, QStringLiteral("0.9.0-nightly.20260923.412"), QStringLiteral("Nightly"));
   });
   struct AppStage {
     ~AppStage() { stage::setAppStage(QString()); }
   };
-  step(QStringLiteral("the app's own stage is %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+  // Set before the first window in the app; here the store's next change republishes it.
+  const auto ownStage = [runs](World& world, const QString& label) {
     world.mc.part<AppStage>();
-    stage::setAppStage(c[0]);
-    // Set before the first window in the app; here the store's next change republishes it.
-    world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.environment")},
-                     {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
-                     {QStringLiteral("mc"), world.mc.name},
-                     {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), world.mc.environmentId},
-                                                                 {QStringLiteral("serverVersion"), QStringLiteral("0.9.0")},
-                                                                 {QStringLiteral("capabilities"), world.mc.capabilities}}}});
-    world.sync();
-    world.waitFor([&] { return world.state(QStringLiteral("stage")).toMap().value(QStringLiteral("label")) == c[0]; },
-                  [&] { return QStringLiteral("the %1 stage; it is %2").arg(c[0], show(world.state(QStringLiteral("stage")))); });
+    stage::setAppStage(label);
+    runs(world, QStringLiteral("0.9.0"), label);
+  };
+  step(QStringLiteral("the app's own stage is %1").arg(kQuoted), [ownStage](World& world, const Captures& c, const Table&) { ownStage(world, c[0]); });
+  // Latest is a release app against a release MC; Nightly comes from the MC's version.
+  step(QStringLiteral("the app's stage is \"(Latest|Nightly|Dev)\""), [runs, ownStage](World& world, const Captures& c, const Table&) {
+    if (c[0] == QLatin1String("Nightly")) {
+      runs(world, QStringLiteral("0.9.0-nightly.20260923.412"), c[0]);
+    } else {
+      ownStage(world, c[0] == QLatin1String("Dev") ? c[0] : QString());
+    }
+  });
+  step(QStringLiteral("the user looks at the app's name"), [](World& world, const Captures&, const Table&) { pluginShell(world); });
+  step(QStringLiteral("the app's name reads %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    QQuickWindow* window = pluginShell(world);
+    world.waitFor([&] { return window->title() == c[0]; }, [&] { return QStringLiteral("the window is titled \"%1\"").arg(window->title()); });
   });
   // The marks the sidebar draws: the night sky, "DEV" in the wordmark, the pill (and its label).
   const auto marks = [sidebar](World& world, bool sky, bool dev, const QString& pill) {

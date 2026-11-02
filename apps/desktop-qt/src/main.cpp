@@ -64,14 +64,24 @@ void installDevDesktopEntry(const QString& appId, const QString& iconSource) {
   const QDir data(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation));
   const QString iconDir = data.absoluteFilePath(QStringLiteral("icons/hicolor/1024x1024/apps"));
   const QString icon = QDir(iconDir).absoluteFilePath(appId + QStringLiteral(".png"));
-  if (QFileInfo(icon).size() != QFileInfo(iconSource).size()) {
+  const auto contents = [](const QString& path) {
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+  };
+  if (contents(icon) != contents(iconSource)) {
     QDir().mkpath(iconDir);
     QFile::remove(icon);
     QFile::copy(iconSource, icon);
   }
-  const QByteArray entry = QStringLiteral("[Desktop Entry]\nType=Application\nName=HAL-C2 (Dev)\nExec=%1 --dev\nIcon=%2\n"
+  // Exec quotes the binary's path and escapes what the Desktop Entry spec reserves in it.
+  QString binary = QCoreApplication::applicationFilePath();
+  for (const QChar reserved : {QLatin1Char('\\'), QLatin1Char('"'), QLatin1Char('`'), QLatin1Char('$')}) {
+    binary.replace(reserved, QStringLiteral("\\") + reserved);
+  }
+  binary.replace(QLatin1Char('\\'), QStringLiteral("\\\\")).replace(QLatin1Char('%'), QStringLiteral("%%"));
+  const QByteArray entry = QStringLiteral("[Desktop Entry]\nType=Application\nName=HAL-C2 (Dev)\nExec=\"%1\" --dev\nIcon=%2\n"
                                           "NoDisplay=true\nStartupWMClass=%2\n")
-                               .arg(QCoreApplication::applicationFilePath(), appId)
+                               .arg(binary, appId)
                                .toUtf8();
   QFile file(data.absoluteFilePath(QStringLiteral("applications/%1.desktop").arg(appId)));
   if (file.open(QIODevice::ReadOnly) && file.readAll() == entry) return;

@@ -270,18 +270,23 @@ Feature: Appearance
         | Version pill | the app shows a Dev version pill        |
         | None         | the app shows no environment marker     |
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The app's name carries its stage unless it is the latest release
       Given the app's stage is "<stage>"
       When the user looks at the app's name
-      Then it reads "<name>"
+      Then the app's name reads "<name>"
 
       Examples:
         | stage   | name              |
         | Latest  | HAL-C2            |
         | Nightly | HAL-C2 (Nightly)  |
-        | Alpha   | HAL-C2 (Alpha)    |
         | Dev     | HAL-C2 (Dev)      |
+
+      # The desktop has no Alpha stage of its own yet.
+      @backlog
+      Examples: Not yet on the desktop
+        | stage   | name              |
+        | Alpha   | HAL-C2 (Alpha)    |
 
     # The hosted web app's channel is a browser-tab concern (apps/web/src/branding.ts,
     # VITE_HOSTED_APP_CHANNEL); the Qt desktop has no hosted build.

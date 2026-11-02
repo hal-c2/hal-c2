@@ -101,6 +101,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/appearance.feature:A new interface font reaches*"),
     QStringLiteral("navigation/appearance.feature:The environment can be identified*"),
     QStringLiteral("navigation/appearance.feature:A development build is identified as Dev*"),
+    QStringLiteral("navigation/appearance.feature:The app's name carries its stage*"),
     QStringLiteral("navigation/appearance.feature:Panel animations*"),
     QStringLiteral("navigation/appearance.feature:Switching threads never*"),
     QStringLiteral("navigation/theme-editor.feature"),
