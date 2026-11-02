@@ -8,6 +8,9 @@
 // scenarios the shell does not deliver itself: `navigation/appearance.feature:System*`.
 
 #include <QGuiApplication>
+#ifdef HAL_C2_HAS_WEBENGINE
+#include <QtWebEngineQuick/qtwebenginequickglobal.h>
+#endif
 #include <QTest>
 
 #include <ctime>
@@ -687,6 +690,10 @@ int main(int argc, char** argv) {
   // Snooze presets and wake labels are wall-clock times: pin them to UTC.
   qputenv("TZ", "UTC");
   tzset();
+#ifdef HAL_C2_HAS_WEBENGINE
+  // Before the application, as main.cpp does: the browser scenarios' pages.
+  QtWebEngineQuick::initialize();
+#endif
   QGuiApplication app(argc, argv);
   tst_Features test;
   return QTest::qExec(&test, argc, argv);

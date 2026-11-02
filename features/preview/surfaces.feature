@@ -450,14 +450,12 @@ Feature: In-app preview browser
 
   Rule: The desktop shows the page beside the thread
 
-    # The desktop embeds no browser: drawing the page needs QtWebEngine or
-    # QtWebView, which on Linux is WebEngine underneath and has no input, zoom or
-    # popup control. Until one is chosen the Previews tab lists
-    # the thread's browser tabs, offers where a new one can go and opens them
-    # in the user's browser, and the scenarios that draw the page wait
-    # (@backlog-desktop).
+    # The desktop draws pages with QtWebEngine (BrowserPanel), one per MC tab,
+    # when the build has it; a build without it lists the tabs in the
+    # Previews tab and opens them in the user's browser. The phone and the
+    # TUI have no in-app browser: they open pages in the system's browser.
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The user opens a local dev server in a browser tab beside the thread
       Given the thread's dev server is listening locally
       When the user opens the preview
@@ -475,7 +473,7 @@ Feature: In-app preview browser
       When the user opens a new browser tab
       Then the tab suggests the running servers, configured preview addresses and up to 10 recent pages
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: An unreachable page explains the failure in plain words
       Given a browser tab whose page fails with <code>
       Then the tab says "This site can't be reached" and "<explanation>"
@@ -490,7 +488,7 @@ Feature: In-app preview browser
         | ERR_CERT_AUTHORITY_INVALID  | Certificate authority is not trusted   |
         | ERR_TOO_MANY_REDIRECTS      | Too many redirects                     |
 
-    @backlog @desktop
+    @desktop
     Scenario: A load the page itself cancelled is not shown as a failure
       Given a browser tab whose page starts another load before the first finishes
       Then the tab does not say the page failed to load
@@ -500,7 +498,7 @@ Feature: In-app preview browser
       Given a browser tab showing a page that embeds a frame which cannot load
       Then the tab does not say the page failed to load
 
-    @backlog @desktop
+    @desktop
     Scenario: A failed load stays shown until a new load starts
       Given a browser tab whose page failed to load
       When the load is reported as having stopped
@@ -508,13 +506,13 @@ Feature: In-app preview browser
       When the user reloads the page
       Then the failure is cleared while the new load runs
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The user reloads a page after the dev server restarts
       Given a browser tab showing the thread's dev server
       When the agent restarts the dev server and the user reloads the tab
       Then the page reloads without the user leaving the thread
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario Outline: The user zooms a page through the preset steps
       Given a browser tab at <from> zoom
       When the user zooms <direction>
@@ -534,18 +532,20 @@ Feature: In-app preview browser
       When the tab is opened
       Then the tab is at the preset step nearest to 137%
 
-    @backlog @desktop
+    @desktop
     Scenario: Zooming the app does not zoom the page in a browser tab
       Given a browser tab at 100% zoom
       When the user zooms the whole app in
       Then the page in the tab stays at 100% zoom
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The user previews the page at a device size
       Given a browser tab that fills its space
       When the user picks the "Pixel 7" device size
       Then the page renders at that device's size
 
+    # BrowserPage::setViewport undoes the size after five seconds without the
+    # MC's answer; a refused resize is undone at once (tst_TimelinePreviewsProp).
     @desktop @backlog-desktop
     Scenario: A device size that times out is undone
       Given the user picks a device size for a tab
@@ -577,7 +577,7 @@ Feature: In-app preview browser
       Then the tab stays silent until the user unmutes it
       And the tab still shows that its page is playing sound
 
-    @backlog @desktop
+    @desktop
     Scenario: A quiet tab can be muted ahead of time
       Given a browser tab that is not playing audio
       When the user mutes the tab from its menu
@@ -589,7 +589,7 @@ Feature: In-app preview browser
       When the user opens that tab's menu
       Then muting is listed but cannot be chosen
 
-    @backlog @desktop
+    @desktop
     Scenario: A tab stays muted when its page navigates
       Given a muted browser tab
       When the tab moves to another page
@@ -688,17 +688,17 @@ Feature: In-app preview browser
       Given a browser tab showing a page that is not a website
       Then the tab shows a plain browser icon
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A sign-in popup opens in its own window
       Given a page in a browser tab starts a sign-in flow in a popup
       Then the popup opens as a real window that can report back to the page
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A link that targets a new window stays in the tab
       When the user follows a link on the page that targets a new window
       Then the page loads in the same browser tab
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A popup cannot open further popups
       Given a sign-in popup opened by a page in a browser tab
       When the popup tries to open another popup
@@ -737,24 +737,24 @@ Feature: In-app preview browser
       When the app is quit and started again
       Then none of that profile's cookies or site data are left
 
-    @backlog @desktop
+    @desktop
     Scenario: The user loads a page by typing its address
-      Given a browser tab showing "http://localhost:5173"
-      When the user types "localhost:3000" in the tab's address field and presses Enter
-      Then the tab loads "http://localhost:3000"
+      Given a browser tab showing the thread's dev server
+      When the user types the address of another of its pages without "http://" and presses Enter
+      Then the tab loads that page over http
       And the address field shows the page's address
 
-    @backlog @desktop
+    @desktop
     Scenario: Escape puts the page's address back in the address field
-      Given a browser tab showing "http://localhost:5173"
+      Given a browser tab showing the thread's dev server
       And the user has typed a different address in the field
       When the user presses Escape
-      Then the field shows "http://localhost:5173" again
+      Then the field shows the page's address again
       And the field no longer has focus
 
-    @backlog @desktop
+    @desktop
     Scenario: Focusing the address field selects the whole address
-      Given a browser tab showing "http://localhost:5173"
+      Given a browser tab showing the thread's dev server
       When the user focuses the address field
       Then the whole address is selected, ready to be replaced
 
@@ -808,23 +808,10 @@ Feature: In-app preview browser
       Then only that tab goes back
 
     @backlog @desktop
-    Scenario: The user opens a tab's page in the system browser
-      Given a browser tab showing "http://localhost:5173"
-      When the user opens the page in the system browser
-      Then the system browser opens "http://localhost:5173"
-      And the tab keeps showing the page
-
-    @backlog @desktop
     Scenario: A tab's page can be reloaded without the cache
       Given a browser tab showing a page the browser has cached
       When the user chooses a hard reload
       Then the tab fetches the page and its files again instead of using the cache
-
-    @backlog @desktop
-    Scenario: The user opens the developer tools for a tab
-      Given a browser tab showing a page
-      When the user opens the developer tools
-      Then the developer tools open for that tab's page
 
     @backlog @desktop
     Scenario Outline: A tab can follow the system or force a light or dark appearance
@@ -1744,6 +1731,44 @@ Feature: In-app preview browser
       Then the user is told "The integrated browser is unavailable in this runtime."
 
     @desktop
+    Scenario: An address that is not a web page is refused in place
+      Given a browser tab showing the thread's dev server
+      When the user types "file:///etc/passwd" in the address field and presses Enter
+      Then the tab stays on the thread's dev server
+      And the address field says only web addresses can be opened
+
+    @desktop
+    Scenario: The user inspects a page with DevTools
+      Given a browser tab showing the thread's dev server
+      When the user opens DevTools for the tab
+      Then DevTools for that page show below it
+      When the user docks DevTools to the right
+      Then DevTools show beside the page
+      And the next browser tab opens DevTools on the right
+
+    @desktop
+    Scenario: A device size is shown whole, centred in the tab
+      Given a browser tab that fills its space
+      When the user picks the "iPad Air" device size
+      Then the page renders at that device's size
+      And the page is scaled down to fit the tab and centred in it
+      And the tab names the device, its size and the scale
+
+    @desktop
+    Scenario: A browser tab's start page offers the thread's servers
+      Given the thread's dev server is listening locally
+      When the user adds a browser tab from the side panel
+      Then the start page offers the dev server to open
+      When the user picks it
+      Then the tab loads the dev server
+
+    @desktop
+    Scenario: The page in a browser tab can be opened in the user's browser
+      Given a browser tab showing the thread's dev server
+      When the user opens the page in the system browser from the tab's menu
+      Then the user's browser opens the page's address
+
+    @desktop
     Scenario: The desktop lists the thread's browser tabs to open in the browser
       Given the thread has browser tabs at "http://localhost:5173" and "http://localhost:6006"
       When the user shows the thread's previews
@@ -1760,6 +1785,16 @@ Feature: In-app preview browser
       Then the previews say "http://localhost:5173" failed to load
       When the tab at "http://localhost:5173" is closed on the MC
       Then no browser tabs are listed
+
+  Rule: Only the desktop draws pages
+
+    # The phone and the TUI have no in-app browser; a page they open goes to
+    # the system's browser.
+    @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The phone and the terminal open pages in the system's browser
+      Given a thread with a browser tab at "http://localhost:5173"
+      When the user opens the tab
+      Then the page opens in the system's browser, not inside the app
 
     @tui
     Scenario: The terminal client lists preview addresses without an embedded browser
