@@ -66,6 +66,49 @@ Item {
             tryCompare(label, "truncated", false);
         }
 
+        // The project name and the thread title are Tab stops that do what a
+        // click on them does; a draft's title opens nothing, so Tab skips it.
+        function test_headerIsReachedByKeyboard_data() {
+            return [
+                {
+                    tag: "thread",
+                    isDraft: false
+                },
+                {
+                    tag: "draft",
+                    isDraft: true
+                }
+            ];
+        }
+
+        function test_headerIsReachedByKeyboard(data) {
+            Shell.state = {
+                workspace: {
+                    projectTitle: qsTr("Project"),
+                    threadTitle: qsTr("Fix TUI Readability Issue"),
+                    isDraft: data.isDraft,
+                    renameRequestId: 0,
+                    scripts: [],
+                    editors: []
+                }
+            };
+            let workspace = createTemporaryObject(workspaceComponent, root);
+            verify(!!workspace, "Component exists");
+            let project = findChild(workspace, "projectLabel");
+            let title = findChild(workspace, "titleSlot");
+            verify(!!project && !!title, "Objects exist");
+            verify(waitForRendering(workspace));
+            compare(title.activeFocusOnTab, !data.isDraft);
+            project.forceActiveFocus(Qt.TabFocusReason);
+            keyClick(Qt.Key_Return);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].action, "workspace.newThread");
+            if (data.isDraft)
+                return;
+            title.forceActiveFocus(Qt.TabFocusReason);
+            keyClick(Qt.Key_Space);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].action, "workspace.titleMenu");
+        }
+
         // Scenario: The thread title uses the room it has, and Scenario: The full
         // thread title is a hover away (features/navigation/layout.feature)
         function test_tightHeaderKeepsTheTitleReadable() {

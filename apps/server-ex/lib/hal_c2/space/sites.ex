@@ -12,7 +12,9 @@ defmodule HalC2.Space.Sites do
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState}
   alias HalC2.Space
-  alias HalC2.Space.{Blocks, Pages}
+  alias HalC2.Space.{Blocks, Markdown, Pages}
+
+  @lists ~w(bullet numbered checklist)
 
   @doc "The site of the page `page_id`, if it is published."
   def of_page(state, page_id),
@@ -122,21 +124,40 @@ defmodule HalC2.Space.Sites do
   # What a site shows of the page: never its comments or authors, and of a link to
   # another page only that page's title, unless it is out of reach in the trash. An image
   # is its caption: the picture's file is not published (`features/space/sites.feature`).
+  # A list item shows how deep it is, and a numbered one its number. An image by its
+  # address is its caption too: nothing is fetched.
   defp snapshot(state, page) do
+    blocks = state |> Blocks.of_page(page["id"]) |> Enum.flat_map(&ordinary(state, &1))
+
     blocks =
-      state
-      |> Blocks.of_page(page["id"])
-      |> Enum.flat_map(fn block -> published(state, block) end)
+      blocks
+      |> Enum.zip(Markdown.list_items(blocks))
+      |> Enum.flat_map(fn {block, item} -> published(state, block, item) end)
 
     %{"title" => page["title"], "blocks" => blocks}
   end
 
   # A run's Markdown reads as the blocks removing the update would make of it.
-  defp published(state, %{"kind" => "generated"} = block) do
-    state
-    |> Space.written(block["text"])
-    |> Enum.flat_map(&published(state, &1))
+  defp ordinary(state, %{"kind" => "generated"} = block), do: Space.written(state, block["text"])
+  defp ordinary(_state, block), do: [block]
+
+  defp published(_state, block, %{depth: depth, number: number}) do
+    %{"kind" => block["kind"], "text" => block["text"] || ""}
+    |> then(
+      &if(block["kind"] == "checklist",
+        do: Map.put(&1, "checked", block["checked"] == true),
+        else: &1
+      )
+    )
+    |> put_if("depth", depth > 0 && depth)
+    |> put_if("number", number)
+    |> List.wrap()
   end
+
+  defp published(state, block, nil), do: published(state, block)
+
+  defp put_if(map, _key, value) when value in [nil, false], do: map
+  defp put_if(map, key, value), do: Map.put(map, key, value)
 
   defp published(state, %{"kind" => "subpage_link"} = block) do
     linked = Pages.get(state, block["linkedPageId"])
@@ -145,15 +166,6 @@ defmodule HalC2.Space.Sites do
       do: [%{"kind" => "subpage_link", "text" => linked["title"]}],
       else: []
   end
-
-  defp published(_state, %{"kind" => "checklist"} = block),
-    do: [
-      %{
-        "kind" => "checklist",
-        "text" => block["text"] || "",
-        "checked" => block["checked"] == true
-      }
-    ]
 
   # A table is its cells and how its columns align, not how its Markdown is padded.
   defp published(_state, %{"kind" => "table", "table" => table} = block),
@@ -166,6 +178,12 @@ defmodule HalC2.Space.Sites do
       %{"kind" => "code", "text" => block["text"] || ""}
       |> then(&if(block["language"], do: Map.put(&1, "language", block["language"]), else: &1))
     ]
+
+  defp published(_state, %{"kind" => "callout"} = block),
+    do: [%{"kind" => "callout", "text" => block["text"] || ""} |> put_if("alert", block["alert"])]
+
+  defp published(_state, %{"kind" => "footnote"} = block),
+    do: [%{"kind" => "footnote", "text" => block["text"] || "", "label" => block["label"]}]
 
   defp published(_state, block), do: [%{"kind" => block["kind"], "text" => block["text"] || ""}]
 
@@ -180,6 +198,8 @@ defmodule HalC2.Space.Sites do
   h1{font-size:1.8em;line-height:1.2}h2{font-size:1.3em;line-height:1.3;margin-top:1.6em}
   p,li,aside{white-space:pre-wrap;overflow-wrap:anywhere}
   ul{list-style:none;padding:0}
+  .d1{margin-left:1.5em}.d2{margin-left:3em}.d3{margin-left:4.5em}
+  .d4{margin-left:6em}.d5{margin-left:7.5em}.d6{margin-left:9em}
   aside{border-left:3px solid;padding:.5em 1em;margin:1em 0}
   pre{overflow-x:auto;padding:.75em 1em;border:1px solid;border-radius:4px}
   table{border-collapse:collapse;display:block;overflow-x:auto;margin:1em 0}
@@ -216,26 +236,61 @@ defmodule HalC2.Space.Sites do
       "</style></head><body><main><h1>",
       esc(title),
       "</h1>",
-      blocks |> Enum.chunk_by(&(&1["kind"] == "checklist")) |> Enum.map(&section/1),
+      blocks |> closed() |> Enum.chunk_by(&(&1["kind"] in @lists)) |> Enum.map(&section/1),
       "</main><footer>Published ",
       esc(String.slice(site["publishedAt"], 0, 10)),
       "</footer></body></html>\n"
     ]
   end
 
-  defp section([%{"kind" => "checklist"} | _] = items),
+  # Each collapsed section closed once: an end with none open is dropped, and one left
+  # open closes at the end of the page.
+  defp closed(blocks) do
+    {blocks, open} =
+      Enum.flat_map_reduce(blocks, 0, fn
+        %{"kind" => "details"} = block, open -> {[block], open + 1}
+        %{"kind" => "details_end"}, 0 -> {[], 0}
+        %{"kind" => "details_end"} = block, open -> {[block], open - 1}
+        block, open -> {[block], open}
+      end)
+
+    blocks ++ List.duplicate(%{"kind" => "details_end", "text" => ""}, open)
+  end
+
+  defp section([%{"kind" => kind} | _] = items) when kind in @lists,
     do: ["<ul>", Enum.map(items, &item/1), "</ul>"]
 
   defp section(blocks), do: Enum.map(blocks, &block/1)
 
-  defp item(%{"text" => text, "checked" => checked}),
-    do: ["<li>", if(checked, do: "☑ ", else: "☐ "), esc(text), "</li>"]
+  defp item(%{"text" => text} = item) do
+    depth = min(item["depth"] || 0, 6)
+    open = if depth > 0, do: "<li class=\"d#{depth}\">", else: "<li>"
+    [open, mark(item), esc(text), "</li>"]
+  end
+
+  defp mark(%{"kind" => "checklist", "checked" => true}), do: "☑ "
+  defp mark(%{"kind" => "checklist"}), do: "☐ "
+  defp mark(%{"number" => number}), do: "#{number}. "
+  defp mark(_bullet), do: "• "
 
   defp block(%{"kind" => "heading", "text" => text}), do: ["<h2>", esc(text), "</h2>"]
+  defp block(%{"kind" => "divider"}), do: "<hr>"
+
+  defp block(%{"kind" => "callout", "text" => text, "alert" => alert}),
+    do: ["<aside><strong>", String.capitalize(alert), "</strong>\n", esc(text), "</aside>"]
+
   defp block(%{"kind" => "callout", "text" => text}), do: ["<aside>", esc(text), "</aside>"]
 
   defp block(%{"kind" => "code", "text" => text}),
     do: ["<pre><code>", esc(text), "</code></pre>"]
+
+  defp block(%{"kind" => "footnote", "text" => text, "label" => label}),
+    do: ["<p><sup>", esc(label), "</sup> ", esc(text), "</p>"]
+
+  defp block(%{"kind" => "details", "text" => text}),
+    do: ["<details><summary>", esc(text), "</summary>"]
+
+  defp block(%{"kind" => "details_end"}), do: "</details>"
 
   defp block(%{"kind" => "table", "table" => %{"align" => align, "rows" => [head | body]}}) do
     [

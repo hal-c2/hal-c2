@@ -121,17 +121,27 @@ export type SpacePage = typeof SpacePage.Type;
  * The kinds of block that can be written by hand. A `raw` block is Markdown a page does
  * not model, kept as its source and shown as written, so a page imported from Markdown
  * exports exactly as it was. A `table`'s text is its Markdown, written by the MC; a
- * `code` block's text is the code.
+ * `code` block's text is the code; math is code in `math`. Each list item is a block: a
+ * `bullet`, a `numbered` item or a `checklist` item. A `divider` has no text. A
+ * `footnote`'s text is the note of its `label`. A collapsed section is a `details` block,
+ * its text the summary (one line, with no details or summary tags), then the blocks
+ * inside it, then a `details_end`, which has no text. Inline formatting is part of a block's text, as written.
  */
 export const SpaceWritableBlockKind = Schema.Literals([
   "paragraph",
   "heading",
   "checklist",
+  "bullet",
+  "numbered",
   "callout",
+  "divider",
   "subpage_link",
   "image",
   "table",
   "code",
+  "footnote",
+  "details",
+  "details_end",
   "raw",
 ]);
 export type SpaceWritableBlockKind = typeof SpaceWritableBlockKind.Type;
@@ -217,6 +227,39 @@ export type SpaceTableInput = typeof SpaceTableInput.Type;
 /** A code block's language: one word, such as `elixir` or `mermaid`. */
 export const SpaceCodeLanguage = Schema.String.check(Schema.isPattern(/^\S+$/u));
 
+/** A footnote's label, `[^label]` in text: no spaces or brackets. */
+export const SpaceFootnoteLabel = Schema.String.check(Schema.isPattern(/^[^\s[\]]+$/u));
+
+/**
+ * The address of an image that is not one of the Space's, as written in Markdown: no
+ * spaces, parentheses, angle brackets or backslashes. Nothing fetches it until the user asks.
+ */
+export const SpaceImageUrl = Schema.String.check(
+  Schema.isPattern(/^(?!space-image:)[^\s()<>\\]+$/u),
+);
+
+/** How far a list item is nested under the items above it; 0 is not nested. */
+export const SpaceListDepth = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+/**
+ * The number a `numbered` item that begins a list starts it at. An item that continues a
+ * list counts on from the one above it and keeps its start for when it begins one, after
+ * the items above it are moved or deleted.
+ */
+export const SpaceListStart = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: 999_999_999 }),
+);
+
+/** The kind of GitHub alert a `callout` is, written `> [!NOTE]` and so on. */
+export const SpaceCalloutAlert = Schema.Literals([
+  "note",
+  "tip",
+  "important",
+  "warning",
+  "caution",
+]);
+export type SpaceCalloutAlert = typeof SpaceCalloutAlert.Type;
+
 export const SpaceBlock = Schema.Struct({
   id: SpaceBlockId,
   pageId: SpacePageId,
@@ -237,6 +280,10 @@ export const SpaceBlock = Schema.Struct({
   chart: Schema.optional(SpaceChart),
   /** The image an `image` block shows; its `text` is the caption. Only on image blocks. */
   imageId: Schema.optional(SpaceImageId),
+  /** The address of an `image` block that is not one of the Space's, in place of `imageId`. */
+  url: Schema.optional(SpaceImageUrl),
+  /** A `footnote`'s label. */
+  label: Schema.optional(SpaceFootnoteLabel),
   /** A `table` block's cells. Its `text` is the table's Markdown. */
   table: Schema.optional(SpaceTable),
   /** A `code` block's language, when it has one. */
@@ -247,6 +294,20 @@ export const SpaceBlock = Schema.Struct({
    */
   fence: Schema.optional(Schema.String),
   info: Schema.optional(Schema.String),
+  /** A list item's depth; 0 when left out. */
+  depth: Schema.optional(SpaceListDepth),
+  /** A `numbered` item's number when it begins a list; 1 when left out. */
+  start: Schema.optional(SpaceListStart),
+  /**
+   * The marker (`*` or `+` for a bullet, `)` for a numbered item, the rule for a divider,
+   * such as `***`, `> ` for a quote's blank lines, and a `details` block's opening up to
+   * its summary) and indent a block imported from Markdown was written with, when they
+   * are not the usual. Clients do not show them.
+   */
+  marker: Schema.optional(Schema.String),
+  indent: Schema.optional(Schema.Int),
+  /** A `callout`'s alert, when it is one. */
+  alert: Schema.optional(SpaceCalloutAlert),
   /**
    * Sorts the page's blocks: compare as plain strings. A block inserted or moved
    * gets a key between its neighbours', so no other block changes.
@@ -393,6 +454,11 @@ export const SpaceSiteBlock = Schema.Struct({
     Schema.Struct({ align: SpaceTable.fields.align, rows: SpaceTable.fields.rows }),
   ),
   language: Schema.optional(Schema.String),
+  /** A list item's depth, when it is nested, and a `numbered` item's number. */
+  depth: Schema.optional(SpaceListDepth),
+  number: Schema.optional(Schema.Int),
+  alert: Schema.optional(SpaceCalloutAlert),
+  label: Schema.optional(SpaceFootnoteLabel),
 });
 export type SpaceSiteBlock = typeof SpaceSiteBlock.Type;
 
@@ -578,22 +644,35 @@ export const SpaceBlockInsertInput = Schema.Struct({
   checked: Schema.optional(Schema.Boolean),
   /** Required for `subpage_link`, which shows that page's title. */
   linkedPageId: Schema.optional(SpacePageId),
-  /** Required for `image`: an image of this Space not in the trash. */
+  /** Required for `image`: an image of this Space not in the trash, or else a `url`. */
   imageId: Schema.optional(SpaceImageId),
+  /** For `image` in place of `imageId`: an address, never fetched by the MC. */
+  url: Schema.optional(SpaceImageUrl),
+  /** Required for `footnote`. */
+  label: Schema.optional(SpaceFootnoteLabel),
   /** For `heading`: 1 to 6, 2 when left out. */
   level: Schema.optional(SpaceHeadingLevel),
   /** Required for `table`. Its `text` is written from it. */
   table: Schema.optional(SpaceTableInput),
   /** For `code`. */
   language: Schema.optional(SpaceCodeLanguage),
+  /** For a list item: 0 when left out. */
+  depth: Schema.optional(SpaceListDepth),
+  /** For `numbered`: 1 when left out. */
+  start: Schema.optional(SpaceListStart),
+  /** For `callout`: a plain quote when left out. */
+  alert: Schema.optional(SpaceCalloutAlert),
   afterBlockId: AfterBlockId,
 });
 export type SpaceBlockInsertInput = typeof SpaceBlockInsertInput.Type;
 
 /**
  * Changes what is given in one step, or nothing. A table's `text` is read as a table,
- * kept as written when it is in the table's own form; `level` is a heading's, and
- * `language` a code block's, null for none.
+ * kept as written when it is in the table's own form; `level` is a heading's,
+ * `language` a code block's (null for none), `depth` a list item's, `start` a numbered
+ * item's (null for 1), `alert` a callout's (null for none), `label` a footnote's and
+ * `url` an image's that has one. A `details` block's text is one line, and a
+ * `details_end` has none.
  */
 export const SpaceBlockUpdateInput = Schema.Struct({
   spaceId: SpaceId,
@@ -601,6 +680,11 @@ export const SpaceBlockUpdateInput = Schema.Struct({
   text: Schema.optional(Schema.String),
   level: Schema.optional(SpaceHeadingLevel),
   language: Schema.optional(Schema.NullOr(SpaceCodeLanguage)),
+  depth: Schema.optional(SpaceListDepth),
+  start: Schema.optional(Schema.NullOr(SpaceListStart)),
+  alert: Schema.optional(Schema.NullOr(SpaceCalloutAlert)),
+  label: Schema.optional(SpaceFootnoteLabel),
+  url: Schema.optional(SpaceImageUrl),
 });
 export type SpaceBlockUpdateInput = typeof SpaceBlockUpdateInput.Type;
 
@@ -703,6 +787,8 @@ export const SpacePageAgent = Schema.Struct({
   error: Schema.NullOr(Schema.String),
   startedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
+  /** Which start of its MC took the ask; none on one from before there were tokens. */
+  boot: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type SpacePageAgent = typeof SpacePageAgent.Type;
 

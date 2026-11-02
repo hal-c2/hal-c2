@@ -38,6 +38,7 @@ Rectangle {
             Label {
                 Layout.fillWidth: true
                 text: card.limits ? qsTr("%1 limits").arg(card.limits.provider) : ""
+                elide: Text.ElideRight
                 color: Theme.palette.color("text", "#e4e4e7")
                 font.pixelSize: Math.round(13 * Theme.fontScale)
                 font.weight: Font.DemiBold
@@ -75,6 +76,7 @@ Rectangle {
                 Label {
                     Layout.fillWidth: true
                     text: row.modelData.label
+                    elide: Text.ElideRight
                     color: Theme.palette.color("text", "#e4e4e7")
                     font.pixelSize: Math.round(12 * Theme.fontScale)
                 }

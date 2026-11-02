@@ -17,6 +17,21 @@ defmodule HalC2.Space.Blocks do
   block's text is the code, with its `language` and, from Markdown, the `fence` and the
   `info` after the language it was written with.
 
+  A list item (a `bullet`, a `numbered` item or a `checklist` item) is nested under the
+  items above it by its `depth`, 0 when it has none, and a numbered item that begins a
+  list may `start` it at a number other than 1. An item that continues a list counts on
+  from the one above it, and keeps a start it is given for when it begins one. From
+  Markdown an item keeps the `marker` and `indent` it was written with
+  (`HalC2.Space.Markdown`); changing its depth or moving it gives it the usual indent. A `callout` may be an `alert`: note, tip, important,
+  warning or caution, and from Markdown keeps `> ` as its `marker` when its blank lines
+  were written so. A `divider` has no text, and from Markdown keeps the rule it was
+  written as when it is not `---`, as its `marker`.
+
+  An `image` is a Space image by its `imageId`, or one by its address, `url`, which the
+  MC never fetches. A `footnote` is the note of its `label`, `[^label]` in text. Math is
+  a `code` block in `math`. A collapsed section is a `details` block, its text the
+  summary, then the blocks inside it, then a `details_end` block, which has no text.
+
   A block of the kind `generated` is the marked part of a page that updates itself
   (`HalC2.Space.Schedule`): a page has at most one, its text is the Markdown of the last
   run, and only `write_generated/4` writes it. Anyone may move or delete it or comment on
@@ -27,9 +42,17 @@ defmodule HalC2.Space.Blocks do
   alias HalC2.{Patch, StreamState}
   alias HalC2.Space.{Chart, Images, Markdown, Order, Pages, Table}
 
-  @kinds ~w(paragraph heading checklist callout subpage_link image raw table code)
+  @kinds ~w(paragraph heading checklist bullet numbered callout divider subpage_link image raw
+             table code footnote details details_end)
 
   @generated "generated"
+
+  @lists ~w(bullet numbered checklist)
+  @start "A numbered item's start is a number from 0 to 999999999, or null for 1."
+  @alert "A callout's alert is note, tip, important, warning or caution, or null for none."
+  @label "A footnote's label is a word with no spaces or brackets, such as 1 or note."
+  @url "An image's address has no spaces, angle brackets, parentheses or backslashes, and is not a space-image: one."
+  @summary "A collapsed section's summary is one line, with no <details>, </details> or <summary> tags."
 
   @doc """
   The kinds of block written directly. A `chart` is only made by `put_chart/6`, and a
@@ -49,8 +72,9 @@ defmodule HalC2.Space.Blocks do
 
   @doc """
   New blocks on a live page from `specs` (maps of `kind`, `text`, `checked`,
-  `linkedPageId`, `imageId`, `level`, `table`, `language`, `fence`, `info`, `gap`), in
-  order after `after`. Used by insert and by imports.
+  `linkedPageId`, `imageId`, `url`, `level`, `table`, `language`, `fence`, `info`,
+  `depth`, `start`, `marker`, `indent`, `alert`, `label`, `gap`), in order after `after`.
+  Used by insert and by imports.
   An image block's text is its caption, the image's name unless given, so a client
   that does not know the kind still shows something true.
   """
@@ -89,6 +113,9 @@ defmodule HalC2.Space.Blocks do
   end
 
   @doc "The text a block made from `spec` has: an image with no caption reads as its name."
+  def text(_state, %{"kind" => "image", "url" => url} = spec) when is_binary(url),
+    do: spec["text"] || ""
+
   def text(state, %{"kind" => "image"} = spec) do
     case spec["text"] do
       text when text in [nil, ""] -> Images.get(state, spec["imageId"])["name"]
@@ -99,23 +126,41 @@ defmodule HalC2.Space.Blocks do
   def text(_state, %{"kind" => "table", "table" => table}), do: Table.markdown(table)
   def text(_state, spec), do: spec["text"] || ""
 
-  # Only an image block has `imageId`, a heading `level`, a table its `table` and code
-  # its `language`, `fence` and `info`, and only a block from Markdown a `gap`: every
-  # other block stays as it was written.
+  # Only an image block has `imageId` or `url`, a heading `level`, a table its `table`,
+  # code its `language`, `fence` and `info`, a list item its `depth` and `indent`, a
+  # bullet, numbered item, divider, callout or collapsed section its `marker`, a numbered
+  # item its `start`, a callout its `alert`, a footnote its `label`, and only a block from
+  # Markdown a `gap`: every other block stays as it was written.
   defp with_extras(block, spec) do
     code = spec["kind"] == "code"
+    item = spec["kind"] in @lists
+    image = spec["kind"] == "image"
 
     block
-    |> put_extra("imageId", spec["kind"] == "image" && spec["imageId"])
+    |> put_extra("url", image && spec["url"])
+    |> put_extra("imageId", image && is_nil(spec["url"]) && spec["imageId"])
     |> put_extra("level", spec["kind"] == "heading" && spec["level"])
     |> put_extra("table", spec["kind"] == "table" && spec["table"])
     |> put_extra("language", code && spec["language"])
     |> put_extra("fence", code && spec["fence"])
     |> put_extra("info", code && spec["info"])
+    |> put_extra("depth", item && spec["depth"] != 0 && spec["depth"])
+    |> put_extra("indent", item && spec["indent"])
+    |> put_extra(
+      "marker",
+      spec["kind"] in ~w(bullet numbered divider callout details) && spec["marker"]
+    )
+    |> put_extra("start", spec["kind"] == "numbered" && spec["start"] != 1 && spec["start"])
+    |> put_extra("alert", spec["kind"] == "callout" && spec["alert"])
+    |> put_extra("label", spec["kind"] == "footnote" && spec["label"])
     |> put_extra("gap", spec["gap"])
   end
 
-  @extras ~w(imageId level table language fence info gap)
+  @extras ~w(imageId url level table language fence info depth indent marker start alert label
+             gap)
+
+  @doc "The fields a block has only by its kind, or from Markdown: how it is written beyond its text."
+  def extras, do: @extras
 
   defp put_extra(block, _key, value) when value in [nil, false], do: block
   defp put_extra(block, key, value), do: Map.put(block, key, value)
@@ -194,9 +239,11 @@ defmodule HalC2.Space.Blocks do
     do: Pages.refused({:error, :invalid, "checked is true or false."})
 
   @doc """
-  Changes a block's `text`, tick (`checked`), heading `level` and code `language` (nil
-  for none) in one step: either refused, nothing changes. What `changes` leaves out, or
-  gives as a nil text, tick or level, stays as it is.
+  Changes a block's `text`, tick (`checked`), heading `level`, code `language` (nil for
+  none), list item `depth`, numbered item `start` (nil for 1), callout `alert` (nil for
+  none), footnote `label` and the `url` of an image by its address in one step: either
+  refused, nothing changes. What `changes` leaves out, or gives as a nil text, tick,
+  level, depth, label or url, stays as it is.
   """
   def edit(state, id, changes, author) do
     change(state, id, author, fn block ->
@@ -204,7 +251,15 @@ defmodule HalC2.Space.Blocks do
            {:ok, tick} <- tick_change(block, changes["checked"]),
            {:ok, level} <- level_change(block, changes["level"]),
            {:ok, language} <- language_change(block, changes),
-           do: {:ok, text |> Map.merge(tick) |> Map.merge(level) |> Map.merge(language)}
+           {:ok, depth} <- depth_change(block, changes["depth"]),
+           {:ok, start} <- start_change(block, changes),
+           {:ok, alert} <- alert_change(block, changes),
+           {:ok, label} <- label_change(block, changes["label"]),
+           {:ok, url} <- url_change(block, changes["url"]) do
+        [tick, level, language, depth, start, alert, label, url]
+        |> Enum.reduce(text, &Map.merge(&2, &1))
+        |> then(&{:ok, &1})
+      end
     end)
   end
 
@@ -250,6 +305,18 @@ defmodule HalC2.Space.Blocks do
   defp text_change(%{"kind" => "chart"}, _),
     do: {:error, :invalid, "A chart cannot be edited. Ask for it again."}
 
+  defp text_change(%{"kind" => "divider"}, text) when text != "",
+    do: {:error, :invalid, "A divider has no text."}
+
+  defp text_change(%{"kind" => "details_end"}, text) when text != "",
+    do: {:error, :invalid, "The end of a collapsed section has no text."}
+
+  defp text_change(%{"kind" => "details"}, text) when is_binary(text) do
+    if Markdown.summary?(text),
+      do: {:ok, %{"text" => text}},
+      else: {:error, :invalid, @summary}
+  end
+
   defp text_change(_block, text) when is_binary(text), do: {:ok, %{"text" => text}}
   defp text_change(_block, _), do: {:error, :invalid, "A block's text is a string."}
 
@@ -277,9 +344,14 @@ defmodule HalC2.Space.Blocks do
     do: {:ok, %{}}
 
   defp language_change(%{"kind" => "code"} = block, %{"language" => language}) do
-    # No language takes the rest of the fence's line with it.
+    # No language takes the rest of the fence's line with it, and only math keeps `$$`.
     next =
       if language, do: %{"language" => language}, else: %{"language" => :unset, "info" => :unset}
+
+    next =
+      if block["fence"] == "$$" and language != "math",
+        do: Map.put(next, "fence", :unset),
+        else: next
 
     if Markdown.code?(Map.merge(block, next) |> Map.reject(fn {_, v} -> v == :unset end)),
       do: {:ok, next},
@@ -288,10 +360,68 @@ defmodule HalC2.Space.Blocks do
 
   defp language_change(_block, _), do: {:error, :invalid, "Only a code block has a language."}
 
+  defp depth_change(_block, nil), do: {:ok, %{}}
+
+  defp depth_change(%{"kind" => kind} = block, depth) when kind in @lists do
+    cond do
+      not (is_integer(depth) and depth >= 0) ->
+        {:error, :invalid, "A list item's depth is 0 or more."}
+
+      depth == (block["depth"] || 0) ->
+        {:ok, %{}}
+
+      true ->
+        {:ok, %{"depth" => if(depth == 0, do: :unset, else: depth), "indent" => :unset}}
+    end
+  end
+
+  defp depth_change(_block, _), do: {:error, :invalid, "Only a list item has a depth."}
+
+  defp start_change(_block, changes) when not is_map_key(changes, "start"), do: {:ok, %{}}
+
+  defp start_change(%{"kind" => "numbered"}, %{"start" => start}) do
+    case start do
+      start when start in [nil, 1] -> {:ok, %{"start" => :unset}}
+      start when start in 0..999_999_999 -> {:ok, %{"start" => start}}
+      _ -> {:error, :invalid, @start}
+    end
+  end
+
+  defp start_change(_block, _), do: {:error, :invalid, "Only a numbered item has a start."}
+
+  defp alert_change(_block, changes) when not is_map_key(changes, "alert"), do: {:ok, %{}}
+
+  defp alert_change(%{"kind" => "callout"}, %{"alert" => alert}) do
+    cond do
+      alert == nil -> {:ok, %{"alert" => :unset}}
+      alert in Markdown.alerts() -> {:ok, %{"alert" => alert}}
+      true -> {:error, :invalid, @alert}
+    end
+  end
+
+  defp alert_change(_block, _), do: {:error, :invalid, "Only a callout has an alert."}
+
+  defp label_change(_block, nil), do: {:ok, %{}}
+
+  defp label_change(%{"kind" => "footnote"}, label) do
+    if Markdown.label?(label), do: {:ok, %{"label" => label}}, else: {:error, :invalid, @label}
+  end
+
+  defp label_change(_block, _), do: {:error, :invalid, "Only a footnote has a label."}
+
+  defp url_change(_block, nil), do: {:ok, %{}}
+
+  defp url_change(%{"kind" => "image", "url" => _}, url) do
+    if Markdown.url?(url), do: {:ok, %{"url" => url}}, else: {:error, :invalid, @url}
+  end
+
+  defp url_change(_block, _),
+    do: {:error, :invalid, "Only an image by its address has a url."}
+
   def move(state, id, after_id, author) do
     change(state, id, author, fn block ->
       with {:ok, low, high} <- place(state, block["pageId"], after_id, id),
-           do: {:ok, %{"order" => Order.between(low, high), "gap" => :unset}}
+           do: {:ok, %{"order" => Order.between(low, high), "gap" => :unset, "indent" => :unset}}
     end)
   end
 
@@ -506,6 +636,18 @@ defmodule HalC2.Space.Blocks do
           _ -> :ok
         end
 
+      spec["kind"] == "image" and spec["url"] != nil ->
+        cond do
+          spec["imageId"] != nil ->
+            {:error, :invalid, "An image has an imageId or a url, not both."}
+
+          Markdown.url?(spec["url"]) ->
+            :ok
+
+          true ->
+            {:error, :invalid, @url}
+        end
+
       spec["kind"] == "image" ->
         with {:ok, _} <- Images.fetch_live(state, spec["imageId"]), do: :ok
 
@@ -514,6 +656,36 @@ defmodule HalC2.Space.Blocks do
 
       spec["kind"] == "code" and not Markdown.code?(spec) ->
         {:error, :invalid, "A code block's language is one word, or null for none."}
+
+      spec["kind"] in @lists and not item?(spec) ->
+        {:error, :invalid,
+         "A list item's depth and indent are 0 or more, and its marker one of - * + or . )."}
+
+      spec["kind"] == "numbered" and not (spec["start"] == nil or spec["start"] in 0..999_999_999) ->
+        {:error, :invalid, @start}
+
+      spec["kind"] == "callout" and spec["alert"] not in [nil | Markdown.alerts()] ->
+        {:error, :invalid, @alert}
+
+      spec["kind"] == "callout" and spec["marker"] not in [nil, "> "] ->
+        {:error, :invalid, "A callout's marker is \"> \", for blank lines written so, or null."}
+
+      spec["kind"] in ~w(divider details_end) and spec["text"] not in [nil, ""] ->
+        {:error, :invalid, "A divider, or the end of a collapsed section, has no text."}
+
+      spec["kind"] == "footnote" and not Markdown.label?(spec["label"]) ->
+        {:error, :invalid, @label}
+
+      spec["kind"] == "details" and not Markdown.summary?(spec["text"] || "") ->
+        {:error, :invalid, @summary}
+
+      spec["kind"] == "details" and not Markdown.details?(spec["marker"]) ->
+        {:error, :invalid,
+         "A collapsed section's marker is how its <details> opening was written."}
+
+      spec["kind"] == "divider" and
+          not (spec["marker"] == nil or Markdown.divider?(spec["marker"])) ->
+        {:error, :invalid, "A divider's marker is a rule such as *** or ___."}
 
       not is_nil(spec["gap"]) and not (is_binary(spec["gap"]) and gap?(spec["gap"])) ->
         {:error, :invalid, "A block's gap is blank lines."}
@@ -532,6 +704,14 @@ defmodule HalC2.Space.Blocks do
   end
 
   defp with_table(spec), do: {:ok, spec}
+
+  defp item?(spec) do
+    count? = &(&1 == nil or (is_integer(&1) and &1 >= 0))
+    markers = %{"bullet" => [nil, "-", "*", "+"], "numbered" => [nil, ".", ")"]}
+
+    count?.(spec["depth"]) and count?.(spec["indent"]) and
+      spec["marker"] in Map.get(markers, spec["kind"], [nil])
+  end
 
   defp gap?("\n" <> rest), do: String.trim(rest) == ""
   defp gap?(_), do: false

@@ -10,7 +10,7 @@ defmodule HalC2.Steps.Space.Markdown do
   import ExUnit.Assertions
 
   alias HalC2.{Space, StreamState, Streams}
-  alias HalC2.Space.Blocks
+  alias HalC2.Space.{Blocks, Markdown}
   alias HalC2.Test.Mc.World
 
   @fixtures Path.expand("../../fixtures/markdown", __DIR__)
@@ -188,6 +188,107 @@ defmodule HalC2.Steps.Space.Markdown do
     {_, context} = World.call!(context, "space.block.update", payload)
     context
   end
+
+  step "the list items of {string} are:", %{args: [title]} = context do
+    [_header | rows] = context.datatable.raw
+
+    items =
+      for %{"kind" => kind} = block <- blocks(context, title),
+          kind in Markdown.lists(),
+          do: [kind, to_string(block["depth"] || 0), block["text"]]
+
+    assert items == rows
+    context
+  end
+
+  step "the user adds the numbered item {string} after {string}",
+       %{args: [text, after_text]} = context do
+    after_id = block_id(context, after_text)
+    state = Streams.state(Space.stream_id(context.space))
+
+    payload = %{
+      "spaceId" => context.space,
+      "pageId" => StreamState.get(state, "block")[after_id]["pageId"],
+      "kind" => "numbered",
+      "text" => text,
+      "afterBlockId" => after_id
+    }
+
+    {_, context} = World.call!(context, "space.block.insert", payload)
+    context
+  end
+
+  step "the user starts the list at {string} from {int}", %{args: [text, start]} = context do
+    update_block(context, text, %{"start" => start})
+  end
+
+  step "the user nests {string} {int} deep", %{args: [text, depth]} = context do
+    update_block(context, text, %{"depth" => depth})
+  end
+
+  step "{string} has a callout holding:", %{args: [title]} = context do
+    assert callout(context, title)["text"] == context.docstring
+    context
+  end
+
+  step "{string} has a {string} callout {string}", %{args: [title, alert, text]} = context do
+    assert Map.take(callout(context, title), ~w(alert text)) == %{
+             "alert" => alert,
+             "text" => text
+           }
+
+    context
+  end
+
+  step "the user makes {string} a {string} alert", %{args: [text, alert]} = context do
+    update_block(context, text, %{"alert" => alert})
+  end
+
+  step "the user makes {string} a plain quote", %{args: [text]} = context do
+    update_block(context, text, %{"alert" => nil})
+  end
+
+  step "{string} has a paragraph holding:", %{args: [title]} = context do
+    assert Enum.find(blocks(context, title), &(&1["kind"] == "paragraph"))["text"] ==
+             context.docstring
+
+    context
+  end
+
+  step "{string} has the footnote {string} holding:", %{args: [title, label]} = context do
+    note = Enum.find(blocks(context, title), &(&1["label"] == label)) || flunk("no footnote")
+    assert {note["kind"], note["text"]} == {"footnote", context.docstring}
+    context
+  end
+
+  step "the user labels {string} as {string}", %{args: [text, label]} = context do
+    update_block(context, text, %{"label" => label})
+  end
+
+  step "the collapsed section of {string} is titled {string}",
+       %{args: [title, summary]} = context do
+    assert Enum.find(blocks(context, title), &(&1["kind"] == "details"))["text"] == summary
+    context
+  end
+
+  step "{string} has the image {string} from {string}",
+       %{args: [title, caption, url]} = context do
+    image = Enum.find(blocks(context, title), &(&1["kind"] == "image")) || flunk("no image")
+    assert {image["text"], image["url"], image["imageId"]} == {caption, url, nil}
+    context
+  end
+
+  # An update whose reply a later step may check, as `context.reply`.
+  defp update_block(context, text, fields) do
+    payload =
+      Map.merge(%{"spaceId" => context.space, "blockId" => block_id(context, text)}, fields)
+
+    {reply, context} = World.call(context, "space.block.update", payload)
+    Map.put(context, :reply, reply)
+  end
+
+  defp callout(context, title),
+    do: Enum.find(blocks(context, title), &(&1["kind"] == "callout")) || flunk("no callout")
 
   defp edit_table(context, title, edit) do
     payload = %{

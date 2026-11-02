@@ -8,8 +8,13 @@
 // RPCs. A page's history (h) is the exception: it is not on a stream, so it is asked
 // for while it is open, again when the Space's stream moves. The SpaceView brick
 // paints `space` and dispatches `space.*`. A chart block draws as text (`spaceChart.ts`)
-// and is asked for in words; Markdown a page keeps as written (a `raw` block) shows as
-// its source, line for line; a heading carries its level's `#` marks. An entry taller
+// and is asked for in words. A Mermaid diagram (a `code` block in "mermaid", or, as the
+// fallback, a `raw` block that is one Mermaid fence the page keeps as written) shows as
+// the MC drew it in characters (`mermaidDiagrams.ts`). Any other `raw`, `table` or
+// `code` block shows as its source, line for line. An image, the Space's or one by its
+// address, is named in words and never fetched. A heading carries its level's `#`
+// marks, a checklist item its box and a callout a bar; a bullet, a numbered item, a
+// divider, a footnote, a `details` and a `details_end` show their text. An entry taller
 // than the pane, as a chart can be, scrolls through itself before the selection moves on.
 import * as NodePath from "node:path";
 
@@ -59,7 +64,8 @@ import { scheduleLabel } from "./sections/scheduledTasks.ts";
 import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
 import { chartData, chartLines } from "./spaceChart.ts";
-import { chunk, styled, type StyledText } from "./styledText.ts";
+import { createMermaidDiagrams, type MermaidDiagrams } from "./mermaidDiagrams.ts";
+import { chunk, mermaidFenceSource, mermaidLines, styled, type StyledText } from "./styledText.ts";
 
 /** Rows the pane's border and header take. */
 export const SPACE_CHROME_ROWS = 3;
@@ -135,6 +141,8 @@ export interface SpaceControllerOptions {
   readonly height: () => number;
   readonly width: () => number;
   readonly palette?: Palette;
+  /** The Mermaid drawings the MC sent, shared with the timeline and file viewer. */
+  readonly diagrams?: MermaidDiagrams;
   readonly setOpen: (open: boolean) => void;
   readonly publish: (state: TuiSpaceState) => void;
   readonly status: (text: string, kind?: StatusKind) => void;
@@ -356,6 +364,7 @@ const byOrder = (a: { readonly order: string }, b: { readonly order: string }) =
 export function createSpaceController(options: SpaceControllerOptions): SpaceController {
   const { client } = options;
   const palette = options.palette ?? THEME;
+  const diagrams = options.diagrams ?? createMermaidDiagrams(client);
   let open = false;
   let view: TuiSpaceView = "spaces";
   let spaces: StreamEntities = EMPTY_STREAM_ENTITIES;
@@ -598,8 +607,57 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     ];
   };
 
-  /** A placed image in words. Its caption names it once the image is gone from the stream. */
+  /**
+   * A diagram's source: a code block in "mermaid", or a Mermaid fence the page keeps as
+   * written (indented, or with a space before its language).
+   */
+  const mermaidSource = (block: SpaceBlock) =>
+    block.kind === "code" && block.language?.toLowerCase() === "mermaid"
+      ? block.text
+      : block.kind === "raw"
+        ? mermaidFenceSource(block.text)
+        : null;
+
+  /** A Mermaid diagram: drawn in characters by the MC, or its source. */
+  const diagramRows = (block: SpaceBlock, source: string): TuiSpaceRow[] => {
+    const key = `block:${block.id}`;
+    const active = selected[view] === key;
+    const bg = active ? { bg: palette.selectedBg } : {};
+    const room = width() - 2;
+    const agent = agentOf(block);
+    const { lines } = mermaidLines(source, diagrams.get(source), palette, room);
+    return lines.map((line, index) => {
+      const first = index === 0;
+      const lead = first ? marker(active) : "  ";
+      const by = index === lines.length - 1 && agent ? `  · ${agent}` : "";
+      // A drawing fits the pane; a line of source or a reason is cut to it, as raw text is.
+      const parts =
+        line.chunks.length === 1
+          ? [{ ...line.chunks[0]!, text: clip(expandTabs(line.chunks[0]!.text), room) }]
+          : line.chunks;
+      const text = parts.map((part) => part.text).join("");
+      return {
+        key,
+        kind: "block",
+        text: `${lead}${text}${by}`,
+        line: styled(
+          chunk(lead, { fg: palette.dim, ...bg }),
+          ...parts.map((part) => ({ ...part, ...bg })),
+          by !== "" && chunk(by, { fg: palette.faint, ...bg }),
+        ),
+        selected: active,
+        blockKind: block.kind,
+        first,
+      } satisfies TuiSpaceRow;
+    });
+  };
+
+  /**
+   * A placed image in words. Its caption names it once the image is gone from the stream.
+   * An image by its address is never fetched: its caption and where it is.
+   */
   const imagePlaceholder = (block: SpaceBlock): string => {
+    if (block.url) return `[image${block.text ? `: ${block.text}` : ""}] ${block.url}`;
     const image = imageById(block.imageId);
     if (!image) return `[image: ${block.text} was deleted]`;
     if (image.trashedAt !== null) return `[image: ${image.name} is in the trash]`;
@@ -653,6 +711,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     // A chart this client cannot read shows what it says of itself, as any block does.
     const chart = block.kind === "chart" ? chartData(block.chart) : null;
     if (chart) return chartRows(block, chart);
+    const diagram = mermaidSource(block);
+    if (diagram !== null) return diagramRows(block, diagram);
     if (asSource(block)) return rawRows(block);
     const key = `block:${block.id}`;
     const active = selected[view] === key;
@@ -1142,6 +1202,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       rows: rows.slice(top, top + room),
     });
   };
+  const stopDiagrams = diagrams.listen(() => {
+    if (open) publish();
+  });
 
   // --- streams ---
 
@@ -3216,8 +3279,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     refreshSpaceFiles,
     settled: async () => {
       while (pending.size > 0) await Promise.allSettled(pending);
+      await diagrams.settled();
     },
     dispose: () => {
+      stopDiagrams();
       unsubscribeViewers?.();
       unsubscribeViewers = null;
       unsubscribeSpaces?.();

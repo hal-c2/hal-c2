@@ -141,18 +141,39 @@ defmodule HalC2.Space.PageAgent do
   the crash lost on the way. `continued` are the threads about to go on, whose runs do not
   exist yet. A stop the crash cut short is finished here, as nothing else will repeat it:
   what the restart put back in the queue goes with it.
+
+  An ask this start of the MC took (`boot/0`) is left alone: the MC listens before this
+  runs, and its launch may still be writing its thread.
   """
   def reconcile(continued \\ []) do
+    boot = :persistent_term.get({__MODULE__, :boot}, nil)
+
     for %{"id" => space_id} <- StreamState.list(Streams.state(Space.index()), "space"),
-        %{"pageId" => page_id, "threadId" => thread_id, "status" => status} <- working(space_id),
+        %{"pageId" => page_id, "threadId" => thread_id, "status" => status} = agent <-
+          working(space_id),
+        boot == nil or agent["boot"] != boot,
         status == "stopping" or thread_id not in continued do
       retrying(thread_id, fn ->
         if status == "stopping", do: stop_thread(thread_id)
         settle(space_id, page_id, thread_id)
       end)
+
+      # No launch from before this start is under way, so one with no thread never will be.
+      drop_unstarted(thread_id)
     end
 
     :ok
+  end
+
+  @doc """
+  Takes a new token for this start of the MC, before it listens. Every ask is stamped
+  with it, so the reconciliation can tell the asks this start took from those it lost; one
+  from before there were tokens has none, and is from an earlier start.
+  """
+  def boot do
+    token = HalC2.Environment.uuid4()
+    :persistent_term.put({__MODULE__, :boot}, token)
+    token
   end
 
   @doc "Whether the page `thread_id` works on asked it to stop: a restart does not start it again."
@@ -343,7 +364,8 @@ defmodule HalC2.Space.PageAgent do
           "edited" => false,
           "error" => nil,
           "startedAt" => at,
-          "endedAt" => nil
+          "endedAt" => nil,
+          "boot" => :persistent_term.get({__MODULE__, :boot}, nil)
         }
 
         previous = entity(state, page_id)
@@ -388,6 +410,13 @@ defmodule HalC2.Space.PageAgent do
     end)
   end
 
+  # Images the ask saved for a thread that was never written: nothing else would ever
+  # delete them. Not on a stop, which can come while the launch is still writing it.
+  defp drop_unstarted(thread_id) do
+    if Streams.get(thread_id, "thread", thread_id) == nil,
+      do: HalC2.Attachments.delete_thread(thread_id)
+  end
+
   defp launcher, do: Application.get_env(:hal_c2, :page_agent_launch, &launch_thread/1)
   defp launch_thread(input), do: Orchestration.launch_thread(input)
 
@@ -408,6 +437,8 @@ defmodule HalC2.Space.PageAgent do
   end
 
   defp not_started(space_id, %{"pageId" => page_id, "threadId" => thread_id}, reason) do
+    drop_unstarted(thread_id)
+
     retrying(thread_id, fn ->
       Space.transact(space_id, fn state ->
         case entity(state, page_id) do
@@ -527,12 +558,18 @@ defmodule HalC2.Space.PageAgent do
 
   defp project(nil), do: last_worked()
 
+  # A project the prompt picked, with the thread the user worked in last there, so its
+  # model is the one an ask that picked none would use in the same project.
   defp project(project_id) do
-    {_threads, projects} = local_rows()
+    {threads, projects} = local_rows()
 
     case Enum.find(projects, &(&1["id"] == project_id)) do
-      nil -> {:error, :invalid, "That project is not on this MC, so an agent cannot run in it."}
-      project -> {:ok, project_id, project, nil}
+      nil ->
+        {:error, :invalid, "That project is not on this MC, so an agent cannot run in it."}
+
+      project ->
+        last = threads |> Enum.filter(&(&1["projectId"] == project_id)) |> latest()
+        {:ok, project_id, project, last}
     end
   end
 

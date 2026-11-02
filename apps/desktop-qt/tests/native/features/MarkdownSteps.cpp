@@ -16,8 +16,10 @@
 #include <memory>
 
 #include "Brick.h"
+#include "ComposerBrick.h"
 #include "FakeFiles.h"
 #include "Harness.h"
+#include "Mermaid.h"
 #include "Stream.h"
 #include "World.h"
 
@@ -33,6 +35,9 @@ const QString kSentence = QStringLiteral("Cache keys include the tenant.");
 // What a step saw, for a later step to compare with.
 struct Seen {
   QString link;
+  QPointer<QObject> menu;  // the text's menu the user opened
+  // The code a reply being written has so far.
+  QString code;
   QPointer<QQuickItem> item;
   std::shared_ptr<QSignalSpy> redraws;
   int segments = 0;
@@ -175,6 +180,25 @@ void write(World& world, const QString& more) {
 
 QString clipboard() {
   return QGuiApplication::clipboard()->text();
+}
+
+
+// Right-clicks `edit`, a reply's text, near its start; returns the text's
+// menu (TextEditMenu) it opened.
+QObject* openTextMenu(World& world, QQuickItem* edit) {
+  Brick& brick = timelineBrick(world);
+  QTest::mouseClick(&brick.window(), Qt::RightButton, Qt::NoModifier, brick.at(edit, 0.05, 0.5));
+  QObject* menu = nullptr;
+  // The reply's Markdown makes it, a delegate's: the timeline does not own it.
+  world.waitFor([&] {
+    for (QQuickItem* up = edit; up && !menu; up = up->parentItem()) {
+      for (QObject* found : up->findChildren<QObject*>(QStringLiteral("textMenu"), Qt::FindDirectChildrenOnly)) {
+        if (found->property("visible").toBool()) menu = found;
+      }
+    }
+    return menu != nullptr;
+  }, QStringLiteral("the text's menu to open"));
+  return menu;
 }
 
 const Steps steps([] {
@@ -356,7 +380,12 @@ const Steps steps([] {
   });
 
   step(QStringLiteral("the agent is writing a code block"), [](World& world, const Captures&, const Table&) {
-    startWriting(world, QStringLiteral("Checking the refund path:\n\n```py\ndef refund(order):\n    return order.total"));
+    world.mc.part<Seen>().code = QStringLiteral("def refund(order):\n    return order.total");
+    startWriting(world, QStringLiteral("Checking the refund path:\n\n```py\n") + world.mc.part<Seen>().code);
+  });
+  step(QStringLiteral("the agent is still writing a \"mermaid\" code block"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<Seen>().code = mermaid::kFlowchart;
+    startWriting(world, QStringLiteral("How an order is paid:\n\n```mermaid\n") + mermaid::kFlowchart);
   });
   step(QStringLiteral("the code written so far is shown as a code block"), [](World& world, const Captures&, const Table&) {
     QQuickItem* message = reply(world, 2);
@@ -364,7 +393,9 @@ const Steps steps([] {
     expect(segment->property("kind") == QLatin1String("code") && segment->property("open").toBool(),
            QStringLiteral("the reply is drawn as %1").arg(kindsOf(message).join(QStringLiteral(", "))));
     QQuickItem* code = one(message, QStringLiteral("codeText"));
-    expect(plain(code) == QLatin1String("def refund(order):\n    return order.total"), QStringLiteral("the code reads \"%1\"").arg(plain(code)));
+    expect(code->isVisible() && plain(code) == world.mc.part<Seen>().code, QStringLiteral("the code reads \"%1\"").arg(plain(code)));
+    // A diagram not finished yet is not drawn, nor asked for.
+    expect(mermaid::asked(world) == 0, QStringLiteral("the MC was asked to draw a diagram being written"));
     world.mc.part<Seen>().item = code;
   });
   step(QStringLiteral("the agent closes the code block"), [](World& world, const Captures&, const Table&) {
@@ -375,6 +406,35 @@ const Steps steps([] {
     QQuickItem* segment = within(message, QStringLiteral("markdownSegment")).last();
     world.waitFor([&] { return !segment->property("open").toBool(); }, QStringLiteral("the code block to close"));
     expect(one(message, QStringLiteral("codeText")) == world.mc.part<Seen>().item.data(), QStringLiteral("the code block was drawn anew"));
+  });
+
+  // Mermaid diagrams (MermaidSteps.cpp answers the MC's part).
+  step(QStringLiteral("the agent answers with a \"mermaid\" code block holding a flowchart( with an unclosed bracket)?"), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<Seen>().code = c[0].isEmpty() ? mermaid::kFlowchart : mermaid::kBrokenFlowchart;
+    answer(world, QStringLiteral("How an order is paid:\n\n```mermaid\n%1\n```").arg(world.mc.part<Seen>().code));
+  });
+  step(QStringLiteral("on the desktop and the phone the flowchart is drawn in place of the code block"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* message = reply(world, 2);
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, QStringLiteral("the diagram to be drawn"));
+    expect(!one(message, QStringLiteral("codeText"))->isVisible(), QStringLiteral("the diagram's source shows beside it"));
+    expect(mermaid::asked(world) == 1, QStringLiteral("the MC was asked %1 times").arg(mermaid::asked(world)));
+  });
+  step(QStringLiteral("the user can switch to the diagram's source and copy it"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* message = reply(world, 2);
+    click(world, one(message, QStringLiteral("diagramSource")));
+    QQuickItem* code = one(message, QStringLiteral("codeText"));
+    world.waitFor([&] { return code->isVisible() && mermaid::drawn(world).isEmpty(); }, QStringLiteral("the source to be shown in place of the diagram"));
+    expect(plain(code) == world.mc.part<Seen>().code, QStringLiteral("the source reads \"%1\"").arg(plain(code)));
+    QGuiApplication::clipboard()->clear();
+    click(world, one(message, QStringLiteral("copyCode")));
+    world.waitFor([&] { return clipboard() == world.mc.part<Seen>().code; }, [&] { return QStringLiteral("the source to be copied; the clipboard has \"%1\"").arg(clipboard()); });
+  });
+  step(QStringLiteral("the diagram's source is shown as a code block"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* message = reply(world, 2);
+    QQuickItem* code = one(message, QStringLiteral("codeText"));
+    world.waitFor([&] { return mermaid::asked(world) == 1 && !world.brick->shows(QStringLiteral("Drawing the diagram…")); }, QStringLiteral("the MC to answer"));
+    expect(code->isVisible() && plain(code) == world.mc.part<Seen>().code, QStringLiteral("the code block reads \"%1\"").arg(plain(code)));
+    expect(!one(message, QStringLiteral("diagramSource"))->isVisible(), QStringLiteral("a diagram that was not drawn offers to show its source"));
   });
 
   // Alerts.
@@ -451,6 +511,43 @@ const Steps steps([] {
     world.waitFor([&] { return !at(world.state(QStringLiteral("menu")), QStringLiteral("items")).toList().isEmpty(); },
                   QStringLiteral("the link's menu to open"));
   });
+  // The right-click menu on a reply's text.
+  step(QStringLiteral("the agent answers %1").arg(q), [](World& world, const Captures& c, const Table&) { answer(world, c[0]); });
+  step(QStringLiteral("the user selects %1 in the reply").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* prose = one(reply(world), QStringLiteral("markdownProse"));
+    const int start = int(plain(prose).indexOf(c[0]));
+    expect(start >= 0, QStringLiteral("\"%1\" is not shown in \"%2\"").arg(c[0], plain(prose)));
+    QMetaObject::invokeMethod(prose, "select", Q_ARG(int, start), Q_ARG(int, start + int(c[0].size())));
+  });
+  step(QStringLiteral("the user chooses %1 from the reply's right-click menu").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* prose = one(reply(world), QStringLiteral("markdownProse"));
+    chooseInTextMenu(world, timelineBrick(world), openTextMenu(world, prose), c[0]);
+  });
+  step(QStringLiteral("the user right-clicks the reply's text"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<Seen>().menu = openTextMenu(world, one(reply(world), QStringLiteral("markdownProse")));
+  });
+  step(QStringLiteral("the menu offers %1 and %1 only").arg(q), [](World& world, const Captures& c, const Table&) {
+    QObject* menu = world.mc.part<Seen>().menu;
+    expect(menu != nullptr, QStringLiteral("no text's menu is open"));
+    QStringList offered;
+    for (int i = 0; i < menu->property("count").toInt(); ++i) {
+      QQuickItem* entry = nullptr;
+      QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, entry), Q_ARG(int, i));
+      if (entry && entry->isVisible() && entry->height() > 0) offered.append(entry->property("text").toString());
+    }
+    expect(offered == QStringList{c[0], c[1]}, QStringLiteral("the menu offers %1").arg(offered.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("the user chooses %1 from the code block's right-click menu").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* code = one(reply(world, 2), QStringLiteral("codeText"));
+    chooseInTextMenu(world, timelineBrick(world), openTextMenu(world, code), c[0]);
+  });
+  step(QStringLiteral("the code block's source is selected"), [](World& world, const Captures&, const Table&) {
+    QString selected = one(reply(world, 2), QStringLiteral("codeText"))->property("selectedText").toString();
+    // Line breaks in a selection are paragraph separators.
+    selected.replace(QChar(0x2028), QLatin1Char('\n')).replace(QChar(0x2029), QLatin1Char('\n'));
+    expect(selected.trimmed() == kSource, QStringLiteral("the selection is \"%1\"").arg(selected));
+  });
+
   // The same address in inline code and in a code block, in the next reply.
   step(QStringLiteral("web addresses inside code are left as text"), [](World& world, const Captures&, const Table&) {
     const QString address = QStringLiteral("https://example.com/docs");

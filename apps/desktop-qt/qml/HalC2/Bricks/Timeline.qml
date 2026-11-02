@@ -219,8 +219,8 @@ Item {
     readonly property color borderColor: Theme.palette.color("border", "#191919")
     readonly property color surfaceColor: Theme.palette.color("surface", "#111111")
     readonly property color accentColor: Theme.palette.color("accent", "#346bf1")
-    readonly property color errorColor: Theme.palette.color("error", "#fb414a")
-    readonly property color warningColor: Theme.palette.color("warning", "#fe9a00")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#fb414a")
+    readonly property color warningColor: Theme.palette.color("warningForeground", "#fe9a00")
     readonly property string monoFamily: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
     readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     // The row colours: the message surface and its text, the hover wash, the
@@ -250,6 +250,9 @@ Item {
     component ActionLink: Text {
         id: action
         signal clicked
+        Accessible.role: Accessible.Button
+        Accessible.name: action.text
+        Accessible.onPressAction: action.clicked()
         color: actionHover.hovered ? root.textColor : root.mutedColor
         font.family: root.uiFamily
         font.pixelSize: Math.round(12 * Theme.fontScale)
@@ -531,6 +534,8 @@ Item {
         // A click in the conversation puts the keyboard on it: Page Up and
         // Page Down page through it, Home and End go to its ends.
         activeFocusOnTab: true
+        Accessible.role: Accessible.List
+        Accessible.name: qsTr("Conversation")
         Keys.onPressed: event => {
             if (event.modifiers & (Qt.AltModifier | Qt.MetaModifier | Qt.ShiftModifier))
                 return;
@@ -547,8 +552,15 @@ Item {
                 return;
             event.accepted = true;
         }
+        // Set when a click put the keyboard here, so only Tab draws the ring.
+        property bool tapped: false
+        onActiveFocusChanged: if (!activeFocus)
+            tapped = false
         TapHandler {
-            onTapped: view.forceActiveFocus()
+            onTapped: {
+                view.tapped = true;
+                view.forceActiveFocus();
+            }
         }
         topMargin: 12
         bottomMargin: 12
@@ -703,11 +715,15 @@ Item {
                         id: attribution
                         readonly property string thread: row.model.thread ?? ""
                         objectName: "messageAttribution"
+                        Accessible.role: attribution.thread.length > 0 ? Accessible.Link : Accessible.StaticText
+                        Accessible.name: attribution.text
+                        Accessible.onPressAction: if (attribution.thread.length > 0)
+                            root.threadActivated(attribution.thread)
                         visible: text.length > 0
                         anchors.right: parent.right
                         anchors.rightMargin: 4
                         text: row.attribution ?? ""
-                        color: attribution.thread.length > 0 && attributionHover.hovered ? root.textColor : Qt.alpha(root.mutedColor, 0.7)
+                        color: attribution.thread.length > 0 && attributionHover.hovered ? root.textColor : root.mutedColor
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                         HoverHandler {
                             id: attributionHover
@@ -953,6 +969,7 @@ Item {
                         Behavior on opacity {
                             NumberAnimation {
                                 duration: 200
+                                easing.type: Easing.OutCubic
                             }
                         }
                         Stamp {
@@ -1148,7 +1165,7 @@ Item {
                                                 width: Math.max(0, fileStat.x - x - 8)
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 text: changedFile.modelData.name
-                                                color: changedFile.folder ? (changedFileHover.hovered ? Qt.alpha(root.textColor, 0.9) : Qt.alpha(root.mutedColor, 0.9)) : changedFileHover.hovered ? root.textColor : Qt.alpha(root.textColor, 0.85)
+                                                color: changedFile.folder ? (changedFileHover.hovered ? Qt.alpha(root.textColor, 0.9) : root.mutedColor) : changedFileHover.hovered ? root.textColor : Qt.alpha(root.textColor, 0.85)
                                                 font.family: root.monoFamily
                                                 font.pixelSize: Math.round((changedFile.folder ? 11 : 12) * Theme.fontScale)
                                                 wrapMode: Text.NoWrap
@@ -1196,6 +1213,7 @@ Item {
                         Behavior on opacity {
                             NumberAnimation {
                                 duration: 200
+                                easing.type: Easing.OutCubic
                             }
                         }
                         IconButton {
@@ -1383,6 +1401,7 @@ Item {
                                 }
                                 Stamp {
                                     anchors.verticalCenter: parent.verticalCenter
+                                    // ljos-allow(focus-hover-only): a call's time is a detail with no action; touch shows it always (alwaysShowMeta), and the timeline's rows take no keyboard focus to show it on
                                     visible: text.length > 0 && (callLine.hovered || root.alwaysShowMeta)
                                     rowId: row.rowId
                                     entryId: call.modelData.id ?? ""
@@ -1465,6 +1484,9 @@ Item {
                     implicitHeight: 36
                     Row {
                         id: foldButton
+                        Accessible.role: Accessible.Button
+                        Accessible.name: row.title ?? ""
+                        Accessible.onPressAction: root.toggle(row.rowId)
                         y: 4
                         height: 23
                         leftPadding: 4
@@ -1838,6 +1860,8 @@ Item {
                             font.pixelSize: Math.round(11 * Theme.fontScale)
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
+                            // One line on the rule: a detail of several would hang over the rows around it.
+                            maximumLineCount: 1
                         }
                     }
                     Rectangle {
@@ -1865,6 +1889,17 @@ Item {
                 return qsTr("Loading…");
             }
         }
+    }
+
+    // The conversation has the keyboard (Tab to it): Page Up/Down page it.
+    Rectangle {
+        objectName: "timelineFocus"
+        anchors.fill: view
+        visible: view.activeFocus && !view.tapped
+        color: "transparent"
+        radius: 6
+        border.width: 1
+        border.color: Theme.palette.color("focus", "#3b82f6")
     }
 
     // "Working for 12s" under the rows, a static

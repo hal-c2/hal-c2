@@ -26,7 +26,7 @@ Item {
     }
 
     function block(id, text, more) {
-        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more ?? {});
+        return Object.assign({ id: id, kind: "paragraph", text: text, language: "", checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more ?? {});
     }
 
     function pageOf(id, more) {
@@ -469,7 +469,7 @@ Item {
         }
 
         function version(id, more) {
-            return Object.assign({ version: id, at: "2026-10-31T10:00:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" }, more ?? {});
+            return Object.assign({ version: id, at: "2026-10-31T10:00:00Z", byAgent: false, byUpdate: false, byFile: false, threadTitle: "", restoredFromAt: "" }, more ?? {});
         }
 
         function openHistory(history, state) {
@@ -480,6 +480,82 @@ Item {
             screen.view = "history";
             waitForRendering(screen);
             return screen;
+        }
+
+        function fileOf(more) {
+            return Object.assign({ projectId: "shop", projectTitle: "shop", path: "docs/guide.md", missing: false, unwritten: false, conflictAt: "" }, more ?? {});
+        }
+
+        function openFilePage(file) {
+            const screen = makeScreen({ page: root.pageOf("p1", { file: file }) });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            waitForRendering(screen);
+            return screen;
+        }
+
+        function texts(item) {
+            let found = item.visible && typeof item.text === "string" ? [item.text] : [];
+            for (const child of item.children ?? [])
+                found = found.concat(texts(child));
+            return found;
+        }
+
+        function test_aFilePageSaysWhichFileItIs() {
+            const screen = openFilePage(fileOf());
+            verify(findChild(screen, "spacePageFile").visible);
+            compare(findChild(screen, "spacePageFilePath").text, "The file docs/guide.md of shop");
+            verify(findChild(screen, "spacePageFileShow").visible);
+            verify(!findChild(screen, "spacePageFileGone").visible);
+            verify(!findChild(screen, "spacePageFileConflict").visible);
+        }
+
+        function test_anOrdinaryPageSaysNothingOfAFile() {
+            const screen = openFilePage(undefined);
+            verify(!findChild(screen, "spacePageFile").visible);
+            verify(!sheetIdsOf(screen, "p1").includes("showFile"));
+            verify(!sheetIdsOf(screen, "p1").includes("unlinkFile"));
+        }
+
+        function test_aGoneFileIsNotOfferedToShow() {
+            const screen = openFilePage(fileOf({ missing: true }));
+            verify(findChild(screen, "spacePageFileGone").visible);
+            verify(!findChild(screen, "spacePageFileShow").visible);
+            const ids = sheetIdsOf(screen, "p1");
+            verify(!ids.includes("showFile"));
+            verify(ids.includes("unlinkFile"));
+        }
+
+        function test_aFileThatWonLeadsToTheHistory() {
+            const screen = openFilePage(fileOf({ conflictAt: "2026-10-31T10:00:00Z" }));
+            verify(findChild(screen, "spacePageFileConflict").visible);
+            findChild(screen, "spacePageFileHistory").clicked();
+            compare(screen.view, "history");
+        }
+
+        function sheetIdsOf(screen, id) {
+            screen.pageMenu(id, id, "", {});
+            const ids = sheetIds(screen);
+            sheetOf(screen).close();
+            return ids;
+        }
+
+        function test_theOpenFilePagesMenuShowsOrStopsFollowingItsFile() {
+            const screen = openFilePage(fileOf());
+            const ids = sheetIdsOf(screen, "p1");
+            verify(ids.includes("showFile"));
+            verify(ids.includes("unlinkFile"));
+            // Of a page only listed, its file is not known.
+            verify(!sheetIdsOf(screen, "p2").includes("unlinkFile"));
+            screen.pageMenu("p1", "p1", "", {});
+            sheetOf(screen).choose("unlinkFile");
+            compare(dispatched("space.page.unlinkFile")[0].pageId, "p1");
+        }
+
+        function test_aVersionTheFileWroteSaysSo() {
+            const screen = openHistory({ versions: [version(3, { byFile: true }), version(1)] });
+            verify(texts(findChild(screen, "spaceHistoryRow:0")).includes("The project file · current"));
+            verify(texts(findChild(screen, "spaceHistoryRow:1")).includes("You"));
         }
 
         function test_aPageMenuOpensTheHistoryOnThatPage() {
@@ -1090,6 +1166,125 @@ Item {
             compare(rename.spaceId, "s1");
             compare(rename.deckId, "d1");
             compare(rename.title, "Renamed");
+        }
+
+        // A page open on a diagram as the MC imports a "mermaid" fence: a code
+        // block in "mermaid" holding the bare source (HalC2.Space.Markdown).
+        function openDiagram(source) {
+            Diagrams.reset();
+            const text = source;
+            const screen = makeScreen({ blocks: [root.block("b1", text, { kind: "code", language: "mermaid" })] });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            tryVerify(() => findChild(screen, "spaceDiagram:" + text) !== null);
+            return { screen: screen, text: text };
+        }
+
+        function test_aMermaidBlockIsDrawnInPlaceOfItsSource() {
+            const source = "flowchart LR\n  Cart --> Pay";
+            const page = openDiagram(source);
+            const editor = findChild(page.screen, "spaceBlockEditor:" + page.text);
+            verify(editor.visible, "the source shows until it is drawn");
+            compare(findChild(page.screen, "mermaidStatus").text, "Drawing the diagram…");
+            verify(("dark\n" + source) in Diagrams.asked, "asked for in the phone's theme");
+
+            const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" fill="#336699"/></svg>';
+            Diagrams.answer(source, "dark", { status: "drawn", kind: "flowchart", url: "data:image/svg+xml;base64," + Qt.btoa(Array.from(svg, c => c.charCodeAt(0))), width: 120, height: 40 });
+            const image = findChild(page.screen, "mermaidImage");
+            tryCompare(image, "status", Image.Ready);
+            verify(image.visible);
+            verify(!editor.visible, "the picture takes the source's place");
+
+            // The source is a tap away, to read or edit, and back.
+            const toggle = findChild(page.screen, "spaceDiagramSource:" + page.text);
+            verify(toggle.visible);
+            toggle.clicked();
+            verify(editor.visible);
+            verify(!image.visible);
+            toggle.clicked();
+            verify(image.visible);
+            verify(!editor.visible);
+        }
+
+        // What the user writes in the source is saved when they leave it, and
+        // drawn once the MC has it.
+        function test_aSavedEditToTheDiagramSourceIsDrawnAgain() {
+            const source = "flowchart LR\n  Cart --> Pay";
+            const page = openDiagram(source);
+            Diagrams.answer(source, "dark", { status: "drawn", kind: "flowchart", url: "", width: 120, height: 40 });
+            findChild(page.screen, "spaceDiagramSource:" + page.text).clicked();
+            const editor = findChild(page.screen, "spaceBlockEditor:" + page.text);
+            editor.forceActiveFocus();
+            const ours = source + "\n  Pay --> Ship";
+            editor.text = ours;
+            editor.focus = false;
+            compare(dispatched("space.block.update")[0].text, ours);
+
+            Spaces.blocks.setProperty(0, "text", ours);
+            verify(("dark\n" + source + "\n  Pay --> Ship") in Diagrams.asked, "the new source is asked for");
+            Diagrams.answer(source + "\n  Pay --> Ship", "dark", { status: "drawn", kind: "flowchart", url: "", width: 120, height: 60 });
+            verify(findChild(page.screen, "spaceDiagram:" + ours).visible, "drawn again with the new node");
+            verify(!editor.visible, "in place of the source");
+        }
+
+        // Another client's or an agent's edit arriving mid-sentence neither
+        // hides the source nor takes the keyboard away.
+        function test_anEditFromElsewhereLeavesTheDiagramSourceBeingWritten() {
+            const source = "flowchart LR\n  Cart --> Pay";
+            const page = openDiagram(source);
+            Diagrams.answer(source, "dark", { status: "drawn", kind: "flowchart", url: "", width: 120, height: 40 });
+            findChild(page.screen, "spaceDiagramSource:" + page.text).clicked();
+            const editor = findChild(page.screen, "spaceBlockEditor:" + page.text);
+            editor.forceActiveFocus();
+            verify(editor.activeFocus);
+
+            const theirs = source + "\n  Pay --> Ship";
+            Spaces.blocks.setProperty(0, "text", theirs);
+            Diagrams.answer(theirs, "dark", { status: "drawn", kind: "flowchart", url: "", width: 120, height: 60 });
+            verify(editor.visible, "the source stays");
+            verify(editor.activeFocus, "the user is still writing");
+            compare(dispatched("space.block.update").length, 0);
+        }
+
+        function test_aMermaidBlockWithAMistakeShowsItsSourceAndWhere() {
+            const source = "flowchart LR\n  Cart[Cart --> Pay";
+            const page = openDiagram(source);
+            Diagrams.answer(source, "dark", { status: "invalid", kind: "flowchart", reason: "A bracket is opened and not closed.", line: 2 });
+            verify(findChild(page.screen, "spaceBlockEditor:" + page.text).visible);
+            const status = findChild(page.screen, "mermaidStatus");
+            verify(status.visible);
+            compare(status.text, "Line 2: A bracket is opened and not closed.");
+            verify(!findChild(page.screen, "spaceDiagramSource:" + page.text).visible, "nothing to switch to");
+        }
+
+        // A fence the MC keeps as written (indented, or with a space before its
+        // language) is a raw block, and still drawn.
+        function test_aMermaidFenceKeptAsWrittenIsDrawnToo() {
+            Diagrams.reset();
+            const spaced = "``` mermaid\nflowchart LR\n  Cart --> Pay\n```";
+            const indented = "  ~~~Mermaid\nsequenceDiagram\n  A->>B: hi\n  ~~~";
+            const screen = makeScreen({ blocks: [root.block("b1", spaced, { kind: "raw" }), root.block("b2", indented, { kind: "raw" })] });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            tryVerify(() => findChild(screen, "spaceDiagram:" + indented) !== null);
+            verify(findChild(screen, "spaceDiagram:" + spaced) !== null);
+            compare(Object.keys(Diagrams.asked).sort(), ["dark\nflowchart LR\n  Cart --> Pay", "dark\nsequenceDiagram\n  A->>B: hi"]);
+        }
+
+        // Code in another language, a fence among other text, and a table are
+        // shown as written.
+        function test_onlyAMermaidCodeBlockOrFenceIsADiagram() {
+            Diagrams.reset();
+            const blocks = [root.block("b1", "flowchart LR\n  A --> B", { kind: "code", language: "js" }),
+                            root.block("b2", "flowchart LR\n  A --> B", { kind: "code" }),
+                            root.block("b3", "```js\nflowchart LR\n```", { kind: "raw" }),
+                            root.block("b4", "Before\n```mermaid\nflowchart LR\n```", { kind: "raw" }),
+                            root.block("b5", "| a |\n| - |\n| 1 |", { kind: "table" })];
+            const screen = makeScreen({ blocks: blocks });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            tryVerify(() => findChild(screen, "spaceBlockEditor:" + blocks[4].text) !== null);
+            compare(Object.keys(Diagrams.asked).length, 0);
         }
 
         function test_whatWasWrittenOnASlideGoesToTheMcWhenTheEditorLosesFocus() {

@@ -432,14 +432,17 @@ private:
 //
 // Publishes `space`: {error (the last refusal, until the next request), busy
 // (a page from a thread is being written), drawing (a chart is being asked for),
-// written, addingImage, generatingImage, imageProviders ({providers, selection},
+// written (the page last written from a thread or opened from a file, the phone's Space
+// screen opening it when it arrives; "" while another file opens), addingImage,
+// generatingImage, imageProviders ({providers, selection},
 // `space.image.providers`' answer), files, picking, projects}.
 //
 // Project files open as pages through the MC (features/space/project-files.feature),
 // only for a project of this client's MC, whose Spaces this view shows:
-//   files    {projectId: {config, paths: {relativePath: {kind, spaceId, pageId, title}}}},
+//   files    {projectId: {config, paths: {relativePath: {kind, spaceId, pageId, title}}, error?}},
 //            the project's Space files as `space.files.list` last said; pageId is
-//            "" for a file with no page yet. A project not asked about is not there.
+//            "" for a file with no page yet. A refused list has no paths and the MC's
+//            error. A project not answered for yet is not there.
 //   picking  the project whose files the Space view offers to add as a page, "" for none
 //   projects [{id, title}]: this MC's projects, for the picker to choose from
 // A file opens in the selected Space, else the last one shown, else the first; the
@@ -597,7 +600,7 @@ private:
   int m_addingImages = 0;
   int m_generatingImages = 0;
   QVariantMap m_imageProviders;
-  // The page last written from a thread.
+  // The page last written from a thread or opened from a file.
   QString m_written;
   // `files`, by project id, and the project picked from.
   QVariantMap m_files;

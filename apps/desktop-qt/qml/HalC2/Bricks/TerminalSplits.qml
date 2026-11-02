@@ -84,6 +84,9 @@ FocusScope {
                 readonly property var session: cell.session
 
                 objectName: "HalC2Terminal"
+                // What the TapHandlers below do with a click on a link.
+                Accessible.role: Accessible.Terminal
+                Accessible.name: Qt.platform.os === "osx" ? qsTr("Terminal: Cmd-click a link to open it") : qsTr("Terminal: Ctrl-click a link to open it")
                 focus: true
                 padding: 6
                 // A whole font: the Terminal's default carries a point size,

@@ -113,12 +113,21 @@ defmodule HalC2.Space.Rpc do
     do: page(Schedule.remove(s, p))
 
   defp call("block.insert", %{"spaceId" => s, "pageId" => p, "kind" => _} = i) do
-    spec = Map.take(i, ~w(kind text checked linkedPageId imageId level table language))
+    spec =
+      Map.take(
+        i,
+        ~w(kind text checked linkedPageId imageId url level table language depth start alert
+           label)
+      )
+
     block(Space.insert_block(s, p, spec, Map.get(i, "afterBlockId", :last)))
   end
 
   defp call("block.update", %{"spaceId" => s, "blockId" => b} = i),
-    do: block(Space.edit_block(s, b, Map.take(i, ~w(text level language))))
+    do:
+      block(
+        Space.edit_block(s, b, Map.take(i, ~w(text level language depth start alert label url)))
+      )
 
   defp call("block.editTable", %{"spaceId" => s, "blockId" => b, "edit" => edit}),
     do: block(Space.edit_table(s, b, edit))

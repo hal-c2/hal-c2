@@ -131,12 +131,19 @@ Item {
                     showBrand: true
                     window: layout.framesWindow ? layout.window : null
 
-                    // The right edge: drag to resize, double click for the default width.
+                    // The right edge: drag to resize, double click for the default
+                    // width. From the keyboard it is a Tab stop: the arrows move it,
+                    // Enter puts the default width back.
                     MouseArea {
+                        id: sidebarEdge
                         objectName: "sidebarEdge"
 
                         property real pressX: 0
                         property int pressWidth: 0
+
+                        function step(by: int) {
+                            Shell.dispatch("sidebar.resize", { width: Math.max(208, sidebarView.shownWidth + by) });
+                        }
 
                         anchors.right: parent.right
                         anchors.top: parent.top
@@ -144,6 +151,14 @@ Item {
                         width: 6
                         cursorShape: Qt.SplitHCursor
                         preventStealing: true
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Splitter
+                        Accessible.name: qsTr("Resize thread list")
+                        Accessible.onPressAction: Shell.dispatch("sidebar.resize", {})
+                        Keys.onLeftPressed: step(-16)
+                        Keys.onRightPressed: step(16)
+                        Keys.onReturnPressed: Shell.dispatch("sidebar.resize", {})
+                        Keys.onEnterPressed: Shell.dispatch("sidebar.resize", {})
                         onPressed: mouse => {
                             pressX = mapToItem(navigation.parent, mouse.x, 0).x;
                             pressWidth = sidebarView.shownWidth;
@@ -160,6 +175,15 @@ Item {
                         }
                         onCanceled: sidebarView.dragWidth = -1
                         onDoubleClicked: Shell.dispatch("sidebar.resize", {})
+
+                        Rectangle {
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            width: 2
+                            visible: sidebarEdge.activeFocus
+                            color: Theme.palette.color("focus", "#3b82f6")
+                        }
                     }
                 }
 
@@ -210,6 +234,8 @@ Item {
                     Layout.preferredHeight: 36
                     visible: layout.framesWindow && Theme.frameless && !workspaceView.visible && !tabsView.visible
                     color: Theme.palette.color("canvas", "#0f0f12")
+                    Accessible.role: Accessible.TitleBar
+                    Accessible.name: qsTr("Title bar")
 
                     DragHandler {
                         target: null
@@ -219,6 +245,7 @@ Item {
                     }
 
                     TapHandler {
+                        // ljos-allow(focus-pointer-only): a double click on the title bar is the pointer's shortcut for the window controls' Maximize button, which the keyboard reaches
                         onDoubleTapped: layout.window.visibility === Window.Maximized ? layout.window.showNormal() : layout.window.showMaximized()
                     }
                 }
@@ -269,6 +296,7 @@ Item {
                 Composer {
                     id: composerView
 
+                    takesDrops: false
                     Layout.fillWidth: true
                     // A Space page has the prompt on the page (SpacePage).
                     visible: ready && model.routeKind !== "page" && !layout.window.settingsActive
@@ -367,6 +395,11 @@ Item {
         width: parent.width - x
         height: navigation.height
         color: Theme.palette.color("scrim", "#52000000")
+        Accessible.role: Accessible.Button
+        Accessible.name: qsTr("Close thread list")
+        // The pointer's way out; the keyboard has the header's toggle.
+        Accessible.focusable: false
+        Accessible.onPressAction: Shell.dispatch("sidebar.toggle")
 
         MouseArea {
             anchors.fill: parent
@@ -386,6 +419,11 @@ Item {
         width: parent.width - panelView.width - x
         height: panelView.height
         color: Theme.palette.color("scrim", "#52000000")
+        Accessible.role: Accessible.Button
+        Accessible.name: qsTr("Close panel")
+        // The pointer's way out; the keyboard has the header's toggle.
+        Accessible.focusable: false
+        Accessible.onPressAction: Shell.dispatch("rightPanel.toggle")
 
         MouseArea {
             anchors.fill: parent
@@ -471,6 +509,21 @@ Item {
 
     ProjectFolderDrop {
         anchors.fill: parent
+    }
+
+    // Over the conversation (the route's centre and the composer under it,
+    // not the terminal or the panels) files go to the draft instead: a
+    // single folder there is referenced, not opened as a project. It is above
+    // everything in `body`, so it stops short of the details shown as a
+    // sheet, and is away while a list or panel over the thread has its
+    // scrim: drops there are theirs (a thread row's attaches to that thread).
+    ConversationDrop {
+        x: body.x + centre.x
+        y: body.y + centre.y + centreHost.y
+        width: detailsView.visible && layout.detailsSheet ? Math.max(0, detailsView.x - centre.x) : centre.width
+        height: composerView.y + composerView.height - centreHost.y
+        visible: centre.visible && composerView.visible && !sidebarScrim.visible && !panelScrim.visible
+        composer: composerView
     }
 
     // Toasts stack from the top right, under the header strip (or the band
