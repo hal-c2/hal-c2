@@ -22,6 +22,7 @@
 #include "FakeConfig.h"
 #include "FakeTerminals.h"
 #include "Harness.h"
+#include "McClient.h"
 #include "SettingsController.h"
 #include "TerminalController.h"
 #include "ThemeController.h"
@@ -641,6 +642,14 @@ const Steps steps([] {
     world.sync();
     terminalSession(world, QStringLiteral("term-1"))->write(QStringLiteral("s\r"));
     world.sync();
+  });
+  step(QStringLiteral("the MC drops the connection and the terminal attaches again"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* terminal = drawnTerminal(world);
+    world.mc.drop();
+    world.waitFor([&world] { return !world.native().client()->isReady(); }, QStringLiteral("the shell to see the drop"));
+    // Attaching again starts with the MC's snapshot, which holds only the shell's output.
+    world.waitFor([&] { return world.native().client()->isReady() && !call(terminal, "text").contains(QLatin1String("[terminal]")); },
+                  [&] { return QStringLiteral("the terminal to attach again; it shows \"%1\"").arg(call(terminal, "text")); });
   });
   step(QStringLiteral("the terminal shows %1 once").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* terminal = drawnTerminal(world);

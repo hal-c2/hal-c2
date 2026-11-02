@@ -109,8 +109,9 @@ private:
   qsizetype m_transcriptSize = 0;
   QString m_pendingWrite;
   bool m_writing = false;
-  // What the last failed write said, until a write goes through: a write that
-  // keeps failing the same way (no MC) is said once, not once per keystroke.
+  // What the last failed write said, until a write goes through or the session
+  // attaches again: a write that keeps failing the same way (no MC) is said
+  // once, not once per keystroke.
   QString m_writeFailure;
   QSize m_wanted;
   QSize m_sent;

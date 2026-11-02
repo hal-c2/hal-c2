@@ -157,6 +157,8 @@ void TerminalSession::onFrame(const QJsonObject& frame) {
     m_unacked = snapshot.value(QLatin1String("sequence")).toInteger(-1);
     m_unackedSize = 0;
     if (!m_parked) sendAck();
+    // Attached again: the next outage is a new one, and is said.
+    m_writeFailure.clear();
     if (!m_attached) {
       m_attached = true;
       flushWrites();
