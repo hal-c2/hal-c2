@@ -1346,11 +1346,7 @@ defmodule HalC2.Orchestration do
   defp await_stop(thread_id, timeout) do
     deadline = System.monotonic_time(:millisecond) + @thread_stop_ms
 
-    {stopper, ref} =
-      spawn_monitor(fn ->
-        hold_queue(thread_id)
-        stop_thread_tree(thread_id, deadline)
-      end)
+    {stopper, ref} = spawn_monitor(fn -> stop_thread_tree(thread_id, deadline) end)
 
     receive do
       {:DOWN, ^ref, :process, ^stopper, {:shutdown, {:stopped, answer}}} -> answer
@@ -1360,13 +1356,6 @@ defmodule HalC2.Orchestration do
         Process.demonitor(ref, [:flush])
         :busy
     end
-  end
-
-  # While the calling stopper lives, the end of a run starts nothing from the thread's queue
-  # (`decide_next/2`), so a message queued mid-stop waits there for the stop's next pass to
-  # cancel it. The hold goes with the process, however the stop ends.
-  defp hold_queue(thread_id) do
-    {:ok, _} = Registry.register(HalC2.Streams.QueueHolds, thread_id, nil)
   end
 
   # Exits with its answer once the thread and every task below it have stopped.
@@ -1398,7 +1387,6 @@ defmodule HalC2.Orchestration do
       Map.put_new_lazy(tasks, id, fn ->
         {_, ref} =
           spawn_monitor(fn ->
-            hold_queue(child)
             # Refused for a task that already ended, whose thread may still have tasks.
             HalC2.Orchestration.Delegation.cancel(thread_id, id)
             stop_thread_tree(child, deadline)
@@ -1409,8 +1397,9 @@ defmodule HalC2.Orchestration do
     end)
   end
 
-  # A run promoted from the queue meanwhile is interrupted too; a runtime still closing
-  # its turn after the run ended answers `:busy`, and is asked again. Tasks are looked at
+  # A message queued after the queue was cancelled can start when the interrupted run ends,
+  # and is interrupted by the next pass; a runtime still closing its turn after the run
+  # ended answers `:busy`, and is asked again. Tasks are looked at
   # on every pass: the turn being stopped can still delegate, or a task's wake be queued.
   defp stop_runs(thread_id, asked, deadline, tasks) do
     tasks = stop_tasks(thread_id, tasks, deadline)
@@ -3485,12 +3474,10 @@ defmodule HalC2.Orchestration do
     # unarchived and the queue resumed or another turn ends. A moving or moved
     # thread starts nothing here either: this is the transaction that starts a
     # run, so the guard cannot be raced by a move marked after an earlier
-    # caller's check (a refused promote's interrupt, say). A thread being stopped starts
-    # nothing either, for the same reason (`hold_queue/1`).
+    # caller's check (a refused promote's interrupt, say).
     with true <-
            thread != nil and thread["deletedAt"] == nil and thread["archivedAt"] == nil and
              thread["moving"] == nil and thread["movedTo"] == nil,
-         [] <- Registry.lookup(HalC2.Streams.QueueHolds, thread_id),
          false <- Enum.any?(runs, &(&1["status"] in @active_statuses)),
          %{} = next <- Enum.find(queued_runs(state), &(&1["queueHeld"] != true)),
          %{} = message <- StreamState.get(state, "message")[next["userMessageId"]] do

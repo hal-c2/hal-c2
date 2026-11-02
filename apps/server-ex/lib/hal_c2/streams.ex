@@ -17,7 +17,6 @@ defmodule HalC2.Streams do
     Supervisor.init(
       [
         {Registry, keys: :unique, name: HalC2.Streams.Registry},
-        {Registry, keys: :duplicate, name: HalC2.Streams.QueueHolds},
         {DynamicSupervisor, name: HalC2.Streams.Supervisor, strategy: :one_for_one}
       ],
       strategy: :rest_for_one

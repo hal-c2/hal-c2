@@ -408,13 +408,15 @@ defmodule HalC2.CodeReviewTest do
     assert run_of(HalC2.Streams.state(child), "queued-message")["status"] == "cancelled"
   end
 
-  test "the end of a run starts nothing queued while a stop is under way", context do
+  test "a message queued mid-stop that a run starts is stopped before the stop answers",
+       context do
     hold = hold_interrupts(context)
     review = start_review()
-    assert_stop_starts_nothing_queued_meanwhile(review, review["threadId"], hold)
+    assert_stop_stops_what_was_queued_meanwhile(review, review["threadId"], hold)
   end
 
-  test "the end of a run of a task starts nothing queued while a stop is under way", context do
+  test "a message queued on a task mid-stop that a run starts is stopped before the stop answers",
+       context do
     hold = hold_interrupts(context)
     review = start_review()
 
@@ -423,7 +425,44 @@ defmodule HalC2.CodeReviewTest do
         "task" => "wait"
       })
 
-    assert_stop_starts_nothing_queued_meanwhile(review, child, hold)
+    assert_stop_stops_what_was_queued_meanwhile(review, child, hold)
+  end
+
+  test "a message sent after the pass of a stop runs while a task below it is held up",
+       context do
+    review = start_review()
+    thread_id = review["threadId"]
+
+    # Only the Codex of the task holds its interrupt: the thread's next one starts without it.
+    hold = hold_interrupts(context)
+
+    {:ok, %{"childThreadId" => child}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => thread_id}, "codex", %{"task" => "wait"})
+
+    await_stream(child, &running?/1)
+    System.delete_env("FAKE_CODEX_HOLD_INTERRUPT")
+
+    assert :busy = HalC2.Orchestration.stop_plugin_thread(thread_id, @id, 100)
+    await_sessions_stopped(thread_id)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "next",
+        "text" => "wait",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "queue_after_active"}
+      })
+
+    await_stream(thread_id, &running?/1)
+    queue_message(thread_id, "behind")
+    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    await_stream(thread_id, &(run_of(&1, "behind")["startedAt"] != nil))
+
+    File.rm!(hold)
+    await_sessions_stopped(child)
   end
 
   test "a stop walks through a task that already ended to the task below it", _context do
@@ -994,7 +1033,7 @@ defmodule HalC2.CodeReviewTest do
   # While the stop waits on the agent, which `hold_interrupts/1` keeps from answering, its
   # next pass cannot cancel what is queued. So `start_next/1`, which is what the end of a
   # run calls, has to leave it there on its own.
-  defp assert_stop_starts_nothing_queued_meanwhile(review, thread_id, hold) do
+  defp assert_stop_stops_what_was_queued_meanwhile(review, thread_id, hold) do
     :ok = HalC2.Streams.watch(thread_id, self())
     stop = Task.async(fn -> HalC2.Orchestration.stop_plugin_thread(review["threadId"], @id) end)
     await_interrupt_requested(thread_id)
@@ -1013,17 +1052,32 @@ defmodule HalC2.CodeReviewTest do
          end, {:ok, :ended}}
       end)
 
+    # Calls the runtime, which waits on the held interrupt.
     next = Task.async(fn -> HalC2.Orchestration.start_next(thread_id) end)
-    Task.yield(next, 5_000)
-    assert run_of(HalC2.Streams.state(thread_id), "mid-stop")["status"] == "queued"
+    await_state(thread_id, &(run_of(&1, "mid-stop")["status"] != "queued"))
 
     File.rm!(hold)
     assert :ok = Task.await(stop, 15_000)
     Task.shutdown(next)
 
-    mid_stop = run_of(HalC2.Streams.state(thread_id), "mid-stop")
-    assert mid_stop["status"] == "cancelled"
-    assert mid_stop["startedAt"] == nil
+    assert active_runs(thread_id) == []
+    assert run_of(HalC2.Streams.state(thread_id), "mid-stop")["status"] != "queued"
+  end
+
+  defp running?(state),
+    do: Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
+
+  defp await_stream(thread_id, done?) do
+    :ok = HalC2.Streams.watch(thread_id, self())
+    await_state(thread_id, done?)
+    HalC2.Streams.Server.unsubscribe(thread_id, self())
+  end
+
+  defp await_state(thread_id, done?) do
+    unless done?.(HalC2.Streams.state(thread_id)) do
+      assert_receive {:hal_c2_stream, ^thread_id, _}, 5_000
+      await_state(thread_id, done?)
+    end
   end
 
   # The fake answers no `turn/interrupt` until the returned file is removed.

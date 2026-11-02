@@ -12,8 +12,9 @@ defmodule HalC2.OrchestrationPropTest do
   client that read it as active does (#403, #474);
   crash a provider runtime mid-turn; release a thread's provider session as
   IdleSessions does; stop a thread as the plugin that started it does, after which no
-  message queued at the stop ever starts, on it or on a task delegated from it; and
-  restart the MC mid-turn (boot recovery). A message can also
+  message queued at the stop ever starts, on it or on a task delegated from it, and the
+  thread goes on as any other once the stop has passed it, also while a task below it
+  is held up; and restart the MC mid-turn (boot recovery). A message can also
   stop its turn on a usage limit, which holds the queue behind it; the user can then
   choose to resume at the reset, and the limit recovery sweep at the reset resumes the
   held queue, or sends "Continue where you left off." when nothing was held.
@@ -66,6 +67,7 @@ defmodule HalC2.OrchestrationPropTest do
         Process.put(:codex_log, log)
         Process.put(:reject_steer, Path.join(home, "reject-steer"))
         Process.put(:hold_steer, Path.join(home, "hold-steer"))
+        Process.put(:hold_interrupt, Path.join(home, "hold-interrupt"))
         Process.put(:refused_steers, [])
         Process.put(:steer_log, {0, []})
 
@@ -127,6 +129,7 @@ defmodule HalC2.OrchestrationPropTest do
 
         subscribe()
         {history, state, result} = run_commands(__MODULE__, cmds)
+        File.rm(Process.get(:hold_interrupt))
         HalC2.Prop.stop_services()
         Application.delete_env(:hal_c2, :codex_command)
         Application.delete_env(:hal_c2, :bundled_plugins)
@@ -149,9 +152,10 @@ defmodule HalC2.OrchestrationPropTest do
   #   queue: queued messages, first to start first;
   #   messages: msg -> %{text, run: the message whose run it joined, shown: in transcript,
   #     notice: the MC's own message to the agent}
-  def initial_state, do: %{threads: %{}, next: 1}
+  #   held_up: the thread whose last stop left a task held up, whose next commands favour it
+  def initial_state, do: %{threads: %{}, next: 1, held_up: nil}
 
-  def command(%{threads: threads, next: next}) do
+  def command(%{threads: threads, next: next, held_up: held_up}) do
     tid = oneof(@threads)
     msg = "m#{next}"
 
@@ -175,10 +179,21 @@ defmodule HalC2.OrchestrationPropTest do
       {1, {:call, __MODULE__, :unarchive, [tid]}},
       {1, {:call, __MODULE__, :delete, [tid]}},
       {3, {:call, __MODULE__, :interrupt, [tid]}},
-      {2, {:call, __MODULE__, :stop, [tid, oneof([:alone, :with_task])]}},
+      {2, {:call, __MODULE__, :stop, [tid, oneof([:alone, :with_task, :with_held_up_task])]}},
       {1, {:call, __MODULE__, :resume, [tid]}},
       {1, {:call, __MODULE__, :release, [tid]}}
     ]
+
+    # A message started and one queued behind it, and the end of the first, while the task
+    # is still held up: too rare a run of commands to draw otherwise.
+    after_held_up =
+      if held_up,
+        do: [
+          {20,
+           {:call, __MODULE__, :send, [held_up, msg, oneof([:queue, :auto]), oneof(@instances)]}},
+          {10, {:call, __MODULE__, :interrupt, [held_up]}}
+        ],
+        else: []
 
     # The test's own messages; the continuation's real id is not "resume:<msg>".
     sent =
@@ -261,7 +276,7 @@ defmodule HalC2.OrchestrationPropTest do
       if(limited == [], do: [], else: [{4, {:call, __MODULE__, :recover, [oneof(limited)]}}]) ++
         if armed == [], do: [], else: [{4, {:call, __MODULE__, :sweep, []}}]
 
-    frequency(always ++ on_messages ++ on_queued ++ on_running ++ on_limits)
+    frequency(always ++ after_held_up ++ on_messages ++ on_queued ++ on_running ++ on_limits)
   end
 
   def precondition(%{threads: threads}, {:call, _, :crash, [tid]}),
@@ -367,13 +382,16 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   # A plugin's stop ends the turn and starts nothing: what was queued is cancelled.
-  def next_state(state, _result, {:call, _, :stop, [tid, _]}) do
+  def next_state(state, _result, {:call, _, :stop, [tid, how]}) do
     case state.threads[tid] do
-      %{status: status} when status != :deleted ->
-        update(state, tid, &(&1 |> cancel_queue() |> end_running(:interrupted)))
+      %{status: status} = thread when status != :deleted ->
+        held_up = if how == :with_held_up_task and running(thread), do: tid
+
+        %{state | held_up: held_up}
+        |> update(tid, &(&1 |> cancel_queue() |> end_running(:interrupted)))
 
       _ ->
-        state
+        %{state | held_up: nil}
     end
   end
 
@@ -1071,7 +1089,17 @@ defmodule HalC2.OrchestrationPropTest do
   # carries an attempt, or ended as something other than cancelled, whatever a later command
   # makes of it. A task's thread is no thread of the model's, so nothing else looks at it.
   def stop(tid, how) do
-    child = if how == :with_task, do: delegate_with_queue(tid)
+    # A task held up by an earlier stop goes now.
+    File.rm(Process.get(:hold_interrupt))
+
+    child =
+      case how do
+        :alone -> nil
+        :with_task -> delegate_with_queue(tid)
+        :with_held_up_task -> delegate_held_up(tid)
+      end
+
+    held_up = how == :with_held_up_task and child != nil
     ending = active_runs(tid)
     queued = for run <- runs(current(tid)), run["status"] == "queued", do: run["id"]
 
@@ -1079,8 +1107,10 @@ defmodule HalC2.OrchestrationPropTest do
       child && for run <- runs(current(child)), run["status"] == "queued", do: run["id"]
 
     result =
-      case Orchestration.stop_plugin_thread(tid, @plugin) do
+      case Orchestration.stop_plugin_thread(tid, @plugin, if(held_up, do: 100, else: 15_000)) do
         :ok -> {:ok, %{}}
+        # The stop goes on, for the task only: what follows sees the thread as it left it.
+        :busy when held_up -> await_passed(tid, child, child_queued)
         :busy -> {:error, :busy}
         error -> error
       end
@@ -1089,6 +1119,51 @@ defmodule HalC2.OrchestrationPropTest do
     if child, do: refute_started(child, child_queued)
 
     reply(result, ending)
+  end
+
+  # A task whose Codex, alone of them, answers no interrupt while the file exists.
+  defp delegate_held_up(tid) do
+    hold = Process.get(:hold_interrupt)
+    command = Application.get_env(:hal_c2, :codex_command)
+
+    Application.put_env(:hal_c2, :codex_command, [
+      "env",
+      "FAKE_CODEX_HOLD_INTERRUPT=#{hold}" | command
+    ])
+
+    child = delegate_with_queue(tid)
+
+    if child do
+      File.write!(hold, "")
+      :ok = HalC2.Streams.watch(child, self())
+      await_stream(child, fn state -> Enum.any?(runs(state), &(&1["status"] == "running")) end)
+    end
+
+    Application.put_env(:hal_c2, :codex_command, command)
+    child
+  end
+
+  defp await_passed(tid, child, child_queued) do
+    await_stream(child, fn state ->
+      Enum.all?(runs(state), &(&1["id"] not in child_queued or &1["status"] == "cancelled"))
+    end)
+
+    await_stream(tid, fn state ->
+      not Enum.any?(runs(state), &(&1["status"] in @active)) and
+        Enum.all?(StreamState.list(state, "provider-session"), &(&1["status"] == "stopped"))
+    end)
+
+    {:ok, %{}}
+  end
+
+  defp await_stream(tid, done?) do
+    unless done?.(current(tid)) do
+      receive do
+        {:hal_c2_stream, ^tid, _} -> await_stream(tid, done?)
+      after
+        @wait_ms -> raise("#{tid} never got there: #{inspect(runs(current(tid)))}")
+      end
+    end
   end
 
   # A task that stays at work, with a message queued behind its turn.
