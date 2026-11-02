@@ -3,8 +3,8 @@ import QtQuick
 import QtQuick.Layouts
 import HalC2.Shell
 
-// The open file's path as a trail of its folders: a folder lists the files
-// beside it in the trail, and picking one opens it.
+// The open file's path as a trail of its folders: a folder lists what is in
+// it, folders first; picking a file opens it and picking a folder goes there.
 //
 //   FilePathTrail { source: Panel.files }
 RowLayout {
@@ -27,29 +27,54 @@ RowLayout {
         id: siblings
 
         property string folder: ""
-        // Read when the menu opens: the tree has loaded the folders of an open file.
-        property var files: []
+        property Item anchor: null
+        readonly property string status: trail.source?.trailStatus ?? ""
+        readonly property string problem: trail.source?.trailProblem ?? ""
+        // What is in the folder, then why there is nothing, and a retry if that may pass.
+        readonly property var rows: {
+            const entries = trail.source?.trailEntries ?? [];
+            if (status === "loading")
+                return [{message: qsTr("Loading…")}];
+            if (entries.length > 0)
+                return entries;
+            return problem.length > 0 ? [{message: problem}].concat(status === "error" ? [{retry: true}] : []) : [];
+        }
 
         function show(folder, anchor) {
             siblings.folder = folder;
-            files = (trail.source?.tree?.entriesIn(folder) ?? []).filter(entry => !entry.directory);
+            siblings.anchor = anchor;
+            trail.source.listTrail(folder);
             popup(anchor, 0, anchor.height);
+        }
+
+        function reopen(folder) {
+            Qt.callLater(() => siblings.show(folder, siblings.anchor));
         }
 
         objectName: "filePathSiblings"
         implicitWidth: 240
 
         Instantiator {
-            model: siblings.files
+            model: siblings.rows
 
             delegate: ShellMenuItem {
                 required property var modelData
+                readonly property string path: modelData.path ?? ""
+                readonly property string openPath: trail.source?.openPath ?? ""
 
-                objectName: "filePathSibling-" + modelData.path
-                text: modelData.name
-                iconName: "file-text"
-                current: modelData.path === (trail.source?.openPath ?? "")
-                onTriggered: Shell.dispatch("files.open", {path: modelData.path})
+                objectName: path.length > 0 ? "filePathSibling-" + path : modelData.retry ? "filePathRetry" : "filePathMessage"
+                text: modelData.name ?? modelData.message ?? qsTr("Try again")
+                enabled: path.length > 0 || modelData.retry === true
+                iconName: path.length === 0 ? "" : modelData.directory ? "folder" : "file-text"
+                current: path.length > 0 && (path === openPath || openPath.startsWith(path + "/"))
+                onTriggered: {
+                    if (modelData.retry)
+                        siblings.reopen(siblings.folder);
+                    else if (modelData.directory)
+                        siblings.reopen(path);
+                    else
+                        Shell.dispatch("files.open", {path: path});
+                }
             }
 
             onObjectAdded: (index, object) => siblings.insertItem(index, object)
@@ -73,6 +98,9 @@ RowLayout {
                 objectName: "filePathPart-" + trail.folderAt(part.index)
                 subtle: true
                 implicitHeight: 24
+                // A file outside the project has no folders of the project to list.
+                enabled: !(trail.source?.outsideProject ?? false)
+                checked: siblings.visible && siblings.anchor === this
                 text: part.modelData
                 font.family: trail.mono
                 font.pixelSize: Theme.fontSizeCode

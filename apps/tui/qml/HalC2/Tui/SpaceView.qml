@@ -1,8 +1,8 @@
 import OpenTUI
 
-// The Spaces and their pages (`Shell.state.space`), in the conversation pane's
-// place: the Spaces, one Space's page tree and its trash, or one page's blocks
-// with their comments. The host keeps the streams, the selection, the window of
+// The Spaces and their pages and decks (`Shell.state.space`), in the conversation
+// pane's place: the Spaces, one Space's page tree, decks and trash, one page's
+// blocks with their comments, one deck's slides, or a slide being presented. The host keeps the streams, the selection, the window of
 // rows that fits and each row's styled line; this paints them.
 Rectangle {
     id: view
@@ -26,6 +26,16 @@ Rectangle {
         text: view.space.title
         color: Theme.colors.accent
         Span { text: view.space.hint; color: Theme.colors.dim }
+    }
+
+    Text {
+        objectName: "spaceViewers"
+        visible: view.space.viewers !== ""
+        flexShrink: 0
+        wrapMode: "none"
+        truncate: true
+        text: view.space.viewers
+        color: Theme.colors.dim
     }
 
     Text {

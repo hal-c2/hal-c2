@@ -10,14 +10,17 @@ defmodule HalC2.StreamsPropTest do
   `HalC2.Prop.StreamsCollector` processes named `p1`..`p3` that fold what they are
   sent as a client does, and resume from what they hold. Commands commit and
   transact, subscribe plainly, as clients (kinds and windows) and as watchers, resume,
-  unsubscribe (also by a tag no subscription has), page a window back (also by a
-  tag no subscription has, which pages nothing), crash
-  subscribers, stop streams idle, crash them, restart the stream supervisor and the
+  unsubscribe, page a window back, crash subscribers, stop streams idle, crash them, restart the stream supervisor and the
   store, and append enough at once to push a subscriber past what a replay carries.
   Some turn items are subagents whose prompt, progress and result grow by long appends, past
   the limit `HalC2.Web.Wire` cuts them at, or are emptied and grown again in one
   patch, so a client that folds the appends must hold the cut text a snapshot shows,
   for each of the wire's cut keys and for an item growing both in one commit.
+
+  A client's subscription may carry a tag, a new one each time it follows, as a
+  socket mints them. Its messages come under that tag, and the subscription it
+  replaced is told so once under the old one, and is sent nothing else. Its own tag
+  pages and ends it; a tag it replaced, or one no subscription ever had, does neither.
   """
 
   use ExUnit.Case, async: false
@@ -84,8 +87,11 @@ defmodule HalC2.StreamsPropTest do
 
   # streams: id => %{events: [event] oldest first, fold: StreamState, commits: [last seq]}
   # subs: {name, stream} => %{mode: :plain | :watch | :client, kinds, window: nil | %{floor: f},
-  #   active: boolean, live: the stream's seq when it subscribed, until: seq it stopped at}
-  def initial_state, do: %{seq: 0, streams: %{}, subs: %{}}
+  #   active: boolean, live: the stream's seq when it subscribed, until: seq it stopped at,
+  #   tag: nil | n, retired: the tags it had before, told: the retired tags it replaced while
+  #   they were followed, oldest first}
+  # tags: the last tag minted. A tag only goes up, so none is ever used twice.
+  def initial_state, do: %{seq: 0, streams: %{}, subs: %{}, tags: 0}
 
   def command(state) do
     base = [
@@ -95,9 +101,15 @@ defmodule HalC2.StreamsPropTest do
       {2, {:call, __MODULE__, :watch, [name(), stream()]}},
       {4,
        {:call, __MODULE__, :subscribe_client,
-        [name(), stream(), integer(0, length(@kinds) - 1), oneof([nil, {:items, 1}, {:items, 3}])]}},
+        [
+          name(),
+          stream(),
+          integer(0, length(@kinds) - 1),
+          oneof([nil, {:items, 1}, {:items, 3}]),
+          new_tag(state)
+        ]}},
       {3, {:call, __MODULE__, :unsubscribe, [name(), stream()]}},
-      {2, {:call, __MODULE__, :unsubscribe_stale, [name(), stream()]}},
+      {2, {:call, __MODULE__, :unsubscribe_stale, [name(), stream(), :unknown]}},
       {1, {:call, __MODULE__, :crash_subscriber, [name()]}},
       {1, {:call, __MODULE__, :transact_raise, [stream()]}},
       {2, {:call, __MODULE__, :state, [stream()]}},
@@ -119,14 +131,29 @@ defmodule HalC2.StreamsPropTest do
           {2,
            let key <- oneof(subs) do
              {:call, __MODULE__, :rekind,
-              [key, integer(0, length(@kinds) - 1), state.subs[key].window != nil]}
+              [key, integer(0, length(@kinds) - 1), state.subs[key].window != nil, new_tag(state)]}
            end},
           {6,
            let key <- oneof(subs) do
-             {:call, __MODULE__, :resume, [key, asked(state.subs[key])]}
+             tag = if state.subs[key].mode == :client, do: new_tag(state)
+             {:call, __MODULE__, :resume, [key, asked(state.subs[key]), tag]}
            end},
-          {2, {:call, __MODULE__, :more, [oneof(subs), oneof([1, 2])]}},
-          {2, {:call, __MODULE__, :more_stale, [oneof(subs), oneof([1, 2])]}}
+          {3,
+           let key <- oneof(subs) do
+             {:call, __MODULE__, :more, [key, oneof([1, 2]), state.subs[key].tag]}
+           end},
+          {3,
+           let key <- oneof(subs) do
+             {:call, __MODULE__, :more_stale, [key, oneof([1, 2]), stale_tag(state.subs[key])]}
+           end},
+          {2,
+           let {name, id} = key <- oneof(subs) do
+             {:call, __MODULE__, :unsubscribe_stale, [name, id, stale_tag(state.subs[key])]}
+           end},
+          {1,
+           let {name, id} = key <- oneof(subs) do
+             {:call, __MODULE__, :unsubscribe_tagged, [name, id, state.subs[key].tag]}
+           end}
         ]
 
     frequency(base ++ with_subs)
@@ -134,6 +161,12 @@ defmodule HalC2.StreamsPropTest do
 
   defp stream, do: oneof(@streams)
   defp name, do: oneof(@names)
+
+  # What a new client subscription follows with: a tag not used before, or none.
+  defp new_tag(state), do: oneof([nil, state.tags + 1])
+
+  # A tag a subscription had before its current one, or one none ever had.
+  defp stale_tag(sub), do: oneof([:unknown | sub.retired])
 
   # Changes that keep to what streams promise their clients: runs are created in
   # order with the next ordinal and never deleted, and a rolled-back run stays so
@@ -294,21 +327,44 @@ defmodule HalC2.StreamsPropTest do
   def precondition(state, {:call, _, :idle_stop, [id]}),
     do: not Enum.any?(state.subs, fn {{_, s}, sub} -> s == id and sub.active end)
 
-  def precondition(state, {:call, _, :more, [key, _]}),
-    do: match?(%{mode: :client, active: true, window: %{}}, state.subs[key])
+  def precondition(state, {:call, _, :subscribe_client, [_, _, _, _, tag]}),
+    do: new_tag?(state, tag)
 
-  def precondition(state, {:call, _, :more_stale, [key, _]}),
-    do: match?(%{mode: :client, active: true, window: %{}}, state.subs[key])
+  def precondition(state, {:call, _, :more, [key, _, tag]}),
+    do: match?(%{mode: :client, active: true, window: %{}, tag: ^tag}, state.subs[key])
 
-  def precondition(state, {:call, _, :resume, [key, asked]}),
-    do: Map.has_key?(state.subs, key) and asked(state.subs[key]) == asked
+  def precondition(state, {:call, _, :more_stale, [key, _, tag]}) do
+    match?(%{mode: :client, active: true, window: %{}}, state.subs[key]) and
+      stale_tag?(state.subs[key], tag)
+  end
 
-  def precondition(state, {:call, _, :rekind, [key, _, windowed?]}),
-    do: match?(%{mode: :client}, state.subs[key]) and state.subs[key].window != nil == windowed?
+  # Without a subscription of that name and stream, only a tag none ever had.
+  def precondition(state, {:call, _, :unsubscribe_stale, [name, id, tag]}) do
+    case state.subs[{name, id}] do
+      nil -> tag == :unknown
+      sub -> stale_tag?(sub, tag)
+    end
+  end
+
+  def precondition(state, {:call, _, :unsubscribe_tagged, [name, id, tag]}),
+    do: tag != nil and match?(%{active: true, tag: ^tag}, state.subs[{name, id}])
+
+  def precondition(state, {:call, _, :resume, [key, asked, tag]}) do
+    Map.has_key?(state.subs, key) and asked(state.subs[key]) == asked and
+      new_tag?(state, tag) and (tag == nil or state.subs[key].mode == :client)
+  end
+
+  def precondition(state, {:call, _, :rekind, [key, _, windowed?, tag]}) do
+    match?(%{mode: :client}, state.subs[key]) and state.subs[key].window != nil == windowed? and
+      new_tag?(state, tag)
+  end
 
   def precondition(state, {:call, _, :check, [key]}), do: Map.has_key?(state.subs, key)
 
   def precondition(_state, _call), do: true
+
+  defp new_tag?(state, tag), do: tag == nil or tag > state.tags
+  defp stale_tag?(sub, tag), do: tag == :unknown or tag in sub.retired
 
   def next_state(state, _result, {:call, _, call, [id, changes]})
       when call in [:commit, :transact],
@@ -323,26 +379,42 @@ defmodule HalC2.StreamsPropTest do
   def next_state(state, _result, {:call, _, :watch, [name, id]}),
     do: subscribe(state, name, id, %{mode: :watch, kinds: nil, window: nil})
 
-  def next_state(state, _result, {:call, _, :subscribe_client, [name, id, kinds, window]}) do
+  def next_state(state, _result, {:call, _, :subscribe_client, [name, id, kinds, window, tag]}) do
     window =
       case window do
         {:items, n} -> %{floor: View.tail(fold(state, id), n)}
         nil -> nil
       end
 
-    subscribe(state, name, id, %{mode: :client, kinds: Enum.at(@kinds, kinds), window: window})
+    subscribe(state, name, id, %{
+      mode: :client,
+      kinds: Enum.at(@kinds, kinds),
+      window: window,
+      tag: tag
+    })
   end
 
   # A resumed subscription asks for what the one before it had.
-  def next_state(state, _result, {:call, _, :resume, [{name, id}, _asked]}),
-    do: subscribe(state, name, id, Map.take(state.subs[{name, id}], [:mode, :kinds, :window]))
+  def next_state(state, _result, {:call, _, :resume, [{name, id}, _asked, tag]}) do
+    sub = Map.take(state.subs[{name, id}], [:mode, :kinds, :window])
+    subscribe(state, name, id, Map.put(sub, :tag, tag))
+  end
 
-  def next_state(state, _result, {:call, _, :rekind, [{name, id} = key, kinds, _]}) do
-    sub = %{mode: :client, kinds: Enum.at(@kinds, kinds), window: state.subs[key].window}
+  def next_state(state, _result, {:call, _, :rekind, [{name, id} = key, kinds, _, tag]}) do
+    sub = %{
+      mode: :client,
+      kinds: Enum.at(@kinds, kinds),
+      window: state.subs[key].window,
+      tag: tag
+    }
+
     subscribe(state, name, id, sub)
   end
 
   def next_state(state, _result, {:call, _, :unsubscribe, [name, id]}),
+    do: stop_subs(state, &(&1 == {name, id}))
+
+  def next_state(state, _result, {:call, _, :unsubscribe_tagged, [name, id, _tag]}),
     do: stop_subs(state, &(&1 == {name, id}))
 
   # Its process is gone, and with it everything it held.
@@ -355,7 +427,7 @@ defmodule HalC2.StreamsPropTest do
   def next_state(state, _result, {:call, _, :restart_streams, []}),
     do: stop_subs(state, fn _ -> true end)
 
-  def next_state(state, _result, {:call, _, :more, [key, items]}) do
+  def next_state(state, _result, {:call, _, :more, [key, items, _tag]}) do
     update_in(state.subs[key], fn
       %{window: %{floor: floor}} = sub when floor != nil ->
         {_runs, floor} = View.take_runs(fold(state, elem(key, 1)), floor, items)
@@ -388,8 +460,26 @@ defmodule HalC2.StreamsPropTest do
   end
 
   defp subscribe(state, name, id, sub) do
-    sub = Map.merge(sub, %{active: true, live: fold(state, id).seq, until: nil})
-    put_in(state.subs[{name, id}], sub)
+    old = state.subs[{name, id}] || %{active: false, tag: nil, retired: [], told: []}
+    retired = if old.tag, do: old.retired ++ [old.tag], else: old.retired
+    told = if old.tag && old.active, do: old.told ++ [old.tag], else: old.told
+
+    sub =
+      %{tag: nil}
+      |> Map.merge(sub)
+      |> Map.merge(%{
+        active: true,
+        live: fold(state, id).seq,
+        until: nil,
+        retired: retired,
+        told: told
+      })
+
+    %{
+      state
+      | subs: Map.put(state.subs, {name, id}, sub),
+        tags: max(state.tags, sub.tag || 0)
+    }
   end
 
   defp stop_subs(state, which) do
@@ -445,7 +535,23 @@ defmodule HalC2.StreamsPropTest do
   def postcondition(state, {:call, _, :check, [{_name, id} = key]}, got) do
     sub = state.subs[key]
     upto = sub.until || fold(state, id).seq
-    check(sub.mode, sub, got, state, id, upto)
+
+    tagged(:stale, got.stale == Enum.map(sub.told, &{&1, :resync})) and
+      check(sub.mode, sub, got, state, id, upto)
+  end
+
+  # Its tag paged it, down to the floor the model moved it to.
+  def postcondition(state, {:call, _, :more, [key, _, _]} = c, got) do
+    tagged(:paged, got.pages > 0) and
+      postcondition(next_state(state, got, c), {:call, __MODULE__, :check, [key]}, got.held) and
+      tagged(:floor, got.held.floor == next_state(state, got, c).subs[key].window.floor)
+  end
+
+  # A tag that is not its own paged nothing, and moved no floor.
+  def postcondition(state, {:call, _, :more_stale, [key, _, _]}, got) do
+    tagged(:paged_stale, got.pages == 0) and
+      postcondition(state, {:call, __MODULE__, :check, [key]}, got.held) and
+      tagged(:floor_stale, got.held.floor == state.subs[key].window.floor)
   end
 
   def postcondition(state, {:call, _, call, [_ | _] = args} = c, got)
@@ -603,15 +709,18 @@ defmodule HalC2.StreamsPropTest do
     Collector.get(collector(name), id)
   end
 
-  def subscribe_client(name, id, kinds, window) do
-    :ok = Collector.reset(collector(name), id, nil, false)
-    client = %{kinds: Enum.at(@kinds, kinds), window: window}
+  def subscribe_client(name, id, kinds, window, tag) do
+    :ok = Collector.reset(collector(name), id, nil, false, tag)
+    client = with_tag(%{kinds: Enum.at(@kinds, kinds), window: window}, tag)
     :ok = Streams.subscribe(id, collector(name), nil, client)
     Collector.get(collector(name), id)
   end
 
+  defp with_tag(client, nil), do: client
+  defp with_tag(client, tag), do: Map.put(client, :tag, tag)
+
   # Subscribes again from what the collector holds, asking for what it had.
-  def resume({name, id}, {mode, kinds, windowed?}) do
+  def resume({name, id}, {mode, kinds, windowed?}, tag) do
     pid = collector(name)
     held = Collector.get(pid, id)
 
@@ -627,8 +736,8 @@ defmodule HalC2.StreamsPropTest do
 
         :client ->
           window = if windowed?, do: {:floor, held.floor}
-          :ok = Collector.reset(pid, id, held.offset, true)
-          client = %{handle: held.handle, kinds: kinds, window: window}
+          :ok = Collector.reset(pid, id, held.offset, true, tag)
+          client = with_tag(%{handle: held.handle, kinds: kinds, window: window}, tag)
           Streams.subscribe(id, pid, held.offset, client)
       end
 
@@ -637,12 +746,12 @@ defmodule HalC2.StreamsPropTest do
 
   # Resumes a client from what it holds, but asking for other kinds: what it holds
   # is not a copy of those, so it must start over.
-  def rekind({name, id}, kinds, windowed?) do
+  def rekind({name, id}, kinds, windowed?, tag) do
     pid = collector(name)
     held = Collector.get(pid, id)
-    :ok = Collector.reset(pid, id, held.offset, true)
+    :ok = Collector.reset(pid, id, held.offset, true, tag)
     window = if windowed?, do: {:floor, held.floor}
-    client = %{handle: held.handle, kinds: Enum.at(@kinds, kinds), window: window}
+    client = with_tag(%{handle: held.handle, kinds: Enum.at(@kinds, kinds), window: window}, tag)
     :ok = Streams.subscribe(id, pid, held.offset, client)
     Collector.get(pid, id)
   end
@@ -651,11 +760,15 @@ defmodule HalC2.StreamsPropTest do
     Streams.unsubscribe(id, collector(name))
   end
 
-  # The unsubscribe of a follow that gave up, by a tag no subscription has now: it
-  # ends nothing.
-  def unsubscribe_stale(name, id) do
-    Streams.unsubscribe(id, collector(name), {node(), make_ref()})
-  end
+  # The unsubscribe of a follow that gave up, by a tag its subscription does not have
+  # now: it ends nothing.
+  def unsubscribe_stale(name, id, tag),
+    do: Streams.unsubscribe(id, collector(name), real_tag(tag))
+
+  def unsubscribe_tagged(name, id, tag), do: Streams.unsubscribe(id, collector(name), tag)
+
+  defp real_tag(:unknown), do: {node(), make_ref()}
+  defp real_tag(tag), do: tag
 
   def crash_subscriber(name) do
     pid = collector(name)
@@ -666,12 +779,20 @@ defmodule HalC2.StreamsPropTest do
     :ok
   end
 
-  def more({name, id}, items), do: Streams.more(id, collector(name), items)
+  def more(key, items, tag), do: paging(key, items, tag)
 
-  # A `more` of a subscription replaced since, by a tag no subscription has now:
-  # it pages nothing and moves no floor (`check` sees both).
-  def more_stale({name, id}, items),
-    do: Streams.more(id, collector(name), items, {node(), make_ref()})
+  # A `more` of a subscription replaced since, or of one that never was.
+  def more_stale(key, items, tag), do: paging(key, items, real_tag(tag))
+
+  # What a `more` sent the subscription's own tag, and what its subscriber holds then.
+  defp paging({name, id}, items, tag) do
+    pid = collector(name)
+    pages = fn held -> Enum.count(held.msgs, &match?({:page, _, _, _, _}, &1)) end
+    before = pages.(Collector.get(pid, id))
+    :ok = Streams.more(id, pid, items, tag)
+    held = Collector.get(pid, id)
+    %{pages: pages.(held) - before, held: held}
+  end
 
   def check({name, id}), do: Collector.get(collector(name), id)
 

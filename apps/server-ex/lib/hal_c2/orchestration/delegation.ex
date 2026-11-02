@@ -225,7 +225,7 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  @doc "`task_cancel`: interrupts a running task; its result, if any, stays."
+  @doc "`task_cancel`: cancels what the child has queued, a user's messages too, and interrupts a running task; its result, if any, stays."
   def cancel(thread_id, task_id) do
     with %{} = task <-
            subagent(thread_id, task_id) ||
@@ -236,6 +236,9 @@ defmodule HalC2.Orchestration.Delegation do
          :ok <- cancellable(task),
          {:settled, _, _} <-
            settle(thread_id, task, "cancelled", task["result"], "disposed", :once) do
+      # Before the interrupt, or the end of the interrupted run starts it for a task that
+      # is over; after `cancellable/1`, which counts it as work there is to cancel.
+      Orchestration.cancel_queued(task["childThreadId"])
       hook(:cancelling, task_id)
 
       _ =
@@ -466,6 +469,15 @@ defmodule HalC2.Orchestration.Delegation do
   are not owed (`BackgroundWork`).
   """
   def quiet?(child), do: not working?(StreamState.list(child, "run")) and owed(child) == []
+
+  @doc """
+  As `quiet?/1`, except that a queued run held for the user to resume the queue
+  (`queueHeld`) is not work under way: nothing starts it until the user does.
+  """
+  def settled?(child) do
+    runs = child |> StreamState.list("run") |> Enum.reject(&(&1["queueHeld"] == true))
+    not working?(runs) and owed(child) == []
+  end
 
   # The child's owed background work, as its sidebar row shows it, read from its stream.
   # A task of its own whose result is still to reach it (a `pending` delivery) is

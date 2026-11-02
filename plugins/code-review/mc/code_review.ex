@@ -1153,6 +1153,7 @@ defmodule HalC2Plugins.CodeReview do
     }
 
     unknown = MapSet.new(found.unknown_sizes)
+    state = if Enum.any?(found.entries, &disputed?(state, found, &1)), do: look_again(state), else: state
 
     Enum.reduce(found.entries, state, fn pr, state ->
       pr =
@@ -1179,7 +1180,7 @@ defmodule HalC2Plugins.CodeReview do
       cond do
         # The look began before this machine's run claimed the commit, so it may list
         # an older head than the run checked out: it says nothing new of this one.
-        found.at < Map.get(state.claimed_at, pr["key"], found.at) ->
+        before_claim?(state, found, pr["key"]) ->
           state
 
         known && known["status"] in ~w(queued running) ->
@@ -1212,6 +1213,16 @@ defmodule HalC2Plugins.CodeReview do
           put(state, Map.put(review, "changed", true))
       end
     end)
+  end
+
+  # Whether `found` began before this machine's run claimed the commit of `key`.
+  defp before_claim?(state, found, key), do: found.at < Map.get(state.claimed_at, key, found.at)
+
+  # A look begun before the claim that lists another head than the review holds: which
+  # is newer cannot be told, and it is left alone, so a look begun now has to say. Until
+  # the next look on the timer the review would otherwise show a head it is not at.
+  defp disputed?(state, found, %{"key" => key, "headSha" => head}) do
+    before_claim?(state, found, key) and state.reviews[key]["headSha"] != head
   end
 
   # Why the watch would start a review of `pr`, or nil.
@@ -1900,6 +1911,8 @@ defmodule HalC2Plugins.CodeReview do
     # post waits for it. One that stopped between its post and saving so forgot
     # it, so the pull request itself is read for the review last. A commit whose
     # review is posted already is published, with why nothing was posted from here.
+    # A post that waited here behind another of the pull request and whose run has
+    # been replaced since posts nothing: the new run has the say.
     :global.trans(
       {{__MODULE__, {:post, review["key"]}}, self()},
       fn ->
@@ -1914,12 +1927,16 @@ defmodule HalC2Plugins.CodeReview do
 
         result =
           cond do
+            replaced?(review) -> :replaced
             posted -> {:posted, "#{posted["machine"]} already posted its review of this commit."}
             restarting -> {:error, "#{restarting["machine"]} is restarting code review; try again."}
             true -> post_unless_on_github(review, input)
           end
 
         case result do
+          :replaced ->
+            {:error, "The review of #{review["key"]} was run again before this post could start."}
+
           {:ok, _} ->
             server({:published, review["key"], review["threadId"], nil})
             {:ok, server(:snapshot)}
@@ -1935,6 +1952,11 @@ defmodule HalC2Plugins.CodeReview do
       end,
       [node() | Node.list()]
     )
+  end
+
+  # Whether the run of `review` is no longer the one being published.
+  defp replaced?(%{"key" => key, "threadId" => thread_id}) do
+    not match?(%{"status" => "publishing", "threadId" => ^thread_id}, server(:reviews)[key])
   end
 
   defp post_unless_on_github(review, input) do

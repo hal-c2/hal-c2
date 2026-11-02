@@ -65,6 +65,7 @@ defmodule HalC2.Application do
       {Registry, keys: :unique, name: HalC2.Vcs.Registry},
       HalC2.Workspace,
       HalC2.WorktreeSetup,
+      HalC2.Space.Presence,
       HalC2.ScheduledTasks,
       HalC2.ProjectClones,
       HalC2.Preview,
@@ -110,6 +111,8 @@ defmodule HalC2.Application do
       # Owns the table of live Antigravity runtime temp directories.
       HalC2.Acp.Antigravity.SessionFiles,
       Supervisor.child_spec({Task, &HalC2.Acp.load/0}, id: :acp_models),
+      # Before the listener: a message reaching a thread first would start a second program.
+      %{id: :reattach, start: {HalC2.Orchestration.Recovery, :start_reattach, []}},
       HalC2.Web,
       # server-runtime.json, once the listener is bound; removed first on the way down.
       HalC2.RuntimeRecord,

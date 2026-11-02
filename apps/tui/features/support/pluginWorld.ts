@@ -226,7 +226,11 @@ export function userKeymap(ctx: PluginWorld): Record<string, unknown> | undefine
     configDir: configDir(ctx),
     warn: (message) => warnings.push(message),
   }).keymap;
-  if (warnings.length > 0) ctx.hostOptions = { ...ctx.hostOptions, startupWarnings: warnings };
+  ctx.hostOptions = {
+    ...ctx.hostOptions,
+    keymapOverrides: keymap,
+    ...(warnings.length > 0 ? { startupWarnings: warnings } : {}),
+  };
   return keymap;
 }
 

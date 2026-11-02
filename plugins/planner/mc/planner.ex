@@ -1092,6 +1092,10 @@ defmodule HalC2Plugins.Planner do
     state = %{state | items: Sync.landed(state.items, moved), latest_moves: latest}
     item = state.items[id] |> Map.merge(extra) |> Map.put("syncError", error)
     item = if stated, do: %{item | "issue" => Map.merge(item["issue"], stated)}, else: item
+    # What the task's change meanwhile left behind: the report's `synced` was made without,
+    # a resent one as well as the first.
+    left = if(replay?, do: flight[:answered_left] || [], else: []) ++ (flight[:left] || [])
+    item = Map.update!(item, "synced", &Sync.left_behind(&1, left))
     stale? = Sync.reasserts(moved, [], state.items, state.projects) != []
 
     {next, state} =
@@ -1114,6 +1118,8 @@ defmodule HalC2Plugins.Planner do
             board: board,
             leg: next_leg,
             moving: Sync.moving(ops),
+            left: [],
+            answered_left: left,
             answered: reported,
             answered_leg: leg,
             answered_board: leg_board,
@@ -1131,7 +1137,7 @@ defmodule HalC2Plugins.Planner do
   def handle_call({:link, id, fields}, caller, state), do: link(state, id, fields, caller)
 
   # A task linked to the issue just made of `sent`, of which GitHub has only what making
-  # it wrote (`Sync.created/2`), so the push sends the rest.
+  # it wrote (`Sync.created/3`), so the push sends the rest.
   def handle_call({:created, id, issue, sent}, caller, state),
     do: link(state, id, %{"issue" => issue}, caller, %{id => sent})
 
@@ -1824,7 +1830,8 @@ defmodule HalC2Plugins.Planner do
   # removed no longer hears from the push on the way to the one before. The tasks tied
   # to a task given an issue, linked to another or unlinked push too, moving their
   # relations to the issue it has now. A task of `created` pushes what its new issue was
-  # not made with (`Sync.created/2`).
+  # not made with (`Sync.created/3`). A milestone an issue stays in with no task left to
+  # ask it out (`Sync.left/2`) pushes too, for that issue to go.
   defp pushes(state, before, items, from, created \\ %{}) do
     gone =
       for {id, old} <- before,
@@ -1841,21 +1848,42 @@ defmodule HalC2Plugins.Planner do
     tied? =
       &(relinked != [] and Enum.any?([&1["parent"] | &1["after"]], fn id -> id in relinked end))
 
+    left = Sync.left(before, items)
+
     state = %{state | items: items, pushing: forget(state.pushing, gone)}
 
     Enum.reduce(items, {[], state}, fn {id, new}, {pushes, state} ->
       old = before[id]
 
       cond do
-        old == nil or (old == new and not tied?.(new)) ->
+        old == nil or (old == new and not tied?.(new) and not is_map_key(left, id)) ->
           {pushes, state}
 
         state.pushing[id] ->
-          {pushes, put_in(state.pushing[id].changed, true)}
+          flight = state.pushing[id]
+          flight = %{flight | changed: true}
+          marks = Map.get(left, id, [])
+          flight = Map.put(flight, :left, (flight[:left] || []) ++ marks)
+          state = put_in(state.pushing[id], flight)
+
+          # On the task too, for a flight that ends without a report; a report's `synced`
+          # has none of them, so the flight keeps them to put back.
+          state =
+            if marks == [],
+              do: state,
+              else:
+                put_in(
+                  state.items[id]["synced"],
+                  Sync.synced(old, new, before) |> Sync.left_behind(marks)
+                )
+
+          {pushes, state}
 
         true ->
-          synced = Sync.synced(old, new, before)
-          synced = if sent = created[id], do: Sync.created(synced, sent), else: synced
+          synced = Sync.synced(old, new, before) |> Sync.left_behind(Map.get(left, id, []))
+
+          synced =
+            if sent = created[id], do: Sync.created(synced, sent, new["issue"]), else: synced
 
           case next_push(state, id, new, synced) do
             {nil, state} ->
@@ -2126,6 +2154,8 @@ defmodule HalC2Plugins.Planner do
                 board: saved["board"] || "",
                 leg: leg,
                 moving: loaded_moving(saved["moving"]),
+                left: saved["left"] || [],
+                answered_left: saved["answeredLeft"] || [],
                 answered: answered,
                 answered_leg: answered_leg,
                 answered_board: saved["answeredBoard"],
@@ -2264,6 +2294,8 @@ defmodule HalC2Plugins.Planner do
             "chained" => flight[:chained] == true,
             "leg" => saved_term(flight[:leg]),
             "moving" => flight[:moving] || [],
+            "left" => flight[:left] || [],
+            "answeredLeft" => flight[:answered_left] || [],
             "answered" => saved_term(answered),
             "answeredBoard" => flight[:answered_board]
           }

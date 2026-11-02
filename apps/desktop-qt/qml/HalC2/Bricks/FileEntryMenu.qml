@@ -20,7 +20,7 @@ ShellMenu {
     }
     ShellMenuItem {
         objectName: "fileEntryReveal"
-        text: qsTr("Reveal in file manager")
+        text: Shell.state.workspace?.revealLabel ?? qsTr("Reveal in file manager")
         enabled: menu.editors.some(editor => editor.id === "file-manager")
         onTriggered: Shell.dispatch("files.reveal", {path: menu.path})
     }

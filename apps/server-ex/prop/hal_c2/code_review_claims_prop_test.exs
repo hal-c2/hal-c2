@@ -59,6 +59,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # The rows the laptop may hold for a pull request: queued or running there but not
   # yet started (soft), or started on a commit (hard).
   @rows [{"queued", false}, {"running", false}, {"running", true}, {"published", true}]
+  @settle_ms 15_000
   @paused "code-review reports: Reviews are paused: the agent hit its usage limit, which resets at 2999-01-01T00:00:00Z. Queued reviews wait instead of failing one by one."
 
   setup_all do
@@ -866,11 +867,10 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
   def crash do
     pid = Process.whereis(@server)
-    {:parent, sup} = Process.info(pid, :parent)
     ref = Process.monitor(pid)
     Process.exit(pid, :kill)
     receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
-    await_restart(sup, pid, 1_000)
+    await_restart(pid)
     observe(nil, :restarted)
   end
 
@@ -1072,25 +1072,28 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # --- settling -------------------------------------------------------------------------
 
   # Returns once the plugin has nothing in flight but runs held at the fetch, and has
-  # heard from everything that ended.
-  defp drain, do: drain(System.monotonic_time(:millisecond) + 15_000, false)
+  # heard from everything that ended. Settled comes before the deadline: this process
+  # can be late to look, and work that finished meanwhile is not stuck.
+  defp drain, do: drain(System.monotonic_time(:millisecond) + @settle_ms, false)
 
   defp drain(deadline, settled_once) do
     with pid when is_pid(pid) <- Process.whereis(@server),
          {:ok, state} <- get_state(pid) do
       kids = kids(pid)
+      settled? = state.polling == nil and length(kids) == parked()
 
       cond do
+        settled? and settled_once ->
+          :ok
+
+        # Once more, for what the processes that just ended told it.
+        settled? ->
+          drain(deadline, true)
+
         System.monotonic_time(:millisecond) > deadline ->
-          problem("code-review never settled: #{length(kids)} processes, #{parked()} held")
-
-        state.polling != nil ->
-          await_poller(pid, deadline)
-          drain(deadline, false)
-
-        length(kids) == parked() ->
-          # Once more, for what the processes that just ended told it.
-          if settled_once, do: :ok, else: drain(deadline, true)
+          problem(
+            "code-review never settled: #{length(kids)} processes, #{parked()} held, polling: #{state.polling != nil}"
+          )
 
         true ->
           await_any(kids)
@@ -1101,33 +1104,21 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     end
   end
 
+  # `:gone` for a server that ended. One that does not answer is not settled, and says so.
   defp get_state(pid) do
-    {:ok, :sys.get_state(pid)}
+    {:ok, :sys.get_state(pid, @settle_ms)}
   catch
-    :exit, _ -> :gone
+    :exit, {:timeout, _} ->
+      problem("code-review did not answer for #{@settle_ms} ms")
+
+    :exit, _ ->
+      :gone
   end
 
   defp kids(pid) do
     {:parent, parent} = Process.info(pid, :parent)
     {:links, links} = Process.info(pid, :links)
     Enum.filter(links, &(is_pid(&1) and &1 != parent))
-  end
-
-  defp await_poller(pid, deadline) do
-    case Process.info(pid, :monitors) do
-      {:monitors, [{:process, poller} | _]} ->
-        ref = Process.monitor(poller)
-
-        receive do
-          {:DOWN, ^ref, :process, _, _} -> :ok
-        after
-          max(deadline - System.monotonic_time(:millisecond), 0) ->
-            Process.demonitor(ref, [:flush])
-        end
-
-      _ ->
-        :ok
-    end
   end
 
   defp await_any(kids) do
@@ -1152,18 +1143,11 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     end
   end
 
-  defp await_restart(_sup, _old, 0), do: problem("code-review was not restarted after a crash")
-
-  defp await_restart(sup, old, tries) do
-    # The supervisor also holds the plugin's deliveries, once it has been sent an event.
-    case List.keyfind(Supervisor.which_children(sup), @server, 0) do
-      {_, pid, _, _} when is_pid(pid) and pid != old ->
-        :ok
-
-      _ ->
-        :sys.get_state(sup)
-        await_restart(sup, old, tries - 1)
-    end
+  # Back once the process replacing `old` publishes, as it does on starting. The
+  # supervisor hears of the crash a moment after this process does, so asking it
+  # straight away can still name `old`.
+  defp await_restart(old) do
+    await_topic(fn _ -> Process.whereis(@server) not in [nil, old] end)
   end
 
   # --- the laptop -----------------------------------------------------------------------

@@ -6,8 +6,10 @@ import HalC2.Shell
 
 // One block of a page (a row of Spaces.blocks): its text edited in place and
 // written when the user leaves it or presses Return, a checklist item's tick,
-// a callout's tint, a subpage link that opens the page, and the block's own
-// actions (comment, add a block below, move up or down, delete).
+// a callout's tint, a subpage link that opens the page, an image above its
+// caption, a chart drawn from its description, what a page's update wrote (Markdown
+// nobody edits by hand), and the block's own actions (comment, add a block below,
+// ask again for a chart, move up or down, delete).
 Item {
     id: block
 
@@ -19,12 +21,19 @@ Item {
     required property string linkedTitle
     required property bool byAgent
     required property int openComments
+    required property string imageId
+    required property string imageState
+    required property string imageUrl
+    required property int imageWidth
+    required property int imageHeight
     // Where it is on the page, and the blocks either side ("" at an end).
     required property int index
     property string previousId: ""
     property string beforePreviousId: ""
     property string nextId: ""
     property bool readOnly: false
+    // A chart block's description (SpaceChart in packages/contracts).
+    property var chart: ({})
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
@@ -33,6 +42,7 @@ Item {
 
     signal commentRequested(string blockId)
     signal addBelowRequested(string blockId)
+    signal askAgainRequested(string blockId, string request)
 
     // Writes what the user typed, if it differs from the block's text.
     function commit() {
@@ -42,7 +52,7 @@ Item {
     }
 
     objectName: "spaceBlock:" + text
-    implicitHeight: Math.max(row.implicitHeight, 28) + (block.kind === "heading" ? 10 : 4)
+    implicitHeight: Math.max(row.implicitHeight, 28) + (block.kind === "heading" ? 10 : 4) + (picture.visible ? picture.height + 6 : 0)
 
     // The editor follows the block while the user is not writing in it.
     onTextChanged: {
@@ -64,12 +74,29 @@ Item {
         border.color: Qt.alpha(block.info, 0.4)
     }
 
+    SpaceBlockImage {
+        id: picture
+
+        objectName: "spaceBlockImage:" + block.text
+        anchors.top: parent.top
+        anchors.left: parent.left
+        width: Math.min(parent.width, 720)
+        visible: block.kind === "image"
+        imageId: block.imageId
+        state_: block.imageState
+        url: block.imageUrl
+        naturalWidth: block.imageWidth
+        naturalHeight: block.imageHeight
+        readOnly: block.readOnly
+    }
+
     RowLayout {
         id: row
 
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: picture.visible ? (picture.height + 6) / 2 : 0
         anchors.leftMargin: block.kind === "callout" ? 10 : 0
         spacing: 8
 
@@ -123,12 +150,22 @@ Item {
             }
         }
 
+        Loader {
+            Layout.fillWidth: true
+            active: block.kind === "chart"
+            visible: active
+
+            sourceComponent: SpaceChart {
+                chart: block.chart
+            }
+        }
+
         TextEdit {
             id: editor
 
             objectName: "spaceBlockEditor:" + block.text
             Layout.fillWidth: true
-            visible: block.kind !== "subpage_link"
+            visible: block.kind !== "subpage_link" && block.kind !== "chart" && block.kind !== "generated"
             readOnly: block.readOnly
             wrapMode: TextEdit.Wrap
             selectByMouse: true
@@ -161,6 +198,28 @@ Item {
             }
         }
 
+        Loader {
+            Layout.fillWidth: true
+            active: block.kind === "generated"
+            visible: active
+
+            sourceComponent: ColumnLayout {
+                spacing: 2
+
+                Markdown {
+                    objectName: "spaceGenerated"
+                    Layout.fillWidth: true
+                    text: block.text
+                }
+
+                Text {
+                    text: qsTr("Written by this page's update")
+                    color: block.muted
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                }
+            }
+        }
+
         Text {
             visible: block.byAgent
             text: qsTr("agent")
@@ -169,6 +228,7 @@ Item {
         }
 
         RowLayout {
+            Layout.alignment: block.kind === "chart" ? Qt.AlignTop : Qt.AlignVCenter
             spacing: 0
             // Kept in the layout so the text does not reflow on hover.
             opacity: hover.hovered || block.editing || block.openComments > 0 ? 1 : 0
@@ -193,6 +253,18 @@ Item {
                 Accessible.name: qsTr("Add a block below")
                 visible: !block.readOnly
                 onClicked: block.addBelowRequested(block.blockId)
+            }
+
+            ShellButton {
+                objectName: "spaceAskAgain:" + block.text
+                subtle: true
+                iconName: "refresh-cw"
+                implicitHeight: 26
+                implicitWidth: 26
+                Accessible.name: qsTr("Ask again")
+                toolTip: qsTr("Ask again")
+                visible: block.kind === "chart" && !block.readOnly
+                onClicked: block.askAgainRequested(block.blockId, block.chart.request ?? "")
             }
 
             ShellButton {

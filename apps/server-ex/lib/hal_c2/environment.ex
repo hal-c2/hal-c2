@@ -227,12 +227,7 @@ defmodule HalC2.Environment do
   def server_config do
     %{
       "environment" => descriptor(),
-      "auth" => %{
-        "policy" => "loopback-browser",
-        "bootstrapMethods" => ["one-time-token"],
-        "sessionMethods" => ["bearer-access-token"],
-        "sessionCookieName" => "hal_c2_session"
-      },
+      "auth" => auth(),
       "cwd" => File.cwd!(),
       "keybindingsConfigPath" => Path.join(HalC2.Paths.config_dir(), "keybindings.json"),
       # Clients compile the rules with the defaults into `keybindings`.
@@ -241,6 +236,7 @@ defmodule HalC2.Environment do
       "issues" => [],
       "providers" => providers(),
       "availableEditors" => HalC2.Editors.available(),
+      "remoteOpenTargets" => HalC2.RemoteOpenTargets.targets(),
       "observability" =>
         %{
           "logsDirectoryPath" => Path.join(HalC2.Paths.state_dir(), "logs"),
@@ -253,6 +249,16 @@ defmodule HalC2.Environment do
           &if(url = HalC2.Traces.otlp_url(), do: Map.put(&1, "otlpTracesUrl", url), else: &1)
         ),
       "settings" => HalC2.Settings.settings()
+    }
+  end
+
+  @doc "`ServerConfig.auth`: how a client signs in here."
+  def auth do
+    %{
+      "policy" => "loopback-browser",
+      "bootstrapMethods" => ["one-time-token"],
+      "sessionMethods" => ["bearer-access-token"],
+      "sessionCookieName" => "hal_c2_session"
     }
   end
 
@@ -392,11 +398,20 @@ defmodule HalC2.Environment do
     # start an editor or a file manager here (`HalC2.Editors`).
     for {key, value} <- [
           {"machine", HalC2.Environment.Machine.kind()},
-          {"machineId", HalC2.Environment.Machine.id()}
+          {"machineId", HalC2.Environment.Machine.id()},
+          {"wsl", if(wsl?(), do: true)}
         ],
         value != nil,
         into: %{"os" => os(), "arch" => arch()},
         do: {key, value}
+  end
+
+  # A Linux kernel of Microsoft's: files are shown by Windows' file manager.
+  defp wsl? do
+    case File.read("/proc/sys/kernel/osrelease") do
+      {:ok, release} -> String.contains?(String.downcase(release), "microsoft")
+      _ -> false
+    end
   end
 
   defp os do

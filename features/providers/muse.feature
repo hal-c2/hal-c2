@@ -303,3 +303,13 @@ Feature: Muse Code
     Given the subagents setting is HAL-C2 workers
     When a Muse Code session is started
     Then it has no built-in subagent tool, if Muse Code can turn it off
+
+  # HalC2.Plugins.Kinds: another instance runs with its own settings, home and account,
+  # so its turn needs its own host rather than the first instance's.
+  Scenario: A turn on another instance of Muse Code starts its own host
+    Given Muse Code is installed and enabled
+    And the user sends a message to Muse Code
+    And a second instance "muse-work" of it with a binary of its own
+    When the next message goes to "muse-work"
+    Then a process of "muse-work" runs that turn in place of the first instance's
+    And another message to "muse-work" stays in that process
