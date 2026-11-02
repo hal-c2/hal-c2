@@ -166,7 +166,7 @@ Feature: GitHub Markdown in a page
     # https://github.com/hal-c2/hal-c2/issues/847
     @shared @backlog-desktop
     Scenario: Markdown a page keeps as written is shown as its source
-      Given the page "Plan" holds HTML the page does not model
+      Given the page "Plan" holds a table the page does not model yet
       When the user opens "Plan"
       Then the table is shown as its Markdown, exactly as written, in a fixed-width face
       And the user can edit it as text
