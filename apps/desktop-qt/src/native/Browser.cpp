@@ -140,9 +140,10 @@ void BrowserPage::follow() {
   m_enrolled = m_tabId;
   if (!m_enrolled.isEmpty()) Browser::instance()->enrol(this, m_enrolled);
   if (m_previews) {
+    disconnect(m_previews, &ThreadPreviews::tabChanged, this, nullptr);
     connect(m_previews, &ThreadPreviews::tabChanged, this, [this](const QString& tabId) {
       if (tabId == m_tabId) refresh();
-    }, Qt::UniqueConnection);
+    });
   }
   // What the MC has now is where the page starts: the brick loads `url`.
   m_tab = m_previews && !m_tabId.isEmpty() ? m_previews->tab(m_tabId) : QJsonObject();

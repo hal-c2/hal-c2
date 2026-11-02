@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Layouts
 import QtWebEngine
 import HalC2.Shell
 import "js/browser.js" as BrowserJs
@@ -102,6 +103,14 @@ Rectangle {
             webView.reload();
     }
 
+    // The load of `url` failed with Chromium's net error `code` (-102 for
+    // ERR_CONNECTION_REFUSED): said in place, and to the MC.
+    function failed(code, description, url) {
+        root.failure = BrowserJs.describeError(code, description);
+        root.failedUrl = url;
+        report("failed", code, description);
+    }
+
     function report(phase, code, description) {
         page.report(phase, webView.url.toString(), webView.title, code, description, webView.canGoBack, webView.canGoForward);
     }
@@ -128,6 +137,10 @@ Rectangle {
 
     Connections {
         target: page
+        // Not a binding: the view's zoom is set again on each load.
+        function onZoomChanged() {
+            webView.zoomFactor = page.zoom;
+        }
         function onAppearanceChanged() {
             root.applyAppearance();
             if (root.address.length > 0)
@@ -206,8 +219,10 @@ Rectangle {
                     typing = false;
             }
             onAccepted: {
+                // Read before the page's address comes back in.
+                const typed = text;
                 typing = false;
-                root.openTyped(text);
+                root.openTyped(typed);
             }
             Keys.onEscapePressed: {
                 typing = false;
@@ -406,6 +421,7 @@ Rectangle {
         }
 
         ShellMenuItem {
+            objectName: "browserDevToolsDock"
             text: Browser.devToolsDock === "right" ? qsTr("Dock DevTools at the bottom") : qsTr("Dock DevTools to the right")
             iconName: Browser.devToolsDock === "right" ? "panel-bottom" : "panel-right"
             onTriggered: {
@@ -458,6 +474,13 @@ Rectangle {
 
                 readonly property var shown: root.framed ? BrowserJs.fit(root.viewport.width, root.viewport.height, width, height - (root.framed ? 24 : 0), 16) : null
 
+                // What a device size sits on.
+                Rectangle {
+                    anchors.fill: parent
+                    visible: root.framed
+                    color: Theme.palette.color("canvas", "#09090b")
+                }
+
                 // The device's edge, under the page.
                 Rectangle {
                     visible: root.framed
@@ -481,7 +504,6 @@ Rectangle {
                     scale: root.framed ? pageArea.shown.scale : 1
                     transformOrigin: Item.TopLeft
                     profile: Browser.profile ? Browser.profile : WebEngine.defaultProfile
-                    zoomFactor: page.zoom
                     audioMuted: page.muted
                     backgroundColor: root.color
                     settings.errorPageEnabled: false
@@ -502,9 +524,7 @@ Rectangle {
                             // ERR_ABORTED: the page started another load itself.
                             if (info.errorCode === -3)
                                 break;
-                            root.failure = BrowserJs.describeError(info.errorCode, info.errorString);
-                            root.failedUrl = info.url;
-                            root.report("failed", info.errorCode, info.errorString);
+                            root.failed(info.errorCode, info.errorString, info.url);
                             break;
                         }
                     }
@@ -528,6 +548,7 @@ Rectangle {
                         }
                     }
                     Component.onCompleted: {
+                        webView.zoomFactor = page.zoom;
                         root.applyAppearance();
                         if (page.url.length > 0)
                             webView.url = page.url;
@@ -623,16 +644,51 @@ Rectangle {
                 Repeater {
                     model: root.source !== null && root.address.length === 0 ? root.source.suggestions : []
 
-                    delegate: ShellButton {
+                    delegate: AbstractButton {
+                        id: suggestion
+
                         required property var modelData
                         required property int index
 
                         objectName: "browserSuggestion-" + index
                         width: parent.width
-                        subtle: true
-                        horizontalPadding: 8
-                        iconName: modelData.kind === "server" ? "server" : modelData.kind === "recent" ? "clock" : "globe"
-                        text: modelData.label && modelData.label.length > 0 ? modelData.url + "  ·  " + modelData.label : modelData.url
+                        implicitHeight: 32
+                        leftPadding: 8
+                        rightPadding: 8
+                        hoverEnabled: true
+                        text: modelData.url
+                        Accessible.name: modelData.url
+
+                        background: Rectangle {
+                            radius: Math.min(Theme.radius, 8)
+                            color: suggestion.hovered || suggestion.visualFocus ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
+                        }
+
+                        contentItem: RowLayout {
+                            spacing: 8
+
+                            ShellIcon {
+                                name: suggestion.modelData.kind === "server" ? "server" : suggestion.modelData.kind === "recent" ? "clock" : "globe"
+                                size: 14
+                                color: root.muted
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: suggestion.modelData.url
+                                elide: Text.ElideMiddle
+                                color: root.foreground
+                                font.pixelSize: Math.round(13 * Theme.fontScale)
+                            }
+
+                            Text {
+                                visible: text.length > 0
+                                text: suggestion.modelData.label || ""
+                                color: root.muted
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                            }
+                        }
+
                         onClicked: root.go(modelData.url, true)
                     }
                 }
@@ -716,6 +772,7 @@ Rectangle {
             WebEngineView {
                 id: popupView
 
+                objectName: "popupView"
                 anchors.fill: parent
                 profile: webView.profile
                 // Left unopened, the request is refused.
