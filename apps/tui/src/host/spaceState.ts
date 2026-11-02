@@ -32,7 +32,6 @@ import {
   type SpaceId,
   type SpaceImage,
   type SpaceImageProvidersResult,
-  type SpaceListResult,
   type SpacePage,
   type SpacePageAgent,
   type SpacePageAgentTarget,
@@ -398,8 +397,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   let spacesError: string | null = null;
   let unsubscribeSpaces: (() => void) | null = null;
   let spaceId: string | null = null;
-  // The Space last open, where a project file opened from outside the pane goes.
-  let lastSpaceId: string | null = null;
   let space: StreamEntities = EMPTY_STREAM_ENTITIES;
   let spaceError: string | null = null;
   let unsubscribeSpace: (() => void) | null = null;
@@ -1380,7 +1377,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   const openSpace = (id: string, then: TuiSpaceView = "pages") => {
     generation += 1;
-    lastSpaceId = id;
     if (spaceId !== id) {
       spaceId = id;
       selected.pages = null;
@@ -2841,40 +2837,13 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return refusalText(error);
   };
 
-  /**
-   * Where a file opens from outside a Space: the Space last open, else the first; null
-   * when there is none, and the refusal when the Spaces could not be listed.
-   */
-  const targetSpace = async (): Promise<string | null | { readonly error: unknown }> => {
-    if (open && spaceId !== null) return spaceId;
-    let result: SpaceListResult;
-    try {
-      result = await call<SpaceListResult>(WS_METHODS.spaceList, {});
-    } catch (error) {
-      return { error };
-    }
-    const ids = result.spaces.map((entry) => entry.id as string);
-    return ids.find((id) => id === lastSpaceId) ?? ids[0] ?? null;
-  };
-
-  /** Opens a project's file as a page in `into` (else `targetSpace`) and shows it. */
-  const openProjectFile = (projectId: string, path: string, into: string | null = null) => {
+  /** Opens a project's file as a page of the project's own Space and shows it. */
+  const openProjectFile = (projectId: string, path: string) => {
     void track(
       (async () => {
-        const target = into ?? (await targetSpace());
-        if (target !== null && typeof target === "object") {
-          options.status(refusalText(target.error), "error");
-          return;
-        }
-        // The MC makes a Space when it lists none, so this is a last resort.
-        if (target === null) {
-          options.status("There is no Space to open it in: make one first (^X p, then n).", "info");
-          return;
-        }
         let result: SpacePageOpenFileResult;
         try {
           result = await call<SpacePageOpenFileResult>(WS_METHODS.spacePageOpenFile, {
-            spaceId: target,
             projectId,
             relativePath: path,
           });
@@ -2882,19 +2851,14 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           options.status(fileRefusalText(error, path), "error");
           return;
         }
-        // The file may be a page of another Space already: that is where it shows.
         closeHistory();
         show();
         openSpace(result.spaceId);
         openPage(result.page.id);
-        const elsewhere =
-          result.spaceId === target
-            ? ""
-            : ` in ${spaceList().find((entry) => entry.id === result.spaceId)?.name ?? "another Space"}`;
         options.status(
           result.created
             ? `Opened ${path} as the page “${result.page.title}”.`
-            : `${path} is the page “${result.page.title}”${elsewhere}.`,
+            : `${path} is the page “${result.page.title}”.`,
           "info",
         );
       })(),
@@ -2922,7 +2886,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
    * Picks a project's Space file and opens it, among `only` when given (the paths a
    * message names, one of which opens without asking).
    */
-  const pickFile = (projectId: string, into: string | null, only?: ReadonlyArray<string>) => {
+  const pickFile = (projectId: string, only?: ReadonlyArray<string>) => {
     void send<SpaceFilesListResult>(WS_METHODS.spaceFilesList, { projectId }).then((result) => {
       if (!result) return;
       knowSpaceFiles(projectId, result);
@@ -2940,7 +2904,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           "info",
         );
       } else if (only && files.length === 1) {
-        openProjectFile(projectId, files[0]!.relativePath, into);
+        openProjectFile(projectId, files[0]!.relativePath);
       } else {
         options.menu({
           title: `Open a file of ${name} as a page`,
@@ -2950,7 +2914,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
             value: file.relativePath,
             ...(file.page ? { description: `the page “${file.page.title}”` } : {}),
           })),
-          onChoose: (path) => openProjectFile(projectId, path, into),
+          onChoose: (path) => openProjectFile(projectId, path),
         });
       }
     });
@@ -2968,7 +2932,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       : undefined;
     const then = (id: string) => {
       if (typeof path === "string") openProjectFile(id, path);
-      else pickFile(id, null, only);
+      else pickFile(id, only);
     };
     if (typeof projectId !== "string") pickProject("Open a file of which project?", then);
     else if ((options.projects?.() ?? []).some((project) => project.id === projectId)) {
@@ -2982,16 +2946,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     }
   };
 
-  /** Inside a Space: a page from one of a project's files. */
+  /** From the pages: one of a project's files, edited as a page of the project's Space. */
   const fromFiles = () => {
-    const into = spaceId;
-    if (view !== "pages" || into === null) {
-      options.status("Open a Space to add a page from a project's files.", "info");
-      return;
-    }
-    pickProject("Add a page from the files of which project?", (projectId) =>
-      pickFile(projectId, into),
-    );
+    pickProject("Edit a file of which project as a page?", (projectId) => pickFile(projectId));
   };
 
   /** From a page to its file, in the file viewer. */
