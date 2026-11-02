@@ -151,11 +151,16 @@ const Steps steps([] {
     pick(world, S("Branch changes"));
     waitForDiff(world);
     expect(diff(world).comparedBase() == c[1] && diff(world).model()->paths() == QStringList{S("src/cart.ts")}, describeDiff(world));
+    // The base picker's search takes a typed ref.
+    world.tap(S("diffBasePicker"));
+    QObject* bases = world.item(S("diffBasePicker"))->findChild<QObject*>(S("diffBases"));
+    world.waitFor([&] { return bases && bases->property("opened").toBool(); }, S("the list of bases to open"));
     world.tap(S("diffBaseRef"));
     world.type(c[0]);
     world.press(S("Return"));
     world.sync();
     waitForDiff(world);
+    expect(!bases->property("opened").toBool(), S("the list of bases stayed open"));
   });
   step(S("the diff shows the changes against %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return diff(world).status() == QLatin1String("ready") && diff(world).comparedBase() == c[0]; },

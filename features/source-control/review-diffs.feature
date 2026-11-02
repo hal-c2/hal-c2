@@ -346,7 +346,7 @@ Feature: Reviewing working tree and branch changes
     When the user reviews the working tree
     Then each file is shown with the highlighting of its language
 
-  # Waits for "Each file of the diff on the desktop is coloured by its language": the
+  # Waits for "Each file of the diff on the desktop is coloured by its language" (hal-c2/hal-c2#916): the
   # desktop's diff has no highlighter to fail yet.
   @backlog @blocked @desktop
   Scenario: A diff is still shown when syntax highlighting cannot start
