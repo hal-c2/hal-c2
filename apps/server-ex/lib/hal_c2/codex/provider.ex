@@ -570,14 +570,28 @@ defmodule HalC2.Codex.Provider do
         version
 
       _ ->
-        version =
-          case System.cmd(path, ["--version"], stderr_to_stdout: true) do
-            {out, 0} -> out |> String.split() |> List.last() |> Kernel.||("unknown")
-            _ -> "unknown"
-          end
-
+        version = probe_version(path)
         :persistent_term.put({__MODULE__, :version}, Map.put(versions, path, version))
         version
+    end
+  end
+
+  # A client waits on this for its server config, so a CLI that hangs counts as "unknown"
+  # at the deadline; killing the task takes the run with it.
+  defp probe_version(path) do
+    task = Task.async(fn -> run_version(path) end)
+    timeout = Application.get_env(:hal_c2, :codex_version_timeout_ms, 5_000)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, version} -> version
+      _ -> "unknown"
+    end
+  end
+
+  defp run_version(path) do
+    case System.cmd(path, ["--version"], stderr_to_stdout: true) do
+      {out, 0} -> out |> String.split() |> List.last() |> Kernel.||("unknown")
+      _ -> "unknown"
     end
   rescue
     _ -> "unknown"

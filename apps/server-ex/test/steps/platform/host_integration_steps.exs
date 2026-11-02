@@ -145,11 +145,15 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   defp server_config(context) do
     Mc.ensure(HalC2.Settings)
 
+    read_config(context, 9)
+  end
+
+  defp read_config(context, id) do
     client =
       World.client(context)
-      |> Mc.sub(9, %{"type" => "config", "environment" => context.mc.environment})
+      |> Mc.sub(id, %{"type" => "config", "environment" => context.mc.environment})
 
-    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 9))
+    {frame, client} = Mc.await_config(client, id)
     context |> World.put_client(client) |> Map.put(:server_config, frame["config"])
   end
 
@@ -384,14 +388,9 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   step "a client reads the MC's server config a second time", context do
-    context = Map.put(context, :queries_after_first, registry_queries(context))
-
-    client =
-      World.client(context)
-      |> Mc.sub(10, %{"type" => "config", "environment" => context.mc.environment})
-
-    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 10))
-    context |> World.put_client(client) |> Map.put(:server_config, frame["config"])
+    context
+    |> Map.put(:queries_after_first, registry_queries(context))
+    |> read_config(10)
   end
 
   step "the registry was not queried again", context do
@@ -518,6 +517,17 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
   step "the host's xdg-mime never answers", context do
     context |> with_display() |> install_script("xdg-mime", "exec sleep 30") |> install("gio")
+  end
+
+  step "the host's codex never answers", context do
+    World.put_app_env(:codex_version_timeout_ms, 300)
+    install_script(bin(context), "codex", "exec sleep 30")
+  end
+
+  step "Codex is listed with an unknown version", context do
+    codex = Enum.find(context.server_config["providers"], &(&1["instanceId"] == "codex"))
+    assert codex["version"] == "unknown"
+    context
   end
 
   step "the default editor is listed first", context do
