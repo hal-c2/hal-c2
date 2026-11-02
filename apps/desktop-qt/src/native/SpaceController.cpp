@@ -67,6 +67,11 @@ bool byAgent(const QJsonValue& author) {
   return author.toObject().value(QLatin1String("type")).toString() == QLatin1String("agent");
 }
 
+// Written by the page's own update rather than by a person or a thread.
+bool byUpdate(const QJsonValue& author) {
+  return author.toObject().value(QLatin1String("type")).toString() == QLatin1String("schedule");
+}
+
 // In the order the MC keeps them: by `field`, then id.
 QList<QJsonObject> sorted(QList<QJsonObject> entities, QLatin1String field) {
   std::sort(entities.begin(), entities.end(), [field](const QJsonObject& a, const QJsonObject& b) {
@@ -251,7 +256,7 @@ SpaceHistory::SpaceHistory(std::function<QString(const QString&)> titleOf,
     : QObject(parent),
       m_titleOf(std::move(titleOf)),
       m_imageFields(std::move(imageFields)),
-      m_versions(new SpaceRows({"id", "version", "at", "byAgent", "threadTitle", "restoredFromAt"}, this)),
+      m_versions(new SpaceRows({"id", "version", "at", "byAgent", "byUpdate", "threadTitle", "restoredFromAt"}, this)),
       m_blocks(new SpaceRows({"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
                               "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
                              this)) {}
@@ -328,6 +333,7 @@ SpaceHistory::Next SpaceHistory::receive(int token, const QJsonObject& result) {
                  {QStringLiteral("version"), number},
                  {QStringLiteral("at"), text(version, QLatin1String("at"))},
                  {QStringLiteral("byAgent"), byAgent(version.value(QLatin1String("author")))},
+                 {QStringLiteral("byUpdate"), byUpdate(version.value(QLatin1String("author")))},
                  {QStringLiteral("threadTitle"), text(version, QLatin1String("threadTitle"))},
                  {QStringLiteral("restoredFromAt"), text(version, QLatin1String("restoredFromAt"))}});
   }

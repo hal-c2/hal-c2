@@ -243,6 +243,8 @@ export function fakeSpaceMc(options: {
   let ids = 0;
   let clock = Date.parse("2026-07-15T12:00:00.000Z");
   const user: SpaceAuthor = { type: "user" };
+  /** A page's update writes as itself, whoever ran it. */
+  const update: SpaceAuthor = { type: "schedule" };
   // Each page's versions, oldest first: what space/history.ex folds from the log.
   const versions = new Map<string, FakeVersion[]>();
   let versionSeq = 0;
@@ -850,15 +852,25 @@ export function fakeSpaceMc(options: {
       const found = livePage(input.spaceId, input.pageId);
       const source = versionOf(input);
       const at = now();
-      const held = blocksOf(input.spaceId, found.id);
+      // HalC2.Space.History.restore/5 never writes a generated part: the page's stays as it
+      // is, a page that updates itself takes none of a version's, and any other gets it
+      // back as the block it reads as.
+      const held = blocksOf(input.spaceId, found.id).filter((block) => block.kind !== "generated");
+      const wanted = source.blocks.flatMap((entry) =>
+        entry.kind !== "generated"
+          ? [entry]
+          : found.schedule
+            ? []
+            : [{ ...entry, kind: "paragraph" }],
+      );
       const changes: Change[] = [
         ...(found.title === source.title
           ? []
           : [["page", found.id, { s: { title: source.title, updatedAt: at } }] as Change]),
         ...held
-          .filter((block) => !source.blocks.some((entry) => entry.id === block.id))
+          .filter((block) => !wanted.some((entry) => entry.id === block.id))
           .map((block) => ["block", block.id, { d: true }] as Change),
-        ...source.blocks
+        ...wanted
           .filter((entry) => {
             const block = held.find((candidate) => candidate.id === entry.id);
             return (
@@ -903,7 +915,7 @@ export function fakeSpaceMc(options: {
       });
       return { page: table(input.spaceId, "page").get(found.id) };
     },
-    "space.page.schedule.runNow": (input, by) => {
+    "space.page.schedule.runNow": (input) => {
       const found = updatedPage(input.spaceId, input.pageId);
       const generation = mc.generation;
       const at = now();
@@ -918,14 +930,14 @@ export function fakeSpaceMc(options: {
       }
       const held = generatedOf(input.spaceId, found.id);
       const part: Entity = held
-        ? { ...held, text: generation.markdown, updatedAt: at }
+        ? { ...held, text: generation.markdown, updatedBy: update, updatedAt: at }
         : {
             ...newBlock(
               input.spaceId,
               found.id,
               { kind: "paragraph", text: generation.markdown },
               orderAt(input.spaceId, found.id, undefined),
-              by,
+              update,
             ),
             kind: "generated",
           };
@@ -1281,7 +1293,8 @@ export function fakeSpaceMc(options: {
       const handler = methods[method];
       if (!handler) throw new Error("unsupported");
       const result = handler(payload, author);
-      if (spaces.has(payload.spaceId)) noteVersions(payload.spaceId, author);
+      if (spaces.has(payload.spaceId))
+        noteVersions(payload.spaceId, method === "space.page.schedule.runNow" ? update : author);
       return result;
     },
     spaceNamed: (value) => {

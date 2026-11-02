@@ -670,7 +670,12 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   const versionRow = (entry: SpacePageVersion, newest: boolean): TuiSpaceRow => {
-    const by = entry.author.type === "agent" ? (entry.threadTitle ?? "an agent") : "You";
+    const by =
+      entry.author.type === "agent"
+        ? (entry.threadTitle ?? "an agent")
+        : entry.author.type === "schedule"
+          ? "The page's update"
+          : "You";
     const current = newest ? " · current" : "";
     const source = entry.restoredFromAt ? ` · restored from ${when(entry.restoredFromAt)}` : "";
     return entryRow(

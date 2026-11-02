@@ -65,6 +65,7 @@ ColumnLayout {
             required property var version
             required property string at
             required property bool byAgent
+            required property bool byUpdate
             required property string threadTitle
             required property string restoredFromAt
             readonly property bool newest: index === 0
@@ -97,7 +98,7 @@ ColumnLayout {
                     Label {
                         Layout.fillWidth: true
                         text: {
-                            const author = !row.byAgent ? qsTr("You") : row.threadTitle !== "" ? row.threadTitle : qsTr("An agent");
+                            const author = row.byUpdate ? qsTr("The page's update") : !row.byAgent ? qsTr("You") : row.threadTitle !== "" ? row.threadTitle : qsTr("An agent");
                             return row.newest ? qsTr("%1 · current").arg(author) : author;
                         }
                         elide: Text.ElideRight

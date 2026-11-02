@@ -26,6 +26,21 @@ defmodule HalC2.SpaceTest do
     block["id"]
   end
 
+  # What `HalC2.Space.Schedule.remove/2` does to the page, with no scheduler to ask.
+  defp remove_update!(space, page_id) do
+    {:ok, _} =
+      Space.transact(space, fn state ->
+        specs =
+          case Enum.find(Space.Blocks.of_page(state, page_id), &(&1["kind"] == "generated")) do
+            nil -> []
+            block -> Space.written(state, block["text"])
+          end
+
+        released = Space.Blocks.release_generated(state, page_id, specs, %{"type" => "schedule"})
+        {[{"page", page_id, %{"s" => %{"schedule" => nil}}} | released], {:ok, nil}}
+      end)
+  end
+
   defp texts(space, page) do
     {:ok, %{blocks: blocks}} = Space.page(space, page)
     Enum.map(blocks, & &1["text"])
@@ -84,6 +99,75 @@ defmodule HalC2.SpaceTest do
 
       assert [{"page", ^page_id, %{"s" => _}}, {"block", _, _}, {"page", ^page_id, %{"u" => _}}] =
                changes
+    end
+
+    # A version's generated part brought back to a page with no update is released as it
+    # comes, so restoring it once more is the page as it is: no edit, no version.
+    test "a run's words restored to a page with no update are its own, and stay so",
+         %{space: space} do
+      page_id = page!(space, "Roadmap")
+      block!(space, page_id, "Final")
+      ref = %{"spaceId" => space, "pageId" => page_id}
+      :ok = Space.Schedule.show(ref, %{"instruction" => "Summarise", "enabled" => true})
+      {:ok, generated} = Space.Schedule.write(space, page_id, "Three threads moved forward")
+      {:ok, %{versions: [%{version: version} | _]}} = Space.page_versions(space, page_id)
+      {:ok, _} = Space.delete_block(space, generated["id"])
+      :ok = Space.Schedule.show(ref, nil)
+
+      assert {:ok, _} = Space.restore_page_version(space, page_id, version)
+      {:ok, state} = Space.state(space)
+      assert [_final, released] = Space.Blocks.of_page(state, page_id)
+
+      assert Map.take(released, ~w(id kind text)) == %{
+               "id" => generated["id"],
+               "kind" => "paragraph",
+               "text" => "Three threads moved forward"
+             }
+
+      seq = Streams.sequence(Space.stream_id(space))
+      {:ok, %{versions: versions}} = Space.page_versions(space, page_id)
+      assert {:ok, _} = Space.restore_page_version(space, page_id, version)
+      assert Streams.sequence(Space.stream_id(space)) == seq
+      assert {:ok, %{versions: ^versions}} = Space.page_versions(space, page_id)
+    end
+
+    # The page as it stood when the run wrote is the page as removing the update left
+    # it: restoring it writes nothing, and no generated part comes back.
+    test "a version from before the update was removed is the page it left", %{space: space} do
+      page_id = page!(space, "Roadmap")
+      block!(space, page_id, "Final")
+      ref = %{"spaceId" => space, "pageId" => page_id}
+      :ok = Space.Schedule.show(ref, %{"instruction" => "Summarise", "enabled" => true})
+      {:ok, _} = Space.Schedule.write(space, page_id, "## Moves\n\nThree threads moved forward")
+      {:ok, %{versions: [%{version: version} | _]}} = Space.page_versions(space, page_id)
+      remove_update!(space, page_id)
+      {:ok, state} = Space.state(space)
+      released = Space.Blocks.of_page(state, page_id)
+
+      seq = Streams.sequence(Space.stream_id(space))
+      assert {:ok, _} = Space.restore_page_version(space, page_id, version)
+      assert Streams.sequence(Space.stream_id(space)) == seq
+      {:ok, state} = Space.state(space)
+      assert Space.Blocks.of_page(state, page_id) == released
+      assert Enum.map(released, & &1["kind"]) == ~w(paragraph heading paragraph)
+    end
+
+    test "a restore while the page updates itself leaves the generated part alone",
+         %{space: space} do
+      page_id = page!(space, "Roadmap")
+      final = block!(space, page_id, "Final")
+      ref = %{"spaceId" => space, "pageId" => page_id}
+      :ok = Space.Schedule.show(ref, %{"instruction" => "Summarise", "enabled" => true})
+      {:ok, _} = Space.Schedule.write(space, page_id, "Three threads moved forward")
+      {:ok, %{versions: [%{version: version} | _]}} = Space.page_versions(space, page_id)
+      {:ok, generated} = Space.Schedule.write(space, page_id, "Five threads moved forward")
+      {:ok, _} = Space.update_block(space, final, "Changed")
+
+      assert {:ok, _} = Space.restore_page_version(space, page_id, version)
+      {:ok, state} = Space.state(space)
+      assert [%{"text" => "Final"}, part] = Space.Blocks.of_page(state, page_id)
+      assert part == generated
+      assert part["text"] == "Five threads moved forward"
     end
 
     # A link to a page that is gone turns into a paragraph; a block on an image that

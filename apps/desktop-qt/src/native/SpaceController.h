@@ -90,7 +90,7 @@ private:
 // the answer, however many were wanted.
 //
 // Rows:
-//   versions {id, version, at, byAgent, threadTitle, restoredFromAt}: newest
+//   versions {id, version, at, byAgent, byUpdate, threadTitle, restoredFromAt}: newest
 //            first, the first being the page as it is now
 //   blocks   the version being read, as SpacePages' blocks
 class SpaceHistory : public QObject {

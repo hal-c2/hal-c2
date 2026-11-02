@@ -191,6 +191,8 @@ Answer refused(const QString& reason, const QString& message, const QString& tag
 }
 
 const QJsonObject kUser{{QStringLiteral("type"), QStringLiteral("user")}};
+// A page's update writes as itself, whoever ran it.
+const QJsonObject kSchedule{{QStringLiteral("type"), QStringLiteral("schedule")}};
 
 QJsonObject agent(const QString& threadId) {
   return {{QStringLiteral("type"), QStringLiteral("agent")}, {QStringLiteral("threadId"), threadId}};
@@ -612,25 +614,35 @@ Answer historyCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
 
   if (const auto why = writable(mc, space, pageId)) return *why;
   const QJsonObject before = contentOf(mc, space, page);
-  if (before != version.content) {
-    const QString stream = streamOf(space);
-    QSet<QString> kept;
-    for (const QJsonValue& value : version.content.value(QLatin1String("blocks")).toArray()) {
-      QJsonObject block = value.toObject();
-      const QString id = text(block, QLatin1String("id"));
-      kept.insert(id);
-      if (versioned(one(mc, stream, QStringLiteral("block"), id)) == block) continue;
-      block.insert(QStringLiteral("updatedBy"), kUser);
-      block.insert(QStringLiteral("updatedAt"), stamp(mc));
-      set(mc, stream, QStringLiteral("block"), id, block);
+  const QString stream = streamOf(space);
+  // HalC2.Space.History.restore/5 never writes a generated part: the page's stays as it
+  // is, a page that updates itself takes none of a version's, and any other gets it back
+  // as the block it reads as.
+  const bool updates = page.value(QLatin1String("schedule")).isObject();
+  QSet<QString> kept;
+  for (const QJsonValue& value : version.content.value(QLatin1String("blocks")).toArray()) {
+    QJsonObject block = value.toObject();
+    if (text(block, QLatin1String("kind")) == QLatin1String("generated")) {
+      if (updates) continue;
+      const QJsonObject first = parseMarkdown(text(block, QLatin1String("text"))).second.value(0);
+      block.insert(QStringLiteral("kind"), text(first, QLatin1String("kind")));
+      block.insert(QStringLiteral("text"), text(first, QLatin1String("text")));
     }
-    for (const QJsonObject& block : blocksOf(mc, space, pageId)) {
-      if (!kept.contains(text(block, QLatin1String("id")))) remove(mc, stream, QStringLiteral("block"), text(block, QLatin1String("id")));
-    }
-    set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("title"), version.content.value(QLatin1String("title"))}});
-    FakeVersion restored{++fake(mc).ids, stamp(mc), kUser, version.at, version.content};
-    versions.append(restored);
+    const QString id = text(block, QLatin1String("id"));
+    kept.insert(id);
+    if (versioned(one(mc, stream, QStringLiteral("block"), id)) == block) continue;
+    block.insert(QStringLiteral("updatedBy"), kUser);
+    block.insert(QStringLiteral("updatedAt"), stamp(mc));
+    set(mc, stream, QStringLiteral("block"), id, block);
   }
+  for (const QJsonObject& block : blocksOf(mc, space, pageId)) {
+    const QString id = text(block, QLatin1String("id"));
+    if (text(block, QLatin1String("kind")) != QLatin1String("generated") && !kept.contains(id)) remove(mc, stream, QStringLiteral("block"), id);
+  }
+  if (page.value(QLatin1String("title")) != version.content.value(QLatin1String("title")))
+    set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("title"), version.content.value(QLatin1String("title"))}});
+  const QJsonObject after = contentOf(mc, space, one(mc, stream, QStringLiteral("page"), pageId));
+  if (after != before) versions.append(FakeVersion{++fake(mc).ids, stamp(mc), kUser, version.at, after});
   return {{{QStringLiteral("page"), one(mc, streamOf(space), QStringLiteral("page"), pageId)}}};
 }
 
@@ -798,10 +810,10 @@ Answer schedule(FakeMc& mc, const QString& method, const QString& space, const Q
   }
   if (block.isEmpty()) {
     const Answer inserted = insertBlock(mc, space, pageId, {{QStringLiteral("kind"), QStringLiteral("paragraph")}, {QStringLiteral("text"), fake(mc).writes}},
-                                        QJsonValue::Undefined, {{QStringLiteral("type"), QStringLiteral("schedule")}});
+                                        QJsonValue::Undefined, kSchedule);
     set(mc, stream, QStringLiteral("block"), text(inserted.result.value(QLatin1String("block")).toObject(), QLatin1String("id")), {{QStringLiteral("kind"), kGenerated}});
   } else {
-    set(mc, stream, QStringLiteral("block"), text(block, QLatin1String("id")), {{QStringLiteral("text"), fake(mc).writes}, {QStringLiteral("updatedAt"), at}});
+    set(mc, stream, QStringLiteral("block"), text(block, QLatin1String("id")), {{QStringLiteral("text"), fake(mc).writes}, {QStringLiteral("updatedBy"), kSchedule}, {QStringLiteral("updatedAt"), at}});
   }
   set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("writtenAt"), at}});
   show({{QStringLiteral("lastRunAt"), at}, {QStringLiteral("lastRunStatus"), QStringLiteral("succeeded")}, {QStringLiteral("lastRunError"), QJsonValue::Null}});
@@ -837,7 +849,7 @@ Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
   const Answer answer = history ? historyCall(mc, method, in) : decide(mc, method, in);
   const QString space = text(in, QLatin1String("spaceId"));
   if (space.isEmpty()) return answer;
-  if (!history && answer.error.isEmpty()) noteEdits(mc, space, kUser);
+  if (!history && answer.error.isEmpty()) noteEdits(mc, space, method == QLatin1String("page.schedule.runNow") ? kSchedule : kUser);
   const QString stream = streamOf(space);
   for (const QJsonObject& site : all(mc, stream, QStringLiteral("site"))) {
     const QJsonObject page = one(mc, stream, QStringLiteral("page"), text(site, QLatin1String("pageId")));
@@ -1922,7 +1934,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("each version says when it was written and by the user"), [](World& world, const Captures&, const Table&) {
     for (const QVariantMap& row : viewOf(world)->history()->versions()->rows()) {
-      expect(!row.value(QStringLiteral("at")).toString().isEmpty() && !row.value(QStringLiteral("byAgent")).toBool(), QStringLiteral("a version says %1").arg(show(row)));
+      expect(!row.value(QStringLiteral("at")).toString().isEmpty() && !row.value(QStringLiteral("byAgent")).toBool() && !row.value(QStringLiteral("byUpdate")).toBool(), QStringLiteral("a version says %1").arg(show(row)));
     }
   });
   step(QStringLiteral("the newest version is the page as it is now"), [](World& world, const Captures&, const Table&) {
@@ -1934,6 +1946,10 @@ const Steps steps([] {
   step(QStringLiteral("the newest version was written by the thread %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QVariantMap newest = viewOf(world)->history()->versions()->get(0);
     expect(newest.value(QStringLiteral("byAgent")).toBool() && newest.value(QStringLiteral("threadTitle")).toString() == c[0], QStringLiteral("the newest version says %1").arg(show(newest)));
+  });
+  step(QStringLiteral("the newest version was written by the page's update"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap newest = viewOf(world)->history()->versions()->get(0);
+    expect(newest.value(QStringLiteral("byUpdate")).toBool() && !newest.value(QStringLiteral("byAgent")).toBool(), QStringLiteral("the newest version says %1").arg(show(newest)));
   });
   step(QStringLiteral("the user reads the version (\\d+) back on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     readVersion(world, versionBack(world, c[1], c[0].toInt()));

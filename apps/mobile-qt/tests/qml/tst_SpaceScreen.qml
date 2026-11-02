@@ -444,7 +444,7 @@ Item {
         }
 
         function version(id, more) {
-            return Object.assign({ version: id, at: "2026-10-31T10:00:00Z", byAgent: false, threadTitle: "", restoredFromAt: "" }, more ?? {});
+            return Object.assign({ version: id, at: "2026-10-31T10:00:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" }, more ?? {});
         }
 
         function openHistory(history, state) {

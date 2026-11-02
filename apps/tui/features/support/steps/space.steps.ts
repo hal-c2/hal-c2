@@ -1325,6 +1325,10 @@ step("the newest version was written by the thread {string}", (ctx: SpaceWorld, 
   expect(words(versionRows(ctx)[0]!)).toContain(thread);
 });
 
+step("the newest version was written by the page's update", (ctx: SpaceWorld) => {
+  expect(words(versionRows(ctx)[0]!)).toContain("The page's update");
+});
+
 step(
   "the user reads the version {int} back on {string}",
   async (ctx: SpaceWorld, back: number, title: string) => {
