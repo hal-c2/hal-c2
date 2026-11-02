@@ -685,16 +685,21 @@ defmodule HalC2.PlannerPropTest do
     # Renaming a task again while GitHub holds its push, so its answer chains one.
     flying = for slot <- pushed, Map.has_key?(m.flights, slot), do: slot
 
-    # A task's owner, most of all a pushed one's or while GitHub refuses it, and GitHub
-    # refusing assignees once a task has an owner to change.
-    owned = for slot <- pushed, m.items[slot].owner != nil, do: slot
+    # A task's owner, now and then; the owner property, most of all a pushed one's or
+    # while GitHub refuses it, and GitHub refusing assignees once a task has an owner to
+    # change.
+    owning = m.focus == @focus_owner
+    owned = if owning, do: for(slot <- pushed, m.items[slot].owner != nil, do: slot), else: []
     # And most of all the change after GitHub refused one, which asks only what is left.
-    half = for {slot, %{sync: {:refused, :assignees}}} <- m.items, do: slot
+    half =
+      if owning, do: for({slot, %{sync: {:refused, :assignees}}} <- m.items, do: slot), else: []
+
+    owns = if owning, do: 6, else: 1
     unassign = for {n, names} <- m.assignees, name <- names, do: {n, name}
 
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
-       {if(pushed == [], do: 2, else: 10),
+       {if(pushed == [] or not owning, do: 2, else: 10),
         {:call, __MODULE__, :reown, [item, elements(@owners)]}},
        {cond do
           half != [] and m.refusing != nil -> 20
@@ -811,7 +816,7 @@ defmodule HalC2.PlannerPropTest do
        if(pushed == [],
          do: [],
          else: [
-           {6,
+           {owns,
             {:call, __MODULE__, :assign,
              [elements(Enum.map(pushed, &issue_of(m, &1))), elements(@assignees)]}}
          ]
@@ -819,7 +824,7 @@ defmodule HalC2.PlannerPropTest do
        if(unassign == [],
          do: [],
          else: [
-           {6, oneof(for {n, name} <- unassign, do: {:call, __MODULE__, :unassign, [n, name]})}
+           {owns, oneof(for {n, name} <- unassign, do: {:call, __MODULE__, :unassign, [n, name]})}
          ]
        ) ++
        if(half == [],
