@@ -787,6 +787,28 @@ defmodule HalC2.PlannerTest do
     end
   end
 
+  describe "moves reported out of the order GitHub took them" do
+    @issue %{"repository" => "acme/api", "number" => 7}
+
+    test "a move taken before one already reported is dropped" do
+      {moved, latest} = Sync.newest([Map.merge(@issue, %{"milestone" => 2, "at" => 20})], %{})
+      assert moved == [Map.put(@issue, "milestone", 2)]
+
+      taken_early =
+        for {number, at} <- [{7, 10}, {9, 11}],
+            do: %{"repository" => "ACME/api", "number" => number, "milestone" => 3, "at" => at}
+
+      assert {[%{"number" => 9}], later} = Sync.newest(taken_early, latest)
+      assert later == %{{"acme/api", 7} => 20, {"acme/api", 9} => 11}
+    end
+
+    test "the same report taken again is not older than itself" do
+      move = Map.merge(@issue, %{"milestone" => 2, "at" => 20})
+      {moved, latest} = Sync.newest([move], %{})
+      assert {^moved, ^latest} = Sync.newest([move], latest)
+    end
+  end
+
   describe "a milestone's correction GitHub refused" do
     @repo "acme/api"
     @projects [%{"id" => "p", "kind" => "github", "repository" => @repo}]

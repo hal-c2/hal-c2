@@ -737,6 +737,9 @@ defmodule HalC2Plugins.Planner do
        slack: nil,
        slack_at: nil,
        polling: nil,
+       # When GitHub last took a move for each issue (`Sync.newest/2`). Monotonic times
+       # mean nothing to another MC run, so it is not saved.
+       latest_moves: %{},
        published: %{},
        launching: %{}
      }), {:continue, :announce}}
@@ -1088,7 +1091,8 @@ defmodule HalC2Plugins.Planner do
     extra = if leg_board == board, do: extra, else: Map.delete(extra, "boardItemId")
     {moved, extra} = Map.pop(extra, "moved", [])
     {stated, extra} = Map.pop(extra, "stated")
-    state = %{state | items: Sync.landed(state.items, moved)}
+    {moved, latest} = Sync.newest(moved, state.latest_moves)
+    state = %{state | items: Sync.landed(state.items, moved), latest_moves: latest}
     item = state.items[id] |> Map.merge(extra) |> Map.put("syncError", error)
     item = if stated, do: %{item | "issue" => Map.merge(item["issue"], stated)}, else: item
     stale? = Sync.reasserts(moved, [], state.items, state.projects) != []

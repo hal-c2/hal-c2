@@ -2279,6 +2279,15 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "nothing in the plan is marked as not synced", context do
+    assert for(
+             %{"syncError" => error} = item when error != nil <- plan!(context)["items"],
+             do: item
+           ) == []
+
+    context
+  end
+
   step "\#{int}'s task is marked as not synced", %{args: [number]} = context do
     error = task_of(plan!(context), number)["syncError"]
     assert is_binary(error) and error != "", "##{number}'s task is marked as synced"
@@ -2695,6 +2704,80 @@ defmodule HalC2.Steps.Planning.Planner do
     context
     |> World.cli_rules([move.(late, "cat '#{gate}' > /dev/null; "), move.(soon, check)])
     |> Map.merge(%{gh_gate: gate, gh_milestones: taken})
+  end
+
+  # GitHub notes each milestone it takes #`number` to. The first ask for `refused` fails,
+  # and #`other`'s move to it waits on the gate.
+  step "GitHub refuses moving \#{int} to {string} once, and takes moving \#{int} to {string} late",
+       %{args: [number, refused, other, title]} = context do
+    home = context.mc.home
+    gate = Path.join(home, "gh-gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    taken = Path.join(home, "gh-milestones")
+    asked = Path.join(home, "gh-asked")
+
+    patch = fn number, milestone, run ->
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [~s("milestone":#{milestone})],
+        "run" => run,
+        "stdout" => %{"number" => number}
+      }
+    end
+
+    note = fn milestone -> "echo '#{milestone}' >> '#{taken}'" end
+    first = context.milestones[refused]
+
+    others =
+      for {_, milestone} <- context.milestones, milestone != first do
+        patch.(number, milestone, note.(milestone))
+      end
+
+    context
+    |> World.cli_rules([
+      patch.(number, first, "[ -e '#{asked}' ] || { : > '#{asked}'; exit 1; }; " <> note.(first)),
+      patch.(other, context.milestones[title], "cat '#{gate}' > /dev/null")
+      | others
+    ])
+    |> Map.merge(%{gh_gate: gate, gh_milestones: taken})
+  end
+
+  step "the user moves {string} from {string} to {string}, which GitHub refuses",
+       %{args: [title, from, to]} = context do
+    {reply, context} = plugin(context, "moveToMilestone", move_input(context, title, from, to))
+    assert {:ok, _} = reply
+    context
+  end
+
+  # The other task's move goes from a client of its own and goes to GitHub with the refused
+  # move before it, so the push takes the refused one and waits on the other while the
+  # task moves to `away`, which GitHub takes, and back.
+  step "the user moves {string} to {string} and back to {string} while GitHub holds moving {string} from {string} to {string}",
+       %{args: [title, away, back, other, from, to]} = context do
+    %{mc: mc} = context
+    input = move_input(context, other, from, to)
+    call = %{"id" => @id, "method" => "moveToMilestone", "input" => input}
+
+    moving =
+      Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+
+    # The gate is opened, without being answered, once the held move's gh waits on it, by
+    # which time GitHub took the move before it.
+    {:ok, gate} = :file.open(context.gh_gate, [:write, :raw])
+
+    context =
+      for {from, to} <- [{back, away}, {away, back}], reduce: context do
+        context ->
+          {reply, context} =
+            plugin(context, "moveToMilestone", move_input(context, title, from, to))
+
+          assert {:ok, _} = reply
+          context
+      end
+
+    :ok = :file.close(gate)
+    assert {{:ok, _}, _} = Task.await(moving, 30_000)
+    context
   end
 
   step "the user moves {string} from {string} to {string}, then to {string} before GitHub answers",
