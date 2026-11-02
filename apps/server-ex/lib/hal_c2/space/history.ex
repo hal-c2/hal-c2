@@ -14,8 +14,8 @@ defmodule HalC2.Space.History do
   An author is what the edit's block says (`updatedBy`), which is why deleting a block
   someone else last wrote first stamps it (`HalC2.Space.Blocks.delete/3`), as does
   deleting the page a link leads to (`HalC2.Space.Pages.delete/3`). A title is
-  the user's, or the source thread's when the page is made from one. There is no agent
-  rename, so that holds.
+  the user's, or the source thread's when the page is made from one, or the file's when
+  a page that is a file takes it from the file. There is no agent rename, so that holds.
 
   A restore is the edits that make the page look like the version again, between two
   writes of the page's `restoring` field in one commit, which is how the fold tells
@@ -273,7 +273,7 @@ defmodule HalC2.Space.History do
         edit(acc, event, creator(next))
 
       prev["title"] != next["title"] ->
-        edit(acc, event, Space.user())
+        edit(acc, event, retitled_by(prev, next))
 
       true ->
         acc
@@ -298,8 +298,16 @@ defmodule HalC2.Space.History do
 
   defp step(_event, acc), do: acc
 
+  defp creator(%{"file" => %{}}), do: Space.Files.author()
   defp creator(%{"sourceThreadId" => id}) when is_binary(id), do: Space.agent(id)
   defp creator(_page), do: Space.user()
+
+  # A file's page takes its title from the file, with what it read of it.
+  defp retitled_by(%{"file" => %{"hash" => hash}}, %{"file" => %{"hash" => next}})
+       when hash != next,
+       do: Space.Files.author()
+
+  defp retitled_by(_prev, _next), do: Space.user()
 
   defp content(nil), do: nil
   defp content(block), do: Map.take(block, @content)
