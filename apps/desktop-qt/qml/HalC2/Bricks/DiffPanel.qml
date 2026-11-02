@@ -9,8 +9,10 @@ import HalC2.Shell
 // one turn; the patch is a DiffModel drawn one row per line, so a large diff
 // only makes the rows in view. Reverting to the turn shown asks first (RevertDialog).
 // The picker also offers the checkout itself: its working tree, or the branch
-// against a base the user can name. The changed files can be listed as a tree
-// that jumps to a file, and a file opens in the user's editor.
+// against a base the user picks from the checkout's refs or names. The changed
+// files can be listed as a tree that jumps to a file, and a file opens in the
+// user's editor or the environment's file manager. A review cut short lists its
+// files and loads each one's changes when it is opened.
 //
 // A source without turns (`hasTurns: false`, a pull request's code) shows no
 // picker or whitespace option; one with setViewed(path, viewed) and
@@ -34,7 +36,28 @@ Rectangle {
     readonly property bool comparing: (source?.reviewing ?? false) && source.selection === -3
     // Whether the changed files are listed as a tree beside the diff.
     property bool showTree: false
-    readonly property var tree: showTree && model !== null && status === "ready" && model.fileCount > 0 ? model.tree() : []
+    // Bumped when the files or the tree's open folders change.
+    property int treeRevision: 0
+    readonly property var tree: treeRevision >= 0 && showTree && model !== null && status === "ready" && model.fileCount > 0 ? model.tree() : []
+
+    Connections {
+        target: root.model
+        function onPatchChanged() {
+            root.treeRevision++;
+        }
+        function onTreeChanged() {
+            root.treeRevision++;
+        }
+    }
+
+    // A diff path as the thread's workspace has it, or "" outside it; a pull
+    // request's paths are its own.
+    function workspacePath(path) {
+        return typeof root.source?.workspacePath === "function" ? root.source.workspacePath(path) : path;
+    }
+    // What the environment opens files with.
+    readonly property var editors: Shell.state.workspace?.editors ?? []
+    readonly property bool hasFileManager: editors.some(editor => editor.id === "file-manager")
 
     // Opens `file` and brings it to the top.
     function jumpTo(file) {
@@ -88,7 +111,7 @@ Rectangle {
                 valueRole: "value"
                 enabled: count > 0
                 currentIndex: Math.max(0, indexOfValue(root.source?.selection ?? -1))
-                onActivated: root.source.select(currentValue)
+                onActivated: index => root.source.select(valueAt(index))
             }
 
             Text {
@@ -216,15 +239,129 @@ Rectangle {
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 elide: Text.ElideMiddle
             }
-            ShellTextField {
-                objectName: "diffBaseRef"
+            ShellButton {
+                id: basePicker
+
+                objectName: "diffBasePicker"
                 Layout.fillWidth: true
                 implicitHeight: 26
-                placeholderText: root.source?.comparedBase || qsTr("the base branch")
-                text: root.source?.baseRef ?? ""
+                chevron: true
+                text: (root.source?.baseRef ?? "").length > 0 ? root.source.baseRef : qsTr("Automatic")
                 Accessible.name: qsTr("Compare against")
-                onAccepted: root.source.baseRef = text
+                ToolTip.visible: hovered && (root.source?.comparedBase ?? "").length > 0
+                ToolTip.text: qsTr("Compared against %1").arg(root.source?.comparedBase ?? "")
+                onClicked: bases.open()
+
+                Popup {
+                    id: bases
+
+                    objectName: "diffBases"
+                    y: parent.height + 4
+                    width: Math.max(parent.width, 260)
+                    padding: 6
+                    onOpened: {
+                        root.source.baseQuery = "";
+                        root.source.loadBases();
+                        baseSearch.text = "";
+                        baseSearch.forceActiveFocus();
+                    }
+                    background: Rectangle {
+                        radius: Theme.radius
+                        color: Theme.palette.color("surfaceOverlay", "#18181b")
+                        border.color: root.borderColor
+                        border.width: 1
+                    }
+
+                    contentItem: ColumnLayout {
+                        spacing: 4
+
+                        ShellTextField {
+                            id: baseSearch
+
+                            objectName: "diffBaseRef"
+                            Layout.fillWidth: true
+                            implicitHeight: 26
+                            placeholderText: qsTr("Search or type a ref")
+                            Accessible.name: qsTr("Search refs to compare against")
+                            onTextEdited: root.source.baseQuery = text
+                            onAccepted: {
+                                root.source.chooseTypedBase(text);
+                                bases.close();
+                            }
+                        }
+                        ListView {
+                            id: baseList
+
+                            objectName: "diffBaseChoices"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Math.min(contentHeight, 240)
+                            clip: true
+                            model: root.source?.baseChoices ?? []
+                            boundsBehavior: Flickable.StopAtBounds
+                            delegate: ItemDelegate {
+                                id: choice
+
+                                required property var modelData
+
+                                objectName: "diffBaseChoice-" + choice.modelData.label
+                                width: baseList.width
+                                height: 26
+                                padding: 0
+                                leftPadding: 8
+                                Accessible.name: choice.modelData.label
+                                onClicked: {
+                                    root.source.chooseBase(choice.modelData.id);
+                                    bases.close();
+                                }
+                                background: Rectangle {
+                                    color: choice.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+                                }
+                                contentItem: RowLayout {
+                                    spacing: 6
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: choice.modelData.label
+                                        color: root.foreground
+                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        elide: Text.ElideMiddle
+                                    }
+                                    Text {
+                                        objectName: "diffBaseRemoteOnly"
+                                        visible: choice.modelData.remoteOnly
+                                        text: qsTr("Remote only")
+                                        color: root.muted
+                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            objectName: "diffBaseEmpty"
+                            Layout.fillWidth: true
+                            Layout.margins: 6
+                            visible: baseList.count === 0
+                            text: root.source?.basesLoading ? qsTr("Loading refs…") : qsTr("No matching refs.")
+                            color: root.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                        }
+                    }
+                }
             }
+        }
+
+        // The MC cut the patch short; what is listed still counts every change.
+        Text {
+            objectName: "diffTruncated"
+            Layout.fillWidth: true
+            Layout.leftMargin: 8
+            Layout.rightMargin: 8
+            Layout.bottomMargin: 8
+            visible: (root.source?.truncated ?? false) && root.status === "ready"
+            text: qsTr("This preview exceeds the size limit. Changes shown are incomplete. Totals include all changes.")
+            color: root.muted
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+            wrapMode: Text.Wrap
         }
 
         Rectangle {
@@ -246,7 +383,7 @@ Rectangle {
                 Layout.fillHeight: true
                 visible: root.tree.length > 0
                 clip: true
-                model: root.tree
+                model: root.tree.filter(node => node.shown)
                 boundsBehavior: Flickable.StopAtBounds
                 delegate: ItemDelegate {
                     id: node
@@ -258,9 +395,8 @@ Rectangle {
                     height: 24
                     padding: 0
                     leftPadding: 8 + node.modelData.depth * 12
-                    enabled: node.modelData.kind === "file"
                     Accessible.name: node.modelData.path
-                    onClicked: root.jumpTo(node.modelData.file)
+                    onClicked: node.modelData.kind === "folder" ? root.model.toggleFolder(node.modelData.path) : root.jumpTo(node.modelData.file)
                     background: Rectangle {
                         color: node.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
                     }
@@ -268,7 +404,7 @@ Rectangle {
                         spacing: 6
 
                         ShellIcon {
-                            name: node.modelData.kind === "folder" ? "folder" : "file"
+                            name: node.modelData.kind === "file" ? "file" : node.modelData.open ? "folder-open" : "folder"
                             size: 13
                             color: root.muted
                         }
@@ -365,6 +501,9 @@ Rectangle {
                         required property var newLine
                         required property string rightText
                         required property string rightSign
+                        required property string state
+                        required property string note
+                        required property bool partial
 
                         width: view.contentWidth
                         sourceComponent: kind === "file" ? fileHeader : kind === "hunk" ? hunkHeader : root.split ? splitLine : stackedLine
@@ -381,8 +520,11 @@ Rectangle {
             id: header
 
             readonly property var row: parent
+            // Listed without its changes, and opened: why they are not shown.
+            readonly property bool waiting: row.expanded && row.state.length > 0
+            readonly property string inWorkspace: root.workspacePath(row.path)
             objectName: "diffFile-" + row.path
-            height: 32
+            height: waiting ? 58 : 32
             hoverEnabled: true
             // The header's text stays in view while the lines scroll sideways.
             leftPadding: Math.max(0, view.contentX - view.originX)
@@ -398,75 +540,151 @@ Rectangle {
                     color: root.borderColor
                 }
             }
-            contentItem: RowLayout {
-                spacing: 6
+            contentItem: ColumnLayout {
+                spacing: 0
 
-                ShellIcon {
-                    Layout.leftMargin: 8
-                    name: header.row.expanded ? "chevron-down" : "chevron-right"
-                    size: 13
-                    color: root.muted
-                }
-                Text {
+                RowLayout {
                     Layout.fillWidth: true
-                    text: header.row.previousPath.length > 0 ? header.row.previousPath + " → " + header.row.path : header.row.path
-                    color: header.row.change === "deleted" ? root.muted : root.foreground
-                    font.family: root.mono
-                    font.pixelSize: Theme.fontSizeCode
-                    font.strikeout: header.row.change === "deleted"
-                    elide: Text.ElideMiddle
-                }
-                ShellButton {
-                    objectName: "diffOpenInEditor"
-                    // A thread's checkout has the file; a pull request's code may not.
-                    visible: root.source?.hasTurns ?? true
-                    subtle: true
-                    iconName: "square-arrow-out-up-right"
-                    iconSize: 13
-                    iconTint: root.muted
-                    implicitWidth: 24
-                    implicitHeight: 24
-                    Accessible.name: qsTr("Open %1 in the editor").arg(header.row.path)
-                    ToolTip.visible: hovered
-                    ToolTip.text: qsTr("Open in editor")
-                    onClicked: Shell.dispatch("workspace.openFile", {
-                        path: header.row.path
-                    })
-                }
-                ShellButton {
-                    readonly property bool viewed: (root.source?.viewedPaths ?? []).indexOf(header.row.path) >= 0
+                    Layout.preferredHeight: 32
+                    spacing: 6
 
-                    objectName: "diffViewed"
-                    visible: typeof root.source?.setViewed === "function"
-                    subtle: true
-                    iconName: viewed ? "square-check" : "square"
-                    iconSize: 13
-                    iconTint: viewed ? root.added : root.muted
-                    implicitWidth: 24
-                    implicitHeight: 24
-                    Accessible.name: viewed ? qsTr("Mark %1 not viewed").arg(header.row.path) : qsTr("Mark %1 viewed").arg(header.row.path)
-                    ToolTip.visible: hovered
-                    ToolTip.text: viewed ? qsTr("Viewed") : qsTr("Mark viewed")
-                    onClicked: root.source.setViewed(header.row.path, !viewed)
+                    ShellIcon {
+                        Layout.leftMargin: 8
+                        name: header.row.expanded ? "chevron-down" : "chevron-right"
+                        size: 13
+                        color: root.muted
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: header.row.previousPath.length > 0 ? header.row.previousPath + " → " + header.row.path : header.row.path
+                        color: header.row.change === "deleted" ? root.muted : root.foreground
+                        font.family: root.mono
+                        font.pixelSize: Theme.fontSizeCode
+                        font.strikeout: header.row.change === "deleted"
+                        elide: Text.ElideMiddle
+                    }
+                    Text {
+                        objectName: "diffFilePartial"
+                        visible: header.row.partial
+                        text: qsTr("Partial diff preview")
+                        color: root.muted
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        ToolTip.text: qsTr("This file is too large to show in full. Counts include all changes.")
+                        ToolTip.visible: partialHover.hovered
+
+                        HoverHandler {
+                            id: partialHover
+                        }
+                    }
+                    ShellButton {
+                        objectName: "diffCopyPath"
+                        subtle: true
+                        iconName: "copy"
+                        iconSize: 13
+                        iconTint: root.muted
+                        implicitWidth: 24
+                        implicitHeight: 24
+                        Accessible.name: qsTr("Copy the path of %1").arg(header.row.path)
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("Copy path")
+                        onClicked: Shell.dispatch("files.copyPath", {
+                            path: header.row.path
+                        })
+                    }
+                    ShellButton {
+                        objectName: "diffOpenInEditor"
+                        // A thread's checkout has the file; a pull request's code may not.
+                        visible: root.source?.hasTurns ?? true
+                        // A file outside the thread's folder is not the thread's to open.
+                        enabled: header.inWorkspace.length > 0
+                        subtle: true
+                        iconName: "square-arrow-out-up-right"
+                        iconSize: 13
+                        iconTint: root.muted
+                        implicitWidth: 24
+                        implicitHeight: 24
+                        Accessible.name: qsTr("Open %1 in the editor").arg(header.row.path)
+                        ToolTip.visible: hovered
+                        ToolTip.text: enabled ? qsTr("Open in editor") : qsTr("Not in this thread's folder")
+                        onClicked: Shell.dispatch("workspace.openFile", {
+                            path: header.inWorkspace
+                        })
+                    }
+                    ShellButton {
+                        objectName: "diffFileMenu"
+                        visible: (root.source?.hasTurns ?? true) && root.editors.length > 0
+                        enabled: header.inWorkspace.length > 0
+                        subtle: true
+                        iconName: "ellipsis"
+                        iconSize: 13
+                        iconTint: root.muted
+                        implicitWidth: 24
+                        implicitHeight: 24
+                        Accessible.name: qsTr("Actions for %1").arg(header.row.path)
+                        onClicked: fileMenu.show(this, header.inWorkspace)
+                    }
+                    ShellButton {
+                        readonly property bool viewed: (root.source?.viewedPaths ?? []).indexOf(header.row.path) >= 0
+
+                        objectName: "diffViewed"
+                        visible: typeof root.source?.setViewed === "function"
+                        subtle: true
+                        iconName: viewed ? "square-check" : "square"
+                        iconSize: 13
+                        iconTint: viewed ? root.added : root.muted
+                        implicitWidth: 24
+                        implicitHeight: 24
+                        Accessible.name: viewed ? qsTr("Mark %1 not viewed").arg(header.row.path) : qsTr("Mark %1 viewed").arg(header.row.path)
+                        ToolTip.visible: hovered
+                        ToolTip.text: viewed ? qsTr("Viewed") : qsTr("Mark viewed")
+                        onClicked: root.source.setViewed(header.row.path, !viewed)
+                    }
+                    Text {
+                        visible: header.row.binary
+                        text: qsTr("binary")
+                        color: root.muted
+                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                    }
+                    Text {
+                        text: "+" + header.row.additions
+                        color: root.added
+                        font.family: root.mono
+                        font.pixelSize: Theme.fontSizeCode
+                    }
+                    Text {
+                        Layout.rightMargin: 10
+                        text: "−" + header.row.deletions
+                        color: root.removed
+                        font.family: root.mono
+                        font.pixelSize: Theme.fontSizeCode
+                    }
                 }
-                Text {
-                    visible: header.row.binary
-                    text: qsTr("binary")
-                    color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
-                }
-                Text {
-                    text: "+" + header.row.additions
-                    color: root.added
-                    font.family: root.mono
-                    font.pixelSize: Theme.fontSizeCode
-                }
-                Text {
-                    Layout.rightMargin: 10
-                    text: "−" + header.row.deletions
-                    color: root.removed
-                    font.family: root.mono
-                    font.pixelSize: Theme.fontSizeCode
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 26
+                    Layout.leftMargin: 27
+                    visible: header.waiting
+                    spacing: 8
+
+                    Text {
+                        objectName: "diffFileNote"
+                        text: header.row.note.length > 0 ? header.row.note : qsTr("Loading…")
+                        color: header.row.state === "error" ? root.removed : root.muted
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        elide: Text.ElideRight
+                        Layout.maximumWidth: view.width - 200
+                    }
+                    ShellButton {
+                        objectName: "diffFileRetry"
+                        visible: header.row.state === "error"
+                        subtle: true
+                        implicitHeight: 22
+                        text: qsTr("Retry loading diff")
+                        onClicked: root.source.retryFile(header.row.path)
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
                 }
             }
         }
@@ -623,6 +841,58 @@ Rectangle {
         source: root.source
     }
 
+    // What the environment can open a diff file with (`path` is the workspace's).
+    ShellMenu {
+        id: fileMenu
+
+        property string path: ""
+
+        function show(button, path) {
+            fileMenu.path = path;
+            const at = button.mapToItem(root, 0, button.height);
+            fileMenu.x = at.x;
+            fileMenu.y = at.y;
+            open();
+        }
+
+        objectName: "diffFileActions"
+        implicitWidth: 230
+
+        ShellMenuItem {
+            objectName: "diffFileOpen"
+            visible: root.hasFileManager
+            height: visible ? implicitHeight : 0
+            text: qsTr("Open")
+            onTriggered: Shell.dispatch("files.openInEditor", {
+                path: fileMenu.path,
+                editorId: "file-manager"
+            })
+        }
+        ShellMenuItem {
+            objectName: "diffFileReveal"
+            visible: root.hasFileManager
+            height: visible ? implicitHeight : 0
+            text: Shell.state.workspace?.revealLabel ?? qsTr("Reveal in file manager")
+            onTriggered: Shell.dispatch("files.reveal", {
+                path: fileMenu.path
+            })
+        }
+        Repeater {
+            model: root.editors.filter(editor => editor.id !== "file-manager")
+
+            ShellMenuItem {
+                required property var modelData
+
+                objectName: "diffFileEditor-" + modelData.id
+                text: qsTr("Open in %1").arg(modelData.label)
+                onTriggered: Shell.dispatch("files.openInEditor", {
+                    path: fileMenu.path,
+                    editorId: modelData.id
+                })
+            }
+        }
+    }
+
     // A note on lines of the diff, added to the prompt as review context.
     Popup {
         id: commentPopup
@@ -696,14 +966,43 @@ Rectangle {
                     Layout.fillWidth: true
                 }
             }
-            ShellTextField {
-                id: commentNote
-
-                objectName: "diffCommentNote"
+            Rectangle {
                 Layout.fillWidth: true
-                placeholderText: qsTr("What should change here?")
-                Accessible.name: qsTr("Comment")
-                onAccepted: commentPopup.submit()
+                implicitHeight: 84
+                radius: Theme.radius
+                color: Theme.palette.color("input", "#141416")
+                border.color: commentNote.activeFocus ? Theme.palette.color("focus", "#3b82f6") : root.borderColor
+
+                ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 6
+
+                    // Enter starts a new line; mod+enter adds the comment.
+                    TextArea {
+                        id: commentNote
+
+                        objectName: "diffCommentNote"
+                        placeholderText: qsTr("What should change here?")
+                        Accessible.name: qsTr("Comment")
+                        placeholderTextColor: root.muted
+                        color: root.foreground
+                        wrapMode: TextEdit.Wrap
+                        background: null
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        // Before the window's shortcuts take it.
+                        Keys.onShortcutOverride: event => {
+                            if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)))
+                                event.accepted = true;
+                        }
+                        Keys.onPressed: event => {
+                            if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier))) {
+                                event.accepted = true;
+                                if (commentNote.text.trim().length > 0)
+                                    commentPopup.submit();
+                            }
+                        }
+                    }
+                }
             }
             RowLayout {
                 Layout.fillWidth: true
