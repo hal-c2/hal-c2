@@ -210,13 +210,16 @@ Feature: Delegating tasks to subagents
     And the message runs after the caller's active turn
     And the task delivery is "delivered"
 
+  # A caller's turn is woken at most twice for the tasks it started (below), so a
+  # completion that lands after the second wake has ended wakes nobody. Here the
+  # later two land while the caller is busy, and ride one wake.
   @mc
   Scenario: Each later completion wakes the caller again
     Given the agent in "parent" delegated tasks "one", "two" and "three" without waiting
     And "parent" was woken for the completion of "one"
-    When "two" and "three" complete afterwards
+    When "two" and "three" complete afterwards, while "parent" works on another turn
     Then "parent" is woken again for them
-    And completions that arrive together may share one wake turn
+    And completions that arrive together share one wake turn
 
   @mc
   Scenario: A completion delivered twice wakes the caller once
