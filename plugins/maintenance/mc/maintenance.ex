@@ -98,6 +98,24 @@ defmodule HalC2Plugins.Maintenance do
   @impl HalC2.Plugins.Extension
   def call("maintenance", _input, _context), do: {:ok, GenServer.call(__MODULE__, :snapshot)}
 
+  # What the settings page offers: the agents and models, and the repositories of
+  # this MC's GitHub projects, the ones a run can start in.
+  def call("settings", _input, context) do
+    {:ok, providers} = Host.providers(@id)
+
+    {:ok,
+     %{
+       "settings" => context.settings,
+       "providers" => providers,
+       "repositories" =>
+         for(
+           %{"repository" => repository} <- projects(),
+           uniq: true,
+           do: repository
+         )
+     }}
+  end
+
   # Run now, and rerun: a new run of the repository with the settings as they are.
   def call("run", %{"repository" => repository}, context) when is_binary(repository),
     do: start(repository, "manual", context.settings)
@@ -125,12 +143,14 @@ defmodule HalC2Plugins.Maintenance do
 
   def call(method, _input, _context), do: {:error, "maintenance has no method #{method}."}
 
-  # A run's turn ended: one that never reported failed. Its thread is settled
-  # either way, so it leaves the working part of the sidebar.
+  # A run's turn ended: one that never reported failed, and its thread is settled
+  # so it leaves the working part of the sidebar. One stopped at a usage limit is
+  # left running and unsettled, for the MC to resume once the limit resets.
   @impl HalC2.Plugins.Extension
   def handle_event(%{"type" => "turn.finished", "threadId" => thread_id} = event, _context) do
-    if GenServer.call(__MODULE__, {:finished, thread_id, event["error"]}) == :ours,
-      do: organize(thread_id, %{"settled" => true})
+    if GenServer.call(__MODULE__, {:finished, thread_id, event["error"], event["errorClass"]}) ==
+         :ours,
+       do: organize(thread_id, %{"settled" => true})
 
     :ok
   end
@@ -555,16 +575,21 @@ defmodule HalC2Plugins.Maintenance do
 
   # --- the repository -------------------------------------------------------------------
 
+  # This MC's GitHub projects: what the settings offer, what the page lists a
+  # repository's project from, and what a run starts in.
   defp projects do
     case Host.projects(@id) do
-      {:ok, projects} -> projects
-      _ -> []
+      {:ok, projects} ->
+        Enum.filter(projects, &(&1["kind"] == "github" and is_binary(&1["repository"])))
+
+      _ ->
+        []
     end
   end
 
   # The project whose remote is `repository`: its runs work in it.
-  defp project_for(repository) do
-    case Enum.find(projects(), &same?(&1["repository"], repository)) do
+  defp project_for(repository, projects \\ projects()) do
+    case Enum.find(projects, &same?(&1["repository"], repository)) do
       nil ->
         {:error,
          "No project on this MC has #{repository} as its remote. Add a checkout of it as a project."}
@@ -712,49 +737,59 @@ defmodule HalC2Plugins.Maintenance do
       if saved["schedule"] in [nil, schedule_key(settings)], do: saved["slots"] || %{}, else: %{}
 
     send(self(), :tick)
-    {:ok, %{settings: settings, runs: runs, slots: slots, timer: nil, repositories: []}}
+
+    {:ok,
+     %{settings: settings, runs: runs, slots: slots, pending: %{}, timer: nil, repositories: []}}
   end
 
   @impl GenServer
   def handle_call(:snapshot, _from, state), do: {:reply, snapshot(state), state}
 
   def handle_call({:settings, settings}, _from, state) do
-    slots = if schedule_key(settings) == schedule_key(state.settings), do: state.slots, else: %{}
+    same = schedule_key(settings) == schedule_key(state.settings)
+    slots = if same, do: state.slots, else: %{}
+    # A start still pending gives back no slot of another schedule.
+    pending = if same, do: state.pending, else: Map.new(state.pending, &{elem(&1, 0), nil})
     send(self(), :tick)
-    {:reply, :ok, %{state | settings: settings, slots: slots}}
+    {:reply, :ok, %{state | settings: settings, slots: slots, pending: pending}}
   end
 
   def handle_call({:ours?, thread_id}, _from, state),
     do: {:reply, Enum.any?(state.runs, &(&1["threadId"] == thread_id)), state}
 
+  # A scheduled start stops pending once it is decided here. One refused only for
+  # the runs at once gives its slot back, so the repository stays due rather than
+  # failing, and starts when a run ends.
   def handle_call({:started, run, limit}, _from, state) do
-    holding =
-      Enum.find(state.runs, &(&1["repository"] == run["repository"] and Runs.holding?(&1)))
+    {previous, pending} =
+      if run["trigger"] == "scheduled",
+        do: Map.pop(state.pending, run["repository"], :none),
+        else: {:none, state.pending}
 
-    working = Enum.count(state.runs, &Runs.working?/1)
+    state = %{state | pending: pending}
 
-    cond do
-      holding && holding["status"] == "running" ->
-        {:reply, {:error, "#{run["repository"]} has a maintenance run going already."}, state}
+    case started(run, limit, state) do
+      {:busy, _message} when previous != :none ->
+        slots = Map.put(state.slots, run["repository"], previous)
+        state = %{state | slots: slots}
+        write_state(state)
+        {:reply, {:error, :later}, state}
 
-      holding ->
-        {:reply,
-         {:error,
-          "#{run["repository"]} has a maintenance run #{holding["status"]} for you; open its pull request or dismiss it first."},
-         state}
+      {:busy, message} ->
+        {:reply, {:error, message}, state}
 
-      working >= (limit || 1) ->
-        {:reply,
-         {:error, "#{working} maintenance runs are going already; wait for one to finish."},
-         state}
-
-      true ->
+      {:ok, run} ->
         {:reply, {:ok, run}, put_runs(state, [run | state.runs])}
+
+      error ->
+        {:reply, error, state}
     end
   end
 
   def handle_call({:skipped, run}, _from, state),
-    do: {:reply, {:ok, run}, put_runs(state, [run | state.runs])}
+    do:
+      {:reply, {:ok, run},
+       put_runs(%{state | pending: unpending(state.pending, run)}, [run | state.runs])}
 
   def handle_call({:start_failed, run_id, message}, _from, state) do
     state =
@@ -778,6 +813,7 @@ defmodule HalC2Plugins.Maintenance do
 
       run ->
         with :ok <- Runs.reportable(run),
+             :ok <- unheld(state.runs, run),
              {:ok, report} <- Report.check(arguments, run),
              {:ok, reported} <-
                Runs.reported(
@@ -794,7 +830,7 @@ defmodule HalC2Plugins.Maintenance do
     end
   end
 
-  def handle_call({:finished, thread_id, error}, _from, state) do
+  def handle_call({:finished, thread_id, error, class}, _from, state) do
     case Enum.find(state.runs, &(&1["threadId"] == thread_id)) do
       nil ->
         {:reply, :theirs, state}
@@ -806,12 +842,12 @@ defmodule HalC2Plugins.Maintenance do
             else:
               "The agent finished without reporting with #{@report_tool}. If it could not reach the tool, check that the project lets agents use HAL-C2's tools."
 
-        {:ok, finished} = Runs.finished(run, message)
+        {:ok, finished} = Runs.finished(run, message, class)
 
         state =
           if finished == run, do: state, else: put_runs(state, replaced(state.runs, finished))
 
-        {:reply, :ours, state}
+        {:reply, if(Runs.working?(finished), do: :paused, else: :ours), state}
     end
   end
 
@@ -824,6 +860,45 @@ defmodule HalC2Plugins.Maintenance do
 
   def handle_call({:publish_failed, run_id, message}, _from, state),
     do: step(state, run_id, &Runs.publish_failed(&1, message))
+
+  # Whether `run` may start beside the runs there are: `{:busy, message}` when only
+  # the runs at once keep it from starting.
+  defp started(run, limit, state) do
+    holding =
+      Enum.find(state.runs, &(&1["repository"] == run["repository"] and Runs.holding?(&1)))
+
+    working = Enum.count(state.runs, &Runs.working?/1)
+
+    cond do
+      holding && holding["status"] == "running" ->
+        {:error, "#{run["repository"]} has a maintenance run going already."}
+
+      holding ->
+        {:error,
+         "#{run["repository"]} has a maintenance run #{holding["status"]} for you; open its pull request or dismiss it first."}
+
+      working >= (limit || 1) ->
+        {:busy, "#{working} maintenance runs are going already; wait for one to finish."}
+
+      true ->
+        {:ok, run}
+    end
+  end
+
+  # A run that failed and reports late: another run of its repository started since
+  # keeps the repository.
+  defp unheld(runs, run) do
+    if run["status"] != "running" and
+         Enum.any?(
+           runs,
+           &(&1["id"] != run["id"] and &1["repository"] == run["repository"] and
+               Runs.holding?(&1))
+         ),
+       do:
+         {:error,
+          "Another maintenance run of #{run["repository"]} started after this one failed; your report is not kept. Stop here."},
+       else: :ok
+  end
 
   defp step(state, run_id, fun) do
     case change(state, run_id, fun) do
@@ -855,35 +930,18 @@ defmodule HalC2Plugins.Maintenance do
     if state.timer, do: Process.cancel_timer(state.timer)
     settings = state.settings
     now = local_now()
-    slot = Schedule.last_slot(settings, now)
-    stamp = slot && NaiveDateTime.to_iso8601(slot)
     repositories = settings["repositories"] || []
 
-    {due, slots} =
-      Enum.reduce(repositories, {[], Map.take(state.slots, repositories)}, fn repository,
-                                                                              {due, slots} ->
-        cond do
-          slot == nil ->
-            {due, slots}
-
-          not Map.has_key?(slots, repository) ->
-            {due, Map.put(slots, repository, stamp)}
-
-          Schedule.due?(settings, slots[repository], now) ->
-            {[repository | due], Map.put(slots, repository, stamp)}
-
-          true ->
-            {due, slots}
-        end
-      end)
-
     # A repository whose last run is still going or waiting for the user lets its
-    # slot pass. Beyond the runs at once, a due repository keeps its slot due and
-    # starts when a run ends.
-    free = Enum.reject(Enum.reverse(due), &held?(state.runs, &1))
-    room = max((settings["concurrency"] || 1) - Enum.count(state.runs, &Runs.working?/1), 0)
-    {starting, waiting} = Enum.split(free, room)
-    slots = Enum.reduce(waiting, slots, &Map.put(&2, &1, state.slots[&1]))
+    # slot pass. Scheduled starts still on their way count toward the runs at once.
+    room =
+      (settings["concurrency"] || 1) - Enum.count(state.runs, &Runs.working?/1) -
+        map_size(state.pending)
+
+    {starting, slots} =
+      Schedule.plan(settings, repositories, state.slots, now, &held?(state.runs, &1), room)
+
+    pending = Enum.reduce(starting, state.pending, &Map.put(&2, &1, state.slots[&1]))
 
     for repository <- starting do
       Process.spawn(fn -> scheduled(repository, settings) end, [])
@@ -902,25 +960,29 @@ defmodule HalC2Plugins.Maintenance do
 
     listed =
       for repository <- repositories do
-        project = Enum.find(projects, &same?(&1["repository"], repository))
         last = Enum.find(state.runs, &(&1["repository"] == repository))
 
         %{
           "repository" => repository,
-          "project" => project && project["title"],
+          "project" =>
+            case project_for(repository, projects) do
+              {:ok, project} -> project["title"]
+              _ -> nil
+            end,
           "nextRunAt" => epoch_ms(next),
           "lastRunAt" => last && last["createdAt"]
         }
       end
 
-    state = %{state | slots: slots, timer: timer, repositories: listed}
+    state = %{state | slots: slots, pending: pending, timer: timer, repositories: listed}
     write_state(state)
     broadcast(state)
     {:noreply, state}
   end
 
   def handle_info({:scheduled_failed, run}, state),
-    do: {:noreply, put_runs(state, [run | state.runs])}
+    do:
+      {:noreply, put_runs(%{state | pending: unpending(state.pending, run)}, [run | state.runs])}
 
   def handle_info(_message, state), do: {:noreply, state}
 
@@ -928,6 +990,10 @@ defmodule HalC2Plugins.Maintenance do
   defp scheduled(repository, settings) do
     case start(repository, "scheduled", settings) do
       {:ok, _run} ->
+        :ok
+
+      # Refused for the runs at once: its slot is due again.
+      {:error, :later} ->
         :ok
 
       {:error, message} ->
@@ -960,6 +1026,11 @@ defmodule HalC2Plugins.Maintenance do
     }
   end
 
+  defp unpending(pending, %{"trigger" => "scheduled", "repository" => repository}),
+    do: Map.delete(pending, repository)
+
+  defp unpending(pending, _run), do: pending
+
   defp held?(runs, repository),
     do: Enum.any?(runs, &(&1["repository"] == repository and Runs.holding?(&1)))
 
@@ -974,7 +1045,10 @@ defmodule HalC2Plugins.Maintenance do
       do: send(self(), :tick)
 
     {open, finished} =
-      Enum.split_with(runs, &(&1["status"] in ~w(running waiting publishing kept)))
+      Enum.split_with(
+        runs,
+        &(&1["status"] in ~w(running waiting publishing kept) and &1["dismissed"] != true)
+      )
 
     state = %{state | runs: open ++ Enum.take(finished, @kept_finished)}
     write_state(state)

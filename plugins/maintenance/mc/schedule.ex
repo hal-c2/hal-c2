@@ -68,6 +68,39 @@ defmodule HalC2Plugins.Maintenance.Schedule do
     end
   end
 
+  @doc """
+  Which of `repositories` start at `now`, and the slots handled after: a repository
+  seen for the first time takes the latest slot as handled, so adding one or
+  changing the schedule does not start a run at once. A due repository that `held?`
+  lets its slot pass; beyond `room` (the runs at once not yet going or starting), a
+  due one keeps its slot due and starts on a later plan.
+  """
+  def plan(settings, repositories, slots, now, held?, room) do
+    slot = last_slot(settings, now)
+    stamp = slot && NaiveDateTime.to_iso8601(slot)
+
+    {due, planned} =
+      Enum.reduce(repositories, {[], Map.take(slots, repositories)}, fn repository,
+                                                                        {due, planned} ->
+        cond do
+          slot == nil ->
+            {due, planned}
+
+          not Map.has_key?(planned, repository) ->
+            {due, Map.put(planned, repository, stamp)}
+
+          due?(settings, planned[repository], now) ->
+            {[repository | due], Map.put(planned, repository, stamp)}
+
+          true ->
+            {due, planned}
+        end
+      end)
+
+    {starting, waiting} = due |> Enum.reverse() |> Enum.reject(held?) |> Enum.split(max(room, 0))
+    {starting, Enum.reduce(waiting, planned, &Map.put(&2, &1, slots[&1]))}
+  end
+
   defp period(%{"schedule" => "daily"}), do: {:ok, 1}
 
   defp period(%{"schedule" => "weekly", "weekday" => weekday}) when weekday in @weekdays,

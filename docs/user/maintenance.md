@@ -11,9 +11,10 @@ it.
 
 Put the `maintenance` folder from this repository's `plugins/` into your MC's
 `plugins` folder and turn it on from **Settings → Plugins**. In its settings,
-list the repositories to maintain as `owner/name`. Each needs a checkout of it
-as a project on that machine. Pick when it runs (every day, every week, or
-only when you ask), the agent and model, and what it may do.
+pick the repositories to maintain from the MC's projects whose remote is on
+GitHub; to add another, add its checkout as a project first. Pick when it runs
+(every day, every week, or only when you ask), the agent and model, and what
+it may do.
 
 The **Maintenance** page lists the repositories with when each runs next.
 **Run now** starts a run at once. A run missed while the MC was off starts
@@ -44,7 +45,11 @@ A run is skipped while the repository still has an open pull request from a
 
 ## The report and the pull request
 
-Every run ends with a report, even when nothing changed: per category, what
+Every run ends with a report, even when nothing changed. A run whose agent
+stopped without one fails, but continuing its thread until the agent reports
+still counts, unless another run of the repository has started since. A run
+stopped by the agent's usage limit is not a failure: it carries on when the
+limit resets. The report holds, per category, what
 was applied, what was deferred and why, and what needs discussing, then the
 checks it ran. Tokens and keys in it are hidden. The report shows on the
 page and becomes the pull request's description.

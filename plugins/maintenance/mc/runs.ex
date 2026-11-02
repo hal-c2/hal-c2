@@ -4,13 +4,18 @@ defmodule HalC2Plugins.Maintenance.Runs do
   `{:ok, run}` or `{:error, message}` for a step its status does not allow.
 
       running ──report──▶ done | kept | waiting | publishing
-         │                          │        ▲  │
-         ├─turn ends unreported─▶ failed   claim│  ├─▶ published
-         └─cancel─▶ cancelled       └───────────┘  └─▶ waiting (publishError)
+       │  ▲                         │        ▲  │
+       │  └─report─┐                └─claim──┘  ├─▶ published
+       ├─turn ends unreported─▶ failed          └─▶ waiting (publishError)
+       └─cancel─▶ cancelled
 
-  `skipped` is a run that never started, because the repository already has an
-  open maintenance pull request. A finished run can be dismissed, which hides it
-  from the page; a dismissed run is never published.
+  A turn that ends without a report fails the run, but not for good: the user can
+  continue its thread, and the report its agent then makes is kept as if the run
+  had never stopped. A turn that ended at a usage limit leaves the run running, as
+  the MC resumes it once the limit resets. `skipped` is a run that never started,
+  because the repository already has an open maintenance pull request. A finished
+  run can be dismissed, which hides it from the page; a dismissed run is never
+  published and takes no report.
   """
 
   # A run holding its repository: no second run starts beside it. One waiting for
@@ -23,8 +28,16 @@ defmodule HalC2Plugins.Maintenance.Runs do
   @doc "Whether a run's turn is still going, which is what counts toward runs at once."
   def working?(run), do: run["status"] == "running"
 
-  @doc "Whether a run may still report: only once, and only while it runs."
+  @doc """
+  Whether a run may still report: only once, while it runs or after a turn of it
+  ended without reporting.
+  """
   def reportable(%{"status" => "running"}), do: :ok
+
+  def reportable(%{"dismissed" => true}),
+    do: {:error, "This run was dismissed; your report is not kept."}
+
+  def reportable(%{"status" => "failed", "unreported" => true}), do: :ok
 
   def reportable(%{"status" => "cancelled"}),
     do: {:error, "This run was cancelled; your report is not kept. Stop here."}
@@ -36,7 +49,11 @@ defmodule HalC2Plugins.Maintenance.Runs do
   to publish; one that did waits for the user (`draft`), stays local (`local`), or
   is published at once (`automatic`, `publishing` until it is).
   """
-  def reported(%{"status" => "running"} = run, report, applied, body, publishing) do
+  def reported(run, report, applied, body, publishing) do
+    with :ok <- reportable(run), do: {:ok, reported_as(run, report, applied, body, publishing)}
+  end
+
+  defp reported_as(run, report, applied, body, publishing) do
     status =
       cond do
         run["mode"] == "report" or applied == 0 -> "done"
@@ -45,19 +62,33 @@ defmodule HalC2Plugins.Maintenance.Runs do
         true -> "waiting"
       end
 
-    {:ok,
-     run
-     |> Map.merge(%{"status" => status, "report" => report, "body" => body, "applied" => applied})
-     |> finish()}
+    run
+    |> Map.merge(%{
+      "status" => status,
+      "report" => report,
+      "body" => body,
+      "applied" => applied,
+      "error" => nil
+    })
+    |> Map.delete("unreported")
+    |> finish()
   end
 
-  def reported(run, _report, _applied, _body, _publishing), do: reportable(run)
+  @doc """
+  The agent's turn ended (`class` is the failure's, if any): a run still running
+  never reported, and failed until a report comes. One stopped at a usage limit is
+  still running.
+  """
+  def finished(%{"status" => "running"} = run, _error, "usage_limit"), do: {:ok, run}
 
-  @doc "The agent's turn ended: a run still running never reported, and failed."
-  def finished(%{"status" => "running"} = run, error),
-    do: {:ok, run |> Map.merge(%{"status" => "failed", "error" => error}) |> finish()}
+  def finished(%{"status" => "running"} = run, error, _class),
+    do:
+      {:ok,
+       run
+       |> Map.merge(%{"status" => "failed", "error" => error, "unreported" => true})
+       |> finish()}
 
-  def finished(run, _error), do: {:ok, run}
+  def finished(run, _error, _class), do: {:ok, run}
 
   def cancel(%{"status" => "running"} = run),
     do: {:ok, run |> Map.put("status", "cancelled") |> finish()}

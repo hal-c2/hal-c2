@@ -44,7 +44,7 @@
       "label": "Repositories",
       "type": "list",
       "default": [],
-      "description": "owner/name of each repository to maintain. Each needs a checkout of it as a project on this MC."
+      "description": "owner/name of each repository to maintain, picked from this MC's GitHub projects. A run works in the repository's project."
     },
     {
       "key": "schedule",
@@ -116,7 +116,7 @@
       "label": "Agent",
       "type": "text",
       "default": "claudeAgent",
-      "description": "The provider instance that maintains, such as claudeAgent or codex."
+      "description": "The agent instance that maintains, picked from this MC's agents."
     },
     {
       "key": "model",
@@ -172,6 +172,7 @@
   ],
   "contributes": {
     "pages": [{ "id": "maintenance", "title": "Maintenance", "qml": "ui/MaintenancePage.qml" }],
+    "settingsPage": "ui/MaintenanceSettings.qml",
     "threadKinds": [
       {
         "kind": "maintenance",

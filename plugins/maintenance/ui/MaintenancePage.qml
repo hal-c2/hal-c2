@@ -181,7 +181,7 @@ Item {
             Text {
                 Layout.fillWidth: true
                 visible: page.maintenance !== null && page.repositories.length === 0
-                text: qsTr("No repositories yet. Add them as owner/name in the plugin's settings; each needs a checkout of it as a project on this machine.")
+                text: qsTr("No repositories yet. Pick them in the plugin's settings from this machine's GitHub projects.")
                 color: page.muted
                 wrapMode: Text.Wrap
                 font.pixelSize: Math.round(13 * Theme.fontScale)

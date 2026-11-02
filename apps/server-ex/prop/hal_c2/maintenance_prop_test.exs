@@ -9,11 +9,14 @@ defmodule HalC2.MaintenancePropTest do
     reporting, its turn ending, cancelling, dismissing, claiming it for its pull
     request, publishing or failing to, and the server starting again. After every
     step the run's status is the model's, it holds its repository exactly while it
-    runs or waits on the user, it reports only once and only while running, a
-    dismissed run is never published, and a run has finished exactly when its status
-    says its turn is over;
+    runs or waits on the user, it reports only once, while running or after a turn
+    ended unreported, a turn stopped at a usage limit leaves it running, a dismissed
+    run is never published, and a run has finished exactly when its status says its
+    turn is over;
   - the schedule's laws: a slot is at or before now and the next one after it, one
-    period apart, and a run is due only for a slot later than the one handled;
+    period apart, a run is due only for a slot later than the one handled, and a
+    plan starts no more due repositories than there is room for, keeping the rest
+    due for a later plan;
   - redaction: a redacted text keeps no token it was given and redacting again
     changes nothing.
 
@@ -53,12 +56,12 @@ defmodule HalC2.MaintenancePropTest do
     do: %{"id" => "r1", "status" => "running", "mode" => mode, "categories" => ["deps"]}
 
   def initial_state(mode \\ "fix"),
-    do: %{status: "running", mode: mode, dismissed: false, url: nil}
+    do: %{status: "running", mode: mode, dismissed: false, url: nil, unreported: false}
 
   def command(_state) do
     oneof([
       {:call, __MODULE__, :report, [integer(0, 2), elements(~w(local draft automatic))]},
-      {:call, __MODULE__, :turn_ends, []},
+      {:call, __MODULE__, :turn_ends, [elements([nil, "usage_limit", "provider"])]},
       {:call, __MODULE__, :cancel, []},
       {:call, __MODULE__, :dismiss, []},
       {:call, __MODULE__, :claim, []},
@@ -73,7 +76,7 @@ defmodule HalC2.MaintenancePropTest do
   def report(applied, publishing),
     do: step(&Runs.reported(&1, %{"summary" => "s"}, applied, "body", publishing))
 
-  def turn_ends, do: step(&Runs.finished(&1, "stopped"))
+  def turn_ends(class), do: step(&Runs.finished(&1, "stopped", class))
   def cancel, do: step(&Runs.cancel/1)
   def dismiss, do: step(&Runs.dismiss/1)
   def claim, do: step(&Runs.claim/1)
@@ -120,25 +123,29 @@ defmodule HalC2.MaintenancePropTest do
       Runs.holding?(run) ==
         (model.status in ~w(running waiting publishing) and not model.dismissed) and
       Runs.working?(run) == (model.status == "running") and
-      Runs.reportable(run) == :ok == (model.status == "running") and
+      run["unreported"] == true == model.unreported and
+      Runs.reportable(run) == :ok == reportable?(model) and
       Map.has_key?(run, "finishedAt") == (model.status != "running")
   end
 
+  defp reportable?(model),
+    do:
+      model.status == "running" or
+        (model.status == "failed" and model.unreported and not model.dismissed)
+
   # The model: what each step does to a run in each status, written as a table
   # rather than as `Runs` matches its arguments.
-  defp accepts(%{status: "running"} = s, :report, [applied, publishing]) do
-    status =
-      cond do
-        s.mode == "report" or applied == 0 -> "done"
-        publishing == "local" -> "kept"
-        publishing == "automatic" -> "publishing"
-        true -> "waiting"
-      end
-
-    {:ok, %{s | status: status}}
+  defp accepts(s, :report, [applied, publishing]) do
+    if reportable?(s),
+      do: {:ok, %{reported(s, applied, publishing) | unreported: false}},
+      else: :refused
   end
 
-  defp accepts(%{status: "running"} = s, :turn_ends, _), do: {:ok, %{s | status: "failed"}}
+  defp accepts(%{status: "running"} = s, :turn_ends, ["usage_limit"]), do: {:ok, s}
+
+  defp accepts(%{status: "running"} = s, :turn_ends, _),
+    do: {:ok, %{s | status: "failed", unreported: true}}
+
   defp accepts(s, :turn_ends, _), do: {:ok, s}
   defp accepts(%{status: "running"} = s, :cancel, _), do: {:ok, %{s | status: "cancelled"}}
 
@@ -158,6 +165,18 @@ defmodule HalC2.MaintenancePropTest do
   defp accepts(%{status: "publishing"} = s, :revive, _), do: {:ok, %{s | status: "waiting"}}
   defp accepts(s, :revive, _), do: {:ok, s}
   defp accepts(_s, _name, _args), do: :refused
+
+  defp reported(s, applied, publishing) do
+    status =
+      cond do
+        s.mode == "report" or applied == 0 -> "done"
+        publishing == "local" -> "kept"
+        publishing == "automatic" -> "publishing"
+        true -> "waiting"
+      end
+
+    %{s | status: status}
+  end
 
   # --- the schedule ----------------------------------------------------------------------
 
@@ -205,6 +224,52 @@ defmodule HalC2.MaintenancePropTest do
         not Schedule.due?(settings, nil, now) and
         not Schedule.due?(%{settings | "schedule" => "manual"}, nil, now) and
         not Schedule.due?(settings, NaiveDateTime.to_iso8601(last), now)
+    end
+  end
+
+  @repositories ~w(acme/a acme/b acme/c acme/d)
+
+  # Repositories with the slot each last handled (or none yet), the ones held by a
+  # run, and the room left for runs at once (below zero when the limit was lowered).
+  defp plan_input do
+    let {settings, now, handled, held, room} <-
+          {schedule(), moment(), vector(length(@repositories), oneof([nil, moment()])),
+           list(elements(@repositories)), integer(-2, 5)} do
+      slots =
+        for {repository, moment} <- Enum.zip(@repositories, handled),
+            moment != nil,
+            into: %{},
+            do: {repository, NaiveDateTime.to_iso8601(moment)}
+
+      {settings, now, slots, MapSet.new(held), room}
+    end
+  end
+
+  property "a plan starts what is due and unheld, as far as there is room, and keeps the rest due",
+    numtests: HalC2.Prop.numtests(200) do
+    forall {settings, now, slots, held, room} <- plan_input() do
+      held? = &MapSet.member?(held, &1)
+      {starting, planned} = Schedule.plan(settings, @repositories, slots, now, held?, room)
+      stamp = NaiveDateTime.to_iso8601(Schedule.last_slot(settings, now))
+
+      startable =
+        Enum.filter(
+          @repositories,
+          &(Map.has_key?(slots, &1) and Schedule.due?(settings, slots[&1], now) and not held?.(&1))
+        )
+
+      waiting = startable -- starting
+
+      # Another plan, as after a refused start gave its slot back, starts the ones
+      # kept waiting once there is room.
+      {later, _} = Schedule.plan(settings, @repositories, planned, now, held?, length(waiting))
+
+      starting == Enum.take(startable, max(room, 0)) and
+        Enum.all?(waiting, &Schedule.due?(settings, planned[&1], now)) and
+        Enum.all?(@repositories -- waiting, &(planned[&1] == stamp or planned[&1] == slots[&1])) and
+        Enum.all?(starting, &(planned[&1] == stamp)) and
+        Map.keys(planned) |> Enum.sort() == @repositories and
+        later == waiting
     end
   end
 

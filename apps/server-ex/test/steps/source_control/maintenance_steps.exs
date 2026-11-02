@@ -109,7 +109,10 @@ defmodule HalC2.Steps.SourceControl.Maintenance do
     case reply do
       {:ok, %{"status" => "running", "threadId" => thread} = run} ->
         World.await_row(thread, & &1, 10_000)
-        Map.merge(context, %{run: run, thread: thread})
+
+        context
+        |> then(&if(&1[:run], do: Map.put_new(&1, :first_run, &1.run), else: &1))
+        |> Map.merge(%{run: run, thread: thread})
 
       _ ->
         context
@@ -280,6 +283,37 @@ defmodule HalC2.Steps.SourceControl.Maintenance do
     end_turns(context)
   end
 
+  # As the host hands the plugin a turn that failed at a usage limit
+  # (`HalC2.Plugins.turn_finished/3`), in this process so its handling is over on return.
+  step "its agent's turn stops at a usage limit", context do
+    HalC2Plugins.Maintenance.handle_event(
+      %{
+        "type" => "turn.finished",
+        "threadId" => context.thread,
+        "status" => "error",
+        "errorClass" => "usage_limit",
+        "error" => "You've hit your usage limit.",
+        "resetAt" => System.system_time(:millisecond) + 3_600_000
+      },
+      %{id: @id}
+    )
+
+    context
+  end
+
+  step "its thread is left unsettled for the MC to resume", context do
+    refute thread(context.thread)["settledOverride"] == "settled"
+    context
+  end
+
+  step "the first run's agent reports nothing applied in every category", context do
+    first = context.first_run
+
+    context
+    |> Map.merge(%{run: first, thread: first["threadId"]})
+    |> then(&Map.put(&1, :tool_result, tool(&1, empty_report(&1))))
+  end
+
   step "the run waits for the user to open its pull request", context do
     await_status(context, "waiting")
   end
@@ -337,6 +371,8 @@ defmodule HalC2.Steps.SourceControl.Maintenance do
   step "the maintenance run failed, saying it finished without reporting", context do
     {run, context} = await_run(context, &(&1["status"] == "failed"))
     assert run["error"] =~ "finished without reporting"
+    # Its turn is over, so the gate closes again for the turns that follow.
+    File.rm!(Path.join([context.mc.home, "gate", "answer"]))
     context
   end
 
@@ -426,19 +462,30 @@ defmodule HalC2.Steps.SourceControl.Maintenance do
 
   # --- scheduling ------------------------------------------------------------------------
 
-  # What a plugin that last handled a slot long ago left behind; the server keeps its
-  # state in memory, so this lands only for the restart that follows.
+  # What a plugin that last handled a slot long ago left behind. A settings save queues
+  # a tick that writes the file under the new schedule (slots under another one are
+  # dropped); a call to the plugin returns after it. The plugin is then stopped, so no
+  # later tick puts back the slot it handled.
   step "the MC last ran maintenance on {string} for a slot long ago",
        %{args: [repository]} = context do
+    snapshot!(context)
+    {_, context} = World.call!(context, "plugins.disable", %{"id" => @id})
     path = Path.join(HalC2.Plugins.Host.data_dir(@id), "state.json")
     saved = path |> File.read!() |> JSON.decode!()
     File.write!(path, JSON.encode!(put_in(saved, ["slots", repository], "2020-01-06T06:00:00")))
-    context
+    Map.put(context, :stopped, true)
   end
 
   step "the plugin starts again", context do
-    {_, context} = World.call!(context, "plugins.restart", %{"id" => @id})
-    context
+    {_, context} =
+      if context[:stopped] do
+        accepted = Enum.map(Fixtures.entry(@id)["permissions"], & &1["id"])
+        World.call!(context, "plugins.enable", %{"id" => @id, "acceptPermissions" => accepted})
+      else
+        World.call!(context, "plugins.restart", %{"id" => @id})
+      end
+
+    Map.delete(context, :stopped)
   end
 
   step "a scheduled maintenance run starts on {string}", %{args: [repository]} = context do
@@ -464,6 +511,48 @@ defmodule HalC2.Steps.SourceControl.Maintenance do
   end
 
   # --- settings --------------------------------------------------------------------------
+
+  step "the user opens the maintenance settings", context do
+    {reply, context} = plugin(context, "settings", %{})
+    assert {:ok, offered} = reply
+    Map.put(context, :offered, offered)
+  end
+
+  step "the MC's agents are offered with their models to maintain", context do
+    assert %{"name" => _, "models" => [%{"slug" => _} | _]} =
+             Enum.find(context.offered["providers"], &(&1["instanceId"] == "codex"))
+
+    assert context.offered["settings"]["provider"] == "codex"
+    context
+  end
+
+  step "{string} is offered to maintain", %{args: [repository]} = context do
+    assert repository in context.offered["repositories"]
+    context
+  end
+
+  step "{string} is not offered to maintain", %{args: [repository]} = context do
+    refute repository in context.offered["repositories"]
+    context
+  end
+
+  step "{string} maintains {string}, which no project has as its remote",
+       %{args: [@id, repository]} = context do
+    save(context, %{"repositories" => [context.repository, repository]})
+  end
+
+  step "the page says {string} has no project with it as its remote",
+       %{args: [repository]} = context do
+    {repositories, context} =
+      await_topic(context, fn value ->
+        listed = value["repositories"]
+        Enum.any?(listed, &(&1["repository"] == repository)) && listed
+      end)
+
+    assert %{"project" => nil} = Enum.find(repositories, &(&1["repository"] == repository))
+    assert %{"project" => "api"} = Enum.find(repositories, &(&1["repository"] == "acme/api"))
+    context
+  end
 
   step "the user saves the maintenance settings with the repository {string}",
        %{args: [bad]} = context do

@@ -5,16 +5,17 @@
 #   plugins/maintenance/mc/runs.ex (how a run moves)
 #   plugins/maintenance/mc/schedule.ex (when a scheduled run is due)
 #   plugins/maintenance/skill/SKILL.md (the maintain skill its agents follow)
-#   plugins/maintenance/ui/MaintenancePage.qml, MaintenanceHeader.qml, MaintenanceRowMark.qml
+#   plugins/maintenance/ui/MaintenancePage.qml, MaintenanceSettings.qml, MaintenanceHeader.qml,
+#     MaintenanceRowMark.qml
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (projects, pull requests, threads for plugins)
 #   docs/user/maintenance.md
 #
 # The MC scenarios run from apps/server-ex with
 #   mise exec -- mix features source-control/maintenance.feature
-# (steps in test/steps/source_control/maintenance_steps.exs). The page, header and
-# row mark are covered by the QML tests in plugins/maintenance/test against a fake MC
-# part; desktop tst_Features steps are the follow-up that takes the @backlog-desktop
-# tags off.
+# (steps in test/steps/source_control/maintenance_steps.exs). The page, settings
+# page, header and row mark are covered by the QML tests in plugins/maintenance/test
+# against a fake MC part; desktop tst_Features steps are the follow-up that takes the
+# @backlog-desktop tags off.
 
 @plugin-maintenance
 Feature: Repository maintenance
@@ -130,6 +131,30 @@ Feature: Repository maintenance
       When its agent's turn ends without reporting
       Then the maintenance run failed, saying it finished without reporting
 
+    @mc
+    Scenario: A run that failed without a report takes the report of its continued thread
+      Given a maintenance run on "acme/api"
+      And its agent's turn ends without reporting
+      And the maintenance run failed, saying it finished without reporting
+      When its agent reports nothing applied in every category
+      Then the run is done
+
+    @mc
+    Scenario: A late report is refused once another run of the repository started
+      Given a maintenance run on "acme/api"
+      And its agent's turn ends without reporting
+      And the maintenance run failed, saying it finished without reporting
+      And the user runs maintenance on "acme/api" now
+      When the first run's agent reports nothing applied in every category
+      Then the maintenance agent is told "started after this one failed"
+
+    @mc
+    Scenario: A turn stopped at a usage limit leaves the run running
+      Given a maintenance run on "acme/api"
+      When its agent's turn stops at a usage limit
+      Then the maintenance run is still running
+      And its thread is left unsettled for the MC to resume
+
   Rule: Publishing is the user's choice
 
     @mc @desktop @backlog-desktop
@@ -210,6 +235,28 @@ Feature: Repository maintenance
       When the plugin starts again
       Then no maintenance thread starts
       And "acme/api" shows when its next run is
+
+  Rule: Repositories are picked from the MC's projects
+
+    @mc
+    Scenario: The settings offer the MC's agents and the repositories of its GitHub projects
+      Given the project "web" whose remote is "acme/web" on GitLab
+      When the user opens the maintenance settings
+      Then the MC's agents are offered with their models to maintain
+      And "acme/api" is offered to maintain
+      And "acme/web" is not offered to maintain
+
+    @desktop @backlog-desktop
+    Scenario: A picked repository that is no longer a project stays listed to untick
+      Given "maintenance" maintains "acme/gone", which no project has as its remote
+      When the user opens the settings of "maintenance"
+      Then "acme/gone" is listed as picked beside "acme/api"
+      And unticking "acme/gone" and saving stops maintaining it
+
+    @mc @desktop @backlog-desktop
+    Scenario: A picked repository without a project says so on the page
+      Given "maintenance" maintains "acme/gone", which no project has as its remote
+      Then the page says "acme/gone" has no project with it as its remote
 
   Rule: Settings are checked when saved
 

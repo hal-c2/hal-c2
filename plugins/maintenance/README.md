@@ -27,8 +27,8 @@ plugin API: copy the folder into an MC's `plugins` folder to install it.
   pull request body made of it, and `schedule.ex` when a run is due, all as
   plain functions.
 - `ui/`: one QML file per part. `MaintenancePage.qml` is the **Maintenance**
-  page; `MaintenanceHeader.qml` and `MaintenanceRowMark.qml` show a run above
-  and beside its thread.
+  page, `MaintenanceSettings.qml` its settings page, and `MaintenanceHeader.qml`
+  and `MaintenanceRowMark.qml` show a run above and beside its thread.
 - `skill/`: the `maintain` skill and the roles it names, vendored (see below).
 - `assets/`: the icon.
 
@@ -47,7 +47,8 @@ upstream and move the commit in `SOURCE.md`.
 The UI parts follow two topics of the MC part: `maintenance`, the followed
 repositories with their next run and every run with its report, and `threads`,
 each run by its thread. The UI acts through the calls `run`, `cancel`,
-`dismiss` and `publish`. A run's agent reports with the `maintenance_report`
+`dismiss` and `publish`; the settings page asks `settings` for the agents and
+the repositories of the MC's GitHub projects to pick from. A run's agent reports with the `maintenance_report`
 tool, offered only to threads this plugin started.
 
 The MC's plugin API has no way to push a branch or open a pull request, so
