@@ -63,8 +63,8 @@ Item {
         // "Roadmap" with its history open: "Final" now, "Draft" before it.
         function withHistory(more) {
             const versions = [
-                { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: true, byUpdate: false, threadTitle: "Work", restoredFromAt: "" },
-                { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" }
+                { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: true, byUpdate: false, byFile: false, threadTitle: "Work", restoredFromAt: "" },
+                { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, byFile: false, threadTitle: "", restoredFromAt: "" }
             ];
             return root.research({ history: Object.assign({ shown: true, pageId: "page-1", versions: versions }, more) });
         }
@@ -91,8 +91,8 @@ Item {
             const view = root.research({
                 page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: true, sourceThreadId: "", sourceThreadTitle: "" },
                 history: { shown: true, pageId: "page-1", versions: [
-                    { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" },
-                    { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" }
+                    { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: false, byUpdate: false, byFile: false, threadTitle: "", restoredFromAt: "" },
+                    { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, byFile: false, threadTitle: "", restoredFromAt: "" }
                 ] }
             });
             tryVerify(() => findChild(view, "spaceHistoryRow:1") !== null);
@@ -834,6 +834,89 @@ Item {
             verify(findChild(view, "spaceSiteLocalOnly").visible);
             mouseClick(findChild(view, "spaceSiteTailscale"));
             compare(dispatched("space.page.publish"), [{ pageId: "page-1", tailscale: true }]);
+        }
+
+        // "Roadmap" as the file docs/roadmap.md of Shop (features/space/project-files.feature).
+        function filed(file) {
+            return Object.assign({ id: "page-1", title: "Roadmap", parentPageId: "", trashed: false, sourceThreadId: "", sourceThreadTitle: "",
+                                   file: Object.assign({ projectId: "shop", projectTitle: "Shop", path: "docs/roadmap.md", missing: false, unwritten: false, conflictAt: "" }, file) });
+        }
+
+        function test_a_page_that_is_a_file_says_which_with_the_ways_to_it_and_out() {
+            const view = root.research({ page: filed({}) });
+            verify(findChild(view, "spacePageFile").visible);
+            compare(findChild(view, "spacePageFilePath").text, "The file docs/roadmap.md of Shop");
+            verify(!findChild(view, "spacePageFileGone").visible);
+            verify(!findChild(view, "spacePageFileConflict").visible);
+            mouseClick(findChild(view, "spacePageFileShow"));
+            mouseClick(findChild(view, "spacePageActions"));
+            verify(findChild(view, "spaceShowFile").visible);
+            findChild(view, "spaceUnlinkFile").triggered();
+            compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.showFile", "space.page.unlinkFile"]);
+            compare(dispatched("space.page.unlinkFile"), [{ pageId: "page-1" }]);
+        }
+
+        function test_an_ordinary_page_says_nothing_of_a_file() {
+            const view = root.research();
+            verify(!findChild(view, "spacePageFile").visible);
+            mouseClick(findChild(view, "spacePageActions"));
+            verify(!findChild(view, "spaceShowFile").visible);
+            verify(!findChild(view, "spaceUnlinkFile").visible);
+        }
+
+        function test_a_page_whose_file_is_gone_says_so_and_whether_it_was_edited_since() {
+            const view = root.research({ page: filed({ missing: true }) });
+            const gone = findChild(view, "spacePageFileGone");
+            verify(gone.visible);
+            verify(!findChild(view, "spacePageFileShow").visible);
+            const untouched = gone.text;
+            Spaces.page = filed({ missing: true, unwritten: true });
+            verify(gone.text !== untouched);
+            verify(gone.text.indexOf("it wins") >= 0);
+        }
+
+        function test_a_file_that_won_over_an_edit_says_so_with_the_way_to_the_history() {
+            const view = root.research({ page: filed({ conflictAt: "2026-09-23T10:20:00Z" }) });
+            verify(findChild(view, "spacePageFileConflict").visible);
+            mouseClick(findChild(view, "spacePageFileHistory"));
+            compare(dispatched("space.history.open"), [{ pageId: "page-1" }]);
+        }
+
+        function picking(listed) {
+            Shell.state = Object.assign({}, Shell.state, { space: {
+                picking: "shop",
+                projects: [{ id: "shop", title: "Shop" }, { id: "docs", title: "Docs" }],
+                files: listed === undefined ? {} : { shop: listed }
+            } });
+            return root.research();
+        }
+
+        function test_the_file_picker_lists_the_projects_files_and_opens_one() {
+            const view = picking({ config: "default", paths: {
+                "docs/roadmap.md": { kind: "markdown", spaceId: "space-1", pageId: "page-1", title: "Roadmap" },
+                "README.md": { kind: "markdown", spaceId: "", pageId: "", title: "" }
+            } });
+            const picker = findChild(view, "spaceFilePicker");
+            tryVerify(() => picker.opened);
+            compare(findChild(picker.contentItem, "spaceFilePickerProject").text, "Shop");
+            tryVerify(() => findChild(picker.contentItem, "spaceFilePickerFile:docs/roadmap.md") !== null);
+            const opened = findChild(picker.contentItem, "spaceFilePickerFile:docs/roadmap.md");
+            compare(opened.text, "docs/roadmap.md (the page Roadmap)");
+            mouseClick(findChild(picker.contentItem, "spaceFilePickerFile:README.md"));
+            compare(dispatched("space.openFile"), [{ projectId: "shop", relativePath: "README.md" }]);
+        }
+
+        function test_the_file_picker_says_when_a_project_has_no_files_and_offers_the_scan() {
+            const view = picking({ config: "default", paths: {} });
+            const picker = findChild(view, "spaceFilePicker");
+            tryVerify(() => picker.opened);
+            const empty = findChild(picker.contentItem, "spaceFilePickerEmpty");
+            verify(empty.visible);
+            verify(empty.text.indexOf("Shop has no files") === 0);
+            mouseClick(findChild(picker.contentItem, "spaceFilePickerScan"));
+            compare(dispatched("space.files.scan"), [{ projectId: "shop" }]);
+            picker.close();
+            compare(dispatched("space.files.pickClose"), [{}]);
         }
 
         function test_a_trashed_page_offers_no_publishing() {

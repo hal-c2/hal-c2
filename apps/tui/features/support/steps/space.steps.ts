@@ -1,4 +1,5 @@
-// space/pages.feature, space/slides.feature and space/markdown.feature: the Spaces pane (^X p), driven by its keys against a fake
+// space/pages.feature, space/slides.feature, space/markdown.feature and space/project-files.feature:
+// the Spaces pane (^X p), driven by its keys against a fake
 // MC that keeps the rules of HalC2.Space (fakeSpaceMc.ts). Givens write to the MC
 // directly; Whens press the pane's keys and answer its fields and pickers; Thens
 // read what the pane shows, the status line and the clipboard. A second client is
@@ -12,6 +13,7 @@ import { type SpaceAuthor, ThreadId } from "@hal-c2/contracts";
 
 import { createHost, type Host } from "../../../src/host/host.ts";
 import type { TuiSelectState } from "../../../src/host/composerState.ts";
+import type { TuiFilesState } from "../../../src/host/filesState.ts";
 import {
   SITE_BEHIND_HINT,
   SITE_LOCAL_ONLY_HINT,
@@ -20,13 +22,18 @@ import {
 } from "../../../src/host/spaceState.ts";
 import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
-import { env, projectNamed, threadNamed, ui } from "../environment.ts";
-import { fakeClient } from "../fakeClient.ts";
+import { addThread, change, env, projectNamed, threadNamed, ui } from "../environment.ts";
+import { fakeClient, thread } from "../fakeClient.ts";
 import { fakeSpaceMc, type FakeSpaceMc } from "../fakeSpaceMc.ts";
 import { presenceOverSession, type PresenceOverSession } from "../presenceOverSession.ts";
+import { chooseCommand, palette, selectThread } from "../threadUi.ts";
+import { message } from "../threadWorld.ts";
 import { findObject, pressKey, settle, typeText, type World } from "../world.ts";
+import { selectRow as selectFileRow } from "./files.steps.ts";
 
 interface SpaceWorld extends World {
+  /** A thread's worktree by project: its folder and the files it has that differ. */
+  worktrees?: Map<string, { readonly root: string; readonly files: Map<string, string> }>;
   /** The site link each page had when the scenario first saw it. */
   siteLinks?: Map<string, string>;
   spaceMc?: FakeSpaceMc;
@@ -2317,6 +2324,28 @@ step("the user can edit it as text", async (ctx: SpaceWorld) => {
   expect(rawSource(ctx).lines).toEqual(edited);
 });
 
+// A table and a code block, which the page shows as their source until #854 draws them.
+const MODELLED_TABLE = ["| Step | Owner |", "| ---- | ----- |", "| MC   | Ada   |"];
+const CODE = ["run()", "    done()"];
+
+step("the page {string} holds a table and a code block", (ctx: SpaceWorld, title: string) => {
+  seedBlock(ctx, title, "table", MODELLED_TABLE.join("\n"));
+  seedBlock(ctx, title, "code", CODE.join("\n"));
+});
+
+step(
+  "the table and the code are each shown line for line in a fixed-width face",
+  (ctx: SpaceWorld) => {
+    for (const [kind, lines] of [
+      ["table", MODELLED_TABLE],
+      ["code", CODE],
+    ] as const) {
+      const rows = pane(ctx).rows.filter((row) => row.blockKind === kind);
+      expect(rows.map((row) => row.text.slice(4))).toEqual(lines);
+    }
+  },
+);
+
 step(
   "the page {string} with headings of every level from 1 to 6",
   (ctx: SpaceWorld, title: string) => {
@@ -2360,4 +2389,320 @@ step("each heading is smaller than the one of the level above it", (ctx: SpaceWo
     THEME.dim.toString(),
     THEME.dim.toString(),
   ]);
+});
+
+// --- project files (project-files.feature) ---
+// The fake MC holds each project's folder; the file browser lists and reads the same copy.
+
+const OPEN_FILE_IN_SPACE = "Open this file in a Space";
+const OPEN_PROJECTS_COPY = "Open the project's copy in a Space";
+const filesPane = (ctx: World) => ctx.host!.state.get("files") as TuiFilesState;
+const projectId = (ctx: World, title: string) => projectNamed(ctx, title).id;
+
+/** The client runs, its file browser reading the project folders the MC holds. */
+async function startWithFiles(ctx: SpaceWorld) {
+  await start(ctx);
+  const folder = (cwd: string) => {
+    const project = env(ctx).projects.find((candidate) => candidate.workspaceRoot === cwd);
+    if (project) return mc(ctx).projectFilesOf(project.id);
+    // A worktree: the project's files, as its own differ.
+    for (const [title, worktree] of ctx.worktrees ?? []) {
+      if (worktree.root !== cwd) continue;
+      return new Map([...mc(ctx).projectFilesOf(projectId(ctx, title)), ...worktree.files]);
+    }
+    return new Map<string, string>();
+  };
+  ctx.fake!.override("listEntries", async (cwd) =>
+    [...folder(cwd).keys()].map((path) => ({ path, kind: "file" as const })),
+  );
+  ctx.fake!.override("readFile", async (cwd, path) => {
+    const text = folder(cwd).get(path);
+    return text === undefined ? null : { contents: text, truncated: false };
+  });
+}
+
+/** A thread of the project, open: the files it browses and the conversation it shows are there. */
+async function openThreadOf(ctx: SpaceWorld, project: string) {
+  const worktree = ctx.worktrees?.get(project);
+  const title = worktree ? `Draft of ${project}` : `Docs of ${project}`;
+  if (!env(ctx).threads.some((candidate) => candidate.title === title)) {
+    change(ctx, () =>
+      addThread(ctx, title, { project, ...(worktree ? { worktreePath: worktree.root } : {}) }),
+    );
+  }
+  await startWithFiles(ctx);
+  await settle(ctx);
+  await selectThread(ctx, title);
+  await settle(ctx);
+  return threadNamed(ctx, title);
+}
+
+async function browseFiles(ctx: SpaceWorld, project: string) {
+  await openThreadOf(ctx, project);
+  await chooseCommand(ctx, "Browse files");
+  await settle(ctx);
+  expect(filesPane(ctx).open).toBe(true);
+}
+
+/** Selects the file's row, opening each folder on its way. */
+async function selectFile(ctx: SpaceWorld, path: string) {
+  if (!ctx.host || !filesPane(ctx).open) await browseFiles(ctx, env(ctx).projects[0]!.title);
+  const segments = path.split("/");
+  for (let depth = 1; depth < segments.length; depth += 1) {
+    const folder = segments.slice(0, depth).join("/");
+    const row = filesPane(ctx).rows.find((candidate) => candidate.path === folder);
+    if (!row) continue; // compacted into a deeper folder row
+    await selectFileRow(ctx, folder);
+    if (row.text.includes("▸ " + segments[depth - 1])) await pressKey(ctx, "Enter");
+  }
+  await selectFileRow(ctx, path);
+  await settle(ctx);
+}
+
+/** The palette's entries for `query`, then closed again. */
+async function offered(ctx: SpaceWorld, query: string) {
+  await pressKey(ctx, "Ctrl+K");
+  await typeText(ctx, query);
+  await settle(ctx);
+  const titles = palette(ctx).commands.map((command) => command.title);
+  await pressKey(ctx, "Escape");
+  await settle(ctx);
+  return titles;
+}
+
+/** Picks `label` when a picker of `title` is up (several projects ask which). */
+async function chooseIfAsked(ctx: SpaceWorld, title: string, label: string) {
+  if (mode(ctx) === "select" && select(ctx).title === title) await choose(ctx, label);
+}
+
+step(
+  "{string} has the file {string} reading {string}",
+  (ctx: SpaceWorld, project: string, path: string, text: string) => {
+    mc(ctx).writeProjectFile(projectId(ctx, project), path, text.replaceAll("\\n", "\n"));
+  },
+);
+
+step("the user is browsing the files of {string}", browseFiles);
+
+step("the user is reading {string} in the file viewer", async (ctx: SpaceWorld, path: string) => {
+  await selectFile(ctx, path);
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+  expect(filesPane(ctx).viewer?.path).toBe(path);
+});
+
+step(
+  "the agent's message in a thread of {string} links {string}",
+  async (ctx: SpaceWorld, project: string, path: string) => {
+    const { id, projectId, title } = await openThreadOf(ctx, project);
+    const messages = [
+      message("m-ask", "user", "Where is the setup written down?", 1),
+      message("m-link", "assistant", `It is in [the guide](${path}), under Install.`, 2),
+    ];
+    ctx.fake!.emitThread({ ...thread(), id, projectId, title, messages } as never);
+    await settle(ctx);
+  },
+);
+
+step("the user is in the Space {string}", (ctx: SpaceWorld, name: string) => openSpace(ctx, name));
+
+step("the user last had the Space {string} open", async (ctx: SpaceWorld, name: string) => {
+  await openSpace(ctx, name);
+  await press(ctx, "Ctrl+P");
+  expect(pane(ctx).open).toBe(false);
+});
+
+step(
+  "the user has opened {string} of {string} in {string}",
+  (ctx: SpaceWorld, path: string, project: string, space: string) => {
+    mc(ctx).run("space.page.openFile", {
+      spaceId: mc(ctx).spaceNamed(space).id,
+      projectId: projectId(ctx, project),
+      relativePath: path,
+    });
+  },
+);
+
+step("an agent in {string} deleted {string}", (ctx: SpaceWorld, project: string, path: string) => {
+  mc(ctx).writeProjectFile(projectId(ctx, project), path, null);
+});
+
+step("the file won over the user's edit of {string}", (ctx: SpaceWorld, title: string) => {
+  mc(ctx).fileWinsOver(pageId(ctx, title));
+});
+
+step(
+  "{string} of {string} was rewritten outside HAL-C2 to {string}",
+  (ctx: SpaceWorld, path: string, project: string, text: string) => {
+    mc(ctx).writeProjectFile(projectId(ctx, project), path, text.replaceAll("\\n", "\n"));
+  },
+);
+
+step("the user opens {string} in a Space from its menu", async (ctx: SpaceWorld, path: string) => {
+  await selectFile(ctx, path);
+  await chooseCommand(ctx, OPEN_FILE_IN_SPACE);
+  await settle(ctx);
+});
+
+step("the user opens it in a Space", async (ctx: SpaceWorld) => {
+  await chooseCommand(ctx, OPEN_FILE_IN_SPACE);
+  await settle(ctx);
+});
+
+step("the user opens that link in a Space", async (ctx: SpaceWorld) => {
+  await chooseCommand(ctx, "Open a file the conversation names in a Space…");
+  await settle(ctx);
+});
+
+step(
+  "the user adds a page from the files of {string} and picks {string}",
+  async (ctx: SpaceWorld, project: string, path: string) => {
+    await startWithFiles(ctx);
+    await press(ctx, "f");
+    await chooseIfAsked(ctx, "Add a page from the files of which project?", project);
+    await choose(ctx, path);
+  },
+);
+
+step(
+  "the user asks the command palette to open {string} in a Space",
+  async (ctx: SpaceWorld, path: string) => {
+    await startWithFiles(ctx);
+    await chooseCommand(ctx, "Open a project file in a Space…");
+    await settle(ctx);
+    await chooseIfAsked(ctx, "Open a file of which project?", env(ctx).projects[0]!.title);
+    await choose(ctx, path);
+  },
+);
+
+step(
+  "the user asks the command palette to scan {string} for Space files",
+  async (ctx: SpaceWorld, project: string) => {
+    await startWithFiles(ctx);
+    await chooseCommand(ctx, "Scan a project for Space files…");
+    await settle(ctx);
+    await chooseIfAsked(ctx, "Scan which project for Space files?", project);
+  },
+);
+
+step("the user shows the page {string}", (ctx: SpaceWorld, title: string) => openPage(ctx, title));
+
+step("the user shows the file of the page {string}", async (ctx: SpaceWorld, title: string) => {
+  await startWithFiles(ctx);
+  await openPage(ctx, title);
+  await press(ctx, "f");
+});
+
+step("the user unlinks the page {string} from its file", async (ctx: SpaceWorld, title: string) => {
+  await openPage(ctx, title);
+  await press(ctx, "F");
+  await choose(ctx, "Unlink it");
+});
+
+step("the Space shows the page {string}", async (ctx: SpaceWorld, title: string) => {
+  await settle(ctx);
+  expect(pane(ctx)).toMatchObject({ open: true, view: "page" });
+  expect(pane(ctx).title).toStartWith(`page · ${title}`);
+});
+
+step("every Space was deleted", (ctx: SpaceWorld) => {
+  for (const space of mc(ctx).spaces()) mc(ctx).run("space.delete", { spaceId: space.id });
+  expect(mc(ctx).spaces()).toEqual([]);
+});
+
+step("the user is told the scan wrote the spaces section", async (ctx: SpaceWorld) => {
+  await settle(ctx);
+  expect(status(ctx).kind).toBe("success");
+  expect(status(ctx).text).toStartWith("Wrote the spaces section of");
+});
+
+// Offered for a Markdown file of the same folder, so the absence is the file's.
+step("{string} offers no way to open it in a Space", async (ctx: SpaceWorld, path: string) => {
+  const label = [...(ctx.worktrees?.values() ?? [])].some(
+    (worktree) => worktree.root === filesPane(ctx)?.cwd,
+  )
+    ? OPEN_PROJECTS_COPY
+    : OPEN_FILE_IN_SPACE;
+  await selectFile(ctx, path);
+  expect(await offered(ctx, label)).not.toContain(label);
+  await selectFile(ctx, "docs/guide.md");
+  expect(await offered(ctx, label)).toContain(label);
+});
+
+step(
+  "a thread of {string} works in a worktree where {string} reads {string}",
+  (ctx: SpaceWorld, project: string, path: string, text: string) => {
+    ctx.worktrees ??= new Map();
+    const files = new Map([[path, text.replaceAll("\\n", "\n")]]);
+    ctx.worktrees.set(project, { root: `/worktrees/${project}-draft`, files });
+  },
+);
+
+step(
+  "the user opens the project's copy of {string} in a Space from its menu",
+  async (ctx: SpaceWorld, path: string) => {
+    await selectFile(ctx, path);
+    expect(filesPane(ctx).cwd).toBe([...ctx.worktrees!.values()][0]!.root);
+    await chooseCommand(ctx, OPEN_PROJECTS_COPY);
+    await settle(ctx);
+  },
+);
+
+step("the page {string} is in {string}", async (ctx: SpaceWorld, title: string, space: string) => {
+  await settle(ctx);
+  expect(mc(ctx).pageNamed(title).spaceId).toBe(mc(ctx).spaceNamed(space).id);
+  expect(pane(ctx).title).toStartWith(`page · ${title}`);
+});
+
+const fileNotes = (ctx: World) =>
+  pane(ctx)
+    .rows.filter((row) => row.kind === "label")
+    .map((row) => row.text.trim());
+
+step(
+  "the page says it is the file {string} of {string}",
+  async (ctx: SpaceWorld, path: string, project: string) => {
+    await settle(ctx);
+    expect(fileNotes(ctx)).toContainEqual(expect.stringContaining(`File: ${path} of ${project}`));
+  },
+);
+
+step(
+  "the file viewer shows {string} of {string}",
+  async (ctx: SpaceWorld, path: string, project: string) => {
+    await settle(ctx);
+    expect(pane(ctx).open).toBe(false);
+    expect(filesPane(ctx).cwd).toBe(projectNamed(ctx, project).workspaceRoot);
+    expect(filesPane(ctx).viewer).toMatchObject({ path, status: "ready" });
+  },
+);
+
+step("the page says its file is gone", async (ctx: SpaceWorld) => {
+  await settle(ctx);
+  expect(fileNotes(ctx)).toContainEqual(expect.stringContaining("The file is gone"));
+});
+
+step(
+  "the page says the file changed under the user's edit and the edit is in its history",
+  async (ctx: SpaceWorld) => {
+    await settle(ctx);
+    expect(fileNotes(ctx)).toContainEqual(
+      expect.stringContaining("The file changed under your edit"),
+    );
+    // The history has the user's edit, and the file's change over it.
+    await press(ctx, "h");
+    const versions = listed(pane(ctx).rows, "version");
+    expect(versions[0]).toContain("The project file docs/guide.md");
+    expect(versions.some((row) => / {2}You\b/.test(row))).toBe(true);
+  },
+);
+
+step("the page no longer says it is a file", async (ctx: SpaceWorld) => {
+  await settle(ctx);
+  expect(fileNotes(ctx).some((note) => note.startsWith("File: "))).toBe(false);
+});
+
+step("the page {string} shows {string}", async (ctx: SpaceWorld, title: string, text: string) => {
+  const rows = await blockRows(ctx, title);
+  expect(rows.map(blockText)).toContain(text);
 });

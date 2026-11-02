@@ -70,6 +70,7 @@ const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 function setup(origin?: string) {
   const streams = new Map<string, Array<(frame: EntityStreamFrame) => void>>();
   const replies = new Map<string, Array<(value: unknown) => void>>();
+  const refusals = new Map<string, Array<(error: unknown) => void>>();
   const calls: Array<{ method: string; payload: unknown }> = [];
   const statuses: string[] = [];
   const menus: PickRequest[] = [];
@@ -78,16 +79,23 @@ function setup(origin?: string) {
   const tellPage: Array<(viewers: ReadonlyArray<SpacePresenceViewer>) => void> = [];
   const asks: AskSpec[] = [];
   const uploads = { fails: false, sent: 0 };
+  const lists = { fails: false };
   let state: TuiSpaceState | null = null;
   const controller = createSpaceController({
     client: {
       mcCall: <T>(method: string, payload: unknown) => {
         calls.push({ method, payload });
-        if (method === "space.list") return Promise.resolve({ spaces: [] } as T);
-        return new Promise<T>((resolve) => {
+        if (method === "space.list") {
+          if (lists.fails) return Promise.reject(new Error("The connection to the MC was lost."));
+          return Promise.resolve({ spaces: [] } as T);
+        }
+        return new Promise<T>((resolve, reject) => {
           const waiting = replies.get(method) ?? [];
           waiting.push(resolve as (value: unknown) => void);
           replies.set(method, waiting);
+          const failing = refusals.get(method) ?? [];
+          failing.push(reject);
+          refusals.set(method, failing);
         });
       },
       subscribeMcStream: (stream, onFrame) => {
@@ -119,13 +127,21 @@ function setup(origin?: string) {
     ask: (spec) => asks.push(spec),
     menu: (spec) => menus.push(spec),
     threads: () => [{ id: "t1", title: "Work" }],
+    projects: () => [{ id: "p1", title: "shop" }],
     openThread: (threadId) => opened.push(threadId),
     ...(origin ? { origin } : {}),
   });
   /** Send a frame on `stream`; `subscription` picks an older follow of the same stream. */
   const send = (stream: string, frame: EntityStreamFrame, subscription = -1) =>
     streams.get(stream)!.at(subscription)!(frame);
-  const reply = (method: string, value: unknown) => replies.get(method)!.shift()!(value);
+  const reply = (method: string, value: unknown) => {
+    refusals.get(method)!.shift();
+    replies.get(method)!.shift()!(value);
+  };
+  const refuse = (method: string, error: unknown) => {
+    replies.get(method)!.shift();
+    refusals.get(method)!.shift()!(error);
+  };
   const view = () => state!;
   const texts = (kind: TuiSpaceRow["kind"]) =>
     view()
@@ -136,6 +152,7 @@ function setup(origin?: string) {
     controller,
     send,
     reply,
+    refuse,
     view,
     texts,
     select,
@@ -144,6 +161,7 @@ function setup(origin?: string) {
     menus,
     asks,
     uploads,
+    lists,
     streams,
     opened,
     onPage,
@@ -961,5 +979,49 @@ describe("images", () => {
       detail: { _tag: "SpaceImageGenerationError", reason: "failed" },
     });
     expect(refusalText(error)).toBe("Image generation failed, so no image was made: No file.");
+  });
+});
+
+describe("project files", () => {
+  test("with no Space to open into, opening a file says so and asks nothing", async () => {
+    const t = setup();
+    t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toBe(
+      "There is no Space to open it in: make one first (^X p, then n).",
+    );
+    expect(t.calls.map((call) => call.method)).toEqual(["space.list"]);
+  });
+
+  test("Spaces that could not be listed say why, not to make one", async () => {
+    const t = setup();
+    t.lists.fails = true;
+    t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    await t.controller.settled();
+    expect(t.statuses).toEqual(["The connection to the MC was lost."]);
+    expect(t.calls.map((call) => call.method)).toEqual(["space.list"]);
+  });
+
+  test("a project of another machine is not asked of this MC", async () => {
+    const t = setup();
+    t.controller.dispatch("space.openProjectFile", { projectId: "env2:p9", paths: ["a.md"] });
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toStartWith("That project is on another machine");
+    expect(t.calls).toEqual([]);
+  });
+
+  test("a list the MC failed to give is asked for again", async () => {
+    const t = setup();
+    expect(t.controller.isSpaceFile("p1", "docs/guide.md")).toBe(false);
+    t.refuse("space.files.list", new Error("lost the connection"));
+    await t.controller.settled();
+    expect(t.controller.isSpaceFile("p1", "docs/guide.md")).toBe(false);
+    t.reply("space.files.list", {
+      config: "default",
+      files: [{ relativePath: "docs/guide.md", kind: "page", page: null }],
+    });
+    await t.controller.settled();
+    expect(t.controller.isSpaceFile("p1", "docs/guide.md")).toBe(true);
+    expect(t.calls.filter((call) => call.method === "space.files.list")).toHaveLength(2);
   });
 });

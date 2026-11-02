@@ -10,7 +10,8 @@ import HalC2.Shell
 // the page, an image above its caption, a chart drawn from its description,
 // what a page's update wrote (Markdown nobody edits by hand), Markdown the page
 // keeps as written (a raw block: its source in a fixed-width face, never
-// wrapped, scrolled sideways, and written with Ctrl+Return or by leaving it), a
+// wrapped, scrolled sideways, and written with Ctrl+Return or by leaving it;
+// a table and a code block show so too until they are drawn as such, #854), a
 // Mermaid diagram drawn from a raw block's source, and the block's own actions
 // (comment, add a block below, ask again for a chart, switch a diagram to its
 // source, move up or down, delete).
@@ -45,7 +46,7 @@ Item {
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color info: Theme.palette.color("info", "#3b82f6")
     readonly property bool editing: editor.activeFocus
-    readonly property bool raw: kind === "raw"
+    readonly property bool raw: kind === "raw" || kind === "table" || kind === "code"
     // Level 2 keeps the page's usual heading; 1 is larger, 3 to 6 step down.
     readonly property int headingSize: [26, 20, 17, 16, 15, 14][Math.max(1, Math.min(6, level || 2)) - 1]
     // A raw block that is one "mermaid" fence is drawn in place of its text,
