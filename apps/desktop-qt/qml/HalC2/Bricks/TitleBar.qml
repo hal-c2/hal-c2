@@ -25,6 +25,7 @@ Rectangle {
     }
 
     TapHandler {
+        // ljos-allow(focus-pointer-only): a double click on the title bar is the pointer's shortcut for the window controls' Maximize button, which the keyboard reaches
         onDoubleTapped: bar.window.visibility === Window.Maximized ? bar.window.showNormal() : bar.window.showMaximized()
     }
 

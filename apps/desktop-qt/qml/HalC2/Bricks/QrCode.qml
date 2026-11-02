@@ -23,6 +23,7 @@ Rectangle {
 
     implicitWidth: side * moduleSize
     implicitHeight: side * moduleSize
+    // ljos-allow(color-scheme-ignored): a QR code is black on white in every scheme; an inverted one may not scan
     color: "white"
     Accessible.role: Accessible.Graphic
 

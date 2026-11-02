@@ -4,6 +4,7 @@
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QPointer>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -117,6 +118,30 @@ private slots:
     bridge.publish("route", QVariant());
     QTRY_VERIFY(centre->isVisible());
     QTRY_VERIFY(!settings->isVisible());
+  }
+
+  // The open right panel, even one dragged wide, takes what the thread leaves
+  // it, not the thread's own room (hal-c2#584: a crushed thread folds the
+  // composer's toolbar over itself), and stays inside the window.
+  void rightPanelLeavesTheThreadRoom(QQuickWindow* window) {
+    auto* panel = findVisualItemOfType(window->contentItem(), "RightPanel");
+    QVERIFY(panel);
+    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    QVERIFY(centre);
+    auto open = QJsonDocument::fromJson(R"({
+      "isOpen":true,"tabs":[],"activeId":"","width":900,
+      "canAdd":{"diff":true,"files":true,"terminal":true}
+    })").toVariant().toMap();
+    bridge.publish("panel", open);
+    const auto close = qScopeGuard([this] { bridge.publish("panel", QVariant()); });
+    QTRY_VERIFY(panel->isVisible());
+    QTRY_VERIFY(panel->width() > 0);
+    // Laid out: the panel sits right of the centre.
+    QTRY_VERIFY(panel->mapToScene(QPointF()).x() >= centre->mapToScene(QPointF(centre->width(), 0)).x());
+    // The thread's 360, less a card's border round the centre, once a
+    // sidebar that folds for it has.
+    QTRY_VERIFY2(centre->width() >= 356, qPrintable(QString::number(centre->width())));
+    QTRY_VERIFY(panel->mapToScene(QPointF(panel->width(), 0)).x() <= window->width());
   }
 
   // The usage route draws its chart inside the centre, and the day under the
@@ -247,6 +272,9 @@ private slots:
     pluginPagesHaveTabs(window);
     if (QTest::currentTestFailed()) return;
     if (width == 1000) threadRoutesDrawTheCentre(window);
+    if (QTest::currentTestFailed()) return;
+    if (width == 1000 && example != "glass-macos" && example != "folders") rightPanelLeavesTheThreadRoom(window);
+    if (QTest::currentTestFailed()) return;
 
     if (example == "glass-macos") {
       // The breakpoints: the sidebar goes off-canvas under 768, the

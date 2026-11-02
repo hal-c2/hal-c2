@@ -16,6 +16,7 @@
 #include <memory>
 
 #include "Brick.h"
+#include "ComposerBrick.h"
 #include "FakeFiles.h"
 #include "Harness.h"
 #include "Stream.h"
@@ -33,6 +34,7 @@ const QString kSentence = QStringLiteral("Cache keys include the tenant.");
 // What a step saw, for a later step to compare with.
 struct Seen {
   QString link;
+  QPointer<QObject> menu;  // the text's menu the user opened
   QPointer<QQuickItem> item;
   std::shared_ptr<QSignalSpy> redraws;
   int segments = 0;
@@ -175,6 +177,25 @@ void write(World& world, const QString& more) {
 
 QString clipboard() {
   return QGuiApplication::clipboard()->text();
+}
+
+
+// Right-clicks `edit`, a reply's text, near its start; returns the text's
+// menu (TextEditMenu) it opened.
+QObject* openTextMenu(World& world, QQuickItem* edit) {
+  Brick& brick = timelineBrick(world);
+  QTest::mouseClick(&brick.window(), Qt::RightButton, Qt::NoModifier, brick.at(edit, 0.05, 0.5));
+  QObject* menu = nullptr;
+  // The reply's Markdown makes it, a delegate's: the timeline does not own it.
+  world.waitFor([&] {
+    for (QQuickItem* up = edit; up && !menu; up = up->parentItem()) {
+      for (QObject* found : up->findChildren<QObject*>(QStringLiteral("textMenu"), Qt::FindDirectChildrenOnly)) {
+        if (found->property("visible").toBool()) menu = found;
+      }
+    }
+    return menu != nullptr;
+  }, QStringLiteral("the text's menu to open"));
+  return menu;
 }
 
 const Steps steps([] {
@@ -451,6 +472,43 @@ const Steps steps([] {
     world.waitFor([&] { return !at(world.state(QStringLiteral("menu")), QStringLiteral("items")).toList().isEmpty(); },
                   QStringLiteral("the link's menu to open"));
   });
+  // The right-click menu on a reply's text.
+  step(QStringLiteral("the agent answers %1").arg(q), [](World& world, const Captures& c, const Table&) { answer(world, c[0]); });
+  step(QStringLiteral("the user selects %1 in the reply").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* prose = one(reply(world), QStringLiteral("markdownProse"));
+    const int start = int(plain(prose).indexOf(c[0]));
+    expect(start >= 0, QStringLiteral("\"%1\" is not shown in \"%2\"").arg(c[0], plain(prose)));
+    QMetaObject::invokeMethod(prose, "select", Q_ARG(int, start), Q_ARG(int, start + int(c[0].size())));
+  });
+  step(QStringLiteral("the user chooses %1 from the reply's right-click menu").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* prose = one(reply(world), QStringLiteral("markdownProse"));
+    chooseInTextMenu(world, timelineBrick(world), openTextMenu(world, prose), c[0]);
+  });
+  step(QStringLiteral("the user right-clicks the reply's text"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<Seen>().menu = openTextMenu(world, one(reply(world), QStringLiteral("markdownProse")));
+  });
+  step(QStringLiteral("the menu offers %1 and %1 only").arg(q), [](World& world, const Captures& c, const Table&) {
+    QObject* menu = world.mc.part<Seen>().menu;
+    expect(menu != nullptr, QStringLiteral("no text's menu is open"));
+    QStringList offered;
+    for (int i = 0; i < menu->property("count").toInt(); ++i) {
+      QQuickItem* entry = nullptr;
+      QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, entry), Q_ARG(int, i));
+      if (entry && entry->isVisible() && entry->height() > 0) offered.append(entry->property("text").toString());
+    }
+    expect(offered == QStringList{c[0], c[1]}, QStringLiteral("the menu offers %1").arg(offered.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("the user chooses %1 from the code block's right-click menu").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* code = one(reply(world, 2), QStringLiteral("codeText"));
+    chooseInTextMenu(world, timelineBrick(world), openTextMenu(world, code), c[0]);
+  });
+  step(QStringLiteral("the code block's source is selected"), [](World& world, const Captures&, const Table&) {
+    QString selected = one(reply(world, 2), QStringLiteral("codeText"))->property("selectedText").toString();
+    // Line breaks in a selection are paragraph separators.
+    selected.replace(QChar(0x2028), QLatin1Char('\n')).replace(QChar(0x2029), QLatin1Char('\n'));
+    expect(selected.trimmed() == kSource, QStringLiteral("the selection is \"%1\"").arg(selected));
+  });
+
   // The same address in inline code and in a code block, in the next reply.
   step(QStringLiteral("web addresses inside code are left as text"), [](World& world, const Captures&, const Table&) {
     const QString address = QStringLiteral("https://example.com/docs");

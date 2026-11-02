@@ -192,7 +192,7 @@ AbstractButton {
         return target !== null;
     }
 
-    implicitHeight: 28
+    implicitHeight: Math.max(28, topPadding + contentItem.implicitHeight + bottomPadding)
     implicitWidth: leftPadding + contentItem.implicitWidth + rightPadding
     leftPadding: 10
     rightPadding: 10 + 14 + 4
@@ -273,6 +273,8 @@ AbstractButton {
     Popup {
         id: popup
 
+        Accessible.name: qsTr("Models")
+
         // Above the trigger, and
         // flipped below it when the window has no room above.
         property bool below: false
@@ -281,6 +283,7 @@ AbstractButton {
         transformOrigin: Item.TopLeft
         x: 0
         y: below ? control.height + 4 : -height - 4
+        // ljos-allow(layout-fixed-size): the rail and the list scroll inside it, and a size that followed the search's results would move the rows under the pointer as one types
         width: 360
         height: 346
         padding: 0
@@ -323,6 +326,7 @@ AbstractButton {
                 from: 1
                 to: 0
                 duration: 90
+                easing.type: Easing.InCubic
             }
         }
 
@@ -517,6 +521,7 @@ AbstractButton {
                             topPadding: 0
                             bottomPadding: 0
                             placeholderText: qsTr("Search models...")
+                            Accessible.name: qsTr("Search models")
                             placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
                             color: control.foreground
                             font.family: control.fontFamily
@@ -644,6 +649,9 @@ AbstractButton {
             color: highlighted || (rowHover.hovered && disabledReason.length === 0) ? control.highlight : isSelected ? control.fade(control.foreground, 0.08) : "transparent"
             Accessible.role: Accessible.ListItem
             Accessible.name: model ? Picker.displayName(model, true) : ""
+            // The search field's arrows and Enter reach it from the keyboard.
+            Accessible.onPressAction: if (row.model)
+                control.choose(row.instance.instanceId, row.model.slug)
 
             HoverHandler {
                 id: rowHover
@@ -740,7 +748,7 @@ AbstractButton {
                         Text {
                             Layout.fillWidth: true
                             text: row.model && row.instance ? Picker.providerLabel(row.model, row.instance) : ""
-                            color: control.fade(control.muted, 0.7)
+                            color: control.muted
                             font.family: control.fontFamily
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             elide: Text.ElideRight
@@ -856,6 +864,8 @@ AbstractButton {
             color: control.highlightedIndex === rowIndex || legacyHover.hovered ? control.highlight : "transparent"
             Accessible.role: Accessible.Button
             Accessible.name: qsTr("Legacy models")
+            Accessible.onPressAction: if (legacy.entry)
+                control.toggleLegacy(legacy.entry.instanceId)
 
             HoverHandler {
                 id: legacyHover
@@ -885,7 +895,7 @@ AbstractButton {
 
                     Text {
                         text: legacy.entry ? qsTr("%1 models").arg(legacy.entry.count) : ""
-                        color: control.fade(control.muted, 0.7)
+                        color: control.muted
                         font.family: control.fontFamily
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
@@ -900,6 +910,7 @@ AbstractButton {
                     Behavior on rotation {
                         NumberAnimation {
                             duration: 150
+                            easing.type: Easing.OutCubic
                         }
                     }
                 }
@@ -921,8 +932,11 @@ AbstractButton {
 
         width: 36
         height: 36
-        Accessible.role: Accessible.Button
+        // A tab of the rail: reached from the search with Left or Shift+Tab,
+        // and moved through with the arrows.
+        Accessible.role: Accessible.PageTab
         Accessible.name: tooltip
+        Accessible.selected: selected
         activeFocusOnTab: false
 
         HoverHandler {

@@ -16,6 +16,7 @@ Popup {
 
     objectName: "commandPalette"
     parent: Overlay.overlay
+    Accessible.name: qsTr("Command palette")
     // Not modal, so the window's shortcuts (mod+k among them) still reach it.
     modal: false
     scale: Shell.state.layout?.zoom ?? 1
@@ -79,6 +80,8 @@ Popup {
             Layout.fillWidth: true
             implicitHeight: 36
             placeholderText: PaletteModel.placeholder
+            Accessible.name: qsTr("Search the command palette")
+            Accessible.description: PaletteModel.placeholder
             rightPadding: submit.visible ? submit.width + 12 : 8
             onTextEdited: PaletteModel.query = text
 
@@ -213,6 +216,7 @@ Popup {
                 bottomPadding: 4
                 leftPadding: 8
                 text: section
+                elide: Text.ElideRight
                 color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(11 * Theme.fontScale)
                 font.weight: Font.DemiBold
@@ -236,6 +240,8 @@ Popup {
 
                 width: ListView.view.width
                 implicitHeight: 34
+                // A row that cannot run here is faded and read as unavailable.
+                enabled: row.runnable
                 opacity: row.runnable ? 1 : 0.5
                 radius: Math.min(Theme.radius, 8)
                 color: index === PaletteModel.highlighted ? Theme.palette.color("accentSurface", "#2a2a30") : "transparent"

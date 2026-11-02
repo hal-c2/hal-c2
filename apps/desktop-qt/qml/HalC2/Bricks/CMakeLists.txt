@@ -10,6 +10,7 @@ set(hal_c2_bricks_qml_files
     ModelPicker.qml
     ProviderIcon.qml
     ComposerVimKeys.qml
+    ConversationDrop.qml
     ProjectFolderDrop.qml
     FolderExplorer.qml
     FolderOperationDialog.qml
@@ -107,6 +108,7 @@ set(hal_c2_bricks_qml_files
     RevertDialog.qml
     TerminalSplits.qml
     TerminalMenu.qml
+    TextEditMenu.qml
     Plugin.qml
     Contribution.qml
     PluginSlot.qml

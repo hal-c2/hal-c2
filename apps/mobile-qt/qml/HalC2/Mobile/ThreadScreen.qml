@@ -8,8 +8,9 @@ import HalC2.Bricks
 // centre (the timeline, or the draft's opening line that picks its project),
 // and the composer, which carries the thread's approvals and questions. The
 // Files tab, which the desktop draws beside the thread, takes the screen under
-// the same bar; the way back closes it (MobileShell.stepBack).
-ColumnLayout {
+// the same bar; the way back closes it (MobileShell.stepBack). Files dropped
+// anywhere on the centre or the composer join the draft.
+Item {
     id: screen
 
     readonly property var route: Shell.state.route ?? null
@@ -22,68 +23,84 @@ ColumnLayout {
     signal backRequested
 
     objectName: "threadScreen"
-    spacing: 0
 
-    MobileBar {
-        Layout.fillWidth: true
-        canGoBack: true
-        title: screen.route !== null && screen.route.title ? screen.route.title : qsTr("Thread")
-        onBackRequested: screen.backRequested()
+    ColumnLayout {
+        id: column
 
-        // This thread's alerts on this phone, which the MC holds back while muted.
-        MobileIconButton {
-            objectName: screen.muted ? "unmuteAlerts" : "muteAlerts"
-            visible: screen.notifications?.supported === true && screen.threadKey.length > 0
-            iconName: screen.muted ? "bell-off" : "bell"
-            label: screen.muted ? qsTr("Unmute alerts for this thread") : qsTr("Mute alerts for this thread")
-            onClicked: Shell.dispatch("alerts.setMuted", { key: screen.threadKey, muted: !screen.muted })
-        }
+        anchors.fill: parent
+        spacing: 0
 
-        MobileIconButton {
-            objectName: "openFiles"
-            visible: !screen.filesOpen && screen.threadKey.length > 0
-            iconName: "files"
-            label: qsTr("Files")
-            onClicked: Shell.dispatch("rightPanel.add", { kind: "files" })
-        }
+        MobileBar {
+            Layout.fillWidth: true
+            canGoBack: true
+            title: screen.route !== null && screen.route.title ? screen.route.title : qsTr("Thread")
+            onBackRequested: screen.backRequested()
 
-        MobileIconButton {
-            objectName: "threadMenu"
-            iconName: "ellipsis"
-            label: qsTr("Thread actions")
-            // The menu the desktop's title opens: the thread's, or a draft's.
-            onClicked: {
-                const point = mapToItem(null, width, height);
-                Shell.dispatch("workspace.titleMenu", { x: point.x, y: point.y });
+            // This thread's alerts on this phone, which the MC holds back while muted.
+            MobileIconButton {
+                objectName: screen.muted ? "unmuteAlerts" : "muteAlerts"
+                visible: screen.notifications?.supported === true && screen.threadKey.length > 0
+                iconName: screen.muted ? "bell-off" : "bell"
+                label: screen.muted ? qsTr("Unmute alerts for this thread") : qsTr("Mute alerts for this thread")
+                onClicked: Shell.dispatch("alerts.setMuted", { key: screen.threadKey, muted: !screen.muted })
+            }
+
+            MobileIconButton {
+                objectName: "openFiles"
+                visible: !screen.filesOpen && screen.threadKey.length > 0
+                iconName: "files"
+                label: qsTr("Files")
+                onClicked: Shell.dispatch("rightPanel.add", { kind: "files" })
+            }
+
+            MobileIconButton {
+                objectName: "threadMenu"
+                iconName: "ellipsis"
+                label: qsTr("Thread actions")
+                // The menu the desktop's title opens: the thread's, or a draft's.
+                onClicked: {
+                    const point = mapToItem(null, width, height);
+                    Shell.dispatch("workspace.titleMenu", { x: point.x, y: point.y });
+                }
             }
         }
-    }
 
-    CentreHost {
-        id: centre
+        CentreHost {
+            id: centre
 
-        objectName: "centreHost"
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        visible: !screen.filesOpen
-        kind: screen.route?.kind ?? ""
-    }
+            objectName: "centreHost"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: !screen.filesOpen
+            kind: screen.route?.kind ?? ""
+        }
 
-    Loader {
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        active: screen.filesOpen
-        visible: active
-        sourceComponent: FilesPanel {
-            objectName: "filesPanel"
-            source: Panel.files
+        Loader {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            active: screen.filesOpen
+            visible: active
+            sourceComponent: FilesPanel {
+                objectName: "filesPanel"
+                source: Panel.files
+            }
+        }
+
+        Composer {
+            id: composerView
+
+            objectName: "composer"
+            Layout.fillWidth: true
+            visible: ready && !screen.filesOpen
+            conversationScrolled: centre.conversationScrolled
         }
     }
 
-    Composer {
-        objectName: "composer"
-        Layout.fillWidth: true
-        visible: ready && !screen.filesOpen
-        conversationScrolled: centre.conversationScrolled
+    ConversationDrop {
+        y: centre.y
+        width: column.width
+        height: composerView.y + composerView.height - centre.y
+        visible: composerView.visible
+        composer: composerView
     }
 }
