@@ -23,6 +23,7 @@ import {
   type SpaceImage,
   type SpaceImageProvidersResult,
   type SpacePage,
+  type SpacePageId,
   type SpacePageSchedule,
   type SpaceSite,
   type SpaceSlide,
@@ -96,6 +97,8 @@ export interface TuiSpaceState {
   readonly title: string;
   readonly hint: string;
   readonly status: "loading" | "ready" | "error";
+  /** Who else is on the open page, "" when nobody is. */
+  readonly viewers: string;
   /** The body line when there are no rows (loading, empty, the stream's refusal). */
   readonly message: string;
   /** The rows that fit, windowed around the selection. */
@@ -103,7 +106,10 @@ export interface TuiSpaceState {
 }
 
 export interface SpaceControllerOptions {
-  readonly client: Pick<TuiClient, "mcCall" | "subscribeMcStream" | "uploadToMc">;
+  readonly client: Pick<
+    TuiClient,
+    "mcCall" | "subscribeMcStream" | "subscribeSpacePresence" | "uploadToMc"
+  >;
   readonly height: () => number;
   readonly width: () => number;
   readonly palette?: Palette;
@@ -136,6 +142,8 @@ export interface SpaceController {
   readonly mode: () => "space";
   /** Republish after a resize or a theme change. */
   readonly sync: () => void;
+  /** The connection is down: who is on the page is unknown until the MC's next frame. */
+  readonly connectionLost: () => void;
   readonly commands: () => ReadonlyArray<{ readonly title: string; readonly action: string }>;
   /** Resolves once the RPCs in flight have answered. */
   readonly settled: () => Promise<void>;
@@ -148,6 +156,7 @@ const CLOSED: TuiSpaceState = {
   title: "",
   hint: "",
   status: "loading",
+  viewers: "",
   message: "",
   rows: [],
 };
@@ -271,6 +280,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   let spaceError: string | null = null;
   let unsubscribeSpace: (() => void) | null = null;
   let pageId: string | null = null;
+  let viewersPage: string | null = null;
+  let viewers = "";
+  let unsubscribeViewers: (() => void) | null = null;
   let deckId: string | null = null;
   // The slide on show, by id so a move elsewhere keeps it; its index for when it goes.
   let shownSlideId: string | null = null;
@@ -803,6 +815,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   const publish = () => {
+    followViewers();
     if (!open) {
       options.publish(CLOSED);
       return;
@@ -824,7 +837,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
                 : "An empty page · n adds a block";
     }
     // Window the rows around the selection.
-    const room = Math.max(1, options.height() - SPACE_CHROME_ROWS - (message === "" ? 0 : 1));
+    const room = Math.max(
+      1,
+      options.height() - SPACE_CHROME_ROWS - (message === "" ? 0 : 1) - (viewers === "" ? 0 : 1),
+    );
     const first = rows.findIndex((row) => row.selected);
     const last = rows.findLastIndex((row) => row.selected);
     if (first >= 0 && last - first + 1 > room) {
@@ -840,12 +856,41 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       title: titleText(),
       hint: HINTS[view],
       status,
+      viewers,
       message,
       rows: rows.slice(top, top + room),
     });
   };
 
   // --- streams ---
+
+  // Being subscribed is being on the page, so only while the page shows.
+  const followViewers = () => {
+    const wanted = open && view === "page" && spaceId !== null ? pageId : null;
+    if (wanted === viewersPage) return;
+    unsubscribeViewers?.();
+    unsubscribeViewers = null;
+    viewersPage = wanted;
+    viewers = "";
+    if (wanted === null) return;
+    let live = true;
+    const stop = client.subscribeSpacePresence(
+      spaceId as SpaceId,
+      wanted as SpacePageId,
+      (next) => {
+        if (!live) return;
+        const names = next.flatMap((viewer) =>
+          viewer.type === "user" ? viewer.devices : [`the agent of “${viewer.title}”`],
+        );
+        viewers = names.length === 0 ? "" : `Also here: ${names.join(", ")}`;
+        publish();
+      },
+    );
+    unsubscribeViewers = () => {
+      live = false;
+      stop();
+    };
+  };
 
   const followSpaces = () => {
     if (unsubscribeSpaces) return;
@@ -2116,7 +2161,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   const page = (delta: number) =>
-    move(delta * Math.max(1, options.height() - SPACE_CHROME_ROWS - 1));
+    move(delta * Math.max(1, options.height() - SPACE_CHROME_ROWS - 1 - (viewers === "" ? 0 : 1)));
 
   /** A slide longer than the pane scrolls; `publish` keeps it in range. */
   const scrollSlide = (delta: number) => {
@@ -2215,6 +2260,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     sync: () => {
       if (open) publish();
     },
+    connectionLost: () => {
+      if (viewers === "") return;
+      viewers = "";
+      publish();
+    },
     commands: () => {
       const entries: Array<{ title: string; action: string }> = [
         { title: open ? "Close Spaces" : "Spaces", action: open ? "space.close" : "space.open" },
@@ -2295,6 +2345,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       while (pending.size > 0) await Promise.allSettled(pending);
     },
     dispose: () => {
+      unsubscribeViewers?.();
+      unsubscribeViewers = null;
       unsubscribeSpaces?.();
       unsubscribeSpaces = null;
       stopSpace();

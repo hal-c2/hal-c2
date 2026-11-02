@@ -649,3 +649,39 @@ export class SpaceImageGenerationError extends Schema.TaggedError<SpaceImageGene
     reason: Schema.Literals(["unsupported", "unavailable", "failed"]),
   },
 ) {}
+
+// Presence
+
+/**
+ * Follows who else has a page open (the `spacePresence` shape). Subscribing is what
+ * puts this client on the page; it leaves by unsubscribing or by its connection going.
+ * Nothing about it is stored, and it sends only when the viewers of this page change.
+ */
+export const SpacePresenceSubscribeInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+});
+export type SpacePresenceSubscribeInput = typeof SpacePresenceSubscribeInput.Type;
+
+/**
+ * Someone else on the page. HAL-C2 has no accounts, so every paired device is the one
+ * user: `devices` names the user's other devices on the page, and there is at most one
+ * such viewer. An agent is on the page it last read or wrote while its turn runs.
+ */
+export const SpacePresenceViewer = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("user"),
+    devices: Schema.Array(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("agent"),
+    threadId: ThreadId,
+    title: TrimmedNonEmptyString,
+  }),
+]);
+export type SpacePresenceViewer = typeof SpacePresenceViewer.Type;
+
+export const SpacePresenceStreamEvent = Schema.Struct({
+  viewers: Schema.Array(SpacePresenceViewer),
+});
+export type SpacePresenceStreamEvent = typeof SpacePresenceStreamEvent.Type;

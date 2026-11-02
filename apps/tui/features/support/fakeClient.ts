@@ -173,6 +173,7 @@ const UNRECORDED = new Set([
   "subscribeServerSettings",
   "subscribeAuthAccess",
   "subscribeMcStream",
+  "subscribeSpacePresence",
   "readSettings",
 ]);
 

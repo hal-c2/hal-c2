@@ -65,6 +65,7 @@ defmodule HalC2.Application do
       {Registry, keys: :unique, name: HalC2.Vcs.Registry},
       HalC2.Workspace,
       HalC2.WorktreeSetup,
+      HalC2.Space.Presence,
       HalC2.ScheduledTasks,
       HalC2.ProjectClones,
       HalC2.Preview,

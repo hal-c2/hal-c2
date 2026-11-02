@@ -31,6 +31,8 @@ defmodule HalC2.AuthRevokeProofTest do
     abstracts: %{
       "HalC2.Auth.session_subject/1" =>
         "reads who a session was granted to; takes no part in tickets or revoking",
+      "HalC2.Auth.device_name/1" =>
+        "reads what a session's device is called; takes no part in tickets or revoking",
       "HalC2.Web.Socket handle_info _" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_stream, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_stream, {_, _}, _}" => @socket_traffic,
