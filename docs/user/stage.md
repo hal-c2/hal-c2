@@ -1,9 +1,10 @@
 # Tabs in the centre
 
 On desktop, any right panel tab (Diff, Files, Agents, Terminal, Previews, a
-device, a pull request review) can move into the thread's centre, beside the
-conversation or in place of its timeline. The composer always stays, so you can
-keep talking to the agent while you read a diff or watch a device.
+browser page, a device, a pull request review) can move into the thread's
+centre, beside the conversation or in place of its timeline. The composer
+always stays, so you can keep talking to the agent while you read a diff or
+watch a device.
 
 ## Move a tab to the centre
 
