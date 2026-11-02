@@ -1040,33 +1040,42 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
 
   # --- a held queue takes new messages ------------------------------------------------
 
-  # As `HalC2.Orchestration.Delegation` sends it to an idle parent: queued after the
-  # active turn, of which there is none.
-  step "a delegated task of {string} finishes while no turn is running",
-       %{args: [thread]} = context do
-    message_id = "message:delegate-result:task-one"
+  # Each as its sender queues it after the active turn, of which there is none:
+  # `HalC2.Orchestration.Delegation`, Codex's background wake, and `hal_c2_thread_send`.
+  step ~r/^(?<what>a delegated task result|a background command's end|another agent's message) reaches "(?<thread>[^"]+)" while no turn is running$/,
+       %{args: [what, thread]} = context do
+    message_id = "message:wake-#{System.unique_integer([:positive])}"
+    queued = %{"messageId" => message_id, "dispatchMode" => %{"type" => "queue_after_active"}}
 
-    context =
-      World.dispatch_message(context, thread, "The delegated tasks finished.", %{
-        "messageId" => message_id,
-        "createdBy" => "system",
-        "creationSource" => "server",
-        "dispatchMode" => %{"type" => "queue_after_active"},
-        "notification" => %{"kind" => "delegated_tasks", "summary" => "Tasks finished"},
-        "delegatedCompletion" => %{
-          "parentRunId" => "run-1",
-          "taskIds" => ["task-one"],
-          "acceptedAt" => nil
-        }
-      })
+    fields =
+      case what do
+        "a delegated task result" ->
+          %{
+            "createdBy" => "system",
+            "creationSource" => "server",
+            "notification" => %{"kind" => "delegated_tasks", "summary" => "Tasks finished"},
+            "delegatedCompletion" => %{
+              "parentRunId" => "run-1",
+              "taskIds" => ["task-one"],
+              "acceptedAt" => nil
+            }
+          }
 
+        "a background command's end" ->
+          %{"createdBy" => "agent", "creationSource" => "provider"}
+
+        "another agent's message" ->
+          %{"createdBy" => "agent", "creationSource" => "mcp"}
+      end
+
+    context = World.dispatch_message(context, thread, what, Map.merge(queued, fields))
     assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
     run_id = World.state(context, thread).entities["message"][message_id]["runId"]
-    Map.put(context, :delegated_run, run_id)
+    Map.put(context, :woken_run, run_id)
   end
 
-  step "the turn carrying the task result starts", context do
-    id = context.delegated_run
+  step "a turn for it starts", context do
+    id = context.woken_run
     World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] in @started))
     assert run(context, id)["queueHeld"] != true
     context

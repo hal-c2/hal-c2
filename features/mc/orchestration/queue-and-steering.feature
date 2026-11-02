@@ -353,13 +353,19 @@ Feature: Queueing, steering and restarting
     Then "B" is held behind "A"
     And no run starts until the user resumes the queue
 
-  # Only what the user queues waits on a held queue: the agent's own results still wake it.
+  # Only what the user queues waits on a held queue: what the agent is sent still wakes it.
   @mc
-  Scenario: A delegated task result that arrives while the queue is held still wakes the agent
+  Scenario Outline: What the agent is sent while the queue is held still wakes it
     Given "t1" has a held queued message "A"
-    When a delegated task of "t1" finishes while no turn is running
-    Then the turn carrying the task result starts
+    When <what> reaches "t1" while no turn is running
+    Then a turn for it starts
     And "A" is still queued
+
+    Examples:
+      | what                        |
+      | a delegated task result     |
+      | a background command's end  |
+      | another agent's message     |
 
   @mc
   Scenario: A queued message that could not start says so in the timeline

@@ -3815,13 +3815,14 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # The user queued the message themselves. The agent's delegated result, a reply or
-  # scheduled prompt the MC sends, and a steer that came too late or was refused are
-  # sent as queued too, but are not the user waiting on a held queue.
+  # The user queued the message themselves. What an agent or the MC sends (a delegated
+  # result, a provider's background wake, another agent's send, a reply or scheduled
+  # prompt) and a steer that came too late or was refused are sent as queued too, but
+  # are not the user waiting on a held queue.
   defp queued_by_user?(command) do
     get_in(command, ["dispatchMode", "type"]) == "queue_after_active" and
-      command["creationSource"] != "server" and command["scheduledTaskId"] == nil and
-      command["fromSteer"] != true
+      command["createdBy"] in [nil, "user"] and command["creationSource"] != "server" and
+      command["scheduledTaskId"] == nil and command["fromSteer"] != true
   end
 
   # Why `message` cannot be steered into the active run `run`, or nil: `/compact` and
