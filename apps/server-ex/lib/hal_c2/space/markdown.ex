@@ -127,8 +127,8 @@ defmodule HalC2.Space.Markdown do
 
   @doc """
   Whether a code block's `fence`, `language` and `info` write a line that opens it again:
-  three or more backticks or tildes, a language of no spaces, and the rest of the line,
-  with no backtick after backticks.
+  three or more backticks or tildes, a language of no spaces, and the rest of the line
+  from a space on, with no backtick after backticks.
   """
   def code?(block) do
     fence = block["fence"] || "```"
@@ -136,7 +136,7 @@ defmodule HalC2.Space.Markdown do
 
     Regex.match?(~r/^(`{3,}|~{3,})$/, fence) and
       (is_nil(language) or (is_binary(language) and Regex.match?(~r/^\S+$/u, language))) and
-      (is_nil(info) or (is_binary(info) and not String.contains?(info, ["\n", "\r"]))) and
+      (is_nil(info) or (is_binary(info) and Regex.match?(~r/^([^\S\r\n][^\r\n]*)?$/u, info))) and
       (is_nil(info) or language != nil) and
       fence(fence <> (language || "") <> (info || "")) == fence
   end

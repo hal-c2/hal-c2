@@ -80,6 +80,122 @@ defmodule HalC2.Steps.Space.Markdown do
     context
   end
 
+  step "the user makes {string} a level {int} heading", %{args: [text, level]} = context do
+    payload = %{
+      "spaceId" => context.space,
+      "blockId" => block_id(context, text),
+      "level" => level
+    }
+
+    {reply, context} = World.call(context, "space.block.update", payload)
+    Map.put(context, :reply, reply)
+  end
+
+  step "the table of {string} has the rows:", %{args: [title]} = context do
+    assert table(context, title)["table"]["rows"] == context.datatable.raw
+    context
+  end
+
+  step "the columns of the table of {string} are aligned {string}",
+       %{args: [title, aligns]} = context do
+    assert Enum.join(table(context, title)["table"]["align"], ", ") == aligns
+    context
+  end
+
+  step "the user changes the {string} of {string} in the table of {string} to {string}",
+       %{args: [column, row, title, text]} = context do
+    %{"table" => %{"rows" => [head | _] = rows}} = table(context, title)
+
+    edit_table(context, title, %{
+      "type" => "setCell",
+      "row" => Enum.find_index(rows, &(hd(&1) == row)),
+      "column" => Enum.find_index(head, &(&1 == column)),
+      "text" => text
+    })
+  end
+
+  step "the user adds a row to the end of the table of {string}", %{args: [title]} = context do
+    at = length(table(context, title)["table"]["rows"])
+    edit_table(context, title, %{"type" => "insertRow", "at" => at})
+  end
+
+  step "the user adds a column to the end of the table of {string}",
+       %{args: [title]} = context do
+    at = length(table(context, title)["table"]["align"])
+    edit_table(context, title, %{"type" => "insertColumn", "at" => at})
+  end
+
+  step "the user removes the last row of the table of {string}", %{args: [title]} = context do
+    last = length(table(context, title)["table"]["rows"]) - 1
+    edit_table(context, title, %{"type" => "deleteRow", "row" => last})
+  end
+
+  step "the user removes the last column of the table of {string}",
+       %{args: [title]} = context do
+    last = length(table(context, title)["table"]["align"]) - 1
+    edit_table(context, title, %{"type" => "deleteColumn", "column" => last})
+  end
+
+  step "the user adds a table to {string} of the rows:", %{args: [title]} = context do
+    payload = %{
+      "spaceId" => context.space,
+      "pageId" =>
+        hd(blocks(context, title) ++ [%{"pageId" => page_id(context, title)}])["pageId"],
+      "kind" => "table",
+      "table" => %{"rows" => context.datatable.raw}
+    }
+
+    {_, context} = World.call!(context, "space.block.insert", payload)
+    context
+  end
+
+  step "{string} has a code block in {string} holding:",
+       %{args: [title, language]} = context do
+    code = Enum.find(blocks(context, title), &(&1["kind"] == "code")) || flunk("no code block")
+    assert {code["language"], code["text"]} == {language, context.docstring}
+    context
+  end
+
+  step "the user makes the code block of {string} {string} code holding:",
+       %{args: [title, language]} = context do
+    code = Enum.find(blocks(context, title), &(&1["kind"] == "code")) || flunk("no code block")
+
+    payload = %{
+      "spaceId" => context.space,
+      "blockId" => code["id"],
+      "text" => context.docstring,
+      "language" => language
+    }
+
+    {_, context} = World.call!(context, "space.block.update", payload)
+    context
+  end
+
+  defp edit_table(context, title, edit) do
+    payload = %{
+      "spaceId" => context.space,
+      "blockId" => table(context, title)["id"],
+      "edit" => edit
+    }
+
+    {_, context} = World.call!(context, "space.block.editTable", payload)
+    context
+  end
+
+  defp table(context, title),
+    do: Enum.find(blocks(context, title), &(&1["kind"] == "table")) || flunk("no table")
+
+  defp block_id(context, text) do
+    state = Streams.state(Space.stream_id(context.space))
+    block = Enum.find(StreamState.list(state, "block"), &(&1["text"] == text))
+    (block || flunk("no block #{inspect(text)}"))["id"]
+  end
+
+  defp page_id(context, title) do
+    state = Streams.state(Space.stream_id(context.space))
+    Enum.find(Map.values(StreamState.get(state, "page")), &(&1["title"] == title))["id"]
+  end
+
   defp import_markdown(context, name, markdown, title \\ nil) do
     space = if name, do: context.spaces[name], else: context.space
 
