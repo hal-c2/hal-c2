@@ -1014,6 +1014,8 @@ Rectangle {
                         ToolTip.text: path
                         onPressed: held = false
                         onCanceled: held = false
+                        // A finger lifted off the row neither clicks nor cancels.
+                        ListView.onPooled: held = false
                         onClicked: {
                             // One click only: a lift the menu took may never click.
                             if (held) {
