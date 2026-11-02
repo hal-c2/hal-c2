@@ -8,6 +8,16 @@ defmodule HalC2.SpaceTest do
   alias HalC2.{Space, Streams}
   alias HalC2.Space.{Blocks, Decks, ImageFile, Images, Markdown, Order}
 
+  # A one-pixel PNG, as a client sends an image inline.
+  @image %{
+    "type" => "image",
+    "name" => "sketch.png",
+    "mimeType" => "image/png",
+    "sizeBytes" => 68,
+    "dataUrl" =>
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII="
+  }
+
   @moduletag :tmp_dir
   setup %{tmp_dir: dir} do
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
@@ -46,6 +56,23 @@ defmodule HalC2.SpaceTest do
     Enum.map(blocks, & &1["text"])
   end
 
+  defp page_agent(space, page),
+    do: HalC2.StreamState.get(Streams.state(Space.stream_id(space)), "pageAgent")[page]
+
+  defp await_page_agent(stream, page, status) do
+    case HalC2.StreamState.get(Streams.state(stream), "pageAgent")[page] do
+      %{"status" => ^status} ->
+        :ok
+
+      _ ->
+        receive do
+          {:hal_c2_stream, ^stream, _} -> await_page_agent(stream, page, status)
+        after
+          5_000 -> flunk("the page's agent never said #{status}")
+        end
+    end
+  end
+
   describe "the agent asked on a page" do
     # A second stop found the first still waiting for the run, and wrote an empty patch
     # that took the Space's stream down.
@@ -69,13 +96,155 @@ defmodule HalC2.SpaceTest do
 
       Application.put_env(:hal_c2, :page_agent_launch, launch)
       on_exit(fn -> Application.delete_env(:hal_c2, :page_agent_launch) end)
-      target = fn -> {:ok, %{project_id: nil, model: nil, runtime_mode: nil}} end
 
-      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", target)
+      target = fn _ ->
+        {:ok, %{project_id: nil, model: nil, runtime_mode: nil, interaction_mode: nil}}
+      end
+
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", %{}, target)
       assert_receive :launched
 
       assert {:ok, %{"status" => "stopping"}} = Space.stop_page_agent(space, page)
       assert {:ok, %{"status" => "stopping"}} = Space.stop_page_agent(space, page)
+    end
+
+    test "what the page's prompt chose reaches the thread, and a refused ask keeps no image",
+         %{space: space, tmp_dir: dir} do
+      page = page!(space, "Roadmap")
+      test = self()
+      home = Application.get_env(:hal_c2, :home)
+      Application.put_env(:hal_c2, :home, dir)
+      # The launch waits, so the page's agent is still at work for the second ask.
+      Application.put_env(:hal_c2, :page_agent_launch, fn input ->
+        send(test, {:launched, input})
+        receive do: (:never -> {:ok, nil})
+      end)
+
+      on_exit(fn ->
+        Application.put_env(:hal_c2, :home, home)
+        Application.delete_env(:hal_c2, :page_agent_launch)
+      end)
+
+      target = fn choices ->
+        {:ok,
+         %{
+           project_id: "shop",
+           model: choices["modelSelection"],
+           runtime_mode: choices["runtimeMode"],
+           interaction_mode: choices["interactionMode"]
+         }}
+      end
+
+      file = %{"type" => "file", "id" => "pending-x", "name" => "notes.pdf", "sizeBytes" => 3}
+      context = %{"version" => 1, "records" => [%{"kind" => "skill", "contextId" => "c1"}]}
+
+      choices = %{
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "approval-required",
+        "interactionMode" => "plan",
+        "attachments" => [@image, file],
+        "context" => context
+      }
+
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", choices, target)
+      assert_receive {:launched, input}
+
+      assert %{
+               "modelSelection" => %{"model" => "gpt-5.4"},
+               "runtimeMode" => "approval-required",
+               "interactionMode" => "plan",
+               "initialMessage" => %{
+                 "attachments" => [saved, ^file],
+                 "context" => ^context
+               }
+             } = input
+
+      assert %{"name" => "sketch.png", "sizeBytes" => 68} = saved
+      assert HalC2.Attachments.path(saved)
+      kept = Path.wildcard(Path.join(HalC2.Attachments.dir(), "*"))
+
+      # The page's agent is at work, so a second ask is refused, and its image with it.
+      assert {:error, :invalid, _} =
+               Space.PageAgent.ask(space, page, "again", %{"attachments" => [@image]}, target)
+
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == kept
+    end
+
+    test "an ask whose thread cannot start keeps no image", %{space: space, tmp_dir: dir} do
+      page = page!(space, "Roadmap")
+      home = Application.get_env(:hal_c2, :home)
+      Application.put_env(:hal_c2, :home, dir)
+      Application.put_env(:hal_c2, :page_agent_launch, fn _ -> {:error, "No provider."} end)
+
+      on_exit(fn ->
+        Application.put_env(:hal_c2, :home, home)
+        Application.delete_env(:hal_c2, :page_agent_launch)
+      end)
+
+      target = fn _ ->
+        {:ok, %{project_id: nil, model: nil, runtime_mode: nil, interaction_mode: nil}}
+      end
+
+      stream = Space.stream_id(space)
+      :ok = Streams.subscribe(stream, self(), nil)
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", %{"attachments" => [@image]}, target)
+      await_page_agent(stream, page, "failed")
+
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == []
+    end
+
+    # The MC listens before its reconciliation runs, so an ask can come in between, with
+    # its launch still writing the thread: the reconciliation took it for one a crash lost,
+    # said the agent failed and deleted its image. Going by the clock instead left an ask
+    # lost after the clock was pulled back working for good, and its page with it.
+    test "the reconciliation settles the asks of earlier starts, whatever the clock says",
+         %{space: space, tmp_dir: dir} do
+      page = page!(space, "Roadmap")
+      test = self()
+      home = Application.get_env(:hal_c2, :home)
+      Application.put_env(:hal_c2, :home, dir)
+
+      Application.put_env(:hal_c2, :page_agent_launch, fn _ ->
+        send(test, :launching)
+        receive do: (:never -> {:ok, nil})
+      end)
+
+      on_exit(fn ->
+        Application.put_env(:hal_c2, :home, home)
+        Application.delete_env(:hal_c2, :page_agent_launch)
+        :persistent_term.erase({Space.PageAgent, :boot})
+      end)
+
+      target = fn _ ->
+        {:ok, %{project_id: nil, model: nil, runtime_mode: nil, interaction_mode: nil}}
+      end
+
+      Space.PageAgent.boot()
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", %{"attachments" => [@image]}, target)
+      assert_receive :launching
+      saved = Path.wildcard(Path.join(HalC2.Attachments.dir(), "*"))
+
+      :ok = Space.PageAgent.reconcile()
+
+      assert %{"status" => "running"} = page_agent(space, page)
+      assert saved != []
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == saved
+
+      # The MC goes down with the launch, and comes back with its clock a day behind.
+      {:ok, _} =
+        Space.transact(space, fn state ->
+          agent = HalC2.StreamState.get(state, "pageAgent")[page]
+          later = DateTime.utc_now() |> DateTime.add(1, :day) |> DateTime.to_iso8601()
+
+          {[{"pageAgent", page, HalC2.Patch.diff(agent, %{agent | "startedAt" => later})}],
+           {:ok, nil}}
+        end)
+
+      Space.PageAgent.boot()
+      :ok = Space.PageAgent.reconcile()
+
+      assert %{"status" => "failed"} = page_agent(space, page)
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == []
     end
   end
 

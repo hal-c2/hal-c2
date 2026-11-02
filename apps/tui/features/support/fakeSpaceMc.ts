@@ -105,6 +105,8 @@ export interface FakeSpaceMc {
   readonly agentThreadGone: (pageId: string) => void;
   /** The next ask is refused, as when another client asked first. */
   readonly refuseNextAsk: () => void;
+  /** What each ask the MC took was sent with, oldest first. */
+  readonly asks: Entity[];
   /** Stops from now on leave an agent stopping, as a provider that ignores them does. */
   readonly ignoreStops: () => void;
   /** How many stops the MC was asked for. */
@@ -288,6 +290,8 @@ export function fakeSpaceMc(options: {
   readonly titleOf: (threadId: string) => string | null;
   /** The thread an ask on a page runs in; the real MC starts a new one. */
   readonly agentThreadId: () => string;
+  /** Where an ask naming no project runs (`space.page.agentTarget`). */
+  readonly agentProjectId?: () => string | null;
 }) {
   const spaces = new Map<string, Entity>();
   // Per Space: its pages, blocks and comments, each in creation order.
@@ -830,6 +834,7 @@ export function fakeSpaceMc(options: {
   };
 
   let refusingAsk = false;
+  const asks: Entity[] = [];
   let ignoringStops = false;
   let stops = 0;
   const isRunning = (agent: Entity | undefined) => agent !== undefined && agent.endedAt === null;
@@ -867,8 +872,10 @@ export function fakeSpaceMc(options: {
           },
         ],
       ]);
+      asks.push(structuredClone(input));
       return { agent: table(input.spaceId, "pageAgent").get(found.id) };
     },
+    "space.page.agentTarget": () => ({ projectId: options.agentProjectId?.() ?? null }),
     "space.page.stopAgent": (input) => {
       if (!isRunning(table(input.spaceId, "pageAgent").get(input.pageId))) {
         refuse("invalid", "No agent is working on this page.");
@@ -1667,6 +1674,7 @@ export function fakeSpaceMc(options: {
     refuseNextAsk: () => {
       refusingAsk = true;
     },
+    asks,
     ignoreStops: () => {
       ignoringStops = true;
     },

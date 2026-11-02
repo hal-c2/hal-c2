@@ -49,6 +49,13 @@ add_executable(tst_PullRequestReference tst_PullRequestReference.cpp ../../src/n
 target_include_directories(tst_PullRequestReference PRIVATE ../../src/native)
 target_link_libraries(tst_PullRequestReference PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME PullRequestReference COMMAND tst_PullRequestReference)
+# The fake MC's code fences against what the MC itself reads and writes.
+add_executable(tst_CodeFence tst_CodeFence.cpp features/CodeFence.h)
+target_include_directories(tst_CodeFence PRIVATE features)
+target_compile_definitions(tst_CodeFence PRIVATE
+  HAL_C2_CODE_FENCES="${CMAKE_CURRENT_SOURCE_DIR}/../../../server-ex/test/fixtures/space/code-fences.json")
+target_link_libraries(tst_CodeFence PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME CodeFence COMMAND tst_CodeFence)
 add_executable(tst_BackendProcess tst_BackendProcess.cpp ../../src/BackendProcess.cpp)
 target_include_directories(tst_BackendProcess PRIVATE ../../src)
 target_link_libraries(tst_BackendProcess PRIVATE Qt6::Core Qt6::Test)

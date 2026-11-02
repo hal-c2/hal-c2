@@ -242,6 +242,7 @@ QList<QVariantMap> blocksOf(const Model& model) {
                  {QStringLiteral("kind"), str(block, "kind")},
                  {QStringLiteral("text"), shown(QStringLiteral("text"), str(block, "text"))},
                  {QStringLiteral("level"), block.value(QLatin1String("level")).toInt(2)},
+                 {QStringLiteral("language"), str(block, "language")},
                  {QStringLiteral("checked"), shown(QStringLiteral("checked"), block.value(QLatin1String("checked")).toBool()).toBool()},
                  {QStringLiteral("linkedPageId"), linked},
                  {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : titleOf(model.held, linked)},
@@ -330,7 +331,9 @@ QVariantMap pageOf(const Model& model) {
           {QStringLiteral("sourceThreadTitle"), thread.isEmpty() ? QString() : QStringLiteral("a thread")},
           {QStringLiteral("schedule"), updateOf(page)},
           {QStringLiteral("writtenAt"), str(page, "writtenAt")},
-          {QStringLiteral("site"), siteShownOf(model)}};
+          {QStringLiteral("site"), siteShownOf(model)},
+          // No page here follows a project file (tst_SpaceFilesProp's do).
+          {QStringLiteral("file"), QVariantMap()}};
 }
 
 QVariantMap agentOf(const Model& model) {
