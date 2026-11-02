@@ -464,12 +464,15 @@ defmodule HalC2.PlannerPropTest do
   # `owner`: a login, `@stored_owner`, or nil. `assignees`: issue of `@repository` → the
   # logins GitHub lists, in its order, stamped as changed like any other change to it.
   # `refusing`: which of `:add` and `:remove` GitHub refuses of any issue's assignees now,
-  # and `:drop`, of its relations, which refuses a push past the assignees.
+  # and `:drop`, of its relations, which refuses a push past the assignees. `asks`: issue →
+  # the assignee changes pushes asked of it, `{:add | :remove, login}` in order, refused or
+  # not, so a push after a refusal is seen to ask only what it left.
   # `focus`: the commands a focused case keeps, or nil for all of them.
   def initial_state,
     do: %{
       focus: nil,
       assignees: %{},
+      asks: %{},
       refusing: MapSet.new(),
       age: nil,
       had: MapSet.new(),
@@ -1095,6 +1098,7 @@ defmodule HalC2.PlannerPropTest do
       github: m.github,
       rel: m.rel,
       assignees: m.assignees,
+      asks: m.asks,
       age: m.age,
       problems: []
     }
@@ -1944,6 +1948,8 @@ defmodule HalC2.PlannerPropTest do
   defp same_login?(a, b),
     do: is_binary(a) and is_binary(b) and String.downcase(a) == String.downcase(b)
 
+  defp asked(m, n, ask), do: %{m | asks: Map.update(m.asks, n, [ask], &(&1 ++ [ask]))}
+
   # GitHub adds a login after the others unless it lists them already, whatever the case,
   # and takes one off whatever the case, listed or not.
   defp assigned(assignees, number, login) do
@@ -1981,6 +1987,8 @@ defmodule HalC2.PlannerPropTest do
           end
 
         {:unassign, n, login} ->
+          m = asked(m, n, {:remove, login})
+
           if MapSet.member?(m.refusing, :remove) do
             {:halt, {m, %{took | error: {:refused_owner, :remove}}}}
           else
@@ -1989,6 +1997,8 @@ defmodule HalC2.PlannerPropTest do
           end
 
         {:assign, n, login} ->
+          m = asked(m, n, {:add, login})
+
           if MapSet.member?(m.refusing, :add) do
             {:halt, {m, %{took | error: {:refused_owner, :add}}}}
           else
@@ -3526,6 +3536,7 @@ defmodule HalC2.PlannerPropTest do
       github: named(),
       rel: related(),
       assignees: Process.get(:pl_assignees),
+      asks: assignee_asks(),
       age: full_age(),
       problems: Process.put(:pl_problems, []) |> Enum.reverse(),
       alone: alone
@@ -3598,6 +3609,20 @@ defmodule HalC2.PlannerPropTest do
   end
 
   # The gh calls so far, one JSON line each.
+  # The assignee changes the pushes asked of each issue, in order, as `asks` in the model.
+  defp assignee_asks do
+    Enum.reduce(gh_calls(), %{}, fn line, asks ->
+      with %{"args" => args, "stdin" => stdin} <- JSON.decode!(line),
+           [_, number] <- Regex.run(~r{issues/(\d+)/assignees}, Enum.join(args, " ")),
+           %{"assignees" => [login]} <- JSON.decode!(stdin) do
+        ask = {if("POST" in args, do: :add, else: :remove), login}
+        Map.update(asks, String.to_integer(number), [ask], &(&1 ++ [ask]))
+      else
+        _ -> asks
+      end
+    end)
+  end
+
   defp gh_calls do
     case File.read(System.get_env("FAKE_GH_LOG")) do
       {:ok, text} -> String.split(text, "\n", trim: true)
