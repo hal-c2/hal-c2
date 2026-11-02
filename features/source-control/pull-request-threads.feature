@@ -74,7 +74,7 @@ Feature: Threads that work on or link pull requests
     Then the worktree is on the branch "hal-c2/pr-42/tax" with no upstream
 
   # Legacy: apps/server/src/sourceControl/gitHubPullRequests.ts, gitLabMergeRequests.ts, bitbucketPullRequests.ts, forgejoPullRequests.ts (isCrossRepository)
-  @backlog @mc
+  @mc
   Scenario Outline: Each host tells a pull request from another repository in its own way
     Given a pull request on <host> where <given>
     When the user starts a thread on it
@@ -92,7 +92,7 @@ Feature: Threads that work on or link pull requests
       | Bitbucket | the source repository was deleted                                           | from the same repository     |
 
   # Legacy: apps/server/src/sourceControl/GitHubCli.ts (older gh without headRepositoryOwner)
-  @backlog @mc
+  @mc
   Scenario: An older GitHub CLI that names only the source repository's owner and name still gives its full name
     Given the GitHub CLI answers with the source repository's name and its owner's login but no full name
     When the user starts a thread on a pull request from that repository
@@ -221,7 +221,7 @@ Feature: Threads that work on or link pull requests
     And the thread is prepared without an upstream
 
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (checkoutChangeRequest, fj)
-  @mc @backlog
+  @mc
   Scenario Outline: A Forgejo pull request is checked out from the server's own pull request ref
     Given the Forgejo CLI is signed in and the checkout's remote is reached over <protocol>
     And <branch state>
@@ -236,7 +236,7 @@ Feature: Threads that work on or link pull requests
       | HTTPS    | the checkout has a "pulls/42"     | the existing branch "pulls/42"                 |
 
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (checkoutChangeRequest, force: reset --keep)
-  @mc @backlog
+  @mc
   Scenario: A forced Forgejo checkout brings the branch to the pull request's head and keeps uncommitted files
     Given the checkout has a branch "pulls/42" behind pull request 42's head and an uncommitted file
     When the user starts a thread on Forgejo pull request 42 in the local checkout forcing the update
@@ -244,13 +244,13 @@ Feature: Threads that work on or link pull requests
     And the uncommitted file is still there
 
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (getPull: number from a reference)
-  @mc @backlog
+  @mc
   Scenario: A Forgejo reference with no pull request number is refused
     When the user starts a thread on the Forgejo reference "acme/shop"
     Then the user is told to specify a pull request number or Forgejo pull request URL
 
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (listChangeRequests)
-  @mc @backlog
+  @mc
   Scenario: Forgejo pull requests of a branch are read newest first until enough are found
     Given the branch "feature/tax" has pull requests on Forgejo among 120 others
     When the MC lists the pull requests of "feature/tax" asking for none in particular
@@ -259,7 +259,7 @@ Feature: Threads that work on or link pull requests
     And reading stops when a page comes back empty
 
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (listChangeRequests: state merged asks closed)
-  @mc @backlog
+  @mc
   Scenario Outline: Forgejo has no merged list so merged pull requests are picked out of the closed ones
     Given the branch "feature/tax" has one merged and one closed pull request on Forgejo
     When the MC lists the <state> pull requests of "feature/tax"
@@ -271,7 +271,7 @@ Feature: Threads that work on or link pull requests
       | closed | the closed pull request   |
 
   # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (createChangeRequest)
-  @mc @backlog
+  @mc
   Scenario: A Forgejo pull request from a fork is opened against the repository it targets
     Given the branch "tax" lives in the fork "sam/shop" of "acme/shop"
     When the user opens a pull request from it on Forgejo

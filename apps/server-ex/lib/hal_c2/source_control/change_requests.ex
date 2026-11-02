@@ -59,6 +59,38 @@ defmodule HalC2.SourceControl.ChangeRequests do
   def for_branch(cwd, %{kind: "forgejo"} = remote, branch),
     do: cwd |> forgejo_list(remote, branch, limit: 1, pages: 1) |> List.first()
 
+  def for_branch(_cwd, %{kind: "bitbucket", repository: repository}, branch) do
+    states = Enum.map_join(@bitbucket_states, " OR ", &~s(state = "#{&1}"))
+    source = ~s(source.branch.name = "#{String.replace(branch, "\"", "\\\"")}")
+
+    query =
+      URI.encode_query(
+        [{"q", "#{source} AND (#{states})"}, {"sort", "-updated_on"}, {"pagelen", "1"}] ++
+          Enum.map(@bitbucket_states, &{"state", &1})
+      )
+
+    with [workspace, slug] <- repository |> String.split("/") |> Enum.take(-2),
+         %{"values" => [%{"id" => number} = pr | _]} <-
+           SourceControl.bitbucket_get(
+             "/repositories/#{URI.encode(workspace)}/#{URI.encode(slug)}/pullrequests?#{query}"
+           ) do
+      change_request(
+        number,
+        pr["title"],
+        get_in(pr, ["links", "html", "href"]),
+        get_in(pr, ["destination", "branch", "name"]),
+        get_in(pr, ["source", "branch", "name"]),
+        state: bitbucket_state(pr["state"]),
+        draft: pr["draft"] == true,
+        updated_at: pr["updated_on"]
+      )
+    else
+      _ -> nil
+    end
+  end
+
+  def for_branch(_cwd, _remote, _branch), do: nil
+
   @doc """
   A branch's Forgejo pull requests, the most recently updated first, as
   `VcsStatusChangeRequest`s: read 50 at a time until `:limit` (default 20) are found
@@ -119,38 +151,6 @@ defmodule HalC2.SourceControl.ChangeRequests do
       updated_at: pr["updated_at"]
     )
   end
-
-  def for_branch(_cwd, %{kind: "bitbucket", repository: repository}, branch) do
-    states = Enum.map_join(@bitbucket_states, " OR ", &~s(state = "#{&1}"))
-    source = ~s(source.branch.name = "#{String.replace(branch, "\"", "\\\"")}")
-
-    query =
-      URI.encode_query(
-        [{"q", "#{source} AND (#{states})"}, {"sort", "-updated_on"}, {"pagelen", "1"}] ++
-          Enum.map(@bitbucket_states, &{"state", &1})
-      )
-
-    with [workspace, slug] <- repository |> String.split("/") |> Enum.take(-2),
-         %{"values" => [%{"id" => number} = pr | _]} <-
-           SourceControl.bitbucket_get(
-             "/repositories/#{URI.encode(workspace)}/#{URI.encode(slug)}/pullrequests?#{query}"
-           ) do
-      change_request(
-        number,
-        pr["title"],
-        get_in(pr, ["links", "html", "href"]),
-        get_in(pr, ["destination", "branch", "name"]),
-        get_in(pr, ["source", "branch", "name"]),
-        state: bitbucket_state(pr["state"]),
-        draft: pr["draft"] == true,
-        updated_at: pr["updated_on"]
-      )
-    else
-      _ -> nil
-    end
-  end
-
-  def for_branch(_cwd, _remote, _branch), do: nil
 
   # A host's answer missing what a status has to name is no change request.
   defp change_request(number, title, url, base, head, opts)

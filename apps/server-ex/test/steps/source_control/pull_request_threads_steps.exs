@@ -12,8 +12,10 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.PullRequests
+  alias HalC2.SourceControl.ChangeRequests
   alias HalC2.Steps.SourceControl.Shared
-  alias HalC2.Test.Mc
+  alias HalC2.Test.{FakeHttp, Mc}
   alias HalC2.Test.Mc.World
 
   @repository "acme/shop"
@@ -426,6 +428,266 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     context
   end
 
+  # --- other hosts ---------------------------------------------------------------------
+
+  step ~r/^a pull request on (?<host>GitHub|GitLab|Bitbucket|Forgejo) where (?<given>.+)$/,
+       %{args: [host, given]} = context do
+    {cross?, answer} = detection(host, given)
+    context = push_head(context, %{"isCrossRepository" => cross?, "headRefName" => "feature/tax"})
+
+    if cross? do
+      World.git!(context.cwd, ["init", "-q", "--bare", bare("sam/shop")])
+
+      World.git!(context.cwd, [
+        "push",
+        "-q",
+        bare("sam/shop"),
+        "#{context.pr_head}:refs/heads/feature/tax"
+      ])
+    end
+
+    answer_host(context, host, answer)
+  end
+
+  step "the user starts a thread on it", context do
+    start(context, "worktree")
+  end
+
+  step ~r/^it is treated as from (?<repository>another|the same) repository$/,
+       %{args: [repository]} = context do
+    branch = if repository == "another", do: "hal-c2/pr-42/feature/tax", else: "feature/tax"
+    assert %{"branch" => ^branch, "worktreePath" => path} = context.prepared
+    assert World.git!(path, ~w(rev-parse HEAD)) == context.pr_head
+    context
+  end
+
+  step "the GitHub CLI answers with the source repository's name and its owner's login but no full name",
+       context do
+    context =
+      answer_view(context, %{
+        "headRefName" => "tax",
+        "isCrossRepository" => true,
+        "headRepository" => %{"name" => "name"},
+        "headRepositoryOwner" => %{"login" => "owner"}
+      })
+
+    World.git!(context.cwd, ["init", "-q", "--bare", bare("owner/name")])
+
+    World.git!(context.cwd, [
+      "push",
+      "-q",
+      bare("owner/name"),
+      "#{context.pr_head}:refs/heads/tax"
+    ])
+
+    Shared.answer_lookup(context, "github", "owner/name")
+  end
+
+  step "the user starts a thread on a pull request from that repository", context do
+    start(context, "worktree")
+  end
+
+  step "the source repository is taken as {string}", %{args: [repository]} = context do
+    assert World.cli_calls(context, "repo view #{repository}") != []
+
+    assert World.git!(context.cwd, ~w(config remote.owner.url)) ==
+             "git@github.com:#{repository}.git"
+
+    assert_follows(context, "owner/tax")
+  end
+
+  # --- Forgejo -------------------------------------------------------------------------
+
+  step ~r/^the Forgejo CLI is signed in and the checkout's remote is reached over (?<protocol>HTTPS|SSH)$/,
+       %{args: [protocol]} = context do
+    forgejo_checkout(context, protocol)
+  end
+
+  step ~r/^the checkout has no "pulls\/42"$/, context do
+    context
+  end
+
+  step ~r/^the checkout has a "pulls\/42"$/, context do
+    World.git!(context.cwd, ~w(branch pulls/42 main))
+    context
+  end
+
+  step ~r/^the user starts a thread on Forgejo pull request 42 in the local checkout(?: forcing the update)?$/,
+       context do
+    start(context, "local")
+  end
+
+  # Only that address holds the pull request ref (`forgejo_checkout/2`).
+  step ~r/^pull request 42's head is fetched from the repository's (?<protocol>HTTPS|SSH) address$/,
+       context do
+    assert World.git!(context.cwd, ~w(rev-parse pulls/42)) == context.pr_head
+    context
+  end
+
+  step ~r/^the checkout is on (?<which>a new|the existing) branch "pulls\/42"(?: at the fetched head)?$/,
+       %{args: [which]} = context do
+    assert %{"branch" => "pulls/42", "worktreePath" => nil} = context.prepared
+    assert World.git!(context.cwd, ~w(branch --show-current)) == "pulls/42"
+    assert World.git!(context.cwd, ~w(rev-parse HEAD)) == context.pr_head
+    # The reflog's first entry says where the branch was made from.
+    created =
+      World.git!(context.cwd, ~w(reflog show --format=%gs pulls/42))
+      |> String.split("\n")
+      |> List.last()
+
+    if which == "a new",
+      do: assert(created =~ "FETCH_HEAD"),
+      else: refute(created =~ "FETCH_HEAD")
+
+    context
+  end
+
+  step ~r/^the checkout has a branch "pulls\/42" behind pull request 42's head and an uncommitted file$/,
+       context do
+    context = forgejo_checkout(context, "SSH")
+    World.git!(context.cwd, ~w(branch pulls/42 main))
+    File.write!(Path.join(context.cwd, "notes.txt"), "draft\n")
+    context
+  end
+
+  step "the branch is at pull request 42's head", context do
+    assert World.git!(context.cwd, ~w(rev-parse pulls/42)) == context.pr_head
+    context
+  end
+
+  step "the uncommitted file is still there", context do
+    assert File.read!(Path.join(context.cwd, "notes.txt")) == "draft\n"
+    context
+  end
+
+  step "the user starts a thread on the Forgejo reference {string}",
+       %{args: [reference]} = context do
+    context |> forgejo_checkout("SSH") |> prepare("local", reference)
+  end
+
+  step "the user is told to specify a pull request number or Forgejo pull request URL", context do
+    assert World.failure(context) =~ "Specify a pull request number or Forgejo pull request URL."
+    context
+  end
+
+  step "the branch {string} has pull requests on Forgejo among 120 others",
+       %{args: ["feature/tax"]} = context do
+    # Five of the branch's, spread over the first three pages of 50.
+    pulls =
+      for n <- 1..125 do
+        head = if rem(n, 25) == 3, do: "feature/tax", else: "other-#{n}"
+        forgejo_pull(n, head, "open")
+      end
+
+    forgejo_listing(context, fn _state -> pulls end)
+  end
+
+  step "the branch {string} has one merged and one closed pull request on Forgejo",
+       %{args: ["feature/tax"]} = context do
+    closed = [
+      forgejo_pull(7, "feature/tax", "closed", true),
+      forgejo_pull(8, "other", "closed"),
+      forgejo_pull(9, "feature/tax", "closed")
+    ]
+
+    forgejo_listing(context, fn
+      "closed" -> closed
+      _ -> []
+    end)
+  end
+
+  step ~r/^the MC lists the (?:(?<state>merged|closed) )?pull requests of "(?<branch>[^"]+)"(?: asking for none in particular)?$/,
+       %{args: args} = context do
+    {state, branch} =
+      case args do
+        [branch] -> {nil, branch}
+        ["", branch] -> {nil, branch}
+        [state, branch] -> {state, branch}
+      end
+
+    remote = PullRequests.parse_remote("git@codeberg.org:acme/shop.git")
+    opts = if state, do: [state: state], else: []
+    listed = ChangeRequests.forgejo_list(context.cwd, remote, branch, opts)
+    Map.put(context, :listed, listed)
+  end
+
+  step "pull requests are read 50 at a time, the most recently updated first", context do
+    for request <- forgejo_listings(context) do
+      assert request["query"] =~ "state=all&sort=recentupdate&limit=50&page="
+    end
+
+    context
+  end
+
+  step "only those whose head is {string} are kept, up to 20", %{args: [branch]} = context do
+    assert Enum.map(context.listed, & &1["number"]) == [3, 28, 53, 78, 103]
+    assert Enum.all?(context.listed, &(&1["headRef"] == branch))
+    context
+  end
+
+  step "reading stops when a page comes back empty", context do
+    pages = for r <- forgejo_listings(context), do: URI.decode_query(r["query"])["page"]
+    assert pages == ~w(1 2 3 4)
+    context
+  end
+
+  step ~r/^only the (?<state>merged|closed) pull request is returned$/,
+       %{args: [state]} = context do
+    number = if state == "merged", do: 7, else: 9
+    assert [%{"number" => ^number, "state" => ^state}] = context.listed
+    assert Enum.all?(forgejo_listings(context), &(&1["query"] =~ "state=closed&"))
+    context
+  end
+
+  step ~r/^the branch "(?<branch>[^"]+)" lives in the fork "(?<fork>[^"]+)" of "acme\/shop"$/,
+       %{args: [branch, fork]} = context do
+    [owner, _] = String.split(fork, "/")
+    root = context.cwd
+    World.git!(root, ~w(remote set-url origin git@codeberg.org:acme/shop.git))
+    World.git!(root, ["init", "-q", "--bare", bare(fork)])
+    World.git!(root, ["remote", "add", owner, "git@codeberg.org:#{fork}.git"])
+    World.git!(root, ["checkout", "-q", "-b", branch])
+    World.commit!(root, %{"tax.txt" => "10%\n"}, "Charge tax")
+    World.git!(root, ["push", "-q", "-u", owner, branch])
+
+    created = %{
+      "number" => 43,
+      "html_url" => "https://codeberg.org/acme/shop/pulls/43",
+      "title" => "Charge tax"
+    }
+
+    context
+    |> Shared.answering_writer()
+    |> forgejo_api(%{
+      "/api/v1/repos/acme/shop/pulls" => fn
+        %{method: "POST"} -> {201, created}
+        _ -> {200, []}
+      end
+    })
+    |> World.create_thread("Tax work", @repository, %{"branch" => branch})
+  end
+
+  step "the user opens a pull request from it on Forgejo", context do
+    id = World.thread_id(context, "Tax work")
+    {events, context} = World.git_action(context, context.cwd, "create_pr", %{"threadId" => id})
+    last = List.last(events)
+    assert last["kind"] == "action_finished", "the action failed: #{inspect(last)}"
+    assert %{"status" => "created", "number" => 43} = last["result"]["pr"]
+    context
+  end
+
+  step ~r/^the pull request is created in "(?<repository>[^"]+)" with the head "(?<head>[^"]+)"$/,
+       %{args: [repository, head]} = context do
+    path = "/api/v1/repos/#{repository}/pulls"
+
+    assert [request] =
+             for(r <- FakeHttp.requests(context.forgejo), r["method"] == "POST", do: r)
+
+    assert request["path"] == path
+    assert %{"head" => ^head, "base" => "main"} = JSON.decode!(request["body"])
+    context
+  end
+
   # --- linking -------------------------------------------------------------------------
 
   step "the thread {string} has no linked pull request", %{args: [title]} = context do
@@ -775,7 +1037,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   # made on the branch and worktree it was prepared in.
   defp start(context, mode) do
     context =
-      if mode == "local" and context.pr_view["headRefName"] == "feature/tax",
+      if mode == "local" and context[:pr_view]["headRefName"] == "feature/tax",
         do: context |> discovery() |> branch_answer("feature/tax", 42, "OPEN"),
         else: context
 
@@ -848,6 +1110,254 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
 
     Shared.answer_lookup(context, "github", repository)
   end
+
+  # Whether a row of the detection outline is from another repository, and what its
+  # host says about the source and target repositories.
+  defp detection("GitHub", "the host says it comes from another repository"), do: {true, %{}}
+
+  defp detection("GitLab", "the source and target projects have different ids"),
+    do:
+      {true,
+       gitlab_projects("sam/shop", "acme/shop", %{
+         "source_project_id" => 2,
+         "target_project_id" => 1
+       })}
+
+  defp detection(
+         "GitLab",
+         "no ids are given and the source and target paths differ only in case"
+       ),
+       do: {false, gitlab_projects("ACME/shop", "acme/shop")}
+
+  defp detection("GitLab", "no ids are given and the source and target paths differ"),
+    do: {true, gitlab_projects("sam/shop", "acme/shop")}
+
+  defp detection(
+         "Bitbucket",
+         "the source and destination repositories have different full names"
+       ),
+       do: {true, %{"full_name" => "sam/shop"}}
+
+  defp detection("Bitbucket", "the source repository was deleted"), do: {false, nil}
+
+  defp detection("Forgejo", "the head and base repositories have different full names"),
+    do: {true, %{"full_name" => "sam/shop", "owner" => %{"login" => "sam"}}}
+
+  defp detection("Forgejo", "the source repository was deleted"), do: {false, nil}
+
+  defp gitlab_projects(source, target, ids \\ %{}),
+    do:
+      Map.merge(ids, %{
+        "source_project" => %{"path_with_namespace" => source},
+        "target_project" => %{"path_with_namespace" => target}
+      })
+
+  # Pull request 42 from "feature/tax" as each host answers for it; `source` is what it
+  # says of the repository the head comes from ("sam/shop" when that is a fork).
+  defp answer_host(context, "GitHub", _source) do
+    context
+    |> answer_view(%{
+      "isCrossRepository" => true,
+      "headRepository" => %{"id" => "R_fork", "name" => "shop", "nameWithOwner" => "sam/shop"},
+      "headRepositoryOwner" => %{"login" => "sam"}
+    })
+    |> Shared.answer_lookup("github", "sam/shop")
+  end
+
+  defp answer_host(context, "GitLab", projects) do
+    World.git!(context.cwd, ~w(remote set-url origin git@gitlab.com:acme/shop.git))
+
+    mr =
+      Map.merge(projects, %{
+        "iid" => 42,
+        "title" => "Charge tax at checkout",
+        "web_url" => "https://gitlab.com/acme/shop/-/merge_requests/42",
+        "target_branch" => "main",
+        "source_branch" => "feature/tax",
+        "state" => "opened",
+        "sha" => context.pr_head
+      })
+
+    context
+    |> World.fake_cli(["glab"])
+    |> World.cli_rules(%{"cmd" => "glab", "args" => ["mr view 42 "], "stdout" => mr})
+    |> Shared.answer_lookup("gitlab", "sam/shop")
+  end
+
+  defp answer_host(context, "Bitbucket", source) do
+    World.git!(context.cwd, ~w(remote set-url origin git@bitbucket.org:acme/shop.git))
+
+    pr = %{
+      "id" => 42,
+      "title" => "Charge tax at checkout",
+      "state" => "OPEN",
+      "links" => %{"html" => %{"href" => "https://bitbucket.org/acme/shop/pull-requests/42"}},
+      "source" => %{
+        "branch" => %{"name" => "feature/tax"},
+        "commit" => %{"hash" => context.pr_head},
+        "repository" => source
+      },
+      "destination" => %{
+        "branch" => %{"name" => "main"},
+        "repository" => %{"full_name" => "acme/shop"}
+      }
+    }
+
+    fork = %{
+      "full_name" => "sam/shop",
+      "links" => %{
+        "clone" => [
+          %{"name" => "https", "href" => "https://bitbucket.org/sam/shop.git"},
+          %{"name" => "ssh", "href" => "git@bitbucket.org:sam/shop.git"}
+        ]
+      }
+    }
+
+    {base, _log} =
+      FakeHttp.start(%{
+        "/2.0/repositories/acme/shop/pullrequests/42" => {200, pr},
+        "/2.0/repositories/sam/shop" => {200, fork}
+      })
+
+    Shared.put_env("HAL_C2_BITBUCKET_API_BASE_URL", base <> "/2.0")
+    Shared.put_env("HAL_C2_BITBUCKET_ACCESS_TOKEN", "bitbucket-token")
+    context
+  end
+
+  defp answer_host(context, "Forgejo", source) do
+    World.git!(context.cwd, ~w(remote set-url origin git@codeberg.org:acme/shop.git))
+
+    pr = %{
+      "number" => 42,
+      "title" => "Charge tax at checkout",
+      "html_url" => "https://codeberg.org/acme/shop/pulls/42",
+      "state" => "open",
+      "merged" => false,
+      "base" => %{"ref" => "main", "repo" => %{"full_name" => "acme/shop"}},
+      "head" => %{"ref" => "feature/tax", "sha" => context.pr_head, "repo" => source}
+    }
+
+    forgejo_api(context, %{
+      "/api/v1/repos/acme/shop/pulls/42" => {200, pr},
+      "/api/v1/repos/sam/shop" => {200, forgejo_repository("sam/shop")}
+    })
+  end
+
+  defp forgejo_repository(repository),
+    do: %{
+      "full_name" => repository,
+      "clone_url" => "https://codeberg.org/#{repository}.git",
+      "ssh_url" => "git@codeberg.org:#{repository}.git"
+    }
+
+  # fj signed in to codeberg.org, whose API is a `HalC2.Test.FakeHttp` serving `routes`
+  # (`HAL_C2_FORGEJO_API_BASE_URL`); its log is the context's `:forgejo`.
+  defp forgejo_api(context, routes) do
+    keys = Path.join(Mc.tmp_dir(context.mc, "forgejo-cli"), "keys.json")
+
+    File.write!(
+      keys,
+      JSON.encode!(%{
+        "hosts" => %{"codeberg.org" => %{"type" => "Application", "token" => "fj-token"}},
+        "aliases" => %{}
+      })
+    )
+
+    previous = Application.get_env(:hal_c2, :fj_keys_paths)
+    Application.put_env(:hal_c2, :fj_keys_paths, [keys])
+    ExUnit.Callbacks.on_exit(fn -> Application.put_env(:hal_c2, :fj_keys_paths, previous) end)
+
+    {base, log} = FakeHttp.start(routes)
+    Shared.put_env("HAL_C2_FORGEJO_API_BASE_URL", base)
+
+    context
+    |> World.fake_cli(["fj"])
+    |> World.cli_rules([
+      %{"cmd" => "fj", "args" => ["version"], "stdout" => "fj v0.6.0\n"},
+      %{"cmd" => "fj", "args" => ["whoami"], "stdout" => "octocat\n"}
+    ])
+    |> Map.put(:forgejo, log)
+  end
+
+  # Pull request 42 of "acme/shop" on codeberg.org, its head at the server's
+  # `refs/pull/42/head`, the checkout's origin reached over `protocol`. Over HTTPS the
+  # repository is a mirror under `https/` of the fake remotes, and only it holds the
+  # pull request ref; over SSH no HTTPS address resolves.
+  defp forgejo_checkout(context, protocol) do
+    context = push_head(context, %{"isCrossRepository" => true, "headRefName" => "feature/tax"})
+    root = context.cwd
+
+    if protocol == "HTTPS" do
+      remotes = System.get_env("HAL_C2_FAKE_REMOTES")
+
+      World.git!(root, [
+        "clone",
+        "-q",
+        "--mirror",
+        bare(@repository),
+        Path.join(remotes, "https/acme/shop.git")
+      ])
+
+      World.git!(root, ~w(remote set-url origin https://codeberg.org/acme/shop.git))
+      World.git!(root, ["config", "url.#{remotes}/https/.insteadOf", "https://codeberg.org/"])
+      # The SSH address no longer has the head, so only an HTTPS fetch finds it.
+      World.git!(bare(@repository), ~w(update-ref -d refs/pull/42/head))
+    else
+      World.git!(root, ~w(remote set-url origin git@codeberg.org:acme/shop.git))
+    end
+
+    pr = %{
+      "number" => 42,
+      "title" => "Charge tax at checkout",
+      "html_url" => "https://codeberg.org/acme/shop/pulls/42",
+      "state" => "open",
+      "merged" => false,
+      "base" => %{"ref" => "main", "repo" => %{"full_name" => "acme/shop"}},
+      "head" => %{
+        "ref" => "feature/tax",
+        "sha" => context.pr_head,
+        "repo" => %{"full_name" => "acme/shop"}
+      }
+    }
+
+    forgejo_api(context, %{
+      "/api/v1/repos/acme/shop/pulls/42" => {200, pr},
+      "/api/v1/repos/acme/shop" => {200, forgejo_repository(@repository)}
+    })
+  end
+
+  defp forgejo_pull(number, head, state, merged? \\ false),
+    do: %{
+      "number" => number,
+      "title" => "Change #{number}",
+      "html_url" => "https://codeberg.org/acme/shop/pulls/#{number}",
+      "state" => state,
+      "merged" => merged?,
+      "base" => %{"ref" => "main"},
+      "head" => %{"ref" => head}
+    }
+
+  # "acme/shop" on codeberg.org listing `pulls_of.(state)` 50 to a page, as Forgejo
+  # pages `GET /repos/{repo}/pulls`.
+  defp forgejo_listing(context, pulls_of) do
+    World.git!(context.cwd, ~w(remote set-url origin git@codeberg.org:acme/shop.git))
+
+    forgejo_api(context, %{
+      "/api/v1/repos/acme/shop/pulls" => fn conn ->
+        query = URI.decode_query(conn.query_string)
+        page = String.to_integer(query["page"] || "1")
+        {200, query["state"] |> pulls_of.() |> Enum.slice((page - 1) * 50, 50)}
+      end
+    })
+  end
+
+  defp forgejo_listings(context),
+    do:
+      for(
+        r <- FakeHttp.requests(context.forgejo),
+        r["path"] == "/api/v1/repos/acme/shop/pulls",
+        do: r
+      )
 
   defp assert_follows(context, upstream) do
     assert %{"worktreePath" => path} = context.prepared
@@ -922,11 +1432,11 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     Map.put(context, :pr_head, head)
   end
 
-  defp prepare(context, mode) do
+  defp prepare(context, mode, reference \\ "42") do
     {reply, context} =
       World.call(context, "git.preparePullRequestThread", %{
         "cwd" => World.project(context, @repository).root,
-        "reference" => "42",
+        "reference" => reference,
         "mode" => mode
       })
 
