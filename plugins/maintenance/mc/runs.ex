@@ -48,19 +48,19 @@ defmodule HalC2Plugins.Maintenance.Runs do
     {:ok,
      run
      |> Map.merge(%{"status" => status, "report" => report, "body" => body, "applied" => applied})
-     |> finish(status)}
+     |> finish()}
   end
 
   def reported(run, _report, _applied, _body, _publishing), do: reportable(run)
 
   @doc "The agent's turn ended: a run still running never reported, and failed."
   def finished(%{"status" => "running"} = run, error),
-    do: {:ok, run |> Map.merge(%{"status" => "failed", "error" => error}) |> finish("failed")}
+    do: {:ok, run |> Map.merge(%{"status" => "failed", "error" => error}) |> finish()}
 
   def finished(run, _error), do: {:ok, run}
 
   def cancel(%{"status" => "running"} = run),
-    do: {:ok, run |> Map.put("status", "cancelled") |> finish("cancelled")}
+    do: {:ok, run |> Map.put("status", "cancelled") |> finish()}
 
   def cancel(run),
     do: {:error, "That run is #{run["status"]}; only a running one can be cancelled."}
@@ -99,8 +99,6 @@ defmodule HalC2Plugins.Maintenance.Runs do
   def revive(%{"status" => "publishing"} = run), do: Map.put(run, "status", "waiting")
   def revive(run), do: run
 
-  defp finish(run, status) when status in @finished,
-    do: Map.put(run, "finishedAt", System.system_time(:millisecond))
-
-  defp finish(run, _status), do: run
+  # The run's turn is over, whatever is left to do with its branch.
+  defp finish(run), do: Map.put(run, "finishedAt", System.system_time(:millisecond))
 end
