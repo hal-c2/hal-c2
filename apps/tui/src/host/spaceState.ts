@@ -1957,12 +1957,16 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       label: replacing ? "ask again" : "chart",
       placeholder: "what should it show?",
       ...(replacing ? { value: chartData(replacing.chart)?.request ?? "" } : {}),
-      onSubmit: (request) => {
-        drawChart(id, page, request, replacing?.id ?? null, asked).catch((error: unknown) =>
-          options.status(refusalText(error), "error"),
-        );
-      },
+      onSubmit: (request) => startChart(id, page, request, replacing?.id ?? null, asked),
     });
+  };
+
+  /**
+   * Draws a chart without waiting on it: a model draws it, so nothing holds the keys
+   * meanwhile. The status line says when it is drawn, or why it was not.
+   */
+  const startChart = (...args: Parameters<typeof drawChart>) => {
+    drawChart(...args).catch((error: unknown) => options.status(refusalText(error), "error"));
   };
 
   /** Asks the MC for a chart in `request`, replacing `blockId`'s; rejects with its refusal. */
@@ -3111,7 +3115,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       }
       const chart = VISUALIZE_PREFIX.exec(input.text);
       if (chart) {
-        await drawChart(id, page, input.text.slice(chart[0].length), null, generation);
+        startChart(id, page, input.text.slice(chart[0].length), null, generation);
         return null;
       }
       const kind = nextKind;

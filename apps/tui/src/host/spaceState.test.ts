@@ -985,18 +985,25 @@ describe("a page's prompt", () => {
     ]);
   });
 
-  test("images go only with an ask, and /visualize asks for a chart", async () => {
+  test("images go only with an ask", async () => {
     const t = onRoadmap();
     const upload = { type: "image", name: "a.png" } as never;
     expect(await t.controller.prompt()!.submit(words("Plans", [upload]))).toBe(
       "Images go with an ask: start the prompt with @agent.",
     );
-    const drawn = t.controller.prompt()!.submit(words("/visualize sales by month"));
-    t.refuse("space.block.visualize", new Error("No numbers to chart."));
-    expect(await drawn).toBe("No numbers to chart.");
+  });
+
+  test("/visualize lets go of the prompt while the chart is drawn, and says why one was not", async () => {
+    const t = onRoadmap();
+    // The prompt is free before the MC answers: a model draws the chart.
+    expect(await t.controller.prompt()!.submit(words("/visualize sales by month"))).toBeNull();
     expect(sent(t, "space.block.visualize")).toEqual([
       { spaceId: "s1", pageId: "p1", request: "sales by month" },
     ]);
+    expect(t.statuses.at(-1)).toBe("Drawing a chart…");
+    t.refuse("space.block.visualize", new Error("No numbers to chart."));
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toBe("No numbers to chart.");
   });
 });
 
