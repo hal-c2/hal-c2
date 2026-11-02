@@ -80,6 +80,11 @@ export const SpacePageFile = Schema.Struct({
   /** True while the file is gone (deleted, or not on the branch checked out). */
   missing: Schema.Boolean,
   /**
+   * True when the page was edited while its file was gone. Should the file come back, it
+   * wins over those edits, and `conflictAt` says so.
+   */
+  unwritten: Schema.Boolean,
+  /**
    * When the file last won over an edit on the page, the edit being a version in the
    * page's history; null once an edit reaches the file again.
    */
@@ -833,6 +838,7 @@ export class SpaceError extends Schema.TaggedError<SpaceError>()("SpaceError", {
     "trashed",
     "notEmpty",
     "cycle",
+    /** Also: a page's file could not be read or written, so the edit was not made. */
     "unavailable",
     /** The project's `spaces` section does not count the file. */
     "notSpaceFile",

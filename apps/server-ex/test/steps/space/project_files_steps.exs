@@ -91,6 +91,39 @@ defmodule HalC2.Steps.Space.ProjectFiles do
     context
   end
 
+  step "{string} of {string} is read-only", %{args: [path, project]} = context do
+    File.chmod!(Path.join(root(context, project), path), 0o444)
+    context
+  end
+
+  step "{string} of {string} was replaced by a folder outside HAL-C2",
+       %{args: [path, project]} = context do
+    file = Path.join(root(context, project), path)
+    File.rm!(file)
+    File.mkdir_p!(file)
+    context
+  end
+
+  step "{string} of {string} links to {string}", %{args: [path, project, target]} = context do
+    link(Path.join(root(context, project), path), target)
+    context
+  end
+
+  step "{string} of {string} links to a file outside the project",
+       %{args: [path, project]} = context do
+    root = root(context, project)
+    outside = Path.join(Path.dirname(root), "outside-#{System.unique_integer([:positive])}.md")
+    File.write!(outside, "# Outside\n\nNot the project's.")
+    link(Path.join(root, path), outside)
+    context
+  end
+
+  step "{string} of {string} still links to {string}",
+       %{args: [path, project, target]} = context do
+    assert File.read_link(Path.join(root(context, project), path)) == {:ok, target}
+    context
+  end
+
   # --- the spaces section ------------------------------------------------------------
 
   step "the spaces section of {string} is set to {string}",
@@ -257,6 +290,17 @@ defmodule HalC2.Steps.Space.ProjectFiles do
   step "the user is told {string} is not one of the project's Space files",
        %{args: [_]} = context do
     refused(context, "notSpaceFile")
+  end
+
+  step "the user is told {string} is not in the project", %{args: [_]} = context do
+    refused(context, "invalid")
+  end
+
+  step "the user is told {string} could not be written", %{args: [path]} = context do
+    refused(context, "unavailable")
+    assert {:error, message, _} = context.space_reply
+    assert message =~ "#{path} could not be written"
+    context
   end
 
   step "the user is told there is no file {string}", %{args: [_]} = context do
@@ -553,6 +597,12 @@ defmodule HalC2.Steps.Space.ProjectFiles do
     file = Path.join(root, path)
     File.mkdir_p!(Path.dirname(file))
     File.write!(file, text)
+  end
+
+  defp link(path, target) do
+    File.mkdir_p!(Path.dirname(path))
+    File.rm(path)
+    File.ln_s!(target, path)
   end
 
   defp commit(root) do
