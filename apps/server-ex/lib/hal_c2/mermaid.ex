@@ -23,8 +23,9 @@ defmodule HalC2.Mermaid do
   wait for that drawing. At most `:limit` drawings run at once, the rest in the order
   asked for; one still waiting for its turn after `:wait` ms is dropped and its callers
   told the MC is busy, so every caller is answered well inside `render/2`'s call timeout.
-  A diagram not started yet whose callers have all gone (a caller's process, or the
-  socket it asks for, ended) is dropped; one being drawn is finished and kept. A `"failed"` result is not kept, so
+  A diagram not started yet whose callers have all gone (the socket a caller asked for
+  closed, or, when it named none, its own process ended) is dropped; one being drawn is
+  finished and kept. A `"failed"` result is not kept, so
   the next caller tries again.
   """
   use GenServer
