@@ -1397,7 +1397,9 @@ defmodule HalC2Plugins.Planner.Sync do
   ask out: a task whose move GitHub refused no longer has its old milestone hold it, so
   when the task leaves its issue, by a relink, an unlink or its removal, nothing in the
   plan names the issue as in that milestone any more. A milestone that holds the task
-  asks by itself. `before` and `items` are the plan either side of a change.
+  asks by itself, but only for the issue it has the task under: another milestone's
+  correction can put the task's issue in it while its own push stands refused. `before`
+  and `items` are the plan either side of a change.
   """
   def left(before, items) do
     for {id, %{"issue" => %{"milestone" => number} = issue}} <- before,
@@ -1405,12 +1407,21 @@ defmodule HalC2Plugins.Planner.Sync do
         not Plan.same_ref?(issue, get_in(items, [id, "issue"])),
         {holder, %{"milestone" => %{"number" => ^number} = ref} = milestone} <- before,
         same?(ref["repository"], issue["repository"]),
-        id not in milestone["after"],
+        not asks_out?(milestone, id, issue, before),
         reduce: %{} do
       left ->
         mark = %{"task" => id, "issue" => Map.take(issue, ~w(repository number))}
         Map.update(left, holder, [mark], &(&1 ++ [mark]))
     end
+  end
+
+  # The next push of `milestone` asks `issue` out of it once the task `id` leaves that
+  # issue (`held_pushes/4`): it holds the task, and GitHub has it under that issue.
+  defp asks_out?(milestone, id, issue, items) do
+    synced = synced(milestone, milestone, items)
+
+    id in milestone["after"] and id in synced["after"] and
+      Plan.same_ref?(had(synced, items, id), issue)
   end
 
   @doc "`synced` with the marks of `left/2`; nothing else when there are none."

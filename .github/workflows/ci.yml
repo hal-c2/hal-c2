@@ -206,8 +206,9 @@ jobs:
     needs: [changes, mc_check]
     if: needs.changes.outputs.proofs != '[]'
     runs-on: ubuntu-24.04
-    # code_review_claims has taken from 13 to over 30 minutes on the same model.
-    timeout-minutes: 45
+    # code_review_claims has taken from 13 to over 37 minutes on the same model, and its
+    # slowest search may use 30 of them (its proof's `timeout`).
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

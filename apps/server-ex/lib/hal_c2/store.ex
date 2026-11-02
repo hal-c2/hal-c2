@@ -285,6 +285,17 @@ defmodule HalC2.Store do
     end)
   end
 
+  @doc "Whether an older MC indexed messages without saying who typed them."
+  def untyped_messages?(path) do
+    with_reader(path, fn db ->
+      {:ok, stmt} = Sqlite3.prepare(db, "SELECT 1 FROM messages WHERE typed IS NULL LIMIT 1")
+      Sqlite3.step(db, stmt) != :done
+    end)
+  end
+
+  @doc "Forgets those messages: what reading the threads did not reach is no longer in them."
+  def forget_untyped_messages(store \\ __MODULE__), do: write(store, :forget_untyped_messages)
+
   @doc "A value from the store's `meta` table."
   def meta(path, key) do
     with_reader(path, fn db ->
@@ -643,6 +654,13 @@ defmodule HalC2.Store do
         db,
         "CREATE INDEX IF NOT EXISTS messages_typed ON messages(created_at, stream) WHERE typed = 1"
       )
+
+    # Empty but for what an older MC wrote, so asking whether it wrote any costs nothing.
+    :ok =
+      Sqlite3.execute(
+        db,
+        "CREATE INDEX IF NOT EXISTS messages_untyped ON messages(stream) WHERE typed IS NULL"
+      )
   end
 
   # The schema version a store was written with, or 0 for a new file.
@@ -728,6 +746,11 @@ defmodule HalC2.Store do
   def handle_call(:checkpoint, from, state) do
     send(state.checkpointer, {:checkpoint, from})
     {:noreply, state}
+  end
+
+  def handle_call(:forget_untyped_messages, _from, state) do
+    :ok = exec(state.db, "DELETE FROM messages WHERE typed IS NULL", [])
+    {:reply, :ok, state}
   end
 
   def handle_call({:delete_meta, key}, _from, state) do

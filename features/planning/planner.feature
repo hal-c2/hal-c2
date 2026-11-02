@@ -803,6 +803,10 @@ Feature: Planner
         | ftp://github.example.com/acme/other/pull/12                 |
         | https://[1:2]/acme/other/pull/12                            |
         | https://github.example.com/acme/other/pull/9007199254740993 |
+        | https://user:token@github.example.com/acme/other/pull/12    |
+        | https://github..example.com/acme/other/pull/12              |
+        | https://github.example.com/../other/pull/12                 |
+        | acme/..#12                                                  |
 
     @mc
     Scenario: Open issues of a followed repository become tasks
@@ -1390,6 +1394,19 @@ Feature: Planner
       When the user moves "Issue 7" from "Beta" to "Launch"
       And the user removes "Issue 7"
       Then GitHub is asked last to move #7 out of its milestone
+
+    # The milestone's refused push still has the task under the issue before, so that is
+    # the one it would ask out; the issue GitHub has in it since has to go as well.
+    @mc
+    Scenario: A task relinked twice takes the issue GitHub has in its milestone out, though the milestone's push was refused
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub refuses moving #7 out of its milestone once
+      And the user relinks #7's task to #8
+      And #8 reached the milestone "Beta" on GitHub
+      And the plugin looks at GitHub
+      When the user relinks #8's task to #12
+      Then GitHub is asked last to move #8 out of its milestone
 
     # The same removal while the milestone waits on GitHub for another push. That push may
     # never report, or report twice, and the issue still has to go.

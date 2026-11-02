@@ -785,6 +785,55 @@ defmodule HalC2.PlannerTest do
       assert applied["m1"]["after"] == []
       assert applied["t"]["issue"]["milestone"] == nil
     end
+
+    # The user moved "t" from "m2" to "m1", whose push to GitHub waits, while GitHub
+    # still lists #2 in M2, where an earlier answered push left it and the plan has not
+    # heard of yet. "m2" has nothing on the way, so the look takes GitHub's word for it,
+    # but not for an issue a push moves: "t" stays in "m1" alone (#418).
+    test "does not add the issue's task to the milestone GitHub lists it in while a push moves it elsewhere" do
+      milestone = fn number, tasks ->
+        %{
+          "title" => "M#{number}",
+          "kind" => "milestone",
+          "due" => "2026-11-30",
+          "after" => tasks
+        }
+      end
+
+      ref = &%{"repository" => "acme/api", "number" => &1, "title" => "M#{&1}"}
+
+      items =
+        plan([
+          {"t", %{"title" => "Issue 2"}},
+          {"m1", milestone.(1, ["t"])},
+          {"m2", milestone.(2, [])}
+        ])
+        |> put_in(["t", "issue"], %{"repository" => "acme/api", "number" => 2, "milestone" => nil})
+        |> put_in(["m1", "milestone"], ref.(1))
+        |> put_in(["m2", "milestone"], ref.(2))
+
+      listed = %{"repository" => "acme/api", "number" => 2, "title" => "Issue 2"}
+
+      found = %{
+        issues: [
+          Map.merge(listed, %{
+            "state" => "open",
+            "milestone" => %{"number" => 2, "title" => "M2", "dueOn" => "2026-11-30"}
+          })
+        ],
+        details: [],
+        projects: [],
+        items: items,
+        board: nil,
+        prs: %{},
+        moving: [Map.take(listed, ~w(repository number))]
+      }
+
+      applied = Sync.apply(items, found, %{"sync" => "twoWay"}, @now, fn -> "new" end)
+      assert applied["m1"]["after"] == ["t"]
+      assert applied["m2"]["after"] == []
+      assert applied["t"]["issue"]["milestone"] == nil
+    end
   end
 
   describe "a milestone's correction GitHub refused" do
@@ -1015,6 +1064,59 @@ defmodule HalC2.PlannerTest do
                Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
 
       assert took.(synced)["misplaced"] == %{}
+    end
+
+    test "an issue a correction put in the milestone of its task leaves when the task relinks" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      milestone = fn after_, synced ->
+        %{
+          "id" => "ms",
+          "title" => "Launch",
+          "due" => nil,
+          "after" => after_,
+          "projectId" => "p",
+          "milestone" => %{"repository" => @repo, "number" => 3},
+          "synced" => synced
+        }
+      end
+
+      # GitHub refused the milestone's push, so it has the task under #7, and took another
+      # milestone's correction, which put the task's #8 in it. Its push will only ask #7 out.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(7)}
+      }
+
+      before = %{
+        "ms" => milestone.(["t"], synced),
+        "t" => task(Map.put(issue.(8), "milestone", 3))
+      }
+
+      items = %{"ms" => before["ms"], "t" => task(issue.(9))}
+      marks = [%{"task" => "t", "issue" => issue.(8)}]
+      assert Sync.left(before, items) == %{"ms" => marks}
+
+      # Unlinking or removing the task leaves it behind the same way.
+      unlinked = %{items | "t" => Map.delete(task(nil), "issue")}
+      assert Sync.left(before, unlinked) == %{"ms" => marks}
+      assert Sync.left(before, Map.delete(items, "t")) == %{"ms" => marks}
+
+      synced = Sync.left_behind(synced, marks)
+
+      asked =
+        for {"update", %{"number" => n, "milestone" => to}, _took} <-
+              Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects),
+            do: {n, to}
+
+      assert Enum.sort(asked) == [{7, nil}, {8, nil}, {9, 3}]
+
+      # A milestone GitHub has the task in under the issue it leaves asks by itself.
+      had_it = milestone.(["t"], %{synced | "refs" => %{"t" => issue.(8)}})
+      assert Sync.left(%{before | "ms" => had_it}, %{items | "ms" => had_it}) == %{}
+      assert Sync.left(%{before | "ms" => milestone.(["t"], nil)}, items) == %{}
     end
 
     test "keeps a mark per issue, so a task that left two issues behind loses neither" do

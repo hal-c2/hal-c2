@@ -2822,6 +2822,28 @@ defmodule HalC2.Steps.Planning.Planner do
     ])
   end
 
+  step "GitHub refuses moving \#{int} out of its milestone once", %{args: [number]} = context do
+    asked = Path.join(context.mc.home, "gh-out-#{number}")
+
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [~s("milestone":null)],
+        "run" => "[ -e '#{asked}' ] || { touch '#{asked}'; exit 1; }",
+        "stdout" => %{"number" => number}
+      }
+    ])
+  end
+
+  # GitHub lists #`number` alone, in the milestone `title`, from now on.
+  step "\#{int} reached the milestone {string} on GitHub", %{args: [number, title]} = context do
+    GitHubIssues.answers(
+      context,
+      context.repository,
+      milestone_issues(context, [{number, title}])
+    )
+  end
+
   # GitHub takes moving #`number` out of any milestone once the scenario answers it.
   step "GitHub takes moving \#{int} out of its milestone late", %{args: [number]} = context do
     gate = Path.join(context.mc.home, "gh-gate-#{number}-out")

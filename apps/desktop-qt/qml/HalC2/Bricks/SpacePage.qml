@@ -354,6 +354,10 @@ Rectangle {
             }
         }
 
+        SpaceViewers {
+            Layout.fillWidth: true
+        }
+
         Text {
             objectName: "spacePageSource"
             visible: (page.current.sourceThreadId ?? "") !== ""
