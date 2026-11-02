@@ -113,6 +113,25 @@ defmodule HalC2.MermaidTest do
     assert Task.await(next) == @drawn
   end
 
+  test "a diagram waiting too long for its turn is dropped and its callers told why" do
+    server = server(draw: gated(), limit: 1, wait: 20)
+    first = render_async(server, "first")
+    assert_receive {:drawing, "first", drawer}
+    waiting = render_async(server, "waiting")
+
+    assert %{
+             "status" => "failed",
+             "reason" => "The MC is busy drawing other diagrams; try again."
+           } =
+             Task.await(waiting)
+
+    # The one being drawn is not cut short, and the dropped one is never drawn.
+    send(drawer, {:outcome, {:ok, @drawn}})
+    assert Task.await(first) == @drawn
+    :sys.get_state(server)
+    refute_received {:drawing, "waiting", _}
+  end
+
   test "the oldest drawing is forgotten past the cache's size" do
     {count, draw} = counted({:ok, @drawn})
     server = server(draw: draw, cache_size: 1)
