@@ -156,11 +156,21 @@ Feature: Planner
       Then the MC is asked to link "API" to #12 of "acme/api" at "https://ghe.example.com:8443/acme/api/pull/12/files?w=1"
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
-    Scenario: An address that is not a pull request cannot be linked as one
+    Scenario Outline: An address the MC would not keep cannot be linked as a pull request
       Given the plan has "API"
       When the user opens the task "API"
-      And the user enters "https://ghe.example.com/acme/api/issues/12" as the pull request to link
-      Then it cannot be linked and the MC is asked nothing
+      And the user enters "<address>" as the pull request to link
+      Then "<address>" cannot be linked and the MC is asked nothing
+
+      Examples:
+        | address                                             |
+        | https://ghe.example.com/acme/api/issues/12          |
+        | https://user:token@ghe.example.com/acme/api/pull/12 |
+        | https://ghe_1.example.com/acme/api/pull/12          |
+        | https://ghe..example.com/acme/api/pull/12           |
+        | https://ghe.example.com:70000/acme/api/pull/12      |
+        | https://[1:2]/acme/api/pull/12                      |
+        | https://ghe.example.com/../api/pull/12              |
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A task names a project the MC no longer offers

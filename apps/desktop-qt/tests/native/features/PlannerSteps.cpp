@@ -935,14 +935,14 @@ const Steps steps([] {
     waitShownNamed(world, QStringLiteral("plannerItemLink"))->setProperty("text", c[0]);
     world.sync();
   });
-  step(QStringLiteral("it cannot be linked and the MC is asked nothing"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("%1 cannot be linked and the MC is asked nothing").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(!waitShownNamed(world, QStringLiteral("plannerItemLinkButton"))->isEnabled(), QStringLiteral("the address can be linked"));
     QQuickItem* field = waitShownNamed(world, QStringLiteral("plannerItemLink"));
     field->forceActiveFocus(Qt::TabFocusReason);
     QTest::keyClick(pluginShell(world), Qt::Key_Return);
     world.sync();
     expect(asked(world, QStringLiteral("link")).isEmpty(), QStringLiteral("the MC was asked %1").arg(showAsked(world, QStringLiteral("link"))));
-    expect(field->property("text").toString().contains(QLatin1String("/issues/")), QStringLiteral("the field was emptied"));
+    expect(field->property("text").toString() == c[0], QStringLiteral("the field was emptied"));
   });
   step(QStringLiteral("the plan has %1").arg(q), [](World& world, const Captures& c, const Table&) {
     dated(world, c[0], QStringLiteral("2026-10-21"), QStringLiteral("2026-10-30"));

@@ -661,13 +661,37 @@ Item {
 
     // The pull request a user names in the Link PR field, as `owner/name#12` or by its web
     // address, or null. The address goes along as an agent's does, so the MC keeps its host
-    // and makes it canonical; this takes only addresses that it would keep.
+    // and makes it canonical. What this takes is what `Plan.ref/2` keeps (its `repository?`,
+    // `host?` and port range), so no address the user gives is dropped for github.com.
     function pullRequestRef(text) {
+        const repository = name => name.split("/").every(part => part !== "." && part !== "..");
         const named = /^\s*([\w.-]+\/[\w.-]+)#(\d+)\s*$/.exec(text);
         if (named)
-            return { repository: named[1], number: Number(named[2]) };
-        const address = /^\s*(https?:\/\/(?:[a-z0-9.-]+|\[[0-9a-f:.]+\])(?::\d+)?\/([\w.-]+\/[\w.-]+)\/pull\/([1-9]\d*)(?:[\/?#]\S*)?)\s*$/i.exec(text);
-        return address ? { repository: address[2], number: Number(address[3]), url: address[1] } : null;
+            return repository(named[1]) ? { repository: named[1], number: Number(named[2]) } : null;
+        const address = /^\s*(https?:\/\/([^\/?#@\s]+?)(?::(\d+))?\/([\w.-]+\/[\w.-]+)\/pull\/([1-9]\d*)(?:[\/?#]\S*)?)\s*$/i.exec(text);
+        if (!address || !page.webHost(address[2]) || !repository(address[4]) || (address[3] !== undefined && !(Number(address[3]) >= 1 && Number(address[3]) <= 65535)))
+            return null;
+        return { repository: address[4], number: Number(address[5]), url: address[1] };
+    }
+
+    // A host the MC stores: `[a-z0-9-]` labels (case and a final dot aside), or a bracketed
+    // IPv6 address without a zone.
+    function webHost(host) {
+        const six = /^\[([0-9a-f:.]+)\]$/i.exec(host);
+        if (!six)
+            return host.replace(/\.$/, "").split(".").every(label => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));
+        const halves = six[1].split("::");
+        if (halves.length > 2)
+            return false;
+        const groups = halves.map(half => half.length > 0 ? half.split(":") : []);
+        const all = [].concat(...groups);
+        const last = all[all.length - 1] ?? "";
+        const four = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(last);
+        if (four && !four.slice(1).every(part => Number(part) <= 255))
+            return false;
+        const hex = four ? all.slice(0, -1) : all;
+        const count = hex.length + (four ? 2 : 0);
+        return hex.every(group => /^[0-9a-f]{1,4}$/i.test(group)) && (halves.length === 2 ? count < 8 : count === 8);
     }
 
     function time(value) {
