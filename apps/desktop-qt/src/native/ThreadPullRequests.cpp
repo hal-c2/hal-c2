@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "McClient.h"
+#include "PullRequestLinks.h"
 #include "ShellStore.h"
 
 namespace {
@@ -25,53 +26,6 @@ QString keyOf(const QJsonObject& link) {
 
 QJsonObject snapshotOf(const QJsonObject& link) {
   return link.value(QLatin1String("snapshot")).toObject();
-}
-
-bool hostOf(const QString& host, const QString& apex, const QString& label) {
-  return (!apex.isEmpty() && (host == apex || host.endsWith(QLatin1Char('.') + apex))) ||
-         (!label.isEmpty() && host.split(QLatin1Char('.')).contains(label));
-}
-
-// A repository's pull request page, as the MC builds it
-// (mcp/tools/pull_requests.ex url/4) from the host alone, telling hosts apart
-// as pull_requests.ex kind/1 does; empty on a host it does not know.
-QString pageOf(const QString& host, const QString& repository, int number) {
-  if (host == QLatin1String("codeberg.org") || hostOf(host, {}, QStringLiteral("forgejo")) || hostOf(host, {}, QStringLiteral("gitea"))) {
-    return QStringLiteral("https://%1/%2/pulls/%3").arg(host, repository).arg(number);
-  }
-  if (hostOf(host, QStringLiteral("github.com"), QStringLiteral("github"))) {
-    return QStringLiteral("https://%1/%2/pull/%3").arg(host, repository).arg(number);
-  }
-  if (hostOf(host, QStringLiteral("gitlab.com"), QStringLiteral("gitlab"))) {
-    return QStringLiteral("https://%1/%2/-/merge_requests/%3").arg(host, repository).arg(number);
-  }
-  if (hostOf(host, QStringLiteral("bitbucket.org"), QStringLiteral("bitbucket"))) {
-    return QStringLiteral("https://%1/%2/pull-requests/%3").arg(host, repository).arg(number);
-  }
-  if (hostOf(host, QStringLiteral("dev.azure.com"), {}) || host.endsWith(QLatin1String(".visualstudio.com"))) {
-    return QStringLiteral("https://%1/%2/pullrequest/%3").arg(host, repository).arg(number);
-  }
-  return {};
-}
-
-// The host a project's checkout reads ("github.com/acme/shop" gives github.com),
-// and its repository.
-std::pair<QString, QString> repositoryOf(const QJsonObject& project) {
-  const QString key = project.value(QLatin1String("repositoryIdentity")).toObject().value(QLatin1String("canonicalKey")).toString().toLower();
-  const qsizetype slash = key.indexOf(QLatin1Char('/'));
-  if (slash <= 0) return {};
-  return {key.left(slash), key.mid(slash + 1)};
-}
-
-// One name for an Azure DevOps repository however it is reached, over SSH,
-// visualstudio.com or dev.azure.com.
-QString canonicalKey(QString key) {
-  static const QRegularExpression ssh(
-      QStringLiteral("^(?:ssh\\.dev\\.azure\\.com|vs-ssh\\.visualstudio\\.com)/v3/([^/]+)/([^/]+)/([^/]+)$"));
-  static const QRegularExpression legacy(QStringLiteral("^([^.]+)\\.visualstudio\\.com/(?:defaultcollection/)?([^/]+)/_git/([^/]+)$"));
-  key.replace(ssh, QStringLiteral("dev.azure.com/\\1/\\2/_git/\\3"));
-  key.replace(legacy, QStringLiteral("dev.azure.com/\\1/\\2/_git/\\3"));
-  return key;
 }
 
 // ThreadPullRequestsPanel's SOURCE_LABELS.
@@ -344,7 +298,7 @@ QString ThreadPullRequests::urlOf(const QString& key) const {
   const qsizetype slash = key.indexOf(QLatin1Char('/'));
   const qsizetype hash = key.lastIndexOf(QLatin1Char('#'));
   if (slash <= 0 || hash <= slash) return {};
-  return pageOf(key.left(slash), key.mid(slash + 1, hash - slash - 1), key.mid(hash + 1).toInt());
+  return PullRequestLinks::pageOf(key.left(slash), key.mid(slash + 1, hash - slash - 1), key.mid(hash + 1).toInt());
 }
 
 const QJsonObject* ThreadPullRequests::find(const QString& key) const {
@@ -354,39 +308,11 @@ const QJsonObject* ThreadPullRequests::find(const QString& key) const {
 
 // --- Naming a pull request -------------------------------------------------------------
 
-// The host, repository and number behind a pull request URL, as the MC
-// parses it (projection/pull_requests.ex parse_change_request_url/1).
+// The host, repository and number behind a pull request URL (PullRequestLinks::parse).
 std::optional<ThreadPullRequests::Target> ThreadPullRequests::parseUrl(const QString& url) {
-  const QUrl parsed(url.trimmed(), QUrl::StrictMode);
-  if (!parsed.isValid() || (parsed.scheme() != QLatin1String("http") && parsed.scheme() != QLatin1String("https")) ||
-      parsed.host().isEmpty()) {
-    return std::nullopt;
-  }
-  QString host = parsed.host().toLower();
-  const QString path = parsed.path().isEmpty() ? QStringLiteral("/") : parsed.path();
-  static const QRegularExpression github(QStringLiteral("^/([^/]+/[^/]+)/pull/([0-9]+)(?:/|$)"));
-  static const QRegularExpression forgejo(QStringLiteral("^/([^/]+(?:/[^/]+)+)/pulls/([0-9]+)(?:/|$)"));
-  static const QRegularExpression gitlab(QStringLiteral("^/([^/]+(?:/[^/]+)+)/-/merge_requests/([0-9]+)(?:/|$)"));
-  static const QRegularExpression bitbucket(QStringLiteral("^/([^/]+/[^/]+)/pull-requests/([0-9]+)(?:/|$)"));
-  static const QRegularExpression azure(QStringLiteral("^/((?:[^/]+/)*_git/[^/]+)/pullrequest/([0-9]+)(?:/|$)"));
-  QRegularExpressionMatch match;
-  if (hostOf(host, QStringLiteral("github.com"), QStringLiteral("github")) && (match = github.match(path)).hasMatch()) {
-  } else if ((match = forgejo.match(path)).hasMatch()) {
-    // Forgejo and Gitea keep a port that is not the scheme's.
-    if (parsed.port() > 0 && parsed.port() != (parsed.scheme() == QLatin1String("https") ? 443 : 80)) {
-      host += QStringLiteral(":%1").arg(parsed.port());
-    }
-  } else if ((match = gitlab.match(path)).hasMatch()) {
-  } else if (hostOf(host, QStringLiteral("bitbucket.org"), QStringLiteral("bitbucket"))) {
-    match = bitbucket.match(path);
-  } else if (hostOf(host, QStringLiteral("dev.azure.com"), {}) || host.endsWith(QLatin1String(".visualstudio.com"))) {
-    match = azure.match(path);
-  }
-  if (!match.hasMatch()) return std::nullopt;
-  bool ok = false;
-  const int number = match.captured(2).toInt(&ok);
-  if (!ok || number <= 0) return std::nullopt;
-  return Target{host, match.captured(1).toLower(), number, url.trimmed()};
+  const std::optional<PullRequestLink> link = PullRequestLinks::parse(url);
+  if (!link) return std::nullopt;
+  return Target{link->host, link->repository, link->number, link->url};
 }
 
 // A URL may name any repository on a host
@@ -399,13 +325,7 @@ std::variant<ThreadPullRequests::Target, QString> ThreadPullRequests::resolve(co
   if (trimmed.isEmpty()) return QStringLiteral("Paste a pull request URL or enter 123 / #123.");
   const QList<QJsonObject> projects = m_store->projectRows(environmentId());
   if (const std::optional<Target> target = parseUrl(trimmed)) {
-    const QString host = target->host.section(QLatin1Char(':'), 0, 0);
-    const QString wanted = canonicalKey(target->host + QLatin1Char('/') + target->repository);
-    const bool azure = wanted.startsWith(QLatin1String("dev.azure.com/"));
-    const bool readable = std::any_of(projects.cbegin(), projects.cend(), [&](const QJsonObject& project) {
-      const auto [projectHost, repository] = repositoryOf(project);
-      return azure ? canonicalKey(projectHost + QLatin1Char('/') + repository) == wanted : projectHost == host;
-    });
+    const bool readable = !PullRequestLinks::projectFor(projects, PullRequestLink{{}, target->host, target->repository, target->number, target->url}, true).isEmpty();
     if (!readable) return QStringLiteral("No project in this environment can read %1/%2.").arg(target->host, target->repository);
     return *target;
   }
@@ -413,10 +333,10 @@ std::variant<ThreadPullRequests::Target, QString> ThreadPullRequests::resolve(co
   const QRegularExpressionMatch number = bare.match(trimmed);
   if (!number.hasMatch() || number.captured(1).toInt() <= 0) return QStringLiteral("Use a pull request URL, 123, or #123.");
   const QJsonObject row = m_store->threadRow(m_thread);
-  const auto [host, repository] = repositoryOf(m_store->projectRow(environmentId(), text(row, QLatin1String("projectId"))));
+  const auto [host, repository] = PullRequestLinks::repositoryOf(m_store->projectRow(environmentId(), text(row, QLatin1String("projectId"))));
   if (host.isEmpty() || repository.isEmpty()) return QStringLiteral("Paste a full URL to link a pull request from another repository.");
   const int value = number.captured(1).toInt();
-  const QString page = pageOf(host, repository, value);
+  const QString page = PullRequestLinks::pageOf(host, repository, value);
   if (page.isEmpty()) return QStringLiteral("Paste a full URL; this project's host has no known pull request URL.");
   return Target{host, repository, value, page};
 }
