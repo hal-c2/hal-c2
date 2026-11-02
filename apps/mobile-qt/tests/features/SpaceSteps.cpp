@@ -55,6 +55,12 @@ using S = QString;
 const QString kIndex = QStringLiteral("spaces");
 const QString kNow = QStringLiteral("2026-09-23T10:00:00Z");
 
+// The page's prompt (space/prompt.feature), which the agent's steps ask through.
+QVariantMap prompt(World& world);
+QQuickItem* promptEditor(QQuickItem* composer);
+QQuickItem* typeInPrompt(World& world, const QString& title, const QString& text);
+void sendPrompt(World& world, QQuickItem* composer);
+
 QString streamOf(const QString& spaceId) {
   return QStringLiteral("space:") + spaceId;
 }
@@ -4209,6 +4215,16 @@ const Steps promptSteps([] {
     }, [&] { return S("the slash menu to offer the kinds and %1; it offers %2").arg(c[0], labels.join(u", ")); });
     // The page's own menu, not the thread's slash commands.
     expect(prompt(world).value(S("suggestions")).toList().isEmpty(), S("the prompt also offers %1").arg(show(prompt(world).value(S("suggestions")))));
+  });
+  // Older than the Background's thread, so an ask still runs in its project by default.
+  step(S("the thread %1 of the project %1 runs on another model").arg(q), [](World& world, const Captures& c, const Table&) {
+    haveProject(world, c[1]);
+    const QString id = S("t-") + c[0].toLower();
+    world.mc.threads.insert(id, {{S("id"), id}, {S("title"), c[0]}, {S("projectId"), c[1]},
+                                 {S("createdAt"), S("2026-09-22T09:00:00Z")}, {S("updatedAt"), S("2026-09-22T09:00:00Z")},
+                                 {S("modelSelection"), QJsonObject{{S("instanceId"), S("codex")}, {S("model"), S("gpt-5")}}}});
+    world.mc.sendRow(id, world.mc.threads.value(id));
+    world.sync();
   });
   step(S("the user starts an ask on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* composer = promptOn(world, c[0]);
