@@ -1557,6 +1557,8 @@ export function createHost(options: HostOptions): Host {
     // A report belongs to the socket it was sent on: a new connection sends it again.
     if (phase === "connected") {
       clientActivity.renew();
+      // A diagram the lost connection refused is asked for again.
+      diagrams.retry();
       // Whether threads can move depends on the cluster this connection reaches.
       void cluster.refresh();
       // And the server may have come back on another version.
