@@ -26,7 +26,8 @@ defmodule HalC2.Space.Schedule do
   @doc "Gives a live page its instruction and cadence, or changes them."
   def set(space_id, page_id, instruction, cadence) do
     with {:ok, instruction} <- instruction(instruction),
-         {:ok, _} <- live(space_id, page_id),
+         {:ok, page} <- live(space_id, page_id),
+         :ok <- not_file(page),
          {:ok, _} <-
            scheduled(
              ScheduledTasks.put_page_task(%{
@@ -242,6 +243,12 @@ defmodule HalC2.Space.Schedule do
   end
 
   defp task_id(page_id), do: "page:" <> page_id
+
+  # A file's page is what the file says; an update would write over it.
+  defp not_file(%{"file" => %{}}),
+    do: {:error, :file_backed, "A page that is a file does not update itself."}
+
+  defp not_file(_page), do: :ok
 
   defp live(space_id, page_id) do
     with {:ok, state} <- Space.state(space_id), do: Pages.fetch_live(state, page_id)

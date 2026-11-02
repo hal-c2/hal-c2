@@ -156,7 +156,8 @@ defmodule HalC2.Space.Blocks do
   refuses is never written.
   """
   def put_chart(state, page_id, chart, nil, after_id, author) do
-    with {:ok, _page} <- Pages.fetch_live(state, page_id),
+    with {:ok, page} <- Pages.fetch_live(state, page_id),
+         :ok <- not_file(page),
          {:ok, low, high} <- place(state, page_id, after_id, nil),
          {:ok, chart} <- valid_chart(chart) do
       spec = %{"kind" => "chart", "text" => Chart.summary(chart)}
@@ -181,9 +182,16 @@ defmodule HalC2.Space.Blocks do
   @doc "Whether a chart can be drawn on the page, and in `block_id` when there is one."
   def chart_place(state, page_id, block_id) do
     with {:ok, page} <- Pages.fetch_live(state, page_id),
+         :ok <- not_file(page),
          :ok <- if(block_id, do: chart_block(state, page_id, block_id), else: :ok),
          do: {:ok, page}
   end
+
+  # A chart is not Markdown a file can hold (`HalC2.Space.Files`).
+  defp not_file(%{"file" => %{}}),
+    do: {:error, :file_backed, "A chart is not drawn on a page that is a file."}
+
+  defp not_file(_page), do: :ok
 
   defp chart_block(state, page_id, block_id) do
     case StreamState.get(state, "block")[block_id] do
@@ -255,10 +263,10 @@ defmodule HalC2.Space.Blocks do
          "A table's text is a table: a header row, a row of ---, and rows of as many cells."}
 
       table ->
-        table =
+        {:ok, table} =
           if Table.markdown(table) == text,
-            do: table,
-            else: elem(Table.cast(Map.take(table, ~w(rows align))), 1)
+            do: {:ok, table},
+            else: Table.cast(Map.take(table, ~w(rows align)))
 
         {:ok, %{"table" => table, "text" => Table.markdown(table)}}
     end

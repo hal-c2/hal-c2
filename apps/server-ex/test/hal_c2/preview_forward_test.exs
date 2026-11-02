@@ -68,7 +68,7 @@ defmodule HalC2.PreviewForwardTest do
 
   describe "listening" do
     test "on the dev server's port of this machine's loopback when it is free" do
-      {port, _} = DevServer.echo(@dev, 0, self())
+      {port, _} = DevServer.on_free_port(&DevServer.echo(@dev, &1, self()))
       tab(port)
       assert PreviewForward.forward(node(), @thread, port) == {:ok, port}
       # Asked again, the same forward.
@@ -94,16 +94,18 @@ defmodule HalC2.PreviewForwardTest do
     end
   end
 
+  # A forward listens at the dev server's port only when that is free on this
+  # machine's loopback, so the tests below use the port it gives.
   describe "connections" do
     setup do
       {port, _} = DevServer.echo(@dev, 0, self())
       tab(port)
-      {:ok, ^port} = PreviewForward.forward(node(), @thread, port)
-      %{port: port}
+      {:ok, local} = PreviewForward.forward(node(), @thread, port)
+      %{port: port, local: local}
     end
 
-    test "carry bytes both ways, many chunks at a time", %{port: port} do
-      socket = connect(port)
+    test "carry bytes both ways, many chunks at a time", %{local: local} do
+      socket = connect(local)
       data = :crypto.strong_rand_bytes(3 * 1024 * 1024 + 17)
       # Sent while the echo is read, or both ends' buffers fill.
       sender = Task.async(fn -> :gen_tcp.send(socket, data) end)
@@ -113,8 +115,8 @@ defmodule HalC2.PreviewForwardTest do
 
     # The browser's socket kept the listener's buffer, so one read could be several
     # chunks and put more than the window on the way at once.
-    test "the browser's socket is read a chunk at a time", %{port: port} do
-      socket = connect(port)
+    test "the browser's socket is read a chunk at a time", %{port: port, local: local} do
+      socket = connect(local)
       assert_receive {:dev_server, :accepted, _}
       [pipe] = Map.keys(:sys.get_state(listener(port)).pipes)
       %{socket: browser} = :sys.get_state(pipe)
@@ -122,22 +124,22 @@ defmodule HalC2.PreviewForwardTest do
       :gen_tcp.close(socket)
     end
 
-    test "closed by the browser close at the dev server", %{port: port} do
-      socket = connect(port)
+    test "closed by the browser close at the dev server", %{local: local} do
+      socket = connect(local)
       assert_receive {:dev_server, :accepted, conn}
       :gen_tcp.close(socket)
       assert_receive {:dev_server, :closed, ^conn}
     end
 
-    test "closed by the dev server close at the browser, after what it sent", %{port: port} do
-      socket = connect(port)
+    test "closed by the dev server close at the browser, after what it sent", %{local: local} do
+      socket = connect(local)
       assert_receive {:dev_server, :accepted, conn}
       :ok = :gen_tcp.send(socket, "last")
       assert {:ok, "last"} = :gen_tcp.recv(socket, 4, 5_000)
       send(conn, :close)
       assert {:error, :closed} = :gen_tcp.recv(socket, 0, 5_000)
       # The forward goes on.
-      assert round_trip(port, "again") == "again"
+      assert round_trip(local, "again") == "again"
     end
 
     # Found by proof/hal_c2/preview_forward_proof_test.exs: a pipe that ended when its
@@ -161,27 +163,28 @@ defmodule HalC2.PreviewForwardTest do
       {port, _} = DevServer.echo(@dev, 0, self())
       first = tab(port)
       second = tab(port)
-      {:ok, ^port} = PreviewForward.forward(node(), @thread, port)
+      {:ok, local} = PreviewForward.forward(node(), @thread, port)
       ref = Process.monitor(listener(port))
-      socket = connect(port)
+      socket = connect(local)
       assert_receive {:dev_server, :accepted, _}
 
       {:ok, nil} = HalC2.Preview.close(%{"threadId" => @thread, "tabId" => first})
       # The grant has seen the close: it was sent before `close/1` returned.
       _ = :sys.get_state(grant())
-      assert round_trip(port, "still") == "still"
+      assert round_trip(local, "still") == "still"
 
       {:ok, nil} = HalC2.Preview.close(%{"threadId" => @thread, "tabId" => second})
       assert_receive {:DOWN, ^ref, :process, _, _}
       assert {:error, :closed} = :gen_tcp.recv(socket, 0, 5_000)
+      # Its listening sockets closed with it. No connect checks that: once free,
+      # the port can be any other socket's.
       assert PreviewForward.listening() == []
-      assert {:error, _} = :gen_tcp.connect({127, 0, 0, 1}, port, [], 1_000)
     end
 
     test "when the last tab at the port navigates elsewhere" do
       {port, _} = DevServer.echo(@dev, 0, self())
       tab = tab(port)
-      {:ok, ^port} = PreviewForward.forward(node(), @thread, port)
+      {:ok, _} = PreviewForward.forward(node(), @thread, port)
       ref = Process.monitor(listener(port))
       url = "http://localhost:#{port + 1}/"
       {:ok, _} = HalC2.Preview.navigate(%{"threadId" => @thread, "tabId" => tab, "url" => url})
@@ -223,16 +226,16 @@ defmodule HalC2.PreviewForwardTest do
       {port, _} = :peer.call(peer, DevServer, :echo, [@dev, 0, self()])
       url = "http://localhost:#{port}/"
       {:ok, _} = :peer.call(peer, HalC2.Preview, :open, [%{"threadId" => @thread, "url" => url}])
-      {:ok, ^port} = PreviewForward.forward(mc, @thread, port)
+      {:ok, local} = PreviewForward.forward(mc, @thread, port)
       ref = Process.monitor(listener(port, mc))
-      socket = connect(port)
+      socket = connect(local)
       assert_receive {:dev_server, :accepted, _}, 5_000
-      %{peer: peer, mc: mc, port: port, ref: ref, socket: socket}
+      %{peer: peer, mc: mc, local: local, ref: ref, socket: socket}
     end
 
     test "it closes, with its connections, when the MC stops", context do
-      %{peer: peer, port: port, ref: ref, socket: socket} = context
-      assert round_trip(port, "hello") == "hello"
+      %{peer: peer, local: local, ref: ref, socket: socket} = context
+      assert round_trip(local, "hello") == "hello"
       :peer.stop(peer)
       assert_receive {:DOWN, ^ref, :process, _, _}, 10_000
       assert {:error, :closed} = :gen_tcp.recv(socket, 0, 5_000)

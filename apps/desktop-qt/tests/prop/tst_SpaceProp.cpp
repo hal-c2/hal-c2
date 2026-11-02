@@ -241,6 +241,7 @@ QList<QVariantMap> blocksOf(const Model& model) {
     rows.append({{QStringLiteral("id"), id},
                  {QStringLiteral("kind"), str(block, "kind")},
                  {QStringLiteral("text"), shown(QStringLiteral("text"), str(block, "text"))},
+                 {QStringLiteral("level"), block.value(QLatin1String("level")).toInt(2)},
                  {QStringLiteral("checked"), shown(QStringLiteral("checked"), block.value(QLatin1String("checked")).toBool()).toBool()},
                  {QStringLiteral("linkedPageId"), linked},
                  {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : titleOf(model.held, linked)},
@@ -631,6 +632,7 @@ struct Write : Command {
       offer(2, "block.check");
       offer(1, "block.replace");
       offer(1, "block.chart");
+      offer(2, "block.level");
       offer(1, "block.delete");
       if (comments.size() < kMaxComments) offer(2, "comment.create");
     }
@@ -674,11 +676,16 @@ struct Write : Command {
     } else if (op == QLatin1String("page.move")) {
       other = pick(pages + QStringList{QString()});
     } else if (op == QLatin1String("block.create")) {
-      value = pick({QStringLiteral("paragraph"), QStringLiteral("checklist"), QStringLiteral("heading"), QStringLiteral("link")});
+      // A heading may carry its level after a colon; one without shows as level 2.
+      value = pick({QStringLiteral("paragraph"), QStringLiteral("checklist"), QStringLiteral("heading"), QStringLiteral("heading:1"),
+                    QStringLiteral("heading:5"), QStringLiteral("raw"), QStringLiteral("link")});
       other = pick(pages);
       flag = *rc::gen::arbitrary<bool>();
     } else if (op == QLatin1String("block.text") || op == QLatin1String("block.replace")) {
       value = pick({QStringLiteral("One"), QStringLiteral("Two"), QString()});
+    } else if (op == QLatin1String("block.level")) {
+      // A level in range, one the client must not trust, or none (unset).
+      value = pick({QStringLiteral("1"), QStringLiteral("3"), QStringLiteral("6"), QStringLiteral("9"), QString()});
     } else if (op == QLatin1String("block.append")) {
       value = pick({QStringLiteral(" more"), QStringLiteral("!")});
     } else if (op == QLatin1String("block.order")) {
@@ -778,11 +785,12 @@ struct Write : Command {
     if (op.endsWith(QLatin1String(".delete"))) return Made{kind, std::nullopt, {{QStringLiteral("d"), true}}};
     if (op == QLatin1String("block.create")) {
       if (!model.mc.contains(keyOf(kPage, other))) return std::nullopt;
-      QJsonObject block{{QStringLiteral("id"), id}, {QStringLiteral("pageId"), other}, {QStringLiteral("kind"), value},
+      QJsonObject block{{QStringLiteral("id"), id}, {QStringLiteral("pageId"), other}, {QStringLiteral("kind"), value.section(QLatin1Char(':'), 0, 0)},
                         {QStringLiteral("text"), QStringLiteral("New")}, {QStringLiteral("checked"), false},
                         {QStringLiteral("order"), QStringLiteral("b")}, {QStringLiteral("createdBy"), author(flag)},
                         {QStringLiteral("updatedAt"), at}};
       if (value == QLatin1String("link")) block.insert(QStringLiteral("linkedPageId"), other);
+      if (value.contains(QLatin1Char(':'))) block.insert(QStringLiteral("level"), value.section(QLatin1Char(':'), 1).toInt());
       return set(block);
     }
     if (op == QLatin1String("block.text")) return set({{QStringLiteral("text"), value}, {QStringLiteral("updatedAt"), at}});
@@ -793,6 +801,14 @@ struct Write : Command {
       return Made{kind, after, {{QStringLiteral("a"), QJsonObject{{QStringLiteral("text"), value}}}, {QStringLiteral("s"), QJsonObject{{QStringLiteral("updatedAt"), at}}}}};
     }
     if (op == QLatin1String("block.order")) return set({{QStringLiteral("order"), value}, {QStringLiteral("updatedAt"), at}});
+    if (op == QLatin1String("block.level")) {
+      // On any kind: the row carries whatever level the block holds, and only a heading reads it.
+      if (!value.isEmpty()) return set({{QStringLiteral("level"), value.toInt()}, {QStringLiteral("updatedAt"), at}});
+      QJsonObject after = current;
+      after.remove(QStringLiteral("level"));
+      after.insert(QStringLiteral("updatedAt"), at);
+      return Made{kind, after, {{QStringLiteral("u"), QJsonArray{QStringLiteral("level")}}, {QStringLiteral("s"), QJsonObject{{QStringLiteral("updatedAt"), at}}}}};
+    }
     if (op == QLatin1String("block.check")) {
       return set({{QStringLiteral("checked"), !current.value(QLatin1String("checked")).toBool()}, {QStringLiteral("updatedAt"), at}});
     }

@@ -52,6 +52,19 @@ defmodule HalC2.Space.Rpc do
   defp call("page.createFromThread", %{"spaceId" => s, "threadId" => t} = i),
     do: page(Space.create_page_from_thread(s, t, i["parentPageId"]))
 
+  defp call("page.openFile", %{"spaceId" => s, "projectId" => p, "relativePath" => path}),
+    do: Space.open_file(s, p, path)
+
+  defp call("page.syncFile", %{"spaceId" => s, "pageId" => p}), do: page(Space.sync_file(s, p))
+
+  defp call("page.unlinkFile", %{"spaceId" => s, "pageId" => p}),
+    do: page(Space.unlink_file(s, p))
+
+  defp call("files.list", %{"projectId" => p}), do: HalC2.Space.Files.list(p)
+
+  defp call("files.scan", %{"projectId" => p} = i),
+    do: HalC2.Space.Files.scan(p, i["replace"] == true)
+
   defp call("page.history", %{"spaceId" => s, "pageId" => p} = i) do
     with {:ok, %{versions: versions, next_before: next}} <-
            Space.page_versions(s, p, i["before"], i["limit"]) do
@@ -190,7 +203,8 @@ defmodule HalC2.Space.Rpc do
 
   @methods ~w(list create rename delete page.create page.rename page.move page.trash
     page.restore page.delete page.publish page.unpublish page.exportMarkdown page.importMarkdown
-    page.createFromThread page.history page.version page.restoreVersion
+    page.createFromThread page.openFile page.syncFile page.unlinkFile files.list files.scan
+    page.history page.version page.restoreVersion
     page.schedule.set page.schedule.setEnabled page.schedule.runNow page.schedule.remove
     page.askAgent page.stopAgent page.dismissAgent block.insert block.update block.setChecked
     block.editTable block.move block.delete block.visualize comment.add comment.resolve comment.reopen
@@ -228,7 +242,9 @@ defmodule HalC2.Space.Rpc do
     trashed: "trashed",
     not_empty: "notEmpty",
     cycle: "cycle",
-    unavailable: "unavailable"
+    unavailable: "unavailable",
+    not_space_file: "notSpaceFile",
+    file_backed: "fileBacked"
   }
 
   defp reply({:ok, _} = ok), do: ok

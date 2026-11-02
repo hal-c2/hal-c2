@@ -165,9 +165,9 @@ Feature: GitHub Markdown in a page
         """
 
     # https://github.com/hal-c2/hal-c2/issues/847
-    @shared @backlog
+    @shared
     Scenario: Markdown a page keeps as written is shown as its source
-      Given the page "Plan" holds HTML the page does not model
+      Given the page "Plan" holds a table the page does not model yet
       When the user opens "Plan"
       Then the table is shown as its Markdown, exactly as written, in a fixed-width face
       And the user can edit it as text
@@ -246,7 +246,7 @@ Feature: GitHub Markdown in a page
       Then "Steps" is shown as a level 3 heading
 
     # https://github.com/hal-c2/hal-c2/issues/847
-    @shared @backlog
+    @shared
     Scenario: Each heading level is shown in its own size
       Given the page "Plan" with headings of every level from 1 to 6
       When the user opens "Plan"
@@ -424,6 +424,81 @@ Feature: GitHub Markdown in a page
         | ---- | ------- |
         | MC   | Barbara |
         """
+
+    @mc
+    Scenario: A table's text rewritten in its own form keeps its spacing
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | Step | Owner |
+        | --- | --- |
+        | MC | Ada |
+        """
+      When the user changes the text of the table of "Plan" to:
+        """
+        | Step | Owner |
+        | --- | --- |
+        | MC | Barbara |
+        """
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner |
+        | --- | --- |
+        | MC | Barbara |
+        """
+
+    @mc
+    Scenario: A table's text rewritten another way is padded to its cells
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | Step | Owner |
+        | ---- | ----- |
+        | MC   | Ada   |
+        """
+      When the user changes the text of the table of "Plan" to:
+        """
+        Step | Owner
+        --- | ---:
+        MC | Barbara
+        """
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner   |
+        | ---- | ------: |
+        | MC   | Barbara |
+        """
+
+    @mc
+    Scenario: A table's text must be a table
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | Step |
+        | ---- |
+        | MC   |
+        """
+      When the user changes the text of the table of "Plan" to:
+        """
+        | Step |
+        | ---- |
+        | MC   |
+
+        Notes for later
+        """
+      Then the user is told "A table's text is a table"
+      And the table of "Plan" has the rows:
+        | Step |
+        | MC   |
 
     @mc
     Scenario: A table written another way is kept as written

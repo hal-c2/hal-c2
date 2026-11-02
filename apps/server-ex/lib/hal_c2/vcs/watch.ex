@@ -31,8 +31,13 @@ defmodule HalC2.Vcs.Watch do
     :ok
   end
 
-  @doc "Reads the checkout's status again if anyone watches it."
+  @doc """
+  Reads the checkout's status again if anyone watches it. Whatever changed the checkout
+  (a branch switched, a pull, a turn) may have changed the files Space pages are of, so
+  they look again too (`HalC2.Space.Files`).
+  """
   def refresh(cwd) do
+    HalC2.Space.Files.changed(cwd)
     if watch = lookup(cwd), do: GenServer.cast(watch, :refresh)
     :ok
   end

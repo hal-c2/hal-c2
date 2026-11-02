@@ -124,14 +124,17 @@ defmodule HalC2.Space.Table do
 
   @doc """
   The table GitHub Markdown lines are, however they are spaced, or nil when they are
-  not one: a header row, a row of alignment marks, and rows of as many cells.
+  not one: a header row, a row of alignment marks, and rows of as many cells, every
+  line with a `|` and every cell one line.
   """
   @spec read([String.t()]) :: map | nil
-  def read([head, rule | body]) do
-    with {:ok, align, rule_widths, tight} <- rule(cells(rule)),
+  def read([head, rule | body] = lines) do
+    with true <- Enum.all?(lines, &Regex.match?(~r/(?<!\\)\|/, &1)),
+         {:ok, align, rule_widths, tight} <- rule(cells(rule)),
          written = Enum.map([head | body], &cells/1),
-         true <- Enum.all?(written, &(length(&1) == length(align))) do
-      rows = Enum.map(written, fn row -> Enum.map(row, &unescape(String.trim(&1))) end)
+         true <- Enum.all?(written, &(length(&1) == length(align))),
+         rows = Enum.map(written, fn row -> Enum.map(row, &unescape(String.trim(&1))) end),
+         true <- Enum.all?(rows, fn row -> Enum.all?(row, &cell?/1) end) do
       widths = Enum.map(by_column(written), &padded_to/1)
       made(align, rows, widths, tight, rule_widths)
     else

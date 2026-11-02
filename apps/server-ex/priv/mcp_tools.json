@@ -4221,5 +4221,43 @@
       "required": ["spaceId", "blockId"],
       "additionalProperties": true
     }
+  },
+  {
+    "name": "hal_c2_page_open_file",
+    "description": "Open a Markdown file of a project as a page of a Space. The page is the file: edits to the page are written to it, and changes to the file show on the page. A file that is a page already is that page, wherever it is. Only files the project's hal-c2.json spaces section counts can be opened (see hal_c2_space_files_scan).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
+        "projectId": {
+          "type": "string",
+          "description": "The project; this thread's when left out."
+        },
+        "relativePath": {
+          "type": "string",
+          "description": "The file's path in the project's own folder."
+        }
+      },
+      "required": ["spaceId", "relativePath"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_space_files_scan",
+    "description": "Propose which of a project's files are Space pages from the Markdown it has, and write that as the spaces section of its hal-c2.json, keeping the rest of the file. A section someone already wrote is kept unless replace is true.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "description": "The project; this thread's when left out."
+        },
+        "replace": {
+          "type": "boolean",
+          "description": "Write over a spaces section that is already there."
+        }
+      },
+      "additionalProperties": true
+    }
   }
 ]
