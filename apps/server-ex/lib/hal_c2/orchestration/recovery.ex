@@ -130,6 +130,12 @@ defmodule HalC2.Orchestration.Recovery do
   @doc false
   # Connects before the MC takes requests; `continue/0` acts on what failed.
   def start_reattach do
+    # Before the listener, so a page's agent asked after it is not the reconciliation's.
+    :persistent_term.put(
+      {__MODULE__, :started},
+      DateTime.truncate(DateTime.utc_now(), :millisecond)
+    )
+
     :persistent_term.put({__MODULE__, :failed}, reattach())
     :ignore
   end
@@ -275,7 +281,9 @@ defmodule HalC2.Orchestration.Recovery do
     :persistent_term.erase({__MODULE__, :delegating})
     for thread_id <- delegating, do: HalC2.Orchestration.Delegation.reconcile(thread_id, false)
     # A page's agent that is not going on says so on its page, whatever the crash lost.
-    HalC2.Space.PageAgent.reconcile(continued)
+    started = :persistent_term.get({__MODULE__, :started}, nil)
+    :persistent_term.erase({__MODULE__, :started})
+    HalC2.Space.PageAgent.reconcile(continued, started)
 
     :ok
   end
