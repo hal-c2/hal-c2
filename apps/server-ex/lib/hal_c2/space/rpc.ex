@@ -98,7 +98,7 @@ defmodule HalC2.Space.Rpc do
     do: page(Schedule.remove(s, p))
 
   defp call("block.insert", %{"spaceId" => s, "pageId" => p, "kind" => _} = i) do
-    spec = Map.take(i, ~w(kind text checked linkedPageId imageId))
+    spec = Map.take(i, ~w(kind text checked linkedPageId imageId level))
     block(Space.insert_block(s, p, spec, Map.get(i, "afterBlockId", :last)))
   end
 

@@ -7,6 +7,11 @@ defmodule HalC2.Space.Blocks do
   writes that block alone. `afterBlockId` places it: after that block, first when
   nil, last when left out (`:last`).
 
+  A `raw` block is Markdown a page does not model, kept as its source so a page
+  imported from Markdown exports exactly as it was (`HalC2.Space.Markdown`). A heading
+  has a `level`, 1 to 6, and a block from Markdown may keep the blank lines above it as
+  its `gap`; moving a block gives it the usual ones.
+
   A block of the kind `generated` is the marked part of a page that updates itself
   (`HalC2.Space.Schedule`): a page has at most one, its text is the Markdown of the last
   run, and only `write_generated/4` writes it. Anyone may move or delete it or comment on
@@ -17,7 +22,7 @@ defmodule HalC2.Space.Blocks do
   alias HalC2.{Patch, StreamState}
   alias HalC2.Space.{Chart, Images, Order, Pages}
 
-  @kinds ~w(paragraph heading checklist callout subpage_link image)
+  @kinds ~w(paragraph heading checklist callout subpage_link image raw)
 
   @generated "generated"
 
@@ -39,7 +44,7 @@ defmodule HalC2.Space.Blocks do
 
   @doc """
   New blocks on a live page from `specs` (maps of `kind`, `text`, `checked`,
-  `linkedPageId`, `imageId`), in order after `after`. Used by insert and by imports.
+  `linkedPageId`, `imageId`, `level`, `gap`), in order after `after`. Used by insert and by imports.
   An image block's text is its caption, the image's name unless given, so a client
   that does not know the kind still shows something true.
   """
@@ -53,7 +58,7 @@ defmodule HalC2.Space.Blocks do
         Enum.map_reduce(specs, low, fn spec, low ->
           order = Order.between(low, high)
           block = new_block(page_id, Map.put(spec, "text", text(state, spec)), order, author, at)
-          {with_image(block, spec), order}
+          {with_extras(block, spec), order}
         end)
 
       {Enum.map(blocks, &{"block", &1["id"], Patch.diff(nil, &1)}), {:ok, blocks}}
@@ -87,9 +92,17 @@ defmodule HalC2.Space.Blocks do
 
   def text(_state, spec), do: spec["text"] || ""
 
-  # Only an image block has the key: every other block stays as it was written.
-  defp with_image(block, %{"kind" => "image", "imageId" => id}), do: Map.put(block, "imageId", id)
-  defp with_image(block, _spec), do: block
+  # Only an image block has `imageId` and a heading `level`, and only a block from
+  # Markdown a `gap`: every other block stays as it was written.
+  defp with_extras(block, spec) do
+    block
+    |> put_extra("imageId", spec["kind"] == "image" && spec["imageId"])
+    |> put_extra("level", spec["kind"] == "heading" && spec["level"])
+    |> put_extra("gap", spec["gap"])
+  end
+
+  defp put_extra(block, _key, value) when value in [nil, false], do: block
+  defp put_extra(block, key, value), do: Map.put(block, key, value)
 
   def insert(state, page_id, spec, after_id, author) do
     case insert_all(state, page_id, [spec], after_id, author) do
@@ -192,7 +205,7 @@ defmodule HalC2.Space.Blocks do
   def move(state, id, after_id, author) do
     change(state, id, author, fn block ->
       with {:ok, low, high} <- place(state, block["pageId"], after_id, id),
-           do: {:ok, %{"order" => Order.between(low, high)}}
+           do: {:ok, %{"order" => Order.between(low, high), "gap" => :unset}}
     end)
   end
 
@@ -266,7 +279,8 @@ defmodule HalC2.Space.Blocks do
             "updatedBy" => author,
             "updatedAt" => Entities.now()
           })
-          |> with_image(first)
+          |> Map.drop(~w(imageId level gap))
+          |> with_extras(first)
 
         {inserted, _} = insert_all(state, page_id, rest, block["id"], author)
         [{"block", block["id"], Patch.diff(block, next)} | inserted]
@@ -335,12 +349,12 @@ defmodule HalC2.Space.Blocks do
 
   defp not_found(what, id), do: {:error, :not_found, "There is no #{what} #{id} in this Space."}
 
-  # Changes a block of a live page with the fields `fun` decides.
+  # Changes a block of a live page with the fields `fun` decides; `:unset` removes one.
   defp change(state, id, author, fun) do
     with {:ok, block} <- fetch(state, id),
          {:ok, _} <- Pages.fetch_live(state, block["pageId"]),
          {:ok, fields} <- fun.(block) do
-      next = Map.merge(block, fields)
+      next = block |> Map.merge(fields) |> Map.reject(fn {_, value} -> value == :unset end)
 
       case Patch.diff(block, next) do
         :unchanged ->
@@ -404,10 +418,19 @@ defmodule HalC2.Space.Blocks do
       spec["kind"] == "image" ->
         with {:ok, _} <- Images.fetch_live(state, spec["imageId"]), do: :ok
 
+      spec["kind"] == "heading" and spec["level"] not in [nil | Enum.to_list(1..6)] ->
+        {:error, :invalid, "A heading's level is 1 to 6."}
+
+      not is_nil(spec["gap"]) and not (is_binary(spec["gap"]) and gap?(spec["gap"])) ->
+        {:error, :invalid, "A block's gap is blank lines."}
+
       true ->
         :ok
     end
   end
+
+  defp gap?("\n" <> rest), do: String.trim(rest) == ""
+  defp gap?(_), do: false
 
   defp on_page(_state, nil, _page_id), do: :ok
 

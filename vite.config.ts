@@ -37,6 +37,8 @@ export default defineConfig({
       // Macroscope's glob-per-line ignore grammar, not Markdown: formatting
       // it rewrites `*` as `_` and joins lines.
       ".macroscope/ignore.md",
+      // Markdown a page must give back byte for byte, odd spacing and all.
+      "apps/server-ex/test/fixtures/markdown",
       "dist",
       "node_modules",
       "pnpm-lock.yaml",

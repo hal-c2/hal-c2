@@ -22,6 +22,8 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js (escaping, safe links, streaming segments)
 #   apps/desktop-qt/tests/tst_Markdown.qml
 #   apps/desktop-qt/tests/native/features/MarkdownSteps.cpp
+#   https://mermaid.js.org/intro/syntax-reference.html (Mermaid diagrams in a reply)
+#   https://github.com/hal-c2/hal-c2/issues/843
 
 Feature: Formatted messages
   Messages are written in Markdown. The timeline shows headings, lists, quotes, code and
@@ -108,6 +110,29 @@ Feature: Formatted messages
       | IMPORTANT | Important |
       | WARNING   | Warning   |
       | CAUTION   | Caution   |
+
+  # The same renderer draws diagrams in pages and the file viewer
+  # (features/space/markdown.feature).
+  @shared @backlog
+  Scenario: A Mermaid diagram in a reply is drawn
+    When the agent answers with a "mermaid" code block holding a flowchart
+    Then on the desktop and the phone the flowchart is drawn in place of the code block
+    And in the terminal the diagram's source is shown, named as a "flowchart" diagram
+    And the user can switch to the diagram's source and copy it
+
+  @shared @backlog
+  Scenario: A Mermaid diagram that cannot be drawn shows its source and says why
+    When the agent answers with a "mermaid" code block holding a flowchart with an unclosed bracket
+    Then the diagram's source is shown as a code block
+    And the user is told where the mistake is
+    And nothing claims the diagram is still being drawn
+
+  @shared @backlog
+  Scenario: A Mermaid diagram being written is drawn once it is finished
+    When the agent is still writing a "mermaid" code block
+    Then the code written so far is shown as a code block
+    When the agent closes the code block
+    Then the diagram is drawn
 
   @shared @backlog-mobile
   Scenario: A user message keeps its line breaks
