@@ -14,3 +14,4 @@ ComposerHighlighter 1.0 ComposerHighlighter.qml
 singleton Spaces 1.0 Spaces.qml
 SpaceRows 1.0 SpaceRows.qml
 singleton Browser 1.0 Browser.qml
+singleton PreviewAutomation 1.0 PreviewAutomation.qml

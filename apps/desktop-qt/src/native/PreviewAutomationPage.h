@@ -13,7 +13,7 @@
 
 // One browser page an agent may drive (PreviewAutomationHost): a preview tab's
 // web view as the browser brick shows it. The host only talks to this, so it
-// never links the web engine; QuickWebPage is the WebEngineView behind it, and
+// never links the web engine; BrowserAutomationPage is the browser brick behind it, and
 // tests stand in pages of their own.
 class PreviewAutomationPage : public QObject {
   Q_OBJECT

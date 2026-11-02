@@ -157,6 +157,7 @@ set(hal_c2_bricks_qml_files
     Markdown.qml
     js/markdown.js
     BrowserPanel.qml
+    AgentCue.qml
     js/browser.js
 )
 set(hal_c2_bricks_resources
