@@ -18,7 +18,9 @@ defmodule HalC2.SpaceFilesPropTest do
   - an edit to a page whose file is gone stays on the page, and a file that comes back
     wins over it, and the page says so; an edit that reaches the file clears that;
   - a page writing its file does not set the server following the folder, but another
-    page that is the same file through a link takes what it wrote; a link stays a link;
+    page that is the same file through a link takes what it wrote, once the server has
+    seen a page go through a link (at an open or a follow) or the write went through one;
+    a link stays a link;
   - a linked page reads as what it last read or wrote, records that text's hash, and
     says whether its file is gone;
   - a file that vanished is followed to the one file no page has that reads the same,
@@ -87,13 +89,14 @@ defmodule HalC2.SpaceFilesPropTest do
   # --- model ----------------------------------------------------------------------
 
   # disk: path => text of the files in the folder; sym: path => path, its links;
-  # locked: the files that are read-only. links:
+  # locked: the files that are read-only. seen: whether a page's path went through a
+  # link when the server last looked (opening it, or following the folder). links:
   # path => %{id, word, base, missing, unwritten, conflict}, the page of that file, the
   # word it shows, the text it last read or wrote, whether its file is gone, whether it
   # was edited since, and whether it says the file won over an edit. unlinked: pages
   # made ordinary, %{id, word}.
   def initial_state,
-    do: %{disk: %{}, sym: %{}, locked: MapSet.new(), links: %{}, unlinked: []}
+    do: %{disk: %{}, sym: %{}, locked: MapSet.new(), seen: false, links: %{}, unlinked: []}
 
   def command(s) do
     linked = Map.keys(s.links)
@@ -157,6 +160,8 @@ defmodule HalC2.SpaceFilesPropTest do
 
   def precondition(_s, _call), do: true
 
+  defp opens?(s, path), do: Map.has_key?(s.links, path) or text(s, path) != nil
+
   defp free?(s, path), do: not Map.has_key?(s.disk, path) and not Map.has_key?(s.sym, path)
 
   # The file `path` is: the one it links to, or itself.
@@ -198,6 +203,8 @@ defmodule HalC2.SpaceFilesPropTest do
     do: %{s | locked: MapSet.put(s.locked, path)}
 
   def next_state(s, res, {:call, _, :open, [path]}) do
+    s = %{s | seen: s.seen or (opens?(s, path) and Map.has_key?(s.sym, path))}
+
     cond do
       link = s.links[path] ->
         put_in(s, [:links, path], read(link, text(s, path)))
@@ -239,13 +246,16 @@ defmodule HalC2.SpaceFilesPropTest do
       true ->
         s = put_in(s.disk[file], doc(word))
 
+        twins? = Map.has_key?(s.sym, path) or s.seen
+
         links =
           Map.new(s.links, fn
             {^path, link} ->
               {path, %{link | word: word, base: doc(word), conflict: false}}
 
             {other, link} ->
-              {other, if(resolve(s, other) == file, do: read(link, doc(word)), else: link)}
+              {other,
+               if(twins? and resolve(s, other) == file, do: read(link, doc(word)), else: link)}
           end)
 
         %{s | links: links}
@@ -270,7 +280,7 @@ defmodule HalC2.SpaceFilesPropTest do
   defp follow(s) do
     taken = MapSet.new(Map.keys(s.links))
 
-    {links, _} =
+    {links, taken} =
       s.links
       |> Enum.sort_by(fn {path, _} -> path end)
       |> Enum.reduce({%{}, taken}, fn {path, link}, {links, taken} ->
@@ -291,7 +301,7 @@ defmodule HalC2.SpaceFilesPropTest do
         end
       end)
 
-    %{s | links: links}
+    %{s | links: links, seen: Enum.any?(taken, &Map.has_key?(s.sym, &1))}
   end
 
   defp moved(disk, base, taken) do

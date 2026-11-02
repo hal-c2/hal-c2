@@ -61,4 +61,38 @@ defmodule HalC2.Space.FilesTest do
     assert Files.generation(root) == seen
     assert texts(space, b) == ["beta"]
   end
+
+  test "a page with no links is still followed after an edit skips looking for its twins",
+       %{space: space, root: root} do
+    a = open!(space, root, "a.md", "# A\n\nalpha\n")
+    {:ok, state} = Space.state(space)
+    [block] = Blocks.of_page(state, a)
+    {:ok, _} = Space.update_block(space, block["id"], "gamma")
+    :ok = Files.drain()
+
+    File.write!(Path.join(root, "a.md"), "# A\n\ndelta\n")
+    seen = Files.generation(root)
+    Files.changed(root)
+    :ok = Files.await(root, seen)
+
+    assert texts(space, a) == ["delta"]
+  end
+
+  test "a write through a link the server has not seen yet still reaches the file's page",
+       %{space: space, root: root} do
+    a = open!(space, root, "a.md", "# A\n\nalpha\n")
+    l = open!(space, root, "l.md", "# A\n\nalpha\n")
+
+    # No page went through a link when the server looked; now l.md is one, unsignalled.
+    File.rm!(Path.join(root, "l.md"))
+    File.ln_s!("a.md", Path.join(root, "l.md"))
+
+    {:ok, state} = Space.state(space)
+    [block] = Blocks.of_page(state, l)
+    {:ok, _} = Space.update_block(space, block["id"], "gamma")
+    :ok = Files.drain()
+
+    assert File.read!(Path.join(root, "a.md")) == "# A\n\ngamma\n"
+    assert texts(space, a) == ["gamma"]
+  end
 end
