@@ -116,7 +116,7 @@ Feature: Terminal input and output
     @mc
     Scenario: Stopping the MC stops every running shell
       Given running terminals, one of whose shells ignores the stop request
-      When the MC shuts down
+      When the MC shuts down with them running
       Then each shell is asked to stop
       And the shell that ignores it is killed after the grace period
       And the MC does not wait for them longer than that
