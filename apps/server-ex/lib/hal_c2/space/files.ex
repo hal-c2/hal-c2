@@ -343,6 +343,10 @@ defmodule HalC2.Space.Files do
     changes ++ settle(state, page_id, pending, anchor)
   end
 
+  # What a block read from the file holds beyond its kind and text, taken whole into the
+  # block it replaces.
+  @spec_fields ~w(imageId level gap table language fence info)
+
   defp settle(_state, _page_id, {[], []}, _anchor), do: []
 
   defp settle(state, page_id, {dels, ins}, anchor) do
@@ -353,14 +357,14 @@ defmodule HalC2.Space.Files do
       Enum.flat_map(paired, fn {block, spec} ->
         next =
           block
-          |> Map.drop(~w(imageId level gap))
+          |> Map.drop(@spec_fields)
           |> Map.merge(%{
             "kind" => spec["kind"],
             "text" => spec["text"] || "",
             "checked" => spec["kind"] == "checklist" and spec["checked"] == true,
             "linkedPageId" => if(spec["kind"] == "subpage_link", do: spec["linkedPageId"])
           })
-          |> Map.merge(Map.take(spec, ~w(imageId level gap)))
+          |> Map.merge(Map.take(spec, @spec_fields))
 
         case Patch.diff(block, next) do
           :unchanged ->
@@ -406,7 +410,8 @@ defmodule HalC2.Space.Files do
 
     {kind, block["text"] || "", kind == "checklist" and block["checked"] == true,
      if(kind == "subpage_link", do: block["linkedPageId"]), block["imageId"],
-     if(kind == "heading", do: Markdown.level(block)), block["gap"]}
+     if(kind == "heading", do: Markdown.level(block)), block["gap"],
+     if(kind == "code", do: Map.take(block, ~w(language fence info)))}
   end
 
   defp file(%{"file" => %{} = file}), do: {:ok, file}

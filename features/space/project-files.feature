@@ -201,6 +201,25 @@ Feature: Project files as Space pages
       When an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nInstall it with mise." and its turn ends
       Then the page "Guide" shows "Install it with mise."
 
+    Scenario: A table's cell and a code block's language the file changes stay in the file
+      When an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nInstall it.\n\n| Step | Owner |\n| ---- | ----- |\n| MC   | Ada   |\n\n```js\nrun()\n```" and its turn ends
+      And an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nInstall it.\n\n| Step | Owner |\n| ---- | ----- |\n| MC   | Bob   |\n\n```ts\nrun()\n```" and its turn ends
+      And the user changes the block "Install it." to "Install it twice."
+      Then "docs/guide.md" of "shop" reads:
+        """
+        # Guide
+
+        Install it twice.
+
+        | Step | Owner |
+        | ---- | ----- |
+        | MC   | Bob   |
+
+        ```ts
+        run()
+        ```
+        """
+
     Scenario: A comment stays on a block the file keeps
       Given the user commented "Which version?" on the block "Install it."
       When an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nInstall it.\n\nThen run it." and its turn ends
