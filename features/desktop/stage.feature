@@ -4,7 +4,7 @@
 #   apps/desktop-qt/src/native/Keybindings.cpp (stage.moveTab mod+alt+s, stage.toggleFocus mod+alt+f)
 #   apps/desktop-qt/qml/HalC2/Bricks/Stage.qml (tab strip, layout switcher, pane headers, drop zones)
 #   apps/desktop-qt/qml/HalC2/Bricks/PanelBodies.qml, PanelBodySlot.qml (one body per kind, moved, never remade)
-#   apps/desktop-qt/qml/HalC2/Bricks/DefaultLayout.qml (beside the conversation, focus mode, narrow windows)
+#   apps/desktop-qt/qml/HalC2/Bricks/ThreadArea.qml (beside the conversation, focus mode, narrow windows)
 #   apps/desktop-qt/tests/tst_Stage.qml (the scenarios tagged @backlog-desktop, by name)
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   apps/desktop-qt/tests/prop/tst_RightPanelProp.cpp (the stage's invariants over any command sequence)
@@ -93,9 +93,9 @@ Feature: The stage: right panel tabs in the thread's centre
 
     # Proved by tst_Stage.qml (test_anEmptyPaneOffersTheStagesTabs), not yet by a step.
     @desktop @backlog-desktop
-    Scenario: An empty pane offers the stage's tabs
+    Scenario: An empty pane offers the tabs no pane shows
       Given the "Diff" tab is on the stage in a grid
-      Then each empty pane lists the stage's tabs to show there
+      Then each empty pane offers the "Files" tab to show there
 
     # Proved by tst_Stage.qml (test_aTabDragsBetweenThePanelAndTheStage), not yet by a step.
     @desktop @backlog-desktop

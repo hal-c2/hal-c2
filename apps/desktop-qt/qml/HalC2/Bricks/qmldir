@@ -17,6 +17,7 @@ GitActions 1.0 GitActions.qml
 Notifications 1.0 Notifications.qml
 RightPanel 1.0 RightPanel.qml
 Stage 1.0 Stage.qml
+ThreadArea 1.0 ThreadArea.qml
 PanelTabDrag 1.0 PanelTabDrag.qml
 PanelBodySlot 1.0 PanelBodySlot.qml
 PanelBodies 1.0 PanelBodies.qml

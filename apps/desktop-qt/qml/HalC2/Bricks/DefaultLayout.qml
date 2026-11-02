@@ -72,11 +72,11 @@ Item {
 
     // Local QML extensions can customize one brick without copying the layout.
     property alias sidebar: sidebarView
-    property alias composer: composerView
+    property alias composer: threadArea.composer
     property alias workspace: workspaceView
-    property alias centreView: centreHost
+    property alias centreView: threadArea.centreView
     property alias rightPanel: panelView
-    property alias stage: stageView
+    property alias stage: threadArea.stage
     property alias toolbar: toolbarLoader.sourceComponent
     property alias navigationPanel: sidebarExtension.sourceComponent
     // Null in a build without a terminal (Terminals.supported).
@@ -260,189 +260,17 @@ Item {
                     visible: layout.window.settingsActive
                 }
 
-                // The route's centre, and a thread's stage: the conversation
-                // (timeline and composer) with the stage beside it, or, with
-                // the timeline put away, the stage over the composer and a
-                // line of what the agent did last. Where the two do not fit
-                // side by side, one shows at a time and that line switches.
-                Item {
+                // The route's centre, with a thread's stage beside or over it.
+                ThreadArea {
                     id: threadArea
-
-                    readonly property var stageModel: Shell.state.panel?.stage ?? null
-                    readonly property bool staged: (layout.window.route?.kind ?? "") === "thread" && (stageModel?.tabs ?? []).length > 0
-                    readonly property bool focusMode: staged && stageModel.focus === true
-                    readonly property bool narrow: width < layout.threadMinimumWidth + stageView.minimumWidth + 1
-                    readonly property bool timelineShown: !staged || !focusMode
-                    readonly property bool besideShown: staged && !focusMode && !narrow
-                    // The conversation's width beside the stage: the one being
-                    // dragged to, the controller's, or 40%.
-                    property int dragWidth: -1
-                    readonly property int chatWidth: {
-                        const kept = dragWidth >= 0 ? dragWidth : (stageModel?.chatWidth ?? 0);
-                        const wanted = kept > 0 ? kept : Math.round(width * 0.4);
-                        return Math.max(layout.threadMinimumWidth, Math.min(wanted, width - stageView.minimumWidth - 1));
-                    }
 
                     objectName: "threadArea"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     visible: !layout.window.settingsActive
-
-                    ColumnLayout {
-                        id: conversation
-
-                        width: threadArea.besideShown ? threadArea.chatWidth : threadArea.width
-                        height: threadArea.height
-                        spacing: 0
-
-                        // The route's centre: a thread, draft, home, pull requests or usage.
-                        CentreHost {
-                            id: centreHost
-                            objectName: "centreHost"
-
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            kind: layout.window.route?.kind ?? ""
-                            visible: threadArea.timelineShown
-                        }
-
-                        // Where the stage lies while the timeline is put away.
-                        Item {
-                            id: stageRoom
-
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            visible: !threadArea.timelineShown
-                        }
-
-                        // What the agent did last while the timeline is put
-                        // away, or the stage's tabs while it is out of room;
-                        // a click shows the other.
-                        Rectangle {
-                            objectName: "stageActivity"
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 30
-                            visible: threadArea.staged && (threadArea.focusMode || threadArea.narrow)
-                            color: activityTap.hovered ? Theme.palette.color("surface", "#141416") : Theme.palette.color("chrome", "#0b0b0d")
-                            Accessible.role: Accessible.Button
-                            Accessible.name: activityAction.text
-                            Accessible.onPressAction: Shell.dispatch("stage.toggleFocus")
-
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                height: 1
-                                color: Theme.palette.color("border", "#27272a")
-                            }
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 12
-                                anchors.rightMargin: 12
-                                spacing: 8
-
-                                // Still while the agent works: a dot, not a spinner.
-                                Rectangle {
-                                    Layout.preferredWidth: 6
-                                    Layout.preferredHeight: 6
-                                    radius: 3
-                                    visible: threadArea.focusMode
-                                    color: Threads.timeline?.working === true ? Theme.palette.color("accent", "#2563eb") : Theme.palette.color("textMuted", "#8b8b93")
-                                }
-
-                                Text {
-                                    objectName: "stageActivityText"
-                                    Layout.fillWidth: true
-                                    textFormat: Text.PlainText
-                                    elide: Text.ElideRight
-                                    text: {
-                                        if (!threadArea.focusMode)
-                                            return qsTr("%n tab(s) in the centre", "", threadArea.stageModel?.tabs.length ?? 0);
-                                        const latest = String(Threads.timeline?.latest ?? "");
-                                        return latest.length > 0 ? latest : qsTr("Nothing in this thread yet");
-                                    }
-                                    color: Theme.palette.color("text", "#e4e4e7")
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                                }
-
-                                Text {
-                                    id: activityAction
-                                    text: threadArea.focusMode ? qsTr("Show the timeline") : qsTr("Show the tabs")
-                                    color: Theme.palette.color("textMuted", "#8b8b93")
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                                }
-                            }
-
-                            HoverHandler {
-                                id: activityTap
-                                cursorShape: Qt.PointingHandCursor
-                            }
-
-                            TapHandler {
-                                onTapped: Shell.dispatch("stage.toggleFocus")
-                            }
-                        }
-
-                        Composer {
-                            id: composerView
-
-                            Layout.fillWidth: true
-                            visible: ready
-                            conversationScrolled: centreHost.conversationScrolled
-                        }
-                    }
-
-                    // Between the conversation and the stage: drag to resize,
-                    // double click for the default width.
-                    Rectangle {
-                        objectName: "stageSplitter"
-                        x: threadArea.chatWidth
-                        width: 1
-                        height: threadArea.height
-                        visible: threadArea.besideShown
-                        color: Theme.palette.color("border", "#27272a")
-
-                        MouseArea {
-                            property real pressX: 0
-                            property int pressWidth: 0
-
-                            anchors.centerIn: parent
-                            width: 7
-                            height: parent.height
-                            cursorShape: Qt.SplitHCursor
-                            preventStealing: true
-                            onPressed: mouse => {
-                                pressX = mapToItem(threadArea, mouse.x, 0).x;
-                                pressWidth = threadArea.chatWidth;
-                            }
-                            onPositionChanged: mouse => {
-                                if (pressed)
-                                    threadArea.dragWidth = Math.round(pressWidth + mapToItem(threadArea, mouse.x, 0).x - pressX);
-                            }
-                            onReleased: {
-                                const width = threadArea.chatWidth;
-                                threadArea.dragWidth = -1;
-                                if (width !== (threadArea.stageModel?.chatWidth ?? 0))
-                                    Shell.dispatch("stage.resize", {
-                                        width: width
-                                    });
-                            }
-                            onCanceled: threadArea.dragWidth = -1
-                            onDoubleClicked: Shell.dispatch("stage.resize", {})
-                        }
-                    }
-
-                    Stage {
-                        id: stageView
-
-                        readonly property int minimumWidth: 360
-
-                        bodies: panelBodies
-                        visible: threadArea.staged && (threadArea.focusMode || threadArea.besideShown)
-                        x: threadArea.focusMode ? 0 : threadArea.chatWidth + 1
-                        width: threadArea.focusMode ? threadArea.width : threadArea.width - x
-                        height: threadArea.focusMode ? stageRoom.height : threadArea.height
-                    }
+                    routeKind: layout.window.route?.kind ?? ""
+                    bodies: panelBodies
+                    threadMinimumWidth: layout.threadMinimumWidth
                 }
 
                 // The terminal drawer, in a build that has a terminal: the

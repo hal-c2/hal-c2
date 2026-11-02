@@ -20,6 +20,7 @@ set(hal_c2_bricks_qml_files
     Notifications.qml
     RightPanel.qml
     Stage.qml
+    ThreadArea.qml
     PanelTabDrag.qml
     PanelBodySlot.qml
     PanelBodies.qml

@@ -418,15 +418,15 @@ Rectangle {
                         }
                     }
 
-                    // A press anywhere in the pane focuses it, and still
-                    // reaches what is under it.
+                    // A press anywhere in the pane focuses it. A PointHandler
+                    // only watches, so the press still reaches the buttons and
+                    // the body under it (a TapHandler here would take clicks).
                     Item {
                         anchors.fill: parent
                         z: 2
 
-                        TapHandler {
-                            gesturePolicy: TapHandler.DragThreshold
-                            onPressedChanged: if (pressed && !pane.focused)
+                        PointHandler {
+                            onActiveChanged: if (active && !pane.focused)
                                 Shell.dispatch("stage.focusPane", {
                                     pane: pane.index
                                 })
