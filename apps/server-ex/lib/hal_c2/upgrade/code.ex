@@ -11,9 +11,13 @@ defmodule HalC2.Upgrade.Code do
   """
 
   # Built for the build machine's platform (`stage_cursor_acp` and
-  # `stage_machine_files` in mix.exs), so they stay the running version's, or stay
+  # `stage_native_helpers` in mix.exs), so they stay the running version's, or stay
   # absent; the manifest's `packages` says when they change.
-  @platform_packages ["priv/cursor-acp/node_modules", "priv/bin/hal-c2-machine-files"]
+  @platform_packages [
+    "priv/cursor-acp/node_modules",
+    "priv/bin/hal-c2-machine-files",
+    "priv/bin/hal-c2-pid-kill"
+  ]
 
   @doc """
   Writes release `target` under `root` from the release `running` describes and the
