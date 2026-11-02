@@ -56,34 +56,8 @@ defmodule HalC2.SourceControl.ChangeRequests do
     end
   end
 
-  def for_branch(cwd, %{kind: "forgejo", repository: repository} = remote, branch) do
-    path =
-      "repos/#{Forgejo.encode_repository(repository)}/pulls?state=all&sort=recentupdate&limit=50"
-
-    # The remote's URL picks the login of its server.
-    target = [repository: repository, remote_url: remote[:url]]
-
-    with {:ok, body, _} <- Forgejo.api(cwd, target, path),
-         {:ok, pulls} when is_list(pulls) <- JSON.decode(body),
-         %{"number" => number} = pr <- Enum.find(pulls, &(get_in(&1, ["head", "ref"]) == branch)) do
-      state =
-        cond do
-          pr["merged"] == true -> "merged"
-          pr["state"] == "closed" -> "closed"
-          true -> "open"
-        end
-
-      draft = Map.get(pr, "draft") || String.match?(pr["title"] || "", ~r/^(?:\[WIP\]|WIP:)/i)
-
-      change_request(number, pr["title"], pr["html_url"], pr["base"]["ref"], pr["head"]["ref"],
-        state: state,
-        draft: draft == true,
-        updated_at: pr["updated_at"]
-      )
-    else
-      _ -> nil
-    end
-  end
+  def for_branch(cwd, %{kind: "forgejo"} = remote, branch),
+    do: cwd |> forgejo_list(remote, branch, limit: 1, pages: 1) |> List.first()
 
   def for_branch(_cwd, %{kind: "bitbucket", repository: repository}, branch) do
     states = Enum.map_join(@bitbucket_states, " OR ", &~s(state = "#{&1}"))
@@ -149,6 +123,67 @@ defmodule HalC2.SourceControl.ChangeRequests do
 
   def view(_cwd, _remote, _number),
     do: {:error, {:failed, "Change requests cannot be previewed for this host yet."}}
+
+  @doc """
+  A branch's Forgejo pull requests, the most recently updated first, as
+  `VcsStatusChangeRequest`s: read 50 at a time until `:limit` (default 20) are found
+  or a page comes back empty (or `:pages` were read; a status read stops at the first).
+  `:state` is `all` (the default), `open`, `closed` or
+  `merged`, which Forgejo has no list of: merged ones are picked out of the closed.
+  As `listChangeRequests` in the Forgejo provider.
+  """
+  def forgejo_list(cwd, %{repository: repository} = remote, branch, opts \\ []) do
+    state = opts[:state] || "all"
+    limit = opts[:limit] || 20
+    asked = if state == "merged", do: "closed", else: state
+
+    # The remote's URL picks the login of its server.
+    target = [repository: repository, remote_url: remote[:url]]
+
+    pages = Stream.iterate(1, &(&1 + 1))
+
+    if(opts[:pages], do: Stream.take(pages, opts[:pages]), else: pages)
+    |> Stream.map(fn page ->
+      path =
+        "repos/#{Forgejo.encode_repository(repository)}/pulls?state=#{asked}&sort=recentupdate&limit=50&page=#{page}"
+
+      with {:ok, body, _} <- Forgejo.api(cwd, target, path),
+           {:ok, pulls} when is_list(pulls) <- JSON.decode(body),
+           do: pulls,
+           else: (_ -> [])
+    end)
+    |> Stream.take_while(&(&1 != []))
+    |> Stream.flat_map(fn pulls ->
+      for %{} = pr <- pulls,
+          get_in(pr, ["head", "ref"]) == branch,
+          change = forgejo_change_request(pr),
+          change != nil and state in ["all", change["state"]],
+          do: change
+    end)
+    |> Enum.take(limit)
+  end
+
+  defp forgejo_change_request(pr) do
+    state =
+      cond do
+        pr["merged"] == true -> "merged"
+        pr["state"] == "closed" -> "closed"
+        true -> "open"
+      end
+
+    draft = Map.get(pr, "draft") || String.match?(pr["title"] || "", ~r/^(?:\[WIP\]|WIP:)/i)
+
+    change_request(
+      pr["number"],
+      pr["title"],
+      pr["html_url"],
+      get_in(pr, ["base", "ref"]),
+      get_in(pr, ["head", "ref"]),
+      state: state,
+      draft: draft == true,
+      updated_at: pr["updated_at"]
+    )
+  end
 
   # A host's answer missing what a status has to name is no change request.
   defp change_request(number, title, url, base, head, opts)
