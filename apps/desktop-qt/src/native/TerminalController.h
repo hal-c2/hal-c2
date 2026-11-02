@@ -10,6 +10,7 @@
 #include <QSet>
 #include <QSize>
 #include <QStringList>
+#include <QTimer>
 #include <QVariant>
 
 #include <functional>
@@ -53,6 +54,8 @@ public:
 
   QString terminalId() const { return m_terminalId; }
   QSize size() const { return m_sent; }
+  // Whether a shell has answered: the MC accepted this terminal at least once.
+  bool hasAttached() const { return m_attached; }
 
   Q_INVOKABLE QString transcript() const { return m_transcript.join(QString()); }
   // Keystrokes, pastes and replies from the Terminal: sent one request at a
@@ -60,6 +63,17 @@ public:
   Q_INVOKABLE void write(const QString& data);
   // Only the latest size matters; one resize is in flight at a time.
   Q_INVOKABLE void resize(int columns, int rows);
+  // Says what went wrong with a terminal action in the terminal itself; the shell keeps running.
+  Q_INVOKABLE void report(const QString& message);
+  // A parked session stops saying what it has read, so an unseen shell's output
+  // stops coming once the MC's window for it is full: the shell keeps running, the
+  // MC keeps its history, and nothing here grows past the capped transcript.
+  // Coming back says how far it got; if the MC held output back it then sends a
+  // snapshot, which replaces the screen.
+  void setParked(bool parked);
+  // How long the tail of some output waits to be acknowledged (tests change it).
+  static constexpr int defaultAckDelay = 50;
+  static void setAckDelay(int milliseconds = defaultAckDelay);
 
 signals:
   void output(const QString& data);
@@ -81,6 +95,8 @@ private:
   void note(const QString& text);
   void flushWrites();
   void flushResize();
+  void consumed(qint64 sequence, qsizetype size);
+  void sendAck();
 
   McClient* m_client;
   QString m_environmentId;
@@ -95,6 +111,11 @@ private:
   QSize m_wanted;
   QSize m_sent;
   bool m_resizing = false;
+  // The latest sequence the terminal has taken and the MC has not heard of, or -1.
+  qint64 m_unacked = -1;
+  qsizetype m_unackedSize = 0;
+  QTimer m_ackTimer;
+  bool m_parked = false;
 };
 
 // The terminals of the thread on screen, the drawer's and the right panel's,
@@ -195,7 +216,11 @@ class TerminalController : public QObject, public NativeController {
   Q_PROPERTY(QString activeGroup READ activeGroup NOTIFY changed)
   // {group: terminal count} for every split or panel group.
   Q_PROPERTY(QVariantMap groupSizes READ groupSizes NOTIFY changed)
+  // How many terminals the drawer holds: with more than one it lists them.
+  Q_PROPERTY(int drawerCount READ drawerCount NOTIFY changed)
   Q_PROPERTY(TerminalTabs* tabs READ tabs CONSTANT)
+  // The system's or the user's: the bricks' cursors stop blinking.
+  Q_PROPERTY(bool reduceMotion READ reduceMotion NOTIFY reduceMotionChanged)
 
 public:
   static constexpr int maxTerminals = 6;
@@ -226,10 +251,12 @@ public:
 
   bool available() const { return m_place.has_value(); }
   bool isOpen() const;
+  bool reduceMotion() const;
   int height() const { return m_height; }
   QString activeTerminalId() const;
   QString activeGroup() const;
   QVariantMap groupSizes() const;
+  int drawerCount() const;
   TerminalTabs* tabs() { return &m_tabs; }
   // The thread whose terminals these are ("<environment>:<thread id>").
   QString threadKey() const { return m_threadKey; }
@@ -255,6 +282,7 @@ public:
 
 signals:
   void changed();
+  void reduceMotionChanged();
   // The terminal's drawer or panel tab should give it the keyboard.
   void focusRequested(const QString& terminalId);
 
@@ -271,6 +299,17 @@ private:
     bool panel = false;
     QString active;
   };
+  struct Starting {
+    // The drawer's active terminal before this one.
+    QString active;
+    // The split group it joined, and what that group was before.
+    QString group;
+    bool madeGroup = false;
+    bool groupVertical = false;
+    QString groupActive;
+    // The caller reports a refusal itself (a script says which one failed).
+    bool quiet = false;
+  };
   struct ThreadUi {
     bool open = false;
     // The drawer's active terminal.
@@ -281,6 +320,12 @@ private:
     QSet<QString> local;
     // Closed here; ignored until the MC confirms.
     QSet<QString> closing;
+    // Closed here and the MC's `remove` not seen yet. Its list is ordered, so
+    // whatever it says of the terminal until then is older than the close; its
+    // reply to the close is not ordered with the list, so it does not settle this.
+    QSet<QString> gone;
+    // Opened here and no shell yet: what to put back if the MC refuses it.
+    QHash<QString, Starting> starting;
     // Read from the store and not yet checked against the MC's terminals:
     // the drawer waits for the list rather than open on a terminal that is gone.
     bool restored = false;
@@ -300,10 +345,15 @@ private:
   bool setOpen(bool open);
   void openTerminal(const QString& terminalId);
   void closeTerminal(const QString& terminalId);
+  // A terminal new here: its id, and what undoes it if the MC refuses it.
+  static Starting& startTerminal(ThreadUi& ui, const QString& terminalId);
+  // The MC refused a terminal still starting: as if it had never been asked
+  // for. A terminal the MC already has keeps its tab and says why instead.
+  void abandonStart(const QString& threadKey, const QString& terminalId, const QString& reason);
   QString nextTerminalId() const;
   TerminalSession* session(const QString& terminalId) const;
   void toast(const QString& title, const QString& description);
-  void followLink(const QString& kind, const QString& text, const QString& reportedCwd);
+  void followLink(const QString& terminalId, const QString& kind, const QString& text, const QString& reportedCwd);
   void save();
   // What `changed` notifies (the right panel reads threadKey too).
   struct Facts {
@@ -314,6 +364,7 @@ private:
     QString active;
     QString activeGroup;
     QVariantMap groupSizes;
+    int drawerCount = 0;
     bool operator==(const Facts&) const = default;
   };
   Facts facts() const;

@@ -56,22 +56,18 @@ void ShellBridge::publish(const QString& key, const QVariant& value) {
   emit stateEntryChanged(key, value);
 }
 
-void ShellBridge::openExternal(const QUrl& url) {
+bool ShellBridge::openExternal(const QUrl& url) {
   const auto scheme = url.scheme();
   // The app's own links open in the app.
   if (scheme == QLatin1String("hal-c2")) {
     dispatch(QStringLiteral("link.open"), QVariantMap{{QStringLiteral("url"), url.toString()}});
-    return;
+    return true;
   }
   if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https") &&
       scheme != QStringLiteral("mailto")) {
-    return;
+    return false;
   }
-  if (m_openUrl) {
-    m_openUrl(url);
-  } else {
-    QDesktopServices::openUrl(url);
-  }
+  return m_openUrl ? m_openUrl(url) : QDesktopServices::openUrl(url);
 }
 
 void ShellBridge::windowCommand(const QString& command) {

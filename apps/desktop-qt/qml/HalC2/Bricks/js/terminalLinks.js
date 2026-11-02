@@ -54,7 +54,8 @@ function extract(line) {
 // The link at (row, column) of a terminal `columns` wide, where `text` is its
 // scrollback and screen with soft wraps joined and `row` counts from the top
 // of the scrollback. A line takes a row per `columns` characters, so a link
-// that wraps is found from any of its rows. Null when there is none.
+// that wraps is found from any of its rows. Its `top` is its line's first row.
+// Null when there is none.
 function linkAt(text, columns, row, column) {
     if (columns <= 0 || row < 0 || column < 0)
         return null;
@@ -66,9 +67,26 @@ function linkAt(text, columns, row, column) {
             if (line.length > MAX_LINE)
                 return null;
             const at = (row - top) * columns + column;
-            return extract(line).find(link => at >= link.start && at < link.end) ?? null;
+            const link = extract(line).find(link => at >= link.start && at < link.end);
+            if (link === undefined)
+                return null;
+            link.top = top;
+            return link;
         }
         top += rows;
     }
     return null;
+}
+
+// Where linkAt's `link` is drawn in a terminal `columns` wide, a piece per row:
+// [{row, column, length}], its rows counted as linkAt's are.
+function spans(link, columns) {
+    const pieces = [];
+    for (let at = link.start; at < link.end;) {
+        const column = at % columns;
+        const length = Math.min(columns - column, link.end - at);
+        pieces.push({ row: link.top + Math.floor(at / columns), column: column, length: length });
+        at += length;
+    }
+    return pieces;
 }

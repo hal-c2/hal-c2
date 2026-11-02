@@ -108,6 +108,7 @@ qt_add_qml_module(hal_c2_bricks
     RevertDialog.qml
     TerminalSplits.qml
     TerminalMenu.qml
+    TerminalScrollbar.qml
     Plugin.qml
     Contribution.qml
     PluginSlot.qml
@@ -159,6 +160,7 @@ qt_add_qml_module(hal_c2_bricks
     qmldir
     plugin/Text.qml
     icons/antigravity.png
+    fonts/SymbolsNerdFontMono-Regular.woff2
     models/phone.glb
     models/tablet.glb
     models/tablet-keyboard.glb

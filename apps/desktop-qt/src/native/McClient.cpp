@@ -156,6 +156,11 @@ void McClient::more(int id, int items) {
   send({{QStringLiteral("t"), QStringLiteral("more")}, {QStringLiteral("id"), id}, {QStringLiteral("items"), items}});
 }
 
+void McClient::ack(int id, qint64 sequence) {
+  if (!m_subscriptions.contains(id)) return;
+  send({{QStringLiteral("t"), QStringLiteral("ack")}, {QStringLiteral("id"), id}, {QStringLiteral("sequence"), sequence}});
+}
+
 void McClient::unsubscribe(int id) {
   if (!m_subscriptions.contains(id)) return;
   endSubscription(id);

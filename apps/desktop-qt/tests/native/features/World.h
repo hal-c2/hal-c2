@@ -58,6 +58,8 @@ public:
   QString clipboard;
   bool clipboardFails = false;
   QList<QUrl> openedUrls;
+  // Nothing on this machine can open an address.
+  bool urlsRefused = false;
   // A brick the scenario keeps on screen (DeviceSteps' DevicePanel): it goes
   // before the shell it draws, on restart too.
   std::unique_ptr<Brick> brick;

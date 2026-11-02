@@ -645,6 +645,7 @@ bool ComposerController::submit(const QVariantMap& payload) {
   const bool hasExtras = !kept.attachments.isEmpty() || !kept.excerpts.isEmpty();
   const bool planFollowUp = !hasExtras && turnState().value(QStringLiteral("plan")).isValid();
   if (text.trimmed().isEmpty() && !hasExtras && !planFollowUp) return true;
+  if (stopForExpiredExcerpts(text, kept)) return true;
 
   QString mode = QStringLiteral("auto");
   if (running(target)) {
@@ -747,6 +748,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   const QList<Attachment> attachments = fromDraft ? std::exchange(draft.attachments, {}) : QList<Attachment>();
   const QList<Excerpt> contexts =
       fromDraft ? std::exchange(draft.excerpts, {}) : QList<Excerpt>();
+  warnOfExpiredExcerpts(contexts);
   withExcerpts(message, contexts);
   commands.append(message);
   // A send made while an earlier one is still in flight waits its turn.
@@ -819,6 +821,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   QList<Attachment> attachments = m_drafts.value(draftId).attachments;
   const QList<Excerpt> contexts = m_drafts.value(draftId).excerpts;
   if (text.trimmed().isEmpty() && attachments.isEmpty() && contexts.isEmpty()) return true;
+  if (stopForExpiredExcerpts(text, m_drafts.value(draftId))) return true;
   if (m_launching.contains(draftId)) return true;
 
   const WorkspaceController::Launch where = shell->controller<WorkspaceController>()->launch(draftId);
@@ -862,6 +865,7 @@ bool ComposerController::submitDraft(const QString& draftId, const QVariantMap& 
   rememberModel(modelSelection);
   if (!contexts.isEmpty()) {
     QJsonObject initial = input.value(QLatin1String("initialMessage")).toObject();
+    warnOfExpiredExcerpts(contexts);
     withExcerpts(initial, contexts);
     input.insert(QStringLiteral("initialMessage"), initial);
   }
@@ -1961,6 +1965,36 @@ std::optional<QString> ComposerController::draftPreview(const QString& target) c
   const qsizetype count = kept == m_drafts.cend() ? 0 : kept->attachments.size() + kept->excerpts.size();
   if (count == 0) return std::nullopt;
   return count == 1 ? tr("1 attachment") : tr("%1 attachments").arg(count);
+}
+
+namespace {
+
+template <typename Excerpts>
+qsizetype countExpired(const Excerpts& excerpts) {
+  return std::count_if(excerpts.cbegin(), excerpts.cend(), [](const auto& context) {
+    return context.citation.isEmpty() && context.review.isEmpty() && context.text.trimmed().isEmpty();
+  });
+}
+
+}  // namespace
+
+bool ComposerController::stopForExpiredExcerpts(const QString& text, const Draft& draft) {
+  const qsizetype expired = countExpired(draft.excerpts);
+  if (expired == 0 || expired != draft.excerpts.size() || !text.trimmed().isEmpty() || !draft.attachments.isEmpty()) return false;
+  NativeShell::of(this)->controller<ToastController>()->show(
+      QStringLiteral("warning"),
+      expired == 1 ? QStringLiteral("Expired terminal context won't be sent") : QStringLiteral("Expired terminal contexts won't be sent"),
+      QStringLiteral("Remove it or re-add it to include terminal output."));
+  return true;
+}
+
+void ComposerController::warnOfExpiredExcerpts(const QList<Excerpt>& contexts) {
+  const qsizetype expired = countExpired(contexts);
+  if (expired == 0) return;
+  NativeShell::of(this)->controller<ToastController>()->show(
+      QStringLiteral("warning"),
+      expired == 1 ? QStringLiteral("Expired terminal context omitted from message") : QStringLiteral("Expired terminal contexts omitted from message"),
+      QStringLiteral("Re-add it if you want that terminal output included."));
 }
 
 // Each excerpt is an inline link in the text

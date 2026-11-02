@@ -16,6 +16,7 @@ QtObject {
     property string activeTerminalId: ""
     property string activeGroup: ""
     property var groupSizes: ({})
+    property int drawerCount: 0
     property var focused: []
     property ListModel tabs: ListModel {}
 
@@ -28,6 +29,8 @@ QtObject {
 
             function transcript() {
                 return "";
+            }
+            function report(message) {
             }
             function write(data) {
                 written.push(data);
@@ -45,6 +48,8 @@ QtObject {
 
     function addTab(terminalId, label, options) {
         const place = options ?? {};
+        if (!(place.panel ?? false))
+            drawerCount += 1;
         tabs.append({
             terminalId: terminalId,
             label: label,
@@ -66,6 +71,7 @@ QtObject {
         activeTerminalId = "";
         activeGroup = "";
         groupSizes = {};
+        drawerCount = 0;
         focused = [];
         tabs.clear();
     }

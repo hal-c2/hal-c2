@@ -105,6 +105,8 @@ public:
   // Asks a windowed stream for the runs before its window that hold `items`
   // turn items; a `page` frame answers.
   void more(int id, int items);
+  // Says how far of a subscription that asked for `acks` has been consumed.
+  void ack(int id, qint64 sequence);
   void call(QObject* context, const QString& environment, const QString& method, const QJsonValue& payload, Reply reply);
   // POSTs `body` to `path` of the MC's origin (its HTTP API, for answers too
   // large for the socket, as `/api/pull-requests/diff`), with the access token.

@@ -8,6 +8,7 @@
 #   apps/web/src/components/preview/openTerminalLinkInPreview.test.ts
 #   apps/web/src/terminal/ghostty/surface.ts (libghostty-vt renderer, Kitty keyboard reporting)
 #   apps/desktop-qt/qml/HalC2/Bricks/TerminalSplits.qml, TerminalMenu.qml (Ctrl-click and the link's menu)
+#   apps/desktop-qt/src/native/TerminalController.cpp (followLink)
 #   Cross-domain: tui/appearance.feature owns inline images and graphics detection in the terminal
 #   client itself; settings/integrations.feature owns the "Open links in" preference and
 #   navigation/appearance.feature owns terminal fonts.
@@ -78,13 +79,17 @@ Feature: Links and rendering inside terminals
       When the user clicks "http://localhost:5173" in the terminal without holding Ctrl
       Then nothing is opened
 
-    @backlog @desktop
+    # Waits on an in-app browser: the desktop has none (docs/internals/desktop-qt.md), so every link
+    # goes to the system browser whatever the setting says.
+    @backlog @blocked @desktop
     Scenario: Following a web address opens it in the in-app browser
       Given the user's links open in the in-app browser
       When the user follows "http://localhost:5173" in the terminal
       Then the address opens in a browser tab beside the thread
 
-    @backlog @desktop
+    # Waits on an in-app browser: the desktop has none (docs/internals/desktop-qt.md), so every link
+    # goes to the system browser whatever the setting says.
+    @backlog @blocked @desktop
     Scenario: Public web addresses open in the in-app browser too
       Given the user's links open in the in-app browser
       When the user follows "https://example.com/docs" in the terminal
@@ -96,13 +101,15 @@ Feature: Links and rendering inside terminals
       When the user follows "http://localhost:5173" in the terminal
       Then the address opens in the system browser
 
-    @backlog @desktop
+    @desktop
     Scenario: The link's menu sends a link to the system browser
       Given the user's links open in the in-app browser
       When the user chooses to open a link in the system browser from the terminal's menu
       Then the address opens in the system browser
 
-    @backlog @desktop
+    # Waits on an in-app browser: the desktop has none (docs/internals/desktop-qt.md), so every link
+    # goes to the system browser whatever the setting says.
+    @backlog @blocked @desktop
     Scenario: A link that cannot open in the in-app browser falls back to the system browser
       Given opening the in-app browser fails
       When the user follows a web address in the terminal
@@ -134,7 +141,7 @@ Feature: Links and rendering inside terminals
         | http://localhost:5173 | Open link | Copy link | the address opens in the system browser                 |
         | src/app.ts:12:4       | Open file | Copy path | "src/app.ts" opens in the user's editor at line 12, column 4 |
 
-    @backlog @desktop
+    @desktop
     Scenario: Holding Ctrl over a link underlines all of it and shows it can be followed
       Given the shell prints a web address that wraps across two lines
       When the user holds Ctrl (Cmd on macOS) and moves the pointer over one piece of it
@@ -143,40 +150,51 @@ Feature: Links and rendering inside terminals
       When the pointer moves off the address
       Then the underline and the pointer go back to normal
 
-    @backlog @desktop
+    @desktop
     Scenario: A link is not offered while a program has the mouse
       Given a program in the terminal has asked to receive mouse events
       When the user moves the pointer over a web address in the output
       Then the address is not underlined
       And pressing on it goes to the program
+      And the terminal's menu on it offers no link
 
-    @backlog @desktop
+    @desktop
+    Scenario: Ctrl still follows a link while a program has the mouse
+      Given a program in the terminal has asked to receive mouse events
+      And the shell prints a web address
+      When the user holds Ctrl and moves the pointer over the address
+      Then the address is underlined
+      When the user holds Ctrl and clicks the address
+      Then the address is followed
+      And the program receives no click
+
+    @desktop
     Scenario: A Ctrl-click that moves a little still follows the link
       Given the shell prints a web address
       When the user holds Ctrl, presses on the address and releases a few pixels away
       Then the address is followed
 
-    @backlog @desktop
+    @desktop
     Scenario: Dragging from a link selects text instead of following it
       Given the shell prints a web address
       When the user presses on the address and drags well away before releasing
       Then the text between the press and the release is selected
       And the address is not followed
 
-    @backlog @desktop
+    @desktop
     Scenario: A link replaced before the pointer is released is not followed
       Given the user pressed on a link
       When the output changes so that another address is under the pointer before release
       Then nothing is followed
 
-    @backlog @desktop
+    @desktop
     Scenario: Clicking a link twice or three times selects a word or a line
       Given the shell prints a web address
       When the user double-clicks and then triple-clicks on the address
       Then the word is selected and then the whole line
       And the address is not followed
 
-    @backlog @desktop
+    @desktop
     Scenario: A link cut off by the edge of the screen is not offered
       Given a web address wraps so that its start has scrolled above the top of the screen
       Then the part still on screen is not a link
@@ -195,3 +213,10 @@ Feature: Links and rendering inside terminals
       Given a program turns on the Kitty keyboard protocol
       When the user presses a key with modifiers
       Then the program receives the enhanced key report
+
+    @desktop
+    Scenario: On macOS a program that asks for enhanced reporting gets Ctrl as Ctrl
+      Given the user is on macOS
+      And a program turns on the Kitty keyboard protocol
+      When the user presses "Ctrl+A" in the terminal
+      Then the program receives Ctrl+A in the enhanced report

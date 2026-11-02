@@ -124,7 +124,7 @@ void World::open() {
   // The scenarios' seams: a dropped connection is tried again at once, and
   // nothing leaves the test for the system's browser or clipboard.
   m_app->native().client()->setRetryDelays({20});
-  m_app->bridge().setUrlOpener([this](const QUrl& url) { openedUrls.append(url); });
+  m_app->bridge().setUrlOpener([this](const QUrl& url) { openedUrls.append(url); return true; });
   m_app->native().shared<ConnectionHealthController>()->setClipboardWriter([this](const QString& text) {
     clipboard = text;
     return true;
