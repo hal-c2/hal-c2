@@ -19,6 +19,7 @@ import {
   deriveTimelineEntries,
   diffStat,
   type FoldableRow,
+  formatWorkingTimer,
   isWorking,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
   type TimelineRow,
@@ -151,7 +152,12 @@ export interface TimelineState {
   readonly rowCount: number;
   readonly windowStart: number;
   readonly windowEnd: number;
-  readonly working: { readonly text: StyledText; readonly elapsedSeconds: number | null } | null;
+  /** The working row; `refreshInMs` is when its time next changes (`timeline.tick`). */
+  readonly working: {
+    readonly text: StyledText;
+    readonly elapsedSeconds: number | null;
+    readonly refreshInMs: number;
+  } | null;
   readonly plan: {
     readonly id: string;
     readonly title: StyledText;
@@ -348,7 +354,8 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
 
   const plan = showingLatest ? latestActionableProposedPlan(detail) : null;
   const working = showingLatest && isWorking(detail);
-  const elapsed = working ? workingElapsedSeconds(workingStartedAt(detail), input.nowMs) : null;
+  const workingFrom = working ? workingStartedAt(detail) : null;
+  const elapsed = working ? workingElapsedSeconds(workingFrom, input.nowMs) : null;
   const contextWindow = deriveContextWindow(detail.activities);
 
   return {
@@ -379,10 +386,16 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     working: working
       ? {
           elapsedSeconds: elapsed,
+          // The time moves once a second, not on every frame.
+          refreshInMs:
+            elapsed === null
+              ? 0
+              : 1000 - ((((input.nowMs - Date.parse(workingFrom!)) % 1000) + 1000) % 1000),
           text: styled(
             chunk("● ", { fg: palette.accent }),
-            chunk("Working…", { fg: palette.dim }),
-            elapsed !== null && chunk(` ${elapsed}s`, { fg: palette.faint }),
+            elapsed === null
+              ? chunk("Working…", { fg: palette.dim })
+              : chunk(`Working for ${formatWorkingTimer(elapsed)}`, { fg: palette.dim }),
           ),
         }
       : null,
@@ -603,6 +616,9 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
     const waiting = queued
       ? `⏸ queued${queued.position === null ? "" : ` · ${queued.position}`}${queued.held ? " · held" : ""}`
       : null;
+    const canCollapse = shouldCollapseUserMessage(rawBody);
+    const expanded = ctx.view.expandedMessages.has(message.id);
+    const toggle = expanded ? "⌃ Show less" : "⌄ Show full message";
     const bubbleWidth = Math.max(
       attachmentMinWidth,
       Math.min(
@@ -631,8 +647,6 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
         : []),
       ...(imageLines.length > 0 ? [...imageLines, line(styled(chunk("")))] : []),
     ];
-    const canCollapse = shouldCollapseUserMessage(rawBody);
-    const expanded = ctx.view.expandedMessages.has(message.id);
     const collapsed = canCollapse && !expanded;
     const shown = collapsed ? clipRows(bodyLines, innerWidth) : bodyLines;
     items.push(
@@ -645,13 +659,9 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
           ...shown.map((text) => line(text)),
           ...(canCollapse
             ? [
-                line(
-                  styled(
-                    chunk(expanded ? "⌃ Show less" : "⌄ Show full message", { fg: palette.dim }),
-                  ),
-                  "timeline.message.toggle",
-                  { id: message.id },
-                ),
+                line(styled(chunk(toggle, { fg: palette.dim })), "timeline.message.toggle", {
+                  id: message.id,
+                }),
               ]
             : []),
         ],
@@ -849,7 +859,7 @@ function toolRow(entry: WorkLogEntry, ctx: RowContext): StyledText {
     chunk(`${workLogIcon(entry)} `, {
       fg: entry.tone === "error" ? palette.error : palette.accent,
     }),
-    chunk(label, { fg: palette.text }),
+    chunk(clip(label, Math.max(8, width - mark.length - 4)), { fg: palette.text }),
     mark.length > 0 &&
       chunk(` ${mark}`, {
         fg:

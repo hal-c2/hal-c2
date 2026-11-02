@@ -1024,6 +1024,10 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         if (!detail || !latestActionableProposedPlan(detail)) return false;
         implementPlan();
         return true;
+      // The working row's time moved on (WorkingIndicator's timer).
+      case "timeline.tick":
+        publishTimeline();
+        return true;
       case "timeline.showOlder":
         showOlder();
         return true;

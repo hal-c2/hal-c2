@@ -180,7 +180,7 @@ step(
   async (ctx: ThreadWorld) => {
     const working = hostState(ctx, "timeline").working;
     expect(working.elapsedSeconds).toBeGreaterThanOrEqual(600);
-    expect(await snapshot(ctx)).toMatch(/● Working… \d+s/);
+    expect(await snapshot(ctx)).toMatch(/● Working for \d+m/);
   },
 );
 

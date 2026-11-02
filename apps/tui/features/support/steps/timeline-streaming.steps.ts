@@ -1,10 +1,11 @@
 // features/timeline/streaming.feature on the terminal client: reasoning, turn
 // folds, stopped turns and long messages, over the MC's projection (turnWorld.ts).
 import { expect } from "bun:test";
+import * as DateTime from "effect/DateTime";
 
 import { step } from "../../steps.ts";
 import { chooseCommand } from "../threadUi.ts";
-import { pressKey, snapshot } from "../world.ts";
+import { advance, pressKey, snapshot } from "../world.ts";
 import { clickText, hostState, plain, recorded, settle } from "../threadWorld.ts";
 import {
   addCommand,
@@ -13,6 +14,7 @@ import {
   lastOf,
   linesOf,
   messageItem,
+  NOW_MS,
   setItem,
   settleRun,
   shownItems,
@@ -229,4 +231,142 @@ step("the user copies the reply", async (ctx: StreamWorld) => {
 step("the reply's markdown is on the clipboard", async (ctx: StreamWorld) => {
   expect(ctx.clipboard).toEqual([REPLY]);
   expect(hostState(ctx, "status")).toEqual({ kind: "success", text: "Reply copied." });
+});
+
+step("the agent reasoned in Markdown", async (ctx: StreamWorld) => {
+  await startRun(ctx);
+  await addItem(ctx, "reasoning", {
+    id: "reasoning",
+    streaming: false,
+    status: "completed",
+    text: "## **Checking** the `cart` total\n\n![a chart](chart.png)",
+  });
+});
+
+// --- the working timer -----------------------------------------------------------------
+
+/** The working row as the host publishes it, and as it is on screen. */
+async function workingRow(ctx: StreamWorld): Promise<string> {
+  const working = hostState(ctx, "timeline").working;
+  expect(working).not.toBeNull();
+  const text = plain(working.text);
+  expect(await snapshot(ctx)).toContain(text);
+  return text;
+}
+
+step("the agent has been working for {int} seconds", async (ctx: StreamWorld, seconds: number) => {
+  await startRun(ctx, seconds);
+  await addCommand(ctx, 1, "running");
+});
+
+step("the thread says the agent is working", async (ctx: StreamWorld) => {
+  expect(await workingRow(ctx)).toMatch(/^● Working for \d+s$/);
+});
+
+// The row's own timer moves it a second on: no stream update is needed.
+step("the elapsed time keeps counting", async (ctx: StreamWorld) => {
+  const before = await workingRow(ctx);
+  const { refreshInMs } = hostState(ctx, "timeline").working;
+  expect(refreshInMs).toBeGreaterThan(0);
+  expect(refreshInMs).toBeLessThanOrEqual(1000);
+  ctx.nowMs! += 1000;
+  await advance(ctx, refreshInMs);
+  await settle();
+  const seconds = (text: string) => Number(/(\d+)s$/.exec(text)![1]);
+  expect(seconds(await workingRow(ctx))).toBe(seconds(before) + 1);
+});
+
+step(
+  "the user sent a message and the agent's session is still starting",
+  async (ctx: StreamWorld) => {
+    await startRun(ctx, 7, "starting");
+  },
+);
+
+step("the agent has not yet begun the turn", async (ctx: StreamWorld) => {
+  const fixture = await turns(ctx);
+  expect(fixture.runs.at(-1)!.startedAt).toBeNull();
+});
+
+step("the elapsed time counts from when the message was sent", async (ctx: StreamWorld) => {
+  expect(await workingRow(ctx)).toBe("● Working for 7s");
+});
+
+step("it does not disappear and come back when the agent begins", async (ctx: StreamWorld) => {
+  const fixture = await turns(ctx);
+  const run = fixture.runs.at(-1)!;
+  // The agent begins two seconds on (`turns` pins the clock, so it moves after).
+  const begun = NOW_MS + 2000;
+  run.status = "running";
+  run.startedAt = DateTime.makeUnsafe(new Date(begun));
+  ctx.nowMs = begun;
+  await sync(ctx);
+  expect(await workingRow(ctx)).toBe("● Working for 9s");
+});
+
+// --- durations -------------------------------------------------------------------------
+
+const UNIT_MS: Record<string, number> = {
+  millisecond: 1,
+  second: 1000,
+  minute: 60_000,
+  hour: 3_600_000,
+};
+
+/** "1 hour 5 seconds" in milliseconds. */
+function durationMs(text: string): number {
+  let total = 0;
+  for (const [, amount, unit] of text.matchAll(/([\d.]+) (millisecond|second|minute|hour)s?/g)) {
+    total += Number(amount) * UNIT_MS[unit!]!;
+  }
+  return total;
+}
+
+// A finished turn folds behind how long it took: the duration the thread shows.
+step(/^the thread shows a duration of (.+)$/, async (ctx: StreamWorld, duration: string) => {
+  await startRun(ctx);
+  await addCommand(ctx, 1);
+  await addItem(ctx, "assistant_message", { id: "answer", text: ANSWER });
+  await settleRun(ctx, "completed", durationMs(duration) / 1000);
+});
+
+step("it reads {string}", async (ctx: StreamWorld, shown: string) => {
+  await expectFolded(ctx, `Worked for ${shown}`);
+});
+
+// --- when a message the user sent is shortened -----------------------------------------
+
+const SENT: Record<string, string> = {
+  "600 characters on one line": "a".repeat(600),
+  "601 characters on one line": "a".repeat(601),
+  "8 short lines": Array.from({ length: 8 }, (_, n) => `line ${n + 1}`).join("\n"),
+  "9 short lines": Array.from({ length: 9 }, (_, n) => `line ${n + 1}`).join("\n"),
+  "only spaces and blank lines": Array.from({ length: 12 }, () => "   ").join("\n"),
+};
+
+step(/^the user sent a message of (.+)$/, async (ctx: StreamWorld, kind: string) => {
+  const text = SENT[kind];
+  if (text === undefined) throw new Error(`no message of ${kind}`);
+  await startRun(ctx);
+  const fixture = await turns(ctx);
+  fixture.messages[fixture.messages.length - 1]!.text = text;
+});
+
+step("the user looks at it in the conversation", async (ctx: StreamWorld) => {
+  await sync(ctx);
+});
+
+step(/^it is (shown in full|shortened)$/, async (ctx: StreamWorld, shown: string) => {
+  const sent = lastOf(ctx, "message");
+  const screen = await snapshot(ctx);
+  if (shown === "shortened") {
+    expect(sent.clip).not.toBeNull();
+    expect(linesOf(sent).at(-1)).toBe("⌄ Show full message");
+    // The bubble stays as narrow as its text, so the toggle may wrap.
+    expect(screen).toContain("⌄ Show");
+  } else {
+    expect(sent.clip).toBeNull();
+    expect(linesOf(sent).join("\n")).not.toContain("Show full message");
+    expect(screen).not.toContain("Show full message");
+  }
 });

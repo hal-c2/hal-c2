@@ -52,27 +52,27 @@ Feature: Streaming the agent's reply
     Then the reasoning is labelled "Thinking"
 
   # The web's row (MessagesTimeline.tsx, remarkThoughtPreview). The TUI still says "Thought".
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Finished reasoning is labelled by what was thought
     Given the agent is reasoning before it answers
     When the reasoning is finished
     Then the reasoning is labelled "The cart total needs"
 
   # A picture reads as its description (remarkThoughtPreview).
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: Reasoning written in Markdown is labelled by its words alone
     Given the agent reasoned in Markdown
     Then the reasoning is labelled "Checking the cart total a chart"
 
   # TUI: implemented in apps/tui/src/components/WorkingIndicator.tsx
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A running turn shows how long the agent has been working
     When the agent has been working for 12 seconds
     Then the thread says the agent is working
     And the elapsed time keeps counting
 
   # Legacy: packages/shared/src/orchestrationTiming.ts (deriveActiveWorkStartedAt: requestedAt floor)
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario: The working time counts from the message while the agent is still starting up
     Given the user sent a message and the agent's session is still starting
     When the agent has not yet begun the turn
@@ -81,7 +81,7 @@ Feature: Streaming the agent's reply
     And it does not disappear and come back when the agent begins
 
   # Legacy: packages/shared/src/orchestrationTiming.ts (formatDuration)
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile
   Scenario Outline: A duration is written in hours, minutes and seconds, leaving out empty steps
     When the thread shows a duration of <duration>
     Then it reads "<shown>"
@@ -140,7 +140,7 @@ Feature: Streaming the agent's reply
     Then the message returns to its preview
 
   # Legacy: packages/shared/src/chatMessages.ts (shouldCollapseUserMessage)
-  @backlog @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario Outline: A message the user sent is shortened only when it is long
     Given the user sent a message of <message>
     When the user looks at it in the conversation
