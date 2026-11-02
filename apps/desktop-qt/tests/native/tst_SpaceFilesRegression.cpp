@@ -50,6 +50,26 @@ struct Shell {
     return bridge.state()->value(QStringLiteral("space")).toMap().value(QStringLiteral("files")).toMap().value(project).toMap();
   }
   QStringList paths(const QString& project) const { return listed(project).value(QStringLiteral("paths")).toMap().keys(); }
+  // The Space "Research" selected, holding page-1, page-2 and the deck deck-1.
+  void showResearch() {
+    const QJsonObject research{{QStringLiteral("id"), QStringLiteral("space-1")}, {QStringLiteral("name"), QStringLiteral("Research")},
+                               {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}};
+    space()->receiveIndex({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("offset"), 1}, {QStringLiteral("part"), 0},
+                           {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{QStringLiteral("space"), QStringLiteral("space-1"), research})}},
+                           {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("index-1")}});
+    space()->selectSpace(QStringLiteral("space-1"));
+    QJsonArray rows;
+    for (const QString id : {QStringLiteral("page-1"), QStringLiteral("page-2")}) {
+      rows.append(QJsonArray{QStringLiteral("page"), id,
+                             QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("title"), id}, {QStringLiteral("parentPageId"), QJsonValue::Null},
+                                         {QStringLiteral("trashedAt"), QJsonValue::Null}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}}});
+    }
+    rows.append(QJsonArray{QStringLiteral("deck"), QStringLiteral("deck-1"),
+                           QJsonObject{{QStringLiteral("id"), QStringLiteral("deck-1")}, {QStringLiteral("title"), QStringLiteral("Talk")},
+                                       {QStringLiteral("trashedAt"), QJsonValue::Null}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}}});
+    space()->receiveSpace({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("offset"), 1}, {QStringLiteral("part"), 0},
+                           {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
+  }
 };
 
 }  // namespace
@@ -157,26 +177,37 @@ private slots:
                                       {QStringLiteral("created"), false}});
     });
     QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
-    const QJsonObject research{{QStringLiteral("id"), QStringLiteral("space-1")}, {QStringLiteral("name"), QStringLiteral("Research")},
-                               {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}};
-    shell.space()->receiveIndex({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("offset"), 1}, {QStringLiteral("part"), 0},
-                                 {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{QStringLiteral("space"), QStringLiteral("space-1"), research})}},
-                                 {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("index-1")}});
-    shell.space()->selectSpace(QStringLiteral("space-1"));
-    QJsonArray rows;
-    for (const QString id : {QStringLiteral("page-1"), QStringLiteral("page-2")}) {
-      rows.append(QJsonArray{QStringLiteral("page"), id,
-                             QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("title"), id}, {QStringLiteral("parentPageId"), QJsonValue::Null},
-                                         {QStringLiteral("trashedAt"), QJsonValue::Null}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}}});
-    }
-    shell.space()->receiveSpace({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("offset"), 1}, {QStringLiteral("part"), 0},
-                                 {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
+    shell.showResearch();
     shell.space()->selectPage(QStringLiteral("page-1"));
 
     QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
     QTRY_COMPARE(shell.written, QStringList{QStringLiteral("page-1")});
     QVERIFY(shell.space()->handle(QStringLiteral("space.selectPage"), QVariantMap{{QStringLiteral("pageId"), QStringLiteral("page-2")}}));
     QCOMPARE(shell.space()->pageId(), QStringLiteral("page-2"));
+  }
+
+  // The same for a deck: one made from a page while it was shown already stayed
+  // awaited, and picking a page brought the deck back over it.
+  void aDeckOpenedWhileShownIsNotAwaited() {
+    Shell shell;
+    shell.mc.onRpc(QStringLiteral("space.deck.createFromPage"), [&](const FakeMc::Rpc& rpc) {
+      shell.mc.reply(rpc, QJsonObject{{QStringLiteral("deck"), QJsonObject{{QStringLiteral("id"), QStringLiteral("deck-1")}}}});
+    });
+    QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
+    shell.showResearch();
+    shell.space()->selectDeck(QStringLiteral("deck-1"));
+
+    QVERIFY(shell.space()->handle(QStringLiteral("space.deck.createFromPage"), QVariantMap{{QStringLiteral("pageId"), QStringLiteral("page-1")}}));
+    // The MC answers in order, so a list asked after it lands after the deck's answer.
+    QVERIFY(shell.list(QStringLiteral("alpha")));
+    QTRY_COMPARE(shell.held.size(), 1);
+    shell.answer(shell.held.takeFirst(), QStringLiteral("notes.md"));
+    QTRY_COMPARE(shell.paths(QStringLiteral("alpha")), QStringList{QStringLiteral("notes.md")});
+    QCOMPARE(shell.space()->deckId(), QStringLiteral("deck-1"));
+
+    QVERIFY(shell.space()->handle(QStringLiteral("space.selectPage"), QVariantMap{{QStringLiteral("pageId"), QStringLiteral("page-2")}}));
+    QCOMPARE(shell.space()->pageId(), QStringLiteral("page-2"));
+    QCOMPARE(shell.space()->deckId(), QString());
   }
 };
 
