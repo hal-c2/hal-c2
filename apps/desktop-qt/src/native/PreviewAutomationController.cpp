@@ -28,7 +28,7 @@ PreviewAutomationController::~PreviewAutomationController() = default;
 void PreviewAutomationController::activate() {
   // A build without the in-app browser has no page for an agent.
   if (m_host || !Browser::supported()) return;
-  m_host = new PreviewAutomationHost(m_client, PreviewAutomationHost::machineClientId(), this);
+  m_host = new PreviewAutomationHost(m_client, PreviewAutomationHost::machineClientId(NativeShell::of(this)->shell()->stateDir()), this);
   connect(m_host, &PreviewAutomationHost::activityChanged, this, &PreviewAutomationController::activityChanged);
   connect(m_host, &PreviewAutomationHost::reveal, this, [this](const PreviewAutomationHost::Reveal& reveal) {
     if (reveal.show == 0) return;

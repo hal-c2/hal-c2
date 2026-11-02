@@ -7,6 +7,7 @@
 #include <QBuffer>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDir>
 #include <QHostInfo>
 #include <QImage>
 #include <QJsonDocument>
@@ -51,7 +52,11 @@ struct PreviewAutomationHost::Request {
   QString threadId;
   QString tabId;
   QString operation;
-  QString queue;
+  // The queues it is in (schedule): its tab's, after the thread's when it
+  // named no tab.
+  QStringList queues;
+  // What it does once it is first in the queue it waits in.
+  std::function<void()> resume;
   bool tabExplicit = false;
   QJsonObject input;
   int timeoutMs = kDefaultWaitMs;
@@ -136,10 +141,13 @@ QStringList PreviewAutomationHost::operations() {
           QStringLiteral("waitFor"), QStringLiteral("resize"), QStringLiteral("setColorScheme")};
 }
 
-QString PreviewAutomationHost::machineClientId() {
+QString PreviewAutomationHost::machineClientId(const QString& home) {
   QByteArray machine = QSysInfo::machineUniqueId();
   if (machine.isEmpty()) machine = QHostInfo::localHostName().toUtf8();
-  const QByteArray hash = QCryptographicHash::hash("hal-c2-desktop:" + machine, QCryptographicHash::Sha256);
+  // The MC keeps one host per id and drops the one it replaces: the installed
+  // desktop and a dev build on one machine must not share one.
+  const QByteArray hash =
+      QCryptographicHash::hash("hal-c2-desktop:" + machine + '\n' + QDir::cleanPath(home).toUtf8(), QCryptographicHash::Sha256);
   return QStringLiteral("desktop-") + QString::fromLatin1(hash.toHex().left(24));
 }
 
@@ -339,11 +347,25 @@ void PreviewAutomationHost::onRequest(const QString& mc, const QJsonObject& json
 
 void PreviewAutomationHost::schedule(const RequestPtr& request) {
   // One page, one action at a time; requests that name no tab wait for the
-  // thread's others, as they act on whatever tab is current when they start.
-  request->queue = request->tabId.isEmpty() ? QStringLiteral("thread:") + request->threadId : request->tabId;
-  QList<RequestPtr>& queue = m_queues[request->queue];
-  queue.append(request);
-  if (queue.size() == 1) start(request);
+  // thread's others, as they act on whatever tab is current when they start,
+  // and then for that tab's turn.
+  enqueue(request, request->tabId.isEmpty() ? QStringLiteral("thread:") + request->threadId : request->tabId,
+          [this, request] { start(request); });
+}
+
+void PreviewAutomationHost::enqueue(const RequestPtr& request, const QString& queue, std::function<void()> then) {
+  if (request->queues.contains(queue)) {
+    then();
+    return;
+  }
+  request->queues.append(queue);
+  QList<RequestPtr>& waiting = m_queues[queue];
+  waiting.append(request);
+  if (waiting.size() == 1) {
+    then();
+  } else {
+    request->resume = std::move(then);
+  }
 }
 
 int PreviewAutomationHost::remainingMs(const RequestPtr& request) const {
@@ -362,6 +384,10 @@ void PreviewAutomationHost::start(const RequestPtr& request) {
     return;
   }
   const QString tab = request->tabId;
+  enqueue(request, tab, [this, request, tab] { act(request, tab); });
+}
+
+void PreviewAutomationHost::act(const RequestPtr& request, const QString& tab) {
   if (!page(tab)) {
     // A tab of the thread this desktop has no page for yet: the browser makes
     // one, out of sight unless the user wants to see what agents do.
@@ -426,7 +452,7 @@ void PreviewAutomationHost::finish(const RequestPtr& request, bool ok, const QJs
                  [](const QJsonValue&, const std::optional<QString>&) {});
   emit answered(request->requestId, ok);
 
-  if (request->queue.isEmpty()) return;
+  if (request->queues.isEmpty()) return;
   if (!request->tabId.isEmpty()) {
     // Fades the cue once the agent has been idle a moment.
     const QString tab = request->tabId;
@@ -435,19 +461,21 @@ void PreviewAutomationHost::finish(const RequestPtr& request, bool ok, const QJs
       if (m_activityGeneration.value(tab) == generation) clearActivity(tab);
     });
   }
-  auto queue = m_queues.find(request->queue);
-  if (queue == m_queues.end()) return;
-  const bool wasRunning = !queue->isEmpty() && queue->first() == request;
-  queue->removeAll(request);
-  if (queue->isEmpty()) {
-    m_queues.erase(queue);
-    return;
-  }
-  if (wasRunning) {
-    const RequestPtr next = queue->first();
-    QTimer::singleShot(0, this, [this, next] {
-      if (!next->done) start(next);
-    });
+  for (const QString& key : std::as_const(request->queues)) {
+    auto queue = m_queues.find(key);
+    if (queue == m_queues.end()) continue;
+    const bool wasRunning = !queue->isEmpty() && queue->first() == request;
+    queue->removeAll(request);
+    if (queue->isEmpty()) {
+      m_queues.erase(queue);
+      continue;
+    }
+    if (wasRunning) {
+      const RequestPtr next = queue->first();
+      QTimer::singleShot(0, this, [next] {
+        if (!next->done && next->resume) std::exchange(next->resume, {})();
+      });
+    }
   }
 }
 
@@ -597,10 +625,13 @@ void PreviewAutomationHost::open(const RequestPtr& request) {
     if (show == 0) m_hidden.insert(tab);
     else if (show == 1) m_hidden.remove(tab);
     emit reveal({request->environmentId, request->threadId, tab, show});
-    waitForPage(request, tab, [this, request, tab, load, url] {
-      record(request, QStringLiteral("running"));
-      if (load && url.isValid()) request->page->load(url);
-      succeed(request, status(tab));
+    // Loading is an action on the tab: it waits for the tab's turn.
+    enqueue(request, tab, [this, request, tab, load, url] {
+      waitForPage(request, tab, [this, request, tab, load, url] {
+        record(request, QStringLiteral("running"));
+        if (load && url.isValid()) request->page->load(url);
+        succeed(request, status(tab));
+      });
     });
   };
 

@@ -6,6 +6,7 @@
 #include <QMouseEvent>
 #include <QPointingDevice>
 
+#include <algorithm>
 #include <cmath>
 
 #include "Browser.h"
@@ -24,6 +25,34 @@ QMetaObject::Connection connectByName(QObject* view, const char* signal, QObject
     }
   }
   return {};
+}
+
+// Whether a press on `item` stops at it: a mouse area, a control, a pointer
+// handler. Other items let it through to what is under them.
+bool takesPress(const QQuickItem* item) {
+  if (item->acceptedMouseButtons() & Qt::LeftButton) return true;
+  const QObjectList& children = item->children();
+  return std::any_of(children.begin(), children.end(),
+                     [](const QObject* child) { return child->inherits("QQuickPointerHandler"); });
+}
+
+// The item a press at `scene` would land on under `item`, as the window
+// delivers it: the topmost visible, enabled item there that takes a press, not
+// one a clipping ancestor hides. `target` takes every press on it.
+QQuickItem* pressTarget(QQuickItem* item, const QPointF& scene, const QQuickItem* target) {
+  if (!item->isVisible() || !item->isEnabled()) return nullptr;
+  const QPointF local = item->mapFromScene(scene);
+  const bool inside = item->contains(local);
+  if (item == target) return inside ? item : nullptr;
+  if (item->clip() && !inside) return nullptr;
+  QList<QQuickItem*> children = item->childItems();
+  // Painted, and so hit, from the highest z down, the later sibling first.
+  std::reverse(children.begin(), children.end());
+  std::stable_sort(children.begin(), children.end(), [](QQuickItem* a, QQuickItem* b) { return a->z() > b->z(); });
+  for (QQuickItem* child : std::as_const(children)) {
+    if (QQuickItem* hit = pressTarget(child, scene, target)) return hit;
+  }
+  return inside && takesPress(item) ? item : nullptr;
 }
 
 }  // namespace
@@ -130,6 +159,9 @@ bool BrowserAutomationPage::click(const QPointF& point) {
   // The view draws the page's CSS pixels at its zoom, then scaled with the
   // view (a device frame, the app's zoom): the scene has both.
   const QPointF scene = m_view->mapToScene(point * zoom());
+  // Only the page's: a menu, a dialog or a neighbouring pane over the point
+  // is the app's, and the agent never clicks it.
+  if (!onPage(scene)) return false;
   const QPointF global = m_window->mapToGlobal(scene);
   const QPointingDevice* mouse = QPointingDevice::primaryPointingDevice();
   QMouseEvent move(QEvent::MouseMove, scene, scene, global, Qt::NoButton, Qt::NoButton, Qt::NoModifier, mouse);
@@ -161,8 +193,8 @@ bool BrowserAutomationPage::pageHasFocus() const {
 }
 
 bool BrowserAutomationPage::onPage(const QPointF& scene) const {
-  if (!m_view) return false;
-  return m_view->contains(m_view->mapFromScene(scene));
+  if (!m_view || !m_window) return false;
+  return pressTarget(m_window->contentItem(), scene, m_view) == m_view;
 }
 
 bool BrowserAutomationPage::eventFilter(QObject* watched, QEvent* event) {

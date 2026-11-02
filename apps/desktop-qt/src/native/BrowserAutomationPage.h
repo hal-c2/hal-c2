@@ -13,7 +13,9 @@ class BrowserPage;
 // meta-object, so hal_c2_native never links the web engine.
 //
 // Real input goes to the view's window as the user's would, and so reaches the
-// page as trusted events; the window's own input that lands on the page is
+// page as trusted events, but a click only where the page itself would take
+// it (no menu, dialog or other pane of the app's over it; click() refuses
+// otherwise, and the host clicks by script instead); the window's own input that lands on the page is
 // the user's (humanInput). A key goes in only while the page has the focus,
 // which a real click gives it.
 class BrowserAutomationPage : public PreviewAutomationPage {
@@ -47,7 +49,8 @@ private:
   void watch(QQuickWindow* window);
   QQuickItem* view() const;
   qreal zoom() const;
-  // Whether the window's input at `scene` (or its keys, with no point) is the page's.
+  // Whether a press at `scene` would land on the page: nothing of the app's
+  // that takes a press covers it there, and no clipping ancestor hides it.
   bool onPage(const QPointF& scene) const;
   bool pageHasFocus() const;
 

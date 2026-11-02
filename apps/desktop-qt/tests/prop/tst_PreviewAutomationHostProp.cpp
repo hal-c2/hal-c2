@@ -2,11 +2,13 @@
 // fake MC. The MC ends the host's registration (as when it answered late),
 // the connection drops and comes back, the window gains and loses focus, and
 // agents ask for actions: quick ones, ones the page never finishes, a status
-// while another action waits, and actions on a tab the user closes meanwhile.
+// while another action waits, actions on a tab the user closes meanwhile, and
+// one naming no tab beside one naming the tab that is current.
 // After every step the host is registered exactly once under the same client
 // id, knows the connection the MC gave it last, has told that connection
 // whether the window has focus, and every request was answered once, on the
-// connection it came on, before its deadline.
+// connection it came on, before its deadline. One page runs one action at a
+// time. And the client id is the same for one HAL-C2 home, another for another.
 
 #include "Prop.h"
 
@@ -142,7 +144,7 @@ struct Sut {
     QJsonObject request{{QStringLiteral("requestId"), id},
                         {QStringLiteral("threadId"), kThread},
                         {QStringLiteral("tabId"), tab},
-                        {QStringLiteral("tabIdExplicit"), true},
+                        {QStringLiteral("tabIdExplicit"), !tab.isEmpty()},
                         {QStringLiteral("operation"), operation},
                         {QStringLiteral("input"), operation == QLatin1String("evaluate")
                                                       ? QJsonObject{{QStringLiteral("expression"), QStringLiteral("6 * 7")}}
@@ -307,6 +309,32 @@ struct Close : Step<Close> {
   void show(std::ostream& os) const override { os << "the user closes the tab mid-action"; }
 };
 
+// An action naming no tab (on the current one, kTab) and one naming kTab, in
+// either order: the later waits for the earlier, which the page never finishes.
+struct Current : Step<Current> {
+  bool namedFirst = *rc::gen::arbitrary<bool>();
+  int timeoutMs = *rc::gen::inRange(350, 600);
+  explicit Current(const Model&) {}
+  void apply(Model&) const override {}
+  void act(const Model&, Sut& sut) const {
+    const QString connection = sut.current;
+    sut.page->hanging = true;
+    const int held = sut.page->held;
+    const QString first = sut.ask(QStringLiteral("evaluate"), timeoutMs, namedFirst ? kTab : QString());
+    const QString second = sut.ask(QStringLiteral("evaluate"), 15000, namedFirst ? QString() : kTab);
+    RC_ASSERT(prop::until([&] { return sut.page->held > held; }));
+    RC_ASSERT(sut.sync());
+    // Only the first is on the page.
+    RC_ASSERT(sut.page->held == held + 1);
+    sut.page->hanging = false;
+    checkAnswer(sut, first, connection, timeoutMs, false, QStringLiteral("PreviewAutomationTimeoutError"));
+    checkAnswer(sut, second, connection, 15000, true);
+  }
+  void show(std::ostream& os) const override {
+    os << (namedFirst ? "an action on the tab, then one naming none" : "an action naming no tab, then one on it") << " (" << timeoutMs << "ms)";
+  }
+};
+
 // A tab with no page: the browser is asked to show it, and the host waits.
 struct Missing : Step<Missing> {
   explicit Missing(const Model&) {}
@@ -327,7 +355,20 @@ private slots:
     QVERIFY(rc::check("the host stays registered once, reports focus, and answers every request in time", [] {
       Sut sut;
       rc::state::check(Model(), sut,
-                       rc::state::gen::execOneOfWithArgs<Focus, End, Drop, Quick, Quick, Hang, Queue, Close, Missing>());
+                       rc::state::gen::execOneOfWithArgs<Focus, End, Drop, Quick, Quick, Hang, Queue, Close, Missing, Current>());
+    }));
+  }
+
+  void clientId() {
+    QVERIFY(rc::check("one HAL-C2 home is one client id, every run; two are two", [] {
+      const QString name = *rc::gen::elementOf(std::vector<QString>{QStringLiteral("hal-c2"), QStringLiteral("hal-c2-dev"), QStringLiteral("home")});
+      const QString other = *rc::gen::elementOf(std::vector<QString>{QStringLiteral("hal-c2"), QStringLiteral("hal-c2-dev"), QStringLiteral("home")});
+      const QString home = QStringLiteral("/home/user/.local/state/") + name;
+      const QString id = PreviewAutomationHost::machineClientId(home);
+      RC_ASSERT(id.startsWith(QStringLiteral("desktop-")));
+      RC_ASSERT(PreviewAutomationHost::machineClientId(home) == id);
+      RC_ASSERT(PreviewAutomationHost::machineClientId(home + QStringLiteral("/")) == id);
+      RC_ASSERT((PreviewAutomationHost::machineClientId(QStringLiteral("/home/user/.local/state/") + other) == id) == (other == name));
     }));
   }
 };

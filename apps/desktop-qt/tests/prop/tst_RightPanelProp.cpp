@@ -7,11 +7,14 @@
 // The stage, too: tabs docked in the thread's centre, moved there and back,
 // laid out in panes, focused and dismissed. Whatever the user does, every tab
 // is docked in one place, the stage's panes show its own tabs once each, an
-// open panel shows one of its tabs, and only what shows works (shownTabs). A
-// PanelStage on its own keeps the same laws and survives being saved.
+// open panel shows one of its tabs, and only what shows works (shownTabs).
+// The app restarts, too, and the MC lists some of the thread's browser tabs:
+// the stage comes back as it was, less the browser tabs the MC no longer has.
+// A PanelStage on its own keeps the same laws and survives being saved.
 
 #include "Prop.h"
 
+#include "Browser.h"
 #include "FakeMc.h"
 #include "McClient.h"
 #include "NativeShell.h"
@@ -22,6 +25,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ThreadDevices.h"
+#include "ThreadPreviews.h"
 
 #include <QTemporaryDir>
 
@@ -34,6 +38,9 @@ namespace {
 
 const QStringList kTabs = {QStringLiteral("device:local:phone"), QStringLiteral("device:local:tablet"), QStringLiteral("diff"), QStringLiteral("agents")};
 const QStringList kDevices = kTabs.mid(0, 2);
+// The thread's browser tabs on the MC, and the stage's tabs: those and the browser's.
+const QStringList kBrowsers = {QStringLiteral("tab-1"), QStringLiteral("tab-2")};
+const QStringList kStageTabs = kTabs + QStringList{QStringLiteral("browser:tab-1"), QStringLiteral("browser:tab-2")};
 const QStringList kZones = {QStringLiteral("center"), QStringLiteral("left"), QStringLiteral("right"), QStringLiteral("top"), QStringLiteral("bottom")};
 
 rc::Gen<QString> oneOf(const QStringList& values) {
@@ -54,13 +61,40 @@ struct Model {
   }
 };
 
+// The app on a fake MC, looking at thread t1, kept in `home` across restarts.
+// The MC lists `browsers` as t1's browser tabs.
 struct Shell {
-  QTemporaryDir home;
-  FakeMc mc;
-  ShellBridge bridge;
-  NativeShell native{&bridge};
+  struct App {
+    FakeMc mc;
+    ShellBridge bridge;
+    NativeShell native{&bridge};
+  };
 
-  Shell() {
+  QTemporaryDir home;
+  QStringList browsers;
+  std::unique_ptr<App> app;
+
+  explicit Shell(const QStringList& listed = {}) : browsers(listed) { start(); }
+
+  void restart(const QStringList& listed) {
+    app.reset();
+    browsers = listed;
+    start();
+  }
+
+  void start() {
+    app = std::make_unique<App>();
+    FakeMc& mc = app->mc;
+    NativeShell& native = app->native;
+    mc.onRpc(QStringLiteral("preview.list"), [this, &mc](const FakeMc::Rpc& rpc) {
+      QJsonArray sessions;
+      for (const QString& tabId : std::as_const(browsers)) {
+        sessions.append(QJsonObject{{QStringLiteral("tabId"), tabId},
+                                    {QStringLiteral("threadId"), QStringLiteral("t1")},
+                                    {QStringLiteral("navStatus"), QJsonObject{{QStringLiteral("url"), QStringLiteral("http://localhost:5173/")}}}});
+      }
+      mc.reply(rpc, QJsonObject{{QStringLiteral("sessions"), sessions}, {QStringLiteral("serverEpoch"), QStringLiteral("e1")}, {QStringLiteral("revision"), 1}});
+    });
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{{QStringLiteral("id"), QStringLiteral("p1")},
                                                          {QStringLiteral("title"), QStringLiteral("Shop")},
                                                          {QStringLiteral("workspaceRoot"), QStringLiteral("/work/shop")},
@@ -77,12 +111,16 @@ struct Shell {
     native.controller<SettingsController>()->setDevicePath(home.filePath(QStringLiteral("preferences.json")));
     native.restoreWindows();
     native.open(mc.origin(), QStringLiteral("mc-token"));
-    if (!prop::until([this] { return native.isActive() && native.store()->threadOnline(QStringLiteral("env-a:t1")); })) qFatal("the shell did not start");
+    if (!prop::until([&native] { return native.isActive() && native.store()->threadOnline(QStringLiteral("env-a:t1")); })) qFatal("the shell did not start");
     native.controller<NavigationController>()->open(NavigationController::Route::thread(QStringLiteral("env-a:t1")));
+    // With the browser in the app, the MC's list of browser tabs is read.
+    if (panel()->previews()->embedded() && !prop::until([this] { return panel()->previews()->status() == QLatin1String("ready"); })) {
+      qFatal("the browser tabs were not listed");
+    }
   }
 
-  RightPanelController* panel() { return native.controller<RightPanelController>(); }
-  QVariantMap published() const { return bridge.state()->value(QStringLiteral("panel")).toMap(); }
+  RightPanelController* panel() { return app->native.controller<RightPanelController>(); }
+  QVariantMap published() const { return app->bridge.state()->value(QStringLiteral("panel")).toMap(); }
 };
 
 void check(const Model& model, Shell& shell) {
@@ -287,10 +325,16 @@ void stageStep(Shell& shell, Step step, Then then) {
 const auto unchangedTabs = [](const Docked& before, const Docked& after) { RC_ASSERT(after.tabs == before.tabs); };
 
 struct StageShowTab : StageCommand {
-  QString id = *oneOf(kTabs);
+  QString id = *oneOf(kStageTabs);
   void run(const Stage&, Shell& shell) const override {
     stageStep(shell, [this](RightPanelController* panel) { panel->showTab(id); },
               [this](const Docked& before, const Docked& after) {
+                // A browser tab the MC does not list is not there to show.
+                if (id.startsWith(QLatin1String("browser:")) && !before.tabs.contains(id)) {
+                  RC_ASSERT(after.tabs == before.tabs);
+                  RC_ASSERT(after.stage == before.stage);
+                  return;
+                }
                 RC_ASSERT(after.tabs.contains(id));
                 RC_ASSERT(after.stage.contains(id) == before.stage.contains(id));
                 // It shows where it is docked.
@@ -302,7 +346,7 @@ struct StageShowTab : StageCommand {
 };
 
 struct StageCloseTab : StageCommand {
-  QString id = *oneOf(kTabs);
+  QString id = *oneOf(kStageTabs);
   void run(const Stage&, Shell& shell) const override {
     stageStep(shell, [this](RightPanelController* panel) { panel->closeTab(id); },
               [this](const Docked& before, const Docked& after) {
@@ -327,7 +371,7 @@ struct StageSetOpen : StageCommand {
 };
 
 struct MoveToStage : StageCommand {
-  QString id = *oneOf(kTabs);
+  QString id = *oneOf(kStageTabs);
   int pane = *rc::gen::inRange(-1, 4);
   QString zone = *oneOf(kZones);
   void run(const Stage&, Shell& shell) const override {
@@ -343,7 +387,7 @@ struct MoveToStage : StageCommand {
 };
 
 struct MoveToPanel : StageCommand {
-  QString id = *oneOf(kTabs);
+  QString id = *oneOf(kStageTabs);
   void run(const Stage&, Shell& shell) const override {
     stageStep(shell, [this](RightPanelController* panel) { panel->moveToPanel(id); },
               [this](const Docked& before, const Docked& after) {
@@ -455,6 +499,40 @@ struct ChatWidth : StageCommand {
   void show(std::ostream& os) const override { os << "ChatWidth(" << width << ")"; }
 };
 
+// The app quits and starts again, the MC listing some of the browser tabs.
+struct Restart : StageCommand {
+  QStringList listed = [] {
+    QStringList listed;
+    for (const QString& tab : kBrowsers) {
+      if (*rc::gen::arbitrary<bool>()) listed.append(tab);
+    }
+    return listed;
+  }();
+  void run(const Stage&, Shell& shell) const override {
+    const Docked before(shell);
+    shell.restart(listed);
+    const Docked after(shell);
+    checkDocked(after);
+    // The stage is as it was, less what the MC no longer has; the browser
+    // tabs are the MC's.
+    PanelStage stage = before.stage;
+    QStringList tabs;
+    for (const QString& id : before.tabs) {
+      if (!id.startsWith(QLatin1String("browser:"))) tabs.append(id);
+    }
+    for (const QString& tab : kBrowsers) {
+      if (listed.contains(tab)) tabs.append(QStringLiteral("browser:") + tab);
+      else stage.remove(QStringLiteral("browser:") + tab);
+    }
+    RC_ASSERT(after.stage == stage);
+    QStringList sorted = after.tabs;
+    sorted.sort();
+    tabs.sort();
+    RC_ASSERT(sorted == tabs);
+  }
+  void show(std::ostream& os) const override { os << "Restart(listing " << listed.join(QLatin1Char(',')).toStdString() << ")"; }
+};
+
 // A PanelStage driven directly, by the stage's own operations.
 void stageOperation(PanelStage& stage) {
   switch (*rc::gen::inRange(0, 6)) {
@@ -481,11 +559,14 @@ private slots:
   }
 
   void stage() {
+    // The browser in the app, for its tabs.
+    Browser::setSupported(true);
+    const auto unsupported = qScopeGuard([] { Browser::setSupported(false); });
     QVERIFY(rc::check("every tab is docked in one place and only what shows works", [] {
-      Shell shell;
+      Shell shell(kBrowsers);
       rc::state::check(Stage{}, shell,
                        rc::state::gen::execOneOfWithArgs<StageShowTab, StageShowTab, StageCloseTab, StageSetOpen, MoveToStage, MoveToStage, MoveToPanel, MoveTab,
-                                                         SetLayout, FocusPane, ToggleFocus, OpenInCentre, Dismiss, ChatWidth>());
+                                                         SetLayout, FocusPane, ToggleFocus, OpenInCentre, Dismiss, ChatWidth, Restart>());
     }));
   }
 
