@@ -658,10 +658,6 @@ const Steps steps([] {
     const QString label = lastCall(world).value(QStringLiteral("label")).toString();
     expect(label == unescaped(c[0]), QStringLiteral("the command reads \"%1\"").arg(label));
   });
-  step(QStringLiteral("the user opens the call's details"), [](World& world, const Captures&, const Table&) {
-    openFold(world);
-    click(world, drawn(world, QStringLiteral("workCall")));
-  });
   step(QStringLiteral("the details show %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(lastCall(world).value(QStringLiteral("command")) == c[0], QStringLiteral("the call is %1").arg(show(lastCall(world))));
     Brick& brick = timelineBrick(world);

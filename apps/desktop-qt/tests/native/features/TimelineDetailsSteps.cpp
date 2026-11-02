@@ -96,8 +96,15 @@ QVariantMap lastCall(World& world) {
   fail(QStringLiteral("no call is shown; %1").arg(describe(model)));
 }
 
-// Opens the newest call's details, as the user clicks its line.
+// Opens the newest call's details, as the user clicks its line; a settled
+// turn's fold is opened first.
 void openDetails(World& world) {
+  TimelineModel& model = timeline(world);
+  for (int row = model.rowCount() - 1; row >= 0; --row) {
+    if (role(model, row, TimelineModel::KindRole) != QLatin1String("fold")) continue;
+    if (!role(model, row, TimelineModel::ExpandedRole).toBool()) model.toggle(role(model, row, TimelineModel::IdRole).toString());
+    break;
+  }
   timelineBrick(world);
   const QString id = lastCall(world).value(QStringLiteral("id")).toString();
   QQuickItem* line = drawn(world, QStringLiteral("workCall"), [&](QQuickItem* item) {
@@ -322,9 +329,10 @@ const Steps steps([] {
   });
   step(QStringLiteral("the details show the command once"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return world.brick->shows(QStringLiteral("$ npm test")); }, QStringLiteral("the command in the details"));
-    // The call's own line, and its command in the details.
+    // The call's own line (a live one named by its program), and its command in the details.
     const QStringList texts = shown(world);
-    expect(texts.count(QStringLiteral("npm test")) == 1 && texts.count(QStringLiteral("$ npm test")) == 1,
+    const bool labelled = lastCall(world).value(QStringLiteral("label")) == QLatin1String("npm test");
+    expect(texts.count(QStringLiteral("npm test")) == (labelled ? 1 : 0) && texts.count(QStringLiteral("$ npm test")) == 1,
            QStringLiteral("the timeline shows %1").arg(texts.join(QLatin1String(" | "))));
   });
   step(QStringLiteral("no output is shown"), [](World& world, const Captures&, const Table&) {
