@@ -117,6 +117,39 @@ defmodule HalC2.SourceControl.ChangeRequests do
 
   def for_branch(_cwd, _remote, _branch), do: nil
 
+  @doc """
+  Change request `number` of `remote`'s repository as the host's full read gives it,
+  in `PullRequestPreview`'s names (`number`, `title`, `url`, `author`, `state`,
+  `isDraft`, `createdAt`): a GitLab merge request through `glab`, which has no
+  narrower read. `{:error, {reason, detail}}` when the host does not answer, or
+  cannot be read here.
+  """
+  def view(cwd, %{kind: "gitlab", host: host, repository: repository}, number) do
+    args = ["mr", "view", "#{number}", "-R", "https://#{host}/#{repository}", "--output", "json"]
+
+    with {:ok, out, _} <- Cli.run("glab", args, cd: cwd, timeout: @timeout),
+         {:ok, %{"iid" => ^number} = mr} <- JSON.decode(out) do
+      {:ok,
+       %{
+         "number" => number,
+         "title" => mr["title"],
+         "url" => mr["web_url"],
+         "author" =>
+           mr["author"] &&
+             %{"login" => mr["author"]["username"], "avatarUrl" => mr["author"]["avatar_url"]},
+         "state" => gitlab_state(mr["state"]),
+         "isDraft" => mr["draft"] == true or mr["work_in_progress"] == true,
+         "createdAt" => mr["created_at"]
+       }}
+    else
+      {:error, {_, _}} = error -> error
+      _ -> {:error, {:failed, "GitLab answered in an unexpected shape."}}
+    end
+  end
+
+  def view(_cwd, _remote, _number),
+    do: {:error, {:failed, "Change requests cannot be previewed for this host yet."}}
+
   # A host's answer missing what a status has to name is no change request.
   defp change_request(number, title, url, base, head, opts)
        when is_integer(number) and is_binary(title) and is_binary(url) and is_binary(base) and

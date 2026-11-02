@@ -754,26 +754,26 @@ Feature: Threads that work on or link pull requests
     When the user opens the git overview of "Tax work" on the phone
     Then pull request 42 is listed with its stack
 
-  @backlog @mc
+  @mc
   Scenario: A link preview asks the host for no more than its card needs
     When a client asks for the preview of pull request 42
     Then the answer carries the repository, number, title, link, author, state, draft flag and creation time
     And it carries none of the conversation, checks or files
 
-  @backlog @mc
+  @mc
   Scenario: A preview is not read again within a short while
     Given the preview of pull request 42 was read a few seconds ago
     When a client asks for it again
     Then the answer comes without asking the host
     But a change made to pull request 42 from HAL-C2 or a refresh makes the next preview ask the host
 
-  @backlog @mc
+  @mc
   Scenario: A preview never waits for a full read of the same pull request
     Given the details of pull request 42 are still being read
     When a client asks for its preview
     Then the preview is answered without waiting for the details
 
-  @backlog @mc
+  @mc
   Scenario: A preview is made from details held a moment ago but never from stale ones
     Given the details of pull request 42 were read 10 seconds ago
     When a client asks for its preview
@@ -781,21 +781,21 @@ Feature: Threads that work on or link pull requests
     When the details were read 20 seconds ago instead
     Then the host is asked for the preview
 
-  @backlog @mc
+  @mc
   Scenario: Previews already held are still shown while a rate limit pauses new ones
-    Given the host is rate limited
-    And the preview of pull request 1 is held
+    Given the preview of pull request 1 is held
+    And the host is rate limited
     When a client asks for the previews of pull requests 1 and 2
     Then the preview of pull request 1 is returned
     And pull request 2 is refused as paused until the limit resets
 
-  @backlog @mc
+  @mc
   Scenario: A host without a narrow preview answers from the full pull request
     Given the host has no narrow read for a pull request
     When a client asks for the preview of pull request 42
     Then the preview is made from the host's full answer
 
-  @backlog @mc
+  @mc
   Scenario: Another project finishing a turn does not discard previews
     Given the previews of "acme/web" and "acme/docs" are held
     When a turn finishes in "acme/docs"

@@ -596,6 +596,10 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     baselines = if checkpoint, do: baselines(state.turn, at), else: []
 
+    # The turn may have pushed or changed its repository's pull requests; forgotten
+    # before the run ends, so whoever sees it end reads them fresh.
+    if cwd = state.turn.cwd, do: HalC2.PullRequests.turn_finished(cwd)
+
     ended =
       HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
         if active?(stream, state.turn.ids.run) do
