@@ -447,7 +447,16 @@ defmodule HalC2.TerminalPropTest do
           else: []
         ) ++
         if(attachments != [],
-          do: [{3, {:call, __MODULE__, :detach, [elements(attachments)]}}],
+          do: [
+            {3, {:call, __MODULE__, :detach, [elements(attachments)]}},
+            {3,
+             let(
+               attachment <- elements(attachments),
+               do:
+                 {:call, __MODULE__, :close_detaching,
+                  [attachment, tokens_of(s, elem(attachment, 1))]}
+             )}
+          ],
           else: []
         ) ++
         if(Enum.any?(s.clients, fn {_, c} -> c.stalled end),
@@ -503,6 +512,11 @@ defmodule HalC2.TerminalPropTest do
     do:
       free?(s, pid) and match?(%{attached: attached} when is_list(attached), s.terms[key]) and
         pid in s.terms[key].attached
+
+  def precondition(s, {:call, _, :close_detaching, [{_, key} = attachment, tokens]}),
+    do:
+      precondition(s, {:call, __MODULE__, :detach, [attachment]}) and
+        tokens == tokens_of(s, key)
 
   def precondition(s, {:call, _, :check, [args]}), do: args == check_args(s)
   def precondition(s, {:call, _, :sync, [args]}), do: args == sync_args(s)
@@ -601,6 +615,12 @@ defmodule HalC2.TerminalPropTest do
     %{s | terms: Map.delete(s.terms, key), disk: disk, followers: followers}
   end
 
+  def next_state(s, r, {:call, m, :close_detaching, [{_, key} = attachment, tokens]}) do
+    s
+    |> next_state(r, {:call, m, :detach, [attachment]})
+    |> next_state(r, {:call, m, :close, [key, false, tokens]})
+  end
+
   def next_state(s, _, {:call, _, :die, [key, _, _]}), do: put_in(s.terms[key].status, :exited)
 
   # A killed terminal never saved, so what the disk holds is unknown: expect nothing.
@@ -646,7 +666,8 @@ defmodule HalC2.TerminalPropTest do
   def postcondition(_, {:call, _, :restart, _}, result),
     do: match?({:ok, %{status: "running"}}, result)
 
-  def postcondition(_, {:call, _, :close, _}, result), do: result == {:ok, nil}
+  def postcondition(_, {:call, _, name, _}, result) when name in [:close, :close_detaching],
+    do: result == {:ok, nil}
 
   def postcondition(_, {:call, _, name, _}, result) when name in [:new_client, :kill_client],
     do: is_pid(result) or result == :ok
@@ -780,6 +801,34 @@ defmodule HalC2.TerminalPropTest do
     note_pids()
     settle(key, tokens)
     Terminal.close(input(key, %{"deleteHistory" => delete?}))
+  end
+
+  # A client detaches while the terminal is closing, its detach queued behind the close;
+  # it does not follow the terminal's next process.
+  def close_detaching({client, key}, tokens) do
+    note_pids()
+    settle(key, tokens)
+    pid = pid_of(key)
+    down = Process.monitor(pid)
+    :sys.suspend(pid)
+    ref = make_ref()
+    send(pid, {:"$gen_call", {self(), ref}, {:close, false}})
+    :ok = ask(client, :detach, [key])
+    :sys.resume(pid)
+
+    receive do
+      {^ref, result} ->
+        receive do
+          {:DOWN, ^down, _, _, _} -> :ok
+        after
+          @wait -> flunk("terminal #{inspect(key)} did not stop")
+        end
+
+        followers = :sys.get_state(Hub).followers |> Map.get(key, %{}) |> Map.keys()
+        if client in followers, do: {:error, {:follows, client, key}}, else: result
+    after
+      @wait -> flunk("close of #{inspect(key)} did not return")
+    end
   end
 
   # Output the shell "printed": into the scrollback and the pending batch.

@@ -1224,7 +1224,9 @@ defmodule HalC2.Web.Socket do
 
   # A subscription that caught up gets what it missed as a new snapshot, from the same
   # attach a new subscription makes: its floor moves to the snapshot, so nothing the
-  # terminal is still sending is told twice. A terminal gone by then said so itself.
+  # terminal is still sending is told twice. When that attach fails, the subscription
+  # starts over by a `resync`, as for a terminal that went down, rather than being
+  # sent everything from then on with a gap where it was held.
   defp terminal_ack(state, id, sequence) do
     with %{^id => window} <- state.terminal_windows,
          {:caught_up, window} <- OutputWindow.ack(window, sequence),
@@ -1247,9 +1249,8 @@ defmodule HalC2.Web.Socket do
       %{} ->
         {:ok, state}
 
-      # Not caught up after all, or nothing left to attach to.
-      _gone ->
-        {:ok, %{state | terminal_windows: Map.delete(state.terminal_windows, id)}}
+      _failed ->
+        {:push, Protocol.encode(%{"t" => "resync", "id" => id}), unsubscribe(state, id, false)}
     end
   end
 
