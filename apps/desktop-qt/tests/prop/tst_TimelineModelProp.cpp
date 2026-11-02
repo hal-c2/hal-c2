@@ -366,6 +366,9 @@ struct Row {
   // What a summarized group did, and whether a call of it failed.
   QString summary;
   bool summaryFailed = false;
+  // What the last call on screen reads, when it is a command: while its turn
+  // runs, how it went ("Running command").
+  QString command;
   QString agentModel;
   bool operator==(const Row&) const = default;
 };
@@ -380,6 +383,7 @@ void showValue(const Row& row, std::ostream& os) {
   if (row.hidden) os << " hidden=" << row.hidden;
   if (!row.entries.isEmpty()) os << " entries=" << row.entries.join(QLatin1Char(',')).toStdString();
   if (row.summarized) os << " summary=" << row.summary.toStdString() << (row.summaryFailed ? " failed" : "");
+  if (!row.command.isEmpty()) os << " command=" << row.command.toStdString();
   if (!row.agentModel.isEmpty()) os << " model=" << row.agentModel.toStdString();
   os << ")";
 }
@@ -500,6 +504,15 @@ QList<Row> project(const Model& model) {
       const int visible = row.summarized ? 0 : 1;
       row.hidden = int(calls.size()) - visible;
       row.entries = row.expanded ? calls : calls.mid(calls.size() - visible);
+      if (const Item last = thread.items.value(row.entries.value(row.entries.size() - 1)); last.type == QLatin1String("command_execution")) {
+        // These commands name no program.
+        const bool live = !settled(thread.runs.value(item.run)) && !row.expanded;
+        const QString& status = last.status;
+        const QString verb = status == QLatin1String("failed")      ? QStringLiteral("Failed")
+                             : status == QLatin1String("completed") ? QStringLiteral("Ran")
+                                                                    : QStringLiteral("Running");
+        row.command = (live ? verb : QStringLiteral("Ran")) + QStringLiteral(" command");
+      }
       rows.append(row);
       continue;
     }
@@ -612,6 +625,10 @@ struct Sut {
     row.expanded = value(TimelineModel::ExpandedRole).toBool();
     row.hidden = value(TimelineModel::HiddenCountRole).toInt();
     for (const QVariant& entry : value(TimelineModel::EntriesRole).toList()) row.entries.append(entry.toMap().value(QStringLiteral("id")).toString());
+    if (const QVariantMap last = value(TimelineModel::EntriesRole).toList().value(row.entries.size() - 1).toMap();
+        last.value(QStringLiteral("type")) == QLatin1String("command_execution")) {
+      row.command = last.value(QStringLiteral("label")).toString();
+    }
     row.summary = value(TimelineModel::SummaryRole).toString();
     row.summarized = !row.summary.isEmpty();
     row.summaryFailed = value(TimelineModel::SummaryFailedRole).toBool();

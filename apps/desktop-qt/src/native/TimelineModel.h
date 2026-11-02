@@ -286,6 +286,8 @@ private:
     bool summarized = false;
     // A work group's: its run was stopped here, so it starts open.
     bool startsOpen = false;
+    // A work group's: its turn is still running.
+    bool live = false;
 
     bool operator==(const Row&) const = default;
   };
@@ -326,7 +328,11 @@ private:
   QList<Row> project() const;
   void applyRows(const QList<Row>& rows, const QSet<QString>& changed);
   void updateWorking();
-  QVariantMap entry(const QJsonObject& item) const;
+  // `live`: the latest call of a running turn, whose command reads as what it
+  // is doing ("Running npm").
+  QVariantMap entry(const QJsonObject& item, bool live = false) const;
+  // A work group's last call as it reads while its turn runs or not, by `row.live`.
+  QVariantMap liveEntry(const Row& row) const;
   // When a row or turn item happened, or invalid.
   QDateTime rowTime(const Row& row) const;
   void redrawTimes();

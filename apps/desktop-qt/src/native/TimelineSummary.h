@@ -43,6 +43,11 @@ bool subagentSettled(const QString& status);
 // there is nothing to say.
 QString subagentDetail(bool settled, const QString& progress, const QString& result);
 
+// What a HAL-C2 tool call is called on its row ("Send message to thread"),
+// whichever provider prefix its name carries. Empty for any other tool,
+// including another MCP server's tool of the same name.
+QString halC2ToolDisplayName(const QString& toolName);
+
 // A command as its row labels it (client-runtime commandDisplayText): the
 // script of a lone `sh -c '<script>'` wrapper, its first line, whitespace
 // collapsed.

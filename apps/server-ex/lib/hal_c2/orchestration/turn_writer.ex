@@ -10,7 +10,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
 
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{Entities, TurnWatch}
+  alias HalC2.Orchestration.{CommandOutput, Entities, TurnWatch}
   alias HalC2.PullRequests.Opened
   alias HalC2.StreamState
 
@@ -274,7 +274,7 @@ defmodule HalC2.Orchestration.TurnWriter do
             item_id,
             &(fun.(&1)
               |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at})
-              |> output_failed(item[:kind], status))
+              |> output_failure(item[:kind]))
           ),
           Orchestration.upsert(
             stream,
@@ -304,30 +304,14 @@ defmodule HalC2.Orchestration.TurnWriter do
     state
   end
 
-  # Some providers finish a command whose output says it failed; the client, which
-  # does not get the output, reads it from `outputIndicatesFailure`.
-  defp output_failed(%{"output" => output} = entity, :command, "completed")
-       when is_binary(output) do
-    if output_indicates_failure?(binary_part(output, 0, min(byte_size(output), 32_768))),
-      do: Map.put(entity, "outputIndicatesFailure", true),
-      else: entity
+  # A command the provider says completed whose output says otherwise.
+  defp output_failure(%{"status" => "completed", "output" => output} = item, :command) do
+    if CommandOutput.failed?(output),
+      do: Map.put(item, "outputIndicatesFailure", true),
+      else: item
   end
 
-  defp output_failed(entity, _kind, _status), do: entity
-
-  @doc "Whether a command's output says it failed: a missing file or command, or a non-zero exit."
-  def output_indicates_failure?(text) do
-    Regex.match?(
-      ~r/file not found|no files found|enoent|no such file|commandnotfoundexception|command not found|is not recognized as the name of a cmdlet|a parameter cannot be found that matches parameter name/i,
-      text
-    ) or
-      (Regex.match?(~r/cannot find path/i, text) and
-         Regex.match?(~r/because it does not exist/i, text)) or
-      (Regex.match?(~r/is not recognized/i, text) and Regex.match?(~r/the term '/i, text)) or
-      Regex.match?(~r/<exited with exit code\s+[1-9]\d*\s*>/i, text) or
-      Regex.match?(~r/exit(?:ed)? with exit code\s+[1-9]\d*/i, text) or
-      Regex.match?(~r/exit code\s*[:\s]\s*[1-9]\d*\b/i, text)
-  end
+  defp output_failure(item, _kind), do: item
 
   @doc """
   Opens an approval prompt: a pending runtime request, the waiting approval item,

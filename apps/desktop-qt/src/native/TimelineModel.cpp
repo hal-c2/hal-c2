@@ -16,6 +16,7 @@
 #include <optional>
 #include <utility>
 
+#include "CommandLabel.h"
 #include "SidebarModel.h"
 #include "TimelineSummary.h"
 
@@ -359,6 +360,7 @@ QString kindName(Kind kind) {
 QString callStatusLabel(const QString& status) {
   if (status == QLatin1String("failed")) return QStringLiteral("Failed");
   if (status == QLatin1String("cancelled") || status == QLatin1String("interrupted")) return QStringLiteral("Stopped");
+  if (status == QLatin1String("declined")) return QStringLiteral("Declined");
   if (status == QLatin1String("completed")) return {};
   return QStringLiteral("Running");
 }
@@ -848,6 +850,12 @@ void TimelineModel::events(const QJsonArray& events) {
   }
 }
 
+QVariantMap TimelineModel::liveEntry(const Row& row) const {
+  if (row.kind != QLatin1String("work") || row.items.isEmpty()) return {};
+  const bool live = row.live && m_expandedGroups.contains(row.id) == row.startsOpen;
+  return entry(entity(QStringLiteral("turn-item"), row.items.last()), live);
+}
+
 bool TimelineModel::shows(const Row& row, const QString& item) const {
   // A collapsed work group draws its last entries and, summarized, a summary of all of them.
   if (row.kind != QLatin1String("work") || row.summarized || m_expandedGroups.contains(row.id) != row.startsOpen) return true;
@@ -1182,7 +1190,8 @@ QList<TimelineModel::Row> TimelineModel::project() const {
         if (callKind != Kind::Work || folded.contains(callId) || text(call, QLatin1String("runId")) != runId) break;
         row.items.append(callId);
       }
-      row.summarized = row.items.size() > 1 && kSettled.contains(text(runs.value(runId), QLatin1String("status")));
+      row.live = !kSettled.contains(text(runs.value(runId), QLatin1String("status")));
+      row.summarized = row.items.size() > 1 && !row.live;
       row.startsOpen = m_keptOpen.contains(runId);
       rows.append(row);
       i = next;
@@ -1241,9 +1250,16 @@ void TimelineModel::applyRows(const QList<Row>& rows, const QSet<QString>& chang
       m_rows.move(from, i);
       endMoveRows();
     }
-    if (m_rows.at(i) != want || dirty(want)) {
+    // A turn settling ends its live call, which redraws only if that changes
+    // how the call reads.
+    Row unlive = want;
+    unlive.live = m_rows.at(i).live;
+    const bool relabelled = unlive.live != want.live && liveEntry(unlive) != liveEntry(want);
+    if (m_rows.at(i) != unlive || relabelled || dirty(want)) {
       m_rows[i] = want;
       emit dataChanged(index(int(i)), index(int(i)));
+    } else {
+      m_rows[i] = want;
     }
     ++i;
   }
@@ -1444,7 +1460,7 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
 }
 
 // One tool call of a work group (apps/tui/src/orchestrationV2Adapter.ts itemSummary).
-QVariantMap TimelineModel::entry(const QJsonObject& item) const {
+QVariantMap TimelineModel::entry(const QJsonObject& item, bool live) const {
   const QString type = text(item, QLatin1String("type"));
   const QString status = text(item, QLatin1String("status"));
   const QString title = text(item, QLatin1String("title")).trimmed();
@@ -1452,7 +1468,9 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
       {QStringLiteral("id"), text(item, QLatin1String("id"))},
       {QStringLiteral("type"), type},
       {QStringLiteral("status"), status},
-      {QStringLiteral("statusLabel"), callStatusLabel(status)},
+      // A call the provider finished whose result says it failed reads as failed.
+      {QStringLiteral("statusLabel"), status == QLatin1String("completed") && timeline::callFailed(item) ? QStringLiteral("Failed")
+                                                                                                         : callStatusLabel(status)},
       {QStringLiteral("icon"), iconOf(item)},
       {QStringLiteral("time"), stamp(itemTime(item))},
   };
@@ -1466,6 +1484,12 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
   } else if (type == QLatin1String("command_execution")) {
     const QString command = timeline::commandDisplayText(text(item, QLatin1String("input")));
     label = command.isEmpty() ? QStringLiteral("Ran command") : command;
+    if (live) {
+      // The running turn's latest command, named by its program and how it went.
+      const QString ended = entry.value(QStringLiteral("statusLabel")).toString();
+      const QString program = timeline::commandProgramName(text(item, QLatin1String("input")));
+      label = (ended.isEmpty() ? QStringLiteral("Ran") : ended) + QLatin1Char(' ') + (program.isEmpty() ? QStringLiteral("command") : program);
+    }
     detail = text(item, QLatin1String("output"));
     // An output that only echoes the command says nothing new.
     if (repeatsCommand(detail, {text(item, QLatin1String("input")), command})) detail.clear();
@@ -1530,6 +1554,7 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
     entry.insert(QStringLiteral("results"), results);
   } else if (type == QLatin1String("dynamic_tool")) {
     label = item.value(QLatin1String("toolName")).toString(QStringLiteral("Used tool"));
+    if (const QString name = timeline::halC2ToolDisplayName(label); !name.isEmpty()) label = name;
     // Its input; a result's body is not shown (docs/user/activity-log.md).
     if (const QJsonValue input = item.value(QLatin1String("input")); input.isObject() && !input.toObject().isEmpty()) {
       detail = QString::fromUtf8(QJsonDocument(input.toObject()).toJson(QJsonDocument::Indented)).trimmed();
@@ -1616,7 +1641,9 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
     if (role == EntriesRole) {
       QVariantList entries;
       const qsizetype first = expanded ? 0 : std::max<qsizetype>(0, row.items.size() - shown);
-      for (qsizetype i = first; i < row.items.size(); ++i) entries.append(entry(entity(QStringLiteral("turn-item"), row.items.at(i))));
+      for (qsizetype i = first; i < row.items.size(); ++i) {
+        entries.append(entry(entity(QStringLiteral("turn-item"), row.items.at(i)), row.live && !expanded && i == row.items.size() - 1));
+      }
       return entries;
     }
     if (role == SummaryRole || role == SummaryFailedRole) {
