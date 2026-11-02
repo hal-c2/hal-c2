@@ -199,6 +199,9 @@ struct Run {
   QString status;
   // A queued run held for the user, numbered above the run that passed it.
   bool held = false;
+  // How long before clock() the message asking for it was sent; -1 when the
+  // MC says nothing of it.
+  int requestedAgo = -1;
   bool operator==(const Run&) const = default;
 };
 
@@ -280,7 +283,10 @@ QString field(const QString& type) {
 QJsonObject json(const Run& run) {
   QJsonObject entity{{QStringLiteral("id"), run.id}, {QStringLiteral("ordinal"), run.ordinal}, {QStringLiteral("status"), run.status}};
   if (run.held) entity.insert(QStringLiteral("queueHeld"), true);
-  if (run.status != QLatin1String("queued") && run.status != QLatin1String("cancelled")) entity.insert(QStringLiteral("startedAt"), clock().toString(Qt::ISODate));
+  if (run.requestedAgo >= 0) entity.insert(QStringLiteral("requestedAt"), clock().addSecs(-run.requestedAgo).toString(Qt::ISODate));
+  if (run.status != QLatin1String("queued") && run.status != QLatin1String("cancelled") && run.status != QLatin1String("starting")) {
+    entity.insert(QStringLiteral("startedAt"), clock().toString(Qt::ISODate));
+  }
   return entity;
 }
 
@@ -634,9 +640,16 @@ struct Sut {
     RC_ASSERT(modelTestFailures == 0);
     RC_ASSERT(model->hasEarlier() == expected.floor.has_value());
     RC_ASSERT(!model->loadingEarlier());
-    bool working = false;
-    for (const Run& run : expected.held.runs) working = working || run.status == QLatin1String("running");
-    RC_ASSERT(model->working() == working);
+    // The timer counts from the earliest message of a run still working, its
+    // session started or not, and so does not move when a session starts.
+    QDateTime since;
+    for (const Run& run : expected.held.runs) {
+      if (run.status != QLatin1String("running") && run.status != QLatin1String("starting")) continue;
+      const QDateTime asked = run.requestedAgo >= 0 ? clock().addSecs(-run.requestedAgo) : clock();
+      if (!since.isValid() || asked < since) since = asked;
+    }
+    RC_ASSERT(model->working() == since.isValid());
+    RC_ASSERT(model->workingSince() == since);
     for (const Row& row : want) {
       const Item item = expected.held.items.value(row.id);
       if (item.type != QLatin1String("user_message") || !item.legacy.isEmpty()) continue;
@@ -790,6 +803,9 @@ QList<Event> renumberWaiting(Model& model, int after) {
 // thread stored of one before the MC recorded them so.
 struct StartRun : Change {
   QString how;
+  // The agent's session is still starting: the run is requested, not begun (Begin).
+  bool starting = *rc::gen::weightedElement<bool>({{3, false}, {1, true}});
+  int requestedAgo = *rc::gen::inRange(-1, 120);
   explicit StartRun(const Model&)
       : how(*rc::gen::weightedElement<QString>(
             {{4, QStringLiteral("user")}, {2, QStringLiteral("notification")}, {1, QStringLiteral("envelope")}, {1, QStringLiteral("wake")}})) {}
@@ -797,7 +813,8 @@ struct StartRun : Change {
   void apply(Model& model) const override {
     // A run that passes a held queue is numbered below it: the held runs are
     // renumbered up behind it in the same commit, as the MC does.
-    const Run run{QStringLiteral("run-%1").arg(model.mc.runs.size() + 1), startOrdinal(model), QStringLiteral("running")};
+    Run run{QStringLiteral("run-%1").arg(model.mc.runs.size() + 1), startOrdinal(model), starting ? QStringLiteral("starting") : QStringLiteral("running")};
+    run.requestedAgo = requestedAgo;
     model.mc.runs.insert(run.id, run);
     QList<Event> events{event(model, QStringLiteral("run"), run.id, {{QStringLiteral("s"), json(run)}})};
     events.append(renumberWaiting(model, run.ordinal));
@@ -810,7 +827,30 @@ struct StartRun : Change {
     events.append(event(model, QStringLiteral("turn-item"), message.id, {{QStringLiteral("s"), json(message)}}, run.id));
     commit(model, events);
   }
-  void show(std::ostream& os) const override { os << "StartRun(" << how.toStdString() << ")"; }
+  void show(std::ostream& os) const override {
+    os << "StartRun(" << how.toStdString() << (starting ? ", starting" : "") << ", requested " << requestedAgo << "s ago)";
+  }
+};
+
+// The agent's session starts and it begins a run that was waiting for it.
+struct Begin : Change {
+  QString run;
+  explicit Begin(const Model& model) {
+    QStringList runs;
+    for (const Run& found : model.mc.runs) {
+      if (found.status == QLatin1String("starting")) runs.append(found.id);
+    }
+    RC_PRE(!runs.isEmpty());
+    run = pick(runs);
+  }
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.runs.value(run).status == QLatin1String("starting")); }
+  void apply(Model& model) const override {
+    model.mc.runs[run].status = QStringLiteral("running");
+    commit(model, {event(model, QStringLiteral("run"), run,
+                         {{QStringLiteral("s"), QJsonObject{{QStringLiteral("status"), QStringLiteral("running")},
+                                                            {QStringLiteral("startedAt"), clock().toString(Qt::ISODate)}}}})});
+  }
+  void show(std::ostream& os) const override { os << "Begin(" << run.toStdString() << ")"; }
 };
 
 // A queued message held for the user (it waited behind a stop) that a newer run
@@ -1370,7 +1410,7 @@ private slots:
       Model model;
       Sut sut;
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<StartRun, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
+                       rc::state::gen::execOneOfWithArgs<StartRun, Begin, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
                                                          LoadEarlier, Toggle, Restart, AgentModel>());
     }));

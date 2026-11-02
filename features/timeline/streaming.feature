@@ -72,7 +72,7 @@ Feature: Streaming the agent's reply
     And the elapsed time keeps counting
 
   # Legacy: packages/shared/src/orchestrationTiming.ts (deriveActiveWorkStartedAt: requestedAt floor)
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: The working time counts from the message while the agent is still starting up
     Given the user sent a message and the agent's session is still starting
     When the agent has not yet begun the turn
@@ -81,7 +81,7 @@ Feature: Streaming the agent's reply
     And it does not disappear and come back when the agent begins
 
   # Legacy: packages/shared/src/orchestrationTiming.ts (formatDuration)
-  @backlog @desktop @mobile @tui
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario Outline: A duration is written in hours, minutes and seconds, leaving out empty steps
     When the thread shows a duration of <duration>
     Then it reads "<shown>"
@@ -140,7 +140,7 @@ Feature: Streaming the agent's reply
     Then the message returns to its preview
 
   # Legacy: packages/shared/src/chatMessages.ts (shouldCollapseUserMessage)
-  @backlog @desktop @tui
+  @desktop @tui @backlog-tui
   Scenario Outline: A message the user sent is shortened only when it is long
     Given the user sent a message of <message>
     When the user looks at it in the conversation
@@ -160,14 +160,14 @@ Feature: Streaming the agent's reply
     When the user copies the reply
     Then the reply's markdown is on the clipboard
 
-  @backlog @desktop
+  @desktop
   Scenario: A copied reply confirms itself beside its copy button for a moment
     Given the agent has answered
     When the user copies the reply
     Then the copy button shows that the reply was copied
     And that confirmation goes away after about a second
 
-  @backlog @desktop
+  @desktop
   Scenario: A reply that cannot be copied says why beside its copy button
     Given the agent has answered
     And the clipboard refuses the copy
@@ -197,7 +197,7 @@ Feature: Streaming the agent's reply
       | a shell command ending in a backslash             |
       | a Python snippet                                  |
 
-  @backlog @desktop
+  @desktop
   Scenario: A reply that finished with no text says so
     Given the agent's turn ended with a reply that has no text
     Then the reply reads "(empty response)"
@@ -209,7 +209,7 @@ Feature: Streaming the agent's reply
     Then it says there is no conversation yet
     And it suggests asking the agent to inspect the repository, run a command or continue the thread
 
-  @backlog @desktop
+  @desktop
   Scenario: A reply still being written is not called empty
     Given the agent has started a reply and written nothing yet
     Then the reply shows no text and no "(empty response)"

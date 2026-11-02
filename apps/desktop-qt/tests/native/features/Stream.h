@@ -88,6 +88,13 @@ struct FakeStreams {
   QStringList changedFiles;
 };
 
+// A duration as the thread writes it (streaming.feature), for "it reads"
+// (TimelineActivitySteps) to compare against instead of a group's summary.
+struct ShownDuration {
+  bool shown = false;
+  QString text;
+};
+
 inline const QString kProject = QStringLiteral("shop");
 inline const QString kThread = QStringLiteral("thread-1");
 inline const QString kPeer = QStringLiteral("mc-b");

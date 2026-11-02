@@ -220,20 +220,24 @@ std::optional<QJsonObject> patched(const QJsonObject& entity, const QJsonObject&
   return next;
 }
 
-// apps/tui/src/timeline.ts formatDuration.
+// packages/shared/src/orchestrationTiming.ts formatDuration: tenths under ten
+// seconds (a whole second without its ".0"), then hours, minutes and seconds,
+// leaving out the empty ones.
 QString formatDuration(qint64 ms) {
   if (ms < 0) return QStringLiteral("0ms");
   if (ms < 1000) return QStringLiteral("%1ms").arg(std::max<qint64>(1, ms));
   if (ms < 10000) {
-    const double tenths = std::round(ms / 100.0) / 10.0;
-    return tenths >= 10 ? QStringLiteral("10s") : QStringLiteral("%1s").arg(tenths, 0, 'f', 1);
+    const qint64 tenths = std::llround(ms / 100.0);
+    if (tenths >= 100) return QStringLiteral("10s");
+    return tenths % 10 == 0 ? QStringLiteral("%1s").arg(tenths / 10) : QStringLiteral("%1.%2s").arg(tenths / 10).arg(tenths % 10);
   }
   if (ms < 60000) return QStringLiteral("%1s").arg(std::llround(ms / 1000.0));
-  const qint64 minutes = ms / 60000;
-  const qint64 seconds = std::llround((ms % 60000) / 1000.0);
-  if (seconds == 0) return QStringLiteral("%1m").arg(minutes);
-  if (seconds == 60) return QStringLiteral("%1m").arg(minutes + 1);
-  return QStringLiteral("%1m %2s").arg(minutes).arg(seconds);
+  const qint64 total = std::llround(ms / 1000.0);
+  QStringList parts;
+  if (total >= 3600) parts.append(QStringLiteral("%1h").arg(total / 3600));
+  if (total % 3600 >= 60) parts.append(QStringLiteral("%1m").arg(total % 3600 / 60));
+  if (total % 60 > 0) parts.append(QStringLiteral("%1s").arg(total % 60));
+  return parts.join(QLatin1Char(' '));
 }
 
 enum class Kind { Message, Work, Plan, Subagent, Error, Marker, Checkpoint };
@@ -362,6 +366,10 @@ void TimelineModel::setStatus(const QString& status, const QString& problem) {
   // Earlier turns only come over a stream that is live.
   if (status != QLatin1String("live") && std::exchange(m_loadingEarlier, false)) emit earlierChanged();
   emit statusChanged();
+}
+
+QString TimelineModel::durationText(qint64 ms) {
+  return formatDuration(ms);
 }
 
 QString TimelineModel::workingLabel() const {
@@ -1172,8 +1180,11 @@ void TimelineModel::updateWorking() {
   QDateTime since;
   for (const QJsonObject& run : m_entities.value(QStringLiteral("run"))) {
     if (!kRunning.contains(text(run, QLatin1String("status")))) continue;
-    QDateTime started = timeOf(run.value(QLatin1String("startedAt")));
-    if (!started.isValid()) started = timeOf(run.value(QLatin1String("requestedAt")));
+    // From the message that asked for it: the run is requested before its
+    // session starts, and its startedAt comes later (deriveActiveWorkStartedAt).
+    QDateTime started = timeOf(run.value(QLatin1String("requestedAt")));
+    const QDateTime began = timeOf(run.value(QLatin1String("startedAt")));
+    if (!started.isValid() || (began.isValid() && began < started)) started = began;
     if (!started.isValid()) started = m_now();
     if (!since.isValid() || started < since) since = started;
   }
@@ -1208,11 +1219,15 @@ int TimelineModel::indexOf(const QString& rowId) const {
   return -1;
 }
 
-bool TimelineModel::copy(const QString& rowId) const {
+QString TimelineModel::copy(const QString& rowId) const {
   const int at = indexOf(rowId);
-  if (at < 0 || m_rows.at(at).kind != QLatin1String("message")) return false;
-  QGuiApplication::clipboard()->setText(data(index(at), TextRole).toString());
-  return true;
+  if (at < 0 || m_rows.at(at).kind != QLatin1String("message")) return QStringLiteral("The message is no longer shown.");
+  const QString text = data(index(at), TextRole).toString();
+  if (m_writeClipboard) return m_writeClipboard(text) ? QString() : QStringLiteral("The clipboard could not be written.");
+  QClipboard* clipboard = QGuiApplication::clipboard();
+  if (!clipboard) return QStringLiteral("This system has no clipboard.");
+  clipboard->setText(text);
+  return {};
 }
 
 QString TimelineModel::finishedRunOf(const QString& rowId) const {

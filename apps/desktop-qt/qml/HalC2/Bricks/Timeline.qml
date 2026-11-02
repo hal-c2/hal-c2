@@ -135,9 +135,12 @@ Item {
     // Whether the model can put a message on the clipboard (copy(rowId)).
     readonly property bool canCopy: root.model !== null && typeof root.model.copy === "function"
 
+    // Copies a message: empty when it is on the clipboard, else why not.
     function copy(rowId) {
-        root.model.copy(rowId);
-        root.copied(rowId);
+        const failure = root.model.copy(rowId) ?? "";
+        if (failure.length === 0)
+            root.copied(rowId);
+        return failure;
     }
 
     function toggle(rowId) {
@@ -323,25 +326,69 @@ Item {
         ToolTip.text: button.tip
     }
 
-    // Copies a message, then shows a check for a second (MessageCopyButton).
+    // Copies a message, then says beside itself for a second that it did
+    // ("Copied!", and a check) or why it could not (MessageCopyButton,
+    // anchoredCopyToast).
     component CopyButton: IconButton {
         id: copyButton
         property string rowId
         property bool copied: false
+        // Why the last copy failed, while it is shown.
+        property string failure: ""
         objectName: "copyMessage"
         visible: root.canCopy
         icon: copied ? "check" : "copy"
         tint: copied ? root.accentColor : hovered ? root.textColor : root.mutedColor
-        tip: copied ? qsTr("Copied") : qsTr("Copy message")
+        tip: notice.visible ? "" : qsTr("Copy message")
         onClicked: {
-            root.copy(copyButton.rowId);
-            copyButton.copied = true;
+            copyButton.failure = root.copy(copyButton.rowId);
+            copyButton.copied = copyButton.failure.length === 0;
             copiedTimer.restart();
         }
         Timer {
             id: copiedTimer
             interval: 1000
-            onTriggered: copyButton.copied = false
+            onTriggered: {
+                copyButton.copied = false;
+                copyButton.failure = "";
+            }
+        }
+        Rectangle {
+            id: notice
+            objectName: "copyNotice"
+            readonly property string title: copyButton.copied ? qsTr("Copied!") : qsTr("Failed to copy")
+            visible: copyButton.copied || copyButton.failure.length > 0
+            z: 2
+            x: Math.round((copyButton.width - width) / 2)
+            y: -height - 6
+            width: Math.min(noticeColumn.implicitWidth, 280) + 16
+            height: noticeColumn.implicitHeight + 10
+            radius: 6
+            color: Theme.palette.color("popover", "#18181b")
+            border.color: root.borderColor
+            border.width: 1
+            Column {
+                id: noticeColumn
+                x: 8
+                y: 5
+                width: parent.width - 16
+                RowText {
+                    objectName: "copyNoticeTitle"
+                    text: notice.title
+                    color: root.textColor
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    wrapMode: Text.NoWrap
+                }
+                RowText {
+                    objectName: "copyNoticeReason"
+                    visible: copyButton.failure.length > 0
+                    width: Math.min(implicitWidth, 280)
+                    text: copyButton.failure
+                    color: root.mutedColor
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    wrapMode: Text.Wrap
+                }
+            }
         }
     }
 
@@ -1010,7 +1057,9 @@ Item {
                         // Over the row's files and actions, for "Cite".
                         z: 1
                         width: parent.width - 8
-                        text: row.text ?? ""
+                        // A finished reply with no text says so; one still being
+                        // written is not empty yet (AssistantTimelineRow).
+                        text: (row.text ?? "").length > 0 || row.streaming === true ? (row.text ?? "") : qsTr("(empty response)")
                         streaming: row.streaming ?? false
                         citable: root.citable && row.streaming !== true && !!row.messageId
                         onLinkActivated: link => root.linkActivated(link)
