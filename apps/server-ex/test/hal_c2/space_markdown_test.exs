@@ -283,6 +283,29 @@ defmodule HalC2.SpaceMarkdownTest do
                "# Plan\n\n## Goals\n\nShip\n\n| a |\n|---|\n\n- [x] MC\n- [ ] QML\n"
     end
 
+    # Found in review: a block right under a heading kept writing no blank line above it
+    # once the heading was deleted, and joined the paragraph that was now above it.
+    test "no blank line is written only where the block still reads apart" do
+      [intro, _heading, para, fence] = Markdown.blocks("Intro\n\n## H\nPara\n```\ncode\n```\n")
+      assert para["gap"] == "\n" and fence["gap"] == "\n"
+
+      written = Markdown.document([intro, para, fence], &none/1)
+      assert written == "Intro\n\nPara\n```\ncode\n```\n"
+      assert written |> Markdown.blocks() |> length() == 3
+    end
+
+    # Found in review: the title was taken only from `# X` on the very first line.
+    test "a title is a level 1 heading however it is spaced" do
+      for markdown <- ["\n# Plan\n\nShip\n", "#  Plan\n\nShip\n", "# Plan #\n\nShip\n"] do
+        assert {"Plan", [%{"text" => "Ship"} = ship]} = Markdown.parse(markdown)
+
+        assert Markdown.export(%{"title" => "Plan"}, [ship], &none/1) == "# Plan\n\nShip\n"
+      end
+
+      assert {nil, _} = Markdown.parse("## Plan\n\nShip\n")
+      assert {nil, _} = Markdown.parse("#\n\nShip\n")
+    end
+
     test "a gap that is not blank lines is ignored" do
       blocks = [
         %{"kind" => "paragraph", "text" => "One"},
