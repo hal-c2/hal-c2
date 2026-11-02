@@ -1,0 +1,159 @@
+defmodule HalC2.MermaidTest do
+  use ExUnit.Case, async: true
+
+  alias HalC2.Mermaid
+
+  @drawn %{"status" => "drawn", "kind" => "flowchart", "svg" => "<svg/>"}
+
+  defp request(source, format \\ "svg"), do: %{source: source, format: format, theme: "light"}
+
+  defp server(opts) do
+    start_supervised!(Supervisor.child_spec({Mermaid, [name: nil] ++ opts}, id: make_ref()))
+  end
+
+  # A drawing that tells the test it started and waits for the outcome it is sent.
+  defp gated do
+    test = self()
+
+    fn request ->
+      send(test, {:drawing, request.source, self()})
+
+      receive do
+        {:outcome, outcome} -> outcome
+      end
+    end
+  end
+
+  defp render_async(server, source),
+    do: Task.async(fn -> Mermaid.render(server, request(source)) end)
+
+  defp counted(outcome) do
+    counter = :counters.new(1, [])
+
+    {counter,
+     fn _request ->
+       :counters.add(counter, 1, 1)
+       outcome
+     end}
+  end
+
+  test "a diagram is drawn once and kept for the next caller" do
+    {count, draw} = counted({:ok, @drawn})
+    server = server(draw: draw)
+
+    assert Mermaid.render(server, request("flowchart TD\n A --> B")) == @drawn
+    assert Mermaid.render(server, request("flowchart TD\n A --> B")) == @drawn
+    assert :counters.get(count, 1) == 1
+
+    # Another format is another drawing.
+    Mermaid.render(server, request("flowchart TD\n A --> B", "text"))
+    assert :counters.get(count, 1) == 2
+  end
+
+  test "callers asking for a diagram being drawn wait for that drawing" do
+    server = server(draw: gated())
+    callers = for _ <- 1..3, do: render_async(server, "graph LR\n A --> B")
+
+    assert_receive {:drawing, _, drawer}
+    send(drawer, {:outcome, {:ok, @drawn}})
+
+    assert Enum.map(callers, &Task.await/1) == [@drawn, @drawn, @drawn]
+    refute_received {:drawing, _, _}
+  end
+
+  test "no more than the limit are drawn at once, and the rest follow in order" do
+    server = server(draw: gated(), limit: 2)
+    callers = for source <- ~w(a b c), do: render_async(server, source)
+
+    assert_receive {:drawing, "a", a}
+    assert_receive {:drawing, "b", _b}
+    refute_received {:drawing, "c", _}
+
+    send(a, {:outcome, {:ok, @drawn}})
+    assert_receive {:drawing, "c", c}
+    send(c, {:outcome, {:ok, @drawn}})
+    assert Task.await(Enum.at(callers, 0)) == @drawn
+    assert Task.await(Enum.at(callers, 2)) == @drawn
+  end
+
+  test "a drawing that failed is not kept, so the next caller tries again" do
+    failed = %{"status" => "failed", "kind" => nil, "reason" => "The diagram renderer failed."}
+    {count, draw} = counted({:error, failed})
+    server = server(draw: draw)
+
+    assert Mermaid.render(server, request("pie\n \"a\" : 1")) == failed
+    assert Mermaid.render(server, request("pie\n \"a\" : 1")) == failed
+    assert :counters.get(count, 1) == 2
+  end
+
+  @tag :capture_log
+  test "a drawing that crashes fails that diagram and not the server" do
+    server = server(draw: fn _ -> raise "boom" end)
+
+    assert %{"status" => "failed", "reason" => "The diagram renderer failed."} =
+             Mermaid.render(server, request("graph LR\n A --> B"))
+
+    assert Process.alive?(server)
+  end
+
+  test "a drawing that takes too long is stopped and the next one starts" do
+    server = server(draw: gated(), limit: 1, timeout: 20)
+    slow = render_async(server, "slow")
+    next = render_async(server, "next")
+
+    assert_receive {:drawing, "slow", drawer}
+    ref = Process.monitor(drawer)
+
+    assert %{"status" => "failed", "reason" => "This diagram took too long to draw."} =
+             Task.await(slow)
+
+    assert_receive {:DOWN, ^ref, :process, _, :killed}
+    assert_receive {:drawing, "next", next_drawer}
+    send(next_drawer, {:outcome, {:ok, @drawn}})
+    assert Task.await(next) == @drawn
+  end
+
+  test "the oldest drawing is forgotten past the cache's size" do
+    {count, draw} = counted({:ok, @drawn})
+    server = server(draw: draw, cache_size: 1)
+
+    for source <- ~w(a b a), do: Mermaid.render(server, request(source))
+    assert :counters.get(count, 1) == 3
+  end
+
+  test "a source too long to draw is a mistake, not a drawing" do
+    long = "flowchart TD\n" <> String.duplicate("  A --> B\n", 7_000)
+
+    assert %{"status" => "invalid", "reason" => "This diagram is too long to draw."} =
+             Mermaid.render(:not_called, request(long))
+  end
+
+  test "a request takes svg and light unless it says otherwise" do
+    assert Mermaid.request(%{"source" => "pie"}) ==
+             {:ok, %{source: "pie", format: "svg", theme: "light"}}
+
+    assert {:ok, %{format: "text", theme: "dark"}} =
+             Mermaid.request(%{"source" => "pie", "format" => "text", "theme" => "dark"})
+
+    assert {:error, _} = Mermaid.request(%{"source" => "pie", "format" => "png"})
+    assert {:error, _} = Mermaid.request(%{"source" => "pie", "theme" => "blue"})
+    assert {:error, _} = Mermaid.request(%{})
+  end
+
+  describe "the helper" do
+    @describetag skip: is_nil(Mermaid.helper()) && "the helper is not built: vp run build:mermaid"
+
+    test "draws a flowchart as a picture with its size" do
+      assert {:ok, %{"status" => "drawn", "kind" => "flowchart", "svg" => svg} = result} =
+               Mermaid.draw(request("flowchart TD\n  A[Start] --> B[Done]\n"))
+
+      assert svg =~ "<svg" and svg =~ "Start"
+      assert result["width"] > 0 and result["height"] > 0
+    end
+
+    test "says where a mistake is" do
+      assert {:ok, %{"status" => "invalid", "kind" => "flowchart", "line" => 2}} =
+               Mermaid.draw(request("flowchart TD\n  A[Start --> B\n"))
+    end
+  end
+end

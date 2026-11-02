@@ -155,6 +155,12 @@ jobs:
           cargo test --locked --manifest-path ../../native/pid-kill/Cargo.toml
           cargo build --locked --release --manifest-path ../../native/pid-kill/Cargo.toml
 
+      # HalC2.Mermaid draws with it; its tests skip without it.
+      - name: Test the Mermaid helper
+        run: |
+          cargo test --locked --manifest-path ../../native/mermaid/Cargo.toml
+          cargo build --locked --release --manifest-path ../../native/mermaid/Cargo.toml
+
       - name: Test
         run: mix test
 
@@ -290,6 +296,11 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y fuse3
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
+
+      # space/diagrams.feature draws with the real helper.
+      - name: Build the Mermaid helper
+        if: matrix.dirs == 'rest'
+        run: cargo build --locked --release --manifest-path ../../native/mermaid/Cargo.toml
 
       - name: Scenarios
         env:

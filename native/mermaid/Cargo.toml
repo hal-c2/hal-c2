@@ -1,0 +1,19 @@
+[package]
+name = "hal-c2-mermaid"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# Draws one Mermaid diagram per run for the MC (HalC2.Mermaid): SVG from mmdr, terminal
+# text from mmdflux. Both are pure Rust and MIT; their CLIs and PNG output stay off.
+[dependencies]
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
+mmdflux = { version = "2.6.1", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true
