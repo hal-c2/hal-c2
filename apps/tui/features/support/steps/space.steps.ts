@@ -2317,6 +2317,28 @@ step("the user can edit it as text", async (ctx: SpaceWorld) => {
   expect(rawSource(ctx).lines).toEqual(edited);
 });
 
+// A table and a code block, which the page shows as their source until #854 draws them.
+const MODELLED_TABLE = ["| Step | Owner |", "| ---- | ----- |", "| MC   | Ada   |"];
+const CODE = ["run()", "    done()"];
+
+step("the page {string} holds a table and a code block", (ctx: SpaceWorld, title: string) => {
+  seedBlock(ctx, title, "table", MODELLED_TABLE.join("\n"));
+  seedBlock(ctx, title, "code", CODE.join("\n"));
+});
+
+step(
+  "the table and the code are each shown line for line in a fixed-width face",
+  (ctx: SpaceWorld) => {
+    for (const [kind, lines] of [
+      ["table", MODELLED_TABLE],
+      ["code", CODE],
+    ] as const) {
+      const rows = pane(ctx).rows.filter((row) => row.blockKind === kind);
+      expect(rows.map((row) => row.text.slice(4))).toEqual(lines);
+    }
+  },
+);
+
 step(
   "the page {string} with headings of every level from 1 to 6",
   (ctx: SpaceWorld, title: string) => {
