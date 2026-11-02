@@ -749,6 +749,41 @@ defmodule HalC2.Orchestration.TurnWriter do
     end
   end
 
+  @doc """
+  Completes run `run_id` of `thread_id` with the checkpoint a capture replayed after a
+  restart took (`args` are the capture's): the MC stopped after its provider turn ended
+  and before the capture did, so the restart left the run to it.
+  """
+  def checkpointed(thread_id, run_id, args, checkpoint) do
+    at = Entities.now()
+
+    completed =
+      HalC2.Streams.transact(thread_id, :thread, fn stream ->
+        case StreamState.get(stream, "run")[run_id] do
+          %{"status" => active} = run when active in @active_runs ->
+            state = abandoned_turn(stream, thread_id, run)
+            turn = Map.put(state.turn, :scope_id, args["scopeId"])
+            baselines = if checkpoint, do: baselines(%{turn | cwd: args["cwd"]}, at), else: []
+
+            changes =
+              baseline_changes(stream, baselines) ++
+                checkpoint_changes(stream, turn, checkpoint, at) ++
+                left_open(stream, run, "completed", at) ++
+                ended(stream, turn.ids, "completed", nil, checkpoint, at)
+
+            {Enum.filter(changes, &is_tuple/1), {state, queue_starts?(stream, thread_id)}}
+
+          _ ->
+            {[], nil}
+        end
+      end)
+
+    case completed do
+      {state, queue?} -> finished(state, "completed", nil, queue?)
+      nil -> :ok
+    end
+  end
+
   # The runtime state `finish/3` needs, rebuilt from the run.
   defp abandoned_turn(stream, thread_id, run) do
     instance = run["providerInstanceId"]
@@ -906,7 +941,7 @@ defmodule HalC2.Orchestration.TurnWriter do
              "rootNodeId" => turn.ids.root_node,
              "at" => at
            },
-           nil,
+           :turn,
            "checkpoint"
          ) do
       {:ok, checkpoint} -> checkpoint

@@ -104,7 +104,7 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the run and the command are ended before the MC stops
     And the command says it was cancelled because the server shut down before the provider work completed
 
-  @backlog @mc
+  @mc
   Scenario: A turn that had finished but not yet captured its checkpoint is not cut off
     Given the provider turn of "t1" had ended and its checkpoint was still to be captured when the MC stopped
     When the MC restarts
@@ -156,7 +156,7 @@ Feature: Recovering from restarts and releasing idle sessions
       | the run was waiting on the user rather than running     |
       | the provider conversation has no native thread to resume |
 
-  @backlog @mc
+  @mc
   Scenario: A thread switched to another provider since its cut-off turn is not continued
     Given project "demo" continues threads after a server update
     And thread "t1" was mid-turn on "codex" when the MC stopped
@@ -164,14 +164,14 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then no continuation message is sent to "t1"
 
-  @backlog @mc
+  @mc
   Scenario: A continuation cut off by a second restart before its agent started is sent on
     Given project "demo" continues threads after a server update
     And the continuation turn of "t1" had not reached its provider when the MC stopped again
     When the MC restarts
     Then "t1" is continued from that turn
 
-  @backlog @mc
+  @mc
   Scenario: A cut-off turn is continued only once
     Given project "demo" continues threads after a server update
     And thread "t1" was mid-turn on a provider conversation that can resume
@@ -453,21 +453,27 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC checks for idle sessions
     Then that provider process stops
 
-  @backlog @mc
+  @mc
   Scenario: A provider process that will not close is still released
     Given the provider process of "t1" does not exit when it is asked to
     When the session of "t1" is released
     Then the session is recorded as stopped after at most 30 seconds
     And "t1" can take its next message
 
-  @backlog @mc
+  # Blocked on hal-c2/hal-c2#904: each MC thread has a provider session of its own, and a
+  # provider's native subagents are entities of their parent thread, so no session has
+  # several threads to serve. Carry upstream's attached-threads sessions, or drop these.
+  @backlog @blocked @mc
   Scenario: A session serving several threads stays until the last one leaves
     Given one provider session serves thread "t1" and a subagent thread of "t1"
     When the subagent thread leaves the session while its turn is running
     Then only the subagent thread's turn is interrupted
     And the provider process keeps running for "t1"
 
-  @backlog @mc
+  # Blocked on hal-c2/hal-c2#904: each MC thread has a provider session of its own, and a
+  # provider's native subagents are entities of their parent thread, so no session has
+  # several threads to serve. Carry upstream's attached-threads sessions, or drop these.
+  @backlog @blocked @mc
   Scenario: A provider that serves one thread per session refuses a second thread
     Given a provider whose sessions serve one thread each has a session for "t1"
     When another thread is attached to that session

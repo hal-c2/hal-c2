@@ -100,11 +100,20 @@ defmodule HalC2.Orchestration.Wake do
   defp retry(thread_id, message_id, message, on_dropped, attempt, reason) do
     if attempt + 1 < @tries do
       Logger.warning("wake of #{thread_id} not taken, trying again: #{inspect(reason)}")
-      Process.sleep(retry_delay(attempt))
+      Process.sleep(pause(attempt))
       send_wake(thread_id, message_id, message, on_dropped, attempt + 1)
     else
       Logger.warning("wake of #{thread_id} dropped: #{inspect(reason)}")
       on_dropped.()
+    end
+  end
+
+  # Tests take the wait out: `{module, function, args}`, called with the attempt,
+  # returning the milliseconds to wait.
+  defp pause(attempt) do
+    case Application.get_env(:hal_c2, :wake_pause) do
+      {m, f, a} -> apply(m, f, a ++ [attempt])
+      nil -> retry_delay(attempt)
     end
   end
 

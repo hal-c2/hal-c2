@@ -259,12 +259,18 @@ defmodule HalC2.Orchestration.Recovery do
   ended (`run` is that turn's), or nil.
   """
   def settle(thread_id, trigger \\ :restart) do
+    capturing = capturing(thread_id)
+
     HalC2.Streams.transact(thread_id, :thread, fn state ->
-      changes = changes(state, Entities.now(), trigger)
+      changes = changes(state, Entities.now(), trigger, capturing)
       requeued? = Enum.any?(StreamState.list(state, "run"), &unstarted?(state, &1))
 
       what =
-        if requeued?, do: :requeued, else: continuable(state) || ended_background(state)
+        cond do
+          requeued? -> :requeued
+          (latest_run(state) || %{})["id"] in capturing -> nil
+          true -> continuable(state) || ended_background(state)
+        end
 
       {changes, {length(changes), what}}
     end)
@@ -479,8 +485,30 @@ defmodule HalC2.Orchestration.Recovery do
         "activeAttemptId" => nil
       })
 
-  defp changes(state, at, trigger) do
+  # Runs whose provider turn ended but whose checkpoint the MC stopped capturing. The
+  # capture runs again at boot (`HalC2.Orchestration.Effects`) and completes the run,
+  # so the restart leaves them be (apps/server ProviderRuntimeRecovery.ts).
+  defp capturing(thread_id) do
+    for %{"type" => "checkpoint.capture", "status" => status, "args" => %{"runId" => run_id}} <-
+          HalC2.Orchestration.Effects.effects(thread_id),
+        status in ~w(pending running),
+        into: MapSet.new(),
+        do: run_id
+  end
+
+  defp changes(state, at, trigger, capturing) do
     done = %{"status" => "interrupted", "completedAt" => at}
+
+    # What a capturing run still owns: itself, its attempts, provider turn, nodes and items.
+    left =
+      for {id, run} <- StreamState.get(state, "run"),
+          id in capturing,
+          attempt = StreamState.get(state, "run-attempt")[run["activeAttemptId"]] || %{},
+          own <- [id, attempt["providerTurnId"]],
+          own != nil,
+          into: MapSet.new(),
+          do: own
+
     ended = if trigger == :shutdown, do: "shut down", else: "restarted"
     detail = "Cancelled because the server #{ended} before the provider work completed."
 
@@ -553,6 +581,7 @@ defmodule HalC2.Orchestration.Recovery do
            )}
         ],
         {id, entity} <- StreamState.get(state, kind),
+        id not in left and entity["runId"] not in capturing,
         next = fun.(entity),
         next != nil,
         patch = Patch.diff(entity, next),

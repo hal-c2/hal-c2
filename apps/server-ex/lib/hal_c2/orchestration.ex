@@ -2351,16 +2351,28 @@ defmodule HalC2.Orchestration do
         end
 
       "checkpoint.capture" ->
-        {:ok,
-         HalC2.Checkpoint.capture_run(
-           args["cwd"],
-           args["scopeId"],
-           args["runOrdinal"],
-           args["runId"],
-           args["rootNodeId"],
-           thread_id,
-           args["at"]
-         )}
+        checkpoint =
+          HalC2.Checkpoint.capture_run(
+            args["cwd"],
+            args["scopeId"],
+            args["runOrdinal"],
+            args["runId"],
+            args["rootNodeId"],
+            thread_id,
+            args["at"]
+          )
+
+        # Replayed after a restart, with no turn waiting on it: it completes the run.
+        if payload != :turn,
+          do:
+            HalC2.Orchestration.TurnWriter.checkpointed(
+              thread_id,
+              args["runId"],
+              args,
+              checkpoint
+            )
+
+        {:ok, checkpoint}
 
       "terminal.cleanup" ->
         if Process.whereis(HalC2.Terminal.Registry),

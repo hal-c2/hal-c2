@@ -90,7 +90,7 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
-  step ~r/^thread "(?<thread>[^"]+)" (?:had a running turn|was mid-turn when the MC stopped|was mid-turn on a provider conversation that can resume)$/,
+  step ~r/^thread "(?<thread>[^"]+)" (?:had a running turn|was mid-turn(?: on "codex")? when the MC stopped|was mid-turn on a provider conversation that can resume)$/,
        %{args: [thread]} = context do
     context = World.running_turn(context, thread)
     # The provider's conversation can resume: Codex named its native thread.
@@ -102,6 +102,148 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     end)
 
     context |> kill_provider(thread) |> Map.put(:cut_off, context.running)
+  end
+
+  # The provider's turn ended, and the MC stopped while it captured the run's checkpoint:
+  # the capture's effect is still recorded as running.
+  step "the provider turn of {string} had ended and its checkpoint was still to be captured when the MC stopped",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread) |> kill_provider(thread)
+    thread_id = World.thread_id(context, thread)
+    run = World.state(context, thread).entities["run"][context.running]
+    [session] = World.entities(context, thread, "provider-session")
+    at = HalC2.Orchestration.Entities.now()
+    id = "effect:checkpoint-#{System.unique_integer([:positive])}"
+
+    HalC2.Store.put_meta(
+      "effect:#{thread_id}:#{id}",
+      JSON.encode!(%{
+        "id" => id,
+        "threadId" => thread_id,
+        "type" => "checkpoint.capture",
+        "lane" => "checkpoint",
+        "status" => "running",
+        "attempts" => 1,
+        "delays" => [],
+        "error" => nil,
+        "args" => %{
+          "cwd" => session["cwd"],
+          "scopeId" => thread_id,
+          "runOrdinal" => run["ordinal"],
+          "runId" => run["id"],
+          "rootNodeId" => run["rootNodeId"],
+          "at" => at
+        },
+        "createdAt" => at,
+        "updatedAt" => at
+      })
+    )
+
+    context
+  end
+
+  step "the run is not ended as cut off", context do
+    run = World.state(context, context.thread).entities["run"][context.running]
+    refute run["status"] in ~w(interrupted failed), inspect(run)
+    context
+  end
+
+  step "it completes once its checkpoint is captured", context do
+    run =
+      World.await_run(
+        context,
+        context.thread,
+        &(&1["id"] == context.running and &1["status"] == "completed")
+      )
+
+    assert %{"checkpointId" => checkpoint} = run
+    assert World.state(context, context.thread).entities["checkpoint"][checkpoint]
+    World.await_row(World.thread_id(context, context.thread), &(&1["activeRunId"] == nil))
+    context
+  end
+
+  step "{string} is now set to run on {string}", %{args: [thread, instance]} = context do
+    model = if instance == "claudeAgent", do: "sonnet", else: "gpt-5.4"
+
+    context =
+      World.command(context, %{
+        "type" => "thread.model-selection.set",
+        "threadId" => World.thread_id(context, thread),
+        "modelSelection" => %{"instanceId" => instance, "model" => model}
+      })
+
+    assert {:ok, _} = context.reply
+    HalC2.Streams.flush_shell(World.thread_id(context, thread))
+    context
+  end
+
+  # A first restart continues the cut-off turn; the MC stops again with the continuation
+  # accepted but not yet sent to the provider, as it records a run in that moment.
+  step "the continuation turn of {string} had not reached its provider when the MC stopped again",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread) |> kill_provider(thread)
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+
+    message =
+      Enum.find(World.entities(context, thread, "message"), &(&1["text"] == @continuation)) ||
+        flunk("the first restart did not continue #{thread}")
+
+    run =
+      World.await_run(
+        context,
+        thread,
+        &(&1["id"] == message["runId"] and &1["status"] in ~w(running waiting completed))
+      )
+
+    if Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, thread)) != [],
+      do: kill_provider(context, thread)
+
+    World.put_entity(context, thread, "run", run["id"], %{
+      "s" => %{"status" => "starting", "startedAt" => nil, "completedAt" => nil}
+    })
+
+    World.put_entity(context, thread, "run-attempt", run["activeAttemptId"], %{
+      "s" => %{"status" => "pending", "providerTurnId" => nil, "completedAt" => nil}
+    })
+
+    context
+    |> Map.put(:continuation, run["id"])
+    |> Map.put(:sent, length(continuations_sent(context)))
+  end
+
+  step "{string} is continued from that turn", %{args: [thread]} = context do
+    run_id = context.continuation
+
+    World.await_run(
+      context,
+      thread,
+      &(&1["id"] == run_id and &1["status"] in ~w(running waiting completed))
+    )
+
+    assert length(continuations_sent(context)) == context.sent + 1
+
+    assert [_] =
+             Enum.filter(
+               World.entities(context, thread, "message"),
+               &(&1["text"] == @continuation)
+             )
+
+    context
+  end
+
+  # A boot cut short after it asked runs its recovery again.
+  step "the MC restarts and its recovery runs twice for {string}", %{args: [thread]} = context do
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    run = World.state(context, thread).entities["run"][context.cut_off]
+    thread_id = World.thread_id(context, thread)
+    :persistent_term.put({HalC2.Orchestration.Recovery, :continuable}, [{thread_id, run}])
+    :ok = HalC2.Orchestration.Recovery.continue()
+    context
+  end
+
+  step "{string} receives one {string} message", %{args: [thread, text]} = context do
+    assert [_] = Enum.filter(World.entities(context, thread, "message"), &(&1["text"] == text))
+    context
   end
 
   step "thread {string} was idle and thread {string} was running when the MC stopped",
@@ -1018,6 +1160,33 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  step "the provider process of {string} does not exit when it is asked to",
+       %{args: [thread]} = context do
+    context = World.providers(context)
+    File.write!(Path.join(World.project(context, "demo").root, "will-not-exit"), "")
+    context = idle_turn(context, thread)
+    {_, runtime} = World.codex_runtime(context, thread)
+    Map.put(context, :os_pid, HalC2.JsonRpc.Connection.os_pid(runtime.conn))
+  end
+
+  step "the session of {string} is released", %{args: [thread]} = context do
+    started = System.monotonic_time(:millisecond)
+    assert :ok = HalC2.Orchestration.release_session(World.thread_id(context, thread))
+    Map.put(context, :released_in, System.monotonic_time(:millisecond) - started)
+  end
+
+  step "the session is recorded as stopped after at most 30 seconds", context do
+    assert context.released_in <= 30_000
+
+    assert [%{"status" => "stopped"}] =
+             World.entities(context, context.thread, "provider-session")
+
+    # Stopped, and so is its process, which only a kill could end.
+    await_exit(context.os_pid)
+    File.rm!(Path.join(World.project(context, "demo").root, "will-not-exit"))
+    context
+  end
+
   step "the user stops {string} and Codex still lists the command's terminal after being asked to end it",
        %{args: [thread]} = context do
     cwd = World.thread(context, thread)["worktreePath"] || World.project(context, "demo").root
@@ -1611,6 +1780,13 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     %{"input" => [%{"text" => text} | _]} = List.last(World.codex_requests(context, "turn/start"))
     text
   end
+
+  defp continuations_sent(context),
+    do:
+      Enum.filter(
+        World.codex_requests(context, "turn/start"),
+        &match?(%{"input" => [%{"text" => @continuation} | _]}, &1)
+      )
 
   # Claude's subagent and command end, and Claude answers by itself between turns.
   defp background_finishes(context) do
