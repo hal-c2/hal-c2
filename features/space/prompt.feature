@@ -91,7 +91,7 @@ Feature: A page's prompt is the timeline's prompt
       Given no project is left on this MC
       Then an ask from a page would have nowhere to run
 
-  @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @shared @backlog-desktop @backlog-mobile
   Rule: The prompt on a page
 
     Scenario: Plain words on a page's prompt write a block
@@ -124,9 +124,14 @@ Feature: A page's prompt is the timeline's prompt
         | approval for each action      |
         | the project "docs"            |
         | the image "sketch.png"        |
-        | the file "notes.pdf"          |
         | a mention of "README.md"      |
         | the skill "review"            |
+
+      # The TUI's prompt attaches images only, and mentions files, not threads (#887).
+      @backlog-tui
+      Examples:
+        | choice                         |
+        | the file "notes.pdf"           |
         | a mention of the thread "Work" |
 
     Scenario Outline: An ask can be started from anywhere the page is
@@ -167,12 +172,16 @@ Feature: A page's prompt is the timeline's prompt
       When the user opens the thread "Work"
       Then the prompt of "Work" does not read "half a thought"
 
+    # The TUI's prompt has no stash (#886).
+    @backlog-tui
     Scenario: A page's draft can be stashed and brought back
       Given the user typed "half a thought" in the prompt of "Roadmap"
       When the user stashes the prompt of "Roadmap"
       And the user brings "half a thought" back from the stash
       Then the prompt of "Roadmap" reads "half a thought"
 
+    # The TUI's prompt has no vim keys or rich text (#886).
+    @backlog-tui
     Scenario Outline: The page's prompt edits as the thread's prompt does
       Given the user turned on <editing>
       When the user opens "Roadmap"
