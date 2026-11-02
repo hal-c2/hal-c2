@@ -130,6 +130,7 @@ defmodule HalC2.SourceControl.ChangeRequests do
   or a page comes back empty (or `:pages` were read; a status read stops at the first).
   `:state` is `all` (the default), `open`, `closed` or
   `merged`, which Forgejo has no list of: merged ones are picked out of the closed.
+  `:head_repository` (`owner/name`) keeps only pull requests from that repository.
   As `listChangeRequests` in the Forgejo provider.
   """
   def forgejo_list(cwd, %{repository: repository} = remote, branch, opts \\ []) do
@@ -156,12 +157,20 @@ defmodule HalC2.SourceControl.ChangeRequests do
     |> Stream.flat_map(fn pulls ->
       for %{} = pr <- pulls,
           get_in(pr, ["head", "ref"]) == branch,
+          head_repository?(pr, opts[:head_repository]),
           change = forgejo_change_request(pr),
           change != nil and state in ["all", change["state"]],
           do: change
     end)
     |> Enum.take(limit)
   end
+
+  defp head_repository?(_pr, nil), do: true
+
+  defp head_repository?(pr, repository),
+    do:
+      String.downcase(get_in(pr, ["head", "repo", "full_name"]) || "") ==
+        String.downcase(repository)
 
   defp forgejo_change_request(pr) do
     state =

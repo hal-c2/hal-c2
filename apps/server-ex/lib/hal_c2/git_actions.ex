@@ -531,9 +531,16 @@ defmodule HalC2.GitActions do
   # remote names, from `owner:branch` when the branch is pushed to a fork of it.
   defp forgejo_pull_request(cwd, branch, target) do
     base = pr_base(cwd, branch)
-    {head_branch, owner} = forgejo_head(cwd, branch, target)
+    {head_branch, fork} = forgejo_head(cwd, branch, target)
+    owner = fork && fork |> String.split("/") |> hd()
 
-    case ChangeRequests.forgejo_list(cwd, target, head_branch, state: "open", limit: 1) do
+    # Only a pull request from this branch's own repository is its pull request: a fork
+    # can hold a branch of the same name.
+    case ChangeRequests.forgejo_list(cwd, target, head_branch,
+           state: "open",
+           limit: 1,
+           head_repository: fork || target.repository
+         ) do
       [pr | _] ->
         %{
           "status" => "opened_existing",
@@ -577,8 +584,8 @@ defmodule HalC2.GitActions do
     end
   end
 
-  # The branch the pull request is from, as its upstream names it, and the owner of the
-  # fork it was pushed to (nil when that is the target repository itself).
+  # The branch the pull request is from, as its upstream names it, and the fork it was
+  # pushed to as `owner/name` (nil when that is the target repository itself).
   defp forgejo_head(cwd, branch, target) do
     config = fn key ->
       case Git.ok(cwd, ["config", "--get", "branch.#{branch}.#{key}"]) do
@@ -601,7 +608,7 @@ defmodule HalC2.GitActions do
            do: repository,
            else: (_ -> nil)
 
-    {head, fork && fork |> String.split("/") |> hd()}
+    {head, fork}
   end
 
   defp remote_url(cwd, remote) do

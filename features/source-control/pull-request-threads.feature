@@ -277,6 +277,14 @@ Feature: Threads that work on or link pull requests
     When the user opens a pull request from it on Forgejo
     Then the pull request is created in "acme/shop" with the head "sam:tax"
 
+  # Legacy: apps/server/src/sourceControl/ForgejoSourceControlProvider.ts (createChangeRequest: the existing pull request)
+  @mc
+  Scenario: Another fork's pull request from a branch of the same name is not taken for this one
+    Given "kim/shop" has an open pull request from its own branch "tax"
+    And the branch "tax" lives in the fork "sam/shop" of "acme/shop"
+    When the user opens a pull request from it on Forgejo
+    Then the pull request is created in "acme/shop" with the head "sam:tax"
+
   @desktop @mobile @tui
   Scenario: Starting a pull request thread from a pasted link
     When the user pastes "https://github.com/acme/shop/pull/42" to start a pull request thread

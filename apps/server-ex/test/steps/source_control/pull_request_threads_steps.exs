@@ -237,7 +237,10 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   end
 
   step "the commit it was on can still be found afterwards", context do
-    assert World.git!(context.existing_worktree, ~w(rev-parse refs/hal-c2/pre-refresh)) ==
+    path = context.existing_worktree
+    branch = World.git!(path, ~w(symbolic-ref --short HEAD))
+
+    assert World.git!(path, ["rev-parse", "refs/hal-c2/pre-refresh/#{branch}"]) ==
              context.pr_head
 
     context
@@ -639,6 +642,15 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     context
   end
 
+  step ~r/^"(?<fork>[^"]+)" has an open pull request from its own branch "(?<branch>[^"]+)"$/,
+       %{args: [fork, branch]} = context do
+    pull =
+      forgejo_pull(41, branch, "open")
+      |> put_in(["head", "repo"], %{"full_name" => fork})
+
+    Map.update(context, :other_forks, [pull], &[pull | &1])
+  end
+
   step ~r/^the branch "(?<branch>[^"]+)" lives in the fork "(?<fork>[^"]+)" of "acme\/shop"$/,
        %{args: [branch, fork]} = context do
     [owner, _] = String.split(fork, "/")
@@ -660,8 +672,11 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     |> Shared.answering_writer()
     |> forgejo_api(%{
       "/api/v1/repos/acme/shop/pulls" => fn
-        %{method: "POST"} -> {201, created}
-        _ -> {200, []}
+        %{method: "POST"} ->
+          {201, created}
+
+        conn ->
+          {200, if(conn.query_string =~ "page=1", do: context[:other_forks] || [], else: [])}
       end
     })
     |> World.create_thread("Tax work", @repository, %{"branch" => branch})
