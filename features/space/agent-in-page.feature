@@ -5,6 +5,7 @@
 #   packages/contracts/src/space.ts (space.page.askAgent, space.page.stopAgent,
 #     space.page.dismissAgent, the pageAgent entity)
 #   apps/server-ex/lib/hal_c2/space/page_agent.ex
+#   features/space/self-updating-pages.feature (where an ask meets a page's own update)
 
 Feature: An agent in a page
   From an open page the user asks an agent to do something to it. The agent runs in an
@@ -71,6 +72,13 @@ Feature: An agent in a page
       Given the user asks "tidy this and wait" on the page "Roadmap"
       When the thread of the agent of "Roadmap" is deleted
       Then "Roadmap" says its agent stopped because "its thread was deleted"
+
+    Scenario: A page that updates itself says what its agent and its update are doing apart
+      Given "Roadmap" updates itself with "Summarise yesterday's threads" every 2 hours
+      When the user asks "@agent tidy this and wait" on the page "Roadmap"
+      Then "Roadmap" says its agent is working on "tidy this and wait"
+      And "Roadmap" shows the instruction "Summarise yesterday's threads"
+      And "Roadmap" shows when it next runs
 
   @desktop @mobile @tui
   Rule: Following an agent from a client
@@ -171,6 +179,42 @@ Feature: An agent in a page
       Given no provider can start a thread
       When the user asks "tidy this and wait" on the page "Roadmap"
       Then "Roadmap" says its agent failed
+
+  @mc
+  Rule: A page that updates itself
+    An agent and the page's own update work side by side. A run writes only the
+    generated part, which the agent cannot edit, so neither waits for the other or
+    replaces it, and what a run wrote is not the agent's change.
+
+    Background:
+      Given text generation writes "Three threads moved forward"
+      And "Roadmap" updates itself with "Summarise yesterday's threads" every 2 hours
+
+    Scenario: The page's update runs while its agent works
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      When the user runs the update of "Roadmap" now
+      Then the generated part of "Roadmap" reads "Three threads moved forward"
+      And "Roadmap" says its agent is working on "tidy this and wait"
+
+    Scenario: A page can be asked while its update runs
+      Given a run of "Roadmap" is under way
+      When the user asks "tidy this and wait" on the page "Roadmap"
+      And the run of "Roadmap" comes back
+      Then the generated part of "Roadmap" reads "Three threads moved forward"
+      And "Roadmap" says its agent is working on "tidy this and wait"
+
+    Scenario: What the update wrote is not the agent's change
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      And the user runs the update of "Roadmap" now
+      When the agent of "Roadmap" finishes
+      Then "Roadmap" says its agent finished without changing the page
+
+    Scenario: The agent cannot rewrite what the update wrote
+      Given the update of "Roadmap" has run
+      And the user asks "tidy this and wait" on the page "Roadmap"
+      When the agent of "Roadmap" tries to edit the generated part
+      Then the agent is refused
+      And the generated part of "Roadmap" reads "Three threads moved forward"
 
   @mc
   Rule: How an agent ends

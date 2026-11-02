@@ -73,6 +73,21 @@ defmodule HalC2.Steps.Space.AgentInPage do
     )
   end
 
+  step "the agent of {string} tries to edit the generated part", %{args: [title]} = context do
+    generated =
+      Enum.find(StreamState.list(state(context), "block"), fn block ->
+        block["pageId"] == page_id(context, title) and block["kind"] == "generated"
+      end) || flunk("#{title} has no generated part")
+
+    arguments = %{"spaceId" => context.space, "blockId" => generated["id"], "text" => "Mine"}
+
+    Map.put(
+      context,
+      :page_tool,
+      World.mcp_tool(context, thread(title), "hal_c2_page_block_update", arguments)
+    )
+  end
+
   step "the agent of {string} finishes", %{args: [title]} = context do
     context = complete(context, thread(title), "completed", nil)
     await_agent(context, title, &(&1["status"] == "completed"))
