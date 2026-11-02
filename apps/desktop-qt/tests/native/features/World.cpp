@@ -62,7 +62,11 @@ void World::start() {
   QObject::connect(m_bridge.get(), &ShellBridge::stateEntryChanged, m_theme.get(), [this](const QString& key, const QVariant& value) {
     if (key == QLatin1String("theme")) m_theme->applyBaseTheme(value);
   });
-  m_bridge->setUrlOpener([this](const QUrl& url) { openedUrls.append(url); });
+  m_bridge->setUrlOpener([this](const QUrl& url) {
+    if (urlsRefused) return false;
+    openedUrls.append(url);
+    return true;
+  });
   const auto writeClipboard = [this](const QString& text) {
     if (clipboardFails) return false;
     clipboard = text;

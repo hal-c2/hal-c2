@@ -13,9 +13,15 @@ FocusScope {
     property int rows: 24
     property real cellWidth: 8
     property real cellHeight: 16
+    property real scrollTotal: 24
     property real scrollOffset: 0
+    property bool atBottom: true
     property string workingDirectory: ""
     property bool hasSelection: false
+    property bool cursorBlink: true
+    property bool macModifiers: false
+    readonly property bool mouseTracking: false
+    readonly property string error: ""
 
     signal input(string data)
     signal resized(int columns, int rows)
@@ -32,6 +38,17 @@ FocusScope {
     function selectedText() {
         return "";
     }
+    function copy() {
+        return false;
+    }
+    function paste(text) {
+    }
     function clearSelection() {
+    }
+    function scrollLines(delta) {
+    }
+    function scrollTo(offset) {
+    }
+    function scrollToBottom() {
     }
 }

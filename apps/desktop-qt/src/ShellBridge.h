@@ -45,9 +45,10 @@ public:
   void declareKey(const QString& key);
   // Called by the controllers with their view models.
   Q_INVOKABLE void publish(const QString& key, const QVariant& value);
-  Q_INVOKABLE void openExternal(const QUrl& url);
+  // False when nothing could open it.
+  Q_INVOKABLE bool openExternal(const QUrl& url);
   // Where openExternal sends a URL; the system browser unless tests say otherwise.
-  void setUrlOpener(std::function<void(const QUrl&)> open) { m_openUrl = std::move(open); }
+  void setUrlOpener(std::function<bool(const QUrl&)> open) { m_openUrl = std::move(open); }
   // Where setClipboardText writes instead of the system clipboard (tests).
   void setClipboardWriter(std::function<void(const QString&)> write) { m_writeClipboard = std::move(write); }
   Q_INVOKABLE void windowCommand(const QString& command);
@@ -96,7 +97,7 @@ signals:
 private:
   QQmlPropertyMap* m_state;
   QList<Interceptor> m_interceptors;
-  std::function<void(const QUrl&)> m_openUrl;
+  std::function<bool(const QUrl&)> m_openUrl;
   std::function<void(const QString&)> m_writeClipboard;
   QUrl m_mcOrigin;
   std::function<bool()> m_mcHere;

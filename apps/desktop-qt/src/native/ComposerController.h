@@ -358,6 +358,11 @@ private:
   bool addReviewComment(const QVariantMap& comment);
   // A selection of one of the route thread's replies joins its draft.
   bool addCitation(const QVariantMap& selection);
+  // Whether a draft of `text` holds nothing but terminal excerpts whose text is
+  // gone. It is not sent, and the user is told.
+  bool stopForExpiredExcerpts(const QString& text, const Draft& draft);
+  // Tells the user how many of `contexts` a send left out, for lack of their text.
+  void warnOfExpiredExcerpts(const QList<Excerpt>& contexts);
   // The message text with a link per excerpt, note and quote, and the
   // excerpts' and notes' records as its `context`.
   static void withExcerpts(QJsonObject& message, const QList<Excerpt>& contexts);
