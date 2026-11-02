@@ -132,6 +132,8 @@ mod CODE-REVIEW-CLAIMS is
   op repost : Id Id Sha -> Item [ctor] .
   op hurt : Id -> Item [ctor] .
 
+  --- A new item, phase, review or looks needs an equation of renamedItem or renamed, and a
+  --- new Ref, Seen or Ids one an equation of refAs, seenAs or idsAs (symmetry, below).
   op empty : -> Conf [ctor] .
   op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
   op {_} : Conf -> Sys [ctor] .
@@ -677,7 +679,7 @@ mod CODE-REVIEW-CLAIMS is
          budget(Pu, Cr, Sp, Bo, Fa, Li) } .
   eq three(Pe, Pu, Cr, Sp, Bo, Fa, Li) =
        { fresh(a) fresh(b) fresh(c) link(a, b) link(a, c) link(b, c) gh(h1) periodic(Pe) free later
-         budget(Pu, Cr, Sp, Bo, Fa, Li) } .
+         budget(Pu, Cr, Sp, Bo, Fa, Li) sym } .
   --- The same two, looking in turn.
   op live : Nat Nat Nat Nat Nat Nat -> Sys .
   eq live(Pu, Cr, Sp, Bo, Fa, Li) =
@@ -726,6 +728,140 @@ mod CODE-REVIEW-CLAIMS is
          made(a, h1) made(b, h1) link(a, b) gh(h1) periodic(0) free later
          budget(0, Cr, 0, Bo, 0, 0) } .
 
+  --- symmetry --------------------------------------------------------------------------
+
+  --- The machines of three(...) start alike, and no rule tells them apart: << only puts
+  --- a link's ends in order, and three has no turn. Nor do the bad states. So a state
+  --- and any renaming of its machines reach the same states but for the names, and a bad
+  --- one from either or neither. A state marked sym is kept as the renaming that lists
+  --- the machines by a code of what each has, and the search visits one state where it
+  --- would visit up to six. Machines with the same code keep their order, which only
+  --- leaves a state that could be shared unshared.
+  op sym : -> Item [ctor] .
+  --- A renaming: a, b and c become these.
+  sort Perm .
+  op perm : Id Id Id -> Perm [ctor] .
+  var Pm : Perm .
+  vars Z Z' : Nat .
+
+  op _@_ : Id Perm -> Id .
+  eq a @ perm(X, Y, A) = X .
+  eq b @ perm(X, Y, A) = Y .
+  eq c @ perm(X, Y, A) = A .
+  op refAs : Ref Perm -> Ref .
+  eq refAs(nobody, Pm) = nobody .
+  eq refAs(on(X), Pm) = on(X @ Pm) .
+  eq refAs(X, Pm) = X @ Pm .
+  op seenAs : Seen Perm -> Seen .
+  eq seenAs(unread, Pm) = unread .
+  eq seenAs(E, Pm) = refAs(E, Pm) .
+  op idsAs : Ids Perm -> Ids .
+  eq idsAs(noids, Pm) = noids .
+  eq idsAs(X & I, Pm) = (X @ Pm) & idsAs(I, Pm) .
+
+  op renamed : Review Perm -> Review .
+  eq renamed(unknown, Pm) = unknown .
+  eq renamed(rv(St, Cl, Rd, Hd, E, Ho), Pm) = rv(St, Cl, Rd, Hd, refAs(E, Pm), Ho) .
+  op renamed : Phase Perm -> Phase .
+  eq renamed(want(S, I), Pm) = want(S, idsAs(I, Pm)) .
+  eq renamed(held(S, I), Pm) = held(S, idsAs(I, Pm)) .
+  eq renamed(pwant(I), Pm) = pwant(idsAs(I, Pm)) .
+  eq renamed(pheld(I, Sg), Pm) = pheld(idsAs(I, Pm), Sg) .
+  eq renamed(fetch, Pm) = fetch .
+  eq renamed(out(S), Pm) = out(S) .
+  op renamed : Looks Perm -> Looks .
+  eq renamed(nolook, Pm) = nolook .
+  eq renamed(lk(K, Ms, Se, B) ; Ls, Pm) = lk(K, Ms, seenAs(Se, Pm), B) ; renamed(Ls, Pm) .
+  op renamed : Conf Perm -> Conf .
+  eq renamed(empty, Pm) = empty .
+  eq renamed(It C, Pm) = renamedItem(It, Pm) renamed(C, Pm) .
+  op renamedItem : Item Perm -> Item .
+  eq renamedItem(mc(X, P, N, R), Pm) = mc(X @ Pm, P, N, renamed(R, Pm)) .
+  eq renamedItem(link(X, Y), Pm) =
+       if (X @ Pm) << (Y @ Pm) then link(X @ Pm, Y @ Pm) else link(Y @ Pm, X @ Pm) fi .
+  eq renamedItem(run(X, Ph), Pm) = run(X @ Pm, renamed(Ph, Pm)) .
+  eq renamedItem(pub(X, S, Ph), Pm) = pub(X @ Pm, S, renamed(Ph, Pm)) .
+  eq renamedItem(ew(X, W), Pm) = ew(X @ Pm, refAs(W, Pm)) .
+  eq renamedItem(down(X, Y), Pm) = down(X @ Pm, Y @ Pm) .
+  eq renamedItem(ping(X), Pm) = ping(X @ Pm) .
+  eq renamedItem(sn(X, S, W, I), Pm) = sn(X @ Pm, S, refAs(W, Pm), idsAs(I, Pm)) .
+  eq renamedItem(looks(X, Ls), Pm) = looks(X @ Pm, renamed(Ls, Pm)) .
+  eq renamedItem(poll(X, Pl), Pm) = poll(X @ Pm, Pl) .
+  eq renamedItem(turn(X), Pm) = turn(X @ Pm) .
+  eq renamedItem(paused(X), Pm) = paused(X @ Pm) .
+  eq renamedItem(made(X, S), Pm) = made(X @ Pm, S) .
+  eq renamedItem(dup(X, Y, S), Pm) = dup(X @ Pm, Y @ Pm, S) .
+  eq renamedItem(redo(X, Y, S), Pm) = redo(X @ Pm, Y @ Pm, S) .
+  eq renamedItem(posted(X, S), Pm) = posted(X @ Pm, S) .
+  eq renamedItem(repost(X, Y, S), Pm) = repost(X @ Pm, Y @ Pm, S) .
+  eq renamedItem(hurt(X), Pm) = hurt(X @ Pm) .
+  --- The items with no machine in them. Each constructor is listed rather than left to
+  --- owise, so a new one that names a machine stays a renamedItem term in the state.
+  eq renamedItem(gh(S), Pm) = gh(S) .
+  eq renamedItem(ghp(S), Pm) = ghp(S) .
+  eq renamedItem(periodic(Bu), Pm) = periodic(Bu) .
+  eq renamedItem(free, Pm) = free .
+  eq renamedItem(later, Pm) = later .
+  eq renamedItem(sym, Pm) = sym .
+  eq renamedItem(pushes(F), Pm) = pushes(F) .
+  eq renamedItem(crashes(F), Pm) = crashes(F) .
+  eq renamedItem(splits(F), Pm) = splits(F) .
+  eq renamedItem(bounces(F), Pm) = bounces(F) .
+  eq renamedItem(fails(F), Pm) = fails(F) .
+  eq renamedItem(limits(F), Pm) = limits(F) .
+
+  --- Machine X's review, coded so that a renaming leaves the code alone: the other
+  --- machines show only as others. The code leaves the rest of what X has out, as it
+  --- costs more to read than it shares; machines it does not tell apart keep their order,
+  --- which leaves apart states that could have been one and changes no answer.
+  op code : Id Conf -> Nat .
+  eq code(X, mc(X, P, N, R) C) = nr(X, R) .
+  op nr : Id Review -> Nat .
+  eq nr(X, unknown) = 0 .
+  --- A review left unrenamed codes as 0 so the renaming settles and unrenamed reports it.
+  eq nr(X, R) = 0 [owise] .
+  eq nr(X, rv(St, Cl, Rd, Hd, E, Ho)) =
+       1 + nt(St) + 7 * (nb(Cl) + 2 * (ns(Rd) + 3 * (ns(Hd) + 3 * (nf(X, E) + 5 * nh(Ho))))) .
+  op nh : Hold -> Nat .
+  eq nh(nohold) = 0 .
+  eq nh(hold(S, St)) = 1 + ns(S) + 3 * nt(St) .
+  op nb : Bool -> Nat .
+  eq nb(true) = 1 .
+  eq nb(false) = 0 .
+  op ns : MSha -> Nat .
+  eq ns(nosha) = 0 .
+  eq ns(h1) = 1 .
+  eq ns(h2) = 2 .
+  op nt : Status -> Nat .
+  eq nt(ready) = 0 .
+  eq nt(queued) = 1 .
+  eq nt(running) = 2 .
+  eq nt(failed) = 3 .
+  eq nt(waiting) = 4 .
+  eq nt(publishing) = 5 .
+  eq nt(published) = 6 .
+  --- Where X shows a review: nowhere, on X itself, or on another.
+  op nf : Id Ref -> Nat .
+  eq nf(X, nobody) = 0 .
+  eq nf(X, X) = 1 .
+  eq nf(X, on(X)) = 2 .
+  eq nf(X, on(Y)) = 4 [owise] .
+  eq nf(X, Y) = 3 [owise] .
+
+  --- The renaming that lists the machines by code, those with the same code in their
+  --- order.
+  op order : Conf -> Perm .
+  eq order(C) = sorted(code(a, C), code(b, C), code(c, C)) .
+  op sorted : Nat Nat Nat -> Perm .
+  eq sorted(Z, Z', Pe) =
+       if Z <= Z' then
+         (if Z' <= Pe then perm(a, b, c) else if Z <= Pe then perm(a, c, b) else perm(b, c, a) fi fi)
+       else
+         (if Z <= Pe then perm(b, a, c) else if Z' <= Pe then perm(c, a, b) else perm(c, b, a) fi fi)
+       fi .
+
+  ceq { sym C } = { sym renamed(C, Pm) } if Pm := order(C) /\ Pm =/= perm(a, b, c) .
+
   --- bad states ------------------------------------------------------------------------
 
   --- A machine claimed a commit while a machine it locked and was connected to had a
@@ -745,9 +881,20 @@ mod CODE-REVIEW-CLAIMS is
   eq reposted({ repost(X, Y, S) C }) = true .
   eq reposted({ C }) = false [owise] .
 
+  --- An item, phase, review or looks the symmetry did not rename, which a new constructor
+  --- without its equation leaves: the search would go on without it, so it counts as bad.
+  --- A new Ref, Seen or Ids constructor needs refAs, seenAs or idsAs, which this misses.
+  op unrenamed : Sys -> Bool .
+  eq unrenamed({ renamedItem(It, Pm) C }) = true .
+  eq unrenamed({ mc(X, P, N, renamed(R, Pm)) C }) = true .
+  eq unrenamed({ looks(X, renamed(Ls, Pm)) C }) = true .
+  eq unrenamed({ run(X, renamed(Ph, Pm)) C }) = true .
+  eq unrenamed({ pub(X, S, renamed(Ph, Pm)) C }) = true .
+  eq unrenamed({ C }) = false [owise] .
+
   --- Any of the three.
   op unsafe : Sys -> Bool .
-  eq unsafe(Y:Sys) = twice(Y:Sys) or again(Y:Sys) or reposted(Y:Sys) .
+  eq unsafe(Y:Sys) = twice(Y:Sys) or again(Y:Sys) or reposted(Y:Sys) or unrenamed(Y:Sys) .
 endm
 
 mod CODE-REVIEW-CLAIMS-PROPS is
