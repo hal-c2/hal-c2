@@ -36,8 +36,8 @@ defmodule HalC2.OrchestrationPropTest do
   `turn/steer`) and is in the transcript ahead of the answer it got. A message of the
   MC's own is in the transcript as a notification, never as a user message; it queues
   ahead of the user's messages, and while it is queued it cannot be edited, moved or
-  made to steer, nor a message moved ahead of it. A message queued while the queue is
-  held is held too, and the queue of an archived thread cannot be resumed.
+  made to steer, nor a message moved ahead of it. A message the user queues while the
+  queue is held is held too, and the queue of an archived thread cannot be resumed.
   """
 
   use ExUnit.Case, async: false
@@ -869,12 +869,13 @@ defmodule HalC2.OrchestrationPropTest do
     active = running(thread)
     text = if mode == :limit, do: "usage limit #{msg}", else: "wait #{msg}"
     message = %{text: text, run: msg, shown: false, notice: mode == :notice}
-    # A message queued while the queue is held is held with it; a restart is not.
-    held = mode != :restart and held_queue?(thread)
+    # A message the user queues while the queue is held is held with it; a restart, or
+    # the agent's own result (`:notice`), is not.
+    held = mode in [:queue, :limit] and held_queue?(thread)
     run = %{msg: msg, status: :queued, held: held, instance: instance}
 
     cond do
-      active == nil and held and mode in [:queue, :limit, :notice] ->
+      active == nil and held ->
         %{thread | runs: thread.runs ++ [run], queue: enqueue(thread, msg, mode)}
         |> put_in([:messages, msg], message)
 

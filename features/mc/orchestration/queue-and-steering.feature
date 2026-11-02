@@ -326,6 +326,13 @@ Feature: Queueing, steering and restarting
       | edit                    | Automatic completion deliveries cannot be edited.            |
 
   @mc
+  Scenario: A restart goes ahead of the user's queued messages but behind a queued task result
+    Given "t1" has a queued delegated task result and a queued message "Next"
+    When the user sends "Instead" to "t1" with restart delivery
+    Then the turn carrying the task result starts when the interrupted run ends
+    And "Instead" and "Next" wait behind it in that order
+
+  @mc
   Scenario: A queued message cannot be moved ahead of a queued delegated task result
     Given "t1" has a queued delegated task result and a queued message "Next"
     When the user moves "Next" before the queued result
@@ -345,6 +352,14 @@ Feature: Queueing, steering and restarting
     When the user queues "B" on "t1"
     Then "B" is held behind "A"
     And no run starts until the user resumes the queue
+
+  # Only what the user queues waits on a held queue: the agent's own results still wake it.
+  @mc
+  Scenario: A delegated task result that arrives while the queue is held still wakes the agent
+    Given "t1" has a held queued message "A"
+    When a delegated task of "t1" finishes while no turn is running
+    Then the turn carrying the task result starts
+    And "A" is still queued
 
   @mc
   Scenario: A queued message that could not start says so in the timeline

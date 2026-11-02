@@ -215,6 +215,22 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context
   end
 
+  step "the turn carrying the task result starts when the interrupted run ends", context do
+    id = context.delegated_run
+
+    state =
+      World.await_state(context, context.thread, &(&1.entities["run"][id]["startedAt"] != nil))
+
+    assert state.entities["run"][context.running]["status"] == "interrupted"
+    context
+  end
+
+  step "{string} and {string} wait behind it in that order", %{args: [first, second]} = context do
+    assert %{"status" => "queued", "queuePosition" => 1} = run_for(context, first)
+    assert %{"status" => "queued", "queuePosition" => 2} = run_for(context, second)
+    context
+  end
+
   step "the user tries to send {string} to {string} as a steer",
        %{args: [text, thread]} = context do
     context
@@ -1023,6 +1039,38 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   end
 
   # --- a held queue takes new messages ------------------------------------------------
+
+  # As `HalC2.Orchestration.Delegation` sends it to an idle parent: queued after the
+  # active turn, of which there is none.
+  step "a delegated task of {string} finishes while no turn is running",
+       %{args: [thread]} = context do
+    message_id = "message:delegate-result:task-one"
+
+    context =
+      World.dispatch_message(context, thread, "The delegated tasks finished.", %{
+        "messageId" => message_id,
+        "createdBy" => "system",
+        "creationSource" => "server",
+        "dispatchMode" => %{"type" => "queue_after_active"},
+        "notification" => %{"kind" => "delegated_tasks", "summary" => "Tasks finished"},
+        "delegatedCompletion" => %{
+          "parentRunId" => "run-1",
+          "taskIds" => ["task-one"],
+          "acceptedAt" => nil
+        }
+      })
+
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    run_id = World.state(context, thread).entities["message"][message_id]["runId"]
+    Map.put(context, :delegated_run, run_id)
+  end
+
+  step "the turn carrying the task result starts", context do
+    id = context.delegated_run
+    World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] in @started))
+    assert run(context, id)["queueHeld"] != true
+    context
+  end
 
   step "the user queues {string} on {string}", %{args: [text, thread]} = context do
     World.queue_message(context, thread, text)

@@ -237,6 +237,17 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     assert runs(current(thread_id)) == []
   end
 
+  # Found by the orchestration property: the archived refusal answered first.
+  test "resuming the queue of an archived thread that was deleted says it is deleted",
+       %{thread_id: thread_id} do
+    {:ok, _} = Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => thread_id})
+    {:ok, _} = Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread_id})
+    deleted = "Thread #{thread_id} is deleted."
+
+    assert {:error, ^deleted} =
+             Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id})
+  end
+
   test "boot recovery interrupts a running turn behind a cancelled queued message",
        %{thread_id: thread_id} do
     {:ok, _} = send_message(thread_id, "m1")

@@ -2439,7 +2439,8 @@ defmodule HalC2.Orchestration do
         steer(thread_id, run, message_id, command)
 
       {:restart, active_run_id, run_id} ->
-        # The queued message goes first; the interrupted run's end starts it.
+        # The queued message goes first, behind only the agent's delegated results
+        # (`queue_run/5`); the interrupted run's end starts it.
         _ =
           HalC2.Orchestration.Effects.run_now(
             thread_id,
@@ -2782,6 +2783,7 @@ defmodule HalC2.Orchestration do
           command
           |> Map.put("messageId", message_id)
           |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
+          |> Map.put("fromSteer", true)
           |> Map.delete("deliveryIntent")
 
         case HalC2.Streams.transact(thread_id, :thread, &unsteer(&1, thread_id, run, resend)) do
@@ -3627,10 +3629,12 @@ defmodule HalC2.Orchestration do
   end
 
   defp unarchived(thread_id) do
-    case StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id] do
-      %{"archivedAt" => at} when at != nil -> {:error, "Thread #{thread_id} is not active."}
-      _ -> :ok
-    end
+    thread = StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id] || %{}
+
+    # A deleted one says so, in `queue_change/2`.
+    if thread["archivedAt"] != nil and thread["deletedAt"] == nil,
+      do: {:error, "Thread #{thread_id} is not active."},
+      else: :ok
   end
 
   defp renumber(state) do
@@ -3784,9 +3788,9 @@ defmodule HalC2.Orchestration do
             end
         end
 
-      # A message sent to the queue while the queue is held waits there, held too
+      # A message the user queues while the queue is held waits there, held too
       # (`queue_run/5`), until the user resumes it.
-      get_in(command, ["dispatchMode", "type"]) == "queue_after_active" and
+      queued_by_user?(command) and
           Enum.any?(runs, &(&1["status"] == "queued" and &1["queueHeld"] == true)) ->
         queue_run(state, thread, runs, command, nil)
 
@@ -3804,10 +3808,20 @@ defmodule HalC2.Orchestration do
          Enum.any?(runs, &(&1["id"] == target and &1["status"] == "completed")) do
       command
       |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
+      |> Map.put("fromSteer", true)
       |> Map.delete("deliveryIntent")
     else
       command
     end
+  end
+
+  # The user queued the message themselves. The agent's delegated result, a reply or
+  # scheduled prompt the MC sends, and a steer that came too late or was refused are
+  # sent as queued too, but are not the user waiting on a held queue.
+  defp queued_by_user?(command) do
+    get_in(command, ["dispatchMode", "type"]) == "queue_after_active" and
+      command["creationSource"] != "server" and command["scheduledTaskId"] == nil and
+      command["fromSteer"] != true
   end
 
   # Why `message` cannot be steered into the active run `run`, or nil: `/compact` and
@@ -4005,8 +4019,10 @@ defmodule HalC2.Orchestration do
     # Above every other run until it starts (`start_ordinal/3`).
     ordinal = Enum.max(Enum.map(runs, &(&1["ordinal"] || 0)), fn -> 0 end) + 1
 
-    # A message queued while the queue is held waits with it; a restart is sent now.
-    held = restart_of == nil and Enum.any?(queued, &(&1["queueHeld"] == true))
+    # A message the user queues while the queue is held waits with it; a restart is sent now.
+    held =
+      restart_of == nil and queued_by_user?(command) and
+        Enum.any?(queued, &(&1["queueHeld"] == true))
 
     run =
       Entities.run(ids, ordinal, selection, at)
