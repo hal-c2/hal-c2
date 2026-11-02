@@ -22,10 +22,16 @@ Item {
 
     readonly property color edge: Theme.palette.color("border", "#27272a")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
-    readonly property var frames: BrowserJs.layoutDevices(root.presetIds, root.width, root.height, 24, 16, 22)
+    readonly property var frames: BrowserJs.layoutDevices(root.presetIds, root.width, root.height, 32, 24, 22)
 
     objectName: "browserDevicesView"
     clip: true
+
+    // What the devices sit on, as under a single device size.
+    Rectangle {
+        anchors.fill: parent
+        color: Theme.palette.color("canvas", "#09090b")
+    }
 
     Repeater {
         model: root.frames
@@ -45,21 +51,23 @@ Item {
             Text {
                 objectName: "browserDevicesLabel-" + frameItem.modelData.id
                 anchors.horizontalCenter: parent.horizontalCenter
-                // Every frame centres at a different y below the label
-                // strip; undo that so every label still sits in one row.
-                y: -frameItem.y + 4
+                y: -height - 14
+                width: parent.width + 28
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
                 text: frameItem.modelData.label + " · " + frameItem.modelData.width + " × " + frameItem.modelData.height
                 color: root.muted
                 font.pixelSize: Math.round(11 * Theme.fontScale)
             }
 
-            // The device's edge, under the page; the 3D body draws its own.
+            // The device's body around the page, one thickness for every
+            // device so their tops line up; the 3D body draws its own.
             Rectangle {
                 anchors.fill: parent
+                anchors.margins: -8
                 visible: !frameItem.body3d
-                color: "transparent"
-                border.color: root.edge
-                radius: 2
+                color: root.edge
+                radius: frameItem.modelData.kind === "desktop" ? 6 : 16
             }
 
             WebEngineView {

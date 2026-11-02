@@ -533,11 +533,11 @@ Rectangle {
                     id: webView
 
                     objectName: "browserView"
-                    x: root.framed ? pageArea.shown.x : 0
-                    y: root.framed ? pageArea.shown.y : 0
+                    x: root.framed ? pageArea.shown?.x ?? 0 : 0
+                    y: root.framed ? pageArea.shown?.y ?? 0 : 0
                     width: root.framed ? root.viewport.width : pageArea.width
                     height: root.framed ? root.viewport.height : pageArea.height
-                    scale: root.framed ? pageArea.shown.scale : 1
+                    scale: root.framed ? pageArea.shown?.scale ?? 1 : 1
                     transformOrigin: Item.TopLeft
                     profile: Browser.profile ? Browser.profile : WebEngine.defaultProfile
                     audioMuted: page.muted

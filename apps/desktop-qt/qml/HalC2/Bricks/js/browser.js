@@ -161,37 +161,48 @@ function fit(width, height, areaWidth, areaHeight, margin) {
     };
 }
 
-// The Devices view's frames, side by side: one equal-width column per id in
-// `ids`, each device's viewport fit into its column (never scaled up) and
-// centred below a `labelHeight` strip, so every frame's label sits at the
-// same height. {id, label, kind, dpr, width, height (the device's CSS
-// viewport), scale, frameWidth, frameHeight, x, y}.
+// The Devices view's frames: one row, `spacing` apart and `margin` in from
+// the area's edges, every device at one shared scale (never up) so they keep
+// their sizes relative to each other. Their tops line up, a `labelHeight`
+// strip above them for labels, and the row is centred in the area.
+// {id, label, kind, dpr, width, height (the device's CSS viewport), scale,
+// frameWidth, frameHeight, x, y}.
 function layoutDevices(ids, areaWidth, areaHeight, spacing, margin, labelHeight) {
     var gap = spacing === undefined ? 0 : spacing;
     var label = labelHeight === undefined ? 0 : labelHeight;
     var pad = margin === undefined ? 0 : margin;
-    var n = ids.length;
-    if (n === 0)
-        return [];
-    var columnWidth = Math.max(1, (areaWidth - gap * (n - 1)) / n);
-    var frameAreaHeight = Math.max(1, areaHeight - label);
-    var frames = [];
-    for (var i = 0; i < n; ++i) {
+    var devices = [];
+    var total = 0;
+    var tallest = 0;
+    for (var i = 0; i < ids.length; ++i) {
         var device = preset(ids[i]) || desktop;
-        var shown = fit(device.width, device.height, columnWidth, frameAreaHeight, pad);
+        devices.push(device);
+        total += device.width;
+        tallest = Math.max(tallest, device.height);
+    }
+    if (devices.length === 0)
+        return [];
+    var roomWidth = Math.max(1, areaWidth - 2 * pad - gap * (devices.length - 1));
+    var roomHeight = Math.max(1, areaHeight - 2 * pad - label);
+    var scale = Math.min(1, roomWidth / total, roomHeight / tallest);
+    var x = (areaWidth - total * scale - gap * (devices.length - 1)) / 2;
+    var frames = [];
+    for (var j = 0; j < devices.length; ++j) {
+        var shown = devices[j];
         frames.push({
-            id: device.id,
-            label: device.label,
-            kind: device.kind,
-            dpr: device.dpr,
-            width: device.width,
-            height: device.height,
-            scale: shown.scale,
-            frameWidth: shown.width,
-            frameHeight: shown.height,
-            x: i * (columnWidth + gap) + (columnWidth - shown.width) / 2,
-            y: label + shown.y
+            id: shown.id,
+            label: shown.label,
+            kind: shown.kind,
+            dpr: shown.dpr,
+            width: shown.width,
+            height: shown.height,
+            scale: scale,
+            frameWidth: shown.width * scale,
+            frameHeight: shown.height * scale,
+            x: x,
+            y: (areaHeight - label - tallest * scale) / 2 + label
         });
+        x += shown.width * scale + gap;
     }
     return frames;
 }

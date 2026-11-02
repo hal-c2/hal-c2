@@ -117,13 +117,19 @@ TestCase {
         compare(BrowserJs.layoutDevices([], 1000, 1000, 10, 10, 20).length, 0);
     }
 
-    function test_layoutDevicesSplitsIntoEqualColumns() {
+    function test_layoutDevicesShareOneScaleInARow() {
         const frames = BrowserJs.layoutDevices(["iphone-12-pro", "ipad-air", "desktop"], 930, 1000, 15, 10, 20);
         compare(frames.length, 3);
-        // Three columns of 300 (930 - 2 gaps of 15, divided by 3).
-        compare(frames[0].x < frames[1].x, true);
-        compare(frames[1].x < frames[2].x, true);
-        verify(frames[1].x - (frames[0].x + frames[0].frameWidth) >= 0);
+        // Left to right, apart, at one scale and on one top line.
+        compare(frames[1].x - (frames[0].x + frames[0].frameWidth), 15);
+        compare(frames[2].x - (frames[1].x + frames[1].frameWidth), 15);
+        compare(frames[0].scale, frames[2].scale);
+        compare(frames[0].y, frames[2].y);
+        // The row's middle is the area's, below the labels.
+        compare(frames[1].y + frames[1].frameHeight / 2, (1000 + 20) / 2);
+        // Centred: the row fills the width less its margins.
+        compare(Math.round(frames[0].x), 10);
+        compare(Math.round(frames[2].x + frames[2].frameWidth), 920);
     }
 
     function test_layoutDevicesNeverScalesUp() {
