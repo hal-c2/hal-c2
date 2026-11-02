@@ -703,8 +703,11 @@ defmodule HalC2.SpaceTest do
     test "a collapsed section's summary is one line, and its end has no text", %{space: space} do
       page = page!(space, "Plan")
 
-      assert {:error, :invalid, _} =
-               Space.insert_block(space, page, %{"kind" => "details", "text" => "a\nb"})
+      # Found in review: a summary that closes the section would read back raw.
+      for summary <- ["a\nb", "a</details>", "x</summary>", "<details><summary>y"] do
+        assert {:error, :invalid, _} =
+                 Space.insert_block(space, page, %{"kind" => "details", "text" => summary})
+      end
 
       assert {:error, :invalid, _} =
                Space.insert_block(space, page, %{"kind" => "details", "marker" => "<div>"})
@@ -717,6 +720,13 @@ defmodule HalC2.SpaceTest do
                {:ok, "# Plan\n\n<details>\n<summary>Logs</summary>\n\nInside\n\n</details>\n"}
 
       assert {:error, :invalid, _} = Space.edit_block(space, details["id"], %{"text" => "a\nb"})
+
+      assert {:error, :invalid, _} =
+               Space.edit_block(space, details["id"], %{"text" => "a</DETAILS>"})
+
+      {:ok, %{"text" => "a <b>b</b>"}} =
+        Space.edit_block(space, details["id"], %{"text" => "a <b>b</b>"})
+
       assert {:error, :invalid, _} = Space.edit_block(space, ending["id"], %{"text" => "x"})
       {:ok, details} = Space.edit_block(space, details["id"], %{"text" => "All logs"})
       assert details["text"] == "All logs"

@@ -55,6 +55,7 @@ describe("Space contracts", () => {
       "https://x.test/a.png",
     );
     expect(() => decodeInsert({ ...at, kind: "image", url: "a (b).png" })).toThrow();
+    expect(() => decodeInsert({ ...at, kind: "image", url: "space-image:abc" })).toThrow();
   });
 
   it("names the thread of an agent author", () => {

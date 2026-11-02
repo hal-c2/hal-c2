@@ -4107,7 +4107,7 @@
             "details_end",
             "raw"
           ],
-          "description": "A list item is a block: bullet, numbered or checklist, nested by depth. A divider has no text. A code block's text is the code; math is code in math. A footnote's text is the note of its label. A collapsed section is a details block, its text the summary, then the blocks inside it, then a details_end block, which has no text. Inline formatting such as **bold**, ~~struck~~ or $x^2$ is written in a block's text as Markdown. raw is Markdown the page does not model (other HTML), kept and shown as written."
+          "description": "A list item is a block: bullet, numbered or checklist, nested by depth. A divider has no text. A code block's text is the code; math is code in math. A footnote's text is the note of its label. A collapsed section is a details block, its text the summary (one line, with no details or summary tags), then the blocks inside it, then a details_end block, which has no text. Inline formatting such as **bold**, ~~struck~~ or $x^2$ is written in a block's text as Markdown. raw is Markdown the page does not model (other HTML), kept and shown as written."
         },
         "text": { "type": "string" },
         "table": {
@@ -4167,7 +4167,7 @@
         },
         "url": {
           "type": "string",
-          "description": "For an image instead of imageId: its address, with no spaces, brackets or parentheses. Never fetched until a reader asks to see it."
+          "description": "For an image instead of imageId: its address, with no spaces, angle brackets, parentheses or backslashes, and not a space-image: one. Never fetched until a reader asks to see it."
         },
         "label": {
           "type": "string",

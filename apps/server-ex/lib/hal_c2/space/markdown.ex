@@ -321,6 +321,15 @@ defmodule HalC2.Space.Markdown do
   def details?(marker),
     do: marker == nil or (is_binary(marker) and Regex.match?(@details, marker <> "</summary>"))
 
+  @doc """
+  Whether a `details` block's summary writes on its opening line and reads back as it: one
+  line that opens and closes no section and no summary.
+  """
+  def summary?(text),
+    do:
+      is_binary(text) and not String.contains?(text, ["\n", "\r"]) and
+        not Regex.match?(~r/<details[\s>]|<\/details\s*>|<\/?summary[\s>]/i, text <> " ")
+
   @doc "Whether a footnote's `label` writes `[^label]`: no spaces or brackets."
   def label?(label), do: is_binary(label) and Regex.match?(~r/^[^\s\[\]]+$/u, label)
 

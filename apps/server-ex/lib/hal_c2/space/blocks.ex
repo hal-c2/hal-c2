@@ -51,7 +51,8 @@ defmodule HalC2.Space.Blocks do
   @start "A numbered item's start is a number from 0 to 999999999, or null for 1."
   @alert "A callout's alert is note, tip, important, warning or caution, or null for none."
   @label "A footnote's label is a word with no spaces or brackets, such as 1 or note."
-  @url "An image's address has no spaces, brackets, parentheses or backslashes."
+  @url "An image's address has no spaces, angle brackets, parentheses or backslashes, and is not a space-image: one."
+  @summary "A collapsed section's summary is one line, with no <details>, </details> or <summary> tags."
 
   @doc """
   The kinds of block written directly. A `chart` is only made by `put_chart/6`, and a
@@ -311,9 +312,9 @@ defmodule HalC2.Space.Blocks do
     do: {:error, :invalid, "The end of a collapsed section has no text."}
 
   defp text_change(%{"kind" => "details"}, text) when is_binary(text) do
-    if String.contains?(text, ["\n", "\r"]),
-      do: {:error, :invalid, "A collapsed section's summary is one line."},
-      else: {:ok, %{"text" => text}}
+    if Markdown.summary?(text),
+      do: {:ok, %{"text" => text}},
+      else: {:error, :invalid, @summary}
   end
 
   defp text_change(_block, text) when is_binary(text), do: {:ok, %{"text" => text}}
@@ -675,8 +676,8 @@ defmodule HalC2.Space.Blocks do
       spec["kind"] == "footnote" and not Markdown.label?(spec["label"]) ->
         {:error, :invalid, @label}
 
-      spec["kind"] == "details" and String.contains?(spec["text"] || "", ["\n", "\r"]) ->
-        {:error, :invalid, "A collapsed section's summary is one line."}
+      spec["kind"] == "details" and not Markdown.summary?(spec["text"] || "") ->
+        {:error, :invalid, @summary}
 
       spec["kind"] == "details" and not Markdown.details?(spec["marker"]) ->
         {:error, :invalid,

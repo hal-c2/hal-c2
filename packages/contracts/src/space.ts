@@ -120,8 +120,8 @@ export type SpacePage = typeof SpacePage.Type;
  * `code` block's text is the code; math is code in `math`. Each list item is a block: a
  * `bullet`, a `numbered` item or a `checklist` item. A `divider` has no text. A
  * `footnote`'s text is the note of its `label`. A collapsed section is a `details` block,
- * its text the summary, then the blocks inside it, then a `details_end`, which has no
- * text. Inline formatting is part of a block's text, as written.
+ * its text the summary (one line, with no details or summary tags), then the blocks
+ * inside it, then a `details_end`, which has no text. Inline formatting is part of a block's text, as written.
  */
 export const SpaceWritableBlockKind = Schema.Literals([
   "paragraph",
@@ -230,7 +230,9 @@ export const SpaceFootnoteLabel = Schema.String.check(Schema.isPattern(/^[^\s[\]
  * The address of an image that is not one of the Space's, as written in Markdown: no
  * spaces, parentheses, angle brackets or backslashes. Nothing fetches it until the user asks.
  */
-export const SpaceImageUrl = Schema.String.check(Schema.isPattern(/^[^\s()<>\\]+$/u));
+export const SpaceImageUrl = Schema.String.check(
+  Schema.isPattern(/^(?!space-image:)[^\s()<>\\]+$/u),
+);
 
 /** How far a list item is nested under the items above it; 0 is not nested. */
 export const SpaceListDepth = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
