@@ -3608,6 +3608,15 @@ void offerModels(World& world) {
 
 const QByteArray kPromptPage = "import QtQuick\nimport HalC2.Bricks\nSpacePage { objectName: \"spacePromptPage\"; width: 900; height: 700 }\n";
 
+// The project `id` on this MC, with no thread of its own.
+void haveProject(World& world, const QString& id) {
+  if (world.mc.projects.contains(id)) return;
+  world.mc.projects.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), id}, {QStringLiteral("workspaceRoot"), QStringLiteral("/work/") + id},
+                                {QStringLiteral("scripts"), QJsonArray()}});
+  world.mc.sendRow(id, world.mc.projects.value(id), QStringLiteral("project"));
+  world.sync();
+}
+
 // The page `title` open with its prompt on screen, aimed at it and knowing where an ask runs.
 QQuickItem* promptOn(World& world, const QString& title) {
   const QString id = idOfPage(world, title);
@@ -3742,6 +3751,16 @@ const Steps promptSteps([] {
     // The page's own menu, not the thread's slash commands.
     expect(prompt(world).value(QStringLiteral("suggestions")).toList().isEmpty(), QStringLiteral("the prompt also offers %1").arg(show(prompt(world).value(QStringLiteral("suggestions")))));
   });
+  // Older than the Background's thread, so an ask still runs in its project by default.
+  step(QStringLiteral("the thread %1 of the project %1 runs on another model").arg(q), [](World& world, const Captures& c, const Table&) {
+    haveProject(world, c[1]);
+    const QString id = QStringLiteral("t-") + c[0].toLower();
+    world.mc.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), c[0]}, {QStringLiteral("projectId"), c[1]},
+                                 {QStringLiteral("createdAt"), QStringLiteral("2026-09-22T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-22T09:00:00Z")},
+                                 {QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}}}});
+    world.mc.sendRow(id, world.mc.threads.value(id));
+    world.sync();
+  });
   step(QStringLiteral("the user starts an ask on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     promptOn(world, c[0]);
     world.bridge().dispatch(QStringLiteral("composer.ask"), QVariantMap());
@@ -3788,7 +3807,7 @@ const Steps promptSteps([] {
            world.bridge().dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), QStringLiteral("approval-required")}});
            world.waitFor([&] { return prompt(world).value(QStringLiteral("runtimeMode")) == QLatin1String("approval-required"); }, QStringLiteral("the prompt to ask before each action"));
          } else if (what.startsWith(QLatin1String("the project"))) {
-           ensureProject(world, named);
+           haveProject(world, named);
            // The project button's menu, as the user picks from it.
            world.brick->click(QStringLiteral("spaceAskProject"));
            QObject* menu = world.brick->root()->findChild<QObject*>(QStringLiteral("spaceAskProjectMenu"));
