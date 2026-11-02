@@ -258,12 +258,17 @@ Feature: Appearance
         | 1.4.0                     | Alpha   |
         | 1.4.0-nightly.3           | Alpha   |
 
-    @backlog @desktop
-    Scenario: A development build is identified as Dev
+    @desktop
+    Scenario Outline: A development build is identified as Dev
       Given the app's own stage is "Dev"
-      And environment identification is set to "Version pill"
-      When the user looks at the app
-      Then the app shows a Dev version pill
+      When the user sets environment identification to "<mode>"
+      Then <outcome>
+
+      Examples:
+        | mode         | outcome                                 |
+        | Artwork      | the app shows "DEV" by the wordmark     |
+        | Version pill | the app shows a Dev version pill        |
+        | None         | the app shows no environment marker     |
 
     @backlog @desktop
     Scenario Outline: The app's name carries its stage unless it is the latest release

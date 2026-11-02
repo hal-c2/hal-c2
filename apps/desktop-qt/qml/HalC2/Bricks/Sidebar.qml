@@ -224,7 +224,8 @@ Rectangle {
             visible: sidebar.showBrand
 
             // A Nightly MC marks the band (StageController): a night sky, or
-            // a pill by the wordmark, as Environment identification says.
+            // a pill by the wordmark, as Environment identification says. A
+            // development shell's artwork is "DEV" in the wordmark.
             Rectangle {
                 objectName: "stageArtwork"
                 anchors.fill: parent
@@ -277,6 +278,7 @@ Rectangle {
 
                 x: 52
                 size: 11
+                dev: sidebar.stage !== null && sidebar.stage.artwork === "dev"
                 anchors.verticalCenter: parent.verticalCenter
             }
 

@@ -13,6 +13,7 @@
 #include "NavigationController.h"
 #include "RightPanelController.h"
 #include "SettingsController.h"
+#include "StageController.h"
 #include "World.h"
 
 namespace {
@@ -150,7 +151,8 @@ const Steps steps([] {
     untouched(world, {QStringLiteral("interface"), QStringLiteral("prompt"), QStringLiteral("code")});
   });
 
-  // Environment identification: how a Nightly MC marks the sidebar's brand band.
+  // Environment identification: how a development shell or a Nightly MC marks
+  // the sidebar's brand band.
   const auto sidebar = [](World& world) -> Brick& {
     if (!world.brick) {
       world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nSidebar { showBrand: true; height: 600 }\n", QSize(256, 600));
@@ -177,17 +179,41 @@ const Steps steps([] {
     world.waitFor([&] { return world.state(QStringLiteral("stage")).toMap().value(QStringLiteral("label")) == QLatin1String("Nightly"); },
                   [&] { return QStringLiteral("the Nightly stage; it is %1").arg(show(world.state(QStringLiteral("stage")))); });
   });
-  const auto marks = [sidebar](World& world, bool artwork, bool pill) {
+  struct AppStage {
+    ~AppStage() { stage::setAppStage(QString()); }
+  };
+  step(QStringLiteral("the app's own stage is %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<AppStage>();
+    stage::setAppStage(c[0]);
+    // Set before the first window in the app; here the store's next change republishes it.
+    world.mc.send({{QStringLiteral("t"), QStringLiteral("shell.environment")},
+                     {QStringLiteral("id"), world.mc.subscribers(QStringLiteral("shell")).value(0)},
+                     {QStringLiteral("mc"), world.mc.name},
+                     {QStringLiteral("environment"), QJsonObject{{QStringLiteral("environmentId"), world.mc.environmentId},
+                                                                 {QStringLiteral("serverVersion"), QStringLiteral("0.9.0")},
+                                                                 {QStringLiteral("capabilities"), world.mc.capabilities}}}});
+    world.sync();
+    world.waitFor([&] { return world.state(QStringLiteral("stage")).toMap().value(QStringLiteral("label")) == c[0]; },
+                  [&] { return QStringLiteral("the %1 stage; it is %2").arg(c[0], show(world.state(QStringLiteral("stage")))); });
+  });
+  // The marks the sidebar draws: the night sky, "DEV" in the wordmark, the pill (and its label).
+  const auto marks = [sidebar](World& world, bool sky, bool dev, const QString& pill) {
     Brick& brick = sidebar(world);
     brick.grab();
-    const bool drawnArtwork = brick.item(QStringLiteral("stageArtwork"))->isVisible();
-    const bool drawnPill = brick.item(QStringLiteral("stagePill"))->isVisible() && brick.shows(QStringLiteral("Nightly"));
-    expect(drawnArtwork == artwork && drawnPill == pill,
-           QStringLiteral("the sidebar draws the artwork: %1, the pill: %2; the stage is %3").arg(drawnArtwork).arg(drawnPill).arg(show(world.state(QStringLiteral("stage")))));
+    const bool drawnSky = brick.item(QStringLiteral("stageArtwork"))->isVisible();
+    const bool drawnDev = brick.item(QStringLiteral("devMark"))->isVisible();
+    const bool drawnPill = brick.item(QStringLiteral("stagePill"))->isVisible();
+    expect(drawnSky == sky && drawnDev == dev && drawnPill == !pill.isEmpty() && (pill.isEmpty() || brick.shows(pill)),
+           QStringLiteral("the sidebar draws the night sky: %1, DEV: %2, the pill: %3; the stage is %4")
+               .arg(drawnSky)
+               .arg(drawnDev)
+               .arg(drawnPill)
+               .arg(show(world.state(QStringLiteral("stage")))));
   };
-  step(QStringLiteral("the app shows the Nightly artwork"), [marks](World& world, const Captures&, const Table&) { marks(world, true, false); });
-  step(QStringLiteral("the app shows a Nightly version pill"), [marks](World& world, const Captures&, const Table&) { marks(world, false, true); });
-  step(QStringLiteral("the app shows no environment marker"), [marks](World& world, const Captures&, const Table&) { marks(world, false, false); });
+  step(QStringLiteral("the app shows the Nightly artwork"), [marks](World& world, const Captures&, const Table&) { marks(world, true, false, {}); });
+  step(QStringLiteral("the app shows a (Nightly|Dev) version pill"), [marks](World& world, const Captures& c, const Table&) { marks(world, false, false, c[0]); });
+  step(QStringLiteral("the app shows \"DEV\" by the wordmark"), [marks](World& world, const Captures&, const Table&) { marks(world, false, true, {}); });
+  step(QStringLiteral("the app shows no environment marker"), [marks](World& world, const Captures&, const Table&) { marks(world, false, false, {}); });
 
   // Motion: the right panel as the desktop draws it, on a thread.
   const auto panelBrick = [](World& world) -> Brick& {
