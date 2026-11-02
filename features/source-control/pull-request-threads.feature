@@ -279,7 +279,7 @@ Feature: Threads that work on or link pull requests
     When the user opens a pull request from it on Forgejo
     Then the pull request is created in "acme/shop" with the head "sam:tax"
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui
   Scenario: Starting a pull request thread from a pasted link
     When the user pastes "https://github.com/acme/shop/pull/42" to start a pull request thread
     Then the user sees the pull request's title and branches before choosing local or worktree
@@ -361,7 +361,7 @@ Feature: Threads that work on or link pull requests
     When the user links "acme/shop" pull request 42 and "acme/api" pull request 7 to "Tax work"
     Then "Tax work" lists both pull requests
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-desktop
   Scenario: Each linked pull request names its repository, even when two share a number
     Given "Tax work" links pull request 42 of "acme/shop" and pull request 42 of "acme/api"
     When the user looks at the thread's linked pull requests
@@ -447,7 +447,7 @@ Feature: Threads that work on or link pull requests
     When the user asks which threads are linked to pull request 42
     Then both "Tax work" and "Old tax" are listed
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Linking from a pull request link in the conversation
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user links that pull request from the mention
@@ -559,19 +559,19 @@ Feature: Threads that work on or link pull requests
   # Links are decided by host, as the web's usePullRequestLinking and
   # findProjectOnChangeRequestHost do: any project on a host lends the MC its
   # credentials there, so a repository nobody has checked out still links.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A pull request from another repository on a host a project reads
     When the user links "https://github.com/other/repo/pull/1"
     Then "Tax work" lists pull request 1 of "other/repo"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A pull request on a host no project can read
     When the user links "https://gitlab.com/other/repo/-/merge_requests/1"
     Then the user is told no project in this environment can read "gitlab.com/other/repo"
 
   # Azure DevOps reads use the checkout's organization and project, not the
   # host's credentials, so there it takes a project of that repository.
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: An Azure DevOps pull request needs a project of its own repository
     Given the environment also has the Azure DevOps project "dev.azure.com/acme/shop/_git/web"
     When the user links "https://dev.azure.com/acme/shop/_git/api/pullrequest/1"
@@ -579,7 +579,7 @@ Feature: Threads that work on or link pull requests
     When the user links "https://dev.azure.com/acme/shop/_git/web/pullrequest/1"
     Then "Tax work" lists pull request 1 of "acme/shop/_git/web"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: A pull request the MC does not link says why
     Given the thread "Tax work" has no linked pull request
     And the MC refuses to link pull requests to "Tax work"
@@ -719,13 +719,13 @@ Feature: Threads that work on or link pull requests
       | link   | to        |
       | unlink | from      |
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Opening a linked pull request in the browser
     Given pull request 42 is linked to "Tax work"
     When the user opens pull request 42 from "Tax work"
     Then the browser opens "https://github.com/acme/shop/pull/42"
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Refreshing the linked pull requests reads them from the host again
     Given pull request 42 is linked to "Tax work"
     And a review is submitted on pull request 42 on GitHub
@@ -733,7 +733,7 @@ Feature: Threads that work on or link pull requests
     Then pull request 42 is read from GitHub again
     And "Tax work" shows the new review state
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Linked pull requests of an unreachable environment stay as last synced
     Given pull request 42 is linked to "Tax work"
     When the environment of "Tax work" becomes unreachable
@@ -748,7 +748,7 @@ Feature: Threads that work on or link pull requests
     When the user opens the pull request from the thread
     Then pull request 42 opens
 
-  @backlog @mobile
+  @mobile
   Scenario: The phone's git overview lists linked reviews and stacks
     Given pull request 42 is linked to "Tax work"
     When the user opens the git overview of "Tax work" on the phone

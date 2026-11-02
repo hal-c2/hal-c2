@@ -17,6 +17,8 @@ Item {
 
     // The corner radius of layouts that round the centre.
     property real radius: 0
+    // Whether messages show their time and actions without hover (touch layouts).
+    property alias alwaysShowMeta: timeline.alwaysShowMeta
     readonly property var route: Shell.state.route ?? null
     readonly property bool draft: route !== null && route.kind === "draft"
     // The user scrolled a thread's conversation away from its latest output (the composer rests then).
