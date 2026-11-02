@@ -6,7 +6,8 @@
 #   apps/desktop-qt/src/native/WorkspaceController.cpp (workspace.runScript, workspace.openInEditor)
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/ThreadDetailsPanel.qml (threadPanel.toggle)
-#   apps/desktop-qt/src/native/RightPanelController.cpp (tabs, open, canAdd; the Pull requests and Previews tabs)
+#   apps/desktop-qt/src/native/RightPanelController.cpp (tabs, open, canAdd; the Pull requests and Previews tabs;
+#     rightPanel.toggleMaximized opens the tab in the centre, desktop/stage.feature)
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   apps/desktop-qt/tests/native/features/HeaderSteps.cpp (the header brick laid out offscreen)
 #   apps/desktop-qt/tests/native/features/TerminalSteps.cpp (terminal drawer, right panel terminal tabs)
@@ -294,8 +295,6 @@ Feature: Layout: sidebar, header, right panel and drawer
     Scenario: The right panel is set apart from the thread by a border
       Given the right panel is open
       Then a 1 px border in the theme's border colour marks its leading edge
-      When the user maximizes the right panel
-      Then the border is not drawn
 
     @desktop @backlog-desktop
     Scenario: Tabs that do not fit scroll and keep the active one in view
@@ -363,13 +362,14 @@ Feature: Layout: sidebar, header, right panel and drawer
     # The web's sheet (apps/web/src/rightPanelLayout.ts): at 980 pixels and
     # under, or wherever the panel's minimum does not fit beside the thread.
     # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    # Its tab can still open in the thread's centre (desktop/stage.feature).
     @desktop @backlog-desktop
     Scenario: In a narrow window the right panel opens over the thread
       Given the window is 960 pixels wide
       When the user opens the right panel
       Then it is shown as a sheet over the thread, under the header
       And the thread keeps the full width
-      And the right panel can be neither resized nor maximized
+      And the right panel cannot be resized
       When the user presses Escape
       Then the right panel is closed
 
@@ -389,13 +389,15 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then they are shown over the thread, under the header
       And the thread keeps the full width
 
+    # The web's maximize filled the window; the desktop opens the tab in the
+    # thread's centre instead and keeps the composer (desktop/stage.feature).
     @desktop
-    Scenario: Maximizing the right panel
+    Scenario: Opening the right panel's tab in the thread's centre
       Given the right panel is open
-      When the user toggles the right panel to fill the window
-      Then the right panel covers the thread
-      When the user toggles it again
-      Then the thread is shown beside the right panel
+      When the user opens the right panel's tab in the centre
+      Then the tab fills the thread's centre above the composer
+      When the user opens it in the centre again
+      Then the tab is back in the right panel beside the thread
 
     @desktop
     Scenario: The right panel's tabs and width survive a restart
@@ -559,8 +561,8 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the thread details open over the conversation instead of beside it
 
     @backlog @desktop
-    Scenario: Thread details float while the right panel fills the window
-      Given the right panel fills the window
+    Scenario: Thread details float while a tab fills the thread's centre
+      Given a right panel tab fills the thread's centre
       When the user toggles the thread details panel
       Then the thread details open over the right panel
 

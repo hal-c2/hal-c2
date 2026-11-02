@@ -130,8 +130,8 @@ void BrowserPage::setTabId(const QString& tabId) {
   if (tabId == m_tabId) return;
   m_tabId = tabId;
   m_lastReport = {};
-  emit tabIdChanged();
   follow();
+  emit tabIdChanged();
 }
 
 void BrowserPage::follow() {

@@ -23,6 +23,7 @@ namespace {
 
 const QStringList kDefaultGlobs{
     QStringLiteral("desktop/native-*.feature"),
+    QStringLiteral("desktop/stage.feature"),
     QStringLiteral("connections/cluster.feature"),
     QStringLiteral("timeline/streaming.feature"),
     QStringLiteral("timeline/tool-calls.feature"),
@@ -543,7 +544,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/layout.feature:A tab kind that the thread cannot show*"),
     QStringLiteral("navigation/layout.feature:Right panel contents survive closing the panel"),
     QStringLiteral("navigation/layout.feature:Resizing the right panel"),
-    QStringLiteral("navigation/layout.feature:Maximizing the right panel"),
+    QStringLiteral("navigation/layout.feature:Opening the right panel's tab in the thread's centre"),
     QStringLiteral("navigation/layout.feature:The right panel's tabs and width survive a restart"),
     QStringLiteral("navigation/layout.feature:Toggling the thread details panel"),
     QStringLiteral("navigation/layout.feature:Hiding the thread details panel"),

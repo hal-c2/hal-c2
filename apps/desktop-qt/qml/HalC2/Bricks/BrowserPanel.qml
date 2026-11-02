@@ -6,8 +6,8 @@ import QtWebEngine
 import HalC2.Shell
 import "js/browser.js" as BrowserJs
 
-// One browser tab of the right panel: the MC's tab `tabId` of a thread's
-// previews (Panel.previews), drawn by QtWebEngine. A BrowserPage follows the
+// One browser tab of the right panel (`browser:<tab>`): the MC's tab of a
+// thread's previews (Panel.previews), drawn by QtWebEngine. A BrowserPage follows the
 // MC's tab and tells it what the page does; the view loads what the MC asks
 // for (an agent's navigate) and what the user types.
 //
@@ -15,7 +15,7 @@ import "js/browser.js" as BrowserJs
 // around it (`stage`), so only the tab's zoom zooms the page. At a device
 // size the page renders at that size, centred and scaled down to fit.
 //
-//   BrowserPanel { anchors.fill: parent; source: Panel.previews; tabId: "tab-1" }
+//   BrowserPanel { anchors.fill: parent; source: Panel.previews; tabId: "browser:tab-1" }
 Rectangle {
     id: root
 
@@ -46,10 +46,13 @@ Rectangle {
         id: page
 
         previews: root.source
-        tabId: root.tabId
+        tabId: root.tabId.slice(root.tabId.indexOf(":") + 1)
         view: webView
 
         onLoadRequested: url => root.go(url, false)
+        // Given its tab after it was made (PanelBodies): the view starts where the tab is.
+        onTabIdChanged: if (url.length > 0 && webView.url.toString() !== url)
+            webView.url = url
         onEvaluateRequested: (request, script) => webView.runJavaScript(script, result => page.evaluated(request, result))
         onGrabRequested: request => {
             const grabbed = webView.grabToImage(result => page.grabbed(request, result.image));

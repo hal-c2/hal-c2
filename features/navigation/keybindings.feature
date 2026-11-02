@@ -22,7 +22,8 @@
 #   chat.newLocal, editor.openFavorite, modelPicker.toggle, modelPicker.previousProvider,
 #   modelPicker.nextProvider, modelPicker.jump.1-9, thread.stop, thread.steerQueuedMessage,
 #   thread.editQueuedMessage, thread.previous, thread.next, thread.copyReference,
-#   thread.settle, thread.pin, thread.undo, thread.jump.1-9, script.<id>.run
+#   thread.settle, thread.pin, thread.undo, thread.jump.1-9, script.<id>.run,
+#   stage.moveTab, stage.toggleFocus, stage.nextPane, stage.dismiss, stage.layout.* (desktop only)
 #   apps/web/src/routes/_chat.tsx (thread shortcuts wait for the command palette; one project needs no chooser)
 
 Feature: Keybindings
@@ -116,6 +117,9 @@ Feature: Keybindings
         | preview.zoomOut           | mod+-           | in the preview                    | aligned |
         | preview.resetZoom         | mod+0           | in the preview                    | aligned |
 
+    # rightPanel.toggleMaximized is Open in centre on the desktop: the right panel's tab
+    # goes to the thread's centre and back (desktop/stage.feature, which also has the
+    # desktop-only stage.* commands and their mod+alt+s and mod+alt+f defaults).
     @desktop
     Scenario Outline: A command with no default binding can still be bound
       Given no custom keybindings

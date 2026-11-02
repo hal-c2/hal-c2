@@ -44,6 +44,7 @@ class TimelineModel : public QAbstractListModel {
   Q_PROPERTY(QDateTime workingSince READ workingSince NOTIFY workingChanged)
   Q_PROPERTY(bool hasEarlier READ hasEarlier NOTIFY earlierChanged)
   Q_PROPERTY(bool loadingEarlier READ loadingEarlier NOTIFY earlierChanged)
+  Q_PROPERTY(QString latest READ latest NOTIFY latestChanged)
 
 public:
   enum Role {
@@ -138,6 +139,9 @@ public:
   void setStatus(const QString& status, const QString& problem = {});
   bool working() const { return m_workingSince.isValid(); }
   QDateTime workingSince() const { return m_workingSince; }
+  // The newest row in one line, for a strip standing in for the timeline: the
+  // agent's reply, what its calls did, or the user's message ("You: ...").
+  QString latest() const { return m_latest; }
   // "Working for 12s", from the clock; the brick asks once a second.
   Q_INVOKABLE QString workingLabel() const;
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
@@ -235,6 +239,7 @@ signals:
   void countChanged();
   void statusChanged();
   void workingChanged();
+  void latestChanged();
   // After a snapshot, or events that touched runs, requests, plans or the
   // request and user message items: what entities() gives the composer.
   void turnChanged();
@@ -258,6 +263,7 @@ signals:
   void earlierWanted(int items);
 
 private:
+  void refreshLatest();
   struct Row {
     QString id;
     QString kind;
@@ -325,6 +331,7 @@ private:
 
   QString m_threadKey;
   QString m_status = QStringLiteral("loading");
+  QString m_latest;
   QString m_problem;
   Entities m_entities;
   // A snapshot arriving in parts.

@@ -19,6 +19,11 @@ set(hal_c2_bricks_qml_files
     GitActions.qml
     Notifications.qml
     RightPanel.qml
+    Stage.qml
+    ThreadArea.qml
+    PanelTabDrag.qml
+    PanelBodySlot.qml
+    PanelBodies.qml
     SettingsNav.qml
     ShellErrorOverlay.qml
     ConnectionNotice.qml
