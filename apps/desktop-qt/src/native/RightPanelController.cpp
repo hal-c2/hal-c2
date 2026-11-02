@@ -346,6 +346,11 @@ void RightPanelController::retarget() {
     if (root.isEmpty()) root = projectRoot;
     TimelineModel* timeline = shell->controller<ThreadStore>()->timeline(threadKey);
     m_diff.setThread(environmentId, threadId, timeline);
+    // The project may be a folder inside its repository.
+    const QString repository = m_store->projectRow(environmentId, row.value(QLatin1String("projectId")).toString())
+                                   .value(QLatin1String("repositoryIdentity")).toObject().value(QLatin1String("rootPath")).toString();
+    const QString folder = repository.isEmpty() || projectRoot.isEmpty() ? QString() : QDir(repository).relativeFilePath(projectRoot);
+    m_diff.setFolder(folder == QLatin1String(".") || folder.startsWith(QLatin1String("..")) ? QString() : folder);
     m_diff.setCheckout(root);
     m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root, threadId);
