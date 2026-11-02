@@ -279,6 +279,52 @@ Feature: Project files as Space pages
       When the user restores the page "Guide"
       Then the page "Guide" shows "While it was in the trash."
 
+    Scenario: An edit to a file that can't be written is refused and changes neither
+      Given "docs/guide.md" of "shop" is read-only
+      When the user changes the block "Install it." to "My way."
+      Then the user is told "docs/guide.md" could not be written
+      And the page "Guide" shows "Install it."
+      And "docs/guide.md" of "shop" reads:
+        """
+        # Guide
+
+        Install it.
+        """
+
+  @mc
+  Rule: Links in the project
+
+    Background:
+      Given "shop" has the file "AGENTS.md" reading "# Agents\n\nBe kind."
+      And "CLAUDE.md" of "shop" links to "AGENTS.md"
+
+    Scenario: A page of a link edits the file it links to and keeps the link
+      Given the user has opened "CLAUDE.md" of "shop" in "Research"
+      When the user changes the block "Be kind." to "Be brief."
+      Then "AGENTS.md" of "shop" reads "# Agents\n\nBe brief."
+      And "CLAUDE.md" of "shop" still links to "AGENTS.md"
+
+    Scenario: A link and the file it links to, each a page, take each other's edits
+      Given the user has opened "CLAUDE.md" of "shop" in "Research"
+      And the user has opened "AGENTS.md" of "shop" in "Research"
+      When the user changes "Be kind." on the page of "CLAUDE.md" to "Be brief."
+      And the user changes "Be brief." on the page of "AGENTS.md" to "Be terse."
+      Then "AGENTS.md" of "shop" reads "# Agents\n\nBe terse."
+      And the page of "CLAUDE.md" shows "Be terse." and says nothing changed under an edit
+      And the page of "AGENTS.md" shows "Be terse." and says nothing changed under an edit
+
+    Scenario: A link out of the project is not opened
+      Given "NOTES.md" of "shop" links to a file outside the project
+      When the user opens "NOTES.md" of "shop" in "Research"
+      Then the user is told "NOTES.md" is not in the project
+
+    Scenario: A link that comes to lead out of the project leaves its page saying the file is gone
+      Given the user has opened "CLAUDE.md" of "shop" in "Research"
+      And "CLAUDE.md" of "shop" links to a file outside the project
+      When the user opens the page "Agents" again
+      Then the page "Agents" says its file is gone
+      And the page "Agents" shows "Be kind."
+
   @mc
   Rule: Nothing in the file is lost
 
@@ -372,6 +418,26 @@ Feature: Project files as Space pages
       When an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nBack again." and its turn ends
       Then the page "Guide" shows "Back again."
       And the page "Guide" no longer says its file is gone
+
+    Scenario: A file that comes back wins over edits made while it was gone, and says so
+      Given an agent in "shop" deleted "docs/guide.md"
+      And the user changed the block "Install it." to "Still here."
+      When an agent in "shop" rewrites "docs/guide.md" to "# Guide\n\nBack again." and its turn ends
+      Then the page "Guide" shows "Back again."
+      And the page "Guide" says the file changed under the user's edit
+
+    Scenario: A deleted file with more than one copy left is not followed to either
+      Given "shop" has the file "notes/one.md" reading "# Guide\n\nInstall it."
+      And "shop" has the file "notes/two.md" reading "# Guide\n\nInstall it."
+      When an agent in "shop" deletes "docs/guide.md" and its turn ends
+      Then the page "Guide" says its file is gone
+      And the page "Guide" is still backed by "docs/guide.md"
+
+    Scenario: A folder where the file was leaves its page saying the file is gone
+      Given "docs/guide.md" of "shop" was replaced by a folder outside HAL-C2
+      When the user opens the page "Guide" again
+      Then the page "Guide" says its file is gone
+      And the page "Guide" shows "Install it."
 
     Scenario: A branch without the file leaves the page saying the file is gone
       Given the branch "bare" of "shop" has no "docs/guide.md"
@@ -500,7 +566,7 @@ Feature: Project files as Space pages
 
   # The clients: every way in, the indicator and the way out. Each client asks the MC that
   # has the project; none reads or writes the file itself.
-  @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @shared @backlog-desktop @backlog-mobile
   Rule: Opening project files from the clients
 
     Background:
@@ -544,6 +610,24 @@ Feature: Project files as Space pages
       When the user opens "docs/guide.md" in a Space from its menu
       Then the page "Guide" is in "Research"
 
+    # The MC makes the Space "Personal" when it lists none, as it does for the Spaces pane.
+    Scenario: Opening a file with no Space opens it in the Space the MC makes
+      Given every Space was deleted
+      When the user asks the command palette to open "docs/guide.md" in a Space
+      Then the page "Guide" is in "Personal"
+
+    # A page follows the file in the project's own folder, never a thread's worktree.
+    Scenario: A file only in a thread's worktree has no page to open
+      Given a thread of "shop" works in a worktree where "docs/draft.md" reads "# Draft"
+      When the user is browsing the files of "shop"
+      Then "docs/draft.md" offers no way to open it in a Space
+
+    Scenario: Opening a file from a worktree thread opens the project's copy
+      Given a thread of "shop" works in a worktree where "docs/guide.md" reads "# Guide\n\nDraft."
+      When the user opens the project's copy of "docs/guide.md" in a Space from its menu
+      Then the Space shows the page "Guide"
+      And the page "Guide" shows "Install it."
+
     Scenario: A file-backed page shows its file
       Given the user has opened "docs/guide.md" of "shop" in "Research"
       When the user shows the page "Guide"
@@ -571,6 +655,8 @@ Feature: Project files as Space pages
       When the user unlinks the page "Guide" from its file
       Then the page no longer says it is a file
 
+    # The TUI's Space pane follows only its own MC's Spaces (#860).
+    @backlog-tui
     Scenario: A project on another machine opens its files in that machine's Space
       Given the project "shop" is on another connected environment
       When the user opens "docs/guide.md" in a Space from its menu

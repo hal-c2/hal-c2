@@ -3,7 +3,9 @@ defmodule HalC2.Space.Files do
   Pages that are project files (`features/space/project-files.feature`). Such a page
   has a `file` field naming the project and the file's path in the project's own folder,
   with the hash and size of what it last read or wrote there, whether the file is gone
-  (`missing`) and when the file last won over an edit (`conflictAt`).
+  (`missing`), whether the page was edited while it was (`unwritten`) and when the file
+  last won over an edit (`conflictAt`). A link in the project is followed to the file it
+  names, which is read and written in its place; a link out of the project is no file.
 
   The page and the file are kept the same both ways:
 
@@ -13,6 +15,7 @@ defmodule HalC2.Space.Files do
       does not model as raw blocks, so a file comes back byte for byte but for what was
       edited. Should the file have changed since it was last read, the file wins: the
       page takes the file and says so, and the edit it lost is a version in its history.
+      A file that can't be read or written refuses the edit, so the two never part.
     * This server follows the files: told a project folder changed (`changed/1`, sent
       at a turn's end, by a git action, a checkout and a save from the file viewer), it
       brings every page of a file that changed up to date, moving a page with its file
@@ -31,6 +34,10 @@ defmodule HalC2.Space.Files do
 
   @author %{"type" => "file"}
 
+  # Why a page's file is gone: the project or the file is, something else is where it
+  # was, or it is a link out of the project.
+  @gone [:enoent, :enotdir, :eisdir, :no_project, :outside]
+
   @doc "The author of what a page takes from its file."
   def author, do: @author
 
@@ -41,6 +48,10 @@ defmodule HalC2.Space.Files do
     do: GenServer.cast(__MODULE__, {:changed, Path.expand(root)})
 
   def changed(_root), do: :ok
+
+  # A page wrote `path`, the real file under `root`: the other pages that are that file
+  # through a link take it. Nothing when the server is not running.
+  defp wrote(root, path), do: GenServer.cast(__MODULE__, {:wrote, root, path})
 
   @doc """
   The page of the project file `relative` in `space_id`, made when there is none, or the
@@ -113,11 +124,11 @@ defmodule HalC2.Space.Files do
             do: {[], {:ok, page}},
             else: take(state, page, moved, text, nil)
 
-        {:error, :enoent} ->
-          gone(page, moved)
+        {:error, reason} when reason in @gone ->
+          gone(page, moved, false)
 
-        {:error, _} ->
-          {[], {:ok, page}}
+        {:error, reason} ->
+          unavailable(file, "read", reason)
       end
     end
     |> Pages.refused()
@@ -136,7 +147,8 @@ defmodule HalC2.Space.Files do
   @doc """
   What follows `changes` to file pages in the same step: their files written, or their
   files taken where they changed first. A page whose `file` the changes themselves set
-  (opened, synced, moved or unlinked) is left as they have it.
+  (opened, synced, moved or unlinked) is left as they have it. Refuses the changes when
+  an edited page's file can't be read or written.
   """
   def follow(state, changes) do
     next = Space.with_changes(state, changes)
@@ -144,7 +156,12 @@ defmodule HalC2.Space.Files do
     changes
     |> Enum.flat_map(&page_of(state, &1))
     |> Enum.uniq()
-    |> Enum.flat_map(&follow_page(state, next, &1))
+    |> Enum.reduce_while([], fn id, acc ->
+      case follow_page(state, next, id) do
+        {:error, _, _} = refused -> {:halt, refused}
+        more -> {:cont, acc ++ more}
+      end
+    end)
   end
 
   defp page_of(_state, {"page", id, _patch}), do: [id]
@@ -187,9 +204,12 @@ defmodule HalC2.Space.Files do
             []
         end
 
-      {:error, :enoent} ->
-        {changes, _} = gone(page, page)
+      {:error, reason} when reason in @gone ->
+        {changes, _} = gone(page, page, edited)
         changes
+
+      {:error, reason} when edited ->
+        unavailable(file, "read", reason)
 
       {:error, _} ->
         []
@@ -200,20 +220,29 @@ defmodule HalC2.Space.Files do
   defp content(state, page),
     do: {page["title"], Enum.map(Blocks.of_page(state, page["id"]), &key/1)}
 
-  # The page written to its file, keeping how the file ends its lines and itself.
+  # The page written to its file, keeping how the file ends its lines and itself. The
+  # folder's listing is as it was and the page has the file's new hash, so the folder is
+  # not followed; only another page that is the same file through a link is told.
   defp write(state, page, original) do
     file = page["file"]
     text = markdown(state, page, original)
 
     with false <- text == original,
          {:ok, root} <- root(file["projectId"]),
-         :ok <- replace(Path.join(root, file["path"]), text) do
-      Workspace.invalidate(root)
+         {:ok, path} <- locate(root, file["path"]),
+         :ok <- replace(path, text) do
+      wrote(root, path)
       next = Map.merge(file, %{"hash" => hash(text), "size" => byte_size(text)})
       [{"page", page["id"], Patch.diff(page, %{page | "file" => %{next | "conflictAt" => nil}})}]
     else
-      _ -> []
+      true -> []
+      {:error, reason} -> unavailable(file, "written", reason)
     end
+  end
+
+  defp unavailable(file, done, reason) do
+    {:error, :unavailable,
+     "#{file["path"]} could not be #{done}: #{:file.format_error(reason)}. The page is as it was."}
   end
 
   defp markdown(state, page, original) do
@@ -249,7 +278,9 @@ defmodule HalC2.Space.Files do
     end
   end
 
-  # Written beside the file and renamed over it, so nothing reads half a file.
+  # Written beside the file and renamed over it, so nothing reads half a file. `path` is
+  # the file itself, not a link to it, so a link stays one. A read-only file stays as it
+  # is, as an editor would leave it.
   defp replace(path, text) do
     temp =
       Path.join(
@@ -257,11 +288,15 @@ defmodule HalC2.Space.Files do
         ".#{Path.basename(path)}.#{System.unique_integer([:positive])}"
       )
 
-    with :ok <- File.write(temp, text),
+    with {:ok, %{access: access}} when access in [:write, :read_write] <- File.stat(path),
+         :ok <- File.write(temp, text),
          :ok <- keep_mode(path, temp),
          :ok <- File.rename(temp, path) do
       :ok
     else
+      {:ok, _stat} ->
+        {:error, :eacces}
+
       error ->
         File.rm(temp)
         error
@@ -280,6 +315,8 @@ defmodule HalC2.Space.Files do
   # those that changed changed in place. `conflict` is when the file won over an edit.
   defp take(state, before, page, text, conflict) do
     file = page["file"]
+    # What the page was edited to while its file was gone, the file wins over as well.
+    conflict = conflict || if(file["unwritten"], do: now())
     {heading, specs} = Markdown.parse(text)
     title = nonblank(heading) || untitled(file["path"])
 
@@ -293,7 +330,13 @@ defmodule HalC2.Space.Files do
     diff = List.myers_difference(Enum.map(blocks, &key/1), Enum.map(specs, &key/1))
     block_changes = edits(state, page["id"], diff, blocks, specs)
 
-    fields = %{"hash" => hash(text), "size" => byte_size(text), "missing" => false}
+    fields = %{
+      "hash" => hash(text),
+      "size" => byte_size(text),
+      "missing" => false,
+      "unwritten" => false
+    }
+
     fields = if conflict, do: Map.put(fields, "conflictAt", conflict), else: fields
     next = %{page | "title" => title, "file" => Map.merge(file, fields)}
 
@@ -311,9 +354,11 @@ defmodule HalC2.Space.Files do
     {page_changes ++ block_changes, {:ok, next}}
   end
 
-  # The file is gone: the page stays as it is and says so.
-  defp gone(before, page) do
+  # The file is gone: the page stays as it is and says so, and whether it was `edited`
+  # since, which the file wins over should it come back.
+  defp gone(before, page, edited) do
     next = put_in(page, ["file", "missing"], true)
+    next = if edited, do: put_in(next, ["file", "unwritten"], true), else: next
 
     case Patch.diff(before, next) do
       :unchanged -> {[], {:ok, before}}
@@ -419,8 +464,39 @@ defmodule HalC2.Space.Files do
 
   defp no_page(id), do: {:error, :not_found, "There is no page #{id} in this Space."}
 
+  # What a page's file says.
   defp read(%{"file" => file}) do
-    with {:ok, root} <- root(file["projectId"]), do: File.read(Path.join(root, file["path"]))
+    with {:ok, path} <- locate(file), do: File.read(path)
+  end
+
+  # Where the page's file is, its links followed, as long as that is in the project.
+  defp locate(file) do
+    with {:ok, root} <- root(file["projectId"]), do: locate(root, file["path"])
+  end
+
+  defp locate(root, relative) do
+    with {:ok, top} <- real(root),
+         {:ok, path} <- real(Path.join(top, relative)) do
+      if String.starts_with?(path, top <> "/"), do: {:ok, path}, else: {:error, :outside}
+    end
+  end
+
+  # `path` with every link in it followed; what does not exist is taken as written.
+  defp real(path), do: real(Path.split(path), "/", 40)
+
+  defp real([], at, _links), do: {:ok, at}
+  defp real(_names, _at, 0), do: {:error, :eloop}
+  defp real(["/" | rest], _at, links), do: real(rest, "/", links)
+  defp real(["." | rest], at, links), do: real(rest, at, links)
+  defp real([".." | rest], at, links), do: real(rest, Path.dirname(at), links)
+
+  defp real([name | rest], at, links) do
+    path = Path.join(at, name)
+
+    case File.read_link(path) do
+      {:ok, target} -> real(Path.split(target) ++ rest, at, links - 1)
+      {:error, _} -> real(rest, path, links)
+    end
   end
 
   defp hash(text), do: :crypto.hash(:sha256, text) |> Base.encode16(case: :lower)
@@ -478,6 +554,19 @@ defmodule HalC2.Space.Files do
 
     {:noreply,
      %{state | generations: Map.put(state.generations, root, generation), waiters: waiting}}
+  end
+
+  def handle_cast({:wrote, root, path}, state) do
+    for {project_id, _} <- state.pages,
+        root(project_id) == {:ok, root},
+        {space_id, space, page} <- linked(state, project_id),
+        Pages.live?(space, page),
+        locate(root, page["file"]["path"]) == {:ok, path},
+        {:ok, text} <- [File.read(path)],
+        hash(text) != page["file"]["hash"] or page["file"]["missing"],
+        do: Space.transact(space_id, &sync(&1, page["id"]))
+
+    {:noreply, state}
   end
 
   @impl true
@@ -539,9 +628,13 @@ defmodule HalC2.Space.Files do
       )
 
   # The pages of the project's files, as the Spaces have them now.
+  # Each Space's state is read once, however many of its pages are files.
   defp linked(state, project_id) do
-    for {space_id, page_id} <- Map.get(state.pages, project_id, []),
+    by_space = Enum.group_by(Map.get(state.pages, project_id, []), &elem(&1, 0), &elem(&1, 1))
+
+    for {space_id, page_ids} <- by_space,
         {:ok, space} <- [Space.state(space_id)],
+        page_id <- page_ids,
         %{"file" => %{"projectId" => ^project_id}} = page <- [Pages.get(space, page_id)],
         do: {space_id, space, page}
   end
@@ -559,18 +652,19 @@ defmodule HalC2.Space.Files do
         taken ->
           file = page["file"]
 
-          case File.read(Path.join(root, file["path"])) do
+          case read(page) do
             {:ok, text} ->
               if hash(text) != file["hash"] or file["missing"],
                 do: Space.transact(space_id, &sync(&1, page["id"]))
 
               taken
 
-            {:error, :enoent} ->
+            {:error, reason} when reason in @gone ->
               path = moved(root, file, taken)
               Space.transact(space_id, &sync(&1, page["id"], path))
               if path, do: MapSet.put(taken, path), else: taken
 
+            # Not readable for now: the page stays as it is until it is.
             {:error, _} ->
               taken
           end
@@ -580,21 +674,20 @@ defmodule HalC2.Space.Files do
     :ok
   end
 
-  # Where the file went, when one Space file no page has is it as it was.
+  # Where the file went, when exactly one Space file no page has is it as it was: of two
+  # copies of a template, or two empty files, neither is the page's file.
   defp moved(_root, %{"missing" => true}, _taken), do: nil
 
   defp moved(root, file, taken) do
-    case ProjectFile.spaces(root) do
-      {:ok, _, entries} ->
-        root
-        |> Workspace.files()
-        |> Enum.find(fn path ->
-          not MapSet.member?(taken, path) and ProjectFile.space_kind(entries, path) != nil and
-            same?(Path.join(root, path), file)
-        end)
-
-      _ ->
-        nil
+    with {:ok, _, entries} <- ProjectFile.spaces(root),
+         [path] <-
+           Enum.filter(Workspace.files(root), fn path ->
+             not MapSet.member?(taken, path) and ProjectFile.space_kind(entries, path) != nil and
+               same?(Path.join(root, path), file)
+           end) do
+      path
+    else
+      _ -> nil
     end
   end
 
@@ -625,10 +718,11 @@ defmodule HalC2.Space.Files do
          do: {:error, :not_found, "There is no project #{id} on this MC."}
   end
 
+  # The path in the project, where a link it is leads as well.
   defp inside(root, relative) when is_binary(relative) do
     full = Path.expand(relative, root)
 
-    if String.starts_with?(full, root <> "/"),
+    if String.starts_with?(full, root <> "/") and locate(root, relative) != {:error, :outside},
       do: {:ok, Path.relative_to(full, root)},
       else: {:error, :invalid, "#{relative} is not in the project."}
   end
@@ -653,7 +747,7 @@ defmodule HalC2.Space.Files do
   end
 
   defp create(space_id, project_id, root, relative) do
-    case File.read(Path.join(root, relative)) do
+    case with({:ok, path} <- locate(root, relative), do: File.read(path)) do
       {:ok, text} ->
         Space.transact(space_id, &created(&1, space_id, project_id, relative, text))
         |> case do
@@ -675,6 +769,7 @@ defmodule HalC2.Space.Files do
       "hash" => hash(text),
       "size" => byte_size(text),
       "missing" => false,
+      "unwritten" => false,
       "conflictAt" => nil
     }
 
