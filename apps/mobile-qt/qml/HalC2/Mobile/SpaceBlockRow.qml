@@ -12,7 +12,9 @@ import HalC2.Bricks
 // deleting and commenting are in the menu at its end, where a desktop's hover would
 // have them. A chart is not written in: it is drawn, and asked for again from the menu.
 // A raw block is Markdown the page keeps as written: shown and edited as its source,
-// in a fixed-width face, line for line, scrolled sideways rather than wrapped.
+// in a fixed-width face, line for line, scrolled sideways rather than wrapped. One
+// that is a single "mermaid" fence is drawn as its diagram instead, with its source
+// a tap away, and says under the source why when it can't be drawn.
 Rectangle {
     id: row
 
@@ -41,20 +43,35 @@ Rectangle {
     readonly property int level: model.level ?? 2
     readonly property bool raw: kind === "raw"
     readonly property bool editing: editor.activeFocus
+    // The Mermaid source a raw block is, or "": drawn in place of the text until
+    // the user switches to the source, and what they write there once it is saved.
+    readonly property string diagramCode: raw ? mermaidOf(text) : ""
+    property bool diagramSource: false
+    readonly property bool diagramShown: diagramCode.length > 0 && diagram.drawn && !diagramSource
 
     signal menuRequested
     signal linkOpened
     signal commentsRequested
+
+    // The source of the one fenced "mermaid" block `text` is, or "" (as the
+    // desktop's SpaceBlock reads it).
+    function mermaidOf(text) {
+        const fence = /^ {0,3}(`{3,}|~{3,})[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)\r?\n {0,3}\1[`~]*[ \t]*(?:\r?\n)?$/i.exec(text);
+        return fence ? fence[2] : "";
+    }
 
     function commit() {
         if (kind !== "subpage_link" && kind !== "chart" && kind !== "generated" && editor.text !== text)
             Shell.dispatch("space.block.update", { blockId: blockId, text: editor.text });
     }
 
-    // What the MC wrote shows unless the user is writing here.
+    // What the MC wrote shows, and a diagram is drawn again, unless the user is
+    // writing here.
     onTextChanged: {
-        if (!editor.activeFocus)
-            editor.text = text;
+        if (editor.activeFocus)
+            return;
+        editor.text = text;
+        diagramSource = false;
     }
     // Scrolled away or the screen left mid-edit: what was written still counts.
     Component.onDestruction: commit()
@@ -115,7 +132,7 @@ Rectangle {
 
                 Layout.fillWidth: true
                 Layout.preferredHeight: editor.height
-                visible: row.kind !== "subpage_link" && row.kind !== "chart" && row.kind !== "generated"
+                visible: row.kind !== "subpage_link" && row.kind !== "chart" && row.kind !== "generated" && !row.diagramShown
                 contentWidth: editor.width
                 contentHeight: editor.height
                 flickableDirection: Flickable.HorizontalFlick
@@ -164,6 +181,19 @@ Rectangle {
                             event.accepted = false;
                     }
                 }
+            }
+
+            // The diagram in place of its source, or why it isn't drawn under it.
+            MermaidDiagram {
+                id: diagram
+
+                objectName: "spaceDiagram:" + row.text
+                Layout.fillWidth: true
+                Layout.preferredHeight: implicitHeight
+                visible: row.diagramCode.length > 0 && !row.diagramSource
+                active: row.onScreen && row.diagramCode.length > 0
+                code: row.diagramCode
+                padding: 0
             }
 
             // What a page's update wrote: Markdown nobody edits by hand.
@@ -226,8 +256,17 @@ Rectangle {
         }
 
         MobileIconButton {
+            objectName: "spaceDiagramSource:" + row.text
+            Layout.alignment: Qt.AlignTop
+            visible: row.diagramCode.length > 0 && diagram.drawn
+            iconName: row.diagramSource ? "image" : "code"
+            label: row.diagramSource ? qsTr("Show the diagram") : qsTr("Show the source")
+            onClicked: row.diagramSource = !row.diagramSource
+        }
+
+        MobileIconButton {
             objectName: "spaceBlockMenu:" + row.text
-            Layout.alignment: row.kind === "chart" ? Qt.AlignTop : Qt.AlignVCenter
+            Layout.alignment: row.kind === "chart" || row.diagramShown ? Qt.AlignTop : Qt.AlignVCenter
             visible: !row.readOnly
             iconName: "ellipsis"
             label: qsTr("Actions for this block")

@@ -1092,6 +1092,73 @@ Item {
             compare(rename.title, "Renamed");
         }
 
+        // A page open on a raw block that is one "mermaid" fence.
+        function openDiagram(source) {
+            Diagrams.reset();
+            const text = "```mermaid\n" + source + "\n```";
+            const screen = makeScreen({ blocks: [root.block("b1", text, { kind: "raw" })] });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            tryVerify(() => findChild(screen, "spaceDiagram:" + text) !== null);
+            return { screen: screen, text: text };
+        }
+
+        function test_aMermaidBlockIsDrawnInPlaceOfItsSource() {
+            const source = "flowchart LR\n  Cart --> Pay";
+            const page = openDiagram(source);
+            const editor = findChild(page.screen, "spaceBlockEditor:" + page.text);
+            verify(editor.visible, "the source shows until it is drawn");
+            compare(findChild(page.screen, "mermaidStatus").text, "Drawing the diagram…");
+            verify(("dark\n" + source) in Diagrams.asked, "asked for in the phone's theme");
+
+            const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" fill="#336699"/></svg>';
+            Diagrams.answer(source, "dark", { status: "drawn", kind: "flowchart", url: "data:image/svg+xml;base64," + Qt.btoa(Array.from(svg, c => c.charCodeAt(0))), width: 120, height: 40 });
+            const image = findChild(page.screen, "mermaidImage");
+            tryCompare(image, "status", Image.Ready);
+            verify(image.visible);
+            verify(!editor.visible, "the picture takes the source's place");
+
+            // The source is a tap away, to read or edit, and back.
+            const toggle = findChild(page.screen, "spaceDiagramSource:" + page.text);
+            verify(toggle.visible);
+            toggle.clicked();
+            verify(editor.visible);
+            verify(!image.visible);
+            toggle.clicked();
+            verify(image.visible);
+            verify(!editor.visible);
+        }
+
+        // Another client's or an agent's edit arriving mid-sentence neither
+        // hides the source nor takes the keyboard away.
+        function test_anEditFromElsewhereLeavesTheDiagramSourceBeingWritten() {
+            const source = "flowchart LR\n  Cart --> Pay";
+            const page = openDiagram(source);
+            Diagrams.answer(source, "dark", { status: "drawn", kind: "flowchart", url: "", width: 120, height: 40 });
+            findChild(page.screen, "spaceDiagramSource:" + page.text).clicked();
+            const editor = findChild(page.screen, "spaceBlockEditor:" + page.text);
+            editor.forceActiveFocus();
+            verify(editor.activeFocus);
+
+            const theirs = source + "\n  Pay --> Ship";
+            Spaces.blocks.setProperty(0, "text", "```mermaid\n" + theirs + "\n```");
+            Diagrams.answer(theirs, "dark", { status: "drawn", kind: "flowchart", url: "", width: 120, height: 60 });
+            verify(editor.visible, "the source stays");
+            verify(editor.activeFocus, "the user is still writing");
+            compare(dispatched("space.block.update").length, 0);
+        }
+
+        function test_aMermaidBlockWithAMistakeShowsItsSourceAndWhere() {
+            const source = "flowchart LR\n  Cart[Cart --> Pay";
+            const page = openDiagram(source);
+            Diagrams.answer(source, "dark", { status: "invalid", kind: "flowchart", reason: "A bracket is opened and not closed.", line: 2 });
+            verify(findChild(page.screen, "spaceBlockEditor:" + page.text).visible);
+            const status = findChild(page.screen, "mermaidStatus");
+            verify(status.visible);
+            compare(status.text, "Line 2: A bracket is opened and not closed.");
+            verify(!findChild(page.screen, "spaceDiagramSource:" + page.text).visible, "nothing to switch to");
+        }
+
         function test_whatWasWrittenOnASlideGoesToTheMcWhenTheEditorLosesFocus() {
             const screen = makeScreen(deckState());
             screen.openSpace("s1");
