@@ -779,6 +779,23 @@ describe("a page's agent", () => {
     expect(t.view().rows.length).toBeLessThan(fitsOneLine);
   });
 
+  test("a page down under a wrapped message steps by the rows on show", () => {
+    const blocks = Array.from({ length: 40 }, (_, index) =>
+      block(`b${index}`, "p1", `Block ${index}`, `a${String(index).padStart(2, "0")}`),
+    );
+    const t = onRoadmap(...blocks, agent({ request: "tidy ".repeat(100) }));
+    const selected = () =>
+      t
+        .view()
+        .rows.find((row) => row.selected)!
+        .text.slice(2)
+        .trim();
+    t.select("block:b0");
+    const onShow = t.view().rows.length;
+    t.controller.dispatch("space.pageDown", {});
+    expect(selected()).toBe(`Block ${onShow}`);
+  });
+
   test("the palette offers the way out that fits what the agent is doing", () => {
     const titles = (t: ReturnType<typeof onRoadmap>) =>
       t.controller.commands().map((command) => command.action);

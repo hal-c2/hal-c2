@@ -330,6 +330,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   let viewersPage: string | null = null;
   let viewers = "";
   let unsubscribeViewers: (() => void) | null = null;
+  // The rows the last publish had room for, which a page up or down steps by.
+  let rowsOnShow = 1;
   let deckId: string | null = null;
   // The slide on show, by id so a move elsewhere keeps it; its index for when it goes.
   let shownSlideId: string | null = null;
@@ -992,6 +994,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       if (last >= top + room) top = Math.max(0, Math.min(first, last - room + 1));
     }
     top = Math.max(0, Math.min(top, Math.max(0, rows.length - room)));
+    rowsOnShow = room;
     options.publish({
       open: true,
       view,
@@ -2546,8 +2549,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     publish();
   };
 
-  const page = (delta: number) =>
-    move(delta * Math.max(1, options.height() - SPACE_CHROME_ROWS - 1 - (viewers === "" ? 0 : 1)));
+  const page = (delta: number) => move(delta * rowsOnShow);
 
   /** A slide longer than the pane scrolls; `publish` keeps it in range. */
   const scrollSlide = (delta: number) => {
