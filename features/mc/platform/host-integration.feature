@@ -215,6 +215,9 @@ Feature: The MC working with its host machine
     Given the host's codex never answers
     When a client reads the MC's server config
     Then Codex is listed with an unknown version
+    When the host's codex answers with version "1.2.3"
+    And a client reads the MC's server config again
+    Then Codex is listed with version "1.2.3"
 
   @mc
   Scenario: A host without a default text editor does not offer one

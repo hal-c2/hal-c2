@@ -34,6 +34,8 @@ defmodule HalC2.Codex.Provider do
 
     with [executable | _] <- command(id),
          path when is_binary(path) <- System.find_executable(executable) do
+      version = version(path)
+
       %{
         "instanceId" => id,
         "driver" => "codex",
@@ -41,8 +43,8 @@ defmodule HalC2.Codex.Provider do
         # turned back on; clients leave it out of the model picker.
         "enabled" => enabled,
         "installed" => true,
-        "version" => version(path),
-        "versionAdvisory" => HalC2.ProviderUpdates.advisory("codex", path, version(path), id),
+        "version" => version,
+        "versionAdvisory" => HalC2.ProviderUpdates.advisory("codex", path, version, id),
         "status" => "ready",
         "availability" => "available",
         "auth" => %{"status" => "authenticated"},
@@ -561,7 +563,8 @@ defmodule HalC2.Codex.Provider do
         Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
       )
 
-  # Read once per executable, so each instance's binary path has its own.
+  # Read once per executable, so each instance's binary path has its own. A read that
+  # missed its deadline is "unknown" for now and not kept, so the next one tries again.
   defp version(path) do
     versions = :persistent_term.get({__MODULE__, :version}, %{})
 
@@ -570,28 +573,43 @@ defmodule HalC2.Codex.Provider do
         version
 
       _ ->
-        version = probe_version(path)
-        :persistent_term.put({__MODULE__, :version}, Map.put(versions, path, version))
-        version
+        case probe_version(path) do
+          :timeout ->
+            "unknown"
+
+          version ->
+            :persistent_term.put({__MODULE__, :version}, Map.put(versions, path, version))
+            version
+        end
     end
   end
 
-  # A client waits on this for its server config, so a CLI that hangs counts as "unknown"
-  # at the deadline; killing the task takes the run with it.
+  # A client waits on this for its server config, so the run has a deadline. Exile stops
+  # the CLI when the task is killed, so a hung one does not outlive the read.
   defp probe_version(path) do
     task = Task.async(fn -> run_version(path) end)
     timeout = Application.get_env(:hal_c2, :codex_version_timeout_ms, 5_000)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
       {:ok, version} -> version
-      _ -> "unknown"
+      _ -> :timeout
     end
   end
 
   defp run_version(path) do
-    case System.cmd(path, ["--version"], stderr_to_stdout: true) do
-      {out, 0} -> out |> String.split() |> List.last() |> Kernel.||("unknown")
-      _ -> "unknown"
+    [path, "--version"]
+    |> Exile.stream(stderr: :redirect_to_stdout, ignore_epipe: true)
+    |> Enum.reduce({[], nil}, fn
+      {:exit, status}, {out, _} -> {out, status}
+      data, {out, status} when is_binary(data) -> {[out, data], status}
+      _, acc -> acc
+    end)
+    |> case do
+      {out, {:status, 0}} ->
+        out |> IO.iodata_to_binary() |> String.split() |> List.last() |> Kernel.||("unknown")
+
+      _ ->
+        "unknown"
     end
   rescue
     _ -> "unknown"

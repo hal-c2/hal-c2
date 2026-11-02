@@ -525,10 +525,25 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   step "Codex is listed with an unknown version", context do
-    codex = Enum.find(context.server_config["providers"], &(&1["instanceId"] == "codex"))
-    assert codex["version"] == "unknown"
+    assert codex_entry(context)["version"] == "unknown"
     context
   end
+
+  step "the host's codex answers with version {string}", %{args: [version]} = context do
+    install_script(context, "codex", "echo codex-cli #{version}")
+  end
+
+  step "a client reads the MC's server config again", context do
+    read_config(context, 11)
+  end
+
+  step "Codex is listed with version {string}", %{args: [version]} = context do
+    assert codex_entry(context)["version"] == version
+    context
+  end
+
+  defp codex_entry(context),
+    do: Enum.find(context.server_config["providers"], &(&1["instanceId"] == "codex"))
 
   step "the default editor is listed first", context do
     assert hd(context.server_config["availableEditors"]) == "default"
