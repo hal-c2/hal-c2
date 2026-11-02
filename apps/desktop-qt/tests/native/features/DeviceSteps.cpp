@@ -197,6 +197,8 @@ struct FakeHub {
   int refuse = 0;
   // The device has sent no picture yet.
   bool silent = false;
+  // Each device's video requests when a step began that must keep its stream.
+  QHash<QString, qsizetype> kept;
   // Its video is not one the desktop can decode.
   bool undecodable = false;
   // Every request that reached the proxy: "<target> <authorization>".
@@ -718,6 +720,57 @@ void waitForScreen(World& world, const QString& name) {
   expect(red(drawnAtScreen(world)), describeScreen(world));
 }
 
+// The video requests made for the device named `name`.
+qsizetype videoRequestsOf(World& world, const QString& name) {
+  const QString id = deviceNamed(fakeHub(world), name).value(QLatin1String("id")).toString();
+  qsizetype count = 0;
+  for (const QString& request : std::as_const(fakeHub(world).requests))
+    count += (request.contains(QLatin1String("/stream.avcc")) || request.contains(QLatin1String("/serve-emu/ws"))) && request.contains(id);
+  return count;
+}
+
+// Remembers each device's video requests, for "keeps its stream".
+void keepStreams(World& world) {
+  FakeHub& hub = fakeHub(world);
+  hub.kept.clear();
+  for (const QJsonValue& device : std::as_const(hub.devices)) {
+    const QString name = device.toObject().value(QLatin1String("name")).toString();
+    hub.kept.insert(name, videoRequestsOf(world, name));
+  }
+}
+
+DeviceStream& streamOf(World& world, const QString& name) {
+  DeviceTab* tab = devices(world).tab(tabOf(world, name));
+  expect(tab, QStringLiteral("no tab for %1: %2").arg(name, describe(world)));
+  return *tab->stream();
+}
+
+QVariantMap stageOf(World& world) { return at(world.state(QStringLiteral("panel")), QStringLiteral("stage")).toMap(); }
+
+// Both devices' tabs on the stage, in columns.
+void sideBySide(World& world, const QString& left, const QString& right) {
+  showDeviceTab(world, left);
+  showDeviceTab(world, right);
+  world.bridge().dispatch(QStringLiteral("rightPanel.dock"), QVariantMap{{QStringLiteral("id"), tabOf(world, left)}, {QStringLiteral("dock"), QStringLiteral("stage")}});
+  world.bridge().dispatch(QStringLiteral("rightPanel.dock"), QVariantMap{{QStringLiteral("id"), tabOf(world, right)},
+                                                                         {QStringLiteral("dock"), QStringLiteral("stage")},
+                                                                         {QStringLiteral("pane"), 0},
+                                                                         {QStringLiteral("zone"), QStringLiteral("right")}});
+  world.sync();
+  const QVariantList wanted{tabOf(world, left), tabOf(world, right)};
+  world.waitFor([&] {
+    const QVariantMap stage = stageOf(world);
+    return stage.value(QStringLiteral("layout")) == QLatin1String("columns") && stage.value(QStringLiteral("panes")).toList() == wanted;
+  }, [&] { return show(stageOf(world)); });
+}
+
+void bothStream(World& world, const QString& one, const QString& other) {
+  world.waitFor([&] {
+    return streamOf(world, one).status() == QLatin1String("streaming") && streamOf(world, other).status() == QLatin1String("streaming");
+  }, [&] { return describe(world); });
+}
+
+
 void watch(World& world, const QString& name) {
   showDeviceTab(world, name);
   waitForScreen(world, name);
@@ -1045,6 +1098,51 @@ const Steps steps([] {
     const qsizetype asked = videoRequests(world);
     world.sync();
     expect(videoRequests(world) == asked, describe(world));
+  });
+
+  // Several at once.
+  step(QStringLiteral("the user puts %1 and %1 side by side in the centre").arg(q), [](World& world, const Captures& c, const Table&) {
+    sideBySide(world, c[0], c[1]);
+  });
+  step(QStringLiteral("%1 and %1 both stream at once").arg(q), [](World& world, const Captures& c, const Table&) { bothStream(world, c[0], c[1]); });
+  step(QStringLiteral("%1 and %1 stream side by side in the centre").arg(q), [](World& world, const Captures& c, const Table&) {
+    sideBySide(world, c[0], c[1]);
+    bothStream(world, c[0], c[1]);
+  });
+  step(QStringLiteral("the user shows only %1 on the stage").arg(q), [](World& world, const Captures& c, const Table&) {
+    keepStreams(world);
+    const qsizetype pane = stageOf(world).value(QStringLiteral("panes")).toList().indexOf(QVariant(tabOf(world, c[0])));
+    world.bridge().dispatch(QStringLiteral("stage.focusPane"), QVariantMap{{QStringLiteral("pane"), int(pane)}});
+    world.bridge().dispatch(QStringLiteral("stage.layout"), QVariantMap{{QStringLiteral("layout"), QStringLiteral("single")}});
+    world.sync();
+  });
+  step(QStringLiteral("the user closes the device %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    keepStreams(world);
+    world.bridge().dispatch(QStringLiteral("rightPanel.close"), QVariantMap{{QStringLiteral("id"), tabOf(world, c[0])}});
+    world.sync();
+  });
+  step(QStringLiteral("the user moves %1 to the centre").arg(q), [](World& world, const Captures& c, const Table&) {
+    keepStreams(world);
+    world.bridge().dispatch(QStringLiteral("rightPanel.dock"), QVariantMap{{QStringLiteral("id"), tabOf(world, c[0])}, {QStringLiteral("dock"), QStringLiteral("stage")}});
+    world.sync();
+    world.waitFor([&] { return stageOf(world).value(QStringLiteral("panes")).toList().contains(QVariant(tabOf(world, c[0]))); },
+                  [&] { return show(stageOf(world)); });
+  });
+  step(QStringLiteral("%1 streams nothing").arg(q), [](World& world, const Captures& c, const Table&) {
+    DeviceTab* tab = devices(world).tab(tabOf(world, c[0]));
+    world.waitFor([&] { return !tab || tab->stream()->status() == QLatin1String("idle"); }, [&] { return describe(world); });
+    const qsizetype asked = videoRequestsOf(world, c[0]);
+    world.sync();
+    expect(videoRequestsOf(world, c[0]) == asked, describe(world));
+  });
+  step(QStringLiteral("%1 keeps its stream").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expect(streamOf(world, c[0]).status() == QLatin1String("streaming") && videoRequestsOf(world, c[0]) == fakeHub(world).kept.value(c[0]),
+           QStringLiteral("%1 asked for video %2 times, %3 before; %4")
+               .arg(c[0])
+               .arg(videoRequestsOf(world, c[0]))
+               .arg(fakeHub(world).kept.value(c[0]))
+               .arg(describe(world)));
   });
 
   // Driving.
@@ -2375,6 +2473,8 @@ const Steps backlogSteps([] {
     world.sync();
   });
   step(QStringLiteral("its tools show its own settings and an empty location"), [](World& world, const Captures&, const Table&) {
+    // Each device tab has its own drawer, closed until opened.
+    openTools(world);
     world.waitFor([&] {
       return toolsView(world).value(QStringLiteral("loaded")).toBool() &&
              toolsView(world).value(QStringLiteral("settings")).toMap().value(QStringLiteral("appearance")) == QStringLiteral("dark") &&

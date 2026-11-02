@@ -15,6 +15,7 @@
 #   apps/server-ex/lib/hal_c2/devices.ex (devices shape, hubBasePath)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (/api/device-hub/mcs/<MC>/vendor/*, 401 and 403)
 #   apps/desktop-qt/src/native/ThreadDevices.cpp, DeviceStream.cpp, DeviceDecoder.cpp, FFmpeg.cpp
+#   apps/desktop-qt/src/native/PanelStage.h (the stage's panes and layouts)
 #   apps/desktop-qt/qml/HalC2/Bricks/DevicePanel.qml
 #   apps/desktop-qt/tests/native/features/DeviceSteps.cpp
 #   Cross-domain: connections/device-hub.feature holds the MC's hub and proxy,
@@ -290,6 +291,38 @@ Feature: Device panel
       Then no device stream is open
       When the user shows the "iPhone 17" tab
       Then the tab "iPhone 17" shows the device's screen
+
+    @desktop
+    Scenario: Two devices stream side by side in the centre
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the thread has the Android Emulator "Pixel 9" open
+      When the user puts "iPhone 17" and "Pixel 9" side by side in the centre
+      Then "iPhone 17" and "Pixel 9" both stream at once
+
+    @desktop
+    Scenario: A device hidden from the centre stops streaming and the other goes on
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the thread has the Android Emulator "Pixel 9" open
+      And "iPhone 17" and "Pixel 9" stream side by side in the centre
+      When the user shows only "iPhone 17" on the stage
+      Then "Pixel 9" streams nothing
+      And "iPhone 17" keeps its stream
+
+    @desktop
+    Scenario: Closing one of two devices leaves the other streaming
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the thread has the Android Emulator "Pixel 9" open
+      And "iPhone 17" and "Pixel 9" stream side by side in the centre
+      When the user closes the device "Pixel 9"
+      Then "Pixel 9" streams nothing
+      And "iPhone 17" keeps its stream
+
+    @desktop
+    Scenario: A device moved to the centre keeps its stream
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user moves "iPhone 17" to the centre
+      Then "iPhone 17" keeps its stream
 
     @desktop
     Scenario: The tab shows which of its two steps it is on
