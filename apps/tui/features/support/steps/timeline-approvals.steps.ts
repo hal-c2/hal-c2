@@ -17,6 +17,7 @@ import {
   updateThread,
   type ThreadWorld,
 } from "../threadWorld.ts";
+import { chooseCommand } from "../threadUi.ts";
 import { addItem, settleRun, startRun, turns, type TurnWorld } from "../turnWorld.ts";
 
 // --- answering an approval -------------------------------------------------------------
@@ -233,7 +234,14 @@ async function moveTo(ctx: ThreadWorld, label: string) {
   throw new Error(`the arrow keys never reached "${label}"`);
 }
 
+// With no question offering it, `label` is a command (the file viewer's "Edit as a page").
 step("the user picks {string}", async (ctx: ThreadWorld, label: string) => {
+  const options: ReadonlyArray<{ label: string }> = hostState(ctx, "userInput")?.options ?? [];
+  if (!options.some((option) => option.label === label)) {
+    await chooseCommand(ctx, label);
+    await settle();
+    return;
+  }
   await moveTo(ctx, label);
   await pressKey(ctx, "Enter");
   await settle();
