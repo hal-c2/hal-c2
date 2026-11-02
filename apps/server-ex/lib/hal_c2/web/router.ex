@@ -27,6 +27,10 @@ defmodule HalC2.Web.Router do
 
   defp cors(conn, _opts), do: merge_resp_headers(conn, @cors_headers)
 
+  @doc false
+  # For the device hub's responses, which `HalC2.Web.Entry` serves before this router.
+  def cors_headers, do: @cors_headers
+
   get "/.well-known/hal-c2/environment" do
     body =
       HalC2.Environment.public_descriptor()
@@ -701,9 +705,6 @@ defmodule HalC2.Web.Router do
   catch
     _, _ -> {:error, 502, "The MC holding this file is unavailable."}
   end
-
-  # Every MC's device hub, relayed to the MC that owns it (`HalC2.Devices.Proxy`).
-  match "/api/device-hub/*rest", do: HalC2.Devices.Proxy.serve(conn, rest)
 
   match _ do
     send_resp(conn, 404, "not found")

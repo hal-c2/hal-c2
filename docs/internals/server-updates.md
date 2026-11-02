@@ -24,7 +24,9 @@ process looping in `receive` with local calls stays on the version it started on
 newer load makes that version the one before last it can never be purged. The load after that is
 refused, naming the process, until it or the MC restarts. A long-lived loop must therefore
 recurse as `__MODULE__.loop(...)` (see the store's checkpointer); a short wait that returns is
-fine. Only BEAM code loads in place: a module that loads a NIF needs a restart.
+fine. A response that streams for long keeps the frames of every plug it passed through, so the
+device hub's relay is served by [`HalC2.Web.Entry`](../../apps/server-ex/lib/hal_c2/web/entry.ex)
+ahead of the router. Only BEAM code loads in place: a module that loads a NIF needs a restart.
 
 ## Restart and rollback
 
