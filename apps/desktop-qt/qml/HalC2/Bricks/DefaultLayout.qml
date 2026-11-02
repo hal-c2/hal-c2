@@ -270,7 +270,8 @@ Item {
                     id: composerView
 
                     Layout.fillWidth: true
-                    visible: ready && !layout.window.settingsActive
+                    // A Space page has the prompt on the page (SpacePage).
+                    visible: ready && model.routeKind !== "page" && !layout.window.settingsActive
                     conversationScrolled: centreHost.conversationScrolled
                 }
 

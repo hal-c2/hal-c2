@@ -41,7 +41,28 @@ Item {
             blocks: [root.block("b1", "One"), root.block("b2", "Two"), root.block("b3", "Three")],
             page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: false, sourceThreadId: "", sourceThreadTitle: "" }
         }, more));
+        // The prompt aimed at the open page, as ComposerController publishes it.
+        Shell.state = Object.assign({}, Shell.state, {
+            composer: Object.assign({}, Shell.state.composer, {
+                target: "page#page-1",
+                routeKind: "page",
+                pageId: "page-1",
+                project: { id: "shop", title: "shop" },
+                projects: [{ id: "shop", title: "shop" }, { id: "docs", title: "docs" }],
+                followUpBehavior: ""
+            })
+        });
         return test.createTemporaryObject(workspaceComponent, root);
+    }
+
+    // The controller's part of a page's prompt (ComposerController::submitPage):
+    // words that are not an ask come back to the page to be written.
+    Connections {
+        target: Shell
+        function onActionRequested(action, payload) {
+            if (action === "composer.submit" && Shell.state.composer.routeKind === "page" && !/^@agent(\s|$)/i.test(payload.text.trim()) && payload.text.trim() !== "")
+                Shell.actionRequested("space.prompt.write", { pageId: Shell.state.composer.pageId, text: payload.text.trim() });
+        }
     }
 
     function dispatched(action) {
@@ -244,19 +265,19 @@ Item {
         function test_a_visualize_request_asks_the_mc_and_is_not_written_as_a_block() {
             const view = root.research({});
             const composer = findChild(view, "spaceComposer");
-            composer.forceActiveFocus();
-            composer.text = "/visualize weekly turns";
+            composer.focusInput();
+            composer.editor.text = "/visualize weekly turns";
             verify(!findChild(view, "spaceSlashMenu").visible);
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize weekly turns" }]);
             compare(root.dispatched("space.block.insert").length, 0);
-            compare(composer.text, "");
+            compare(composer.editor.text, "");
         }
 
         function test_the_slash_menu_starts_a_visualize_request() {
             const view = root.research({});
             const composer = findChild(view, "spaceComposer");
-            composer.forceActiveFocus();
+            composer.focusInput();
             keyClick("/");
             keyClick("v");
             const slash = findChild(view, "spaceSlashMenu");
@@ -264,7 +285,7 @@ Item {
             compare(slash.shown.map(entry => entry.kind), ["chart"]);
             keyClick(Qt.Key_Return);
             tryVerify(() => !slash.visible);
-            compare(composer.text, "/visualize ");
+            compare(composer.editor.text, "/visualize ");
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.block.visualize").length, 0);
         }
@@ -275,14 +296,14 @@ Item {
             tryVerify(() => again !== null);
             again.clicked();
             const composer = findChild(view, "spaceComposer");
-            compare(composer.text, "/visualize signups");
+            compare(composer.editor.text, "/visualize signups");
             const hint = findChild(view, "spaceReplacing");
             tryVerify(() => hint.visible);
             mouseClick(hint);
             tryVerify(() => !hint.visible);
-            compare(composer.text, "");
+            compare(composer.editor.text, "");
             again.clicked();
-            composer.forceActiveFocus();
+            composer.focusInput();
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", blockId: "c1" }]);
         }
@@ -296,16 +317,16 @@ Item {
             const composer = findChild(view, "spaceComposer");
             again.clicked();
             tryVerify(() => hint.visible);
-            composer.text = "A plain paragraph";
-            composer.forceActiveFocus();
+            composer.editor.text = "A plain paragraph";
+            composer.focusInput();
             keyClick(Qt.Key_Return);
             tryVerify(() => !hint.visible);
             again.clicked();
             tryVerify(() => hint.visible);
             findChild(view, "spaceBlock:" + blocks[1].text).addBelowRequested("b2");
             tryVerify(() => !hint.visible);
-            composer.text = "/visualize signups";
-            composer.forceActiveFocus();
+            composer.editor.text = "/visualize signups";
+            composer.focusInput();
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", afterBlockId: "b2" }]);
         }
@@ -562,7 +583,7 @@ Item {
         function test_a_slash_picks_the_kind_of_the_next_block() {
             const view = root.research({});
             const composer = findChild(view, "spaceComposer");
-            composer.forceActiveFocus();
+            composer.focusInput();
             keyClick("/");
             keyClick("c");
             keyClick("h");
@@ -572,7 +593,7 @@ Item {
             compare(slash.shown.map(entry => entry.kind), ["checklist"]);
             keyClick(Qt.Key_Return);
             tryVerify(() => !slash.visible);
-            compare(composer.text, "");
+            compare(composer.editor.text, "");
             compare(findChild(view, "spaceNewKind").text, "Checklist");
             keyClick("S");
             keyClick("h");
@@ -892,7 +913,7 @@ Item {
 
         function test_a_subpage_made_from_the_link_menu_is_linked() {
             const view = root.research({});
-            findChild(view, "spaceComposer").forceActiveFocus();
+            findChild(view, "spaceComposer").focusInput();
             keyClick("/");
             keyClick("l");
             keyClick(Qt.Key_Return);
@@ -923,78 +944,66 @@ Item {
             compare(root.dispatched("space.page.rename"), [{ pageId: "page-1", title: "P" }]);
         }
 
-        function test_the_composer_asks_an_agent_and_writes_no_block() {
+        // The controller sends an ask (ComposerController::submitPage); the page writes no block.
+        function test_the_prompt_sends_an_ask_and_writes_no_block() {
             const view = root.research({});
-            findChild(view, "spaceComposer").forceActiveFocus();
+            findChild(view, "spaceComposer").focusInput();
             for (const key of "@agent tidy")
                 keyClick(key);
             keyClick(Qt.Key_Return);
-            compare(root.dispatched("space.agent.ask"), [{ pageId: "page-1", request: "@agent tidy" }]);
+            compare(root.dispatched("composer.submit").map(entry => entry.text), ["@agent tidy"]);
             compare(root.dispatched("space.block.insert"), []);
-            compare(findChild(view, "spaceComposer").text, "@agent tidy");
-            Spaces.agentAskAnswered("page-1", "@agent tidy", true);
-            compare(findChild(view, "spaceComposer").text, "");
         }
 
-        function test_an_ask_the_mc_refuses_keeps_its_words() {
+        function test_an_ask_says_the_project_it_runs_in_and_can_change_it() {
             const view = root.research({});
-            findChild(view, "spaceComposer").forceActiveFocus();
-            for (const key of "@agent tidy")
+            const project = findChild(view, "spaceAskProject");
+            const kind = findChild(view, "spaceNewKind");
+            verify(!project.visible);
+            verify(kind.visible);
+            findChild(view, "spaceComposer").focusInput();
+            for (const key of "@agent ")
                 keyClick(key);
-            keyClick(Qt.Key_Return);
-            Spaces.agentAskAnswered("page-1", "@agent tidy", false);
-            compare(findChild(view, "spaceComposer").text, "@agent tidy");
-        }
-
-        function test_words_changed_while_an_ask_is_answered_are_kept() {
-            const view = root.research({});
-            findChild(view, "spaceComposer").forceActiveFocus();
-            for (const key of "@agent tidy")
-                keyClick(key);
-            keyClick(Qt.Key_Return);
-            keyClick("!");
-            Spaces.agentAskAnswered("page-1", "@agent tidy", true);
-            compare(findChild(view, "spaceComposer").text, "@agent tidy!");
+            tryVerify(() => project.visible);
+            verify(!kind.visible);
+            compare(project.text, "shop");
+            // The row of actions places the button once it shows.
+            waitForPolish(project.parent);
+            mouseClick(project);
+            const menu = findChild(view, "spaceAskProjectMenu");
+            tryVerify(() => menu.opened && menu.count === 2);
+            menu.itemAt(1).triggered();
+            compare(root.dispatched("composer.project.set"), [{ projectId: "docs" }]);
         }
 
         function test_a_word_that_only_starts_like_the_mention_is_a_block() {
             const view = root.research({});
-            findChild(view, "spaceComposer").forceActiveFocus();
+            findChild(view, "spaceComposer").focusInput();
             for (const key of "@agents")
                 keyClick(key);
+            verify(!findChild(view, "spaceAskProject").visible);
             keyClick(Qt.Key_Return);
-            compare(root.dispatched("space.agent.ask"), []);
             compare(root.dispatched("space.block.insert").length, 1);
         }
 
-        function test_an_ask_the_page_cannot_take_yet_keeps_its_words() {
-            const view = root.research({ agent: { status: "running", request: "tidy", threadId: "t9" } });
-            const composer = findChild(view, "spaceComposer");
-            composer.forceActiveFocus();
-            for (const key of "@agent more")
-                keyClick(key);
-            keyClick(Qt.Key_Return);
-            compare(composer.text, "@agent more");
-        }
-
-        function test_the_way_in_starts_the_words_of_an_ask() {
-            const view = root.research({});
-            Spaces.agentAskRequested();
-            const composer = findChild(view, "spaceComposer");
-            compare(composer.text, "@agent ");
-            verify(composer.activeFocus);
-        }
-
-        function test_the_way_in_keeps_a_draft() {
+        // The page's menu starts an ask from what is typed; the controller puts `@agent` ahead of it.
+        function test_the_page_menu_starts_an_ask_from_the_draft() {
             const view = root.research({});
             const composer = findChild(view, "spaceComposer");
-            composer.text = "the plan";
-            Spaces.agentAskRequested();
-            compare(composer.text, "@agent the plan");
-            compare(composer.cursorPosition, "@agent ".length);
-            Spaces.agentAskRequested();
-            compare(composer.text, "@agent the plan");
-            verify(composer.activeFocus);
+            composer.editor.text = "the plan";
+            findChild(view, "spaceAskAgent").triggered();
+            compare(root.dispatched("composer.ask").length, 1);
+            compare(Shell.state.composer.text, "the plan");
+            const actions = Shell.dispatchedActions.map(entry => entry.action);
+            verify(actions.lastIndexOf("composer.text.set") < actions.indexOf("composer.ask"));
+        }
+
+        function test_words_the_controller_sends_back_are_written() {
+            const view = root.research({});
+            Shell.actionRequested("space.prompt.write", { pageId: "page-1", text: "Ship" });
+            compare(root.dispatched("space.block.insert").map(entry => entry.text), ["Ship"]);
+            Shell.actionRequested("space.prompt.write", { pageId: "page-9", text: "Elsewhere" });
+            compare(root.dispatched("space.block.insert").length, 1);
         }
 
         function test_a_working_agent_can_be_followed_and_stopped() {
@@ -1157,7 +1166,7 @@ Item {
 
         function test_an_image_block_is_placed_from_the_spaces_images() {
             const view = root.research({ images: [root.imageRow("image-1", "cat.png")] });
-            findChild(view, "spaceComposer").forceActiveFocus();
+            findChild(view, "spaceComposer").focusInput();
             keyClick("/");
             keyClick("i");
             keyClick("m");

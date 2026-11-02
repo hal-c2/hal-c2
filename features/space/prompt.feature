@@ -91,7 +91,7 @@ Feature: A page's prompt is the timeline's prompt
       Given no project is left on this MC
       Then an ask from a page would have nowhere to run
 
-  @shared @backlog-desktop @backlog-mobile @backlog-tui
+  @shared @backlog-mobile @backlog-tui
   Rule: The prompt on a page
 
     Scenario: Plain words on a page's prompt write a block
@@ -127,6 +127,10 @@ Feature: A page's prompt is the timeline's prompt
         | the file "notes.pdf"          |
         | a mention of "README.md"      |
         | the skill "review"            |
+
+      @backlog-desktop @backlog-mobile
+      Examples:
+        | choice                         |
         | a mention of the thread "Work" |
 
     Scenario Outline: An ask can be started from anywhere the page is

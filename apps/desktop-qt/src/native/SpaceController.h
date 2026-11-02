@@ -347,6 +347,8 @@ signals:
   void agentAskRequested();
   // The MC answered an ask: whoever holds its words lets them go only if it took it.
   void agentAskAnswered(const QString& pageId, const QString& request, bool taken);
+  // The page the prompt writes on may have changed (promptPage).
+  void promptPageChanged();
   // The selected Space changed: its stream is followed anew.
   void spaceSelected(const QString& id);
   void viewersChanged();
@@ -521,6 +523,18 @@ public:
   bool isSpaceFile(const QString& environmentId, const QString& projectId, const QString& relativePath) const;
   // Opens the file as a page (`space.openFile`) and shows it.
   void openFile(const QString& environmentId, const QString& projectId, const QString& relativePath);
+
+  // The page the timeline's prompt writes on (ComposerController): the selected
+  // page while it is on show and out of the trash, else empty.
+  QString promptPage() const;
+  // Asks an agent to work on the page (`space.page.askAgent`) with the
+  // prompt's choices, {request, projectId?, modelSelection?, runtimeMode?,
+  // interactionMode?, attachments?, context?}. `answered` says whether the MC
+  // took it; a refusal is said in a toast.
+  void askAgent(const QString& pageId, const QJsonObject& ask, std::function<void(bool taken)> answered);
+  // The project an ask goes to unless the prompt names one
+  // (`space.page.agentTarget`); empty for none, or when the MC cannot say.
+  void agentTarget(std::function<void(const QString& projectId)> done);
 
 private:
   void setOpen(bool open);
