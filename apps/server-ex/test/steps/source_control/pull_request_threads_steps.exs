@@ -237,11 +237,10 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   end
 
   step "the commit it was on can still be found afterwards", context do
-    path = context.existing_worktree
-    branch = World.git!(path, ~w(symbolic-ref --short HEAD))
-
-    assert World.git!(path, ["rev-parse", "refs/hal-c2/pre-refresh/#{branch}"]) ==
-             context.pr_head
+    assert World.git!(
+             context.existing_worktree,
+             ~w(rev-parse refs/worktree/hal-c2/pre-refresh)
+           ) == context.pr_head
 
     context
   end

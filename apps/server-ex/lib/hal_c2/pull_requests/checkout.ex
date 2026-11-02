@@ -580,8 +580,9 @@ defmodule HalC2.PullRequests.Checkout do
 
   # As `refreshCheckedOutBranch`: forward when the head descends from the checkout; a
   # rewritten head only when the tree is clean and HEAD never left the commit its
-  # upstream held, keeping that commit at `refs/hal-c2/pre-refresh/<branch>` (refs are
-  # shared by every worktree, so each branch keeps its own).
+  # upstream held, keeping that commit at `refs/worktree/hal-c2/pre-refresh`: a ref of
+  # the worktree's own, which no other worktree's refresh overwrites and which goes
+  # with the worktree.
   defp refresh(path, target, reset_when) do
     head = rev(path, "HEAD")
 
@@ -596,9 +597,7 @@ defmodule HalC2.PullRequests.Checkout do
         match?({:ok, _}, Git.ok(path, ["merge", "--ff-only", "--quiet", target]))
 
       head == reset_when ->
-        with {:ok, branch} <- Git.ok(path, ~w(symbolic-ref --short HEAD)),
-             ref = "refs/hal-c2/pre-refresh/" <> String.trim(branch),
-             {:ok, _} <- Git.ok(path, ["update-ref", ref, head]),
+        with {:ok, _} <- Git.ok(path, ["update-ref", "refs/worktree/hal-c2/pre-refresh", head]),
              {:ok, _} <- Git.ok(path, ["reset", "--quiet", "--merge", target]),
              do: true,
              else: (_ -> false)
