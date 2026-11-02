@@ -59,6 +59,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # The rows the laptop may hold for a pull request: queued or running there but not
   # yet started (soft), or started on a commit (hard).
   @rows [{"queued", false}, {"running", false}, {"running", true}, {"published", true}]
+  @settle_ms 15_000
   @paused "code-review reports: Reviews are paused: the agent hit its usage limit, which resets at 2999-01-01T00:00:00Z. Queued reviews wait instead of failing one by one."
 
   setup_all do
@@ -1071,25 +1072,28 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # --- settling -------------------------------------------------------------------------
 
   # Returns once the plugin has nothing in flight but runs held at the fetch, and has
-  # heard from everything that ended.
-  defp drain, do: drain(System.monotonic_time(:millisecond) + 15_000, false)
+  # heard from everything that ended. Settled comes before the deadline: this process
+  # can be late to look, and work that finished meanwhile is not stuck.
+  defp drain, do: drain(System.monotonic_time(:millisecond) + @settle_ms, false)
 
   defp drain(deadline, settled_once) do
     with pid when is_pid(pid) <- Process.whereis(@server),
          {:ok, state} <- get_state(pid) do
       kids = kids(pid)
+      settled? = state.polling == nil and length(kids) == parked()
 
       cond do
+        settled? and settled_once ->
+          :ok
+
+        # Once more, for what the processes that just ended told it.
+        settled? ->
+          drain(deadline, true)
+
         System.monotonic_time(:millisecond) > deadline ->
-          problem("code-review never settled: #{length(kids)} processes, #{parked()} held")
-
-        state.polling != nil ->
-          await_poller(pid, deadline)
-          drain(deadline, false)
-
-        length(kids) == parked() ->
-          # Once more, for what the processes that just ended told it.
-          if settled_once, do: :ok, else: drain(deadline, true)
+          problem(
+            "code-review never settled: #{length(kids)} processes, #{parked()} held, polling: #{state.polling != nil}"
+          )
 
         true ->
           await_any(kids)
@@ -1100,42 +1104,21 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     end
   end
 
+  # `:gone` for a server that ended. One that does not answer is not settled, and says so.
   defp get_state(pid) do
-    {:ok, :sys.get_state(pid)}
+    {:ok, :sys.get_state(pid, @settle_ms)}
   catch
-    :exit, _ -> :gone
+    :exit, {:timeout, _} ->
+      problem("code-review did not answer for #{@settle_ms} ms")
+
+    :exit, _ ->
+      :gone
   end
 
   defp kids(pid) do
     {:parent, parent} = Process.info(pid, :parent)
     {:links, links} = Process.info(pid, :links)
     Enum.filter(links, &(is_pid(&1) and &1 != parent))
-  end
-
-  defp await_poller(pid, deadline) do
-    case poller(pid) do
-      poller when is_pid(poller) ->
-        ref = Process.monitor(poller)
-
-        receive do
-          {:DOWN, ^ref, :process, _, _} -> :ok
-        after
-          max(deadline - System.monotonic_time(:millisecond), 0) ->
-            Process.demonitor(ref, [:flush])
-        end
-
-      nil ->
-        :ok
-    end
-  end
-
-  # The look under way: the one process the plugin both links and monitors. A monitor
-  # alone will not do: the server's own calls in flight (a file it saves goes through
-  # the file server) monitor their callee for as long as they last.
-  defp poller(pid) do
-    {:links, links} = Process.info(pid, :links)
-    {:monitors, monitors} = Process.info(pid, :monitors)
-    Enum.find_value(monitors, fn {:process, p} -> p in links and p end)
   end
 
   defp await_any(kids) do
