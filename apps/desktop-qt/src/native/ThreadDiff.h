@@ -1,6 +1,8 @@
 #pragma once
 
 #include <optional>
+#include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QMap>
 #include <QObject>
@@ -29,9 +31,18 @@ class TimelineModel;
 //
 // The checkout itself can be reviewed too (`review.getDiffPreview`):
 // WorkingTree is its uncommitted changes, Branch the whole branch against
-// its base, which is the MC's choice until `baseRef` names another. A thread
-// with no finished turn opens on the working tree. These do not follow the
-// checkout: reload() asks again.
+// its base, which is the MC's choice ("Automatic") until `baseRef` names
+// another; `baseChoices` offers the checkout's refs for it. A thread with no
+// finished turn opens on the working tree. What is shown of the checkout
+// follows it: the agent changing files, or the app becoming active again,
+// asks again without the panel going blank; reload() asks at once.
+//
+// A review the MC cut short (`truncated`) but whose files it counted lists
+// those files without their changes, and each file's are loaded when it is
+// opened (DiffModel::fileWanted): one file's patch is
+// `review.getDiffPreview` with `file`.
+//
+// Each thread keeps its own selection and base, for as long as the app runs.
 //
 // Opening one changed file from a reply shows that file alone (`focusPath`)
 // until the user asks for all of the selection's files again or picks
@@ -64,6 +75,13 @@ class ThreadDiff : public QObject {
   Q_PROPERTY(QString baseRef READ baseRef WRITE setBaseRef NOTIFY reviewChanged)
   Q_PROPERTY(QString comparedBase READ comparedBase NOTIFY reviewChanged)
   Q_PROPERTY(QString comparedHead READ comparedHead NOTIFY reviewChanged)
+  // The refs the branch can be compared against, as baseQuery filters them:
+  // [{id, label, ref, remoteOnly}], "Automatic" (id "automatic", ref "")
+  // first while nothing is searched. A local branch and its remote one are
+  // one choice, compared as the local; the branch under review is not offered.
+  Q_PROPERTY(QVariantList baseChoices READ baseChoices NOTIFY basesChanged)
+  Q_PROPERTY(QString baseQuery READ baseQuery WRITE setBaseQuery NOTIFY basesChanged)
+  Q_PROPERTY(bool basesLoading READ basesLoading NOTIFY basesChanged)
   // The MC cut the patch short; the files' counts are still whole.
   Q_PROPERTY(bool truncated READ truncated NOTIFY reviewChanged)
   Q_PROPERTY(bool ignoreWhitespace READ ignoreWhitespace WRITE setIgnoreWhitespace NOTIFY optionsChanged)
@@ -87,6 +105,12 @@ public:
   void setThread(const QString& environmentId, const QString& threadId, TimelineModel* timeline);
   // The thread's checkout, for reviewing it; empty when it has none.
   void setCheckout(const QString& cwd);
+  // Where the thread works in its repository ("packages/web"; empty at its
+  // top): the diff's paths are the repository's.
+  void setFolder(const QString& folder) { m_folder = folder; }
+  // A diff path as the thread's workspace has it ("packages/web/src/app.ts"
+  // -> "src/app.ts"), or empty for a file outside it.
+  Q_INVOKABLE QString workspacePath(const QString& path) const;
   void setActive(bool active);
 
   DiffModel* model() { return &m_model; }
@@ -104,6 +128,16 @@ public:
   void setBaseRef(const QString& ref);
   QString comparedBase() const { return m_comparedBase; }
   QString comparedHead() const { return m_comparedHead; }
+  QVariantList baseChoices() const;
+  QString baseQuery() const { return m_baseQuery; }
+  void setBaseQuery(const QString& query);
+  bool basesLoading() const { return m_basesLoading; }
+  // Asks the checkout for its refs again (the base picker opening).
+  Q_INVOKABLE void loadBases();
+  // Compares against the choice `id` of baseChoices.
+  Q_INVOKABLE void chooseBase(const QString& id);
+  // What the user typed: the choice labelled so, else the ref as typed.
+  Q_INVOKABLE void chooseTypedBase(const QString& text);
   bool truncated() const { return m_truncated; }
   QString status() const { return m_status; }
   QString message() const { return m_message; }
@@ -120,6 +154,8 @@ public:
 
   // Loads the selection again.
   Q_INVOKABLE void reload();
+  // Loads one file's changes of a review cut short again (after an error).
+  Q_INVOKABLE void retryFile(const QString& path);
   // Asks the view to scroll to `path`'s file, expanding it.
   Q_INVOKABLE void revealFile(const QString& path);
   QString focusPath() const { return m_focus; }
@@ -150,6 +186,7 @@ signals:
   void focusChanged();
   void commentRequested(const QVariantMap& comment);
   void reviewChanged();
+  void basesChanged();
   void revertChanged();
   // The view should show `row` of the model at its top.
   void revealRow(int row);
@@ -188,6 +225,10 @@ private:
   int effectiveSelection() const;
   void loadReview(int selection);
   void load();
+  // Loads what is shown of the checkout again, keeping it on screen meanwhile.
+  void follow();
+  // One file of a review cut short.
+  void loadFile(int file);
   // Sets the status; the caller tells (statusChanged) once it is done.
   void setStatus(const QString& status, const QString& message = {});
   // Puts the loaded patch, or its focused file, in the model.
@@ -202,11 +243,37 @@ private:
   QPointer<TimelineModel> m_timeline;
   QMetaObject::Connection m_checkpointsConnection;
   QMetaObject::Connection m_workingConnection;
+  QMetaObject::Connection m_workspaceConnection;
+  // The timeline's workspaceMutation(), to tell the agent changing files.
+  QString m_mutation;
   // Turn number -> its ready checkpoint.
   QMap<int, QJsonObject> m_turns;
   int m_selection = -1;
+  // What each other thread shows ("environment:thread").
+  struct Choice {
+    int selection = -1;
+    QString baseRef;
+  };
+  QHash<QString, Choice> m_choices;
   QString m_cwd;
   QString m_baseRef;
+  // The checkout's refs, for the base picker.
+  QJsonArray m_refs;
+  QString m_baseQuery;
+  QString m_folder;
+  bool m_basesLoading = false;
+  int m_basesRequest = 0;
+  // A load following the checkout keeps what is shown until it is answered.
+  bool m_quiet = false;
+  // The review's source shown, by its kind and hash: the same answer again
+  // leaves the model (opened files, loaded patches) alone.
+  QString m_sourceKey;
+  // The focus the model was last filled for.
+  QString m_presented;
+  bool m_lazy = false;
+  // Counts the files listed (setFiles), for an answer to tell its own.
+  int m_listing = 0;
+  QString m_lazyKind;
   QString m_comparedBase;
   QString m_comparedHead;
   bool m_truncated = false;

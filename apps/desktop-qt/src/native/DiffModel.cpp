@@ -1,6 +1,7 @@
 #include "DiffModel.h"
 
-#include <QMap>
+#include <QHash>
+#include <QJsonObject>
 #include <QVariantMap>
 
 #include <algorithm>
@@ -38,7 +39,8 @@ QString stripPrefix(QStringView path) {
 DiffModel::DiffModel(QObject* parent) : QAbstractListModel(parent) {}
 
 void DiffModel::setPatch(const QString& patch) {
-  if (patch == m_patch) {
+  const bool listed = std::any_of(m_files.begin(), m_files.end(), [](const File& file) { return !file.state.isEmpty() || file.partial; });
+  if (patch == m_patch && !listed) {
     return;
   }
   const bool allBefore = allExpanded();
@@ -64,14 +66,22 @@ void DiffModel::setPatch(const QString& patch) {
 }
 
 void DiffModel::parse() {
-  m_files.clear();
+  m_maxColumns = 0;
+  m_files = parseFrom(0);
   m_additions = 0;
   m_deletions = 0;
-  m_maxColumns = 0;
+  for (const File& each : m_files) {
+    m_additions += each.additions;
+    m_deletions += each.deletions;
+  }
+}
+
+std::vector<DiffModel::File> DiffModel::parseFrom(qsizetype from) {
+  std::vector<File> files;
   const QStringView text(m_patch);
   File* file = nullptr;
   bool inHunk = false;
-  qsizetype at = 0;
+  qsizetype at = from;
   while (at < text.size()) {
     qsizetype end = text.indexOf(QLatin1Char('\n'), at);
     if (end < 0) {
@@ -82,8 +92,8 @@ void DiffModel::parse() {
       if (file) {
         file->end = int(at);
       }
-      m_files.push_back({});
-      file = &m_files.back();
+      files.push_back({});
+      file = &files.back();
       file->body = int(end + 1);
       inHunk = false;
       // "diff --git a/x b/x": good enough until ---/+++ or rename lines say.
@@ -128,7 +138,7 @@ void DiffModel::parse() {
   if (file) {
     file->end = int(text.size());
   }
-  for (File& each : m_files) {
+  for (File& each : files) {
     // A file with no hunks has its body at its end.
     if (each.lineCount == 0) {
       each.body = each.end;
@@ -139,9 +149,101 @@ void DiffModel::parse() {
     if (each.change == QLatin1String("deleted") && each.path.isEmpty()) {
       each.path = each.previousPath;
     }
-    m_additions += each.additions;
-    m_deletions += each.deletions;
   }
+  return files;
+}
+
+void DiffModel::setFiles(const QJsonArray& files) {
+  const bool allBefore = allExpanded();
+  beginResetModel();
+  m_patch.clear();
+  m_files.clear();
+  m_additions = 0;
+  m_deletions = 0;
+  m_maxColumns = 0;
+  for (const QJsonValue& value : files) {
+    const QJsonObject stat = value.toObject();
+    File file;
+    file.path = stat.value(QLatin1String("path")).toString();
+    file.previousPath = stat.value(QLatin1String("previousPath")).toString();
+    if (!file.previousPath.isEmpty() && file.previousPath != file.path) {
+      file.change = QStringLiteral("renamed");
+    } else {
+      file.previousPath.clear();
+    }
+    file.additions = stat.value(QLatin1String("additions")).toInt();
+    file.deletions = stat.value(QLatin1String("deletions")).toInt();
+    file.state = QStringLiteral("unloaded");
+    file.parsed = true;
+    m_additions += file.additions;
+    m_deletions += file.deletions;
+    m_files.push_back(std::move(file));
+  }
+  rebuildRows();
+  endResetModel();
+  emit patchChanged();
+  if (allExpanded() != allBefore) emit expansionChanged();
+}
+
+bool DiffModel::setFilePatch(int file, const QString& patch, bool partial) {
+  // A file whose changes are here keeps them.
+  if (file < 0 || file >= fileCount() || !waiting(m_files[size_t(file)])) return false;
+  const qsizetype from = m_patch.size();
+  // Its own part of the patch, after every other file's.
+  m_patch += patch;
+  if (!m_patch.endsWith(QLatin1Char('\n'))) m_patch += QLatin1Char('\n');
+  const int columns = m_maxColumns;
+  std::vector<File> parsed = parseFrom(from);
+  File& entry = m_files[size_t(file)];
+  const auto found = std::find_if(parsed.begin(), parsed.end(), [&](const File& each) { return each.path == entry.path; });
+  if (found == parsed.end()) {
+    m_patch.truncate(from);
+    m_maxColumns = columns;
+    return false;
+  }
+  const bool allBefore = allExpanded();
+  const int header = rowOfFile(file);
+  // The counts listed are whole; the patch may not be.
+  const int additions = entry.additions;
+  const int deletions = entry.deletions;
+  const bool expanded = entry.expanded;
+  entry = std::move(*found);
+  entry.additions = additions;
+  entry.deletions = deletions;
+  entry.partial = partial;
+  entry.expanded = expanded;
+  if (expanded) {
+    ensureLines(entry);
+    const int shown = linesShown(entry);
+    if (shown > 0) {
+      beginInsertRows({}, header + 1, header + shown);
+      std::vector<Row> rows;
+      for (int l = 0; l < shown; ++l) rows.push_back({file, l});
+      m_rows.insert(m_rows.begin() + header + 1, rows.begin(), rows.end());
+      endInsertRows();
+    }
+  }
+  const QModelIndex at = index(header);
+  emit dataChanged(at, at);
+  emit patchChanged();
+  if (allExpanded() != allBefore) emit expansionChanged();
+  return true;
+}
+
+void DiffModel::setFileState(int file, const QString& state, const QString& note) {
+  if (file < 0 || file >= fileCount()) return;
+  File& entry = m_files[size_t(file)];
+  // A file whose changes are here keeps them.
+  if (!waiting(entry)) return;
+  entry.state = state;
+  entry.note = note;
+  const QModelIndex at = index(rowOfFile(file));
+  emit dataChanged(at, at, {StateRole, NoteRole});
+}
+
+QString DiffModel::withoutTruncatedMarker(const QString& patch) {
+  static const QString marker = QStringLiteral("\n\n[truncated]");
+  return patch.endsWith(marker) ? patch.left(patch.size() - marker.size()) + QLatin1Char('\n') : patch;
 }
 
 void DiffModel::ensureLines(File& file) {
@@ -243,7 +345,8 @@ void DiffModel::setSplit(bool split) {
 }
 
 bool DiffModel::allExpanded() const {
-  return std::all_of(m_files.begin(), m_files.end(), [](const File& file) { return file.expanded; });
+  // A file still waiting for its changes is only opened by hand.
+  return std::all_of(m_files.begin(), m_files.end(), [this](const File& file) { return file.expanded || waiting(file); });
 }
 
 QStringList DiffModel::paths() const {
@@ -255,34 +358,74 @@ QStringList DiffModel::paths() const {
 }
 
 QVariantList DiffModel::tree() const {
+  // In the diff's order: each folder and file where its first file is.
   struct Node {
-    QMap<QString, Node> folders;
-    QMap<QString, int> files;  // name -> file index
+    QString name;
+    QString path;
+    int file = -1;  // a file's index; -1 for a folder
+    QString change;
+    int additions = 0;
+    int deletions = 0;
+    std::vector<int> children;  // into nodes
   };
-  Node root;
-  for (int file = 0; file < fileCount(); ++file) {
-    const QStringList parts = m_files[file].path.split(QLatin1Char('/'));
-    Node* node = &root;
-    for (qsizetype i = 0; i + 1 < parts.size(); ++i) node = &node->folders[parts.at(i)];
-    node->files.insert(parts.last(), file);
+  std::vector<Node> nodes(1);
+  QHash<QString, int> byPath;
+  for (int f = 0; f < fileCount(); ++f) {
+    const File& file = m_files[size_t(f)];
+    const auto known = byPath.constFind(QLatin1Char('\x01') + file.path);
+    if (known != byPath.cend()) {
+      // The same path twice: a file replaced by a link.
+      Node& node = nodes[size_t(*known)];
+      node.change = QStringLiteral("modified");
+      node.additions += file.additions;
+      node.deletions += file.deletions;
+      continue;
+    }
+    const QStringList parts = file.path.split(QLatin1Char('/'));
+    int parent = 0;
+    QString prefix;
+    for (qsizetype i = 0; i + 1 < parts.size(); ++i) {
+      prefix += parts.at(i);
+      auto it = byPath.constFind(prefix);
+      if (it == byPath.cend()) {
+        nodes.push_back({parts.at(i), prefix});
+        it = byPath.insert(prefix, int(nodes.size()) - 1);
+        nodes[size_t(parent)].children.push_back(*it);
+      }
+      parent = *it;
+      prefix += QLatin1Char('/');
+    }
+    nodes.push_back({parts.last(), file.path, f, file.change, file.additions, file.deletions});
+    const int at = int(nodes.size()) - 1;
+    byPath.insert(QLatin1Char('\x01') + file.path, at);
+    nodes[size_t(parent)].children.push_back(at);
   }
   QVariantList rows;
-  const auto walk = [&](auto&& self, const Node& node, const QString& prefix, int depth) -> void {
-    for (auto it = node.folders.cbegin(); it != node.folders.cend(); ++it) {
-      const QString path = prefix + it.key();
-      rows.append(QVariantMap{{QStringLiteral("kind"), QStringLiteral("folder")}, {QStringLiteral("name"), it.key()},
-                              {QStringLiteral("path"), path}, {QStringLiteral("depth"), depth}});
-      self(self, *it, path + QLatin1Char('/'), depth + 1);
-    }
-    for (auto it = node.files.cbegin(); it != node.files.cend(); ++it) {
-      const File& file = m_files[*it];
-      rows.append(QVariantMap{{QStringLiteral("kind"), QStringLiteral("file")}, {QStringLiteral("name"), it.key()},
-                              {QStringLiteral("path"), file.path}, {QStringLiteral("depth"), depth}, {QStringLiteral("file"), *it},
-                              {QStringLiteral("additions"), file.additions}, {QStringLiteral("deletions"), file.deletions}});
+  const auto walk = [&](auto&& self, const Node& node, int depth, bool shown) -> void {
+    for (const int child : node.children) {
+      const Node& each = nodes[size_t(child)];
+      if (each.file < 0) {
+        const bool open = folderOpen(each.path);
+        rows.append(QVariantMap{{QStringLiteral("kind"), QStringLiteral("folder")}, {QStringLiteral("name"), each.name},
+                                {QStringLiteral("path"), each.path}, {QStringLiteral("depth"), depth},
+                                {QStringLiteral("open"), open}, {QStringLiteral("shown"), shown}});
+        self(self, each, depth + 1, shown && open);
+      } else {
+        rows.append(QVariantMap{{QStringLiteral("kind"), QStringLiteral("file")}, {QStringLiteral("name"), each.name},
+                                {QStringLiteral("path"), each.path}, {QStringLiteral("depth"), depth},
+                                {QStringLiteral("file"), each.file}, {QStringLiteral("change"), each.change},
+                                {QStringLiteral("additions"), each.additions}, {QStringLiteral("deletions"), each.deletions},
+                                {QStringLiteral("shown"), shown}});
+      }
     }
   };
-  walk(walk, root, QString(), 0);
+  walk(walk, nodes.front(), 0, true);
   return rows;
+}
+
+void DiffModel::toggleFolder(const QString& path) {
+  if (!m_closedFolders.remove(path)) m_closedFolders.insert(path);
+  emit treeChanged();
 }
 
 QVariantMap DiffModel::excerpt(int file, const QString& side, int first, int last) {
@@ -358,6 +501,7 @@ void DiffModel::expandOne(int file, bool expand) {
   if (expand) {
     ensureLines(entry);
     entry.expanded = true;
+    if (entry.state == QLatin1String("unloaded") || entry.state == QLatin1String("error")) emit fileWanted(file);
     const int shown = linesShown(entry);
     if (shown > 0) {
       beginInsertRows({}, header + 1, header + shown);
@@ -385,6 +529,7 @@ void DiffModel::expandOne(int file, bool expand) {
 void DiffModel::expandAll() {
   const bool allBefore = allExpanded();
   for (int f = 0; f < fileCount(); ++f) {
+    if (waiting(m_files[size_t(f)])) continue;
     expandOne(f, true);
   }
   if (!allBefore) {
@@ -447,6 +592,12 @@ QVariant DiffModel::data(const QModelIndex& index, int role) const {
         return file.deletions;
       case ExpandedRole:
         return file.expanded;
+      case StateRole:
+        return file.state;
+      case NoteRole:
+        return file.note;
+      case PartialRole:
+        return file.partial;
       default:
         return {};
     }
@@ -509,5 +660,8 @@ QHash<int, QByteArray> DiffModel::roleNames() const {
       {NewLineRole, "newLine"},
       {RightTextRole, "rightText"},
       {RightSignRole, "rightSign"},
+      {StateRole, "state"},
+      {NoteRole, "note"},
+      {PartialRole, "partial"},
   };
 }
