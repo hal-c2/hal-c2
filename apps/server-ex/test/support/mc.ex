@@ -228,6 +228,16 @@ defmodule HalC2.Test.Mc do
   end
 
   @doc """
+  The config frame of the subscription `id`. A config the MC could not build comes as an
+  error frame saying why, and waiting on past it would only report a missing frame.
+  """
+  def await_config(client, id) do
+    {frame, client} = await(client, &(&1["t"] in ["config", "error"] and &1["id"] == id))
+    if frame["t"] == "error", do: flunk("the MC sent no config: #{frame["reason"]}")
+    {frame, client}
+  end
+
+  @doc """
   The first frame matching each predicate, in predicate order, whatever order
   they arrive in (an RPC's reply and the push it causes race).
   """
