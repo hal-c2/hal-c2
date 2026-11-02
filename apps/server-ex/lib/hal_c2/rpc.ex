@@ -359,7 +359,7 @@ defmodule HalC2.Rpc do
     projects.searchContents projects.searchEntries filesystem.browse files.localPath
     agentSessions.scan
     assets.createUrl vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
-    slack.status slack.manifest space.list space.page.exportMarkdown space.page.history
+    slack.status slack.manifest space.list space.files.list space.page.exportMarkdown space.page.history
     space.page.version space.image.providers mermaid.render
   )
   @pull_request_writes ~w(

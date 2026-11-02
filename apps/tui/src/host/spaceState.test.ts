@@ -661,6 +661,74 @@ describe("a chart on a page", () => {
   });
 });
 
+describe("Markdown a page keeps as written", () => {
+  const raw = (id: string, text: string) => {
+    const [kind, key, fields] = block(id, "p1", text, "b");
+    return [kind, key, { ...fields, kind: "raw" }] as const;
+  };
+  const onPage = (...rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>) => {
+    const t = inResearch([page("p1", "Plan"), ...rows]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+  /** The source as the rows show it, after the marker and the gutter. */
+  const shown = (t: ReturnType<typeof onPage>) =>
+    t
+      .view()
+      .rows.filter((row) => row.blockKind === "raw")
+      .map((row) => row.text.slice(4));
+
+  test("is a row per line, its spaces and blank lines kept and its tabs at stops of four", () => {
+    const t = onPage(raw("r1", "  - nested\n\n```sh\n\tmake\na\tb\n```"));
+    expect(shown(t)).toEqual(["  - nested", "", "```sh", "    make", "a   b", "```"]);
+    expect(t.view().rows.filter((row) => row.blockKind === "raw" && row.first)).toHaveLength(1);
+  });
+
+  test("a line wider than the pane is cut short, never wrapped", () => {
+    const t = onPage(raw("r1", `| ${"cell | ".repeat(20)}`));
+    const rows = shown(t);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEndWith("…");
+  });
+
+  test("is edited on one line, sent as typed with its spaces", () => {
+    const t = onPage(raw("r1", "  | a |\n  | - |"));
+    t.select("block:r1");
+    t.controller.dispatch("space.edit", {});
+    const field = t.asks.at(-1)!;
+    expect(field).toMatchObject({ value: "  | a |\\n  | - |", untrimmed: true });
+    const sent = () => t.calls.filter((call) => call.method === "space.block.update");
+    field.onSubmit(field.value!);
+    expect(sent()).toEqual([]);
+    field.onSubmit(`${field.value}\\n  | b |`);
+    expect(sent().at(-1)?.payload).toEqual({
+      spaceId: "s1",
+      blockId: "r1",
+      text: "  | a |\n  | - |\n  | b |",
+    });
+  });
+});
+
+describe("a heading", () => {
+  const heading = (id: string, text: string, order: string, level?: number) => {
+    const [kind, key, fields] = block(id, "p1", text, order);
+    return [kind, key, { ...fields, kind: "heading", ...(level ? { level } : {}) }] as const;
+  };
+
+  test("carries its level's marks, a second level when it has none", () => {
+    const t = inResearch([
+      page("p1", "Plan"),
+      heading("h1", "Top", "a", 1),
+      heading("h2", "Steps", "b"),
+      heading("h6", "Fine print", "c", 6),
+    ]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    expect(t.texts("block")).toEqual(["# Top", "## Steps", "###### Fine print"]);
+  });
+});
+
 describe("publishing a page as a site", () => {
   const publishPayload = (origin: string, action = "space.publish") => {
     const t = inResearch([page("p1", "Roadmap")], origin);

@@ -360,6 +360,12 @@ import {
   SpacePagePublishResult,
   SpacePageUnpublishResult,
   SpacePageImportMarkdownInput,
+  SpacePageOpenFileInput,
+  SpacePageOpenFileResult,
+  SpaceFilesListResult,
+  SpaceFilesProjectInput,
+  SpaceFilesScanInput,
+  SpaceFilesScanResult,
   SpacePageMoveInput,
   SpacePageRef,
   SpacePresenceStreamEvent,
@@ -559,6 +565,11 @@ export const WS_METHODS = {
   spacePageUnpublish: "space.page.unpublish",
   spacePageExportMarkdown: "space.page.exportMarkdown",
   spacePageImportMarkdown: "space.page.importMarkdown",
+  spacePageOpenFile: "space.page.openFile",
+  spacePageSyncFile: "space.page.syncFile",
+  spacePageUnlinkFile: "space.page.unlinkFile",
+  spaceFilesList: "space.files.list",
+  spaceFilesScan: "space.files.scan",
   spacePageCreateFromThread: "space.page.createFromThread",
   spacePageHistory: "space.page.history",
   spacePageVersion: "space.page.version",
@@ -1923,6 +1934,38 @@ const WsSpacePageImportMarkdownRpc = Rpc.make(WS_METHODS.spacePageImportMarkdown
   error: SpaceRpcError,
 });
 
+const WsSpacePageOpenFileRpc = Rpc.make(WS_METHODS.spacePageOpenFile, {
+  payload: SpacePageOpenFileInput,
+  success: SpacePageOpenFileResult,
+  error: SpaceRpcError,
+});
+
+/** Reads a file-backed page's file again, taking what changed. */
+const WsSpacePageSyncFileRpc = Rpc.make(WS_METHODS.spacePageSyncFile, {
+  payload: SpacePageRef,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+/** Makes a file-backed page an ordinary page; the file stays as it is. */
+const WsSpacePageUnlinkFileRpc = Rpc.make(WS_METHODS.spacePageUnlinkFile, {
+  payload: SpacePageRef,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceFilesListRpc = Rpc.make(WS_METHODS.spaceFilesList, {
+  payload: SpaceFilesProjectInput,
+  success: SpaceFilesListResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceFilesScanRpc = Rpc.make(WS_METHODS.spaceFilesScan, {
+  payload: SpaceFilesScanInput,
+  success: SpaceFilesScanResult,
+  error: SpaceRpcError,
+});
+
 const WsSpacePageCreateFromThreadRpc = Rpc.make(WS_METHODS.spacePageCreateFromThread, {
   payload: SpacePageCreateFromThreadInput,
   success: SpacePageResult,
@@ -2238,6 +2281,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageUnpublishRpc,
   WsSpacePageExportMarkdownRpc,
   WsSpacePageImportMarkdownRpc,
+  WsSpacePageOpenFileRpc,
+  WsSpacePageSyncFileRpc,
+  WsSpacePageUnlinkFileRpc,
+  WsSpaceFilesListRpc,
+  WsSpaceFilesScanRpc,
   WsSpacePageCreateFromThreadRpc,
   WsSpacePageHistoryRpc,
   WsSpacePageVersionRpc,
