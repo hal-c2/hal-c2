@@ -77,11 +77,12 @@ defmodule HalC2.SpacePageAgentPropTest do
         Application.put_env(:hal_c2, :page_agent_launch, &fake_thread(&1, test))
         {:ok, space} = Space.create("Prop")
         Process.put(:space, space["id"])
-        Process.put(:started, nil)
+        :persistent_term.erase({PageAgent, :boot})
         Process.put(:names, %{})
         Process.put(:threads, %{})
         {history, state, result} = run_commands(__MODULE__, cmds)
         Application.delete_env(:hal_c2, :page_agent_launch)
+        :persistent_term.erase({PageAgent, :boot})
         HalC2.Prop.stop_services()
 
         (result == :ok)
@@ -97,11 +98,11 @@ defmodule HalC2.SpacePageAgentPropTest do
   # wrote, said, run, moving}: it wrote as it edits, and says edited once it ends; said is
   # whether it gave a reason; run is what its run is (nil before a launch that never
   # came); moving is whether its thread is in a move. asks counts this page's threads, so
-  # a report can name an old one. image is whether its ask sent one. fresh is whether
-  # it was asked since the MC last started, which the reconciliation leaves alone.
-  # images counts the images saved for the threads of asks; started is whether the MC
-  # has a start the reconciliation goes by.
-  def initial_state, do: %{pages: %{}, images: 0, started: false}
+  # a report can name an old one. image is whether its ask sent one. boot is the start of
+  # the MC that took the ask, which the reconciliation of that start leaves alone.
+  # images counts the images saved for the threads of asks; boot is the MC's start, nil
+  # before it has one, as asks from before there were tokens have none.
+  def initial_state, do: %{pages: %{}, images: 0, boot: nil}
 
   def command(s) do
     pages = Map.keys(s.pages)
@@ -376,23 +377,15 @@ defmodule HalC2.SpacePageAgentPropTest do
 
   defp step(s, :restart, []), do: {:ok, s, 0}
 
-  # Every ask so far was before this start.
-  defp step(s, :start, []) do
-    pages =
-      Map.new(s.pages, fn
-        {name, %{agent: %{} = agent} = page} -> {name, %{page | agent: %{agent | fresh: false}}}
-        other -> other
-      end)
-
-    {:ok, %{s | pages: pages, started: true}, 0}
-  end
+  # Every ask so far was before this start, whatever the clock says.
+  defp step(s, :start, []), do: {:ok, %{s | boot: (s.boot || 0) + 1}, 0}
 
   # A thread about to go on is left, whatever else settles, unless it was asked to stop.
   defp reconcile(s, continuing) do
     next =
       for {name, _} <- s.pages,
           active?(s, name),
-          not s.pages[name].agent.fresh,
+          s.boot == nil or s.pages[name].agent.boot != s.boot,
           name != continuing or s.pages[name].agent.status == "stopping",
           reduce: s do
         acc -> if stops_now?(acc.pages[name].agent), do: run_over(acc, name), else: acc
@@ -404,7 +397,7 @@ defmodule HalC2.SpacePageAgentPropTest do
   defp agent(run, image, s) do
     %{
       image: image,
-      fresh: s.started,
+      boot: s.boot,
       status: "running",
       edited: false,
       wrote: false,
@@ -804,18 +797,13 @@ defmodule HalC2.SpacePageAgentPropTest do
     end)
   end
 
-  def reconcile, do: act(fn _ -> PageAgent.reconcile([], Process.get(:started)) end)
+  def reconcile, do: act(fn _ -> PageAgent.reconcile() end)
+  def reconcile_continuing(name), do: act(fn _ -> PageAgent.reconcile([thread(name)]) end)
 
-  def reconcile_continuing(name),
-    do: act(fn _ -> PageAgent.reconcile([thread(name)], Process.get(:started)) end)
-
-  # Takes the time the MC starts at, as `HalC2.Orchestration.Recovery` does before it
-  # listens, and lets the clock pass it, as the listener coming up does.
+  # A start of the MC, as `HalC2.Orchestration.Recovery` takes before it listens.
   def start do
     act(fn _ ->
-      started = DateTime.truncate(DateTime.utc_now(), :millisecond)
-      Process.put(:started, started)
-      past(started)
+      PageAgent.boot()
       :ok
     end)
   end
@@ -846,12 +834,6 @@ defmodule HalC2.SpacePageAgentPropTest do
   end
 
   # --- helpers --------------------------------------------------------------------
-
-  defp past(started) do
-    if DateTime.compare(DateTime.truncate(DateTime.utc_now(), :millisecond), started) == :gt,
-      do: :ok,
-      else: past(started)
-  end
 
   # Runs `fun` and reports what it replied, the events it wrote and what the page says.
   defp act(fun) do

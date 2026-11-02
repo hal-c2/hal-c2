@@ -194,9 +194,11 @@ defmodule HalC2.SpaceTest do
     end
 
     # The MC listens before its reconciliation runs, so an ask can come in between, with
-    # its launch still writing the thread. The reconciliation took it for one a crash lost:
-    # it said the agent failed and deleted its image.
-    test "an ask taken since the MC started is left to its launch", %{space: space, tmp_dir: dir} do
+    # its launch still writing the thread: the reconciliation took it for one a crash lost,
+    # said the agent failed and deleted its image. Going by the clock instead left an ask
+    # lost after the clock was pulled back working for good, and its page with it.
+    test "the reconciliation settles the asks of earlier starts, whatever the clock says",
+         %{space: space, tmp_dir: dir} do
       page = page!(space, "Roadmap")
       test = self()
       home = Application.get_env(:hal_c2, :home)
@@ -210,25 +212,36 @@ defmodule HalC2.SpaceTest do
       on_exit(fn ->
         Application.put_env(:hal_c2, :home, home)
         Application.delete_env(:hal_c2, :page_agent_launch)
+        :persistent_term.erase({Space.PageAgent, :boot})
       end)
 
       target = fn _ ->
         {:ok, %{project_id: nil, model: nil, runtime_mode: nil, interaction_mode: nil}}
       end
 
-      started = DateTime.add(DateTime.utc_now(), -1, :second)
+      Space.PageAgent.boot()
       {:ok, _} = Space.PageAgent.ask(space, page, "tidy", %{"attachments" => [@image]}, target)
       assert_receive :launching
       saved = Path.wildcard(Path.join(HalC2.Attachments.dir(), "*"))
 
-      :ok = Space.PageAgent.reconcile([], started)
+      :ok = Space.PageAgent.reconcile()
 
       assert %{"status" => "running"} = page_agent(space, page)
       assert saved != []
       assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == saved
 
-      # An ask from before the start, with no thread, is one the crash lost.
-      :ok = Space.PageAgent.reconcile([], DateTime.add(DateTime.utc_now(), 1, :second))
+      # The MC goes down with the launch, and comes back with its clock a day behind.
+      {:ok, _} =
+        Space.transact(space, fn state ->
+          agent = HalC2.StreamState.get(state, "pageAgent")[page]
+          later = DateTime.utc_now() |> DateTime.add(1, :day) |> DateTime.to_iso8601()
+
+          {[{"pageAgent", page, HalC2.Patch.diff(agent, %{agent | "startedAt" => later})}],
+           {:ok, nil}}
+        end)
+
+      Space.PageAgent.boot()
+      :ok = Space.PageAgent.reconcile()
 
       assert %{"status" => "failed"} = page_agent(space, page)
       assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == []
