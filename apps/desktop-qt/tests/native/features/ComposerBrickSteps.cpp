@@ -48,6 +48,7 @@ Item {
     Composer {
         id: composerView
         objectName: "composer"
+        takesDrops: false
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom

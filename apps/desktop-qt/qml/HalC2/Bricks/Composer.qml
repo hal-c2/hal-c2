@@ -14,6 +14,10 @@ import "js/providerIcons.js" as ProviderIcons
 Rectangle {
     id: composer
 
+    // Files dropped on the card attach. A layout that lays a ConversationDrop
+    // over the whole conversation turns this off, so a drop on a sheet or
+    // scrim over the card does not fall through to it.
+    property bool takesDrops: true
     readonly property var model: Shell.state.composer ?? null
     readonly property var workspace: Shell.state.workspace ?? null
     // This machine's stashed prompts (ComposerController), newest first.
@@ -672,6 +676,14 @@ Rectangle {
             color: Theme.palette.color("surface", "#141416")
             border.color: composer.outline
             border.width: 1
+
+            ConversationDrop {
+                objectName: "composerDrop"
+                anchors.fill: parent
+                z: 1
+                enabled: composer.takesDrops
+                composer: composer
+            }
 
             ColumnLayout {
                 id: cardColumn

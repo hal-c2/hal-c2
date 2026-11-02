@@ -90,6 +90,7 @@ Item {
             id: composerView
 
             objectName: "composer"
+            takesDrops: false
             Layout.fillWidth: true
             visible: ready && !screen.filesOpen
             conversationScrolled: centre.conversationScrolled

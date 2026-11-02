@@ -296,6 +296,7 @@ Item {
                 Composer {
                     id: composerView
 
+                    takesDrops: false
                     Layout.fillWidth: true
                     visible: ready && !layout.window.settingsActive
                     conversationScrolled: centreHost.conversationScrolled
@@ -511,13 +512,16 @@ Item {
 
     // Over the conversation (the route's centre and the composer under it,
     // not the terminal or the panels) files go to the draft instead: a
-    // single folder there is referenced, not opened as a project.
+    // single folder there is referenced, not opened as a project. It is above
+    // everything in `body`, so it stops short of the details shown as a
+    // sheet, and is away while a list or panel over the thread has its
+    // scrim: drops there are theirs (a thread row's attaches to that thread).
     ConversationDrop {
         x: body.x + centre.x
         y: body.y + centre.y + centreHost.y
-        width: centre.width
+        width: detailsView.visible && layout.detailsSheet ? Math.max(0, detailsView.x - centre.x) : centre.width
         height: composerView.y + composerView.height - centreHost.y
-        visible: centre.visible && composerView.visible
+        visible: centre.visible && composerView.visible && !sidebarScrim.visible && !panelScrim.visible
         composer: composerView
     }
 
