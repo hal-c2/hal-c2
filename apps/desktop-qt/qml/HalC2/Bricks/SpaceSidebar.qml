@@ -93,6 +93,15 @@ Rectangle {
             }
 
             ShellButton {
+                objectName: "spaceFromProjectFiles"
+                subtle: true
+                iconName: "folder-open"
+                Accessible.name: qsTr("Add a page from a project's files")
+                enabled: Spaces.spaceId !== ""
+                onClicked: Shell.dispatch("space.files.pick", {})
+            }
+
+            ShellButton {
                 objectName: "spaceNewPage"
                 subtle: true
                 iconName: "plus"

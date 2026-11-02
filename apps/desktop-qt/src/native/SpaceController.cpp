@@ -1,6 +1,7 @@
 #include "SpaceController.h"
 
 #include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -73,6 +74,11 @@ bool byAgent(const QJsonValue& author) {
 // Written by the page's own update rather than by a person or a thread.
 bool byUpdate(const QJsonValue& author) {
   return author.toObject().value(QLatin1String("type")).toString() == QLatin1String("schedule");
+}
+
+// Written by the project file the page is, read again after it changed.
+bool byFile(const QJsonValue& author) {
+  return author.toObject().value(QLatin1String("type")).toString() == QLatin1String("file");
 }
 
 // In the order the MC keeps them: by `field`, then id.
@@ -259,8 +265,8 @@ SpaceHistory::SpaceHistory(std::function<QString(const QString&)> titleOf,
     : QObject(parent),
       m_titleOf(std::move(titleOf)),
       m_imageFields(std::move(imageFields)),
-      m_versions(new SpaceRows({"id", "version", "at", "byAgent", "byUpdate", "threadTitle", "restoredFromAt"}, this)),
-      m_blocks(new SpaceRows({"id", "kind", "text", "level", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
+      m_versions(new SpaceRows({"id", "version", "at", "byAgent", "byUpdate", "byFile", "threadTitle", "restoredFromAt"}, this)),
+      m_blocks(new SpaceRows({"id", "kind", "text", "level", "language", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
                               "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
                              this)) {}
 
@@ -337,6 +343,7 @@ SpaceHistory::Next SpaceHistory::receive(int token, const QJsonObject& result) {
                  {QStringLiteral("at"), text(version, QLatin1String("at"))},
                  {QStringLiteral("byAgent"), byAgent(version.value(QLatin1String("author")))},
                  {QStringLiteral("byUpdate"), byUpdate(version.value(QLatin1String("author")))},
+                 {QStringLiteral("byFile"), byFile(version.value(QLatin1String("author")))},
                  {QStringLiteral("threadTitle"), text(version, QLatin1String("threadTitle"))},
                  {QStringLiteral("restoredFromAt"), text(version, QLatin1String("restoredFromAt"))}});
   }
@@ -415,6 +422,7 @@ void SpaceHistory::repaint() {
                     {QStringLiteral("kind"), text(block, QLatin1String("kind"))},
                     {QStringLiteral("text"), text(block, QLatin1String("text"))},
                     {QStringLiteral("level"), block.value(QLatin1String("level")).toInt(2)},
+                    {QStringLiteral("language"), text(block, QLatin1String("language"))},
                     {QStringLiteral("checked"), block.value(QLatin1String("checked")).toBool()},
                     {QStringLiteral("linkedPageId"), linked},
                     {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : m_titleOf(linked)},
@@ -432,7 +440,7 @@ SpacePages::SpacePages(QObject* parent)
       m_spaces(new SpaceRows({"id", "name"}, this)),
       m_pages(new SpaceRows({"id", "title", "depth", "parentPageId", "hasChildren", "fromThread"}, this)),
       m_trash(new SpaceRows({"id", "title", "trashedAt"}, this)),
-      m_blocks(new SpaceRows({"id", "kind", "text", "level", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
+      m_blocks(new SpaceRows({"id", "kind", "text", "level", "language", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
                               "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
                              this)),
       m_comments(new SpaceRows({"id", "blockId", "blockText", "blockGone", "body", "resolved", "byAgent", "createdAt"}, this)),
@@ -471,7 +479,22 @@ QVariantMap SpacePages::page() const {
           {QStringLiteral("sourceThreadTitle"), thread.isEmpty() ? QString() : threadTitle(thread)},
           {QStringLiteral("schedule"), updateOf(page)},
           {QStringLiteral("writtenAt"), text(page, QLatin1String("writtenAt"))},
-          {QStringLiteral("site"), siteOf(m_pageId)}};
+          {QStringLiteral("site"), siteOf(m_pageId)},
+          {QStringLiteral("file"), fileOf(m_pageId)}};
+}
+
+QVariantMap SpacePages::fileOf(const QString& pageId) const {
+  const QJsonObject file = m_space.entity(QStringLiteral("page"), pageId).value(QLatin1String("file")).toObject();
+  if (file.isEmpty()) return {};
+  const QString project = text(file, QLatin1String("projectId"));
+  const QString title = m_projectTitle ? m_projectTitle(project) : QString();
+  return {{QStringLiteral("projectId"), project},
+          {QStringLiteral("projectTitle"), title.isEmpty() ? QStringLiteral("a project") : title},
+          {QStringLiteral("path"), text(file, QLatin1String("path"))},
+          {QStringLiteral("missing"), file.value(QLatin1String("missing")).toBool()},
+          // Edited while the file was gone; an MC that does not say has none.
+          {QStringLiteral("unwritten"), file.value(QLatin1String("unwritten")).toBool()},
+          {QStringLiteral("conflictAt"), text(file, QLatin1String("conflictAt"))}};
 }
 
 QString SpacePages::cadenceLabel(const QJsonObject& cadence) {
@@ -871,6 +894,7 @@ void SpacePages::rebuild() {
                     {QStringLiteral("kind"), text(block, QLatin1String("kind"))},
                     {QStringLiteral("text"), shown(QStringLiteral("text"), text(block, QLatin1String("text")))},
                     {QStringLiteral("level"), block.value(QLatin1String("level")).toInt(2)},
+                    {QStringLiteral("language"), text(block, QLatin1String("language"))},
                     {QStringLiteral("checked"),
                      shown(QStringLiteral("checked"), block.value(QLatin1String("checked")).toBool()).toBool()},
                     {QStringLiteral("linkedPageId"), linked},
@@ -1024,6 +1048,10 @@ SpaceController::SpaceController(ShellBridge* bridge, McClient* client, ShellSto
     const auto thread = m_store->thread(m_client->environment() + QLatin1Char(':') + threadId);
     return thread ? thread->title : QString();
   });
+  setProjectTitles([this](const QString& projectId) {
+    const QJsonObject project = m_store->projectRow(m_client->environment(), projectId);
+    return project.value(QLatin1String("title")).toString();
+  });
   connect(this, &SpacePages::spaceSelected, this, [this] {
     if (m_open) followSpace();
   });
@@ -1094,11 +1122,28 @@ void SpaceController::activate() {
     });
     keys->commands()->setTerms(kPresentDeck, {QStringLiteral("space"), QStringLiteral("slides"),
                                               QStringLiteral("presentation"), QStringLiteral("slideshow")});
+    keys->commands()->add(kPickFile, tr("Open a project file in a Space"),
+                          [this] { handle(kPickFile, QVariantMap()); });
+    keys->commands()->setTerms(kPickFile, {QStringLiteral("space"), QStringLiteral("page"), QStringLiteral("file"),
+                                           QStringLiteral("markdown"), QStringLiteral("docs")});
+    keys->commands()->add(kScanFiles, tr("Scan project for Space files"), [this] {
+      const QString project = projectHere();
+      if (project.isEmpty()) {
+        refuse(tr("Add a project on this machine to scan it for Space files."));
+      } else {
+        scanFiles(project, false);
+      }
+    });
+    keys->commands()->setTerms(kScanFiles, {QStringLiteral("space"), QStringLiteral("files"), QStringLiteral("markdown"),
+                                            QStringLiteral("hal-c2.json"), QStringLiteral("config")});
   }
   connect(navigation, &NavigationController::changed, this,
           [this, navigation] { setOpen(navigation->route().kind == kRoute); });
   connect(m_client, &McClient::readyChanged, this, [this](bool ready) {
     if (ready && m_open) follow();
+    if (ready) {
+      for (const QString& project : QSet<QString>(m_filesWanted)) listFiles(m_client->environment(), project);
+    }
     followViewers();
   });
   setOpen(navigation->route().kind == kRoute);
@@ -1115,6 +1160,7 @@ void SpaceController::setOpen(bool open) {
     history()->close();
     m_historyRefresh->stop();
     m_pageShown = false;
+    if (!std::exchange(m_picking, QString()).isEmpty()) publish();
   }
   followViewers();
 }
@@ -1164,10 +1210,14 @@ void SpaceController::followSpace() {
       [this, followed] { return followed == spaceId() ? space().subscribing() : QJsonObject(); });
 }
 
-void SpaceController::followViewers() {
+bool SpaceController::pageOnShow() const {
   // A deck or the image browser takes the selected page's place.
-  const bool onShow = m_open && m_client->isReady() && deckId().isEmpty() && !imagesShown() && (!m_pageShownBySteps || m_pageShown);
-  const QString page = onShow ? pageId() : QString();
+  return m_open && m_client->isReady() && deckId().isEmpty() && !imagesShown() && (!m_pageShownBySteps || m_pageShown);
+}
+
+void SpaceController::followViewers() {
+  syncShownFile();
+  const QString page = pageOnShow() ? pageId() : QString();
   if (page == m_followedViewers) return;
   if (m_viewersSubscription) m_client->unsubscribe(std::exchange(m_viewersSubscription, 0));
   m_followedViewers = page;
@@ -1210,7 +1260,9 @@ void SpaceController::unfollow() {
 
 void SpaceController::call(const QString& method, QJsonObject payload, std::function<void(const QJsonObject&)> done,
                            std::function<QString(const QJsonObject&)> refused) {
-  if (method != QLatin1String("list") && method != QLatin1String("create") && !payload.contains(QLatin1String("spaceId"))) {
+  // The Spaces and a project's files are no Space's.
+  if (method != QLatin1String("list") && method != QLatin1String("create") && !method.startsWith(QLatin1String("files.")) &&
+      !payload.contains(QLatin1String("spaceId"))) {
     payload.insert(QStringLiteral("spaceId"), spaceId());
   }
   if (!m_error.isEmpty()) {
@@ -1239,13 +1291,23 @@ void SpaceController::toast(const QString& type, const QString& title, const QSt
 }
 
 void SpaceController::publish() {
+  QVariantList projects;
+  if (!m_picking.isEmpty()) {
+    for (const QJsonObject& project : m_store->projectRows(m_client->environment())) {
+      projects.append(QVariantMap{{QStringLiteral("id"), project.value(QLatin1String("id")).toString()},
+                                  {QStringLiteral("title"), project.value(QLatin1String("title")).toString()}});
+    }
+  }
   m_bridge->publish(QStringLiteral("space"), QVariantMap{{QStringLiteral("error"), m_error},
                                                           {QStringLiteral("busy"), m_writing > 0},
                                                           {QStringLiteral("drawing"), m_drawing > 0},
                                                           {QStringLiteral("written"), m_written},
                                                           {QStringLiteral("addingImage"), m_addingImages > 0},
                                                           {QStringLiteral("generatingImage"), m_generatingImages > 0},
-                                                          {QStringLiteral("imageProviders"), m_imageProviders}});
+                                                          {QStringLiteral("imageProviders"), m_imageProviders},
+                                                          {QStringLiteral("files"), m_files},
+                                                          {QStringLiteral("picking"), m_picking},
+                                                          {QStringLiteral("projects"), projects}});
 }
 
 void SpaceController::exportPage(const QString& pageId, std::function<void(const QString&)> done) {
@@ -1307,6 +1369,179 @@ void SpaceController::pageFromThread(const QString& threadKey) {
     if (spaces.isEmpty()) return;
     write(spaces.first().toObject().value(QLatin1String("id")).toString());
   });
+}
+
+void SpaceController::listFiles(const QString& environmentId, const QString& projectId) {
+  if (projectId.isEmpty() || environmentId != m_client->environment()) return;
+  // Asked again on every connection: what the files are may have changed meanwhile.
+  m_filesWanted.insert(projectId);
+  if (!m_client->isReady()) return;
+  // Only the latest answer for a project is kept, whatever order they come in.
+  const int token = ++m_fileTokens;
+  m_listing.insert(projectId, token);
+  m_client->call(this, environmentId, QStringLiteral("space.files.list"), QJsonObject{{QStringLiteral("projectId"), projectId}},
+                 [this, projectId, token](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (m_listing.value(projectId) != token) return;
+                   // Asked again on connecting; what the files were stands meanwhile.
+                   if (error && *error == QLatin1String("disconnected")) return;
+                   m_listing.remove(projectId);
+                   // Said nowhere: a project the MC cannot list offers none of its files.
+                   if (error) {
+                     if (m_files.remove(projectId)) publish();
+                     return;
+                   }
+                   receiveFiles(projectId, result.toObject());
+                 });
+}
+
+void SpaceController::receiveFiles(const QString& projectId, const QJsonObject& result) {
+  QVariantMap paths;
+  for (const QJsonValue& value : result.value(QLatin1String("files")).toArray()) {
+    const QJsonObject file = value.toObject();
+    const QJsonObject page = file.value(QLatin1String("page")).toObject();
+    paths.insert(text(file, QLatin1String("relativePath")),
+                 QVariantMap{{QStringLiteral("kind"), text(file, QLatin1String("kind"))},
+                             {QStringLiteral("spaceId"), text(page, QLatin1String("spaceId"))},
+                             {QStringLiteral("pageId"), text(page, QLatin1String("pageId"))},
+                             {QStringLiteral("title"), text(page, QLatin1String("title"))}});
+  }
+  m_files.insert(projectId, QVariantMap{{QStringLiteral("config"), text(result, QLatin1String("config"))},
+                                        {QStringLiteral("paths"), paths}});
+  publish();
+}
+
+bool SpaceController::isSpaceFile(const QString& environmentId, const QString& projectId, const QString& relativePath) const {
+  if (environmentId != m_client->environment()) return false;
+  QString path = relativePath;
+  if (path.startsWith(QLatin1String("./"))) path = path.mid(2);
+  return m_files.value(projectId).toMap().value(QStringLiteral("paths")).toMap().contains(path);
+}
+
+void SpaceController::openFile(const QString& environmentId, const QString& projectId, const QString& relativePath) {
+  // The Space view shows this MC's Spaces only, and a file opens in one of its own MC's.
+  if (environmentId != m_client->environment()) {
+    return refuse(tr("A file opens in a Space only from a project on this machine."));
+  }
+  const auto open = [this, projectId, relativePath](const QString& space) {
+    call(
+        QStringLiteral("page.openFile"),
+        {{QStringLiteral("spaceId"), space}, {QStringLiteral("projectId"), projectId}, {QStringLiteral("relativePath"), relativePath}},
+        [this, space, projectId](const QJsonObject& result) {
+          if (!std::exchange(m_picking, QString()).isEmpty()) publish();
+          if (auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
+            navigation->open(NavigationController::Route::of(kRoute));
+          }
+          // The file's page may be in another Space, which is where it is shown.
+          awaitSpace(result.value(QLatin1String("spaceId")).toString(space));
+          awaitPage(result.value(QLatin1String("page")).toObject().value(QLatin1String("id")).toString());
+          listFiles(m_client->environment(), projectId);
+        },
+        [relativePath](const QJsonObject& detail) {
+          const QString reason = detail.value(QLatin1String("reason")).toString();
+          if (reason == QLatin1String("notSpaceFile")) {
+            return tr("%1 is not a file this project shows in a Space. Add it to the spaces section of its "
+                      "hal-c2.json, or scan the project for Space files.")
+                .arg(relativePath);
+          }
+          if (reason == QLatin1String("notFound")) return tr("There is no file %1 in this project.").arg(relativePath);
+          if (reason == QLatin1String("invalid")) return tr("%1 is outside the project.").arg(relativePath);
+          return QString();
+        });
+  };
+  // Not in a Space: the one shown last, else the first, Personal on a new MC.
+  if (!spaceId().isEmpty()) return open(spaceId());
+  call(QStringLiteral("list"), {}, [this, open](const QJsonObject& result) {
+    m_listed = true;
+    const QJsonArray spaces = result.value(QLatin1String("spaces")).toArray();
+    if (spaces.isEmpty()) return refuse(tr("There is no Space to open the file in. Make a Space first, then open the file."));
+    open(spaces.first().toObject().value(QLatin1String("id")).toString());
+  });
+}
+
+QString SpaceController::projectHere() const {
+  const QString environment = m_client->environment();
+  auto* navigation = NativeShell::of(this)->controller<NavigationController>();
+  const QString threadKey = navigation ? navigation->threadKey() : QString();
+  if (threadKey.left(threadKey.indexOf(QLatin1Char(':'))) == environment) {
+    const QString project = m_store->threadRow(threadKey).value(QLatin1String("projectId")).toString();
+    if (!project.isEmpty()) return project;
+  }
+  if (!m_lastPicked.isEmpty() && !m_store->projectRow(environment, m_lastPicked).isEmpty()) return m_lastPicked;
+  const QList<QJsonObject> projects = m_store->projectRows(environment);
+  return projects.isEmpty() ? QString() : projects.first().value(QLatin1String("id")).toString();
+}
+
+void SpaceController::scanFiles(const QString& projectId, bool replace) {
+  QJsonObject scan{{QStringLiteral("projectId"), projectId}};
+  if (replace) scan.insert(QStringLiteral("replace"), true);
+  call(QStringLiteral("files.scan"), scan, [this, projectId](const QJsonObject& result) {
+    QString title = m_store->projectRow(m_client->environment(), projectId).value(QLatin1String("title")).toString();
+    if (title.isEmpty()) title = tr("the project");
+    QStringList entries;
+    for (const QJsonValue& entry : result.value(QLatin1String("entries")).toArray()) {
+      entries.append(entry.toObject().value(QLatin1String("path")).toString());
+    }
+    const QString found = entries.join(QStringLiteral(", "));
+    const QString status = result.value(QLatin1String("status")).toString();
+    if (status == QLatin1String("written")) {
+      toast(QStringLiteral("success"), tr("Wrote the spaces section of %1").arg(title), found);
+    } else if (status == QLatin1String("current")) {
+      toast(QStringLiteral("info"), tr("The spaces section of %1 is up to date").arg(title), found);
+    } else if (status == QLatin1String("kept")) {
+      // Someone wrote the section by hand: it is replaced only when the user says so.
+      if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) {
+        toasts->show(QStringLiteral("info"), tr("%1 keeps the spaces section someone wrote").arg(title),
+                     tr("The scan would write: %1").arg(found),
+                     ToastController::Action{tr("Replace it"), [this, projectId] { scanFiles(projectId, true); }}, 0);
+      }
+    } else {
+      toast(QStringLiteral("info"), tr("%1 has no Markdown files for a Space").arg(title));
+    }
+    listFiles(m_client->environment(), projectId);
+  });
+}
+
+void SpaceController::showFile(const QString& pageId) {
+  const QVariantMap file = fileOf(pageId);
+  if (file.isEmpty()) return refuse(tr("This page is not a project file."));
+  // The Files tab is a thread's: the project's latest one on the project folder
+  // shows the file the page follows; a worktree's copy only when there is no other.
+  const QString environment = m_client->environment();
+  const QString project = file.value(QStringLiteral("projectId")).toString();
+  const QString root = QDir::cleanPath(m_store->projectRow(environment, project).value(QLatin1String("workspaceRoot")).toString());
+  const auto onRoot = [&](const sidebar::Thread& thread) {
+    const QString worktree = m_store->threadRow(thread.key()).value(QLatin1String("worktreePath")).toString();
+    return worktree.isEmpty() || QDir::cleanPath(worktree) == root;
+  };
+  std::optional<sidebar::Thread> latest;
+  bool latestOnRoot = false;
+  for (const sidebar::Thread& thread : m_store->threads()) {
+    if (thread.environmentId != environment || thread.projectId != project || thread.archivedAt || thread.subagent) continue;
+    const bool here = onRoot(thread);
+    if (!latest || (here && !latestOnRoot) || (here == latestOnRoot && thread.updatedAt > latest->updatedAt)) {
+      latest = thread;
+      latestOnRoot = here;
+    }
+  }
+  if (!latest) {
+    return refuse(tr("Start a thread in %1 to see its files.").arg(file.value(QStringLiteral("projectTitle")).toString()));
+  }
+  if (auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
+    navigation->open(NavigationController::Route::thread(environment + QLatin1Char(':') + latest->id));
+  }
+  m_bridge->dispatch(QStringLiteral("panel.open"),
+                     QVariantMap{{QStringLiteral("tab"), QStringLiteral("files")}, {QStringLiteral("path"), file.value(QStringLiteral("path"))}});
+}
+
+void SpaceController::syncShownFile() {
+  const QString page = pageOnShow() && !fileOf(pageId()).isEmpty() ? pageId() : QString();
+  if (page == m_synced) return;
+  m_synced = page;
+  if (page.isEmpty()) return;
+  // What the stream then shows is the answer; one that fails leaves the page as it was.
+  m_client->call(this, m_client->environment(), QStringLiteral("space.page.syncFile"),
+                 QJsonObject{{QStringLiteral("spaceId"), spaceId()}, {QStringLiteral("pageId"), page}},
+                 [](const QJsonValue&, const std::optional<QString>&) {});
 }
 
 void SpaceController::openHistory(const QString& page) {
@@ -1473,6 +1708,40 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
   } else if (action == QLatin1String("space.pageShown")) {
     m_pageShown = input.value(QLatin1String("shown")).toBool();
     followViewers();
+  } else if (action == QLatin1String("space.openFile")) {
+    openFile(input.contains(QLatin1String("environmentId")) ? field(QLatin1String("environmentId")) : m_client->environment(),
+             field(QLatin1String("projectId")), field(QLatin1String("relativePath")));
+  } else if (action == QLatin1String("space.files.list")) {
+    listFiles(m_client->environment(), field(QLatin1String("projectId")));
+  } else if (action == kPickFile) {
+    const QString project = input.contains(QLatin1String("projectId")) ? field(QLatin1String("projectId")) : projectHere();
+    if (project.isEmpty()) {
+      refuse(tr("Add a project on this machine to open its files in a Space."));
+    } else {
+      if (auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
+        navigation->open(NavigationController::Route::of(kRoute));
+      }
+      m_picking = m_lastPicked = project;
+      publish();
+      listFiles(m_client->environment(), project);
+    }
+  } else if (action == QLatin1String("space.files.pickClose")) {
+    if (!std::exchange(m_picking, QString()).isEmpty()) publish();
+  } else if (action == QLatin1String("space.files.scan")) {
+    const QString project = input.contains(QLatin1String("projectId")) ? field(QLatin1String("projectId")) : projectHere();
+    if (project.isEmpty()) {
+      refuse(tr("Add a project on this machine to scan it for Space files."));
+    } else {
+      scanFiles(project, input.value(QLatin1String("replace")).toBool());
+    }
+  } else if (action == QLatin1String("space.page.unlinkFile")) {
+    const QString project = fileOf(pageId).value(QStringLiteral("projectId")).toString();
+    call(QStringLiteral("page.unlinkFile"), {{QStringLiteral("pageId"), pageId}}, [this, project](const QJsonObject&) {
+      toast(QStringLiteral("success"), tr("The page no longer follows its file"));
+      listFiles(m_client->environment(), project);
+    });
+  } else if (action == QLatin1String("space.page.showFile")) {
+    showFile(pageId);
   } else if (action == QLatin1String("space.selectPage")) {
     selectPage(pageId);
   } else if (action == QLatin1String("space.create")) {

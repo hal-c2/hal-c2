@@ -110,9 +110,13 @@ defmodule HalC2.Space.Markdown do
   defp apart_item?(_above, _block, _item), do: false
 
   defp separator(above, block, text) do
+    next = block["kind"]
+
     case {gap(block), above} do
       {nil, _} -> usual(above, block["kind"])
       {"\n" <> gap, :start} -> gap
+      # Between items "\n" is the usual separator: no need to read the list again.
+      {"\n", {kind, _}} when kind in @lists and next in @lists -> "\n"
       {"\n", {_kind, over}} -> if apart?(over, text), do: "\n", else: usual(above, block["kind"])
       {gap, _} -> gap
     end

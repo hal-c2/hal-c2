@@ -319,6 +319,7 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import { MermaidRenderInput, MermaidRenderResult } from "./mermaid.ts";
 import {
   SpaceBlockDeleteInput,
   SpaceBlockDeleteResult,
@@ -607,6 +608,9 @@ export const WS_METHODS = {
   spaceImageRestore: "space.image.restore",
   spaceImageDelete: "space.image.delete",
   spaceImageProviders: "space.image.providers",
+
+  // Mermaid diagrams, drawn by the MC for every client
+  mermaidRender: "mermaid.render",
 
   // The cluster of this person's machines (MCs only)
   clusterStatus: "cluster.status",
@@ -2186,6 +2190,12 @@ const WsSpaceImageProvidersRpc = Rpc.make(WS_METHODS.spaceImageProviders, {
   error: EnvironmentAuthorizationError,
 });
 
+const WsMermaidRenderRpc = Rpc.make(WS_METHODS.mermaidRender, {
+  payload: MermaidRenderInput,
+  success: MermaidRenderResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2321,6 +2331,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpaceImageRestoreRpc,
   WsSpaceImageDeleteRpc,
   WsSpaceImageProvidersRpc,
+  WsMermaidRenderRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerReportDesktopUpdateStatusRpc,

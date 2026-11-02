@@ -90,8 +90,9 @@ private:
 // the answer, however many were wanted.
 //
 // Rows:
-//   versions {id, version, at, byAgent, byUpdate, threadTitle, restoredFromAt}: newest
-//            first, the first being the page as it is now
+//   versions {id, version, at, byAgent, byUpdate, byFile, threadTitle, restoredFromAt}:
+//            newest first, the first being the page as it is now; byFile when the
+//            project file it is wrote it
 //   blocks   the version being read, as SpacePages' blocks
 class SpaceHistory : public QObject {
   Q_OBJECT
@@ -224,9 +225,11 @@ class SpacePages : public QObject {
   Q_PROPERTY(QString spaceId READ spaceId NOTIFY changed)
   Q_PROPERTY(QString spaceName READ spaceName NOTIFY changed)
   Q_PROPERTY(QString pageId READ pageId NOTIFY changed)
-  // {id, title, parentPageId, trashed, sourceThreadId, sourceThreadTitle, site},
+  // {id, title, parentPageId, trashed, sourceThreadId, sourceThreadTitle, site, file},
   // or empty. `site` is what the page has published, {url, localOnly, behind,
-  // publishedAt}, or empty.
+  // publishedAt}, or empty. `file` is the project file the page is, {projectId,
+  // projectTitle, path, missing, unwritten, conflictAt}, or empty; unwritten when the
+  // page was edited while the file was gone.
   Q_PROPERTY(QVariantMap page READ page NOTIFY changed)
   // What the open page says about the agent asked to work on it: {status (running, stopping,
   // completed, failed, stopped), request, threadId, threadTitle, edited, error}, or empty.
@@ -264,8 +267,8 @@ public:
   QString spaceName() const;
   QString pageId() const { return m_pageId; }
   // The open page: {id, title, parentPageId, trashed, sourceThreadId,
-  // sourceThreadTitle, schedule, writtenAt}. `schedule` is what the MC shows of
-  // the page's update plus its `cadenceLabel`, empty when it has none.
+  // sourceThreadTitle, schedule, writtenAt, site, file}. `schedule` is what the MC
+  // shows of the page's update plus its `cadenceLabel`, empty when it has none.
   QVariantMap page() const;
   QVariantMap agent() const;
   QString deckId() const { return m_deckId; }
@@ -276,6 +279,7 @@ public:
   int slideNumber() const { return m_presenting ? m_slideIndex + 1 : 0; }
   int slideCount() const { return m_presenting ? m_slides->rowCount() : 0; }
   QVariantMap siteOf(const QString& pageId) const;
+  QVariantMap fileOf(const QString& pageId) const;
   QString status() const;
   QVariantMap viewers() const { return m_viewers; }
   // "Every 2 hours", "Every day at 07:30", "Mon, Wed at 09:00".
@@ -335,6 +339,7 @@ public:
   QString titleOf(const QString& pageId) const;
   QString threadTitle(const QString& threadId) const;
   void setThreadTitles(std::function<QString(const QString&)> title) { m_threadTitle = std::move(title); }
+  void setProjectTitles(std::function<QString(const QString&)> title) { m_projectTitle = std::move(title); }
 
 signals:
   void changed();
@@ -391,6 +396,7 @@ private:
   QHash<QString, Pending> m_pending;
   int m_tokens = 0;
   std::function<QString(const QString&)> m_threadTitle;
+  std::function<QString(const QString&)> m_projectTitle;
   struct Address {
     QString url;
     qint64 expiresAt = 0;
@@ -425,7 +431,19 @@ private:
 // Publishes `space`: {error (the last refusal, until the next request), busy
 // (a page from a thread is being written), drawing (a chart is being asked for),
 // written, addingImage, generatingImage, imageProviders ({providers, selection},
-// `space.image.providers`' answer)}.
+// `space.image.providers`' answer), files, picking, projects}.
+//
+// Project files open as pages through the MC (features/space/project-files.feature),
+// only for a project of this client's MC, whose Spaces this view shows:
+//   files    {projectId: {config, paths: {relativePath: {kind, spaceId, pageId, title}}}},
+//            the project's Space files as `space.files.list` last said; pageId is
+//            "" for a file with no page yet. A project not asked about is not there.
+//   picking  the project whose files the Space view offers to add as a page, "" for none
+//   projects [{id, title}]: this MC's projects, for the picker to choose from
+// A file opens in the selected Space, else the last one shown, else the first; the
+// MC's answer names the Space when the file already has a page in another, and
+// that Space and page are shown. A file-backed page is read again from its file
+// each time it comes on show.
 //
 // Actions (each payload's `spaceId` defaults to the selected Space):
 // `space.open`, `space.select {spaceId}`, `space.selectPage {pageId}`,
@@ -441,6 +459,12 @@ private:
 // `space.page.copySiteLink {pageId}`,
 // `space.page.importMarkdown {markdown}`, `space.page.importFile {url}`,
 // `space.pageFromThread {threadKey}`,
+// `space.openFile {environmentId, projectId, relativePath}` (environmentId: this MC's
+// when absent), `space.files.list {projectId}`, `space.files.pick {projectId}` (the
+// project of the thread on show, else the last picked, else the first, when absent),
+// `space.files.pickClose`, `space.files.scan {projectId, replace}` (projectId as
+// for pick), `space.page.unlinkFile {pageId}`, `space.page.showFile {pageId}` (the
+// file in the Files tab of the project's latest thread),
 // `space.block.insert {pageId, kind, text, checked, linkedPageId, imageId, afterBlockId}`
 // (afterBlockId: "" first, absent last), `space.block.visualize {pageId, request,
 // blockId (the chart it replaces), afterBlockId}`, `space.block.update {blockId, text}`,
@@ -473,6 +497,8 @@ public:
   static inline const QString kAskAgent = QStringLiteral("space.agent.focus");
   static inline const QString kDeckFromPage = QStringLiteral("space.deck.fromOpenPage");
   static inline const QString kPresentDeck = QStringLiteral("space.deck.presentOpen");
+  static inline const QString kPickFile = QStringLiteral("space.files.pick");
+  static inline const QString kScanFiles = QStringLiteral("space.files.scanProject");
 
   SpaceController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
@@ -486,6 +512,15 @@ public:
   void setPageShownBySteps(bool bySteps);
   // How long a page the MC could not say who is on waits to ask it again.
   void setViewersRetryMs(int ms);
+
+  // The project files a client offers to open as pages: asks the MC which files of
+  // the project `projectId` are Space content, published in `files`. A project of
+  // another environment is never asked about, as its files open in no Space here.
+  void listFiles(const QString& environmentId, const QString& projectId);
+  // Whether `relativePath` was among the Space files the MC last said the project has.
+  bool isSpaceFile(const QString& environmentId, const QString& projectId, const QString& relativePath) const;
+  // Opens the file as a page (`space.openFile`) and shows it.
+  void openFile(const QString& environmentId, const QString& projectId, const QString& relativePath);
 
 private:
   void setOpen(bool open);
@@ -505,6 +540,16 @@ private:
   void exportPage(const QString& pageId, std::function<void(const QString& markdown)> done);
   void importMarkdown(const QString& markdown);
   void pageFromThread(const QString& threadKey);
+  // The project the user means without naming one: that of the thread on show,
+  // else the one last picked, else this MC's first.
+  QString projectHere() const;
+  void receiveFiles(const QString& projectId, const QJsonObject& result);
+  void scanFiles(const QString& projectId, bool replace);
+  void showFile(const QString& pageId);
+  // Reads the open page's file again when it comes on show (`space.page.syncFile`).
+  void syncShownFile();
+  // Whether the selected page is the one on show.
+  bool pageOnShow() const;
   void openHistory(const QString& pageId);
   // The history follows the open page, and asks again a moment after the page is
   // written (at most once in `kHistoryRefreshMs`, however fast it is written). A
@@ -540,6 +585,16 @@ private:
   QVariantMap m_imageProviders;
   // The page last written from a thread.
   QString m_written;
+  // `files`, by project id, and the project picked from.
+  QVariantMap m_files;
+  QString m_picking;
+  QString m_lastPicked;
+  // The `space.files.list` on its way for each project, by its token.
+  QHash<QString, int> m_listing;
+  QSet<QString> m_filesWanted;
+  int m_fileTokens = 0;
+  // The file-backed page read again since it came on show.
+  QString m_synced;
   QTimer* m_historyRefresh;
   qint64 m_historyOffset = -1;
 };

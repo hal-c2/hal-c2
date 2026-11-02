@@ -337,10 +337,12 @@ inline cache::Thread keptCopy(World& world, const QString& key) {
   return copy;
 }
 
-// The thread "thread-1" of `project`, opened and followed.
-inline void lookAtThread(World& world, const QString& project) {
-  world.mc.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), QStringLiteral("Tax line")}, {QStringLiteral("projectId"), project},
-                                      {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
+// The thread "thread-1" of `project`, with the fields of `more` (a worktreePath), opened and followed.
+inline void lookAtThread(World& world, const QString& project, const QJsonObject& more = {}) {
+  QJsonObject row{{QStringLiteral("id"), kThread}, {QStringLiteral("title"), QStringLiteral("Tax line")}, {QStringLiteral("projectId"), project},
+                  {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}};
+  for (auto it = more.begin(); it != more.end(); ++it) row.insert(it.key(), it.value());
+  world.mc.threads.insert(kThread, row);
   world.mc.sendRow(kThread, world.mc.threads.value(kThread));
   world.sync();
   FakeStreams& fake = world.mc.part<FakeStreams>();

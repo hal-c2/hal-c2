@@ -177,6 +177,7 @@ defmodule HalC2.Rpc do
   def handle("device.action", input), do: HalC2.Devices.action(input)
   def handle("slack." <> method, input), do: HalC2.Slack.handle(method, input)
   def handle("space." <> method, input), do: HalC2.Space.Rpc.handle(method, input)
+  def handle("mermaid.render", input), do: HalC2.Mermaid.handle(input)
   def handle("scheduledTasks.list", input), do: HalC2.ScheduledTasks.list(input)
   def handle("scheduledTasks.upsert", input), do: HalC2.ScheduledTasks.upsert(input)
   def handle("scheduledTasks.delete", input), do: HalC2.ScheduledTasks.delete(input)
@@ -359,7 +360,7 @@ defmodule HalC2.Rpc do
     agentSessions.scan
     assets.createUrl vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
     slack.status slack.manifest space.list space.files.list space.page.exportMarkdown space.page.history
-    space.page.version space.image.providers
+    space.page.version space.image.providers mermaid.render
   )
   @pull_request_writes ~w(
     runAction update comment updateComment submitReview replyToThread setThreadResolution

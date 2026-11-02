@@ -66,6 +66,8 @@ defmodule HalC2.Application do
       HalC2.Workspace,
       HalC2.WorktreeSetup,
       HalC2.Space.Presence,
+      # Draws Mermaid diagrams for every client, and keeps what it drew.
+      HalC2.Mermaid,
       HalC2.ScheduledTasks,
       # Pages that are project files follow them, from what changed while it was stopped.
       HalC2.Space.Files,
