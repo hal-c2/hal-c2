@@ -636,6 +636,17 @@ const Steps steps([] {
     world.sync();
     expect(terminal->property("hasSelection").toBool(), QStringLiteral("a failed copy cleared the selection"));
   });
+  step(QStringLiteral("the user types again while the MC is still unreachable"), [](World& world, const Captures&, const Table&) {
+    terminalSession(world, QStringLiteral("term-1"))->write(QStringLiteral("l"));
+    world.sync();
+    terminalSession(world, QStringLiteral("term-1"))->write(QStringLiteral("s\r"));
+    world.sync();
+  });
+  step(QStringLiteral("the terminal shows %1 once").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* terminal = drawnTerminal(world);
+    world.waitFor([&] { return call(terminal, "text").contains(c[0]); }, [&] { return QStringLiteral("the terminal to say \"%1\"; it shows \"%2\"").arg(c[0], call(terminal, "text")); });
+    expect(call(terminal, "text").count(c[0]) == 1, QStringLiteral("it says \"%1\" %2 times").arg(c[0]).arg(call(terminal, "text").count(c[0])));
+  });
   step(QStringLiteral("the terminal shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* terminal = drawnTerminal(world);
     world.waitFor([&] { return call(terminal, "text").contains(c[0]); }, [&] { return QStringLiteral("the terminal to say \"%1\"; it shows \"%2\"").arg(c[0], call(terminal, "text")); });

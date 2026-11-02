@@ -189,6 +189,14 @@ Feature: Terminal failures
         | pasting from the clipboard            |                      | Unable to read the clipboard |
 
     @desktop
+    Scenario: Typing while the MC is unreachable says so once
+      Given the terminal shows a running shell
+      When sending what the user typed fails with "MC is unreachable"
+      And the user types again while the MC is still unreachable
+      Then the terminal shows "[terminal] MC is unreachable" once
+      And the terminal keeps working
+
+    @desktop
     Scenario: A link that cannot be opened anywhere is reported without losing the terminal
       Given the user's links open in the in-app browser
       And neither the in-app browser nor the system browser can open an address

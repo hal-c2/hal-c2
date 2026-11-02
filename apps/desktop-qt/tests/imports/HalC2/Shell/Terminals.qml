@@ -46,6 +46,10 @@ QtObject {
         focused.push(terminalId);
     }
 
+    function terminalFont(family, pixelSize) {
+        return Qt.font({ family: family.length > 0 ? family : "monospace", pixelSize: pixelSize });
+    }
+
     function addTab(terminalId, label, options) {
         const place = options ?? {};
         if (!(place.panel ?? false))

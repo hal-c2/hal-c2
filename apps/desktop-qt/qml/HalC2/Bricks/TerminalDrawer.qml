@@ -206,6 +206,7 @@ Item {
         group: Terminals.activeGroup
         background: drawer.background
         foreground: drawer.foreground
+        scrollbarTopInset: drawer.listShown ? 0 : actions.y + actions.height + 2 - y
     }
 
     // Over the single terminal's corner, or over the list. On its own
@@ -220,6 +221,7 @@ Item {
     RowLayout {
         id: actions
 
+        objectName: "terminalDrawerActions"
         anchors.top: edgeLine.bottom
         anchors.right: parent.right
         anchors.topMargin: 4
