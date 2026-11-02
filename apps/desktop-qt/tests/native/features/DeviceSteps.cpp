@@ -1109,6 +1109,22 @@ const Steps steps([] {
     sideBySide(world, c[0], c[1]);
     bothStream(world, c[0], c[1]);
   });
+  step(QStringLiteral("the user opens it side by side with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    Brick& panel = devicePanel(world);
+    world.waitFor([&] { return panel.item(QStringLiteral("deviceCompare"))->isVisible(); }, [&] { return describe(world); });
+    panel.click(QStringLiteral("deviceCompare"));
+    const QString entry = QStringLiteral("deviceCompare-") + tabOf(world, c[0]);
+    world.waitFor([&] { return panel.shows(c[0]) && panel.item(entry)->isVisible(); }, [&] { return describe(world); });
+    panel.click(entry);
+    world.sync();
+  });
+  step(QStringLiteral("%1 and %1 show side by side in the centre").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList wanted{tabOf(world, c[0]), tabOf(world, c[1])};
+    world.waitFor([&] {
+      const QVariantMap stage = stageOf(world);
+      return stage.value(QStringLiteral("layout")) == QLatin1String("columns") && stage.value(QStringLiteral("panes")).toList() == wanted;
+    }, [&] { return show(stageOf(world)); });
+  });
   step(QStringLiteral("the user shows only %1 on the stage").arg(q), [](World& world, const Captures& c, const Table&) {
     keepStreams(world);
     const qsizetype pane = stageOf(world).value(QStringLiteral("panes")).toList().indexOf(QVariant(tabOf(world, c[0])));

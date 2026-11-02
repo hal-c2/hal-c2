@@ -318,6 +318,16 @@ Feature: Device panel
       And "iPhone 17" keeps its stream
 
     @desktop
+    Scenario: A device opens side by side with another from its tab
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the thread has the Android Emulator "Pixel 9" open
+      And the user is watching the "Pixel 9" tab
+      And the user is watching the "iPhone 17" tab
+      When the user opens it side by side with "Pixel 9"
+      Then "iPhone 17" and "Pixel 9" show side by side in the centre
+      And "iPhone 17" and "Pixel 9" both stream at once
+
+    @desktop
     Scenario: A device moved to the centre keeps its stream
       Given the thread has the iOS Simulator "iPhone 17" open
       And the user is watching the "iPhone 17" tab

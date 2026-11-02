@@ -65,7 +65,7 @@ class ShellStore;
 // centre), `rightPanel.dock {id, dock: "stage"|"panel", pane?, zone?}`,
 // `stage.show {id}`, `stage.layout {layout}`, `stage.focusPane {pane}`,
 // `stage.toggleFocus`, `stage.resize {width?}`, `stage.dismiss` (every stage
-// tab back to the panel),
+// tab back to the panel), `stage.sideBySide {id, with}` (both, in columns),
 // `threadPanel.toggle`, `rightPanel.reviewProject {key}` (a pull request of
 // the thread's project, from the Pull requests tab), `rightPanel.linkPullRequest {url}` (a message's
 // mention), `rightPanel.openThread {threadKey}` (an Agents row's;
@@ -159,6 +159,8 @@ public:
   // back on the panel, where it shows.
   Q_INVOKABLE void moveToStage(const QString& id, int pane = -1, const QString& zone = QStringLiteral("center"));
   Q_INVOKABLE void moveToPanel(const QString& id);
+  // Both tabs on the stage, side by side (columns): `id` left, `other` right.
+  Q_INVOKABLE void sideBySide(const QString& id, const QString& other);
   // The panel's active tab to the stage, or else the stage's focused tab back.
   Q_INVOKABLE void moveTab();
   Q_INVOKABLE void setStageLayout(const QString& layout);

@@ -295,6 +295,8 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     } else {
       moveToStage(id, map.value(QStringLiteral("pane"), -1).toInt(), map.value(QStringLiteral("zone"), QStringLiteral("center")).toString());
     }
+  } else if (action == QLatin1String("stage.sideBySide")) {
+    sideBySide(map.value(QStringLiteral("id")).toString(), map.value(QStringLiteral("with")).toString());
   } else if (action == QLatin1String("stage.show")) {
     showTab(map.value(QStringLiteral("id")).toString());
   } else if (action == QLatin1String("stage.layout")) {
@@ -720,6 +722,23 @@ void RightPanelController::moveToPanel(const QString& id) {
   if (!state.stage.remove(id)) return;
   state.active = id;
   state.open = true;
+  update();
+}
+
+void RightPanelController::sideBySide(const QString& id, const QString& other) {
+  if (!m_onThread || id == other) return;
+  Panel& state = panel();
+  if (!state.tabs.contains(id) || !state.tabs.contains(other)) return;
+  const QStringList before = panelTabs(state);
+  for (const QString& tab : {id, other}) {
+    if (state.floating == tab) state.floating.clear();
+    if (!state.stage.contains(tab)) state.stage.tabs.append(tab);
+  }
+  state.stage.layout = QStringLiteral("columns");
+  state.stage.panes = {id, other};
+  state.stage.focused = 0;
+  state.stage.normalize();
+  if (!state.active.isEmpty() && !panelTabs(state).contains(state.active)) nextActive(state, before);
   update();
 }
 

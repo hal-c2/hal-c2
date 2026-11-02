@@ -29,6 +29,20 @@ Rectangle {
     readonly property bool show3d: deviceTab !== null && deviceTab.show3d
     readonly property bool keyboardAttached: deviceTab !== null && deviceTab.keyboardAttached
     readonly property bool tablet: screen !== null && String(screen.name).indexOf("iPad") >= 0
+    // The thread's other open devices, to show beside this one: [{id, name}].
+    readonly property var others: {
+        const tabs = source ? source.tabs : {};
+        const found = [];
+        for (const id in tabs) {
+            const other = tabs[id];
+            if (id !== tabId && other && other.screen)
+                found.push({
+                    id: id,
+                    name: other.screen.name
+                });
+        }
+        return found;
+    }
 
     function toggleKeyboard() {
         if (deviceTab)
@@ -178,6 +192,39 @@ Rectangle {
                     iconName: "sliders-horizontal"
                     Accessible.name: qsTr("Tools")
                     onClicked: root.tools.setOpen(!root.toolsOpen)
+                }
+                DeviceButton {
+                    objectName: "deviceCompare"
+                    visible: root.others.length > 0
+                    iconName: "square-split-horizontal"
+                    Accessible.name: qsTr("Open side by side with…")
+                    onClicked: compareMenu.open()
+
+                    ShellMenu {
+                        id: compareMenu
+
+                        y: parent.height + 4
+                        x: parent.width - width
+
+                        Instantiator {
+                            model: root.others
+
+                            delegate: ShellMenuItem {
+                                required property var modelData
+
+                                objectName: "deviceCompare-" + modelData.id
+                                text: modelData.name
+                                iconName: "smartphone"
+                                onTriggered: Shell.dispatch("stage.sideBySide", {
+                                    id: root.tabId,
+                                    with: modelData.id
+                                })
+                            }
+
+                            onObjectAdded: (index, object) => compareMenu.insertItem(index, object)
+                            onObjectRemoved: (index, object) => compareMenu.removeItem(object)
+                        }
+                    }
                 }
                 DeviceButton {
                     objectName: "deviceFloat"
