@@ -281,7 +281,7 @@ Feature: Queueing, steering and restarting
     Then no queued message is held
     And a run for "A" starts
 
-  @mc @shared @backlog-mobile
+  @mc @shared
   Scenario: A usage limit keeps the queue as it was
     Given "t1" has a running turn and queued messages "one" and "two"
     When the provider stops "t1" because its usage limit was reached
