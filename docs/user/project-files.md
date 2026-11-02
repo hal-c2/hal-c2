@@ -15,6 +15,10 @@ same file again, from any Space, goes to the page it already is, and brings it b
 A file opened from a thread's worktree goes to the page of the project's own folder: a page follows
 the file in the project's folder, whatever branch is checked out there.
 
+A link in the project (`CLAUDE.md` linking to `AGENTS.md`, say) opens as the file it links to, and
+edits go to that file while the link stays a link. If the link and its file are both open as pages, an
+edit on either shows on the other. A link that leads out of the project doesn't open.
+
 ## Which files count
 
 Without any setup, every Markdown file in the project can be opened. To choose, add a `spaces`
@@ -35,14 +39,19 @@ and leaves the rest of `hal-c2.json` working.
 When the file changed since the page last read it and you edit the page, the file wins. The page
 says so, and what you typed is a version in the page's history that you can restore.
 
+When the file can't be written, for example because it is read-only, the edit is refused and you
+are told why; the page and the file stay as they were.
+
 Comments, who is on the page, the page's agent, its history and where it sits in the Space stay with
 the page, not in the file. A page that is a file can't update itself or hold charts.
 
 ## Moved and deleted files
 
-A file renamed or moved as it is takes its page along. A deleted file, or one the checked-out branch
-doesn't have, leaves the page saying the file is gone; the page keeps what it said, and follows the
-file again when it comes back.
+A file renamed or moved as it is takes its page along, unless more than one file now reads the same,
+in which case the page says the file is gone. A deleted file, or one the checked-out branch doesn't
+have, leaves the page saying the file is gone; the page keeps what it said, including edits made
+since, and follows the file again when it comes back. A file that comes back wins over those edits:
+the page says so, and they are versions in its history.
 
 ## Stop following the file
 
