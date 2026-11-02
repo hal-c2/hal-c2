@@ -8,8 +8,9 @@
 // RPCs. A page's history (h) is the exception: it is not on a stream, so it is asked
 // for while it is open, again when the Space's stream moves. The SpaceView brick
 // paints `space` and dispatches `space.*`. A chart block draws as text (`spaceChart.ts`)
-// and is asked for in words; an entry taller than the pane, as a chart can be, scrolls
-// through itself before the selection moves on.
+// and is asked for in words, and a raw block that is one Mermaid fence as the MC drew
+// it in characters (`mermaidDiagrams.ts`); an entry taller than the pane, as a chart
+// can be, scrolls through itself before the selection moves on.
 import * as NodePath from "node:path";
 
 import {
@@ -54,7 +55,15 @@ import { scheduleLabel } from "./sections/scheduledTasks.ts";
 import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
 import { chartData, chartLines } from "./spaceChart.ts";
-import { chunk, styled, type StyledText } from "./styledText.ts";
+import { createMermaidDiagrams, type MermaidDiagrams } from "./mermaidDiagrams.ts";
+import {
+  chunk,
+  mermaidFenceSource,
+  mermaidLines,
+  plainText,
+  styled,
+  type StyledText,
+} from "./styledText.ts";
 
 /** Rows the pane's border and header take. */
 export const SPACE_CHROME_ROWS = 3;
@@ -130,6 +139,8 @@ export interface SpaceControllerOptions {
   readonly height: () => number;
   readonly width: () => number;
   readonly palette?: Palette;
+  /** The Mermaid drawings the MC sent, shared with the timeline and file viewer. */
+  readonly diagrams?: MermaidDiagrams;
   readonly setOpen: (open: boolean) => void;
   readonly publish: (state: TuiSpaceState) => void;
   readonly status: (text: string, kind?: StatusKind) => void;
@@ -317,6 +328,7 @@ const byOrder = (a: { readonly order: string }, b: { readonly order: string }) =
 export function createSpaceController(options: SpaceControllerOptions): SpaceController {
   const { client } = options;
   const palette = options.palette ?? THEME;
+  const diagrams = options.diagrams ?? createMermaidDiagrams(client);
   let open = false;
   let view: TuiSpaceView = "spaces";
   let spaces: StreamEntities = EMPTY_STREAM_ENTITIES;
@@ -557,6 +569,34 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     ];
   };
 
+  /** A raw block that is one Mermaid fence: drawn in characters by the MC, or its source. */
+  const diagramRows = (block: SpaceBlock, source: string): TuiSpaceRow[] => {
+    const key = `block:${block.id}`;
+    const active = selected.page === key;
+    const bg = active ? { bg: palette.selectedBg } : {};
+    const room = width() - 2;
+    const agent = agentOf(block);
+    const { lines } = mermaidLines(source, diagrams.get(source), palette, room);
+    return lines.map((line, index) => {
+      const lead = index === 0 ? marker(active) : "  ";
+      const by = index === 0 && agent ? `  · ${agent}` : "";
+      const chunks = [
+        chunk(lead, { fg: palette.dim, ...bg }),
+        ...line.chunks.map((part) => ({ ...part, ...bg })),
+        ...(by === "" ? [] : [chunk(by, { fg: palette.faint, ...bg })]),
+      ];
+      return {
+        key,
+        kind: "block",
+        text: `${lead}${plainText(line)}${by}`,
+        line: { chunks },
+        selected: active,
+        blockKind: block.kind,
+        first: index === 0,
+      };
+    });
+  };
+
   /** A placed image in words. Its caption names it once the image is gone from the stream. */
   const imagePlaceholder = (block: SpaceBlock): string => {
     const image = imageById(block.imageId);
@@ -574,6 +614,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     // A chart this client cannot read shows what it says of itself, as any block does.
     const chart = block.kind === "chart" ? chartData(block.chart) : null;
     if (chart) return chartRows(block, chart);
+    const diagram = block.kind === "raw" ? mermaidFenceSource(block.text) : null;
+    if (diagram !== null) return diagramRows(block, diagram);
     const key = `block:${block.id}`;
     const active = selected[view] === key;
     const linked = block.kind === "subpage_link" ? pageById(block.linkedPageId) : undefined;
@@ -1006,6 +1048,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       rows: rows.slice(top, top + room),
     });
   };
+  const stopDiagrams = diagrams.listen(() => {
+    if (open) publish();
+  });
 
   // --- streams ---
 
@@ -2763,8 +2808,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     },
     settled: async () => {
       while (pending.size > 0) await Promise.allSettled(pending);
+      await diagrams.settled();
     },
     dispose: () => {
+      stopDiagrams();
       unsubscribeViewers?.();
       unsubscribeViewers = null;
       unsubscribeSpaces?.();

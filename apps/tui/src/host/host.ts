@@ -36,6 +36,7 @@ import { createComposer } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import { createFilesController } from "./filesState.ts";
+import { createMermaidDiagrams } from "./mermaidDiagrams.ts";
 import { createSpaceController } from "./spaceState.ts";
 import {
   buildTuiLayoutState,
@@ -392,10 +393,13 @@ export function createHost(options: HostOptions): Host {
   // Republish a key only when what it is derived from changed, so bindings
   // on other keys are not re-evaluated by every store emit.
   let last: StoreState | null = null;
+  // Mermaid diagrams the MC drew, shared by replies, pages and the file viewer.
+  const diagrams = createMermaidDiagrams(client);
   const threadView = createThreadView({
     store,
     client,
     state,
+    diagrams,
     mode: () => mode,
     setMode: (next) => setMode(next),
     nowMs: () => Date.parse(now()),
@@ -722,6 +726,7 @@ export function createHost(options: HostOptions): Host {
   // The file browser and viewer take the conversation pane's place.
   const files = createFilesController({
     client,
+    diagrams,
     cwd: () => selectedWorkspace()?.cwd ?? null,
     height: () => layout.panesRows,
     width: () => layout.chatWidth,
@@ -752,6 +757,7 @@ export function createHost(options: HostOptions): Host {
   const home = options.homeDir ?? NodeOS.homedir();
   const space = createSpaceController({
     client,
+    diagrams,
     height: () => layout.panesRows,
     width: () => layout.chatWidth,
     setOpen: (open) => {
