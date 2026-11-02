@@ -27,13 +27,13 @@ namespace {
 const QString kTab = QStringLiteral("tab-1");
 const QString kThread = QStringLiteral("thread-1");
 
-// The fixture page: a button that counts its trusted clicks, a field, and a
-// line that says which keys reached the field.
+// The fixture page: a button that counts its trusted clicks (and all of
+// them), a field, and a line that says which keys reached the field.
 const char kPage[] = R"html(<!doctype html><title>Fixture</title>
 <body style="margin:0">
 <h1>Checkout</h1>
 <button id="buy" style="position:absolute;left:40px;top:120px;width:120px;height:40px"
-  onclick="if (event.isTrusted) document.getElementById('clicks').textContent = String(Number(document.getElementById('clicks').textContent) + 1)">Buy</button>
+  onclick="window.anyClicks = (window.anyClicks || 0) + 1; if (event.isTrusted) document.getElementById('clicks').textContent = String(Number(document.getElementById('clicks').textContent) + 1)">Buy</button>
 <span id="clicks">0</span>
 <input id="name" style="position:absolute;left:40px;top:200px;width:200px"
   onkeydown="if (event.key === 'Enter') document.getElementById('entered').textContent = this.value">
@@ -48,11 +48,36 @@ import HalC2.Shell
 Window {
     width: 800; height: 600; visible: true
     property alias page: page
-    WebEngineView {
-        id: view
-        objectName: "view"
+    property alias frame: frame
+    property alias cover: cover
+    property alias neighbour: neighbour
+    // The pane beside the view's, under it: where the view's pane clips the
+    // view, a press lands on this one.
+    MouseArea {
+        id: neighbour
+        property int presses: 0
         anchors.fill: parent
-        onJavaScriptConsoleMessage: (level, message, line, source) => page.consoleMessage(level, message, line, source)
+        onPressed: presses++
+    }
+    // The pane the view sits in: narrowed, it clips the view.
+    Item {
+        id: frame
+        width: parent.width; height: parent.height
+        clip: true
+        WebEngineView {
+            id: view
+            objectName: "view"
+            width: 800; height: 600
+            onJavaScriptConsoleMessage: (level, message, line, source) => page.consoleMessage(level, message, line, source)
+        }
+    }
+    // An app overlay (a menu, a dialog) over the page.
+    MouseArea {
+        id: cover
+        property int presses: 0
+        anchors.fill: parent
+        visible: false
+        onPressed: presses++
     }
     BrowserPage {
         id: page
@@ -231,6 +256,37 @@ private slots:
     QCOMPARE(human.count(), 0);
     QTest::mouseClick(m_window, Qt::LeftButton, {}, QPoint(300, 400));
     QTRY_VERIFY(human.count() > 0);
+  }
+
+  // An app overlay over the page takes no agent click: the agent's real click
+  // would be the user's on the app's own menu or dialog. The page still gets
+  // the click, by script.
+  void neverClicksTheAppOverThePage() {
+    QObject* cover = m_window->property("cover").value<QObject*>();
+    cover->setProperty("visible", true);
+    const int trusted = evaluate(QStringLiteral("document.getElementById('clicks').textContent")).toString().toInt();
+    const int any = evaluate(QStringLiteral("window.anyClicks || 0")).toInt();
+    const QJsonObject clicked = ask(QStringLiteral("click"), {{QStringLiteral("selector"), QStringLiteral("#buy")}});
+    cover->setProperty("visible", false);
+    QVERIFY2(clicked.value(QLatin1String("ok")).toBool(), QJsonDocument(clicked).toJson().constData());
+    QCOMPARE(cover->property("presses").toInt(), 0);
+    QCOMPARE(evaluate(QStringLiteral("window.anyClicks || 0")).toInt(), any + 1);
+    QCOMPARE(evaluate(QStringLiteral("document.getElementById('clicks').textContent")).toString().toInt(), trusted);
+  }
+
+  // Nor where the pane holding the page clips it: what shows there is the
+  // pane beside it.
+  void neverClicksWhereThePageIsClipped() {
+    QObject* frame = m_window->property("frame").value<QObject*>();
+    frame->setProperty("width", 20);
+    const int trusted = evaluate(QStringLiteral("document.getElementById('clicks').textContent")).toString().toInt();
+    const int any = evaluate(QStringLiteral("window.anyClicks || 0")).toInt();
+    const QJsonObject clicked = ask(QStringLiteral("click"), {{QStringLiteral("selector"), QStringLiteral("#buy")}});
+    frame->setProperty("width", m_window->width());
+    QVERIFY2(clicked.value(QLatin1String("ok")).toBool(), QJsonDocument(clicked).toJson().constData());
+    QCOMPARE(m_window->property("neighbour").value<QObject*>()->property("presses").toInt(), 0);
+    QCOMPARE(evaluate(QStringLiteral("window.anyClicks || 0")).toInt(), any + 1);
+    QCOMPARE(evaluate(QStringLiteral("document.getElementById('clicks').textContent")).toString().toInt(), trusted);
   }
 
   // The user acting in the page while the agent clicks stops the agent's click.
