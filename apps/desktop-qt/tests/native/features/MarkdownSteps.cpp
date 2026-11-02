@@ -18,6 +18,7 @@
 #include "Brick.h"
 #include "FakeFiles.h"
 #include "Harness.h"
+#include "Mermaid.h"
 #include "Stream.h"
 #include "World.h"
 
@@ -33,6 +34,8 @@ const QString kSentence = QStringLiteral("Cache keys include the tenant.");
 // What a step saw, for a later step to compare with.
 struct Seen {
   QString link;
+  // The code a reply being written has so far.
+  QString code;
   QPointer<QQuickItem> item;
   std::shared_ptr<QSignalSpy> redraws;
   int segments = 0;
@@ -356,7 +359,12 @@ const Steps steps([] {
   });
 
   step(QStringLiteral("the agent is writing a code block"), [](World& world, const Captures&, const Table&) {
-    startWriting(world, QStringLiteral("Checking the refund path:\n\n```py\ndef refund(order):\n    return order.total"));
+    world.mc.part<Seen>().code = QStringLiteral("def refund(order):\n    return order.total");
+    startWriting(world, QStringLiteral("Checking the refund path:\n\n```py\n") + world.mc.part<Seen>().code);
+  });
+  step(QStringLiteral("the agent is still writing a \"mermaid\" code block"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<Seen>().code = mermaid::kFlowchart;
+    startWriting(world, QStringLiteral("How an order is paid:\n\n```mermaid\n") + mermaid::kFlowchart);
   });
   step(QStringLiteral("the code written so far is shown as a code block"), [](World& world, const Captures&, const Table&) {
     QQuickItem* message = reply(world, 2);
@@ -364,7 +372,9 @@ const Steps steps([] {
     expect(segment->property("kind") == QLatin1String("code") && segment->property("open").toBool(),
            QStringLiteral("the reply is drawn as %1").arg(kindsOf(message).join(QStringLiteral(", "))));
     QQuickItem* code = one(message, QStringLiteral("codeText"));
-    expect(plain(code) == QLatin1String("def refund(order):\n    return order.total"), QStringLiteral("the code reads \"%1\"").arg(plain(code)));
+    expect(code->isVisible() && plain(code) == world.mc.part<Seen>().code, QStringLiteral("the code reads \"%1\"").arg(plain(code)));
+    // A diagram not finished yet is not drawn, nor asked for.
+    expect(mermaid::asked(world) == 0, QStringLiteral("the MC was asked to draw a diagram being written"));
     world.mc.part<Seen>().item = code;
   });
   step(QStringLiteral("the agent closes the code block"), [](World& world, const Captures&, const Table&) {
@@ -375,6 +385,35 @@ const Steps steps([] {
     QQuickItem* segment = within(message, QStringLiteral("markdownSegment")).last();
     world.waitFor([&] { return !segment->property("open").toBool(); }, QStringLiteral("the code block to close"));
     expect(one(message, QStringLiteral("codeText")) == world.mc.part<Seen>().item.data(), QStringLiteral("the code block was drawn anew"));
+  });
+
+  // Mermaid diagrams (MermaidSteps.cpp answers the MC's part).
+  step(QStringLiteral("the agent answers with a \"mermaid\" code block holding a flowchart( with an unclosed bracket)?"), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<Seen>().code = c[0].isEmpty() ? mermaid::kFlowchart : mermaid::kBrokenFlowchart;
+    answer(world, QStringLiteral("How an order is paid:\n\n```mermaid\n%1\n```").arg(world.mc.part<Seen>().code));
+  });
+  step(QStringLiteral("on the desktop and the phone the flowchart is drawn in place of the code block"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* message = reply(world, 2);
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, QStringLiteral("the diagram to be drawn"));
+    expect(!one(message, QStringLiteral("codeText"))->isVisible(), QStringLiteral("the diagram's source shows beside it"));
+    expect(mermaid::asked(world) == 1, QStringLiteral("the MC was asked %1 times").arg(mermaid::asked(world)));
+  });
+  step(QStringLiteral("the user can switch to the diagram's source and copy it"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* message = reply(world, 2);
+    click(world, one(message, QStringLiteral("diagramSource")));
+    QQuickItem* code = one(message, QStringLiteral("codeText"));
+    world.waitFor([&] { return code->isVisible() && mermaid::drawn(world).isEmpty(); }, QStringLiteral("the source to be shown in place of the diagram"));
+    expect(plain(code) == world.mc.part<Seen>().code, QStringLiteral("the source reads \"%1\"").arg(plain(code)));
+    QGuiApplication::clipboard()->clear();
+    click(world, one(message, QStringLiteral("copyCode")));
+    world.waitFor([&] { return clipboard() == world.mc.part<Seen>().code; }, [&] { return QStringLiteral("the source to be copied; the clipboard has \"%1\"").arg(clipboard()); });
+  });
+  step(QStringLiteral("the diagram's source is shown as a code block"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* message = reply(world, 2);
+    QQuickItem* code = one(message, QStringLiteral("codeText"));
+    world.waitFor([&] { return mermaid::asked(world) == 1 && !world.brick->shows(QStringLiteral("Drawing the diagram…")); }, QStringLiteral("the MC to answer"));
+    expect(code->isVisible() && plain(code) == world.mc.part<Seen>().code, QStringLiteral("the code block reads \"%1\"").arg(plain(code)));
+    expect(!one(message, QStringLiteral("diagramSource"))->isVisible(), QStringLiteral("a diagram that was not drawn offers to show its source"));
   });
 
   // Alerts.
