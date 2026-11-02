@@ -48,6 +48,18 @@ defmodule HalC2.Search do
   @doc "Has the next start read every thread again, after an import with no MC running."
   def read_again, do: Store.delete_meta(@read)
 
+  @doc """
+  Runs `write`, which stores a thread and indexes it (`index_thread/2`) with no stream to
+  do it. Should it not get that far, the next start reads every thread again.
+  """
+  def unread_during(write) do
+    read? = read?()
+    if read?, do: :ok = read_again()
+    result = write.()
+    if read?, do: Store.put_meta(@read, "1")
+    result
+  end
+
   @doc "Indexes all of a thread's messages from its loaded `state`, as an import needs."
   def index_thread(id, state) do
     thread = StreamState.get(state, "thread")[id]

@@ -637,8 +637,12 @@ defmodule HalC2.ThreadArchive do
       {:ok, _} = Streams.commit(id, :thread, changes)
       Streams.flush_shell(id)
     else
-      {:ok, _} = Store.append([{:thread, id, changes}])
-      :ok = HalC2.Search.index_thread(id, StreamState.load(Store.path(), id))
+      :ok =
+        HalC2.Search.unread_during(fn ->
+          {:ok, _} = Store.append([{:thread, id, changes}])
+          HalC2.Search.index_thread(id, StreamState.load(Store.path(), id))
+        end)
+
       HalC2.Projection.rebuild(id)
     end
 
@@ -651,6 +655,31 @@ defmodule HalC2.ThreadArchive do
     meta = archive["thread"]
     id = meta["id"]
 
+    loaded = HalC2.Search.unread_during(fn -> v1_thread(archive, project, meta, id) end)
+
+    # Provider sessions from an earlier install do not come along: the next message hands
+    # the conversation over.
+    native =
+      for pt <- StreamState.list(loaded, "provider-thread"),
+          is_map(pt["nativeThreadRef"]),
+          do: {"provider-thread", pt["id"], %{"s" => %{"nativeThreadRef" => nil}}}
+
+    if native != [], do: {:ok, _} = Store.append([{:thread, id, native}])
+
+    if Process.whereis(HalC2.Shell) do
+      case HalC2.Projection.rebuild(id) do
+        {_, _} = kind_row -> HalC2.Shell.put_row(id, kind_row)
+        nil -> :ok
+      end
+    else
+      HalC2.Projection.rebuild(id)
+    end
+
+    {:ok, %{thread: id, title: meta["title"], project: project["id"], session: false, notes: []}}
+  end
+
+  # Stores and indexes the thread and its files, as `Import.V2` writes them in batches.
+  defp v1_thread(archive, project, meta, id) do
     source = HalC2.Scratch.path("hal-c2-thread", ".sqlite")
 
     rewrite =
@@ -686,28 +715,9 @@ defmodule HalC2.ThreadArchive do
         terminal = v1_terminal(name, id),
         do: Terminal.put_scrollback(id, terminal, bytes(file))
 
-    # Provider sessions from an earlier install do not come along: the next message hands
-    # the conversation over.
     loaded = StreamState.load(Store.path(), id)
     :ok = HalC2.Search.index_thread(id, loaded)
-
-    native =
-      for pt <- StreamState.list(loaded, "provider-thread"),
-          is_map(pt["nativeThreadRef"]),
-          do: {"provider-thread", pt["id"], %{"s" => %{"nativeThreadRef" => nil}}}
-
-    if native != [], do: {:ok, _} = Store.append([{:thread, id, native}])
-
-    if Process.whereis(HalC2.Shell) do
-      case HalC2.Projection.rebuild(id) do
-        {_, _} = kind_row -> HalC2.Shell.put_row(id, kind_row)
-        nil -> :ok
-      end
-    else
-      HalC2.Projection.rebuild(id)
-    end
-
-    {:ok, %{thread: id, title: meta["title"], project: project["id"], session: false, notes: []}}
+    loaded
   end
 
   @doc "The terminal an earlier install's scrollback file `name` belongs to in `thread_id`, or `nil`."

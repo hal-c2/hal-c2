@@ -36,6 +36,15 @@ Feature: Bringing history over from the Node server
     Then the MC counts 1 turn for the imported thread "t1"
 
   @mc
+  Scenario: History an import stopped partway through is still read
+    Given the snapshot holds a message the user typed in thread "t1"
+    And the snapshot's thread "t2" cannot be read
+    And the MC has read its older threads
+    When the operator's import of the snapshot fails partway
+    And the MC has read its older threads
+    Then the MC counts 1 turn for the imported thread "t1"
+
+  @mc
   Scenario: The source is never written
     When the operator imports the snapshot into an MC
     Then the snapshot is opened read-only and is unchanged afterwards

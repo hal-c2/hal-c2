@@ -207,6 +207,18 @@ Feature: Charts on a page
       When the user imports "Alpha" from that install
       Then the MC counts 1 turn for "Alpha"
 
+    Scenario: A thread file imported with no MC up is counted
+      Given this MC's threads took turns this week
+      And a thread file holds one turn of the thread "filed"
+      When the operator imports the thread file with no MC up
+      Then the MC counts 1 turn for the imported thread "filed"
+
+    Scenario: A previous server's thread file imported with no MC up is counted
+      Given this MC's threads took turns this week
+      And a previous server's thread file holds one turn of the thread "filed"
+      When the operator imports the thread file with no MC up
+      Then the MC counts 1 turn for the imported thread "filed"
+
     Scenario: A thread that moved away is no longer one of this MC's
       Given this MC's threads took turns this week
       And a thread of "shop" moved to another MC

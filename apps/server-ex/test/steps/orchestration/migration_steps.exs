@@ -281,6 +281,23 @@ defmodule HalC2.Steps.Orchestration.Migration do
     })
   end
 
+  step "the snapshot's thread {string} cannot be read", %{args: [id]} = context do
+    context
+    |> event("thread", id, "thread.created", thread(id))
+    |> Map.put(:unreadable_stream, id)
+  end
+
+  step "the operator's import of the snapshot fails partway", context do
+    source = snapshot(context)
+
+    mc =
+      Mc.restart(context.mc, fn ->
+        assert_raise JSON.DecodeError, fn -> import!(source) end
+      end)
+
+    %{context | mc: mc, clients: %{}}
+  end
+
   step "the MC counts {int} turn(s) for the imported thread {string}",
        %{args: [count, id]} = context do
     HalC2.Store.put_meta("test.flush", "1")
@@ -518,7 +535,18 @@ defmodule HalC2.Steps.Orchestration.Migration do
     path = Path.join(Mc.tmp_dir(context.mc, "mc-server"), "state.sqlite")
     World.node_log(path, context.snapshot)
     Enum.each(context[:v1_streams] || [], &version_1(path, &1))
+    if context[:unreadable_stream], do: unreadable(path, context.unreadable_stream)
     path
+  end
+
+  defp unreadable(path, stream) do
+    {:ok, db} = Sqlite3.open(path)
+    sql = "UPDATE orchestration_events SET payload_json = 'not json' WHERE stream_id = ?1"
+    {:ok, stmt} = Sqlite3.prepare(db, sql)
+    :ok = Sqlite3.bind(stmt, [stream])
+    :done = Sqlite3.step(db, stmt)
+    :ok = Sqlite3.release(db, stmt)
+    :ok = Sqlite3.close(db)
   end
 
   # Marks a thread's events as logged before an earlier install's v2 orchestrator.

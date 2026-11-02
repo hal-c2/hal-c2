@@ -21,8 +21,9 @@ defmodule Mix.Tasks.HalC2.Import do
     {:ok, _} = Application.ensure_all_started(:exqlite)
     {:ok, _} = HalC2.Store.start_link(path: HalC2.Store.home_path())
 
-    {us, {:ok, report}} = :timer.tc(fn -> HalC2.Import.V2.run(Path.expand(source)) end)
+    # First, as the import writes as it goes: one that fails has still left threads to read.
     :ok = HalC2.Search.read_again()
+    {us, {:ok, report}} = :timer.tc(fn -> HalC2.Import.V2.run(Path.expand(source)) end)
 
     Mix.shell().info("""
     Imported #{report.streams} streams in #{div(us, 1000)} ms into #{home}

@@ -130,6 +130,92 @@ defmodule HalC2.Steps.Space.Visualize do
     |> tap(fn _ -> Store.put_meta("test.flush", "1") end)
   end
 
+  step "a thread file holds one turn of the thread {string}", %{args: [id]} = context do
+    context =
+      context
+      |> World.create_thread("To file", "shop")
+      |> World.add_message("To file", "user", "one")
+
+    source = World.thread_id(context, "To file")
+    Store.put_meta("test.flush", "1")
+    {:ok, archive} = HalC2.ThreadArchive.build(source)
+    thread_file(context, archive |> HalC2.ThreadArchive.encode() |> String.replace(source, id))
+  end
+
+  step "a previous server's thread file holds one turn of the thread {string}",
+       %{args: [id]} = context do
+    project = World.project(context, "shop")
+    at = "2026-09-01T00:00:00.000Z"
+
+    payload = %{
+      "id" => "m1",
+      "threadId" => id,
+      "role" => "user",
+      "text" => "one",
+      "createdAt" => at
+    }
+
+    events =
+      for {type, payload} <- [
+            {"thread.created",
+             %{"id" => id, "projectId" => project.id, "title" => "Filed", "createdAt" => at}},
+            {"message.updated", payload}
+          ] do
+        %{
+          "aggregateKind" => "thread",
+          "streamId" => id,
+          "eventType" => type,
+          "occurredAt" => at,
+          "payloadJson" => JSON.encode!(payload),
+          "applicationEventVersion" => 2
+        }
+      end
+
+    archive = %{
+      "format" => "hal-c2-thread-export",
+      "version" => 1,
+      "thread" => %{
+        "id" => id,
+        "title" => "Filed",
+        "sourceProjectId" => project.id,
+        "sourceWorkspaceRoot" => project.root
+      },
+      "events" => events,
+      "attachments" => [],
+      "terminalLogs" => []
+    }
+
+    thread_file(context, JSON.encode!(archive))
+  end
+
+  # `mix hal_c2.thread.import` as the operator runs it.
+  step "the operator imports the thread file with no MC up", context do
+    # The pass a start runs, which may not have ended when the MC stops.
+    :ok = HalC2.Search.backfill()
+    project = World.project(context, "shop")
+    shell = Mix.shell()
+
+    mc =
+      Mc.restart(context.mc, fn ->
+        Mix.shell(Mix.Shell.Process)
+
+        try do
+          Mix.Tasks.HalC2.Thread.Import.run([context.thread_file, "--project", project.id])
+        after
+          Mix.shell(shell)
+          GenServer.stop(Store)
+        end
+      end)
+
+    %{context | mc: mc, clients: %{}}
+  end
+
+  defp thread_file(context, contents) do
+    file = Path.join(Mc.tmp_dir(context.mc, "thread-file"), "filed.hal-c2-thread")
+    File.write!(file, contents)
+    Map.put(context, :thread_file, file)
+  end
+
   step "the MC counts {int} turn(s) for {string}", %{args: [count, title]} = context do
     id = context.t3.ids[title]
     Store.put_meta("test.flush", "1")
