@@ -12,9 +12,9 @@ import HalC2.Shell
 // keeps as written (a raw block: its source in a fixed-width face, never
 // wrapped, scrolled sideways, and written with Ctrl+Return or by leaving it;
 // a table and a code block show so too until they are drawn as such, #854), a
-// Mermaid diagram drawn from a raw block's source, and the block's own actions
-// (comment, add a block below, ask again for a chart, switch a diagram to its
-// source, move up or down, delete).
+// Mermaid diagram drawn from a "mermaid" code block or a raw block's fence, and
+// the block's own actions (comment, add a block below, ask again for a chart,
+// switch a diagram to its source, move up or down, delete).
 Item {
     id: block
 
@@ -39,6 +39,8 @@ Item {
     property bool readOnly: false
     // A heading's level, 1 to 6 (0 or none counts as 2).
     property int level: 0
+    // A code block's language ("" for none).
+    property string language: ""
     // A chart block's description (SpaceChart in packages/contracts).
     property var chart: ({})
 
@@ -49,10 +51,11 @@ Item {
     readonly property bool raw: kind === "raw" || kind === "table" || kind === "code"
     // Level 2 keeps the page's usual heading; 1 is larger, 3 to 6 step down.
     readonly property int headingSize: [26, 20, 17, 16, 15, 14][Math.max(1, Math.min(6, level || 2)) - 1]
-    // A raw block that is one "mermaid" fence is drawn in place of its text,
-    // until the user switches to the source; what they write there is drawn
-    // once it is saved.
-    readonly property string diagramCode: block.raw ? block.mermaidOf(block.text) : ""
+    // A "mermaid" code block, or a raw block that is one "mermaid" fence, is
+    // drawn in place of its text until the user switches to the source; what
+    // they write there is drawn once it is saved.
+    readonly property string diagramCode: block.kind === "code" ? (block.language.toLowerCase() === "mermaid" ? block.text : "")
+                                        : block.kind === "raw" ? block.mermaidOf(block.text) : ""
     property bool diagramSource: false
     readonly property bool diagramShown: diagramCode.length > 0 && diagram.drawn && !diagramSource
 

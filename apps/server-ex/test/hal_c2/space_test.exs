@@ -577,6 +577,89 @@ defmodule HalC2.SpaceTest do
       assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n#### Deep\n"}
     end
 
+    test "a list item is indented and outdented by its depth, and only a list item has one",
+         %{space: space} do
+      {:ok, page} = Space.import_markdown(space, "# Plan\n\n- a\n    - b\n- c\n\nd\n")
+      {:ok, %{blocks: [_a, b, c, d]}} = Space.page(space, page["id"])
+      assert b["indent"] == 4
+
+      {:ok, c} = Space.edit_block(space, c["id"], %{"depth" => 1})
+      assert c["depth"] == 1
+      {:ok, b} = Space.edit_block(space, b["id"], %{"depth" => 0})
+      refute Map.has_key?(b, "depth") or Map.has_key?(b, "indent")
+      assert Space.export_markdown(space, page["id"]) == {:ok, "# Plan\n\n- a\n- b\n  - c\n\nd\n"}
+
+      assert {:error, :invalid, "Only a list item has a depth."} =
+               Space.edit_block(space, d["id"], %{"depth" => 1})
+
+      assert {:error, :invalid, _} = Space.edit_block(space, c["id"], %{"depth" => -1})
+    end
+
+    test "a numbered list starts where its first item says", %{space: space} do
+      page = page!(space, "Plan")
+      {:ok, one} = Space.insert_block(space, page, %{"kind" => "numbered", "text" => "a"})
+      {:ok, two} = Space.insert_block(space, page, %{"kind" => "numbered", "text" => "b"})
+      {:ok, one} = Space.edit_block(space, one["id"], %{"start" => 4})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n4. a\n5. b\n"}
+
+      {:ok, one} = Space.edit_block(space, one["id"], %{"start" => nil})
+      refute Map.has_key?(one, "start")
+
+      # An item that continues its list keeps a start for when it begins one.
+      {:ok, _} = Space.edit_block(space, two["id"], %{"start" => 7})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n1. a\n2. b\n"}
+      {:ok, _} = Space.delete_block(space, one["id"])
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n7. b\n"}
+
+      {:ok, bullet} =
+        Space.insert_block(space, page, %{"kind" => "bullet", "text" => "c", "start" => 2})
+
+      refute Map.has_key?(bullet, "start")
+
+      assert {:error, :invalid, "Only a numbered item has a start."} =
+               Space.edit_block(space, bullet["id"], %{"start" => 2})
+    end
+
+    test "a callout's alert is one of GitHub's, and only a callout has one", %{space: space} do
+      page = page!(space, "Plan")
+
+      {:ok, callout} =
+        Space.insert_block(space, page, %{"kind" => "callout", "text" => "Mind", "alert" => "tip"})
+
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n> [!TIP]\n> Mind\n"}
+      {:ok, callout} = Space.edit_block(space, callout["id"], %{"alert" => nil})
+      refute Map.has_key?(callout, "alert")
+
+      assert {:error, :invalid, _} =
+               Space.edit_block(space, callout["id"], %{"alert" => "danger"})
+
+      {:ok, paragraph} =
+        Space.insert_block(space, page, %{"kind" => "paragraph", "text" => "x", "alert" => "note"})
+
+      refute Map.has_key?(paragraph, "alert")
+
+      assert {:error, :invalid, "Only a callout has an alert."} =
+               Space.edit_block(space, paragraph["id"], %{"alert" => "note"})
+    end
+
+    test "a divider has no text", %{space: space} do
+      page = page!(space, "Plan")
+      {:ok, divider} = Space.insert_block(space, page, %{"kind" => "divider"})
+      assert divider["text"] == ""
+      assert {:error, :invalid, _} = Space.edit_block(space, divider["id"], %{"text" => "x"})
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{"kind" => "divider", "text" => "x"})
+
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n---\n"}
+
+      {:ok, _} = Space.insert_block(space, page, %{"kind" => "divider", "marker" => "* * *"})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n---\n\n* * *\n"}
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{"kind" => "divider", "marker" => "**"})
+    end
+
     test "a link to a page the Space lacks is imported as a paragraph", %{space: space} do
       {:ok, page} = Space.import_markdown(space, "[Old](#gone)", "Copy")
       assert texts(space, page["id"]) == ["[Old](#gone)"]

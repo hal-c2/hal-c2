@@ -242,6 +242,12 @@ defmodule HalC2.Steps.Space.Sites do
     context
   end
 
+  step "the document holds each line of:", context do
+    assert {200, _, body} = context.browser
+    for line <- String.split(context.docstring, "\n"), do: assert(body =~ line)
+    context
+  end
+
   step "the document has the heading {string}", %{args: [heading]} = context do
     assert {200, _, body} = context.browser
     assert body =~ "<h2>#{heading}</h2>"

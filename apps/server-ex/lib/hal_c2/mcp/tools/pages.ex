@@ -43,7 +43,11 @@ defmodule HalC2.Mcp.Tools.Pages do
         %{"spaceId" => s, "pageId" => p, "kind" => _} = args,
         caller
       ) do
-    spec = Map.take(args, ~w(kind text checked linkedPageId imageId level table language))
+    spec =
+      Map.take(
+        args,
+        ~w(kind text checked linkedPageId imageId level table language depth start alert)
+      )
 
     s
     |> Space.insert_block(p, spec, Map.get(args, "afterBlockId", :last), author(caller))
@@ -52,7 +56,7 @@ defmodule HalC2.Mcp.Tools.Pages do
 
   # What is given changes together; a block given nothing to change is returned as is.
   def run("hal_c2_page_block_update", %{"spaceId" => s, "blockId" => b} = args, caller) do
-    changes = Map.take(args, ~w(text checked level language))
+    changes = Map.take(args, ~w(text checked level language depth start alert))
     s |> Space.edit_block(b, changes, author(caller)) |> block(caller, s)
   end
 

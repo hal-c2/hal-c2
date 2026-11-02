@@ -97,6 +97,7 @@ Rectangle {
                 width: ListView.view.width
                 blockId: model.id
                 level: model.level ?? 0
+                language: model.language ?? ""
                 chart: model.chart ?? ({})
                 readOnly: true
             }
