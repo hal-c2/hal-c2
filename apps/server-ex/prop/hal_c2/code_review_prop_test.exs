@@ -1709,9 +1709,10 @@ defmodule HalC2.CodeReviewPropTest do
     lists =
       for repo <- ~w(api web) do
         %{
-          "args" => ["pr list", "--repo github.com/acme/#{repo}"],
+          "args" => ["api graphql"],
+          "repository" => "acme/#{repo}",
           "run" => hold,
-          "stdout" => listing(world, repo)
+          "pulls" => listing(world, repo)
         }
       end
 

@@ -2746,7 +2746,7 @@ defmodule HalC2.PlannerPropTest do
     %{"args" => ["pr view #{n} ", "#{host}/#{@lone}"], "stdout" => pr}
   end
 
-  # The pull requests of `@repository` as `gh pr list` answers them, merged or open.
+  # The pull requests of `@repository` as GitHub lists them, merged or open.
   defp pr_list do
     rows =
       for pr <- @pulls do
@@ -2764,7 +2764,7 @@ defmodule HalC2.PlannerPropTest do
         }
       end
 
-    %{"args" => ["pr list"], "stdout" => rows}
+    %{"args" => ["api graphql"], "stdin" => ["PullRequestList"], "pulls" => rows}
   end
 
   defp link_to(slot, number, state \\ nil) do
