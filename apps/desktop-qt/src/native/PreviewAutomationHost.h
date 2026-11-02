@@ -120,7 +120,12 @@ private:
 
   // Runs `request` now, or once its tab's earlier requests are done.
   void schedule(const RequestPtr& request);
+  // Puts `request` in `queue` and runs `then` once it is first there (at
+  // once, when it already is).
+  void enqueue(const RequestPtr& request, const QString& queue, std::function<void()> then);
   void start(const RequestPtr& request);
+  // `request`'s action, on its tab's turn.
+  void act(const RequestPtr& request, const QString& tab);
   void finish(const RequestPtr& request, bool ok, const QJsonValue& result, const QJsonObject& error = {});
   void succeed(const RequestPtr& request, const QJsonValue& result) { finish(request, true, result); }
   void fail(const RequestPtr& request, const QString& tag, const QString& message, const QJsonObject& detail = {});

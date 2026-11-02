@@ -1,0 +1,104 @@
+// What tests/prop/tst_PreviewAutomationHostProp.cpp found in the host agents
+// drive the browser through, each as the plain case that shows it.
+
+#include <QtTest>
+
+#include <QJsonObject>
+
+#include "FakeMc.h"
+#include "McClient.h"
+#include "PreviewAutomationHost.h"
+#include "PreviewAutomationPage.h"
+
+namespace {
+
+const QString kTab = QStringLiteral("tab-1");
+const QString kThread = QStringLiteral("thread-1");
+
+// A page that keeps every script it is given, never answering.
+class HeldPage : public PreviewAutomationPage {
+public:
+  int held = 0;
+
+  void runJavaScript(const QString&, World, ScriptDone) override { ++held; }
+  void grab(ImageDone) override {}
+  QUrl url() const override { return QUrl(QStringLiteral("http://localhost:5173/")); }
+  QString title() const override { return QStringLiteral("Page"); }
+  bool loading() const override { return false; }
+  void load(const QUrl&) override {}
+  bool devToolsOpen() const override { return false; }
+  bool onScreen() const override { return true; }
+  QSize viewport() const override { return {1280, 800}; }
+  void setViewport(const QSize&) override {}
+  bool click(const QPointF&) override { return false; }
+  bool key(int, Qt::KeyboardModifiers, const QString&) override { return false; }
+  void setColorScheme(const QString&) override {}
+};
+
+} // namespace
+
+class tst_PreviewAutomationHostRegression : public QObject {
+  Q_OBJECT
+
+private slots:
+  // An action naming no tab ran on the current tab beside one naming it: the
+  // first waited in the thread's queue, the second in the tab's.
+  void anActionOnTheCurrentTabWaitsForOneNamingIt() {
+    FakeMc mc;
+    QString connection;
+    mc.onShape(QStringLiteral("previewAutomation"), [&](int id, const QJsonObject&) {
+      QTimer::singleShot(0, &mc, [&, id] {
+        connection = QStringLiteral("connection-1");
+        mc.send({{QStringLiteral("t"), QStringLiteral("previewAutomation")},
+                 {QStringLiteral("id"), id},
+                 {QStringLiteral("event"), QJsonObject{{QStringLiteral("type"), QStringLiteral("connected")},
+                                                       {QStringLiteral("connectionId"), connection}}}});
+      });
+    });
+    QStringList answered;
+    mc.onRpc(QStringLiteral("previewAutomation.respond"), [&](const FakeMc::Rpc& rpc) {
+      answered.append(rpc.payload.value(QLatin1String("requestId")).toString());
+      mc.reply(rpc, QJsonValue::Null);
+    });
+    mc.onRpc(QStringLiteral("previewAutomation.focusHost"), [&](const FakeMc::Rpc& rpc) { mc.reply(rpc, QJsonValue::Null); });
+    McClient client;
+    client.open(mc.origin(), QStringLiteral("token"));
+    QTRY_VERIFY(client.isReady());
+    PreviewAutomationHost host(&client, QStringLiteral("desktop-test"));
+    HeldPage page;
+    host.setMcs({{mc.name, mc.environmentId}});
+    host.attach(mc.environmentId, kThread, kTab, &page);
+    QTRY_VERIFY(!connection.isEmpty() && host.connectionId(mc.name) == connection);
+
+    const auto ask = [&](const QString& id, const QString& tab, int timeoutMs) {
+      const QJsonObject request{{QStringLiteral("requestId"), id},
+                                {QStringLiteral("threadId"), kThread},
+                                {QStringLiteral("tabId"), tab},
+                                {QStringLiteral("tabIdExplicit"), !tab.isEmpty()},
+                                {QStringLiteral("operation"), QStringLiteral("evaluate")},
+                                {QStringLiteral("input"), QJsonObject{{QStringLiteral("expression"), QStringLiteral("1")}}},
+                                {QStringLiteral("timeoutMs"), timeoutMs}};
+      mc.send({{QStringLiteral("t"), QStringLiteral("previewAutomation")},
+               {QStringLiteral("id"), mc.subscribers(QStringLiteral("previewAutomation")).last()},
+               {QStringLiteral("event"), QJsonObject{{QStringLiteral("type"), QStringLiteral("request")},
+                                                     {QStringLiteral("connectionId"), connection},
+                                                     {QStringLiteral("request"), request}}}});
+    };
+    ask(QStringLiteral("current"), QString(), 400);
+    QTRY_COMPARE(page.held, 1);
+    ask(QStringLiteral("named"), kTab, 15000);
+    bool synced = false;
+    client.call(&mc, {}, QStringLiteral("test.barrier"), {}, [&](const QJsonValue&, const std::optional<QString>&) { synced = true; });
+    QTRY_VERIFY(synced);
+    // The named one waits for the page.
+    QCOMPARE(page.held, 1);
+    QVERIFY(answered.isEmpty());
+
+    // The first gives up; only then does the second reach the page.
+    QTRY_COMPARE(answered, QStringList{QStringLiteral("current")});
+    QTRY_COMPARE(page.held, 2);
+  }
+};
+
+QTEST_MAIN(tst_PreviewAutomationHostRegression)
+#include "tst_PreviewAutomationHostRegression.moc"
