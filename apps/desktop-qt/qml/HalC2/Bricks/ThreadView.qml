@@ -126,6 +126,11 @@ Item {
             messageId: messageId
         }, selector))
         onRevertRequested: rowId => view.askRevert(rowId)
+        // In the thread's terminal, the way a project action runs.
+        runnable: true
+        onRunCommand: command => Shell.dispatch("workspace.runCommand", {
+                command: command
+            })
         onEditRequested: rowId => Shell.dispatch("rewind.request", {
                 rowId: rowId
             })

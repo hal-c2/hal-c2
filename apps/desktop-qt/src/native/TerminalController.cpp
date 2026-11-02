@@ -973,6 +973,14 @@ void TerminalController::followLink(const QString& kind, const QString& text, co
 }
 
 bool TerminalController::runScript(const QString& scriptId) {
+  QJsonObject script;
+  for (const QJsonValue& value : m_place ? m_place->scripts : QJsonArray()) {
+    if (value.toObject().value(QLatin1String("id")).toString() == scriptId) script = value.toObject();
+  }
+  return runCommand(script.value(QLatin1String("name")).toString(), script.value(QLatin1String("command")).toString());
+}
+
+bool TerminalController::runCommand(const QString& name, const QString& line) {
   if (!supported()) {
     toast(QStringLiteral("This build of HAL-C2 has no terminal"), QStringLiteral("Project actions run in one. Run it from HAL-C2 on a computer."));
     return false;
@@ -983,13 +991,7 @@ bool TerminalController::runScript(const QString& scriptId) {
     toast(QStringLiteral("No terminal on a screen this small"), QStringLiteral("Project actions run in one. Run it from a wider window or another device."));
     return false;
   }
-  if (!m_active || !m_place) return false;
-  QJsonObject script;
-  for (const QJsonValue& value : std::as_const(m_place->scripts)) {
-    if (value.toObject().value(QLatin1String("id")).toString() == scriptId) script = value.toObject();
-  }
-  if (script.isEmpty()) return false;
-  const QString name = script.value(QLatin1String("name")).toString();
+  if (!m_active || !m_place || line.isEmpty()) return false;
   const QStringList ids = terminalIds();
   const QString active = activeTerminalId();
   QString terminalId = !active.isEmpty() ? active : !ids.isEmpty() ? ids.constFirst() : nextTerminalId();
@@ -1007,7 +1009,7 @@ bool TerminalController::runScript(const QString& scriptId) {
     input.insert(QStringLiteral("cols"), session->size().width());
     input.insert(QStringLiteral("rows"), session->size().height());
   }
-  const QString command = script.value(QLatin1String("command")).toString() + QLatin1Char('\r');
+  const QString command = line + QLatin1Char('\r');
   const QString threadKey = m_threadKey;
   const TerminalPlace place = *m_place;
   m_client->call(this, place.environmentId, QStringLiteral("terminal.open"), input,

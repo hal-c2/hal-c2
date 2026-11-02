@@ -127,6 +127,10 @@ Item {
 
     // Whether a selection in a reply offers "Cite".
     property bool citable: false
+    // Whether a reply's complete shell command offers "Run in terminal",
+    // which asks the host to run it (runCommand).
+    property bool runnable: false
+    signal runCommand(string command)
 
     // Whether the model can put a message on the clipboard (copy(rowId)).
     readonly property bool canCopy: root.model !== null && typeof root.model.copy === "function"
@@ -1011,6 +1015,8 @@ Item {
                         citable: root.citable && row.streaming !== true && !!row.messageId
                         onLinkActivated: link => root.linkActivated(link)
                         onCited: selector => root.cited(row.messageId, selector)
+                        runnable: root.runnable
+                        onRunCommand: command => root.runCommand(command)
                         // "Cite" under a short reply's last line reaches over the next row.
                         onSelectionChanged: row.z = selection !== null ? 1 : 0
                     }
