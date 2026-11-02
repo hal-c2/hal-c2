@@ -79,6 +79,8 @@ public:
   void setClock(std::function<QDateTime()> now);
   // The locale the timelines read times in (the system's by default).
   void setLocale(const QLocale& locale);
+  // How the timelines fold settled turns (TimelineModel::setFolds).
+  void setFolds(TimelineModel::Folds folds);
   // A time that may be ahead (a usage limit's reset) as the timelines read it.
   QString upcoming(const QDateTime& at) const;
 
@@ -139,4 +141,5 @@ private:
   std::function<QDateTime()> m_now;
   QString m_timestampFormat = QStringLiteral("locale");
   QLocale m_locale;
+  TimelineModel::Folds m_folds = TimelineModel::Folds::Desktop;
 };

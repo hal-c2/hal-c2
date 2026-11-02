@@ -74,6 +74,17 @@ Item {
             visible: !screen.filesOpen
             kind: screen.route?.kind ?? ""
         }
+        // A thread with no conversation yet suggests what to ask, as the web phone did.
+        Binding {
+            target: centre.item as ThreadView
+            property: "emptyText"
+            value: qsTr("No conversation yet")
+        }
+        Binding {
+            target: centre.item as ThreadView
+            property: "emptyHint"
+            value: qsTr("Ask the agent to inspect the repo, run a command, or continue the active thread.")
+        }
 
         Loader {
             Layout.fillWidth: true
