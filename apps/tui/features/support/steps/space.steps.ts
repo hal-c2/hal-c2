@@ -1814,8 +1814,8 @@ const CHOICES: Record<string, (ctx: SpaceWorld) => Promise<void>> = {
   'the project "docs"': async (ctx) => {
     change(ctx, () => addProject(ctx, "docs"));
     await settle(ctx);
-    ctx.host!.dispatch("composer.workspacePicker.toggle");
-    await settle(ctx);
+    // The keyboard's way to the "ask runs in" chip.
+    await runPaletteCommand(ctx, "Change where an ask runs");
     expect(select(ctx).title).toBe("ask runs in");
     await chooseInPicker(ctx, "docs");
     expect(prompt(ctx).context?.workspace).toBe("ask runs in docs ▾");

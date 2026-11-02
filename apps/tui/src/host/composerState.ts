@@ -455,6 +455,7 @@ export interface Composer {
   /** For the palette: what the composer can offer right now. */
   readonly context: () => {
     readonly newDraft: boolean;
+    readonly page: boolean;
     readonly workspaceMode: NewThreadWorkspaceMode | null;
     readonly threadId: string | null;
     readonly interactionMode: ProviderInteractionMode;
@@ -2776,6 +2777,7 @@ export function createComposer(options: ComposerOptions): Composer {
       const page = openPage();
       return {
         newDraft: newDraft !== null,
+        page: page !== null,
         workspaceMode: newDraft?.workspaceMode ?? null,
         threadId: detail?.id ?? null,
         interactionMode: newDraft
