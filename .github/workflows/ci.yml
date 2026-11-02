@@ -331,6 +331,16 @@ jobs:
         working-directory: apps/tui
         run: bun test
 
+      # Some scenarios run against a real MC (apps/tui/features/support/realMc.ts).
+      - name: Setup the MC
+        uses: ./.github/actions/setup-mc
+
+      - name: Compile the MC
+        working-directory: apps/server-ex
+        env:
+          MIX_ENV: test
+        run: mix compile
+
       - name: "@tui and @shared scenarios"
         working-directory: apps/tui
         env:
