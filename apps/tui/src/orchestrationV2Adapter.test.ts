@@ -254,11 +254,12 @@ describe("orchestration V2 TUI presentation", () => {
     expect(result.activities).toHaveLength(1);
     expect(result.activities[0]).toMatchObject({
       kind: "task.completed",
-      summary: "Thought",
+      // Finished reasoning is labelled by what was thought.
+      summary: "Mapped the turn",
       sequence: 0,
       payload: {
-        title: "Thought",
-        detail: "Mapped the turn",
+        title: "Mapped the turn",
+        detail: null,
         status: "completed",
       },
     });
