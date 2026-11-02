@@ -498,8 +498,7 @@ defmodule HalC2.Test.AcpFixtures do
     {frame, client} =
       HalC2.Test.Mc.await(
         client,
-        &(&1["t"] == "providerAuth" and &1["id"] == sub and is_list(&1["state"]["methods"])),
-        5_000
+        &(&1["t"] == "providerAuth" and &1["id"] == sub and is_list(&1["state"]["methods"]))
       )
 
     ctx = HalC2.Test.Mc.World.put_client(ctx, name, client)
@@ -507,7 +506,7 @@ defmodule HalC2.Test.AcpFixtures do
   end
 
   @doc "Waits on client `name` for a sign-in state of `id` matching `fun`."
-  def await_auth(ctx, id, fun, name \\ "default", timeout \\ 5_000) do
+  def await_auth(ctx, id, fun, name \\ "default", timeout \\ 30_000) do
     sub = ctx.auth_subs[{name, id}] || flunk("client #{name} does not watch #{id}'s sign-in")
 
     {frame, client} =

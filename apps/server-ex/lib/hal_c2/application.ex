@@ -65,7 +65,12 @@ defmodule HalC2.Application do
       {Registry, keys: :unique, name: HalC2.Vcs.Registry},
       HalC2.Workspace,
       HalC2.WorktreeSetup,
+      HalC2.Space.Presence,
+      # Draws Mermaid diagrams for every client, and keeps what it drew.
+      HalC2.Mermaid,
       HalC2.ScheduledTasks,
+      # Pages that are project files follow them, from what changed while it was stopped.
+      HalC2.Space.Files,
       HalC2.ProjectClones,
       HalC2.Preview,
       # Dev servers on another MC, reached from this machine's browser.
@@ -110,6 +115,8 @@ defmodule HalC2.Application do
       # Owns the table of live Antigravity runtime temp directories.
       HalC2.Acp.Antigravity.SessionFiles,
       Supervisor.child_spec({Task, &HalC2.Acp.load/0}, id: :acp_models),
+      # Before the listener: a message reaching a thread first would start a second program.
+      %{id: :reattach, start: {HalC2.Orchestration.Recovery, :start_reattach, []}},
       HalC2.Web,
       # server-runtime.json, once the listener is bound; removed first on the way down.
       HalC2.RuntimeRecord,

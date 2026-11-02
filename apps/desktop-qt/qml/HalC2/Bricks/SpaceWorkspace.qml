@@ -6,9 +6,10 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The Space view (route kind `space`; SpaceController publishes `space`): the
-// Space's pages beside the open one, and its comments beside that when the
-// user asks for them. Everything shown is the MC's; with nothing to show it
-// says why.
+// Space's pages and decks beside the open one, or beside its images, and a page's
+// comments or its history beside that when the user asks for them; a version being
+// read takes the page's place. Everything shown is the MC's; with nothing to show
+// it says why.
 Rectangle {
     id: workspace
 
@@ -19,6 +20,14 @@ Rectangle {
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color lineColor: Theme.palette.color("border", "#27272a")
     property bool commentsShown: false
+    property bool imagesShown: false
+    // Signing an address for every image lasts only as long as they are on screen.
+    readonly property bool browsing: imagesShown && visible
+    onBrowsingChanged: Shell.dispatch("space.images.show", { shown: browsing })
+    Component.onDestruction: {
+        if (browsing)
+            Shell.dispatch("space.images.show", { shown: false });
+    }
     // What the open page's state is when it shows nothing.
     readonly property string emptyText: {
         if (Spaces.status === "unreachable")
@@ -31,6 +40,8 @@ Rectangle {
     }
 
     function showComments(blockId) {
+        if (Spaces.history.shown)
+            Shell.dispatch("space.history.close", {});
         comments.blockId = blockId;
         workspace.commentsShown = true;
         comments.focusDraft();
@@ -42,6 +53,22 @@ Rectangle {
     readonly property string pageId: Spaces.pageId
     onPageIdChanged: comments.blockId = ""
 
+    // A deck just opened, made in the sidebar say, is what the user wants to see.
+    readonly property string deckId: Spaces.deckId
+    onDeckIdChanged: {
+        if (deckId !== "")
+            imagesShown = false;
+    }
+
+    // One column beside the page at a time.
+    Connections {
+        target: Spaces.history
+        function onChanged() {
+            if (Spaces.history.shown)
+                workspace.commentsShown = false;
+        }
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
@@ -52,6 +79,8 @@ Rectangle {
             Layout.preferredWidth: 260
             Layout.fillHeight: true
             onImportRequested: importDialog.open()
+            onImagesRequested: workspace.imagesShown = true
+            onPageChosen: workspace.imagesShown = false
         }
 
         Rectangle {
@@ -66,17 +95,28 @@ Rectangle {
 
             SpacePage {
                 anchors.fill: parent
-                visible: Spaces.pageId !== ""
+                visible: Spaces.pageId !== "" && Spaces.deckId === "" && !Spaces.history.reading && !workspace.imagesShown
+                onImagesRequested: workspace.imagesShown = true
                 onSaveRequested: saveDialog.open()
                 onSubpageRequested: (parentPageId, link) => sidebar.newPage(parentPageId, link)
                 onCommentRequested: blockId => workspace.showComments(blockId)
+            }
+
+            SpaceVersionView {
+                anchors.fill: parent
+                visible: Spaces.history.reading && !workspace.imagesShown
+            }
+
+            SpaceDeck {
+                anchors.fill: parent
+                visible: Spaces.deckId !== "" && !workspace.imagesShown
             }
 
             ColumnLayout {
                 objectName: "spaceEmpty"
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 48, 420)
-                visible: Spaces.pageId === ""
+                visible: Spaces.pageId === "" && Spaces.deckId === "" && !workspace.imagesShown
                 spacing: 12
 
                 ShellIcon {
@@ -124,14 +164,29 @@ Rectangle {
                         text: qsTr("Import Markdown")
                         onClicked: importDialog.open()
                     }
+
+                    ShellButton {
+                        objectName: "spaceEmptyFromFiles"
+                        iconName: "folder-open"
+                        text: qsTr("From project files")
+                        onClicked: Shell.dispatch("space.files.pick", {})
+                    }
                 }
+            }
+
+            SpaceImages {
+                anchors.fill: parent
+                visible: workspace.imagesShown
+                onAddRequested: imageDialog.open()
+                onGenerateRequested: generateDialog.open()
+                onCloseRequested: workspace.imagesShown = false
             }
         }
 
         Rectangle {
             Layout.preferredWidth: 1
             Layout.fillHeight: true
-            visible: comments.visible
+            visible: comments.visible || historyPanel.visible
             color: workspace.lineColor
         }
 
@@ -140,10 +195,22 @@ Rectangle {
 
             Layout.preferredWidth: 300
             Layout.fillHeight: true
-            visible: workspace.commentsShown && Spaces.pageId !== ""
+            visible: workspace.commentsShown && Spaces.pageId !== "" && Spaces.deckId === "" && !workspace.imagesShown
             readOnly: Spaces.page.trashed === true
             onCloseRequested: workspace.commentsShown = false
         }
+
+        SpaceHistoryPanel {
+            id: historyPanel
+
+            Layout.preferredWidth: 300
+            Layout.fillHeight: true
+            visible: Spaces.history.shown && !workspace.imagesShown
+        }
+    }
+
+    SpacePresenter {
+        anchors.fill: parent
     }
 
     FileDialog {
@@ -154,6 +221,21 @@ Rectangle {
         nameFilters: [qsTr("Markdown (*.md *.markdown)"), qsTr("All files (*)")]
         onAccepted: Shell.dispatch("space.page.importFile", { url: selectedFile.toString() })
     }
+
+    FileDialog {
+        id: imageDialog
+
+        title: qsTr("Add an image to the Space")
+        fileMode: FileDialog.OpenFile
+        nameFilters: [qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp)"), qsTr("All files (*)")]
+        onAccepted: Shell.dispatch("space.image.addFile", { url: selectedFile.toString() })
+    }
+
+    SpaceImageDialog {
+        id: generateDialog
+    }
+
+    SpaceFilePicker {}
 
     FileDialog {
         id: saveDialog

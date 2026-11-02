@@ -225,6 +225,7 @@ defmodule HalC2.Import.PreviousInstall do
   # The files of an imported thread, and its row in the sidebar.
   defp finish(path, files, id) do
     state = StreamState.load(Store.path(), id)
+    :ok = HalC2.Search.index_thread(id, state)
 
     for kind <- ["message", "turn-item"],
         entity <- StreamState.list(state, kind),

@@ -6,7 +6,10 @@ defmodule HalC2.Orchestration.TurnWatch do
   turn ends as failed from what the thread recorded (`TurnWriter.abandon/4`) and the
   thread's next message starts. A process that stops (`:normal`, `:shutdown`) leaves
   its turn alone: an MC shutting down settles its turns at boot
-  (`HalC2.Orchestration.Recovery`), and a stop on a turn nothing drives ends it.
+  (`HalC2.Orchestration.Recovery`), and a stop on a turn nothing drives ends it. So
+  does a process killed while the MC stops, as one stuck in a call to its provider is
+  at its shutdown limit: this outlives the runtimes, and a failed run is one boot
+  recovery would skip, leaving a steer it cut off pending.
   """
 
   use GenServer
@@ -65,7 +68,7 @@ defmodule HalC2.Orchestration.TurnWatch do
   def handle_info({:DOWN, ref, :process, _pid, reason}, runs) do
     case Enum.find(runs, fn {_run_id, {run_ref, _, _}} -> run_ref == ref end) do
       {run_id, {_, _, thread_id}} ->
-        if crashed?(reason) do
+        if crashed?(reason) and not HalC2.Orchestration.Recovery.stopping?() do
           Logger.warning("run #{run_id} lost its runtime: #{inspect(reason)}")
 
           # Off this process: ending a run writes to the thread and starts the next one.

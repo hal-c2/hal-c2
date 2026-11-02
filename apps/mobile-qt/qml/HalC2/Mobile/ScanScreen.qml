@@ -43,6 +43,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
             // Dark behind the picture, and before the camera's first one.
+            // ljos-allow(color-scheme-ignored): a viewfinder is black in either scheme, and the text inside shows only while this is transparent
             color: screen.looking ? "black" : "transparent"
 
             VideoOutput {

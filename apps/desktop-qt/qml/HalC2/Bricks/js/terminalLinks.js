@@ -27,6 +27,12 @@ function isUrl(value) {
     return /^https?:\/\//iu.test(value);
 }
 
+// git's "main..topic" and "main...origin/main" name commits, not files: a
+// path's parts are names, "." or "..".
+function isRange(value) {
+    return value.split("/").some(part => part !== ".." && part.includes(".."));
+}
+
 // [{kind: "url"|"path", text, start, end}] in order.
 function extract(line) {
     const matches = [];
@@ -39,7 +45,7 @@ function extract(line) {
                 continue;
             }
             const text = trimClosingDelimiters(raw[0]);
-            if (text.length === 0 || text.length > MAX_LINK || (kind === "path" && isUrl(text)))
+            if (text.length === 0 || text.length > MAX_LINK || (kind === "path" && (isUrl(text) || isRange(text))))
                 continue;
             const candidate = { kind: kind, text: text, start: raw.index, end: raw.index + text.length };
             if (!matches.some(other => candidate.start < other.end && other.start < candidate.end))

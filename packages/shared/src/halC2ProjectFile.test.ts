@@ -36,6 +36,7 @@ describe("buildHalC2ProjectFileJsonSchema", () => {
       "defaultThreadEnvMode",
       "iconPath",
       "scripts",
+      "spaces",
       "worktreeSubmodules",
     ]);
     expect(schema.required).toBeUndefined();
@@ -90,5 +91,20 @@ describe("parseHalC2ProjectFile", () => {
   it("returns null for malformed or invalid contents", () => {
     expect(parseHalC2ProjectFile("{ not json")).toBeNull();
     expect(parseHalC2ProjectFile('{ "defaultThreadEnvMode": "spaceship" }')).toBeNull();
+  });
+
+  it("keeps the spaces section", () => {
+    const spaces = { files: [{ path: "docs/**/*.md", kind: "page" }] };
+    expect(parseHalC2ProjectFile(JSON.stringify({ spaces }))).toEqual({ spaces });
+  });
+
+  it("leaves out a spaces section that does not match, and keeps the rest", () => {
+    const contents = JSON.stringify({
+      scripts: [{ name: "Test", command: "mix test" }],
+      spaces: { files: [{ path: "*.md", kind: "poster" }] },
+    });
+    expect(parseHalC2ProjectFile(contents)).toEqual({
+      scripts: [{ name: "Test", command: "mix test" }],
+    });
   });
 });

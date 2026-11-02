@@ -52,6 +52,7 @@ import {
   DiscoveredLocalServerList,
   PreviewError,
   ResourceTelemetrySnapshot,
+  SpacePresenceStreamEvent,
   PreviewEvent,
   PreviewInvalidUrlError,
   PreviewSessionLookupError,
@@ -179,6 +180,7 @@ const decodeDeviceState = Schema.decodeUnknownSync(Schema.toCodecJson(DeviceServ
 const decodeDeviceError = Schema.decodeUnknownOption(DeviceError);
 const decodeClusterError = Schema.decodeUnknownOption(ClusterError);
 const decodeTelemetry = Schema.decodeUnknownSync(Schema.toCodecJson(ResourceTelemetrySnapshot));
+const decodeSpacePresence = Schema.decodeUnknownSync(Schema.toCodecJson(SpacePresenceStreamEvent));
 const decodeAuthAccess = Schema.decodeUnknownSync(Schema.toCodecJson(AuthAccessStreamEvent));
 const decodeSetupError = Schema.decodeUnknownOption(ProviderSetupError);
 const decodeTerminalError = Schema.decodeUnknownOption(TerminalError);
@@ -1019,6 +1021,15 @@ export function makeV3Session(input: {
       (_request: object, message) => new ClusterRpcError(message, undefined),
     );
 
+    const spacePresence = (request: { readonly spaceId: string; readonly pageId: string }) =>
+      shapeStream(
+        socket,
+        { type: "spacePresence", mc, spaceId: request.spaceId, pageId: request.pageId },
+        (frame) =>
+          frame.t === "spacePresence" ? [decodeSpacePresence({ viewers: frame.viewers })] : [],
+        (frame) => new ClusterRpcError(String(frame.reason ?? "Presence is unavailable."), frame),
+      );
+
     // A new thread's worktree is prepared on its MC.
     const worktreeSetup = (request: { readonly threadId: string }) =>
       shapeStream(socket, { type: "worktreeSetup", mc, threadId: request.threadId }, (frame) =>
@@ -1324,6 +1335,7 @@ export function makeV3Session(input: {
         ].map((tag) => [tag, forward(tag, (_request: object, _message, cause) => cause)]),
       ),
       [WS_METHODS.subscribeResourceTelemetry]: resourceTelemetry,
+      [WS_METHODS.subscribeSpacePresence]: spacePresence,
       [WS_METHODS.subscribeAuthAccess]: authAccess,
       [WS_METHODS.serverGetBackgroundPolicy]: backgroundPolicy,
       // MCs have no client-driven policy, so it never changes after the first read.

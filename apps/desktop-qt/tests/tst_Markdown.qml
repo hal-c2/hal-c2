@@ -97,6 +97,31 @@ Item {
             mouseClick(edit, rect.x + 1, rect.y + rect.height / 2, Qt.LeftButton, modifiers);
         }
 
+        // A link is drawn in the theme's link colour, not the platform's blue:
+        // the inkiest pixel of its letters is that colour.
+        function test_linksTakeTheThemesLinkColour() {
+            const md = make("See [the pull request](https://example.com/pull/135) now.");
+            const edit = prose(segmentsOf(md)[0]);
+            verify(waitForRendering(edit));
+            const shot = grabImage(edit);
+            const start = edit.positionToRectangle(plain(edit).indexOf("the pull"));
+            const end = edit.positionToRectangle(plain(edit).indexOf(" now"));
+            const x0 = Math.ceil(start.x);
+            const y0 = Math.ceil(start.y);
+            const rgb = (x, y) => [shot.red(x, y), shot.green(x, y), shot.blue(x, y)];
+            const away = (a, b) => Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
+            const paper = rgb(x0, y0);
+            let ink = paper;
+            for (let y = y0; y < start.y + start.height; ++y) {
+                for (let x = x0; x < end.x; ++x) {
+                    if (away(rgb(x, y), paper) > away(ink, paper))
+                        ink = rgb(x, y);
+                }
+            }
+            const link = [Theme.link.r, Theme.link.g, Theme.link.b].map(c => Math.round(c * 255));
+            verify(away(ink, link) <= 8, "the link is drawn in " + link + ", not " + ink);
+        }
+
         function test_hoveredLinkTipNamesTheLink() {
             const md = make("See the [pricing docs](https://example.com/docs/pricing) now.");
             const edit = prose(segmentsOf(md)[0]);
@@ -116,6 +141,38 @@ Item {
         function test_plainClickLeavesLinkAlone() {
             clickWord(make("See the [pricing docs](https://example.com/docs/pricing) now."), "pricing", "https://example.com/docs/pricing", Qt.NoModifier);
             compare(linkSpy.count, 0);
+        }
+
+        // A finger has no secondary button: holding a link offers its menu,
+        // where a tap would have opened it.
+        function test_aHeldLinkOffersItsMenu() {
+            Shell.reset();
+            const md = make("See the [guide](docs/guide.md) now.");
+            linkSpy.target = md;
+            linkSpy.clear();
+            const edit = prose(segmentsOf(md)[0]);
+            const rect = edit.positionToRectangle(plain(edit).indexOf("guide") + 2);
+            const y = rect.y + rect.height / 2;
+            const touch = touchEvent(edit);
+            touch.press(0, edit, rect.x + 1, y).commit();
+            tryVerify(() => Shell.dispatchedActions.some(a => a.action === "link.menu"), 3000);
+            touch.release(0, edit, rect.x + 1, y).commit();
+            const menu = Shell.dispatchedActions.find(a => a.action === "link.menu");
+            compare(menu.payload.url, "docs/guide.md");
+            compare(linkSpy.count, 0);
+        }
+
+        function test_aTappedLinkOpens() {
+            Shell.reset();
+            const md = make("See the [guide](docs/guide.md) now.");
+            linkSpy.target = md;
+            linkSpy.clear();
+            const edit = prose(segmentsOf(md)[0]);
+            const rect = edit.positionToRectangle(plain(edit).indexOf("guide") + 2);
+            const y = rect.y + rect.height / 2;
+            touchEvent(edit).press(0, edit, rect.x + 1, y).commit().release(0, edit, rect.x + 1, y).commit();
+            compare(linkSpy.count, 1);
+            verify(!Shell.dispatchedActions.some(a => a.action === "link.menu"));
         }
 
         // The Files viewer draws a file's task boxes as links to be ticked with
@@ -161,6 +218,98 @@ Item {
             compare(clipboardText(), source);
             compare(button.iconName, "check");
             tryCompare(button, "iconName", "copy", 3000);
+        }
+
+        // What the MC draws for a small flowchart, as MermaidController keeps it.
+        function drawnFlowchart() {
+            const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" fill="#336699"/></svg>';
+            return { status: "drawn", kind: "flowchart", url: "data:image/svg+xml;base64," + Qt.btoa(Array.from(svg, c => c.charCodeAt(0))), width: 120, height: 40 };
+        }
+
+        function test_aMermaidBlockIsDrawnOnceTheMcAnswers() {
+            Diagrams.reset();
+            const source = "flowchart LR\n  A --> B";
+            const md = make("Here:\n\n```mermaid\n" + source + "\n```");
+            const status = findChild(md, "mermaidStatus");
+            verify(status.visible, "it says the diagram is being drawn");
+            compare(status.text, "Drawing the diagram…");
+            verify(findChild(md, "codeText").visible, "the source shows until it is drawn");
+            verify(("dark\n" + source) in Diagrams.asked, "asked for in the client's theme");
+
+            Diagrams.answer(source, "dark", drawnFlowchart());
+            const image = findChild(md, "mermaidImage");
+            verify(image.visible);
+            tryCompare(image, "status", Image.Ready);
+            compare(image.width, 120);
+            verify(!findChild(md, "codeText").visible, "the picture takes the code's place");
+            verify(!status.visible);
+
+            // Its source is one switch away, and copies.
+            const toggle = findChild(md, "diagramSource");
+            verify(toggle.visible);
+            // Placed in its row on the next polish.
+            verify(waitForPolish(toggle.parent));
+            mouseClick(toggle);
+            verify(findChild(md, "codeText").visible);
+            verify(!image.visible);
+            mouseClick(findChild(md, "copyCode"));
+            compare(clipboardText(), source);
+            mouseClick(toggle);
+            verify(image.visible);
+        }
+
+        function test_aMermaidMistakeShowsTheSourceAndWhereItIs() {
+            Diagrams.reset();
+            const source = "flowchart LR\n  A[open --> B";
+            const md = make("```mermaid\n" + source + "\n```");
+            Diagrams.answer(source, "dark", { status: "invalid", kind: "flowchart", reason: "An unclosed bracket.", line: 2, column: 3 });
+            verify(findChild(md, "codeText").visible);
+            const status = findChild(md, "mermaidStatus");
+            verify(status.visible);
+            compare(status.text, "Line 2: An unclosed bracket.");
+            verify(!findChild(md, "diagramSource").visible, "nothing to switch to");
+            verify(!findChild(md, "mermaidRetry").visible, "a mistake is not asked for again");
+        }
+
+        function test_aDiagramTheMcCouldNotDrawCanBeAskedAgain() {
+            Diagrams.reset();
+            const source = "sequenceDiagram\n  A->>B: hi";
+            const md = make("```mermaid\n" + source + "\n```");
+            Diagrams.answer(source, "dark", { status: "failed", kind: "", reason: "The MC could not be reached to draw this diagram." });
+            compare(findChild(md, "mermaidStatus").text, "The MC could not be reached to draw this diagram.");
+            const retry = findChild(md, "mermaidRetry");
+            // Beside the note once the row is laid out.
+            tryVerify(() => retry.mapToItem(md, 0, 0).x > 100);
+            mouseClick(retry);
+            compare(Diagrams.retried, ["dark\n" + source]);
+        }
+
+        function test_aDiagramIsDrawnAgainInTheNewTheme() {
+            Diagrams.reset();
+            const source = "flowchart LR\n  A --> B";
+            const md = make("```mermaid\n" + source + "\n```");
+            Diagrams.answer(source, "dark", drawnFlowchart());
+            verify(findChild(md, "mermaidImage").visible);
+            Theme.appearance = "light";
+            try {
+                verify(("light\n" + source) in Diagrams.asked, "asked for in the new theme");
+                verify(!findChild(md, "mermaidImage").visible, "the dark picture is not kept");
+                compare(findChild(md, "mermaidStatus").text, "Drawing the diagram…");
+            } finally {
+                Theme.appearance = "dark";
+            }
+        }
+
+        function test_aMermaidBlockBeingWrittenIsNotDrawnYet() {
+            Diagrams.reset();
+            const md = make("Look:\n\n```mermaid\nflowchart LR\n  A --> B", { streaming: true });
+            const code = findChild(md, "markdownCode");
+            verify(code.code.length > 0);
+            verify(!findChild(md, "mermaidStatus").visible, "nothing claims it is being drawn");
+            compare(Object.keys(Diagrams.asked).length, 0, "nothing is asked while the fence is open");
+            md.text += "\n```";
+            verify(findChild(md, "mermaidStatus").visible);
+            compare(Object.keys(Diagrams.asked), ["dark\nflowchart LR\n  A --> B"]);
         }
 
         function test_wrapToggleSwitchesLineWrap() {

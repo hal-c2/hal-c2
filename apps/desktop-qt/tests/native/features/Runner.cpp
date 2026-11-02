@@ -179,8 +179,10 @@ Match match(const Step& step) {
     matched = candidate;
   }
   if (!found) fail(QStringLiteral("undefined step: ") + step.text);
-  Captures captures = matched.capturedTexts();
-  captures.removeFirst();
+  // One per group, a group that took no part as an empty string
+  // (capturedTexts() leaves trailing ones out).
+  Captures captures;
+  for (int group = 1; group <= found->pattern.captureCount(); ++group) captures.append(matched.captured(group));
   return {found, captures};
 }
 

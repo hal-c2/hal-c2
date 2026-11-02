@@ -47,8 +47,8 @@ Rectangle {
     // The session may only view this environment: nothing on it can be changed.
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color warning: Theme.palette.color("warning", "#f59e0b")
-    readonly property color danger: Theme.palette.color("error", "#f87171")
+    readonly property color warning: Theme.palette.color("warningForeground", "#f59e0b")
+    readonly property color danger: Theme.palette.color("errorForeground", "#f87171")
 
     // A redacted placeholder: the same length and
     // separators, other characters drawn from a hash of the value, so an
@@ -381,6 +381,8 @@ Rectangle {
                             sourceSize: Qt.size(20, 20)
                             fillMode: Image.PreserveAspectFit
                             asynchronous: true
+                            // The agent's name is beside it.
+                            Accessible.ignored: true
                         }
 
                         ColumnLayout {
@@ -864,6 +866,8 @@ Rectangle {
                 visible: card.provider.email.length > 0
                 flat: true
                 padding: 0
+                // Tall enough to hit, though the text is small.
+                implicitHeight: Math.max(24, implicitContentHeight)
                 text: card.revealed ? card.provider.email : page.redacted(card.provider.email)
                 font.pixelSize: Math.round(11 * Theme.fontScale)
                 font.family: "monospace"
@@ -874,10 +878,16 @@ Rectangle {
 
                 contentItem: Label {
                     text: email.text
+                    verticalAlignment: Text.AlignVCenter
                     color: email.hovered ? page.foreground : page.muted
                     font: email.font
                 }
-                background: null
+                background: Rectangle {
+                    color: "transparent"
+                    radius: 4
+                    border.width: email.visualFocus ? 1 : 0
+                    border.color: Theme.palette.color("focus", "#3b82f6")
+                }
             }
 
             // The runtime the environment installs itself (Antigravity).
@@ -1447,6 +1457,7 @@ Rectangle {
                     text: page.model ? page.model.title : ""
                     color: page.foreground
                     font.pixelSize: Math.round(14 * Theme.fontScale)
+                    wrapMode: Text.Wrap
                     font.weight: Font.DemiBold
                 }
 

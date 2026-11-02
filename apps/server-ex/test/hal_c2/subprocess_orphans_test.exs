@@ -20,8 +20,23 @@ defmodule HalC2.Subprocess.OrphansTest do
 
   setup %{tmp_dir: dir} do
     Application.put_env(:hal_c2, :home, dir)
+    on_exit(fn -> Application.delete_env(:hal_c2, :pid_kill_helper) end)
     :ok
   end
+
+  # The tests that take `kill` off PATH mean there is no way to signal at all.
+  defp no_pid_kill_helper, do: Application.put_env(:hal_c2, :pid_kill_helper, false)
+
+  # A stand-in hal-c2-pid-kill that says how it was run, then runs `script`.
+  defp pid_kill_stub(dir, script) do
+    {stub, args} = {Path.join(dir, "pid-kill"), Path.join(dir, "pid-kill-args")}
+    File.write!(stub, ~s(#!/bin/sh\necho "$@" >> '#{args}'\n#{script}\n))
+    File.chmod!(stub, 0o755)
+    Application.put_env(:hal_c2, :pid_kill_helper, stub)
+    args
+  end
+
+  defp ticks(started), do: started |> String.split(":") |> List.last()
 
   # An MC that is gone: this VM's pid, but not its start time.
   defp dead_mc, do: %{"pid" => String.to_integer(System.pid()), "started" => "an earlier boot"}
@@ -59,18 +74,21 @@ defmodule HalC2.Subprocess.OrphansTest do
     :ok = Subprocess.write_line(sub, "leave")
     assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
     Subprocess.ack(sub)
-    await_gone(leader, 500)
+    await_reaped(leader, 500)
     String.to_integer(line)
   end
 
-  defp await_gone(pid, tries) when tries > 0 do
-    if Orphans.gone?(pid) do
-      :ok
-    else
+  # Not `Orphans.gone?`, which a zombie passes too: a boot kills the group a zombie still
+  # leads. Nor its exit status, which the port holds back while a command keeps its pipes;
+  # so this reads the process; the bound is only how long a failure waits.
+  defp await_reaped(pid, tries) when tries > 0 do
+    if Orphans.started(pid) do
       Process.sleep(10)
-      await_gone(pid, tries - 1)
+      await_reaped(pid, tries - 1)
     end
   end
+
+  defp await_reaped(pid, 0), do: flunk("#{pid} was never reaped")
 
   test "a boot kills what a program that exited after its MC died left in its group" do
     boot(:died, owner: dead_mc())
@@ -85,19 +103,133 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert File.ls!(Orphans.dir()) == []
   end
 
+  test "a kill goes through the helper with the start time that was read", %{tmp_dir: dir} do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    pid = Subprocess.os_pid(sub)
+    started = Orphans.started(pid)
+    :ok = stop_supervised(:died)
+    args = pid_kill_stub(dir, ~s(exec kill -KILL -- "-$2"))
+
+    boot(:next)
+
+    assert File.read!(args) == "--group #{pid} #{ticks(started)}\n"
+    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+    assert File.ls!(Orphans.dir()) == []
+  end
+
+  test "a sweep signals each command through the helper, alone", %{tmp_dir: dir} do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @leaves])
+    :ok = stop_supervised(:died)
+    command = left_behind(sub)
+    started = Orphans.started(command)
+    args = pid_kill_stub(dir, ~s(exec kill -KILL -- "$1"))
+
+    boot(:next)
+
+    assert File.read!(args) == "#{command} #{ticks(started)}\n"
+    assert Orphans.gone?(command)
+    assert File.ls!(Orphans.dir()) == []
+  end
+
+  test "a kill the helper finds the pid reused for does not fall back to kill", %{tmp_dir: dir} do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+    pid_kill_stub(dir, "exit 3")
+
+    boot(:next)
+
+    alive!(sub)
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
+  # No pidfds (4), and what a binary that will not load comes back as (8, 127).
+  for status <- [4, 8, 127] do
+    test "a helper exiting #{status} gets the kill it always got", %{tmp_dir: dir} do
+      boot(:died, owner: dead_mc())
+      {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+      :ok = stop_supervised(:died)
+      pid_kill_stub(dir, "exit #{unquote(status)}")
+
+      boot(:next)
+
+      assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+      assert File.ls!(Orphans.dir()) == []
+    end
+  end
+
+  test "a program that exits just before the helper's check still has its commands swept",
+       %{tmp_dir: dir} do
+    boot(:died, owner: dead_mc())
+    {:ok, sub} = Subprocess.start(["sh", "-c", "sleep 60 & echo $!; " <> @echo])
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
+    Subprocess.ack(sub)
+    command = String.to_integer(line)
+    leader = Subprocess.os_pid(sub)
+    :ok = stop_supervised(:died)
+
+    # The first run ends the program alone and finds it gone, as the helper would; the
+    # sweep's run is a plain kill of the command.
+    pid_kill_stub(
+      dir,
+      ~s(if [ "$1" = --group ]; then kill -KILL "$2"; exit 3; fi; exec kill -KILL "$1")
+    )
+
+    boot(:next)
+
+    assert Orphans.gone?(leader)
+    assert Orphans.gone?(command)
+    assert File.ls!(Orphans.dir()) == []
+  end
+
   test "a boot spares a process in that group without the program's mark" do
     # What a later group with the same id looks like: no leader, and not this program's.
-    script = ~s(env -u HAL_C2_PROGRAM_ID sleep 60 & while read l; do echo $!; exit 0; done)
+    # It says its own pid: `$!` would name the fork, which has the mark until `env` execs.
+    stranger = ~S{env -u HAL_C2_PROGRAM_ID sh -c 'echo $$; exec sleep 60'}
     boot(:died, owner: dead_mc())
-    {:ok, sub} = Subprocess.start(["sh", "-c", script])
+    {:ok, sub} = Subprocess.start(["sh", "-c", stranger <> " & while read l; do exit 0; done"])
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
+    Subprocess.ack(sub)
+    stranger = String.to_integer(line)
     :ok = stop_supervised(:died)
-    stranger = left_behind(sub)
+    leader = Subprocess.os_pid(sub)
+    :ok = Subprocess.write_line(sub, "leave")
+    await_reaped(leader, 500)
 
     boot(:next)
 
     refute Orphans.gone?(stranger)
     assert File.ls!(Orphans.dir()) == []
     System.cmd("kill", ["-KILL", "#{stranger}"])
+  end
+
+  test "a boot kills the whole group of a program that exited but was not reaped yet" do
+    # A zombie leader, as in the unreaped-MC test below, with a command in a group of its
+    # own: `setsid` execs in place, as a background job leads no group. Its pid is held,
+    # so the group cannot be a later one's, and even an unmarked command in it goes.
+    leader = ~S{while [ "$(cat /proc/$PPID/comm)" != sleep ]; do sleep 0.01; done; }
+    child = ~s{setsid sh -c '#{leader}sleep 60 & echo $$ $!'}
+    {:ok, holder} = Exile.Process.start_link(["sh", "-c", child <> " & exec sleep 60"])
+    {:ok, line} = Exile.Process.read(holder)
+    [zombie, command] = line |> String.split() |> Enum.map(&String.to_integer/1)
+    await_zombie(zombie, 500)
+    refute Orphans.gone?(command)
+
+    File.mkdir_p!(Orphans.dir())
+    record = "#{zombie}-1.json"
+
+    File.write!(
+      Path.join(Orphans.dir(), record),
+      JSON.encode!(%{"pid" => zombie, "started" => Orphans.started(zombie), "mc" => dead_mc()})
+    )
+
+    boot(:next)
+
+    assert Orphans.gone?(command)
+    assert File.ls!(Orphans.dir()) == [record]
+    :ok = Exile.Process.kill(holder, :sigkill)
   end
 
   test "only a marked process holds up a sweep when it cannot be read" do
@@ -135,6 +267,7 @@ defmodule HalC2.Subprocess.OrphansTest do
   end
 
   test "a boot with no kill to run keeps the record of what a gone program left" do
+    no_pid_kill_helper()
     boot(:died, owner: dead_mc())
     {:ok, sub} = Subprocess.start(["sh", "-c", @leaves])
     :ok = stop_supervised(:died)
@@ -220,6 +353,7 @@ defmodule HalC2.Subprocess.OrphansTest do
   end
 
   test "a failed kill of a zombie program keeps its record for the next boot", %{tmp_dir: dir} do
+    no_pid_kill_helper()
     # A zombie (as in the unreaped-MC test below): exited, so "not running" before
     # any signal — a failed kill must not be read as success from that alone.
     child = ~S{sh -c 'while [ "$(cat /proc/$PPID/comm)" != sleep ]; do sleep 0.01; done'}
@@ -254,6 +388,7 @@ defmodule HalC2.Subprocess.OrphansTest do
   end
 
   test "a boot with no kill to run keeps the record, and a later one kills the program" do
+    no_pid_kill_helper()
     boot(:died, owner: dead_mc())
     {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
     :ok = stop_supervised(:died)
@@ -351,6 +486,161 @@ defmodule HalC2.Subprocess.OrphansTest do
     # The refusal comes before any spawn is tried: even a program that is not
     # there is answered with the tracking failure, not the spawn's own.
     assert {:error, {:untracked, :no_records_dir}} = Subprocess.start(["/no/such/program"])
+  end
+
+  # hal-c2/hal-c2#451. A file where the state dir goes; the dir, records and all, waits
+  # beside it until the returned function puts it back.
+  defp break_records_dir do
+    parent = Path.dirname(Orphans.dir())
+    File.mkdir_p!(parent)
+    File.rename!(parent, parent <> ".aside")
+    File.write!(parent, "")
+
+    fn ->
+      File.rm!(parent)
+      File.rename!(parent <> ".aside", parent)
+    end
+  end
+
+  test "a records dir that can be made again reaps, as the owner the boot was given, before any start" do
+    boot(:died, owner: dead_mc())
+    {:ok, orphan} = Subprocess.start(["sh", "-c", "sleep 60 & " <> @echo])
+    orphan_pid = Subprocess.os_pid(orphan)
+    :ok = stop_supervised(:died)
+
+    restore = break_records_dir()
+    owner = %{"pid" => String.to_integer(System.pid()), "started" => "the boot's own"}
+    boot(:next, owner: owner)
+
+    assert {:error, {:untracked, :no_records_dir}} = Subprocess.start(["sh", "-c", @echo])
+    alive!(orphan)
+
+    restore.()
+
+    # Starts at once, each behind the same attempt: every one that returns finds the
+    # orphan reaped already and its own record written, and none is refused.
+    results =
+      1..4
+      |> Enum.map(fn _ ->
+        Task.async(fn ->
+          {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+          reaped? = Orphans.gone?(orphan_pid)
+          record? = sub |> Subprocess.os_pid() |> record_of() |> Map.get("mc")
+          {:ok, 0} = Subprocess.stop(sub)
+          {reaped?, record?}
+        end)
+      end)
+      |> Task.await_many(10_000)
+
+    assert results == List.duplicate({true, owner}, 4)
+    assert_receive {:subprocess_eof, reader} when reader == orphan.reader, 5_000
+  end
+
+  defp record_of(pid) do
+    Orphans.dir()
+    |> File.ls!()
+    # Another program's record may go, or be half written, while this reads.
+    |> Enum.flat_map(fn name ->
+      with {:ok, text} <- File.read(Path.join(Orphans.dir(), name)),
+           {:ok, record} <- JSON.decode(text) do
+        [record]
+      else
+        _ -> []
+      end
+    end)
+    |> Enum.find(&(&1["pid"] == pid))
+  end
+
+  test "a start time that can be read again turns tracking on for the next start", %{tmp_dir: dir} do
+    me = String.to_integer(System.pid())
+    readable = Path.join(dir, "readable")
+    # A function, as the MC's own identity is: read again at each attempt.
+    owner = fn -> %{"pid" => me, "started" => if(File.exists?(readable), do: "now")} end
+    boot(:next, owner: owner)
+
+    assert {:error, {:untracked, :no_start_time}} = Subprocess.start(["sh", "-c", @echo])
+
+    File.write!(readable, "")
+
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    alive!(sub)
+    assert record_of(Subprocess.os_pid(sub))["mc"] == %{"pid" => me, "started" => "now"}
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
+  # What `Subprocess.start` reaches when the mark turns unavailable after its first check.
+  test "tracking a running program while unavailable is refused, then recorded once it heals" do
+    restore = break_records_dir()
+    boot(:next, owner: dead_mc())
+    me = String.to_integer(System.pid())
+
+    assert {:error, :no_records_dir} = Orphans.track(self(), me, "mark")
+
+    restore.()
+
+    assert :ok = Orphans.track(self(), me, "mark")
+    assert %{"mark" => "mark", "mc" => mc} = record_of(me)
+    assert mc == dead_mc()
+  end
+
+  test "a start time still unreadable does not reap again at each refused start", %{tmp_dir: dir} do
+    me = String.to_integer(System.pid())
+    readable = Path.join(dir, "readable")
+    owner = fn -> %{"pid" => me, "started" => if(File.exists?(readable), do: "now")} end
+    boot(:died, owner: dead_mc())
+    {:ok, orphan} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+    # Out of the way of the boot's own reap, so only a retry could reach it.
+    [record] = File.ls!(Orphans.dir())
+    path = Path.join(Orphans.dir(), record)
+    File.rename!(path, Path.join(dir, record))
+    boot(:next, owner: owner)
+    File.rename!(Path.join(dir, record), path)
+
+    assert {:error, {:untracked, :no_start_time}} = Subprocess.start(["sh", "-c", @echo])
+    alive!(orphan)
+
+    File.write!(readable, "")
+
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    assert_receive {:subprocess_eof, reader} when reader == orphan.reader, 5_000
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
+  test "with both failures at boot, the dir coming back reaps once and the start stays refused",
+       %{tmp_dir: dir} do
+    me = String.to_integer(System.pid())
+    readable = Path.join(dir, "readable")
+    owner = fn -> %{"pid" => me, "started" => if(File.exists?(readable), do: "now")} end
+    boot(:died, owner: dead_mc())
+    {:ok, first} = Subprocess.start(["sh", "-c", @echo])
+    {:ok, second} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+    # The second's record is out of reach of the first attempt's reap, so only a later
+    # reap could kill it.
+    [record] =
+      File.ls!(Orphans.dir())
+      |> Enum.filter(&String.starts_with?(&1, "#{Subprocess.os_pid(second)}-"))
+
+    path = Path.join(Orphans.dir(), record)
+    File.rename!(path, Path.join(dir, record))
+
+    restore = break_records_dir()
+    boot(:next, owner: owner)
+    assert {:error, {:untracked, :no_records_dir}} = Subprocess.start(["sh", "-c", @echo])
+    restore.()
+
+    assert {:error, {:untracked, :no_start_time}} = Subprocess.start(["sh", "-c", @echo])
+    assert_receive {:subprocess_eof, reader} when reader == first.reader, 5_000
+
+    File.rename!(Path.join(dir, record), path)
+    assert {:error, {:untracked, :no_start_time}} = Subprocess.start(["sh", "-c", @echo])
+    alive!(second)
+
+    File.write!(readable, "")
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    assert_receive {:subprocess_eof, reader} when reader == second.reader, 5_000
+    assert {:ok, 0} = Subprocess.stop(sub)
   end
 
   test "in a running MC a program is not run untracked before the service has started" do
@@ -554,6 +844,14 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert Orphans.parse_stat("123 (sh) S 1 123 " <> garbage) == :unknown
     # Without the boot it started in, the ticks are no identity at all.
     assert Orphans.parse_stat("123 (sh) S 1 123 " <> rest, "") == :unknown
+  end
+
+  test "only a read that says the process is no more reads as gone" do
+    # A program reaped between the read's open and its read answers :esrch.
+    assert Orphans.unreadable_stat(:enoent) == :gone
+    assert Orphans.unreadable_stat(:esrch) == :gone
+    assert Orphans.unreadable_stat(:eacces) == :unknown
+    assert Orphans.unreadable_stat(:eio) == :unknown
   end
 
   test "tracking a program already gone is fine, and gone? tells it from a running one" do

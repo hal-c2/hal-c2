@@ -44,11 +44,16 @@ Feature: Terminal failures
       And no shell is started
 
     @mc
-    Scenario: A terminal does not open when the instance's settings cannot be read
+    Scenario Outline: A terminal does not open when the instance's settings cannot be read
       Given the MC cannot read its provider settings
-      When a client opens a terminal for the provider instance "work"
-      Then the open fails
-      And no shell is started with a missing home or variables
+      When a client opens a terminal for the provider instance "<instance>"
+      Then the open fails saying the settings cannot be read
+      And no shell starts
+
+      Examples:
+        | instance |
+        | work     |
+        | codex    |
 
     @mc
     Scenario: A machine with no usable shell reports which shells it tried

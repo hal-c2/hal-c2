@@ -6,17 +6,21 @@ defmodule HalC2.PlannerMilestonesPropTest do
   out of one until the model answers it, in any order, and writes down each move it
   takes.
 
-  GitHub has three milestones, each holding one issue. The plan imports them, and a
-  client moves the tasks of the first two issues from one milestone to another, into
-  one when the task is in none and out of the one it is in, each move from a caller of
-  its own, as another window's would, so it can wait on GitHub while the case goes on.
-  GitHub answers the moves it holds one at a time, and now and then refuses one, and the
-  plugin now and then looks at GitHub, which lists each issue in the milestone it took
-  for it last. After every step, a look's included, the plan has each task in the
-  milestone it was moved to last, and once GitHub has answered everything:
+  GitHub has three milestones, each holding one issue, and a fourth issue in none. The
+  plan imports the three, and a client moves the tasks of the first two issues from one
+  milestone to another, into one when the task is in none and out of the one it is in.
+  It also relinks those tasks to an issue no task names, which hands an issue over when
+  another task left it, unlinks them and removes them. Each change comes from a caller
+  of its own, as another window's would, so it can wait on GitHub while the case goes
+  on. GitHub answers the moves it holds one at a time, and now and then refuses one, and
+  the plugin now and then looks at GitHub, which lists each issue in the milestone it
+  took for it last, or restarts, its changes going on. After every step, a look's included, the plan has each task where
+  it was moved to last and naming the issue it was linked to last, and once GitHub has
+  answered everything:
 
-  - GitHub has each issue in the milestone its task is in, or in none, the move it took
-    last being the one the plan kept, whichever order it took them in;
+  - GitHub has each issue in the milestone of the task naming it, or in none when no
+    task names it or that task is in none, the move it took last being the one the plan
+    kept, whichever order it took them in;
   - the moves end: GitHub is not asked to move issues for ever;
   - no milestone or task is marked as not synced or waiting on GitHub.
 
@@ -26,10 +30,14 @@ defmodule HalC2.PlannerMilestonesPropTest do
   milestone has changed since the last one: then GitHub ends with every issue where its
   task is, and nothing is marked, as if it had refused nothing.
 
-  Each task keeps the issue it starts with: relinking, unlinking or removing a
-  task is not generated, so what corrections do for a relinked task (one task
-  leaving two issues behind in a milestone) rests on the `Sync` unit tests in
-  `test/hal_c2/planner_test.exs`, not on this model.
+  A correction sent to the task that took its issue over takes a late push, a refusal and
+  two relinks in a row, which cases this short rarely reach: its scenario in
+  `features/planning/planner.feature` pins it.
+
+  A look is generated only until the first relink, unlink or removal. It makes a task
+  of an open issue no task names, and puts a newly linked task in the milestone GitHub
+  has its issue in, so what it does then depends on what GitHub took by that moment,
+  which the model does not follow.
   """
   use ExUnit.Case, async: false
   use PropCheck
@@ -42,8 +50,10 @@ defmodule HalC2.PlannerMilestonesPropTest do
   @package Path.expand("../../../../plugins/planner", __DIR__)
   @support Path.expand("../../test/support", __DIR__)
   @repository "acme/api"
-  # Issue n starts in milestone n; only the first two move.
-  @issues [1, 2, 3]
+  # Task n starts with issue n in milestone n; only the first two change. Issue 4 starts
+  # in no milestone with no task.
+  @tasks [1, 2, 3]
+  @issues [1, 2, 3, 4]
   @moving [1, 2]
   @milestones [1, 2, 3]
   # The most moves one settling answers before it calls them endless.
@@ -103,48 +113,106 @@ defmodule HalC2.PlannerMilestonesPropTest do
 
   # --- model ----------------------------------------------------------------------------
 
-  # `at`: issue → the milestone its task is in, or nil.
-  def initial_state, do: %{at: Map.new(@issues, &{&1, &1})}
-
-  def command(m) do
-    frequency([
-      {4,
-       let [n <- oneof(@moving), to <- oneof([nil | @milestones])] do
-         {:call, __MODULE__, :move, [n, m.at[n], to]}
-       end},
-      {4, {:call, __MODULE__, :answer, [integer(0, 3)]}},
-      {1, {:call, __MODULE__, :refuse, [integer(0, 3)]}},
-      {1, {:call, __MODULE__, :look, []}},
-      {1, {:call, __MODULE__, :settle, []}}
-    ])
+  # `tasks`: task → the issue it names and the milestone it is in, either of them nil; a
+  # removed task is gone. `relinked`: a task has left its issue, so no look is generated.
+  def initial_state do
+    %{tasks: Map.new(@tasks, &{&1, %{issue: &1, at: &1}}), relinked: false}
   end
 
-  def precondition(m, {:call, _, :move, [n, from, to]}), do: from == m.at[n] and to != from
+  def command(m) do
+    live = Enum.filter(@moving, &is_map_key(m.tasks, &1))
+
+    changes =
+      if live == [],
+        do: [],
+        else: [
+          {4,
+           let [t <- oneof(live), to <- oneof([nil | @milestones])] do
+             {:call, __MODULE__, :move, [t, m.tasks[t].at, to]}
+           end},
+          {2,
+           let [t <- oneof(live), n <- oneof(@issues)] do
+             {:call, __MODULE__, :relink, [t, n, m.tasks[t].at]}
+           end},
+          {1,
+           let t <- oneof(live) do
+             {:call, __MODULE__, :unlink, [t, m.tasks[t].issue, m.tasks[t].at]}
+           end},
+          {1,
+           let t <- oneof(live) do
+             {:call, __MODULE__, :remove, [t, m.tasks[t].at]}
+           end}
+        ]
+
+    frequency(
+      changes ++
+        [
+          {4, {:call, __MODULE__, :answer, [integer(0, 3)]}},
+          {1, {:call, __MODULE__, :refuse, [integer(0, 3)]}},
+          {1, {:call, __MODULE__, :look, []}},
+          {1, {:call, __MODULE__, :restart, []}},
+          {1, {:call, __MODULE__, :settle, []}}
+        ]
+    )
+  end
+
+  def precondition(m, {:call, _, :move, [t, from, to]}),
+    do: live?(m, t, from) and to != from
+
+  def precondition(m, {:call, _, :relink, [t, n, from]}),
+    do: live?(m, t, from) and not Enum.any?(m.tasks, fn {_, task} -> task.issue == n end)
+
+  def precondition(m, {:call, _, :unlink, [t, issue, from]}),
+    do: live?(m, t, from) and issue != nil and m.tasks[t].issue == issue
+
+  def precondition(m, {:call, _, :remove, [t, from]}), do: live?(m, t, from)
+  def precondition(m, {:call, _, :look, []}), do: not m.relinked
+  # A restart looks at GitHub as it starts.
+  def precondition(m, {:call, _, :restart, []}), do: not m.relinked
   def precondition(_m, _call), do: true
 
-  def next_state(m, _result, {:call, _, :move, [n, _from, to]}), do: put_in(m.at[n], to)
+  defp live?(m, t, from), do: is_map_key(m.tasks, t) and m.tasks[t].at == from
+
+  def next_state(m, _result, {:call, _, :move, [t, _from, to]}), do: put_in(m.tasks[t].at, to)
+
+  def next_state(m, _result, {:call, _, :relink, [t, n, _from]}),
+    do: %{put_in(m.tasks[t].issue, n) | relinked: true}
+
+  def next_state(m, _result, {:call, _, :unlink, [t, _issue, _from]}),
+    do: %{put_in(m.tasks[t].issue, nil) | relinked: true}
+
+  def next_state(m, _result, {:call, _, :remove, [t, _from]}),
+    do: %{m | tasks: Map.delete(m.tasks, t), relinked: true}
+
   def next_state(m, _result, _call), do: m
 
   def postcondition(m, {:call, _, :settle, []} = call, observed) do
-    at = next_state(m, observed, call).at
+    tasks = next_state(m, observed, call).tasks
+    github = placed(tasks)
 
-    observed.problems == [] and observed.at == at and
+    observed.problems == [] and observed.tasks == tasks and
       if(observed.refused and MapSet.new(observed.changed) != MapSet.new(@milestones),
-        do: observed.github == at or observed.marked != [],
-        else: observed.github == at and observed.marked == []
+        do: observed.github == github or observed.marked != [],
+        else: observed.github == github and observed.marked == []
       )
   end
 
   def postcondition(m, call, observed),
-    do: observed.problems == [] and observed.at == next_state(m, observed, call).at
+    do: observed.problems == [] and observed.tasks == next_state(m, observed, call).tasks
+
+  # Issue → the milestone of the task naming it, or nil.
+  defp placed(tasks) do
+    Map.new(@issues, fn n ->
+      {n, Enum.find_value(tasks, fn {_, task} -> if task.issue == n, do: task.at end)}
+    end)
+  end
 
   # --- commands ---------------------------------------------------------------------------
 
-  # Moves issue `n`'s task from the milestone `from` to `to`, either of them none, from a
-  # caller of its own, and returns once GitHub holds a move or the caller is done.
-  def move(n, from, to) do
+  # Moves task `t` from the milestone `from` to `to`, either of them none.
+  def move(t, from, to) do
     plan = plan()
-    task = task_id(plan, n)
+    task = Process.get(:pl_tasks)[t]
 
     {method, input} =
       case {from, to} do
@@ -159,19 +227,34 @@ defmodule HalC2.PlannerMilestonesPropTest do
           {"moveToMilestone", Map.put(ids, "id", task)}
       end
 
-    caller =
-      spawn_monitor(fn ->
-        try do
-          call(method, input)
-        catch
-          # The plugin stopped with the case.
-          :exit, _ -> :ok
-        end
-      end)
+    change(method, input, [from, to])
+  end
+
+  # Links task `t`, in the milestone `from`, to the issue `n`, which no task names.
+  def relink(t, n, from),
+    do: change("link", %{"itemId" => Process.get(:pl_tasks)[t], "issue" => ref(n)}, [from])
+
+  # Unlinks task `t`, in the milestone `from`, from the issue it names.
+  def unlink(t, n, from) do
+    input = %{"itemId" => Process.get(:pl_tasks)[t], "kind" => "issue", "ref" => ref(n)}
+    change("unlink", input, [from])
+  end
+
+  # Removes task `t`, in the milestone `from`.
+  def remove(t, from),
+    do: change("removeItem", %{"id" => Process.get(:pl_tasks)[t]}, [from])
+
+  defp ref(n), do: %{"repository" => @repository, "number" => n}
+
+  # Calls the plugin from a caller of its own, and returns once GitHub holds a move or the
+  # caller is done. `milestones`, any of them nil for none, are the ones the call changes.
+  defp change(method, input, milestones) do
+    # It ends with the plugin's answer, which `await_github/0` reads.
+    caller = spawn_monitor(fn -> exit(call(method, input)) end)
 
     Process.put(:pl_callers, [caller | Process.get(:pl_callers)])
     await_github()
-    changed = Enum.uniq(Process.get(:pl_changed) ++ Enum.reject([from, to], &is_nil/1))
+    changed = Enum.uniq(Process.get(:pl_changed) ++ Enum.reject(milestones, &is_nil/1))
     Process.put(:pl_changed, Enum.sort(changed))
     observe()
   end
@@ -212,6 +295,15 @@ defmodule HalC2.PlannerMilestonesPropTest do
     observe()
   end
 
+  # The plugin restarts, its changes on the way to GitHub going on, and returns once it
+  # has looked at GitHub, which it does on starting, as `look/0` has GitHub list each issue.
+  def restart do
+    rules(github())
+    {:ok, _} = HalC2.Plugins.handle("restart", %{"id" => @id})
+    drain()
+    observe()
+  end
+
   # GitHub answers every move it holds, and the ones they lead to, until none is left.
   def settle, do: settle(@answers)
 
@@ -242,9 +334,6 @@ defmodule HalC2.PlannerMilestonesPropTest do
   defp milestone_id(plan, number),
     do: Enum.find(plan["items"], &match?(%{"milestone" => %{"number" => ^number}}, &1))["id"]
 
-  defp task_id(plan, number),
-    do: Enum.find(plan["items"], &match?(%{"issue" => %{"number" => ^number}}, &1))["id"]
-
   defp call(method, input) do
     HalC2.Plugins.handle("call", %{"id" => @id, "method" => method, "input" => input})
   end
@@ -266,35 +355,48 @@ defmodule HalC2.PlannerMilestonesPropTest do
       {^reader, {:data, {:eol, gate}}} ->
         Process.put(:pl_held, Process.get(:pl_held) ++ [gate])
 
-      {:DOWN, ref, :process, pid, _} ->
-        if {pid, ref} in callers,
-          do: Process.put(:pl_callers, List.delete(callers, {pid, ref})),
-          else: await_github()
+      {:DOWN, ref, :process, pid, answer} ->
+        if {pid, ref} in callers do
+          Process.put(:pl_callers, List.delete(callers, {pid, ref}))
+
+          case answer do
+            {:ok, _} -> :ok
+            # A link or an unlink reads its task again once GitHub answers, removed by then.
+            {:error, %{"message" => "planner: There is no task " <> _}} -> :ok
+            _ -> problem("a call failed: #{inspect(answer)}")
+          end
+        else
+          await_github()
+        end
     after
       15_000 -> problem("a move neither reached GitHub nor ended")
     end
   end
 
-  # What the model checks: where the plan has each task, where GitHub has each issue,
-  # and which items are marked as not synced or waiting on GitHub.
+  # What the model checks: which issue the plan has each task name and which milestone
+  # it has it in, where GitHub has each issue, and which items are marked as not synced
+  # or waiting on GitHub.
   defp observe do
     plan = plan()
 
-    at =
-      Map.new(@issues, fn n ->
-        task = task_id(plan, n)
-
+    tasks =
+      for {t, id} <- Process.get(:pl_tasks),
+          item = Enum.find(plan["items"], &(&1["id"] == id)),
+          into: %{} do
         holders =
-          for %{"milestone" => %{"number" => number}} = item <- plan["items"],
-              task in item["after"],
+          for %{"milestone" => %{"number" => number}} = held <- plan["items"],
+              id in held["after"],
               do: number
 
-        case holders do
-          [] -> {n, nil}
-          [number] -> {n, number}
-          many -> {n, many}
-        end
-      end)
+        at =
+          case holders do
+            [] -> nil
+            [number] -> number
+            many -> many
+          end
+
+        {t, %{issue: get_in(item, ["issue", "number"]), at: at}}
+      end
 
     {items, _details} = GenServer.call(@server, :looking)
 
@@ -304,7 +406,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
           do: item["title"]
 
     %{
-      at: at,
+      tasks: tasks,
       github: github(),
       marked: marked,
       refused: Process.get(:pl_refused),
@@ -313,7 +415,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
     }
   end
 
-  # Issue → the milestone GitHub took for it last, or the one it started in.
+  # Issue → the milestone GitHub took for it last, or the one it started in, if any.
   defp github do
     taken =
       case File.read(Path.join(Process.get(:pl_gh), "taken")) do
@@ -321,12 +423,14 @@ defmodule HalC2.PlannerMilestonesPropTest do
         {:error, _} -> []
       end
 
-    Enum.reduce(taken, Map.new(@issues, &{&1, &1}), fn line, github ->
+    Enum.reduce(taken, started(), fn line, github ->
       [n, milestone] = String.split(line, " ")
       milestone = if milestone == "null", do: nil, else: String.to_integer(milestone)
       Map.put(github, String.to_integer(n), milestone)
     end)
   end
+
+  defp started, do: Map.new(@issues, &{&1, if(&1 in @tasks, do: &1)})
 
   defp problem(text), do: Process.put(:pl_problems, [text | Process.get(:pl_problems, [])])
 
@@ -420,7 +524,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
       ])
 
     Process.put(:pl_reader, {reader, notify})
-    rules(Map.new(@issues, &{&1, &1}))
+    rules(started())
     Process.put(:pl_held, [])
     Process.put(:pl_callers, [])
     Process.put(:pl_problems, [])
@@ -482,11 +586,23 @@ defmodule HalC2.PlannerMilestonesPropTest do
     drain()
     {:ok, _} = call("sync", %{})
     drain()
+
+    items = plan()["items"]
+
+    Process.put(
+      :pl_tasks,
+      Map.new(@tasks, fn t ->
+        {t, Enum.find(items, &match?(%{"issue" => %{"number" => ^t}}, &1))["id"]}
+      end)
+    )
+
     Process.put(:pl_problems, [])
   end
 
   # The fake GitHub's rules, with each issue in the milestone `github` has it in: a move
   # waits on the case (see `begin_case/0`), and a read or list says where each issue is.
+  # Only the issues tasks start with are listed: the list is read until a task leaves
+  # its issue, and issue 4 would become a task of its own.
   # They are replaced whole, as a gh running meanwhile reads them.
   defp rules(github) do
     gh = Process.get(:pl_gh)
@@ -525,7 +641,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
           "repository" => %{
             "issues" => %{
               "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil},
-              "nodes" => Enum.map(@issues, &issue_node(&1, github[&1]))
+              "nodes" => Enum.map(@tasks, &issue_node(&1, github[&1]))
             }
           }
         }
@@ -554,11 +670,22 @@ defmodule HalC2.PlannerMilestonesPropTest do
   end
 
   defp end_case do
+    # The callers end first, and for good. Left to find the plugin gone they would go on
+    # telling it how their pushes went for 30 seconds (`report/6` in the plugin), reach
+    # the next case's plugin, and run their next pushes under that case's rules and log.
+    for {pid, ref} <- Process.get(:pl_callers) do
+      Process.exit(pid, :kill)
+      receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+    end
+
     HalC2.Prop.stop_services()
-    # The moves GitHub still holds are answered, and their callers find the plugin gone.
-    # They end before the next case begins: a gh one of them ran later would read that
-    # case's rules and log.
-    release(System.monotonic_time(:millisecond) + 15_000)
+    # With no caller to go on, the moves GitHub still holds are answered so each gh ends.
+    # Not File.write!: a gh already gone with its caller leaves a fifo with no reader, and
+    # opening that blocks for good.
+    for gate <- Process.get(:pl_held) do
+      System.cmd("timeout", ["5", "sh", "-c", "echo go > '#{gate}'"])
+    end
+
     {reader, notify} = Process.get(:pl_reader)
     File.write!(notify, "stop
 ", [:raw])
@@ -571,16 +698,6 @@ defmodule HalC2.PlannerMilestonesPropTest do
 
     # Notices that came after the last answer.
     receive_all(reader)
-  end
-
-  defp release(deadline) do
-    for gate <- Process.get(:pl_held), do: File.write!(gate, "go\n", [:raw])
-    Process.put(:pl_held, [])
-
-    if Process.get(:pl_callers) != [] and System.monotonic_time(:millisecond) < deadline do
-      await_github()
-      release(deadline)
-    end
   end
 
   defp receive_all(reader) do

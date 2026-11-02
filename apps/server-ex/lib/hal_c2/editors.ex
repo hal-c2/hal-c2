@@ -17,6 +17,7 @@ defmodule HalC2.Editors do
     {"vscode-insiders", ["code-insiders"], [], :goto},
     {"vscodium", ["codium"], [], :goto},
     {"zed", ["zed", "zeditor"], [], :direct_path},
+    {"sublime", ["subl"], [], :direct_path},
     {"antigravity", ["agy"], [], :goto},
     {"idea", ["idea"], [], :line_column},
     {"aqua", ["aqua"], [], :line_column},

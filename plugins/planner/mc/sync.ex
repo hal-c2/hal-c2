@@ -20,6 +20,7 @@ defmodule HalC2Plugins.Planner.Sync do
   alias HalC2Plugins.Planner.Plan
 
   @id "planner"
+  @no_answer "GitHub did not answer in time."
 
   @doc """
   What GitHub holds for the plan: `issues` of the followed repositories (open, with
@@ -35,8 +36,9 @@ defmodule HalC2Plugins.Planner.Sync do
   only an issue neither has is read alone, or every one the listing lacks when it
   fails or is cut short. Without a `before` the look that reads issues is a full one,
   `full: true` in what it finds: every linked issue not among the open ones is read
-  alone, a call for each, four at a time. A look whose listing failed or was cut
-  short, so it read every such issue alone and none failed, counts as full too.
+  alone, a call for each, four at a time, each given up on as failed after a minute.
+  A look whose listing failed or was cut short, so it read every such issue alone and
+  none failed, counts as full too.
   A look without a `before` is full even where an alone-read failed: that issue
   is absent from `details`, so the next look reads it alone again (below), and
   the ones read stand for the day. A look that reads no issues (sync is off, or
@@ -148,23 +150,24 @@ defmodule HalC2Plugins.Planner.Sync do
 
           # The issues to read alone are read a few at a time.
           read =
-            alone
-            |> Task.async_stream(
+            read_alone(
+              alone,
               fn %{"number" => number} ->
                 input = %{"projectId" => project["id"], "repository" => repo, "number" => number}
                 {number, Host.issues(@id, "detail", input)}
               end,
-              max_concurrency: 4,
-              timeout: :infinity
+              &{&1["number"], {:error, @no_answer}}
             )
-            |> Enum.map(fn {:ok, answer} -> answer end)
 
           {details, problems} =
             for {number, answer} <- read, reduce: {known ++ details, problems} do
               {details, problems} ->
                 case answer do
-                  {:ok, issue} -> {[issue | details], problems}
-                  {:error, error} -> {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
+                  {:ok, issue} ->
+                    {[issue | details], problems}
+
+                  {:error, error} ->
+                    {details, problems ++ ["#{repo}##{number}: #{message(error)}"]}
                 end
             end
 
@@ -225,6 +228,26 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   defp skew_seconds, do: Application.get_env(:hal_c2, :planner_skew_seconds, 300)
+
+  # What `read` makes of each of `inputs`, a few at a time. One still going after
+  # `read_timeout/0` is killed and `late` makes its answer, so what hangs costs the look
+  # that one read. It has to outlast the 30 seconds `gh` itself gets, whose failure says
+  # more, and covers what `gh` does not: finding the project runs git in every checkout.
+  defp read_alone(inputs, read, late) do
+    inputs
+    |> Task.async_stream(read,
+      max_concurrency: 4,
+      timeout: read_timeout(),
+      on_timeout: :kill_task,
+      zip_input_on_exit: true
+    )
+    |> Enum.map(fn
+      {:ok, answer} -> answer
+      {:exit, {input, :timeout}} -> late.(input)
+    end)
+  end
+
+  defp read_timeout, do: Application.get_env(:hal_c2, :planner_read_timeout, 60_000)
 
   defp board(found, settings, github) do
     with {:ok, owner, number} <- board_name(settings["board"]),
@@ -381,9 +404,11 @@ defmodule HalC2Plugins.Planner.Sync do
 
   defp lone_prs(found, alone, github) do
     read =
-      alone
-      |> Task.async_stream(&lone_pr(&1, github), max_concurrency: 4, timeout: :infinity)
-      |> Enum.map(fn {:ok, read} -> read end)
+      read_alone(
+        alone,
+        &lone_pr(&1, github),
+        &{:error, "#{&1["repository"]}##{&1["number"]}: #{@no_answer}"}
+      )
 
     prs = for {:ok, key, state} <- read, into: found.prs, do: {key, state}
     problem(%{found | prs: prs}, for({:error, error} <- read, do: error))
@@ -888,13 +913,18 @@ defmodule HalC2Plugins.Planner.Sync do
   with, open, with no dates on the board, and the relations of `synced`, so a push
   closes it, dates it and relates it as the task has it.
   """
-  def created(synced, sent),
-    do:
-      synced
-      |> Map.merge(Map.take(sent, ~w(title notes labels)))
-      # Only the owner GitHub was actually asked to assign is one it has.
-      |> Map.put("owner", if(Plan.login?(sent["owner"]), do: sent["owner"]))
-      |> Map.merge(%{"state" => "open", "start" => nil, "due" => nil})
+  def created(synced, sent, issue) do
+    # Only the owner GitHub was actually asked to assign is one it has, on the new issue.
+    owner = if Plan.login?(sent["owner"]), do: sent["owner"]
+
+    synced
+    |> Map.merge(Map.take(sent, ~w(title notes labels)))
+    |> Map.merge(%{
+      "owner" => owner,
+      "ownerIssue" => if(owner, do: Map.take(issue, ~w(repository number)))
+    })
+    |> Map.merge(%{"state" => "open", "start" => nil, "due" => nil})
+  end
 
   defp fields(item),
     do:
@@ -1034,9 +1064,17 @@ defmodule HalC2Plugins.Planner.Sync do
     on_was = was && Map.put(was, "projectId", project_id(Map.put(new, "issue", was), projects))
     pushed = is_binary(on_was["projectId"]) && was
 
-    # The old owner comes off the issue they were synced to (`was`), the new one goes
-    # on the task's own: a relink and an owner change can land in one chained push.
-    update = update ++ owner_pushes(base, if(pushed, do: on_was), synced, new)
+    # The old owner comes off the issue a push put them on, else the one they were synced
+    # to (`was`), the new one goes on the task's own: a relink and an owner change can land
+    # in one chained push. The issue they landed on is kept apart from `was`, which the
+    # relations still to drop need when a later part of the push is refused.
+    holder = synced["ownerIssue"] || was
+
+    on_holder =
+      holder && Map.put(holder, "projectId", project_id(Map.put(new, "issue", holder), projects))
+
+    off_from = if is_binary(on_holder["projectId"]), do: on_holder
+    update = update ++ owner_pushes(base, off_from, synced, new)
     kept? = &(not moved? and Plan.same_ref?(had(synced, items, &1), ref(items, &1)))
     kept = Enum.filter(synced["after"], &(&1 in new["after"] and kept?.(&1)))
     onto = &Map.put(&1, "issue", me)
@@ -1086,7 +1124,7 @@ defmodule HalC2Plugins.Planner.Sync do
   # The task holds one of the issue's assignees, so a new owner replaces only the old
   # one: the old comes off first, then the new goes on, and GitHub has the owner it took
   # last, so a refusal in between sends only what is left.
-  defp owner_pushes(base, on_was, synced, new) do
+  defp owner_pushes(base, on_holder, synced, new) do
     old = synced["owner"]
     login = new["owner"]
     # GitHub reads a login whatever its case, so a change of case alone pushes nothing.
@@ -1096,15 +1134,22 @@ defmodule HalC2Plugins.Planner.Sync do
     # no GitHub assignee under that string, so there is nothing to take off, and
     # asking would be refused before GitHub and wedge every later push.
     off =
-      if changed? and Plan.login?(old) and not is_nil(on_was),
+      if changed? and Plan.login?(old) and not is_nil(on_holder),
         do: [
-          {"removeAssignees", Map.put(on_was, "assignees", [old]), &Map.put(&1, "owner", nil)}
+          {"removeAssignees", Map.put(on_holder, "assignees", [old]),
+           &Map.merge(&1, %{"owner" => nil, "ownerIssue" => nil})}
         ],
         else: []
 
     on =
       if changed? and Plan.login?(login),
-        do: [{"addAssignees", Map.put(base, "assignees", [login]), &Map.put(&1, "owner", login)}],
+        do: [
+          {"addAssignees", Map.put(base, "assignees", [login]),
+           &Map.merge(&1, %{
+             "owner" => login,
+             "ownerIssue" => Map.take(base, ~w(repository number))
+           })}
+        ],
         else: []
 
     off ++ on
@@ -1231,8 +1276,7 @@ defmodule HalC2Plugins.Planner.Sync do
       for {id, issue} <- to_correct do
         holder = linked(items, issue)
 
-        {id, issue,
-         holder && List.first(holders(items, ref["repository"], holder["id"])),
+        {id, issue, holder && List.first(holders(items, ref["repository"], holder["id"])),
          if(id in new["after"],
            do: &placed(&1, id, issue),
            else: &unrelate(&1, "after", id, issue)
@@ -1349,6 +1393,46 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   @doc """
+  Milestone id → the marks (`misplaced/2`) of issues GitHub has in it that no push will
+  ask out: a task whose move GitHub refused no longer has its old milestone hold it, so
+  when the task leaves its issue, by a relink, an unlink or its removal, nothing in the
+  plan names the issue as in that milestone any more. A milestone that holds the task
+  asks by itself, but only for the issue it has the task under: another milestone's
+  correction can put the task's issue in it while its own push stands refused. `before`
+  and `items` are the plan either side of a change.
+  """
+  def left(before, items) do
+    for {id, %{"issue" => %{"milestone" => number} = issue}} <- before,
+        is_integer(number),
+        not Plan.same_ref?(issue, get_in(items, [id, "issue"])),
+        {holder, %{"milestone" => %{"number" => ^number} = ref} = milestone} <- before,
+        same?(ref["repository"], issue["repository"]),
+        not asks_out?(milestone, id, issue, before),
+        reduce: %{} do
+      left ->
+        mark = %{"task" => id, "issue" => Map.take(issue, ~w(repository number))}
+        Map.update(left, holder, [mark], &(&1 ++ [mark]))
+    end
+  end
+
+  # The next push of `milestone` asks `issue` out of it once the task `id` leaves that
+  # issue (`held_pushes/4`): it holds the task, and GitHub has it under that issue.
+  defp asks_out?(milestone, id, issue, items) do
+    synced = synced(milestone, milestone, items)
+
+    id in milestone["after"] and id in synced["after"] and
+      Plan.same_ref?(had(synced, items, id), issue)
+  end
+
+  @doc "`synced` with the marks of `left/2`; nothing else when there are none."
+  def left_behind(synced, []), do: synced
+
+  def left_behind(synced, marks) do
+    at = Map.new(marks, &{issue_key(&1["issue"]), &1})
+    Map.put(synced, "misplaced", Map.merge(marks(synced), at))
+  end
+
+  @doc """
   `synced` without the tasks the milestone `item` holds again as misplaced, while they
   name the issue marked: GitHub has it in the milestone, as the plan does, so there is
   nothing to correct and no push would clear it. A task that names another issue now
@@ -1375,7 +1459,23 @@ defmodule HalC2Plugins.Planner.Sync do
     do: id in held and Plan.same_ref?(issue, ref(items, id))
 
   @doc """
-  `items` with the milestones GitHub took the issues `moved` (`run/2`) to, kept on
+  The moves of `moved` (`run/2`) newer than any taken for their issue, without their
+  `at`, and `latest`, issue → when GitHub last took a move for it, with them. A push
+  reports when all its ops are answered, so a move it took early is reported after
+  moves other milestones' pushes took later, and is no longer where GitHub has the
+  issue. Dropping it leaves the issue where the later move put it, so a milestone that
+  holds the task again sees it elsewhere and moves it (`held_pushes/4`).
+  """
+  def newest(moved, latest) do
+    Enum.flat_map_reduce(moved, latest, fn %{"at" => at} = move, latest ->
+      if at < Map.get(latest, key(move), at),
+        do: {[], latest},
+        else: {[Map.delete(move, "at")], Map.put(latest, key(move), at)}
+    end)
+  end
+
+  @doc """
+  `items` with the milestones GitHub took the issues `moved` (`newest/2`) to, kept on
   their tasks' issues as a look reads them.
   """
   def landed(items, moved) do
@@ -1431,7 +1531,10 @@ defmodule HalC2Plugins.Planner.Sync do
 
   defp stated(extra, _method, _input), do: extra
 
-  defp move(input), do: Map.take(input, ~w(repository number milestone))
+  # `at` orders it against the moves other milestones' pushes took for the issue.
+  defp move(input),
+    do:
+      input |> Map.take(~w(repository number milestone)) |> Map.put("at", System.monotonic_time())
 
   defp ask(:board, input), do: Host.issues(@id, "addBoardItem", input)
 

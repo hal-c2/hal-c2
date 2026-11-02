@@ -173,6 +173,14 @@ defmodule HalC2.TerminalPropTest do
   @wait 15_000
   @ended_keys for n <- 1..5, do: {"th-ended", "t#{n}"}
   @ended_limit 2
+  # Around every length where the history file's name stops fitting, and a wildcard.
+  @scrollback_ids [
+    "a",
+    "*",
+    String.duplicate("b", 128),
+    String.duplicate("c", 200),
+    String.duplicate("🦀", 128)
+  ]
 
   property "terminals, their clients and the hub agree with the model",
     numtests: HalC2.Prop.numtests(100),
@@ -289,6 +297,72 @@ defmodule HalC2.TerminalPropTest do
 
       History.value(split) == History.value(history) and split.pending == history.pending
     end
+  end
+
+  property "a history cut to its line limit does not depend on how the output is chunked",
+    numtests: HalC2.Prop.numtests(100),
+    max_size: 60 do
+    forall {chunks, cuts, max_lines} <-
+             {list(resize(40, text_chunk())), list(integer(1, 7)), integer(1, 8)} do
+      fresh = History.new("", max_lines: max_lines)
+      whole = History.value(History.append(fresh, Enum.join(chunks)))
+
+      split =
+        Enum.join(chunks)
+        |> cut(cuts)
+        |> Enum.reduce(fresh, fn piece, h -> History.append(h, piece) end)
+        |> History.value()
+
+      (split == whole) |> when_fail(IO.inspect({split, whole}, label: "split, whole"))
+    end
+  end
+
+  property "saved scrollback survives ids of any length",
+    numtests: HalC2.Prop.numtests(100),
+    max_size: 40 do
+    forall ops <- list(scrollback_op()) do
+      HalC2.Prop.scratch_home("terminal-scrollback")
+      HalC2.Prop.start_services([{Registry, keys: :unique, name: @registry}])
+
+      model =
+        Enum.reduce(ops, %{}, fn
+          {:put, thread, terminal, text}, model ->
+            Terminal.put_scrollback(thread, terminal, text)
+            Map.put(model, {thread, terminal}, text)
+
+          {:delete, thread, terminal}, model ->
+            Terminal.close(%{
+              "threadId" => thread,
+              "terminalId" => terminal,
+              "deleteHistory" => true
+            })
+
+            Map.delete(model, {thread, terminal})
+
+          {:delete_all, thread}, model ->
+            Terminal.close(%{"threadId" => thread, "deleteHistory" => true})
+            Map.reject(model, fn {{t, _}, _} -> t == thread end)
+        end)
+
+      agrees =
+        Enum.all?(@scrollback_ids, fn thread ->
+          expected = for {{^thread, terminal}, text} <- model, do: {terminal, text}
+          Enum.sort(Terminal.saved_scrollback(thread)) == Enum.sort(expected)
+        end)
+
+      HalC2.Prop.stop_services()
+      agrees
+    end
+  end
+
+  defp scrollback_op do
+    id = oneof(@scrollback_ids)
+
+    oneof([
+      {:put, id, id, oneof(["one\n", "two\n"])},
+      {:delete, id, id},
+      {:delete_all, id}
+    ])
   end
 
   defp text_chunk,

@@ -9,7 +9,7 @@ Rectangle {
     id: banner
 
     readonly property var recovery: Shell.state.limitRecovery ?? null
-    readonly property color warning: Theme.palette.color("warning", "#f59e0b")
+    readonly property color warning: Theme.palette.color("warningForeground", "#f59e0b")
 
     objectName: "limitRecovery"
     visible: recovery !== null
@@ -71,7 +71,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: text.length > 0
             text: banner.recovery?.error ?? ""
-            color: Theme.palette.color("error", "#ef4444")
+            color: Theme.palette.color("errorForeground", "#ef4444")
             font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }

@@ -37,12 +37,33 @@ defmodule HalC2.Workspace do
     {:ok, nil}
   end
 
-  @doc "Forgets a root's cached entries (a turn may have changed its files)."
+  @doc """
+  Forgets a root's cached entries (a turn may have changed its files), and tells the
+  Space pages that are files of it to look again (`HalC2.Space.Files`).
+  """
   def invalidate(root) do
+    HalC2.Space.Files.changed(root)
+    forget(root)
+  end
+
+  defp forget(root) do
     :ets.delete(@table, Path.expand(root))
     :ok
   rescue
     ArgumentError -> :ok
+  end
+
+  @doc """
+  The paths of the files under `root` as they are now, relative to it and not cached:
+  what the entries list, but only files that are there.
+  """
+  def files(root) do
+    root = Path.expand(root)
+    {entries, _truncated} = scan(root)
+
+    for %{"kind" => "file", "path" => path} <- entries,
+        File.regular?(Path.join(root, path)),
+        do: path
   end
 
   # --- RPCs ------------------------------------------------------------------------
@@ -98,9 +119,12 @@ defmodule HalC2.Workspace do
     with {:ok, root} <- root(cwd, "ProjectReadFileError"),
          {:ok, path, shown} <- read_target(root, relative, error),
          {:ok, %File.Stat{type: :regular, size: size}} <- stat(path, error),
-         :ok <- if(base64? and not chat_image?(path), do: :binary, else: :ok),
+         # By what the path resolves to: a link named like an image reads no other file.
+         :ok <- if(base64? and not chat_image?(real(path)), do: :binary, else: :ok),
          # An image too large to attach comes back without its bytes.
-         {:ok, contents} <- read_head(path, if(base64? and size > max, do: 0, else: max), error) do
+         {:ok, head} <- read_head(path, if(base64? and size > max, do: 0, else: max), error) do
+      contents = if(base64? or size <= max, do: head, else: whole_characters(head))
+
       cond do
         base64? ->
           {:ok, result(shown, Base.encode64(contents), size, size > max)}
@@ -108,21 +132,34 @@ defmodule HalC2.Workspace do
         text?(contents) ->
           {:ok, result(shown, contents, size, size > max)}
 
-        true ->
+        String.contains?(contents, <<0>>) ->
           error.("binary_file", "'#{relative}' is not a text file.")
+
+        true ->
+          error.("not_utf8", "'#{relative}' is not a text file.")
       end
     else
-      :binary -> error.("binary_file", "'#{relative}' is not a text file.")
+      :binary -> error.("binary_file", "'#{relative}' is binary and cannot be read as text.")
       {:ok, %File.Stat{}} -> error.("path_not_file", "'#{relative}' is not a file.")
       {:error, _} = failure -> failure
     end
+  end
+
+  # The read limit can fall inside a character, which does not make the file
+  # any less text.
+  defp whole_characters(head) do
+    Enum.find_value(0..3, head, fn cut ->
+      kept = binary_part(head, 0, max(byte_size(head) - cut, 0))
+      if String.valid?(kept), do: kept
+    end)
   end
 
   defp read_target(root, relative, error) do
     if Path.type(relative) == :absolute do
       {:ok, real(relative), relative}
     else
-      with {:ok, path} <- inside(root, relative, error), do: {:ok, path, normalize(relative)}
+      with {:ok, path} <- inside_file(root, relative, error),
+           do: {:ok, path, normalize(relative)}
     end
   end
 
@@ -160,7 +197,7 @@ defmodule HalC2.Workspace do
       with {:ok, path} <- existing_text(real(relative), relative, error),
            do: {:ok, path, relative}
     else
-      with {:ok, path} <- inside(root, relative, error),
+      with {:ok, path} <- inside_file(root, relative, error),
            :ok <- mkdir(Path.dirname(path), error),
            {:ok, path} <- inside(root, relative, error),
            do: {:ok, path, normalize(relative)}
@@ -395,8 +432,19 @@ defmodule HalC2.Workspace do
          "truncated" => false
        }}
     else
-      {:error, reason} when is_atom(reason) -> error.("Could not list '#{directory}': #{reason}")
-      {:error, _} = failure -> failure
+      {:error, :enoent} ->
+        entries_error(
+          "ProjectListEntriesError",
+          root,
+          "directory_not_found",
+          "'#{directory}' does not exist."
+        )
+
+      {:error, reason} when is_atom(reason) ->
+        error.("Could not list '#{directory}': #{reason}")
+
+      {:error, _} = failure ->
+        failure
     end
   end
 
@@ -584,6 +632,13 @@ defmodule HalC2.Workspace do
       true ->
         {:ok, Path.join(root, relative)}
     end
+  end
+
+  # As `inside/3`, for a file: the root's own folder is not one.
+  defp inside_file(root, relative, error) do
+    if Path.expand(normalize(relative), root) == root,
+      do: error.("workspace_path_outside_root", "'#{relative}' is outside the workspace."),
+      else: inside(root, relative, error)
   end
 
   @doc "Whether `path` is `root` or under it; both absolute and normalized."

@@ -396,7 +396,7 @@ defmodule HalC2.Steps.Terminal.Io do
     Map.merge(context, %{obliging: obliging, snapshot: stubborn})
   end
 
-  step "the MC shuts down", context do
+  step "the MC shuts down with them running", context do
     started = System.monotonic_time(:millisecond)
     :ok = DynamicSupervisor.stop(HalC2.Terminal.Supervisor, :shutdown)
     Map.put(context, :stop_took, System.monotonic_time(:millisecond) - started)

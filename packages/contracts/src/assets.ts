@@ -29,6 +29,12 @@ export const AssetResource = Schema.Union([
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   }),
+  /** An image a Space keeps. Its name and type come from the MC's record of it. */
+  Schema.TaggedStruct("space-image", {
+    spaceId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+    imageId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+    disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
+  }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
     /** Display name and mime from the `ChatAttachment` the caller holds. The

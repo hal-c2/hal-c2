@@ -6,6 +6,7 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QQuickItem>
 #include <QVariantMap>
 
 #include <memory>
@@ -18,6 +19,8 @@
 #include "Keymap.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#include "RightPanelController.h"
+#include "WorkspaceFiles.h"
 #include "Onboarding.h"
 #include "SettingsController.h"
 #include "Stream.h"
@@ -116,6 +119,31 @@ QString question(World& world, const QString& text, const QStringList& labels, b
 }
 
 // The pending approval or question the composer shows first.
+// Two questions in one request, each long enough to wrap: the shape Claude's
+// AskUserQuestion arrives in.
+QJsonObject longQuestions() {
+  const auto asked = [](const QString& id, const QString& text, const QStringList& labels) {
+    QJsonArray options;
+    for (const QString& label : labels) options.append(QJsonObject{{QStringLiteral("label"), label}, {QStringLiteral("description"), QString()}});
+    return QJsonObject{{QStringLiteral("id"), id},
+                       {QStringLiteral("header"), id},
+                       {QStringLiteral("question"), text},
+                       {QStringLiteral("options"), options},
+                       {QStringLiteral("multiSelect"), false},
+                       {QStringLiteral("allowCustomAnswer"), true}};
+  };
+  return {{QStringLiteral("questions"),
+           QJsonArray{asked(QStringLiteral("lint"),
+                            QStringLiteral("Should the lint get a family of rules that flags imperative QML which could be declarative "
+                                           "(bindings, States, Transitions, SequentialAnimation)?"),
+                            {QStringLiteral("Yes, start now (Recommended)"), QStringLiteral("After make-it-right"), QStringLiteral("Not now")}),
+                      asked(QStringLiteral("direction"),
+                            QStringLiteral("Which direction for the typed scripting language that replaces JavaScript (with JS kept as the "
+                                           "compat mode)?"),
+                            {QStringLiteral("Strict TS subset (Recommended)"), QStringLiteral("ReScript-like language"),
+                             QStringLiteral("Decide later")})}}};
+}
+
 QVariantMap first(World& world, const QString& field) {
   const QVariantList requests = listed(world, field);
   if (requests.isEmpty()) fail(QStringLiteral("the composer shows no %1; the turn is %2").arg(field, show(turn(world))));
@@ -328,6 +356,12 @@ const Steps steps([] {
       for (const QVariant& item : listed(world, QStringLiteral("approvals"))) {
         if (item.toMap().value(QStringLiteral("problem")) == c[0]) return true;
       }
+      // What the file viewer and its path trail say in place of a file or a folder's list.
+      if (auto* panel = world.native().controller<RightPanelController>(); panel && panel->files()) {
+        if (panel->files()->fileProblem() == c[0] || panel->files()->trailProblem() == c[0]) return true;
+      }
+      // What the attachment viewer says when it could not fetch.
+      if (world.state(QStringLiteral("attachmentViewer")).toMap().value(QStringLiteral("problem")) == c[0]) return true;
       // A toast is told by its title, its description, or as "title — description".
       for (const QVariant& item : toasts(world)) {
         const QString title = item.toMap().value(QStringLiteral("title")).toString();
@@ -426,6 +460,34 @@ const Steps steps([] {
     startWorking(world);
     question(world, c[0], {c[1], c[2]});
   });
+  step(QStringLiteral("the composer is on screen"), [](World& world, const Captures&, const Table&) { composerBrick(world); });
+  step(QStringLiteral("the agent asks two long questions in place of the first"), [](World& world, const Captures&, const Table&) {
+    const QString requestId = first(world, QStringLiteral("questions")).value(QStringLiteral("requestId")).toString();
+    set(world, QStringLiteral("runtime-request"), requestId, {{QStringLiteral("status"), QStringLiteral("resolved")}});
+    request(world, QStringLiteral("user_input_request"), longQuestions());
+  });
+  step(QStringLiteral("the questions, their options and the answer button sit above the composer's editor"),
+       [](World& world, const Captures&, const Table&) {
+         composerBrick(world);
+         world.waitFor([&] { return composerPart(world, QStringLiteral("questionAnswer-direction")) != nullptr; },
+                       QStringLiteral("the second question to show"));
+         const qreal editorTop = composerEditor(world)->mapToScene(QPointF()).y();
+         for (const QString& part : {QStringLiteral("questionOption-Yes, start now (Recommended)"), QStringLiteral("questionAnswer-lint"),
+                                     QStringLiteral("questionOption-Decide later"), QStringLiteral("questionAnswer-direction"),
+                                     QStringLiteral("questionSubmit")}) {
+           QQuickItem* item = composerPart(world, part);
+           expect(item != nullptr, QStringLiteral("the composer has no %1").arg(part));
+           const qreal top = item->mapToScene(QPointF()).y();
+           const qreal bottom = item->mapToScene(QPointF(0, item->height())).y();
+           expect(item->isVisible() && top >= 0 && bottom <= editorTop,
+                  QStringLiteral("%1 (visible: %2) spans %3..%4, the editor starts at %5")
+                      .arg(part)
+                      .arg(item->isVisible())
+                      .arg(top)
+                      .arg(bottom)
+                      .arg(editorTop));
+         }
+       });
   step(QStringLiteral("the user dismisses the question without answering"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("composer.question.dismiss"),
                             QVariantMap{{QStringLiteral("requestId"), first(world, QStringLiteral("questions")).value(QStringLiteral("requestId"))}});

@@ -1,5 +1,6 @@
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
@@ -28,6 +29,7 @@
 #include "ShellRuntime.h"
 #include "ShellWindows.h"
 #include "SingleInstance.h"
+#include "StageController.h"
 #include "StoragePaths.h"
 #include "ThemeStore.h"
 
@@ -53,6 +55,41 @@ QString resolveQmlSourceDir(const QString& override) {
   }
   return QStringLiteral(HAL_C2_QML_SOURCE_DIR);
 }
+
+#ifdef Q_OS_LINUX
+// Wayland docks and bars find a window's icon through the desktop entry its app
+// id names, not the icon the window sets. A development shell has its own id,
+// so it gets its own entry: the dev icon, hidden from launchers.
+void installDevDesktopEntry(const QString& appId, const QString& iconSource) {
+  const QDir data(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation));
+  const QString iconDir = data.absoluteFilePath(QStringLiteral("icons/hicolor/1024x1024/apps"));
+  const QString icon = QDir(iconDir).absoluteFilePath(appId + QStringLiteral(".png"));
+  const auto contents = [](const QString& path) {
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+  };
+  if (contents(icon) != contents(iconSource)) {
+    QDir().mkpath(iconDir);
+    QFile::remove(icon);
+    QFile::copy(iconSource, icon);
+  }
+  // Exec quotes the binary's path and escapes what the Desktop Entry spec reserves in it.
+  QString binary = QCoreApplication::applicationFilePath();
+  for (const QChar reserved : {QLatin1Char('\\'), QLatin1Char('"'), QLatin1Char('`'), QLatin1Char('$')}) {
+    binary.replace(reserved, QStringLiteral("\\") + reserved);
+  }
+  binary.replace(QLatin1Char('\\'), QStringLiteral("\\\\")).replace(QLatin1Char('%'), QStringLiteral("%%"));
+  const QByteArray entry = QStringLiteral("[Desktop Entry]\nType=Application\nName=HAL-C2 (Dev)\nExec=\"%1\" --dev\nIcon=%2\n"
+                                          "NoDisplay=true\nStartupWMClass=%2\n")
+                               .arg(binary, appId)
+                               .toUtf8();
+  QFile file(data.absoluteFilePath(QStringLiteral("applications/%1.desktop").arg(appId)));
+  if (file.open(QIODevice::ReadOnly) && file.readAll() == entry) return;
+  file.close();
+  QDir().mkpath(QFileInfo(file).absolutePath());
+  if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) file.write(entry);
+}
+#endif
 
 QString resolveDefaultHostEntry() {
   const QString configured = QStringLiteral(HAL_C2_HOST_ENTRY);
@@ -84,13 +121,13 @@ int main(int argc, char* argv[]) {
   QCoreApplication::setOrganizationDomain(QStringLiteral("hal-c2.example"));
   QCoreApplication::setApplicationName(QStringLiteral("hal-c2"));
   QCoreApplication::setApplicationVersion(QStringLiteral(HAL_C2_APP_VERSION));
-  // Stable app id so compositor rules (blur, opacity, workspace) can target it.
+  // Stable app id so compositor rules (blur, opacity, workspace) can target it;
+  // a development shell is hal-c2-dev (below).
   QGuiApplication::setDesktopFileName(QStringLiteral("hal-c2"));
 
   QGuiApplication app(argc, argv);
   // Closing a window closes only it; the last one quits (NativeShell::lastWindowClosed).
   QGuiApplication::setQuitOnLastWindowClosed(false);
-  QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/hal-c2/app-icon.png")));
   useSoftwareRenderingWithoutDisplay();
 
   QCommandLineParser parser;
@@ -133,8 +170,20 @@ int main(int argc, char* argv[]) {
                      nodeOption, localFolderImportOption, appIdOption});
   ScriptedRun::addOptions(parser);
   parser.process(app);
+  // A shell built from source, or one on the development profile, is Dev: its
+  // own icon and app id (hal-c2-dev), and "DEV" by the wordmark
+  // (StageController), so it is never mistaken for the installed app.
+  const bool dev = HAL_C2_DEV_BUILD || parser.isSet(devOption);
+  stage::setAppStage(dev ? QStringLiteral("Dev") : QString());
+  const bool devIcon = dev && QFileInfo::exists(QStringLiteral(HAL_C2_DEV_ICON));
+  QGuiApplication::setWindowIcon(QIcon(devIcon ? QStringLiteral(HAL_C2_DEV_ICON) : QStringLiteral(":/hal-c2/app-icon.png")));
   if (parser.isSet(appIdOption) && !parser.value(appIdOption).trimmed().isEmpty()) {
     QGuiApplication::setDesktopFileName(parser.value(appIdOption).trimmed());
+  } else if (dev) {
+    QGuiApplication::setDesktopFileName(QStringLiteral("hal-c2-dev"));
+#ifdef Q_OS_LINUX
+    if (devIcon) installDevDesktopEntry(QGuiApplication::desktopFileName(), QStringLiteral(HAL_C2_DEV_ICON));
+#endif
   }
 
   const StoragePaths storage = resolveStoragePaths(

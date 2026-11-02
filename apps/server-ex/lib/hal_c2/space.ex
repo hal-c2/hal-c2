@@ -1,12 +1,19 @@
 defmodule HalC2.Space do
   @moduledoc """
-  Spaces: Pages that people and agents write together (`features/space/`).
+  Spaces: Pages that people and agents write together, and slide decks
+  (`features/space/`).
 
   The `spaces` stream indexes the Spaces, one `space` entity each, and each Space's
-  own `space:<id>` stream holds its `page`, `block` and `comment` entities. Every
-  change is a `HalC2.Streams.transact/3` on one of them, so the event log is the
-  only record and clients follow both streams through the stream shape. The
-  decisions live in `HalC2.Space.Pages` and `HalC2.Space.Blocks`.
+  own `space:<id>` stream holds its `page`, `block`, `comment`, `image`, `site`, `deck`, `slide`
+  and `pageAgent` entities. Every change is a `HalC2.Streams.transact/3` on one of them, so the
+  event log is the only record and clients follow both streams through the stream shape.
+  The decisions live in `HalC2.Space.Pages`, `HalC2.Space.Blocks`, `HalC2.Space.Images`,
+  `HalC2.Space.Sites` and `HalC2.Space.Decks`.
+
+  An image's bytes are the one thing not in the log: they are a file
+  (`HalC2.Space.ImageFile`), written before the entity that names it and removed after
+  the entity is gone, so no entity names a missing file. A crash between the two can
+  only leave an unnamed file behind.
 
   Replies are `{:ok, value}` or `{:error, reason, message}`; an author is
   `%{"type" => "user"}` or `%{"type" => "agent", "threadId" => id}`.
@@ -14,7 +21,22 @@ defmodule HalC2.Space do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState, Streams}
-  alias HalC2.Space.{Blocks, Markdown, Pages}
+
+  alias HalC2.Space.{
+    Blocks,
+    Chart,
+    Decks,
+    Files,
+    History,
+    ImageFile,
+    ImageGeneration,
+    Images,
+    Markdown,
+    PageAgent,
+    Pages,
+    Sites,
+    Visualize
+  }
 
   @index "spaces"
 
@@ -88,11 +110,11 @@ defmodule HalC2.Space do
     end
   end
 
-  @doc "Deletes a Space with no pages, in the trash or out of it."
+  @doc "Deletes a Space with no pages, decks or images, in the trash or out of it."
   def delete(id) do
-    # Decided in the Space's stream, so no page can be made in it meanwhile.
+    # Decided in the Space's stream, so nothing can be made in it meanwhile.
     Streams.transact(stream_id(id), :space, fn state ->
-      if StreamState.get(state, "page") == %{} do
+      if Enum.all?(~w(page deck image), &(StreamState.get(state, &1) == %{})) do
         reply =
           Streams.transact(@index, :space, fn index ->
             if StreamState.get(index, "space")[id],
@@ -132,11 +154,29 @@ defmodule HalC2.Space do
   def transact(space_id, fun) when is_binary(space_id) do
     Streams.transact(stream_id(space_id), :space, fn state ->
       # The index is asked from inside the Space's stream: a delete decides there too.
-      if Streams.get(@index, "space", space_id), do: fun.(state), else: {[], no_space(space_id)}
+      if Streams.get(@index, "space", space_id),
+        do: fun.(state) |> and_files(state) |> and_sites(state),
+        else: {[], no_space(space_id)}
     end)
   end
 
   def transact(_space_id, _fun), do: {:error, :invalid, "spaceId is required."}
+
+  # A page that is a project file and its file change together, or neither does
+  # (`HalC2.Space.Files`).
+  defp and_files({changes, reply}, state) do
+    case Files.follow(state, changes) do
+      {:error, _, _} = refused -> {[], refused}
+      more -> {changes ++ more, reply}
+    end
+  end
+
+  # Whatever a command does to pages, their sites follow in the same step.
+  defp and_sites({changes, reply}, state) do
+    if Sites.affected?(state, changes),
+      do: {changes ++ Sites.follow(state, with_changes(state, changes), changes), reply},
+      else: {changes, reply}
+  end
 
   @doc "The Space's stream state, for reads."
   def state(space_id) do
@@ -145,14 +185,37 @@ defmodule HalC2.Space do
       else: no_space(space_id)
   end
 
+  @doc "The page of a project's file in this Space, or wherever it already is (`HalC2.Space.Files`)."
+  def open_file(space_id, project_id, relative) do
+    with {:ok, _} <- state(space_id), do: Files.open(space_id, project_id, relative)
+  end
+
+  def sync_file(space_id, id), do: transact(space_id, &Files.sync(&1, id))
+  def unlink_file(space_id, id), do: transact(space_id, &Files.unlink(&1, id))
+
   def create_page(space_id, title, parent_id \\ nil),
     do: transact(space_id, &Pages.create(&1, space_id, title, parent_id))
 
   def rename_page(space_id, id, title), do: transact(space_id, &Pages.rename(&1, id, title))
   def move_page(space_id, id, parent_id), do: transact(space_id, &Pages.move(&1, id, parent_id))
-  def trash_page(space_id, id), do: transact(space_id, &Pages.trash(&1, id))
-  def restore_page(space_id, id), do: transact(space_id, &Pages.restore(&1, id))
-  def delete_page(space_id, id), do: transact(space_id, &Pages.delete(&1, id))
+
+  def trash_page(space_id, id),
+    do: transact(space_id, &Pages.trash(&1, id)) |> settle_schedules(space_id)
+
+  def restore_page(space_id, id),
+    do: transact(space_id, &Pages.restore(&1, id)) |> settle_schedules(space_id)
+
+  def delete_page(space_id, id, author \\ @user),
+    do: transact(space_id, &Pages.delete(&1, id, author)) |> settle_schedules(space_id)
+
+  # The trash decides whether a page's update runs, and the scheduler is told after the
+  # stream's step is over: it writes to this stream, so it cannot be waited on inside one.
+  defp settle_schedules({:ok, _} = reply, space_id) do
+    :ok = HalC2.ScheduledTasks.reconcile_pages(space_id)
+    reply
+  end
+
+  defp settle_schedules(refused, _space_id), do: refused
 
   def insert_block(space_id, page_id, spec, after_id \\ :last, author \\ @user),
     do: transact(space_id, &Blocks.insert(&1, page_id, spec, after_id, author))
@@ -163,19 +226,68 @@ defmodule HalC2.Space do
   def set_checked(space_id, id, checked, author \\ @user),
     do: transact(space_id, &Blocks.set_checked(&1, id, checked, author))
 
-  def edit_block(space_id, id, text, checked, author \\ @user),
-    do: transact(space_id, &Blocks.edit(&1, id, text, checked, author))
+  @doc "Changes a block's text, tick, heading level and code language, as `Blocks.edit/4`."
+  def edit_block(space_id, id, changes, author \\ @user),
+    do: transact(space_id, &Blocks.edit(&1, id, changes, author))
+
+  def edit_table(space_id, id, edit, author \\ @user),
+    do: transact(space_id, &Blocks.edit_table(&1, id, edit, author))
 
   def move_block(space_id, id, after_id, author \\ @user),
     do: transact(space_id, &Blocks.move(&1, id, after_id, author))
 
-  def delete_block(space_id, id), do: transact(space_id, &Blocks.delete(&1, id))
+  def delete_block(space_id, id, author \\ @user),
+    do: transact(space_id, &Blocks.delete(&1, id, author))
+
+  @doc """
+  Draws a chart that answers `request` on a page (`HalC2.Space.Visualize`): a new block
+  placed by `after_id`, or, with `block_id`, in place of that chart. The model is asked
+  outside the stream, so nothing waits on it; when it cannot answer, the page is as it was.
+  """
+  def visualize(space_id, page_id, request, block_id \\ nil, after_id \\ :last, author \\ @user) do
+    with {:ok, request} <- chart_request(request),
+         {:ok, state} <- state(space_id),
+         {:ok, page} <- Blocks.chart_place(state, page_id, block_id),
+         {:ok, chart} <- Visualize.answer(request, page, Blocks.of_page(state, page_id)) do
+      put_chart(space_id, page_id, chart, block_id, after_id, author)
+    end
+  end
+
+  @doc "Writes a chart as `visualize/6` does, deciding again: the page may have changed."
+  def put_chart(space_id, page_id, chart, block_id, after_id \\ :last, author \\ @user) do
+    transact(space_id, &Blocks.put_chart(&1, page_id, chart, block_id, after_id, author))
+  end
+
+  defp chart_request(request) do
+    with {:error, message} <- Chart.request(request), do: {:error, :invalid, message}
+  end
 
   def add_comment(space_id, page_id, block_id, body, author \\ @user),
     do: transact(space_id, &Blocks.comment(&1, page_id, block_id, body, author))
 
   def resolve_comment(space_id, id), do: transact(space_id, &Blocks.resolve(&1, id))
   def reopen_comment(space_id, id), do: transact(space_id, &Blocks.reopen(&1, id))
+
+  def create_deck(space_id, title), do: transact(space_id, &Decks.create(&1, space_id, title))
+
+  def create_deck_from_page(space_id, page_id),
+    do: transact(space_id, &Decks.create_from_page(&1, space_id, page_id))
+
+  def rename_deck(space_id, id, title), do: transact(space_id, &Decks.rename(&1, id, title))
+  def trash_deck(space_id, id), do: transact(space_id, &Decks.trash(&1, id))
+  def restore_deck(space_id, id), do: transact(space_id, &Decks.restore(&1, id))
+  def delete_deck(space_id, id), do: transact(space_id, &Decks.delete(&1, id))
+
+  def insert_slide(space_id, deck_id, spec, after_id \\ :last),
+    do: transact(space_id, &Decks.insert_slide(&1, deck_id, spec, after_id))
+
+  def update_slide(space_id, id, fields),
+    do: transact(space_id, &Decks.update_slide(&1, id, fields))
+
+  def move_slide(space_id, id, after_id),
+    do: transact(space_id, &Decks.move_slide(&1, id, after_id))
+
+  def delete_slide(space_id, id), do: transact(space_id, &Decks.delete_slide(&1, id))
 
   @doc "A page with its blocks and comments, trashed or not."
   def page(space_id, page_id) do
@@ -195,7 +307,136 @@ defmodule HalC2.Space do
     end
   end
 
+  # --- history -------------------------------------------------------------------------
+
+  @doc "See `HalC2.Space.History.versions/4`."
+  defdelegate page_versions(space_id, page_id, before \\ nil, limit \\ nil),
+    to: History,
+    as: :versions
+
+  @doc "See `HalC2.Space.History.read/3`."
+  defdelegate page_version(space_id, page_id, version), to: History, as: :read
+
+  @doc """
+  Makes the page look like `version` again, as a new edit (`HalC2.Space.History`). The
+  version is read before the stream decides: what it held never changes.
+  """
+  def restore_page_version(space_id, page_id, version, author \\ @user) do
+    with {:ok, read} <- History.read(space_id, page_id, version) do
+      transact(space_id, &History.restore(&1, page_id, read, author))
+    end
+  end
+
+  # --- the agent of a page ----------------------------------------------------------------
+
+  @doc "See `HalC2.Space.PageAgent.ask/5`."
+  defdelegate ask_page_agent(space_id, page_id, request, choices \\ %{}), to: PageAgent, as: :ask
+
+  @doc "See `HalC2.Space.PageAgent.stop/2`."
+  defdelegate stop_page_agent(space_id, page_id), to: PageAgent, as: :stop
+
+  @doc "See `HalC2.Space.PageAgent.dismiss/2`."
+  defdelegate dismiss_page_agent(space_id, page_id), to: PageAgent, as: :dismiss
+
+  # --- images --------------------------------------------------------------------------
+
+  @doc """
+  Keeps an upload (`attachments.createUploadUrl`) as an image of the Space, if its
+  content is a real image; `extra` sets fields such as `prompt`. The upload is used up
+  either way.
+  """
+  def add_image(space_id, attachment_id, name, extra \\ %{}, author \\ @user) do
+    with {:ok, _} <- state(space_id),
+         {:ok, name} <- Images.name(name),
+         {:ok, id, file} <- ImageFile.take(attachment_id) do
+      case transact(space_id, &Images.add(&1, space_id, id, name, file, extra, author)) do
+        {:ok, _} = kept ->
+          kept
+
+        refused ->
+          ImageFile.remove(id)
+          refused
+      end
+    end
+  end
+
+  @doc """
+  An image from a prompt, made by the provider of `selection` or else the first that can
+  (`HalC2.Space.ImageGeneration`). With none to make it, or one that fails, there is no
+  image.
+  """
+  def generate_image(space_id, prompt, selection \\ nil) do
+    with {:ok, _} <- state(space_id),
+         {:ok, prompt} <- Images.prompt(prompt) do
+      case ImageGeneration.generate(prompt, selection) do
+        {:ok, upload, used} ->
+          extra = %{"prompt" => prompt, "generatedBy" => used}
+
+          with {:error, :invalid, message} <-
+                 add_image(space_id, upload, Images.name_from(prompt), extra),
+               do: {:error, :image_failed, message}
+
+        {:error, :unsupported, message} ->
+          {:error, :image_unsupported, message}
+
+        {:error, :unavailable, message} ->
+          {:error, :image_unavailable, message}
+
+        {:error, :failed, message} ->
+          {:error, :image_failed, message}
+      end
+    end
+  end
+
+  def trash_image(space_id, id), do: transact(space_id, &Images.trash(&1, id))
+  def restore_image(space_id, id), do: transact(space_id, &Images.restore(&1, id))
+
+  @doc """
+  Deletes an image in the trash for good and removes its file. The blocks showing it
+  stay, on every page, and say it was deleted.
+  """
+  def delete_image(space_id, id) do
+    with {:ok, id} = deleted <- transact(space_id, &Images.delete(&1, id)) do
+      ImageFile.remove(id)
+      deleted
+    end
+  end
+
+  @doc "`{:ok, file, mime, name}` for an image of the Space, trashed or not, else `:error`."
+  def image_file(space_id, id) do
+    with {:ok, state} <- state(space_id),
+         %{} = image <- Images.get(state, id),
+         file when is_binary(file) <- ImageFile.existing(id) do
+      {:ok, file, image["mimeType"], image["name"]}
+    else
+      _ -> :error
+    end
+  end
+
   # --- Markdown and threads -----------------------------------------------------------
+
+  def publish_page(space_id, page_id, where \\ %{}) do
+    # Refused first: reaching for the address can publish the MC over Tailscale.
+    with {:ok, _} <- transact(space_id, &{[], Pages.fetch_live(&1, page_id)}),
+         {:ok, reached} <- reached(where) do
+      transact(space_id, &Sites.publish(&1, page_id, reached, move: where["tailscale"] == true))
+    end
+  end
+
+  def unpublish_page(space_id, page_id), do: transact(space_id, &Sites.unpublish(&1, page_id))
+
+  @doc """
+  The site at this link: the Space's stream is only touched for a Space that exists, as
+  anyone can ask, and only this one entity is read from it.
+  """
+  def site(space_id, token) do
+    if Streams.get(@index, "space", space_id), do: Streams.get(stream_id(space_id), "site", token)
+  end
+
+  defp reached(where) do
+    with {:error, {:tailscale, message}} <- HalC2.Web.address(where),
+         do: {:error, :unavailable, message}
+  end
 
   def export_markdown(space_id, page_id) do
     with {:ok, state} <- state(space_id),
@@ -241,15 +482,35 @@ defmodule HalC2.Space do
 
   def import_markdown(_, _, _, _, _, _), do: {:error, :invalid, "markdown is a string."}
 
-  # `state` as if `changes` were committed, to decide what follows them in one step.
-  defp with_changes(state, changes) do
+  @doc "`state` as if `changes` were committed, to decide what follows them in one step."
+  def with_changes(state, changes) do
     Enum.reduce(changes, state, fn {kind, id, patch}, state ->
       StreamState.apply_event(state, %{seq: state.seq, kind: kind, entity: id, patch: patch})
     end)
   end
 
-  # A link to a page this Space does not have is kept as a paragraph.
-  defp links(state, %{"kind" => "subpage_link"} = spec) do
+  @doc """
+  `spec` as a block of this Space: a link to a page it does not have is a paragraph, and
+  so is an image it does not have or that is in the trash. An image by its address stays.
+  """
+  def links(_state, %{"kind" => "image", "url" => url} = spec) when is_binary(url), do: spec
+
+  def links(state, %{"kind" => "image"} = spec) do
+    case Images.fetch_live(state, spec["imageId"]) do
+      {:ok, _} ->
+        spec
+
+      _ ->
+        spec
+        |> Map.delete("imageId")
+        |> Map.merge(%{
+          "kind" => "paragraph",
+          "text" => "![#{spec["text"]}](space-image:#{spec["imageId"]})"
+        })
+    end
+  end
+
+  def links(state, %{"kind" => "subpage_link"} = spec) do
     if Pages.get(state, spec["linkedPageId"]),
       do: spec,
       else: %{
@@ -260,7 +521,15 @@ defmodule HalC2.Space do
       }
   end
 
-  defp links(_state, spec), do: spec
+  def links(_state, spec), do: spec
+
+  @doc "A run's Markdown as the block specs it reads as in this Space, each with its text."
+  def written(state, markdown) do
+    markdown
+    |> Markdown.blocks()
+    |> Enum.map(&links(state, &1))
+    |> Enum.map(&Map.put(&1, "text", Blocks.text(state, &1)))
+  end
 
   @doc """
   A new page summarising a thread of this MC, written by text generation in the

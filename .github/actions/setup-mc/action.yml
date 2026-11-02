@@ -36,10 +36,17 @@ runs:
         key: ${{ steps.key.outputs.prefix }}${{ github.sha }}
         restore-keys: ${{ steps.key.outputs.prefix }}
 
+    # hex.pm answering slowly once shouldn't fail a job before any test has run.
     - name: Fetch deps
       shell: bash
       working-directory: apps/server-ex
-      run: mix deps.get
+      run: |
+        for delay in 15 45; do
+          mix deps.get && exit 0
+          echo "::warning::mix deps.get failed, retrying in ${delay}s"
+          sleep "$delay"
+        done
+        mix deps.get
 
     - name: Git identity for test repositories
       shell: bash

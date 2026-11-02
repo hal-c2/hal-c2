@@ -89,7 +89,7 @@ Dialog {
             objectName: "folderOperationError"
             Layout.fillWidth: true
             visible: text.length > 0
-            color: Theme.palette.color("error", "#ef4444")
+            color: Theme.palette.color("errorForeground", "#ef4444")
             wrapMode: Text.Wrap
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }
@@ -108,7 +108,7 @@ Dialog {
                 objectName: "folderOperationConfirm"
                 text: dialog.operation === "trash" ? qsTr("Move to Trash") : dialog.operation === "create" ? qsTr("Create folder") : dialog.operation === "rename" ? qsTr("Rename") : qsTr("Move")
                 enabled: entry.text.trim().length > 0 && (dialog.operation !== "trash" || entry.text === dialog.folderName)
-                tint: dialog.operation === "trash" ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("text", "#e4e4e7")
+                tint: dialog.operation === "trash" ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("text", "#e4e4e7")
                 onClicked: dialog.commit()
             }
         }

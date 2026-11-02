@@ -44,6 +44,41 @@ private slots:
     pages.receiveSpace(live(QStringLiteral("space")));
     QCOMPARE(pages.pageId(), QStringLiteral("p2"));
   }
+
+  // A restore that swaps one block for another keeps the count of blocks, so
+  // comment rows reading the block list by its count kept their old label.
+  void aSwapOfBlocksRedrawsTheCommentsOnThem() {
+    const auto block = [](const QString& id) {
+      return row(QStringLiteral("block"), id, {{QStringLiteral("pageId"), QStringLiteral("p1")}, {QStringLiteral("text"), id}});
+    };
+    const auto comment = [](const QString& id, const QString& blockId) {
+      return row(QStringLiteral("comment"), id, {{QStringLiteral("pageId"), QStringLiteral("p1")}, {QStringLiteral("blockId"), blockId}});
+    };
+    const auto event = [](int seq, const QString& kind, const QString& id, const QJsonObject& patch) {
+      return QJsonObject{{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("offset"), seq},
+                         {QStringLiteral("events"), QJsonArray{QJsonArray{seq, kind, id, patch, QStringLiteral("2026-01-01T00:00:00Z")}}}};
+    };
+    SpacePages pages;
+    pages.receiveIndex(snapshot(QStringLiteral("index"), {row(QStringLiteral("space"), QStringLiteral("s1"), {{QStringLiteral("name"), QStringLiteral("Research")}})}));
+    pages.receiveIndex(live(QStringLiteral("index")));
+    pages.receiveSpace(snapshot(QStringLiteral("space"),
+                                {row(QStringLiteral("page"), QStringLiteral("p1"), {{QStringLiteral("title"), QStringLiteral("Roadmap")}}),
+                                 block(QStringLiteral("x")), comment(QStringLiteral("on-x"), QStringLiteral("x")), comment(QStringLiteral("on-y"), QStringLiteral("y"))}));
+    pages.receiveSpace(live(QStringLiteral("space")));
+    const auto gone = [&pages](const QString& id) {
+      return pages.comments()->get(pages.comments()->indexOf(id)).value(QStringLiteral("blockGone")).toBool();
+    };
+    QVERIFY(!gone(QStringLiteral("on-x")));
+    QVERIFY(gone(QStringLiteral("on-y")));
+
+    QSignalSpy redrawn(pages.comments(), &QAbstractItemModel::dataChanged);
+    pages.receiveSpace(event(2, QStringLiteral("block"), QStringLiteral("x"), {{QStringLiteral("d"), true}}));
+    pages.receiveSpace(event(3, QStringLiteral("block"), QStringLiteral("y"), {{QStringLiteral("s"), block(QStringLiteral("y")).at(2)}}));
+    QVERIFY(gone(QStringLiteral("on-x")));
+    QVERIFY(!gone(QStringLiteral("on-y")));
+    QCOMPARE(pages.blocks()->rowCount(), 1);
+    QCOMPARE(redrawn.count(), 2);
+  }
 };
 
 QTEST_GUILESS_MAIN(SpaceRegression)

@@ -40,6 +40,26 @@ defmodule HalC2.HotTest do
     HalC2.Hot.reload(HalC2.Hot.beams_from_dir(Application.app_dir(:hal_c2, "ebin")))
   end
 
+  # A plain loop that recursed locally stayed on its first version, so the store
+  # reloaded once and then never again: `{:previous_version_still_running, [HalC2.Store]}`.
+  @tag :tmp_dir
+  test "the store's checkpointer moves to new code", %{tmp_dir: dir} do
+    store =
+      start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite"), name: :hot_store})
+
+    %{checkpointer: checkpointer} = :sys.get_state(store)
+    {HalC2.Store, bin, file} = :code.get_object_code(HalC2.Store)
+    assert :code.soft_purge(HalC2.Store)
+    {:module, HalC2.Store} = :code.load_binary(HalC2.Store, file, bin)
+
+    # The first is answered from the old loop, which then calls the new one by name.
+    HalC2.Store.checkpoint(store)
+    HalC2.Store.checkpoint(store)
+    refute :erlang.check_process_code(checkpointer, HalC2.Store)
+  after
+    :code.soft_purge(HalC2.Store)
+  end
+
   defp compile_variant(dir, edit) do
     src = Path.join(dir, "connection.ex")
     File.write!(src, edit.(File.read!(@source)))
