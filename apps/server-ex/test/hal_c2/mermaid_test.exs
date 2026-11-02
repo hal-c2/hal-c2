@@ -132,6 +132,66 @@ defmodule HalC2.MermaidTest do
     refute_received {:drawing, "waiting", _}
   end
 
+  test "a diagram whose callers have gone before its turn is never drawn" do
+    server = server(draw: gated(), limit: 1)
+    first = render_async(server, "first")
+    assert_receive {:drawing, "first", drawer}
+
+    test = self()
+
+    gone =
+      spawn(fn ->
+        :gen_server.send_request(server, {:render, request("gone")})
+        send(test, :asked)
+        Process.sleep(:infinity)
+      end)
+
+    assert_receive :asked
+    kept = render_async(server, "kept")
+    assert "gone" in queued(server)
+    monitor = Process.monitor(gone)
+    Process.exit(gone, :kill)
+    assert_receive {:DOWN, ^monitor, :process, _, _}
+    refute "gone" in dropped(server, "gone", 100)
+
+    send(drawer, {:outcome, {:ok, @drawn}})
+    assert Task.await(first) == @drawn
+    assert_receive {:drawing, "kept", drawer}
+    send(drawer, {:outcome, {:ok, @drawn}})
+    assert Task.await(kept) == @drawn
+    refute_received {:drawing, "gone", _}
+  end
+
+  test "a caller whose socket goes is let go, and its diagram is not drawn" do
+    server = server(draw: gated(), limit: 1)
+    first = render_async(server, "first")
+    assert_receive {:drawing, "first", drawer}
+
+    socket = spawn(fn -> Process.sleep(:infinity) end)
+    caller = Task.async(fn -> Mermaid.render(server, request("closed"), socket) end)
+    Process.exit(socket, :kill)
+
+    assert %{"status" => "failed", "reason" => "The client asking for this diagram has gone."} =
+             Task.await(caller)
+
+    assert queued(server) == []
+    send(drawer, {:outcome, {:ok, @drawn}})
+    assert Task.await(first) == @drawn
+    :sys.get_state(server)
+    refute_received {:drawing, "closed", _}
+  end
+
+  defp queued(server),
+    do:
+      for({_, %{source: source}, _} <- :queue.to_list(:sys.get_state(server).queued), do: source)
+
+  # The test's word that a caller went and the server's are two signals in no promised
+  # order; each look is one more turn for the server to read its own.
+  defp dropped(server, source, tries) do
+    queued = queued(server)
+    if source in queued and tries > 0, do: dropped(server, source, tries - 1), else: queued
+  end
+
   test "the oldest drawing is forgotten past the cache's size" do
     {count, draw} = counted({:ok, @drawn})
     server = server(draw: draw, cache_size: 1)
