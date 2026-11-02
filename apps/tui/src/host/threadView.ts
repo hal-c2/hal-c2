@@ -23,6 +23,7 @@ import {
 import { createAttachmentPreviews } from "./attachmentPreviews.ts";
 import { buildImageViewerState, type TuiImageViewerState } from "./imageViewer.ts";
 import type { TuiMode, TuiSize } from "./layoutState.ts";
+import { createMermaidDiagrams, type MermaidDiagrams } from "./mermaidDiagrams.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import type { PaletteCommand } from "./paletteState.ts";
 import { chunk, styled } from "./styledText.ts";
@@ -77,6 +78,8 @@ export interface ThreadViewOptions {
   readonly mutedThreads?: MutedThreadsStore | undefined;
   /** Put text on the terminal's clipboard; false when the terminal refuses. */
   readonly copyToClipboard?: ((text: string) => boolean) | undefined;
+  /** The Mermaid diagrams the MC drew, shared with the other panes (default: its own). */
+  readonly diagrams?: MermaidDiagrams | undefined;
 }
 
 export interface ThreadView {
@@ -213,6 +216,8 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     inlineImages: options.inlineImages === true,
     onChange: () => publishTimeline(),
   });
+  const diagrams = options.diagrams ?? createMermaidDiagrams(client);
+  const stopDiagrams = diagrams.listen(() => publishTimeline());
 
   const activeQuestion = (): PendingUserInput | null => questions[0] ?? null;
   const questionOpen = () => activeQuestion() !== null && !question.deferred;
@@ -258,6 +263,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
         : "Select a thread to view its conversation.",
       attachments: attachments.get,
       cellPixels: cellPixels(),
+      diagrams: diagrams.get,
     });
     state.set("timeline", timeline);
   };
@@ -1057,6 +1063,9 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "timeline.table.toggle":
         setView({ collapsedTables: toggled(view.collapsedTables, String(field(payload, "key"))) });
         return true;
+      case "timeline.diagram.toggle":
+        setView({ diagramSources: toggled(view.diagramSources, String(field(payload, "key"))) });
+        return true;
       case "timeline.reply.copy": {
         const reply = latestReply();
         if (reply) copy(reply.text, "Reply");
@@ -1196,8 +1205,12 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     paletteCommands,
     dispose: () => {
       if (copiedTimer) clearTimeout(copiedTimer);
+      stopDiagrams();
     },
-    settled: attachments.settled,
+    settled: async () => {
+      await attachments.settled();
+      await diagrams.settled();
+    },
     question: () => {
       const current = activeQuestion()?.questions[question.questionIndex];
       return current && !question.deferred

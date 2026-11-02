@@ -192,6 +192,10 @@ function exportMarkdown(page: Entity, blocks: Entity[], titleOf: (id: string) =>
           .join("\n");
       case "subpage_link":
         return `[${titleOf(block.linkedPageId) ?? block.text}](#${block.linkedPageId})`;
+      case "code": {
+        const fence = block.fence ?? "```";
+        return `${fence}${block.language ?? ""}${block.info ?? ""}\n${block.text}\n${fence}`;
+      }
       default:
         return block.text;
     }
@@ -225,6 +229,26 @@ function parseMarkdown(markdown: string): { title: string | null; blocks: Entity
     } else if ((match = /^\s*[-*]\s+\[([ xX])\]\s?(.*)$/.exec(line))) {
       out.push(block("checklist", match[2]!, match[1] !== " "));
       index += 1;
+    } else if ((match = /^ {0,3}(`{3,}|~{3,})/.exec(line))) {
+      const close = new RegExp(`^ {0,3}\\${match[1]![0]}{${match[1]!.length},}\\s*$`);
+      const fenced = [line];
+      index += 1;
+      while (index < lines.length) {
+        fenced.push(lines[index]!);
+        index += 1;
+        if (close.test(fenced.at(-1)!)) break;
+      }
+      // A closed fence from the start of the line is a code block, its language the first
+      // word after the fence; any other is kept as written, a raw block.
+      const open = /^(`{3,}|~{3,})(?:(\S+)(.*))?$/.exec(line);
+      if (open && fenced.length > 1 && close.test(fenced.at(-1)!)) {
+        out.push({
+          ...block("code", fenced.slice(1, -1).join("\n")),
+          ...(open[1] !== "```" ? { fence: open[1] } : {}),
+          ...(open[2] ? { language: open[2] } : {}),
+          ...(open[3] ? { info: open[3] } : {}),
+        });
+      } else out.push(block("raw", fenced.join("\n")));
     } else if (line.startsWith(">")) {
       const quote: string[] = [];
       while (index < lines.length && lines[index]!.startsWith(">")) {
