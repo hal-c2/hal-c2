@@ -1,7 +1,7 @@
 import Config
 
 # Tests start the pieces they need under their own supervisors.
-config :hal_c2, start_mc: false
+config :hal_c2, start_mc: false, durable_programs: false
 
 # Nothing is mounted unless a test starts `HalC2.MachineFiles` itself; peers have no
 # config and leave it off too.

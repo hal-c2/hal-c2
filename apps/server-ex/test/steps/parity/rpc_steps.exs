@@ -465,7 +465,7 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "vcs." <> _ ->
         {%{"cwd" => f.root}, context}
 
-      "worktreeSetup.cancel" ->
+      "worktreeSetup." <> _ ->
         {%{"threadId" => f.thread}, context}
 
       "git.resolvePullRequest" ->

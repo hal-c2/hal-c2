@@ -6,9 +6,9 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The Space view (route kind `space`; SpaceController publishes `space`): the
-// Space's pages beside the open one, and its comments beside that when the
-// user asks for them. Everything shown is the MC's; with nothing to show it
-// says why.
+// Space's pages and decks beside the open one, or beside its images, and a page's
+// comments beside that when the user asks for them. Everything shown is the MC's;
+// with nothing to show it says why.
 Rectangle {
     id: workspace
 
@@ -19,6 +19,14 @@ Rectangle {
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color lineColor: Theme.palette.color("border", "#27272a")
     property bool commentsShown: false
+    property bool imagesShown: false
+    // Signing an address for every image lasts only as long as they are on screen.
+    readonly property bool browsing: imagesShown && visible
+    onBrowsingChanged: Shell.dispatch("space.images.show", { shown: browsing })
+    Component.onDestruction: {
+        if (browsing)
+            Shell.dispatch("space.images.show", { shown: false });
+    }
     // What the open page's state is when it shows nothing.
     readonly property string emptyText: {
         if (Spaces.status === "unreachable")
@@ -42,6 +50,13 @@ Rectangle {
     readonly property string pageId: Spaces.pageId
     onPageIdChanged: comments.blockId = ""
 
+    // A deck just opened, made in the sidebar say, is what the user wants to see.
+    readonly property string deckId: Spaces.deckId
+    onDeckIdChanged: {
+        if (deckId !== "")
+            imagesShown = false;
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
@@ -52,6 +67,8 @@ Rectangle {
             Layout.preferredWidth: 260
             Layout.fillHeight: true
             onImportRequested: importDialog.open()
+            onImagesRequested: workspace.imagesShown = true
+            onPageChosen: workspace.imagesShown = false
         }
 
         Rectangle {
@@ -66,17 +83,23 @@ Rectangle {
 
             SpacePage {
                 anchors.fill: parent
-                visible: Spaces.pageId !== ""
+                visible: Spaces.pageId !== "" && Spaces.deckId === "" && !workspace.imagesShown
+                onImagesRequested: workspace.imagesShown = true
                 onSaveRequested: saveDialog.open()
                 onSubpageRequested: (parentPageId, link) => sidebar.newPage(parentPageId, link)
                 onCommentRequested: blockId => workspace.showComments(blockId)
+            }
+
+            SpaceDeck {
+                anchors.fill: parent
+                visible: Spaces.deckId !== "" && !workspace.imagesShown
             }
 
             ColumnLayout {
                 objectName: "spaceEmpty"
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 48, 420)
-                visible: Spaces.pageId === ""
+                visible: Spaces.pageId === "" && Spaces.deckId === "" && !workspace.imagesShown
                 spacing: 12
 
                 ShellIcon {
@@ -126,6 +149,14 @@ Rectangle {
                     }
                 }
             }
+
+            SpaceImages {
+                anchors.fill: parent
+                visible: workspace.imagesShown
+                onAddRequested: imageDialog.open()
+                onGenerateRequested: generateDialog.open()
+                onCloseRequested: workspace.imagesShown = false
+            }
         }
 
         Rectangle {
@@ -140,10 +171,14 @@ Rectangle {
 
             Layout.preferredWidth: 300
             Layout.fillHeight: true
-            visible: workspace.commentsShown && Spaces.pageId !== ""
+            visible: workspace.commentsShown && Spaces.pageId !== "" && Spaces.deckId === "" && !workspace.imagesShown
             readOnly: Spaces.page.trashed === true
             onCloseRequested: workspace.commentsShown = false
         }
+    }
+
+    SpacePresenter {
+        anchors.fill: parent
     }
 
     FileDialog {
@@ -153,6 +188,19 @@ Rectangle {
         fileMode: FileDialog.OpenFile
         nameFilters: [qsTr("Markdown (*.md *.markdown)"), qsTr("All files (*)")]
         onAccepted: Shell.dispatch("space.page.importFile", { url: selectedFile.toString() })
+    }
+
+    FileDialog {
+        id: imageDialog
+
+        title: qsTr("Add an image to the Space")
+        fileMode: FileDialog.OpenFile
+        nameFilters: [qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp)"), qsTr("All files (*)")]
+        onAccepted: Shell.dispatch("space.image.addFile", { url: selectedFile.toString() })
+    }
+
+    SpaceImageDialog {
+        id: generateDialog
     }
 
     FileDialog {

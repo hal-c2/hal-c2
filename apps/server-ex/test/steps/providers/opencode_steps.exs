@@ -37,6 +37,16 @@ defmodule HalC2.Steps.Providers.Opencode do
     FakeAcp.install(context, "opencode", models(@connected))
   end
 
+  step "OpenCode is installed and enabled", context do
+    FakeAcp.install(context, "opencode", %{}, enabled: true)
+  end
+
+  step "the user sends a message to OpenCode", context do
+    context = context |> FakeAcp.thread() |> FakeAcp.send_message("hello OpenCode")
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
   step "no OpenCode process is started", context do
     HalC2.Acp.load()
     assert %{"enabled" => false} = FakeAcp.entry("opencode")
@@ -879,6 +889,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   step "no OpenCode process stays owned by the thread", context do
+    HalC2.Test.Mc.settle_registry(HalC2.Acp.Registry)
     assert Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, @thread)) == []
     refute Process.alive?(context.opencode_server.conn)
     context

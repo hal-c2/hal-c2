@@ -196,10 +196,12 @@ async function main(): Promise<void> {
   let shellRoot: Parameters<typeof movePromptCursorToEnd>[0] | null = null;
   const host = createHost({
     client,
+    origin,
     size: { columns: renderer.width, rows: renderer.height },
     onQuit: handleExit,
     log: appendLog,
     startupWarnings: configWarnings,
+    keymapOverrides: userConfig.keymap,
     promptCursorToEnd: (text) => {
       if (shellRoot) movePromptCursorToEnd(shellRoot, text);
     },

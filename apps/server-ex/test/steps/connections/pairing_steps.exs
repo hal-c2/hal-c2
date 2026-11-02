@@ -256,6 +256,11 @@ defmodule HalC2.Steps.Connections.Pairing do
     context
   end
 
+  step "the MC listens on every network interface", context do
+    World.put_app_env(:host, "0.0.0.0")
+    context
+  end
+
   step("the MC listens on its own machine only", context, do: context)
 
   step "Tailscale names the MC's machine {string}", %{args: [name]} = context do
@@ -291,6 +296,17 @@ defmodule HalC2.Steps.Connections.Pairing do
   step "the link comes with the MC's LAN address", context do
     assert {:ok, link} = context.asked
     assert link["address"] == "http://#{Mc.lan_address()}:#{context.mc.port}"
+    context
+  end
+
+  step "the link comes with a network address of its machine", context do
+    assert {:ok, link} = context.asked
+    %{host: host, port: port} = URI.parse(link["address"])
+    {:ok, ip} = :inet.parse_address(String.to_charlist(host))
+    {:ok, interfaces} = :inet.getifaddrs()
+    assert ip in for({_, opts} <- interfaces, {:addr, addr} <- opts, do: addr)
+    refute match?({127, _, _, _}, ip)
+    assert port == context.mc.port
     context
   end
 

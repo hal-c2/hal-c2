@@ -1,5 +1,6 @@
 // @effect-diagnostics globalErrorInEffectFailure:off
 // @effect-diagnostics anyUnknownInErrorContext:off
+// @effect-diagnostics globalFetch:off
 // The client calls behind the settings pages (`host/settingsSections.ts`).
 //
 // Settings reach machines other than the one the terminal is connected to
@@ -43,6 +44,8 @@ export interface TuiSettingsClient {
     payload: unknown,
     environmentId?: string,
   ) => Promise<T>;
+  /** Send a file to an upload address the MC signed (`attachments.createUploadUrl`). */
+  readonly uploadToMc: (relativeUrl: string, bytes: Uint8Array, mimeType: string) => Promise<void>;
   /** This machine's scheduled tasks: the whole list now and after every change. */
   readonly subscribeScheduledTasks: (
     onTasks: (tasks: ReadonlyArray<ScheduledTask>) => void,
@@ -85,6 +88,7 @@ export interface TuiSettingsClient {
 
 export function makeTuiSettingsClient(
   runtime: ManagedRuntime.ManagedRuntime<EnvironmentSupervisor, never>,
+  origin = "",
 ): TuiSettingsClient {
   const drain = <A>(stream: Stream.Stream<A, unknown, EnvironmentSupervisor>): (() => void) => {
     const fiber = runtime.runFork(Stream.runDrain(stream));
@@ -112,6 +116,15 @@ export function makeTuiSettingsClient(
           )) as T;
         }),
       ),
+    // The signed address is its own authorization, like the MC's other upload clients use it.
+    uploadToMc: async (relativeUrl, bytes, mimeType) => {
+      const response = await fetch(new URL(relativeUrl, origin || undefined), {
+        method: "POST",
+        headers: { "content-type": mimeType },
+        body: bytes as Uint8Array<ArrayBuffer>,
+      });
+      if (!response.ok) throw new Error(`The MC refused the upload (${response.status}).`);
+    },
     subscribeScheduledTasks: (onTasks) =>
       drain(
         subscribe(WS_METHODS.scheduledTasksSubscribe, {}).pipe(

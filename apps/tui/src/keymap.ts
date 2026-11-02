@@ -144,7 +144,8 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       },
       {
         keys: "e",
-        description: "Files: edit in $EDITOR · Spaces: rename a Space or page, edit a block",
+        description:
+          "Files: edit in $EDITOR · Spaces: rename a Space, page or deck, edit a block or slide",
         chords: ["e"],
       },
       {
@@ -153,11 +154,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["c"],
       },
       { keys: "a", description: "Spaces: new page inside the selected page", chords: ["a"] },
-      { keys: "m", description: "Spaces: move a page or block", chords: ["m"] },
+      { keys: "m", description: "Spaces: move a page, block or slide", chords: ["m"] },
       {
         keys: "d · D",
         description:
-          "Spaces: delete a Space or block, trash a page · delete a trashed page for good",
+          "Spaces: delete a Space, block or slide, trash a page or deck · delete a trashed one for good",
         chords: ["d", "shift+d"],
       },
       {
@@ -166,7 +167,33 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["space", "x"],
       },
       { keys: "l", description: "Spaces: link a subpage", chords: ["l"] },
+      { keys: "u", description: "Spaces: give a page an update", chords: ["u"] },
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
+      {
+        keys: "g",
+        description: "Spaces: ask for a chart, or ask again for the selected one",
+        chords: ["g"],
+      },
+      {
+        keys: "s · S",
+        description: "Spaces: new deck / make a deck from the page",
+        chords: ["s", "shift+s"],
+      },
+      {
+        keys: "p · P",
+        description: "Spaces: present a deck or publish a page · publish it over Tailscale",
+        chords: ["p", "shift+p"],
+      },
+      {
+        keys: "Y · U",
+        description: "Spaces: copy a published page's link · unpublish it",
+        chords: ["shift+y", "shift+u"],
+      },
+      {
+        keys: "v",
+        description: "Spaces: the Space's images (n generates one, i adds a file)",
+        chords: ["v"],
+      },
       {
         keys: "Tab · ^Enter",
         description: "Add project: browse ⇄ edit · run the action",
@@ -367,7 +394,8 @@ export const KEYMAP_LAYERS = {
     pageup: "space.pageUp",
     pagedown: "space.pageDown",
     "return, right": "space.activate",
-    "left, backspace, escape": "space.back",
+    "left, backspace": "space.back",
+    escape: "space.leave",
     n: "space.new",
     a: "space.newInside",
     e: "space.edit",
@@ -378,9 +406,18 @@ export const KEYMAP_LAYERS = {
     "space, x": "space.tick",
     c: "space.comment",
     l: "space.link",
+    u: "space.update",
     y: "space.export",
+    p: "space.presentOrPublish",
+    "shift+p": "space.publishTailscale",
+    "shift+y": "space.copySiteLink",
+    "shift+u": "space.unpublish",
     i: "space.import",
     t: "space.fromThread",
+    g: "space.visualize",
+    s: "space.newDeck",
+    "shift+s": "space.deckFromPage",
+    v: "space.images",
     "ctrl+k": "palette.open",
     "ctrl+p": "space.close",
   },
@@ -527,6 +564,47 @@ export function rebindLayers(
   }
   freed.delete(chord);
   return { layers: next, freed: [...freed] };
+}
+
+/**
+ * The first chord that runs `action` in `mode` once `overrides` (keymap.json's
+ * entries, as the engine merges them into every unnamed Keymap) sit over the
+ * live `layers`; null when none does. ShellKeymap keeps the global layer under
+ * every mode but the terminal drawer.
+ */
+export function effectiveChord(
+  layers: Record<string, KeymapLayer>,
+  overrides: Record<string, unknown> | undefined,
+  mode: string,
+  action: string,
+): string | null {
+  const id = (chords: string) =>
+    splitChords(chords)
+      .map((chord) => normalizeChord(chord) ?? chord)
+      .join(",");
+  // A binding's action: the plain form, or the object form that also describes it.
+  const actionOf = (value: unknown) =>
+    value && typeof value === "object" && "action" in value ? value.action : value;
+  for (const layer of [layers[mode], mode === "terminal" ? undefined : layers.global]) {
+    if (!layer) continue;
+    const merged = new Map(
+      Object.entries(layer).map(([chords, bound]) => [id(chords), bound as unknown]),
+    );
+    for (const [chords, value] of Object.entries(overrides ?? {})) {
+      // A section for a named keymap, not a binding.
+      if (value && typeof value === "object" && !("action" in value)) continue;
+      merged.set(id(chords), value);
+    }
+    for (const [chords, value] of merged) {
+      if (actionOf(value) === action) return chords.split(",")[0]!;
+    }
+  }
+  return null;
+}
+
+/** A chord as the key-hint row spells it: "ctrl+k" → "^K", "f2" → "F2". */
+export function chordHint(chord: string): string {
+  return chordLabel(chord).replace(/^Ctrl\+/, "^");
 }
 
 /**

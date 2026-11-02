@@ -24,6 +24,7 @@
 namespace {
 
 const QStringList kDefaultGlobs{
+    QStringLiteral("files/file-viewer-and-editing.feature"),
     QStringLiteral("mobile/pairing-and-environments.feature"),
     QStringLiteral("mobile/home-and-thread-list.feature"),
     QStringLiteral("mobile/composer.feature"),
@@ -33,6 +34,11 @@ const QStringList kDefaultGlobs{
     QStringLiteral("mobile/notifications.feature"),
     QStringLiteral("mobile/spaces.feature"),
     QStringLiteral("space/pages.feature"),
+    QStringLiteral("space/self-updating-pages.feature"),
+    QStringLiteral("space/visualize.feature"),
+    QStringLiteral("space/slides.feature"),
+    QStringLiteral("space/sites.feature"),
+    QStringLiteral("space/images.feature"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
     QStringLiteral("threads/sidebar-list.feature:*plugin*"),
     QStringLiteral("providers/codex.feature:A plan Codex marked finished*"),

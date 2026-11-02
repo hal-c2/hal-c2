@@ -79,6 +79,21 @@ int diffTurnOf(const QHash<QString, QJsonObject>& checkpoints, const QHash<QStri
   return 0;
 }
 
+// Held for the user and never started: still queued, or cancelled while held.
+bool heldNeverStarted(const QJsonObject& run) {
+  const QString status = text(run, QLatin1String("status"));
+  return (status == QLatin1String("queued") || status == QLatin1String("cancelled")) && run.value(QLatin1String("queueHeld")).toBool();
+}
+
+// Whether a run ever started: not one still queued, held or not, nor one that
+// ended with no start time (cancelled from the queue, its workspace never ready).
+bool everStarted(const QJsonObject& run) {
+  const QString status = text(run, QLatin1String("status"));
+  if (status == QLatin1String("queued") || heldNeverStarted(run)) return false;
+  const bool endedEarly = status == QLatin1String("cancelled") || status == QLatin1String("failed") || status == QLatin1String("interrupted");
+  return !endedEarly || run.value(QLatin1String("startedAt")).isString();
+}
+
 // When a turn item happened: its start, else its last update.
 QDateTime itemTime(const QJsonObject& item) {
   const QDateTime started = timeOf(item.value(QLatin1String("startedAt")));
@@ -927,11 +942,6 @@ QList<TimelineModel::Row> TimelineModel::project() const {
   // instead, where the MC would take the newest made; the pick never depends on
   // hash order either way. The item index is built only when the highest ordinal
   // actually ties, so the common case is one pass over the runs.
-  const auto heldNeverStarted = [](const QJsonObject& run) {
-    const QString status = text(run, QLatin1String("status"));
-    return (status == QLatin1String("queued") || status == QLatin1String("cancelled")) &&
-           run.value(QLatin1String("queueHeld")).toBool();
-  };
   QString latestRun;
   double latestOrdinal = -1;
   bool latestTied = false;
@@ -1227,12 +1237,13 @@ QVariantMap TimelineModel::rewindPointOf(const QString& rowId) const {
   const auto runs = m_entities.value(QStringLiteral("run"));
   const auto checkpoints = m_entities.value(QStringLiteral("checkpoint"));
   // The turn's number: its checkpoint's diff turn, else its place among the
-  // runs still shown.
+  // runs that started and are still shown.
   int turn = diffTurnOf(checkpoints, runs, runId);
   const double ordinal = runs.value(runId).value(QLatin1String("ordinal")).toDouble();
   if (turn <= 0) {
-    for (const QJsonObject& other : runs) {
-      if (other.value(QLatin1String("ordinal")).toDouble() <= ordinal && text(other, QLatin1String("status")) != QLatin1String("rolled_back")) ++turn;
+    for (auto other = runs.cbegin(); other != runs.cend(); ++other) {
+      if (other->value(QLatin1String("ordinal")).toDouble() > ordinal || text(*other, QLatin1String("status")) == QLatin1String("rolled_back")) continue;
+      if (other.key() == runId || everStarted(*other)) ++turn;
     }
   }
   QVariantMap point{{QStringLiteral("turn"), turn},
@@ -1294,6 +1305,7 @@ void TimelineModel::loadAttachment(const QString& id) {
 }
 
 void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const QDateTime& expiresAt) {
+  emit attachmentSigned(id, url);
   if (url.isEmpty()) {
     m_attachmentUrls.remove(id);
     return;
@@ -1309,6 +1321,12 @@ void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const Q
       return;
     }
   }
+}
+
+QString TimelineModel::accessJson(const QString& id, const QJsonObject& tree) const {
+  auto known = m_accessJson.find(id);
+  if (known == m_accessJson.end()) known = m_accessJson.insert(id, QString::fromUtf8(QJsonDocument(tree).toJson()));
+  return *known;
 }
 
 // --- Rows --------------------------------------------------------------------------
@@ -1562,11 +1580,23 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         if (text(attachment, QLatin1String("type")) != QLatin1String("image")) continue;
         const QString id = text(attachment, QLatin1String("id"));
         const AttachmentUrl known = m_attachmentUrls.value(id);
-        images.append(QVariantMap{
+        QVariantMap image{
             {QStringLiteral("id"), id},
             {QStringLiteral("name"), text(attachment, QLatin1String("name"))},
             {QStringLiteral("url"), known.expiresAt > m_now() ? known.url : QUrl()},
-        });
+        };
+        // A Snap Shot's capture: its tree as JSON, or its flat text.
+        const QJsonObject source = attachment.value(QLatin1String("source")).toObject();
+        const QJsonObject tree = source.value(QLatin1String("accessibility")).toObject();
+        const QString flat = text(tree, QLatin1String("format")) == QLatin1String("flat-text") ? text(tree, QLatin1String("text")) : text(source, QLatin1String("accessibleText"));
+        if (!tree.isEmpty() && text(tree, QLatin1String("format")) != QLatin1String("flat-text")) {
+          image.insert(QStringLiteral("accessFormat"), QStringLiteral("json"));
+          image.insert(QStringLiteral("accessText"), accessJson(id, tree));
+        } else if (!flat.isEmpty()) {
+          image.insert(QStringLiteral("accessFormat"), QStringLiteral("text"));
+          image.insert(QStringLiteral("accessText"), flat);
+        }
+        images.append(image);
       }
       return images;
     }
@@ -1587,6 +1617,7 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         }
         files.append(QVariantMap{{QStringLiteral("id"), text(attachment, QLatin1String("id"))},
                                  {QStringLiteral("name"), name},
+                                 {QStringLiteral("mimeType"), text(attachment, QLatin1String("mimeType"))},
                                  {QStringLiteral("detail"), detail}});
       }
       return files;

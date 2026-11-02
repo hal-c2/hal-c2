@@ -941,6 +941,30 @@ const Steps steps([] {
     waitText(world, QStringLiteral("plannerItemDue"), c[2]);
   });
 
+  step(QStringLiteral("the user links it to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitShownNamed(world, QStringLiteral("plannerItemLink"))->setProperty("text", c[0]);
+    world.sync();
+    click(world, waitShownNamed(world, QStringLiteral("plannerItemLinkButton")));
+  });
+  step(QStringLiteral("the MC is asked to link %1 to #(\\d+) of %1 at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitAsked(world, QStringLiteral("link"),
+              {{QStringLiteral("itemId"), idOf(world, c[0])},
+               {QStringLiteral("pullRequest"), QJsonObject{{QStringLiteral("repository"), c[2]}, {QStringLiteral("number"), c[1].toInt()}, {QStringLiteral("url"), c[3]}}}});
+  });
+  step(QStringLiteral("the user enters %1 to link").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitShownNamed(world, QStringLiteral("plannerItemLink"))->setProperty("text", c[0]);
+    world.sync();
+  });
+  step(QStringLiteral("the user presses Enter in the link field"), [](World& world, const Captures&, const Table&) {
+    expect(QMetaObject::invokeMethod(waitShownNamed(world, QStringLiteral("plannerItemLink")), "accepted"), QStringLiteral("the link field cannot be accepted"));
+    world.sync();
+  });
+  step(QStringLiteral("the pull request cannot be linked"), [](World& world, const Captures&, const Table&) {
+    expect(!waitShownNamed(world, QStringLiteral("plannerItemLinkButton"))->isEnabled(), QStringLiteral("the Link PR button is enabled"));
+    expect(asked(world, QStringLiteral("link")).isEmpty(), QStringLiteral("the MC was asked %1").arg(showAsked(world, QStringLiteral("link"))));
+    expect(!textOf(world, QStringLiteral("plannerItemLink")).isEmpty(), QStringLiteral("the field lost what the user entered"));
+  });
+
   step(QStringLiteral("the run of %1 proposes moving %1 to end on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     propose(world, c[0], c[1], c[2]);
     publish(world);

@@ -50,6 +50,18 @@ Feature: Issues, milestones and boards for MC plugins
       | comments "On track"             | comment "On track" on #7             |
 
   @mc
+  Scenario Outline: Assignees set outright must be logins before GitHub is asked
+    Given a plugin granted "issues:write"
+    When it <change> with the assignee "da na" on #7 of "acme/api"
+    Then it is told the assignees must be logins
+    And GitHub is never asked to <effect>
+
+    Examples:
+      | change                         | effect    |
+      | creates the issue "Add limits" | create it |
+      | updates it                     | change it |
+
+  @mc
   Scenario: A plugin reads a board and the fields of its items
     Given the board "acme/3" has the fields "Start date", "Target date" and "Status"
     And #7 of "acme/api" is on "acme/3" starting "2026-10-20" with the target "2026-11-02"

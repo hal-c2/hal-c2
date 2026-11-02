@@ -584,6 +584,7 @@ defmodule HalC2.Orchestration do
         do: regenerate_title(thread_id)
 
       if type == "thread.delete" do
+        HalC2.WorktreeSetup.superseded(thread_id)
         stop_runtimes(thread_id)
         # Work the thread still had waiting dies with it; cleaning up its
         # terminals and attached files is recorded work that outlives a
@@ -1210,6 +1211,8 @@ defmodule HalC2.Orchestration do
   # recorded and run as an effect (`HalC2.Orchestration.Effects`), so a stop
   # that arrives before it can cancel it and a restart knows it was in flight.
   defp begin_turn(thread_id, turn) do
+    HalC2.WorktreeSetup.superseded(thread_id)
+
     HalC2.Orchestration.Effects.run_now(
       thread_id,
       "provider-turn.start",
@@ -1342,6 +1345,7 @@ defmodule HalC2.Orchestration do
   # they run apart from the caller, who stops waiting at the deadline.
   defp await_stop(thread_id, timeout) do
     deadline = System.monotonic_time(:millisecond) + @thread_stop_ms
+
     {stopper, ref} = spawn_monitor(fn -> stop_thread_tree(thread_id, deadline) end)
 
     receive do
@@ -1393,21 +1397,24 @@ defmodule HalC2.Orchestration do
     end)
   end
 
-  # A run promoted from the queue meanwhile is interrupted too; a runtime still closing
-  # its turn after the run ended answers `:busy`, and is asked again. Tasks are looked at
+  # A message queued after the queue was cancelled can start when the interrupted run ends,
+  # and is interrupted by the next pass; a runtime still closing its turn after the run
+  # ended answers `:busy`, and is asked again. Tasks are looked at
   # on every pass: the turn being stopped can still delegate, or a task's wake be queued.
   defp stop_runs(thread_id, asked, deadline, tasks) do
     tasks = stop_tasks(thread_id, tasks, deadline)
     runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
     active = Enum.find_value(runs, &(&1["status"] in @active_statuses && &1["id"]))
 
+    # The queue goes before the interrupt, so nothing the agent stops for is left behind it.
+    # `active` is read before it: nothing was active and nothing is queued, so nothing is
+    # left for the end of a run to start. Whatever it held is looked at again.
+    queued = cancel_queued(thread_id)
+
     if active && active != asked do
       dispatch(%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => active})
     end
 
-    # Read before the queue: nothing was active and nothing is queued, so nothing is left
-    # for the end of a run to start. Whatever the queue held is looked at again.
-    queued = cancel_queued(thread_id)
     released = if active || queued, do: :busy, else: release_session(thread_id)
     left = deadline - System.monotonic_time(:millisecond)
 
@@ -1429,9 +1436,11 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # Whether a queued run was cancelled. A thread that refuses it, deleted or moved, starts
-  # nothing from its queue here anyway.
-  defp cancel_queued(thread_id) do
+  @doc """
+  Cancels the thread's queue, and answers whether a queued run was cancelled. A thread that
+  refuses it, deleted or moved, starts nothing from its queue here anyway.
+  """
+  def cancel_queued(thread_id) do
     thread_id
     |> HalC2.Streams.state()
     |> queued_runs()
@@ -1898,6 +1907,49 @@ defmodule HalC2.Orchestration do
         end)
 
     result
+  end
+
+  @doc "Whether the thread is a delegated child, whose caller awaits its task's end."
+  def delegated?(thread_id) do
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+
+    get_in(StreamState.get(state, "thread"), [thread_id, "lineage", "relationshipToParent"]) ==
+      "subagent"
+  end
+
+  @doc """
+  Puts a run whose workspace could not be prepared back to waiting for it
+  (`HalC2.WorktreeSetup.retry/1`). Only while it is the thread's one run: a later
+  message means the thread went on without it, in the worktree a retry works in. The
+  failure is resolved, so the error item it left goes.
+  """
+  def retry_prepared(thread_id, run_id) do
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      case StreamState.get(state, "run") do
+        %{^run_id => %{"status" => "failed"} = run} = runs when map_size(runs) == 1 ->
+          waiting =
+            upsert(state, "run", run_id, fn _ ->
+              Map.merge(run, %{"status" => "preparing", "completedAt" => nil})
+            end)
+
+          item =
+            preparation(state, run_id, %{
+              "status" => "running",
+              "title" => @preparing_workspace,
+              "output" => nil,
+              "exitCode" => nil,
+              "completedAt" => nil
+            })
+
+          error = "turn-item:workspace-preparation-failure:#{run_id}"
+          resolved = {"turn-item", error, Patch.delete()}
+
+          {Enum.reject([waiting, item, resolved], &is_nil/1), :ok}
+
+        _ ->
+          {[], {:error, "Run #{run_id} cannot be retried."}}
+      end
+    end)
   end
 
   defp not_preparing(run_id), do: "Run #{run_id} is not awaiting workspace preparation."

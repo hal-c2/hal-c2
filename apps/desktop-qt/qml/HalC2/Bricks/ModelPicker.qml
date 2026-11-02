@@ -17,12 +17,18 @@ AbstractButton {
     property var selectedInstanceId: null
     property var selectedModel: null
 
+    // Set to choose for something other than the composer: only these instance
+    // ids are offered, and a choice is only said (chosen).
+    property var onlyInstances: null
     readonly property var catalogue: Shell.state.modelPicker ?? null
-    readonly property var instances: catalogue ? catalogue.instances : []
+    readonly property var instances: {
+        const all = catalogue ? catalogue.instances : [];
+        return onlyInstances === null ? all : all.filter(instance => onlyInstances.includes(instance.instanceId));
+    }
     readonly property var activeInstance: Picker.findInstance(instances, selectedInstanceId)
     readonly property var activeModel: Picker.findModel(activeInstance, selectedModel)
     // The models a new thread's prompt goes to, once more than one is chosen.
-    readonly property var multiple: catalogue?.multiple ?? null
+    readonly property var multiple: onlyInstances === null ? (catalogue?.multiple ?? null) : null
     readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : activeModel ? Picker.displayName(activeModel, true) : (selectedModel ? selectedModel : qsTr("Choose model"))
 
     function inMultiple(instanceId, model) {
@@ -31,6 +37,8 @@ AbstractButton {
     readonly property string triggerLabel: activeModel && activeModel.isUnavailable ? triggerTitle + qsTr(" (Unavailable)") : triggerTitle
     readonly property bool mac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property alias popup: popup
+
+    signal chosen(string instanceId, string model)
 
     // The popup's state: the rail entry ("favorites" or an instance id), the
     // search, and the keyboard highlight in the list.
@@ -97,6 +105,11 @@ AbstractButton {
         const entry = Picker.findModel(Picker.findInstance(instances, instanceId), model);
         if (!entry || entry.disabledReason !== null)
             return;
+        if (onlyInstances !== null) {
+            chosen(instanceId, model);
+            popup.close();
+            return;
+        }
         Shell.dispatch("composer.model.select", {
             instanceId: instanceId,
             model: model

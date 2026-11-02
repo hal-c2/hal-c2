@@ -296,6 +296,7 @@ export const ProjectEntriesFailure = Schema.Literals([
   "search_index_scan_timed_out",
   "search_index_search_failed",
   "directory_list_failed",
+  "directory_not_found",
 ]);
 export type ProjectEntriesFailure = typeof ProjectEntriesFailure.Type;
 
@@ -420,6 +421,7 @@ export const ProjectFileFailure = Schema.Literals([
   "resolved_path_outside_root",
   "path_not_file",
   "binary_file",
+  "not_utf8",
   "operation_failed",
 ]);
 export type ProjectFileFailure = typeof ProjectFileFailure.Type;

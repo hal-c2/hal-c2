@@ -17,18 +17,24 @@ defmodule HalC2.Subprocess do
   Exile stops the program when its owner exits, but not when the VM dies;
   `HalC2.Subprocess.Orphans` records each program so the next boot kills those.
 
+  With `:durable` (a thread id), the program runs detached instead and outlives the MC
+  (`HalC2.Subprocess.Durable`); `adopt/3` connects a later MC to it. What crosses
+  the helper program in between is the same lines, plus the byte offset they reach
+  as `{:subprocess_offset, reader, offset}` after each batch.
+
   Reader loops recurse through fully qualified calls, so a hot code load moves them
   onto the new module version at the next chunk.
   """
 
   alias Exile.Process, as: Proc
+  alias HalC2.Subprocess.Durable
 
   require Logger
 
   @enforce_keys [:proc, :reader]
-  defstruct [:proc, :reader]
+  defstruct [:proc, :reader, :durable]
 
-  @type t :: %__MODULE__{proc: Proc.t(), reader: pid}
+  @type t :: %__MODULE__{proc: Proc.t(), reader: pid, durable: map | nil}
 
   @read_size 65_535
   # A stderr line longer than this is dropped unread; prefixed lines are short.
@@ -36,6 +42,61 @@ defmodule HalC2.Subprocess do
 
   @spec start([String.t()], keyword) :: {:ok, t} | {:error, term}
   def start(cmd, opts \\ []) do
+    {durable, opts} = Keyword.pop(opts, :durable)
+
+    if durable && Durable.enabled?(),
+      do: start_durable(durable, cmd, opts),
+      else: start_owned(cmd, opts)
+  end
+
+  defp start_durable(thread_id, cmd, opts) do
+    with {:ok, program} <- Durable.launch(thread_id, spawn_command(cmd), opts) do
+      case attach(program.dir, 0, opts[:stderr_prefix]) do
+        {:ok, sub} ->
+          {:ok, sub}
+
+        {:error, reason} ->
+          Durable.kill_dir(program.dir)
+          {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Connects to the program a previous MC left in `dir`, reading its output from `offset`.
+  """
+  @spec adopt(String.t(), non_neg_integer, String.t() | nil) :: {:ok, t} | {:error, term}
+  def adopt(dir, offset, prefix \\ nil) do
+    if Durable.attachable?(dir),
+      do: attach(dir, offset, prefix),
+      else: {:error, :program_gone}
+  end
+
+  defp attach(dir, offset, prefix) do
+    stderr = if prefix, do: :consume, else: :disable
+    {mark, entry} = HalC2.Subprocess.Orphans.new_mark()
+    args = Durable.attach_args(dir, offset, prefix)
+
+    with :ok <- trackable(),
+         {:ok, proc} <- Proc.start_link(args, stderr: stderr, env: [entry]),
+         :ok <- track(proc, mark) do
+      owner = self()
+      reader = spawn_link(fn -> durable_reader_init(proc, owner, offset) end)
+      :ok = Proc.change_pipe_owner(proc, :stdout, reader)
+      send(reader, :owned)
+
+      if prefix do
+        errors = spawn(fn -> stderr_init(proc, owner, prefix) end)
+        :ok = Proc.change_pipe_owner(proc, :stderr, errors)
+        send(errors, :owned)
+      end
+
+      HalC2.Subprocess.Orphans.watch_durable(proc.pid, dir)
+      {:ok, %__MODULE__{proc: proc, reader: reader, durable: %{dir: dir}}}
+    end
+  end
+
+  defp start_owned(cmd, opts) do
     cmd = spawn_command(cmd)
     {prefix, opts} = Keyword.pop(opts, :stderr_prefix)
     stderr = if prefix, do: :consume, else: :disable
@@ -223,6 +284,11 @@ defmodule HalC2.Subprocess do
   end
 
   @spec os_pid(t) :: pos_integer
+  def os_pid(%__MODULE__{durable: %{dir: dir}}) do
+    %{"pid" => pid} = JSON.decode!(File.read!(Path.join(dir, "meta")))
+    pid
+  end
+
   def os_pid(%__MODULE__{proc: proc}) do
     {:ok, pid} = Proc.os_pid(proc)
     pid
@@ -230,9 +296,96 @@ defmodule HalC2.Subprocess do
 
   @doc "Closes stdin and waits for the program to exit, escalating to signals after `timeout`."
   @spec stop(t, timeout) :: {:ok, non_neg_integer} | term
-  def stop(%__MODULE__{proc: proc}, timeout \\ 2_000) do
+  def stop(sub, timeout \\ 2_000)
+
+  # A program the MC keeps running across its own stop only loses its helper; any
+  # other stop ends it, and it cannot hear a closed stdin (the shim holds it open).
+  def stop(%__MODULE__{durable: %{dir: dir}} = sub, timeout) do
+    # In this order: the watcher kills a program whose helper ends in a running MC, which
+    # must not beat the polite signal; a program the MC keeps must not be stopped at all.
+    if HalC2.Orchestration.Recovery.stopping?() do
+      detach(sub)
+      :detached
+    else
+      result = Durable.stop(dir, timeout)
+      detach(sub)
+      result
+    end
+  end
+
+  def stop(%__MODULE__{proc: proc}, timeout) do
     Proc.close_stdin(proc)
     Proc.await_exit(proc, timeout)
+  end
+
+  # Stdin closed first, so what was written still reaches the program: the helper ends
+  # once it has passed that on, and its output ending ends the reader. Then the port
+  # process goes, not through Exile's own stop, which exits `:kill_timeout` at its linked
+  # owner when the helper is gone.
+  defp detach(%__MODULE__{proc: proc, reader: reader}) do
+    Process.unlink(reader)
+    drained = Process.monitor(reader)
+
+    try do
+      Proc.close_stdin(proc)
+    catch
+      :exit, _ -> :ok
+    end
+
+    send(reader, :ack)
+
+    receive do
+      {:DOWN, ^drained, :process, _, _} -> :ok
+    after
+      500 ->
+        Process.demonitor(drained, [:flush])
+        Process.exit(reader, :kill)
+    end
+
+    ref = Process.monitor(proc.pid)
+    Process.unlink(proc.pid)
+    Process.exit(proc.pid, :kill)
+
+    receive do
+      {:DOWN, ^ref, :process, _, _} -> :ok
+    after
+      1_000 -> Process.demonitor(ref, [:flush])
+    end
+  end
+
+  @doc false
+  def durable_reader_init(proc, owner, offset) do
+    receive do: (:owned -> :ok)
+    __MODULE__.durable_reader_loop(proc, owner, "", offset)
+  end
+
+  @doc false
+  # As `reader_loop/3`, counting the bytes of whole lines so a later MC reads on
+  # from there, and ending at the shim's report rather than at end of file: the
+  # output is a file, which has no end while the helper follows it.
+  def durable_reader_loop(proc, owner, partial, offset) do
+    case Proc.read(proc, @read_size) do
+      {:ok, data} ->
+        data = IO.iodata_to_binary(data)
+        {lines, rest} = split_lines(partial <> data)
+        offset = offset + byte_size(partial) + byte_size(data) - byte_size(rest)
+        {lines, ended} = Enum.split_while(lines, &(not Durable.exit_line?(&1)))
+
+        if lines != [] do
+          send(owner, {:subprocess_lines, self(), lines})
+          send(owner, {:subprocess_offset, self(), offset})
+          receive do: (:ack -> :ok)
+        end
+
+        if ended == [] do
+          __MODULE__.durable_reader_loop(proc, owner, rest, offset)
+        else
+          send(owner, {:subprocess_eof, self()})
+        end
+
+      _eof_or_error ->
+        send(owner, {:subprocess_eof, self()})
+    end
   end
 
   @doc false
