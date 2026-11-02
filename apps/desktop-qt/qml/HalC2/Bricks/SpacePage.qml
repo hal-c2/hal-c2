@@ -676,6 +676,10 @@ Rectangle {
                 level: model.level ?? 0
                 language: model.language ?? ""
                 chart: model.chart ?? ({})
+                markdownAbove: model.markdownAbove ?? ""
+                markdownLead: model.markdownLead ?? ""
+                markdownTail: model.markdownTail ?? ""
+                markdownBelow: model.markdownBelow ?? ""
                 readOnly: page.trashed
                 previousId: index > 0 ? Spaces.blocks.get(index - 1).id : ""
                 beforePreviousId: index > 1 ? Spaces.blocks.get(index - 2).id : ""

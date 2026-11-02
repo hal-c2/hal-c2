@@ -59,6 +59,7 @@ import { scheduleLabel } from "./sections/scheduledTasks.ts";
 import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
 import { chartData, chartLines } from "./spaceChart.ts";
+import { listItems, markdownFrame, type SpaceListItem } from "./spaceMarkdown.ts";
 import { chunk, styled, type StyledText } from "./styledText.ts";
 
 /** Rows the pane's border and header take. */
@@ -105,6 +106,8 @@ export interface TuiSpaceRow {
   readonly resolved?: boolean;
   /** The first line of an entry (a wrapped block's later lines are false). */
   readonly first: boolean;
+  /** A line the MC writes above a block's text, as an alert's kind; the text follows it. */
+  readonly above?: boolean;
 }
 
 /** Published under `space`. */
@@ -631,7 +634,13 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const bg = active ? { bg: palette.selectedBg } : {};
     const agent = agentOf(block);
     const room = width() - 2 - Bun.stringWidth(RAW_GUTTER);
-    const lines = block.text.split("\n").map(expandTabs);
+    // Math is shown with the fences the MC writes around it.
+    const { above, below } = markdownFrame(block, null);
+    const lines = [
+      ...(above ? [above] : []),
+      ...block.text.split("\n").map(expandTabs),
+      ...(below ? [below] : []),
+    ];
     return lines.map((source, index) => {
       const first = index === 0;
       const lead = `${first ? marker(active) : "  "}${RAW_GUTTER}`;
@@ -649,11 +658,17 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         selected: active,
         blockKind: block.kind,
         first,
+        ...(first && above ? { above: true } : {}),
       } satisfies TuiSpaceRow;
     });
   };
 
-  const blockRows = (block: SpaceBlock): TuiSpaceRow[] => {
+  /**
+   * A block's rows. A list item, an alert, a divider, a footnote and a collapsed section
+   * are shown as the MC writes them (#869, #877): `item` is where the block sits in its
+   * list, from `listItems` over the page's blocks.
+   */
+  const blockRows = (block: SpaceBlock, item: SpaceListItem | null = null): TuiSpaceRow[] => {
     // A chart this client cannot read shows what it says of itself, as any block does.
     const chart = block.kind === "chart" ? chartData(block.chart) : null;
     if (chart) return chartRows(block, chart);
@@ -662,24 +677,27 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const active = selected[view] === key;
     const linked = block.kind === "subpage_link" ? pageById(block.linkedPageId) : undefined;
     const level = block.kind === "heading" ? (block.level ?? 2) : 0;
+    const frame = markdownFrame(block, item);
+    // A divider and a section's end have no text: what the MC writes is all there is.
+    const bare = block.kind === "divider" || block.kind === "details_end";
     const prefix =
       block.kind === "heading"
         ? `${"#".repeat(level)} `
-        : block.kind === "checklist"
-          ? block.checked
-            ? "[x] "
-            : "[ ] "
-          : block.kind === "callout"
-            ? "▌ "
-            : block.kind === "subpage_link"
-              ? "↳ "
-              : "";
+        : block.kind === "callout"
+          ? "▌ "
+          : block.kind === "subpage_link"
+            ? "↳ "
+            : bare
+              ? ""
+              : frame.lead;
     const body =
       block.kind === "subpage_link"
         ? (linked?.title ?? (block.text || "(a deleted page)"))
         : block.kind === "image"
           ? imagePlaceholder(block)
-          : block.text;
+          : bare
+            ? frame.lead
+            : `${block.text}${frame.tail}`;
     const agent = block.kind === "generated" ? "written by its update" : agentOf(block);
     const room = width() - 2 - Bun.stringWidth(prefix);
     const lines = wrapWords(body === "" ? " " : body, room);
@@ -699,12 +717,33 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
               ? palette.dim
               : palette.text;
     const bg = active ? { bg: palette.selectedBg } : {};
-    return lines.map((text, index) => {
-      const first = index === 0;
+    // An alert's kind stands above its text, behind the same bar.
+    const aboveLead = `${marker(active)}${block.kind === "callout" ? "▌ " : ""}`;
+    const aboveRows: TuiSpaceRow[] = frame.above
+      ? [
+          {
+            key,
+            kind: "block",
+            text: `${aboveLead}${frame.above}`,
+            line: styled(
+              chunk(aboveLead, { fg: palette.dim, ...bg }),
+              chunk(frame.above, { fg, ...bg }),
+            ),
+            selected: active,
+            blockKind: block.kind,
+            checked: block.checked,
+            first: true,
+            above: true,
+          },
+        ]
+      : [];
+    const textRows = lines.map((text, index) => {
+      const first = index === 0 && aboveRows.length === 0;
       const last = index === lines.length - 1;
-      const lead = first
-        ? `${marker(active)}${prefix}`
-        : `  ${" ".repeat(Bun.stringWidth(prefix))}`;
+      const lead =
+        index === 0
+          ? `${first ? marker(active) : "  "}${prefix}`
+          : `  ${" ".repeat(Bun.stringWidth(prefix))}`;
       const by = last && agent ? `  · ${agent}` : "";
       return {
         key,
@@ -721,6 +760,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         first,
       } satisfies TuiSpaceRow;
     });
+    return [...aboveRows, ...textRows];
   };
 
   /** A note above a page's blocks, wrapped. Not selectable. */
@@ -947,7 +987,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       return rows;
     }
     if (view === "version") {
-      return (reading?.blocks ?? []).flatMap((block) => blockRows(block));
+      const read = reading?.blocks ?? [];
+      const items = listItems(read);
+      return read.flatMap((block, index) => blockRows(block, items[index]));
     }
     if (view === "deck") return slidesOf(deckId).flatMap(slideRows);
     if (view === "present") return presenterRows();
@@ -976,8 +1018,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       ...(open ? updateRows(open) : []),
       ...siteRows(id),
     ];
-    for (const block of blocks) {
-      rows.push(...blockRows(block));
+    const items = listItems(blocks);
+    for (const [index, block] of blocks.entries()) {
+      rows.push(...blockRows(block, items[index]));
       for (const comment of comments.filter((entry) => entry.blockId === block.id)) {
         rows.push(commentRow(comment));
       }

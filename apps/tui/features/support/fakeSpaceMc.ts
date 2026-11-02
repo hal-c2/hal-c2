@@ -628,6 +628,27 @@ export function fakeSpaceMc(options: {
     return { entry, change: ["page", entry.id, { s: entry }] as Change };
   };
 
+  const extras = (spec: Entity): Entity => {
+    const code = spec.kind === "code";
+    const item = ["bullet", "numbered", "checklist"].includes(spec.kind);
+    const kept: Array<[string, boolean]> = [
+      ["language", code],
+      ["fence", code],
+      ["info", code],
+      ["depth", item && spec.depth !== 0],
+      ["indent", item],
+      ["marker", ["bullet", "numbered", "divider", "callout", "details"].includes(spec.kind)],
+      ["start", spec.kind === "numbered" && spec.start !== 1],
+      ["alert", spec.kind === "callout"],
+      ["label", spec.kind === "footnote"],
+    ];
+    return Object.fromEntries(
+      kept
+        .filter(([field, keep]) => keep && spec[field] != null)
+        .map(([field]) => [field, spec[field]]),
+    );
+  };
+
   const newBlock = (
     spaceId: string,
     pageId: string,
@@ -639,12 +660,18 @@ export function fakeSpaceMc(options: {
       "paragraph",
       "heading",
       "checklist",
+      "bullet",
+      "numbered",
       "callout",
+      "divider",
       "subpage_link",
       "image",
       "raw",
       "table",
       "code",
+      "footnote",
+      "details",
+      "details_end",
     ];
     if (!kinds.includes(spec.kind)) refuse("invalid", `A block is one of ${kinds.join(", ")}.`);
     const level = spec.kind === "heading" ? spec.level : undefined;
@@ -654,7 +681,8 @@ export function fakeSpaceMc(options: {
     if (spec.kind === "subpage_link" && !table(spaceId, "page").get(spec.linkedPageId)) {
       refuse("invalid", "A subpage link needs a page of this Space.");
     }
-    const placed = spec.kind === "image" ? image(spaceId, spec.imageId) : null;
+    const url = spec.kind === "image" && typeof spec.url === "string" ? spec.url : undefined;
+    const placed = spec.kind === "image" && url === undefined ? image(spaceId, spec.imageId) : null;
     if (placed && placed.trashedAt !== null) {
       refuse("trashed", `The image "${placed.name}" is in the trash.`);
     }
@@ -667,7 +695,10 @@ export function fakeSpaceMc(options: {
       checked: spec.kind === "checklist" && spec.checked === true,
       linkedPageId: spec.kind === "subpage_link" ? spec.linkedPageId : null,
       ...(placed ? { imageId: placed.id } : {}),
+      ...(url !== undefined ? { url } : {}),
       ...(level !== undefined ? { level } : {}),
+      // The fields only some kinds keep, as the MC's `with_extras` keeps them.
+      ...extras(spec),
       order,
       createdBy: by,
       updatedBy: by,
