@@ -35,6 +35,8 @@ import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
 import { createComposer } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
+import { memoryTimestampFormat, type TimestampFormatStore } from "./timestampFormatSetting.ts";
+import { TIMESTAMP_FORMAT_LABELS, TIMESTAMP_FORMATS } from "../timestampFormat.ts";
 import { createFilesController, type TuiFilesState } from "./filesState.ts";
 import { createMermaidDiagrams } from "./mermaidDiagrams.ts";
 import { createSpaceController } from "./spaceState.ts";
@@ -167,6 +169,8 @@ export interface HostOptions {
   readonly cellPixels?: () => CellPixels | null;
   /** Where this device keeps the threads whose alerts it muted (default: this run only). */
   readonly mutedThreads?: MutedThreadsStore;
+  /** Where this device keeps how it writes times (default: this run only). */
+  readonly timestampFormat?: TimestampFormatStore;
   /**
    * The HAL-C2 version this client shipped as. A server on an older one is
    * offered its update; without it no server is known to be behind.
@@ -395,6 +399,8 @@ export function createHost(options: HostOptions): Host {
   let last: StoreState | null = null;
   // Mermaid diagrams the MC drew, shared by replies, pages and the file viewer.
   const diagrams = createMermaidDiagrams(client);
+  const timestampFormats = options.timestampFormat ?? memoryTimestampFormat();
+  let timestampFormat = timestampFormats.load();
   const threadView = createThreadView({
     store,
     client,
@@ -403,6 +409,7 @@ export function createHost(options: HostOptions): Host {
     mode: () => mode,
     setMode: (next) => setMode(next),
     nowMs: () => Date.parse(now()),
+    timestampFormat: () => timestampFormat,
     inlineImages: (options.inlineImages ?? null) !== null,
     ...(options.cellPixels ? { cellPixels: options.cellPixels } : {}),
     // The image preview fills the conversation pane (ImageLightbox).
@@ -1330,6 +1337,17 @@ export function createHost(options: HostOptions): Host {
       case "terminal.toggle":
         terminal.toggle();
         return true;
+      case "timeline.code.run": {
+        // A reply's shell block runs like a project script, without becoming the
+        // project's last-run script (pingdotgg/t3code#13060).
+        const command = payloadField(payload, "command");
+        if (
+          typeof command === "string" &&
+          !terminal.runAction({ name: "Chat code block", command })
+        )
+          store.setStatus("Open a thread to run a command in its terminal.", "warning");
+        return true;
+      }
       case "terminal.open":
         terminal.open();
         return true;
@@ -1436,6 +1454,26 @@ export function createHost(options: HostOptions): Host {
       case "icons.nerdFont.set": {
         setNerdFont(payloadField(payload, "on") === true);
         repaint();
+        return true;
+      }
+      case "timestampFormat.pick":
+        composer!.pick({
+          title: "time format",
+          options: TIMESTAMP_FORMATS.map((format) => ({
+            label: TIMESTAMP_FORMAT_LABELS[format],
+            value: format,
+          })),
+          index: TIMESTAMP_FORMATS.indexOf(timestampFormat),
+          onChoose: (value) => handle("timestampFormat.set", { format: value }),
+        });
+        return true;
+      case "timestampFormat.set": {
+        const format = TIMESTAMP_FORMATS.find((entry) => entry === payloadField(payload, "format"));
+        if (!format) return true;
+        timestampFormat = format;
+        timestampFormats.save(format);
+        threadView.dispatch("timeline.tick", null);
+        store.setStatus(`Times → ${TIMESTAMP_FORMAT_LABELS[format]}`, "success");
         return true;
       }
       case "theme.set": {

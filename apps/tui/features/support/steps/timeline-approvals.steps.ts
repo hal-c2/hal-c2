@@ -58,7 +58,7 @@ async function expectAnswered(ctx: ThreadWorld, choice: string) {
 
 const expectStillWorking = async (ctx: ThreadWorld) => {
   expect(hostState(ctx, "timeline").working).not.toBeNull();
-  expect(await snapshot(ctx)).toContain("● Working…");
+  expect(await snapshot(ctx)).toContain("● Working");
 };
 
 step("the command runs and the agent continues", async (ctx: ThreadWorld) => {

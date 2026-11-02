@@ -6,6 +6,7 @@ import { expect } from "bun:test";
 import { step } from "../../steps.ts";
 import { TUI_RENDERER_CONFIG } from "../../../src/terminalStartup.ts";
 import { FAKE_MC_ENVIRONMENT_ID, type FakeMc } from "../fakeMc.ts";
+import { dropThreadConnection, type SyncWorld } from "../streamSyncWorld.ts";
 import {
   baseDir,
   clientLog,
@@ -165,7 +166,9 @@ step("the terminal client is connected to an MC", async (ctx: LaunchWorld) => {
   await connected(ctx);
 });
 
-step("the MC drops the connection", (ctx: LaunchWorld) => {
+step("the MC drops the connection", async (ctx: LaunchWorld) => {
+  // An open thread kept by the real client (timeline/streaming.feature) has no launched MC.
+  if (!ctx.mc) return dropThreadConnection(ctx as unknown as SyncWorld);
   ctx.ticketsBeforeDrop = mc(ctx).ticketBearers.length;
   mc(ctx).dropConnections();
 });

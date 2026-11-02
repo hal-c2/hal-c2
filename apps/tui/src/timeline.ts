@@ -55,7 +55,10 @@ interface OrderedItem {
   readonly entry: WorkLogEntry | null;
 }
 
-/** Whole/partial-second elapsed label, matching the web's formatDuration buckets. */
+/**
+ * Elapsed label, the web's formatDuration: milliseconds under a second, tenths
+ * under ten seconds, then hours, minutes and seconds, leaving out empty steps.
+ */
 export function formatDuration(durationMs: number): string {
   if (!Number.isFinite(durationMs) || durationMs < 0) return "0ms";
   if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`;
@@ -64,11 +67,13 @@ export function formatDuration(durationMs: number): string {
     return tenths >= 10 ? "10s" : `${tenths.toFixed(1)}s`;
   }
   if (durationMs < 60_000) return `${Math.round(durationMs / 1_000)}s`;
-  const minutes = Math.floor(durationMs / 60_000);
-  const seconds = Math.round((durationMs % 60_000) / 1_000);
-  if (seconds === 0) return `${minutes}m`;
-  if (seconds === 60) return `${minutes + 1}m`;
-  return `${minutes}m ${seconds}s`;
+  const totalSeconds = Math.round(durationMs / 1_000);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours > 0 && `${hours}h`, minutes > 0 && `${minutes}m`, seconds > 0 && `${seconds}s`]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function computeElapsedMs(startIso: string, endIso: string): number | null {
@@ -327,8 +332,15 @@ export function isWorking(detail: OrchestrationThread): boolean {
   return detail.session?.status === "running" || detail.latestTurn?.state === "running";
 }
 
+/**
+ * When the working timer counts from: the message that asked for the turn.
+ * The turn has no start time while the agent's session is still starting, and
+ * counting from the message keeps the timer from blinking out, or jumping back,
+ * when the agent begins.
+ */
 export function workingStartedAt(detail: OrchestrationThread): string | null {
-  return detail.latestTurn?.startedAt ?? null;
+  const turn = detail.latestTurn;
+  return turn?.requestedAt ?? turn?.startedAt ?? null;
 }
 
 /** Whole seconds elapsed since the active turn started, or null if unknown. */
@@ -337,6 +349,11 @@ export function workingElapsedSeconds(startedAt: string | null, nowMs: number): 
   const started = Date.parse(startedAt);
   if (Number.isNaN(started)) return null;
   return Math.max(0, Math.floor((nowMs - started) / 1000));
+}
+
+/** The working timer's time: whole seconds under a minute, then as `formatDuration`. */
+export function formatWorkingTimer(elapsedSeconds: number): string {
+  return elapsedSeconds < 60 ? `${elapsedSeconds}s` : formatDuration(elapsedSeconds * 1000);
 }
 
 // ── Changed files ────────────────────────────────────────────────────────────

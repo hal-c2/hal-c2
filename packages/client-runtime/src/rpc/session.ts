@@ -42,7 +42,7 @@ import {
 import { environmentMismatchError } from "../connection/errors.ts";
 import { SHAPE_PROTOCOL_VERSION } from "../connection/compatibility.ts";
 import type { EntityStreamFrame } from "../state/streamEntities.ts";
-import { connectV3Session } from "../v3/session.ts";
+import { connectV3Session, ThreadResumes } from "../v3/session.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
@@ -196,9 +196,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
   };
 
+  // Where protocol-3 thread streams stopped, kept across this factory's sessions.
+  const threadResumes = new ThreadResumes();
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {
     if (connection.orchestrationProtocolVersion === SHAPE_PROTOCOL_VERSION) {
-      return yield* connectV3Session(connection);
+      return yield* connectV3Session(connection, threadResumes);
     }
 
     yield* Effect.annotateCurrentSpan({

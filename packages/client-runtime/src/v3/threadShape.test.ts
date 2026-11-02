@@ -104,6 +104,35 @@ describe("ThreadShapeFold", () => {
     expect(turnItem?.status).toBe("completed");
   });
 
+  it("applies a catch-up that overlaps what it already holds once, and resumes from it", () => {
+    const shape = new ThreadShapeFold(v2ThreadId);
+    const [snapshot] = shape.snapshot({
+      rows: [
+        ["thread", v2ThreadId, thread],
+        ["turn-item", "item-1", message("Hel")],
+      ],
+      part: 0,
+      done: true,
+      offset: 1,
+      at: 1,
+    });
+    if (snapshot?.kind !== "snapshot") throw new Error("expected snapshot");
+    expect(shape.resumes(1)).toBe(true);
+
+    const first = shape.events([[2, "turn-item", "item-1", { a: { text: "lo" } }, 2]]);
+    const again = shape.events([
+      [2, "turn-item", "item-1", { a: { text: "lo" } }, 2],
+      [3, "turn-item", "item-1", { a: { text: "!" } }, 3],
+    ]);
+
+    expect(again.map((i) => (i.kind === "event" ? i.sequence : i.kind))).toEqual([3]);
+    const [turnItem] = fold([...first, ...again], snapshot.projection)?.turnItems ?? [];
+    expect(turnItem?.type === "assistant_message" && turnItem.text).toBe("Hello!");
+    expect(shape.resumes(3)).toBe(true);
+    expect(shape.resumes(2)).toBe(false);
+    expect(shape.resumes(undefined)).toBe(false);
+  });
+
   it("skips an entity kind it does not know and applies the events after it", () => {
     const shape = new ThreadShapeFold(v2ThreadId);
     const [snapshot] = shape.snapshot({

@@ -1,24 +1,29 @@
 // features/timeline/streaming.feature on the terminal client: reasoning, turn
 // folds, stopped turns and long messages, over the MC's projection (turnWorld.ts).
 import { expect } from "bun:test";
+import * as DateTime from "effect/DateTime";
 
 import { step } from "../../steps.ts";
-import { chooseCommand } from "../threadUi.ts";
-import { pressKey, snapshot } from "../world.ts";
+import { advance, pressKey, snapshot } from "../world.ts";
+import { project } from "../fakeClient.ts";
+import { chooseCommand, palette, statusText } from "../threadUi.ts";
 import { clickText, hostState, plain, recorded, settle } from "../threadWorld.ts";
 import {
   addCommand,
   addItem,
+  currentRun,
   itemsOf,
   lastOf,
   linesOf,
   messageItem,
+  NOW_MS,
   setItem,
   settleRun,
   shownItems,
   startRun,
   sync,
   turns,
+  type ShownLine,
   type TurnWorld,
 } from "../turnWorld.ts";
 
@@ -229,4 +234,288 @@ step("the user copies the reply", async (ctx: StreamWorld) => {
 step("the reply's markdown is on the clipboard", async (ctx: StreamWorld) => {
   expect(ctx.clipboard).toEqual([REPLY]);
   expect(hostState(ctx, "status")).toEqual({ kind: "success", text: "Reply copied." });
+});
+
+step("the agent reasoned in Markdown", async (ctx: StreamWorld) => {
+  await startRun(ctx);
+  await addItem(ctx, "reasoning", {
+    id: "reasoning",
+    streaming: false,
+    status: "completed",
+    text: "## **Checking** the `cart` total\n\n![a chart](chart.png)",
+  });
+});
+
+// --- the working timer -----------------------------------------------------------------
+
+/** The working row as the host publishes it, and as it is on screen. */
+async function workingRow(ctx: StreamWorld): Promise<string> {
+  const working = hostState(ctx, "timeline").working;
+  expect(working).not.toBeNull();
+  const text = plain(working.text);
+  expect(await snapshot(ctx)).toContain(text);
+  return text;
+}
+
+step("the agent has been working for {int} seconds", async (ctx: StreamWorld, seconds: number) => {
+  await startRun(ctx, seconds);
+  await addCommand(ctx, 1, "running");
+});
+
+step("the thread says the agent is working", async (ctx: StreamWorld) => {
+  expect(await workingRow(ctx)).toMatch(/^● Working for \d+s$/);
+});
+
+// The row's own timer moves it a second on: no stream update is needed.
+step("the elapsed time keeps counting", async (ctx: StreamWorld) => {
+  const before = await workingRow(ctx);
+  const { refreshInMs } = hostState(ctx, "timeline").working;
+  expect(refreshInMs).toBeGreaterThan(0);
+  expect(refreshInMs).toBeLessThanOrEqual(1000);
+  ctx.nowMs! += 1000;
+  await advance(ctx, refreshInMs);
+  await settle();
+  const seconds = (text: string) => Number(/(\d+)s$/.exec(text)![1]);
+  expect(seconds(await workingRow(ctx))).toBe(seconds(before) + 1);
+});
+
+step(
+  "the user sent a message and the agent's session is still starting",
+  async (ctx: StreamWorld) => {
+    await startRun(ctx, 7, "starting");
+  },
+);
+
+step("the agent has not yet begun the turn", async (ctx: StreamWorld) => {
+  const fixture = await turns(ctx);
+  expect(fixture.runs.at(-1)!.startedAt).toBeNull();
+});
+
+step("the elapsed time counts from when the message was sent", async (ctx: StreamWorld) => {
+  expect(await workingRow(ctx)).toBe("● Working for 7s");
+});
+
+step("it does not disappear and come back when the agent begins", async (ctx: StreamWorld) => {
+  const fixture = await turns(ctx);
+  const run = fixture.runs.at(-1)!;
+  // The agent begins two seconds on (`turns` pins the clock, so it moves after).
+  const begun = NOW_MS + 2000;
+  run.status = "running";
+  run.startedAt = DateTime.makeUnsafe(new Date(begun));
+  ctx.nowMs = begun;
+  await sync(ctx);
+  expect(await workingRow(ctx)).toBe("● Working for 9s");
+});
+
+// --- durations -------------------------------------------------------------------------
+
+const UNIT_MS: Record<string, number> = {
+  millisecond: 1,
+  second: 1000,
+  minute: 60_000,
+  hour: 3_600_000,
+};
+
+/** "1 hour 5 seconds" in milliseconds. */
+function durationMs(text: string): number {
+  let total = 0;
+  for (const [, amount, unit] of text.matchAll(/([\d.]+) (millisecond|second|minute|hour)s?/g)) {
+    total += Number(amount) * UNIT_MS[unit!]!;
+  }
+  return total;
+}
+
+// A finished turn folds behind how long it took: the duration the thread shows.
+step(/^the thread shows a duration of (.+)$/, async (ctx: StreamWorld, duration: string) => {
+  await startRun(ctx);
+  await addCommand(ctx, 1);
+  await addItem(ctx, "assistant_message", { id: "answer", text: ANSWER });
+  await settleRun(ctx, "completed", durationMs(duration) / 1000);
+});
+
+step("it reads {string}", async (ctx: StreamWorld, shown: string) => {
+  await expectFolded(ctx, `Worked for ${shown}`);
+});
+
+// --- when a message the user sent is shortened -----------------------------------------
+
+const SENT: Record<string, string> = {
+  "600 characters on one line": "a".repeat(600),
+  "601 characters on one line": "a".repeat(601),
+  "8 short lines": Array.from({ length: 8 }, (_, n) => `line ${n + 1}`).join("\n"),
+  "9 short lines": Array.from({ length: 9 }, (_, n) => `line ${n + 1}`).join("\n"),
+  "only spaces and blank lines": Array.from({ length: 12 }, () => "   ").join("\n"),
+};
+
+step(/^the user sent a message of (.+)$/, async (ctx: StreamWorld, kind: string) => {
+  const text = SENT[kind];
+  if (text === undefined) throw new Error(`no message of ${kind}`);
+  await startRun(ctx);
+  const fixture = await turns(ctx);
+  fixture.messages[fixture.messages.length - 1]!.text = text;
+});
+
+step("the user looks at it in the conversation", async (ctx: StreamWorld) => {
+  await sync(ctx);
+});
+
+step(/^it is (shown in full|shortened)$/, async (ctx: StreamWorld, shown: string) => {
+  const sent = lastOf(ctx, "message");
+  const screen = await snapshot(ctx);
+  if (shown === "shortened") {
+    expect(sent.clip).not.toBeNull();
+    expect(linesOf(sent).at(-1)).toBe("⌄ Show full message");
+    // The bubble stays as narrow as its text, so the toggle may wrap.
+    expect(screen).toContain("⌄ Show");
+  } else {
+    expect(sent.clip).toBeNull();
+    expect(linesOf(sent).join("\n")).not.toContain("Show full message");
+    expect(screen).not.toContain("Show full message");
+  }
+});
+
+// --- running a reply's shell command -----------------------------------------------------
+
+const SHELL_BLOCKS: Record<string, { readonly fence: string; readonly streaming?: boolean }> = {
+  "a single-line shell command": { fence: "```bash\nbun test\n```" },
+  "a shell command still streaming": { fence: "```bash\nbun test\n```", streaming: true },
+  "a shell command that spans several lines": { fence: "```bash\ncd web\nbun test\n```" },
+  "an empty shell block": { fence: "```bash\n\n```" },
+  "a shell command ending in a backslash": { fence: "```bash\nbun test \\\n```" },
+  "a Python snippet": { fence: "```python\nprint('tax')\n```" },
+};
+
+const SCRIPTS = [
+  { id: "test", name: "Test", command: "bun test", icon: "test", runOnWorktreeCreate: false },
+  { id: "lint", name: "Lint", command: "bun run lint", icon: "lint", runOnWorktreeCreate: false },
+];
+
+step(/^the agent's reply has (.+) in a code block$/, async (ctx: StreamWorld, kind: string) => {
+  const block = SHELL_BLOCKS[kind];
+  if (!block) throw new Error(`no code block for ${kind}`);
+  await turns(ctx);
+  const current = ctx.fake!.latestShell();
+  ctx.fake!.emitShell({
+    ...current,
+    projects: current.projects.map((entry) => ({ ...entry, scripts: SCRIPTS })),
+  } as never);
+  await settle();
+  // The user last ran Lint, so the palette offers it first.
+  ctx.host!.dispatch("script.run", { id: "lint" });
+  await settle();
+  ctx.fake!.calls.length = 0;
+  ctx.fake!.terminals.clear();
+  await startRun(ctx);
+  const id = await addItem(ctx, "assistant_message", {
+    id: "answer",
+    text: `Run the tests:\n\n${block.fence}`,
+    streaming: block.streaming === true,
+  });
+  if (!block.streaming) {
+    await settleRun(ctx, "completed", 5);
+    return;
+  }
+  await setItem(ctx, id, { streaming: true });
+});
+
+step("the user runs the command from its code block", async (ctx: StreamWorld) => {
+  await clickText(ctx, "▶ Run");
+  await settle();
+});
+
+step(
+  "the command runs in the thread's terminal in the thread's folder",
+  async (ctx: StreamWorld) => {
+    const opened = ctx.fake!.calls.find((call) => call.method === "terminalOpen");
+    expect(opened).toBeDefined();
+    const input = opened!.args[0] as { threadId: string; cwd: string; worktreePath: string | null };
+    expect(input.threadId).toBe(ctx.thread!.id);
+    expect(input.cwd).toBe(ctx.thread!.worktreePath ?? project.workspaceRoot);
+    const writes = [...ctx.fake!.terminals.values()].flatMap((terminal) => terminal.writes);
+    expect(writes).toEqual(["bun test\r"]);
+  },
+);
+
+step("the project's selected script is not changed", async (ctx: StreamWorld) => {
+  await pressKey(ctx, "Ctrl+K");
+  const titles = palette(ctx).commands.map((command) => command.title);
+  expect(titles).toContain("Run Lint");
+  expect(titles).not.toContain("Run Chat code block");
+  await pressKey(ctx, "Escape");
+});
+
+step("the code block offers no run action", async (ctx: StreamWorld) => {
+  const answer = messageItem(ctx, "answer");
+  expect(answer.lines.some((line) => line.right && plain(line.right.text) === "▶ Run")).toBe(false);
+  expect(await snapshot(ctx)).not.toContain("▶ Run");
+});
+
+// --- message times and actions ---------------------------------------------------------
+
+const COPY = "⧉ Copy";
+
+/** Whether a message's item ends with its time-and-copy row. */
+function showsMeta(ctx: StreamWorld, id: string): boolean {
+  return messageItem(ctx, id).lines.some((line) => {
+    const parts = (line as { parts?: ReadonlyArray<{ text: ShownLine["text"] }> | null }).parts;
+    return parts?.some((part) => plain(part.text) === COPY) ?? false;
+  });
+}
+
+step("the agent commented, ran a tool call and then answered", async (ctx: StreamWorld) => {
+  await startRun(ctx);
+  await addItem(ctx, "assistant_message", { id: "comment", text: "Looking at the cart." });
+  await addCommand(ctx, 1);
+  await addItem(ctx, "assistant_message", { id: "answer", text: ANSWER });
+});
+
+step("neither message shows its time and actions while the agent works", (ctx: StreamWorld) => {
+  expect(showsMeta(ctx, "comment")).toBe(false);
+  expect(showsMeta(ctx, "answer")).toBe(false);
+});
+
+step("only the answer shows its time and actions", async (ctx: StreamWorld) => {
+  expect(showsMeta(ctx, "comment")).toBe(false);
+  expect(showsMeta(ctx, "answer")).toBe(true);
+  const screen = await snapshot(ctx);
+  expect(screen.split(COPY).length - 1).toBe(1);
+});
+
+step("this device's {string} is set to {string}", async (ctx: StreamWorld, _key, format) => {
+  await turns(ctx);
+  ctx.host!.dispatch("timestampFormat.set", { format });
+  await settle();
+});
+
+const SENT_ON: Record<string, (now: Date) => Date> = {
+  today: (now) => now,
+  yesterday: (now) => new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1),
+  "on September 20": (now) => new Date(now.getFullYear(), 8, 20),
+  "on December 30, 2025": () => new Date(2025, 11, 30),
+};
+
+step(
+  /^the user sent a message (today|yesterday|on September 20|on December 30, 2025) at 9:05 in the morning$/,
+  async (ctx: StreamWorld, when: string) => {
+    const day = SENT_ON[when]!(new Date(NOW_MS));
+    const sentMs = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 5).getTime();
+    await startRun(ctx, 0, "running", sentMs);
+    await settleRun(ctx, "completed", 30);
+  },
+);
+
+const stampOf = (ctx: StreamWorld) => {
+  const item = shownItems(ctx).find((entry) => entry.key === `stamp:message:${currentRun(ctx)}`);
+  if (!item) throw new Error("the user's message shows no time");
+  return item;
+};
+
+step("the message is stamped {string}", async (ctx: StreamWorld, stamp: string) => {
+  expect(linesOf(stampOf(ctx))).toEqual([stamp]);
+  expect(await snapshot(ctx)).toContain(stamp);
+});
+
+step("its full time reads {string}", async (ctx: StreamWorld, full: string) => {
+  await clickText(ctx, linesOf(stampOf(ctx))[0]!);
+  expect(statusText(ctx)).toBe(full);
 });

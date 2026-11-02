@@ -52,27 +52,27 @@ Feature: Streaming the agent's reply
     Then the reasoning is labelled "Thinking"
 
   # The web's row (MessagesTimeline.tsx, remarkThoughtPreview). The TUI still says "Thought".
-  @shared @backlog-tui
+  @shared
   Scenario: Finished reasoning is labelled by what was thought
     Given the agent is reasoning before it answers
     When the reasoning is finished
     Then the reasoning is labelled "The cart total needs"
 
   # A picture reads as its description (remarkThoughtPreview).
-  @shared @backlog-tui
+  @shared
   Scenario: Reasoning written in Markdown is labelled by its words alone
     Given the agent reasoned in Markdown
     Then the reasoning is labelled "Checking the cart total a chart"
 
   # TUI: implemented in apps/tui/src/components/WorkingIndicator.tsx
-  @shared @backlog-tui
+  @shared
   Scenario: A running turn shows how long the agent has been working
     When the agent has been working for 12 seconds
     Then the thread says the agent is working
     And the elapsed time keeps counting
 
   # Legacy: packages/shared/src/orchestrationTiming.ts (deriveActiveWorkStartedAt: requestedAt floor)
-  @desktop @mobile @tui @backlog-tui
+  @desktop @mobile @tui
   Scenario: The working time counts from the message while the agent is still starting up
     Given the user sent a message and the agent's session is still starting
     When the agent has not yet begun the turn
@@ -81,7 +81,7 @@ Feature: Streaming the agent's reply
     And it does not disappear and come back when the agent begins
 
   # Legacy: packages/shared/src/orchestrationTiming.ts (formatDuration)
-  @desktop @mobile @tui @backlog-tui
+  @desktop @mobile @tui
   Scenario Outline: A duration is written in hours, minutes and seconds, leaving out empty steps
     When the thread shows a duration of <duration>
     Then it reads "<shown>"
@@ -140,7 +140,7 @@ Feature: Streaming the agent's reply
     Then the message returns to its preview
 
   # Legacy: packages/shared/src/chatMessages.ts (shouldCollapseUserMessage)
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario Outline: A message the user sent is shortened only when it is long
     Given the user sent a message of <message>
     When the user looks at it in the conversation
@@ -177,14 +177,14 @@ Feature: Streaming the agent's reply
   # The Run action sits beside Copy on a shell block the agent wrote. It sends the command to
   # the thread's terminal, the same path a project script takes, and leaves the project's
   # selected script alone.
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A complete shell command in a reply runs in the thread's terminal
     Given the agent's reply has a single-line shell command in a code block
     When the user runs the command from its code block
     Then the command runs in the thread's terminal in the thread's folder
     And the project's selected script is not changed
 
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A code block that is not one complete shell command offers no run
     Given the agent's reply has <block> in a code block
     Then the code block offers no run action
@@ -214,7 +214,7 @@ Feature: Streaming the agent's reply
     Given the agent has started a reply and written nothing yet
     Then the reply shows no text and no "(empty response)"
 
-  @shared @backlog-tui
+  @shared
   Scenario: Only a turn's last reply carries its time and actions
     Given the agent commented, ran a tool call and then answered
     Then neither message shows its time and actions while the agent works
@@ -222,7 +222,7 @@ Feature: Streaming the agent's reply
     And the user opens the folded work
     Then only the answer shows its time and actions
 
-  @shared @backlog-tui
+  @shared
   Scenario Outline: A message says when it was sent, in the time format the user chose
     Given this device's "timestampFormat" is set to "<format>"
     When the user sent a message today at 9:05 in the morning
@@ -234,7 +234,7 @@ Feature: Streaming the agent's reply
       | 12-hour | 9:05 AM |
       | 24-hour | 09:05   |
 
-  @shared @backlog-tui
+  @shared
   Scenario Outline: A message from an earlier day also says which day it was sent
     When the user sent a message <when> at 9:05 in the morning
     Then the message is stamped "<stamp>"
@@ -246,7 +246,7 @@ Feature: Streaming the agent's reply
       | on September 20      | 9/20 9:05 AM         | 9:05 AM, 20th September 2026      |
       | on December 30, 2025 | 12/30/2025 9:05 AM   | 9:05 AM, 30th December 2025       |
 
-  @shared @backlog-tui
+  @shared
   Scenario: A reply that finishes while the connection is down is caught up
     Given the agent is writing a reply
     And the MC drops the connection
@@ -256,7 +256,7 @@ Feature: Streaming the agent's reply
     And the rows shown before are kept
     And the MC sends only what the client lacks
 
-  @shared @backlog-tui
+  @shared
   Scenario: A catch-up cut off part-way is not applied twice
     Given the agent is writing a reply
     And the agent finishes the reply while the MC cannot be reached
@@ -265,7 +265,7 @@ Feature: Streaming the agent's reply
     And the rows shown before are kept
     And the client asked again from where it was
 
-  @shared @backlog-tui
+  @shared
   Scenario: A thread that falls behind is caught up from the MC
     Given the agent is writing a reply
     When the agent writes more than the shell has read
@@ -273,7 +273,7 @@ Feature: Streaming the agent's reply
     Then the whole reply is shown
     And the rows shown before are kept
 
-  @shared @backlog-tui
+  @shared
   Scenario: A thread whose MC leaves the cluster says so until the MC returns
     Given the user is looking at a thread on another MC of the cluster
     And the agent has answered "Use the tax table."
