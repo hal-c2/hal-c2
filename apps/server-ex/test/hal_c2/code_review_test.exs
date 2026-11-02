@@ -945,7 +945,75 @@ defmodule HalC2.CodeReviewTest do
     assert [_] = posts(context)
   end
 
+  # From the property model of hal-c2/hal-c2#688: a post waiting behind one GitHub still
+  # held went out when its turn came, though the review had been run again since, and the
+  # new run's own post then found its commit already on the pull request.
+  test "a post whose run was replaced as it waited behind another posts nothing", context do
+    hold = Path.join(context.dir, "post.hold")
+    held = Path.join(context.dir, "post.held")
+    File.write!(hold, "")
+
+    rules!(context,
+      head: 1,
+      post: "touch '#{held}'; while [ -e '#{hold}' ]; do sleep 0.05; done"
+    )
+
+    report_findings()
+    first = publishing()
+    await_file(held)
+    server = Process.whereis(@server)
+    holder = kids(server)
+
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    settle(holder)
+    report_findings(holder)
+    second = publishing()
+    waiter = kids(server) -- holder
+
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    settle(holder ++ waiter)
+    assert %{"status" => "running", "checkout" => _} = review()
+
+    File.rm!(hold)
+    assert_receive {^first, {:ok, _}}, 15_000
+    assert_receive {^second, {:error, message}}, 15_000
+    assert message =~ "run again"
+    settle()
+    assert [_] = posts(context)
+    assert %{"status" => "running"} = review()
+  end
+
   # --- helpers ----------------------------------------------------------------------------
+
+  # Reports findings from the review's thread, starting a run first if there is none.
+  defp report_findings(held \\ []) do
+    review = if held == [], do: start_review(), else: review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    settle(held)
+    assert %{"status" => "waiting"} = review()
+  end
+
+  # Asks to publish #1 without waiting for GitHub. Returns the ref its reply comes with.
+  defp publishing do
+    ref = make_ref()
+    send(@server, {:"$gen_call", {self(), ref}, {:publish, @key}})
+    :sys.get_state(@server)
+    ref
+  end
+
+  # The plugin's processes under way.
+  defp kids(server) do
+    {:parent, parent} = Process.info(server, :parent)
+    {:links, links} = Process.info(server, :links)
+    Enum.filter(links, &(is_pid(&1) and &1 != parent))
+  end
 
   # What a look begun at `at` found: the pull request of `review` at the head `head`.
   defp listing(review, at, head) do
@@ -1302,7 +1370,10 @@ defmodule HalC2.CodeReviewTest do
           "commits" => []
         }
       },
-      %{"args" => ["--method POST", "pulls/1/reviews"], "stdout" => "{}"},
+      Map.merge(
+        %{"args" => ["--method POST", "pulls/1/reviews"], "stdout" => "{}"},
+        if(opts[:post], do: %{"run" => opts[:post]}, else: %{})
+      ),
       # Pull request #1 read on its own, as asking for its review reads it.
       %{
         "args" => ["api graphql"],

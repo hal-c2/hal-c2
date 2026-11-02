@@ -1911,6 +1911,8 @@ defmodule HalC2Plugins.CodeReview do
     # post waits for it. One that stopped between its post and saving so forgot
     # it, so the pull request itself is read for the review last. A commit whose
     # review is posted already is published, with why nothing was posted from here.
+    # A post that waited here behind another of the pull request and whose run has
+    # been replaced since posts nothing: the new run has the say.
     :global.trans(
       {{__MODULE__, {:post, review["key"]}}, self()},
       fn ->
@@ -1925,12 +1927,16 @@ defmodule HalC2Plugins.CodeReview do
 
         result =
           cond do
+            replaced?(review) -> :replaced
             posted -> {:posted, "#{posted["machine"]} already posted its review of this commit."}
             restarting -> {:error, "#{restarting["machine"]} is restarting code review; try again."}
             true -> post_unless_on_github(review, input)
           end
 
         case result do
+          :replaced ->
+            {:error, "The review of #{review["key"]} was run again before this post could start."}
+
           {:ok, _} ->
             server({:published, review["key"], review["threadId"], nil})
             {:ok, server(:snapshot)}
@@ -1946,6 +1952,11 @@ defmodule HalC2Plugins.CodeReview do
       end,
       [node() | Node.list()]
     )
+  end
+
+  # Whether the run of `review` is no longer the one being published.
+  defp replaced?(%{"key" => key, "threadId" => thread_id}) do
+    not match?(%{"status" => "publishing", "threadId" => ^thread_id}, server(:reviews)[key])
   end
 
   defp post_unless_on_github(review, input) do

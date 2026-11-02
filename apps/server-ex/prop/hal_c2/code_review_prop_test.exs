@@ -21,6 +21,9 @@ defmodule HalC2.CodeReviewPropTest do
     with the count and severities of the findings kept, and a late answer to a
     superseded post leaves the newer run alone; a commit whose review GitHub already
     took is not posted again, but one it refused or never got is;
+  - a post waits behind one of its pull request still with GitHub, so a second run's
+    post of the same commit never goes beside it, and one whose run was replaced as it
+    waited posts nothing;
   - a report with nothing to post goes back to the agent as an error, and one posted
     automatically is answered once GitHub has, with how the post went;
   - a new run stops the thread it replaces before its checkout goes, and a report from
@@ -196,6 +199,54 @@ defmodule HalC2.CodeReviewPropTest do
     assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
   end
 
+  # From hal-c2/hal-c2#688: a second run's post of a commit whose first post GitHub still
+  # holds waits for it, then finds the commit on the pull request and posts nothing.
+  test "a second post of a commit waits behind the first and is not made" do
+    Process.flag(:trap_exit, true)
+
+    cmds = [
+      {:set, {:var, 1}, {:call, __MODULE__, :gate, [:closed]}},
+      {:set, {:var, 2}, {:call, __MODULE__, :start, ["acme/web#1"]}},
+      {:set, {:var, 3}, {:call, __MODULE__, :report, [{"acme/web#1", 1}, :findings]}},
+      {:set, {:var, 4}, {:call, __MODULE__, :publish, ["acme/web#1"]}},
+      {:set, {:var, 5}, {:call, __MODULE__, :start, ["acme/web#1"]}},
+      {:set, {:var, 6}, {:call, __MODULE__, :report, [{"acme/web#1", 2}, :findings]}},
+      {:set, {:var, 7}, {:call, __MODULE__, :publish, ["acme/web#1"]}},
+      {:set, {:var, 8}, {:call, __MODULE__, :gate, [:open]}}
+    ]
+
+    begin_case()
+    {history, state, result} = run_commands(__MODULE__, cmds)
+    end_case()
+
+    assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
+  end
+
+  # Also from hal-c2/hal-c2#688: a post waiting behind another, whose run is replaced before
+  # its turn, posts nothing even when the first post is refused.
+  test "a post whose run is replaced as it waits behind another is not made" do
+    Process.flag(:trap_exit, true)
+
+    cmds = [
+      {:set, {:var, 1}, {:call, __MODULE__, :gate, [:closed]}},
+      {:set, {:var, 2}, {:call, __MODULE__, :refuse, [true]}},
+      {:set, {:var, 3}, {:call, __MODULE__, :start, ["acme/web#1"]}},
+      {:set, {:var, 4}, {:call, __MODULE__, :report, [{"acme/web#1", 1}, :findings]}},
+      {:set, {:var, 5}, {:call, __MODULE__, :publish, ["acme/web#1"]}},
+      {:set, {:var, 6}, {:call, __MODULE__, :start, ["acme/web#1"]}},
+      {:set, {:var, 7}, {:call, __MODULE__, :report, [{"acme/web#1", 2}, :findings]}},
+      {:set, {:var, 8}, {:call, __MODULE__, :publish, ["acme/web#1"]}},
+      {:set, {:var, 9}, {:call, __MODULE__, :start, ["acme/web#1"]}},
+      {:set, {:var, 10}, {:call, __MODULE__, :gate, [:open]}}
+    ]
+
+    begin_case()
+    {history, state, result} = run_commands(__MODULE__, cmds)
+    end_case()
+
+    assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
+  end
+
   # --- model ----------------------------------------------------------------------------
 
   # `reviews`: key → %{status, run (the run its thread is, nil before the first), seen
@@ -205,6 +256,7 @@ defmodule HalC2.CodeReviewPropTest do
   # `posts`: every post that reached GitHub, `{key, reviewed, comments, event, headline}`;
   # `github`: the `{key, reviewed}` of those GitHub took.
   # `held_runs`/`held_pubs`: checkouts held at the fetch and posts held at GitHub.
+  # `waiting_pubs`: posts behind a held post of their pull request, `{key, run, reviewed, sent}`.
   # Every pull request starts open, so the first look finds them all ready.
   def initial_state do
     look(%{
@@ -226,6 +278,7 @@ defmodule HalC2.CodeReviewPropTest do
       hold: false,
       held_runs: [],
       held_pubs: [],
+      waiting_pubs: [],
       crashes: 0,
       seq: 0,
       paused: false,
@@ -507,7 +560,7 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :late_published, _}), do: {m, :ok}
 
   defp step(m, {:call, _, :disable, _}),
-    do: {%{m | enabled: false, held_runs: [], held_pubs: []}, :ok}
+    do: {%{m | enabled: false, held_runs: [], held_pubs: [], waiting_pubs: []}, :ok}
 
   defp step(m, {:call, _, :enable, []}), do: {restart(%{m | enabled: true, crashes: 0}), :ok}
   defp step(m, {:call, _, :crash, []}), do: {restart(%{m | crashes: m.crashes + 1}), nil}
@@ -540,11 +593,15 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp step(m, {:call, _, :gate, [:open]}) do
     held = m.held_pubs
-    m = %{m | gate: :open, held_pubs: []}
+    waiting = m.waiting_pubs
+    m = %{m | gate: :open, held_pubs: [], waiting_pubs: []}
 
-    {Enum.reduce(held, m, fn {key, run, reviewed, refused}, m ->
-       complete(m, key, run, reviewed, refused)
-     end), :ok}
+    m =
+      Enum.reduce(held, m, fn {key, run, reviewed, refused}, m ->
+        complete(m, key, run, reviewed, refused)
+      end)
+
+    {Enum.reduce(waiting, m, &post_after_wait/2), :ok}
   end
 
   defp step(m, {:call, _, :refuse, [refusing]}), do: {%{m | refusing: refusing}, :ok}
@@ -698,15 +755,18 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
-  # Posts the review of `key` as it is now, unless GitHub already took a review of its
-  # commit, which makes it published with nothing posted; GitHub answers at once unless
-  # the gate holds it.
+  # Posts the review of `key` as it is now, unless GitHub still holds a post of the pull
+  # request, which it waits behind, or already took a review of its commit, which makes
+  # it published with nothing posted; GitHub answers at once unless the gate holds it.
   defp post(m, key) do
     r = m.reviews[key]
     kept = Enum.count(r.comments, &(not &1))
     sent = {key, r.reviewed, kept, @events[r.verdict], headline(r.comments)}
 
     cond do
+      Enum.any?(m.held_pubs, &(elem(&1, 0) == key)) ->
+        {%{m | waiting_pubs: m.waiting_pubs ++ [{key, r.run, r.reviewed, sent}]}, :held}
+
       {key, r.reviewed} in m.github ->
         {put_review(m, key, %{r | status: :published, publish_error: false}), :ok}
 
@@ -718,6 +778,22 @@ defmodule HalC2.CodeReviewPropTest do
         m = %{m | posts: m.posts ++ [sent]}
 
         {complete(m, key, r.run, r.reviewed, m.refusing), if(m.refusing, do: :error, else: :ok)}
+    end
+  end
+
+  # A post's turn, once the post it waited behind is over: one whose run was replaced as
+  # it waited posts nothing, and it goes as it was when it was asked for.
+  defp post_after_wait({key, run, reviewed, sent}, m) do
+    case m.reviews[key] do
+      %{status: :publishing, run: ^run} = r ->
+        if {key, reviewed} in m.github do
+          put_review(m, key, %{r | status: :published, publish_error: false})
+        else
+          complete(%{m | posts: m.posts ++ [sent]}, key, run, reviewed, m.refusing)
+        end
+
+      _ ->
+        m
     end
   end
 
@@ -770,7 +846,7 @@ defmodule HalC2.CodeReviewPropTest do
 
     # A pause is saved with the reviews, so it stands across the restart; the
     # run of failures that may have led to it is not.
-    look(%{m | reviews: reviews, held_runs: [], held_pubs: [], failures: 0})
+    look(%{m | reviews: reviews, held_runs: [], held_pubs: [], waiting_pubs: [], failures: 0})
   end
 
   # Whether the thread each review shows, once it has one, is listed with the threads.
@@ -1330,13 +1406,13 @@ defmodule HalC2.CodeReviewPropTest do
 
       cond do
         System.monotonic_time(:millisecond) > deadline ->
-          problem("code-review never settled: #{length(kids)} processes, #{parked()} held")
+          problem("code-review never settled: #{length(kids)} processes, #{parked(kids)} held")
 
         state.polling != nil ->
           await_poller(pid, deadline)
           drain(deadline, false)
 
-        length(kids) == parked() ->
+        length(kids) == parked(kids) ->
           # Once more, for what the processes that just ended told it.
           if settled_once, do: :ok, else: drain(deadline, true)
 
@@ -1399,10 +1475,18 @@ defmodule HalC2.CodeReviewPropTest do
     for ref <- refs, do: Process.demonitor(ref, [:flush])
   end
 
-  # Runs held at the fetch and posts held at GitHub.
-  defp parked do
+  # Runs held at the fetch, posts held at GitHub and posts waiting behind those.
+  defp parked(kids) do
     if(File.exists?(fx_path("fetch.hold")), do: length(markers()), else: 0) +
-      if File.exists?(fx_path("gate.closed")), do: length(gated()), else: 0
+      if File.exists?(fx_path("gate.closed")),
+        do: length(gated()) + Enum.count(kids, &behind_a_post?/1),
+        else: 0
+  end
+
+  # Whether a process failed to get a post's lock and is backing off to try again. Steps
+  # settle in turn, so with the gate closed the lock's holder is a post GitHub holds.
+  defp behind_a_post?(pid) do
+    Process.info(pid, :current_function) == {:current_function, {:global, :random_sleep, 1}}
   end
 
   # The git pid of each fetch the hold keeps waiting.
