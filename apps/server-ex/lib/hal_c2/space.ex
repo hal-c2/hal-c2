@@ -162,8 +162,14 @@ defmodule HalC2.Space do
 
   def transact(_space_id, _fun), do: {:error, :invalid, "spaceId is required."}
 
-  # A page that is a project file and its file change together (`HalC2.Space.Files`).
-  defp and_files({changes, reply}, state), do: {changes ++ Files.follow(state, changes), reply}
+  # A page that is a project file and its file change together, or neither does
+  # (`HalC2.Space.Files`).
+  defp and_files({changes, reply}, state) do
+    case Files.follow(state, changes) do
+      {:error, _, _} = refused -> {[], refused}
+      more -> {changes ++ more, reply}
+    end
+  end
 
   # Whatever a command does to pages, their sites follow in the same step.
   defp and_sites({changes, reply}, state) do

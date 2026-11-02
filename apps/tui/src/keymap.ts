@@ -171,6 +171,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
       { keys: "h", description: "Spaces: a page's history", chords: ["h"] },
       {
+        keys: "f · F",
+        description: "Spaces: a page from a project's files, or a page's own file · unlink it",
+        chords: ["f", "shift+f"],
+      },
+      {
         keys: "A · s · o · z",
         description: "Spaces: ask an agent about a page · stop it · open its thread · clear it",
         chords: ["shift+a", "s", "o", "z"],
@@ -428,6 +433,8 @@ export const KEYMAP_LAYERS = {
     g: "space.visualize",
     "shift+s": "space.deckFromPage",
     v: "space.images",
+    f: "space.files",
+    "shift+f": "space.unlinkFile",
     "ctrl+k": "palette.open",
     "ctrl+p": "space.close",
   },
