@@ -272,7 +272,7 @@ Feature: Appearance
 
     # A rice's sidebar can leave off the brand band (Sidebar.showBrand); the
     # stage moves above the list then.
-    @desktop
+    @desktop @mobile @backlog-mobile
     Scenario Outline: A shell without the brand band still shows which build it is
       Given the app's own stage is "Dev"
       And the user's shell leaves off the sidebar's brand band
