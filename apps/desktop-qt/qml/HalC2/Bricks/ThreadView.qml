@@ -130,8 +130,10 @@ Item {
             messageId: messageId
         }, selector))
         onRevertRequested: rowId => view.askRevert(rowId)
-        // In the thread's terminal, the way a project action runs.
-        runnable: true
+        // In the thread's terminal, the way a project action runs; offered
+        // only where the thread has one (not in the phone's layout or a build
+        // without the terminal).
+        runnable: Terminals.available
         onRunCommand: command => Shell.dispatch("workspace.runCommand", {
                 command: command
             })

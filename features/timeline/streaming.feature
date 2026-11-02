@@ -51,7 +51,7 @@ Feature: Streaming the agent's reply
     When the reasoning is streaming
     Then the reasoning is labelled "Thinking"
 
-  # The web's row (MessagesTimeline.tsx, remarkThoughtPreview). The TUI still says "Thought".
+  # The web's row (MessagesTimeline.tsx, remarkThoughtPreview).
   @shared
   Scenario: Finished reasoning is labelled by what was thought
     Given the agent is reasoning before it answers
