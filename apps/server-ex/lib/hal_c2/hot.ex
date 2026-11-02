@@ -11,13 +11,21 @@ defmodule HalC2.Hot do
   blocked inside old code is reported as `lingering` and can be purged later; it is
   never force-purged, because that would kill the process.
 
-  This cannot change the supervision tree, NIFs, or OTP itself; those need a restart.
+  The VM keeps at most two versions of a module, so the next load of a lingering
+  module is refused until its old version is free, naming the processes that hold it.
+  A process only leaves old code through a call by module name: a long-lived loop
+  that recurses with local calls stays on the version it started with for good, so
+  such loops call themselves as `__MODULE__.loop(...)`.
+
+  Only BEAM code loads. A module that loads a NIF is skipped and reported as `native`,
+  as are the supervision tree and OTP itself: those need a restart.
   """
 
   require Logger
 
   @type beam :: {module, binary}
-  @type report :: %{changed: [module], migrated: [pid], lingering: [module]}
+  @type report :: %{changed: [module], migrated: [pid], lingering: [module], native: [module]}
+  @type holder :: {pid, current_function :: mfa | nil}
 
   @suspend_timeout 5_000
 
@@ -49,7 +57,11 @@ defmodule HalC2.Hot do
   """
   @spec reload([beam], keyword) :: {:ok, report} | {:error, term}
   def reload(beams, opts \\ []) do
-    changed = Enum.reject(beams, fn {mod, bin} -> loaded_md5(mod) == beam_md5(bin) end)
+    {native, changed} =
+      beams
+      |> Enum.reject(fn {mod, bin} -> loaded_md5(mod) == beam_md5(bin) end)
+      |> Enum.split_with(&native?/1)
+
     mods = Enum.map(changed, &elem(&1, 0))
     old_vsns = Map.new(mods, &{&1, loaded_vsn(&1)})
 
@@ -65,13 +77,63 @@ defmodule HalC2.Hot do
           for {pid, mod} <- procs, do: :ok = :sys.change_code(pid, mod, old_vsns[mod], :hot)
 
           {:ok,
-           %{changed: mods, migrated: Enum.map(procs, &elem(&1, 0)), lingering: purge_old(mods)}}
+           %{
+             changed: mods,
+             migrated: Enum.map(procs, &elem(&1, 0)),
+             lingering: purge_old(mods),
+             native: Enum.map(native, &elem(&1, 0))
+           }}
         after
           Enum.each(procs, fn {pid, _} -> :sys.resume(pid) end)
         end
 
       busy ->
-        {:error, {:previous_version_still_running, busy}}
+        {:error, {:previous_version_still_running, Enum.map(busy, &{&1, holders(&1)})}}
+    end
+  end
+
+  @doc "Says what a `reload/2` error means, for a developer."
+  @spec describe_error(term) :: String.t()
+  def describe_error({:previous_version_still_running, busy}) do
+    held =
+      Enum.map_join(busy, "; ", fn {mod, holders} ->
+        if holders == [],
+          do: inspect(mod),
+          else: "#{inspect(mod)} in " <> Enum.map_join(holders, ", ", &describe_holder/1)
+      end)
+
+    "the version before last is still running (#{held}). Those processes never call " <>
+      "into newer code, so restart them or the MC"
+  end
+
+  def describe_error(reason), do: inspect(reason)
+
+  defp describe_holder({pid, {m, f, a}}), do: "#{inspect(pid)} (#{Exception.format_mfa(m, f, a)})"
+  defp describe_holder({pid, nil}), do: inspect(pid)
+
+  @doc """
+  Whether `beam` loads a NIF. Loading it again would rerun its `on_load` against the
+  native library already in the VM, so it never hot-loads.
+  """
+  @spec native?(beam) :: boolean
+  def native?({_mod, bin}) do
+    case :beam_lib.chunks(bin, [:imports]) do
+      {:ok, {_, [imports: imports]}} -> {:erlang, :load_nif, 2} in imports
+      _ -> false
+    end
+  end
+
+  # The processes still running, or holding funs of, `mod`'s old version.
+  defp holders(mod) do
+    for pid <- Process.list(), :erlang.check_process_code(pid, mod) do
+      {pid, current_function(pid)}
+    end
+  end
+
+  defp current_function(pid) do
+    case Process.info(pid, :current_function) do
+      {:current_function, {m, f, a}} -> {m, f, a}
+      _ -> nil
     end
   end
 

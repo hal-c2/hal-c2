@@ -206,7 +206,7 @@ defmodule HalC2.Upgrade do
   Loads what changed after `mix compile`, for MCs run from source
   (`mix hal_c2.upgrade --dev`). A supervisor's code loads too, so the modules calling
   it find its functions, but its tree only changes at start: it is reported to restart
-  for.
+  for, as is a module that loads a NIF, which never loads in place (`HalC2.Hot`).
 
   `build` is the build directory (`_build/dev`) of the checkout that asks. When it is
   not the one this MC started from, a worktree's say, the MC moves to that build: its
@@ -256,7 +256,7 @@ defmodule HalC2.Upgrade do
 
     with {:ok, report} <- HalC2.Hot.reload(beams, unmigrated: restart) do
       pending = run_after_hot_update(beams, services)
-      {:ok, Map.put(report, :needs_restart, restart ++ pending)}
+      {:ok, Map.put(report, :needs_restart, restart ++ report.native ++ pending)}
     end
   end
 
@@ -325,9 +325,15 @@ defmodule HalC2.Upgrade do
     if reasons == [] do
       changed = changed_modules(bundle)
 
-      case Enum.filter(changed, &restart_module?(&1)) do
-        [] -> {:hot, Enum.map(changed, &elem(&1, 0))}
-        supervisors -> {:restart, ["#{inspect(elem(hd(supervisors), 0))} supervises processes"]}
+      cond do
+        native = Enum.find(changed, &HalC2.Hot.native?/1) ->
+          {:restart, ["#{inspect(elem(native, 0))} loads native code"]}
+
+        supervisor = Enum.find(changed, &restart_module?/1) ->
+          {:restart, ["#{inspect(elem(supervisor, 0))} supervises processes"]}
+
+        true ->
+          {:hot, Enum.map(changed, &elem(&1, 0))}
       end
     else
       {:restart, reasons}
