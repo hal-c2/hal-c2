@@ -2,9 +2,11 @@ defmodule HalC2.SpaceFilesPropTest do
   @moduledoc """
   A state machine over Space pages that are project files (`HalC2.Space.Files`): files
   written, deleted, renamed and made read-only in the project's folder, and links made
-  to them and deleted, each with or without the signal that the checkout changed; files opened as pages and opened again; pages edited,
-  read again from their file and unlinked; unlinked pages edited; and the server that
-  follows the files restarting, which reads every file again.
+  to them and deleted, each with or without the signal that the checkout changed; files
+  opened as pages of the project's Space and opened again; pages edited and read again
+  from their file; pages an earlier MC made of files in a Space of the user's, which the
+  next start makes ordinary pages there, and those edited; every Space of the user's
+  deleted; and the server that follows the files restarting, which reads every file again.
 
   Every file reads `# Doc`, a blank line and a word: a paragraph, a table, a code block,
   a quote or alert, a list or a rule, so a page is that word's blocks. The page edits a
@@ -30,7 +32,9 @@ defmodule HalC2.SpaceFilesPropTest do
   - a file that vanished is followed to the one file no page has that reads the same,
     and to none when there are more, pages claiming such files in the order of their
     paths;
-  - one file is behind at most one page, and opening a file again goes to its page.
+  - one file is behind at most one page, and opening a file again goes to its page;
+  - the pages of files are in the project's Space, which no list of the user's Spaces
+    has: deleting them all leaves Personal alone, and the project's pages as they were.
   """
 
   use ExUnit.Case, async: false
@@ -114,7 +118,7 @@ defmodule HalC2.SpaceFilesPropTest do
   # path => %{id, word, base, missing, unwritten, conflict}, the page of that file, the
   # word it shows, the text it last read or wrote, whether its file is gone, whether it
   # was edited since, and whether it says the file won over an edit. unlinked: pages
-  # made ordinary, %{id, word}.
+  # made ordinary, %{id, word}: the pages of files an earlier MC put in the user's Space.
   def initial_state,
     do: %{disk: %{}, sym: %{}, locked: MapSet.new(), seen: false, links: %{}, unlinked: []}
 
@@ -126,7 +130,8 @@ defmodule HalC2.SpaceFilesPropTest do
         {4, {:call, __MODULE__, :write, [path(), word(), boolean()]}},
         {3, {:call, __MODULE__, :open, [path()]}},
         {2, {:call, __MODULE__, :symlink, [oneof(@tops), oneof(@tops), boolean()]}},
-        {1, {:call, __MODULE__, :restart, []}}
+        {1, {:call, __MODULE__, :restart, []}},
+        {1, {:call, __MODULE__, :legacy, [path()]}}
       ] ++
         if(s.disk == %{},
           do: [],
@@ -142,12 +147,11 @@ defmodule HalC2.SpaceFilesPropTest do
           else: [
             {4,
              let(p <- oneof(linked), do: {:call, __MODULE__, :edit, [p, s.links[p].id, word()]})},
-            {1, let(p <- oneof(linked), do: {:call, __MODULE__, :sync, [p, s.links[p].id]})},
-            {1, let(p <- oneof(linked), do: {:call, __MODULE__, :unlink, [p, s.links[p].id]})}
+            {1, let(p <- oneof(linked), do: {:call, __MODULE__, :sync, [p, s.links[p].id]})}
           ]
         ) ++
         if(s.unlinked == [],
-          do: [],
+          do: [{1, {:call, __MODULE__, :delete_user_spaces, []}}],
           else: [
             {1,
              let(u <- oneof(s.unlinked), do: {:call, __MODULE__, :edit_unlinked, [u.id, word()]})}
@@ -175,8 +179,10 @@ defmodule HalC2.SpaceFilesPropTest do
   def precondition(s, {:call, _, :edit, [path, id, word]}),
     do: match?(%{id: ^id}, s.links[path]) and editable?(word, s.links[path].word)
 
-  def precondition(s, {:call, _, name, [path, id | _]}) when name in [:sync, :unlink],
-    do: match?(%{id: ^id}, s.links[path])
+  def precondition(s, {:call, _, :sync, [path, id]}), do: match?(%{id: ^id}, s.links[path])
+
+  def precondition(s, {:call, _, :legacy, [path]}), do: text(s, path) != nil
+  def precondition(s, {:call, _, :delete_user_spaces, []}), do: s.unlinked == []
 
   def precondition(s, {:call, _, :edit_unlinked, [id, word]}),
     do: Enum.any?(s.unlinked, &(&1.id == id and editable?(word, &1.word)))
@@ -285,10 +291,13 @@ defmodule HalC2.SpaceFilesPropTest do
     end
   end
 
-  def next_state(s, _res, {:call, _, :unlink, [path, _id]}) do
-    {link, links} = Map.pop(s.links, path)
-    %{s | links: links, unlinked: [%{id: link.id, word: link.word} | s.unlinked]}
+  # Planted as it was, then the start after the update makes it an ordinary page.
+  def next_state(s, res, {:call, _, :legacy, [path]}) do
+    s = follow(s)
+    %{s | unlinked: [%{id: res, word: word_of(text(s, path))} | s.unlinked]}
   end
+
+  def next_state(s, _res, {:call, _, :delete_user_spaces, []}), do: s
 
   def next_state(s, _res, {:call, _, :edit_unlinked, [id, word]}),
     do: %{s | unlinked: Enum.map(s.unlinked, &if(&1.id == id, do: %{&1 | word: word}, else: &1))}
@@ -372,6 +381,13 @@ defmodule HalC2.SpaceFilesPropTest do
     expected and agrees(next_state(s, res, call))
   end
 
+  def postcondition(s, {:call, _, :legacy, _} = call, res),
+    do: is_binary(res) and agrees(next_state(s, res, call))
+
+  # Personal is made again, whatever the project's Space holds.
+  def postcondition(s, {:call, _, :delete_user_spaces, []} = call, res),
+    do: res == ["Personal"] and agrees(next_state(s, res, call))
+
   def postcondition(s, call, res) do
     expected = if refused?(s, call), do: {:error, :unavailable}, else: :ok
     res == expected and agrees(next_state(s, res, call))
@@ -380,8 +396,10 @@ defmodule HalC2.SpaceFilesPropTest do
   # The folder and the Space are what the model says.
   defp agrees(s) do
     root = Process.get(:root)
-    {:ok, state} = Space.state(Process.get(:space))
-    pages = StreamState.list(state, "page")
+    {:ok, spaces} = Space.list()
+    project = Space.project_space_id("demo")
+    {state, pages} = pages(project)
+    {user, user_pages} = pages(Process.get(:space))
 
     disk =
       for path <- @paths,
@@ -403,15 +421,29 @@ defmodule HalC2.SpaceFilesPropTest do
 
     unlinked =
       Enum.all?(s.unlinked, fn u ->
-        page = Enum.find(pages, &(&1["id"] == u.id))
-        page["file"] == nil and words(state, page) == [u.word]
+        page = Enum.find(user_pages, &(&1["id"] == u.id))
+        page["file"] == nil and words(user, page) == [u.word]
       end)
+
+    # The user's Spaces: never the project's, and only ordinary pages in them; the
+    # project's has the pages of its files and nothing else.
+    listed =
+      Enum.all?(spaces, &(&1["id"] != project and not Map.has_key?(&1, "projectId"))) and
+        Enum.all?(user_pages, &(&1["file"] == nil)) and length(pages) == map_size(s.links)
 
     syms =
       Enum.all?(s.sym, fn {path, to} -> File.read_link(Path.join(root, path)) == {:ok, to} end)
 
-    disk == view(s) and syms and linked and unlinked and
+    disk == view(s) and syms and linked and unlinked and listed and
       length(files) == length(Enum.uniq(files))
+  end
+
+  # A Space's state and live pages; none for the project's before a file was opened.
+  defp pages(nil), do: {nil, []}
+
+  defp pages(space) do
+    {:ok, state} = Space.state(space)
+    {state, StreamState.list(state, "page")}
   end
 
   defp words(state, page) do
@@ -462,25 +494,54 @@ defmodule HalC2.SpaceFilesPropTest do
   end
 
   def open(path) do
-    case Space.open_file(Process.get(:space), "demo", path) do
+    case Space.open_file("demo", path) do
       {:ok, %{"page" => page}} -> page["id"]
       {:error, reason, _message} -> {:error, reason}
     end
   end
 
-  def sync(_path, id), do: done(Space.sync_file(Process.get(:space), id))
-  def unlink(_path, id), do: done(Space.unlink_file(Process.get(:space), id))
+  def sync(_path, id), do: done(Space.sync_file(Space.project_space_id("demo"), id))
 
   # Anything the edit set the server following the files doing is done once it answers,
   # so a follow the edit should not have caused shows.
   def edit(_path, id, word) do
-    result = edit_unlinked(id, word)
+    result = edit_in(Space.project_space_id("demo"), id, word)
     :sys.get_state(Files)
     result
   end
 
-  def edit_unlinked(id, word) do
-    space = Process.get(:space)
+  def edit_unlinked(id, word), do: edit_in(Process.get(:space), id, word)
+
+  # A page of the file as an MC before the update made it, in a Space of the user's,
+  # and the start after the update.
+  def legacy(path) do
+    text = File.read!(Path.join(Process.get(:root), path))
+
+    file = %{
+      "projectId" => "demo",
+      "path" => path,
+      "hash" => hash(text),
+      "size" => byte_size(text),
+      "missing" => false,
+      "unwritten" => false,
+      "conflictAt" => nil
+    }
+
+    {:ok, page} = Space.import_markdown(Process.get(:space), text, nil, nil, %{"file" => file})
+    restart()
+    page["id"]
+  end
+
+  # Every Space the user has, deleted; the names of those a first look then finds.
+  def delete_user_spaces do
+    {:ok, spaces} = Space.list()
+    for space <- spaces, do: {:ok, _} = Space.delete(space["id"])
+    {:ok, spaces} = Space.list()
+    Process.put(:space, hd(spaces)["id"])
+    Enum.map(spaces, & &1["name"])
+  end
+
+  defp edit_in(space, id, word) do
     {:ok, state} = Space.state(space)
     [block] = Blocks.of_page(state, id)
     done(Space.edit_block(space, block["id"], changes(kind(word), word)))

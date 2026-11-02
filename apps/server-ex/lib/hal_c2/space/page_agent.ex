@@ -148,7 +148,7 @@ defmodule HalC2.Space.PageAgent do
   def reconcile(continued \\ []) do
     boot = :persistent_term.get({__MODULE__, :boot}, nil)
 
-    for %{"id" => space_id} <- StreamState.list(Streams.state(Space.index()), "space"),
+    for space_id <- Space.ids(),
         %{"pageId" => page_id, "threadId" => thread_id, "status" => status} = agent <-
           working(space_id),
         boot == nil or agent["boot"] != boot,
@@ -384,7 +384,7 @@ defmodule HalC2.Space.PageAgent do
       else: :ok
   end
 
-  defp space_name(space_id), do: (Streams.get(Space.index(), "space", space_id) || %{})["name"]
+  defp space_name(space_id), do: Space.name_of(space_id)
 
   # Starting a thread can wait on the provider, so it happens off the caller. What it
   # could not start fails on the page, and an agent stopped meanwhile stops here: its

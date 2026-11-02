@@ -4243,11 +4243,10 @@
   },
   {
     "name": "hal_c2_page_open_file",
-    "description": "Open a Markdown file of a project as a page of a Space. The page is the file: edits to the page are written to it, and changes to the file show on the page. A file that is a page already is that page, wherever it is. Only files the project's hal-c2.json spaces section counts can be opened (see hal_c2_space_files_scan).",
+    "description": "Open a Markdown file of a project to edit as a page. The page is the file: edits to the page are written to it, and changes to the file show on the page. It is a page of the project's own Space, the spaceId in the reply, which hal_c2_page_list does not list; a file that is a page already is that page. Only files the project's hal-c2.json spaces section counts can be opened (see hal_c2_space_files_scan).",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
         "projectId": {
           "type": "string",
           "description": "The project; this thread's when left out."
@@ -4257,7 +4256,7 @@
           "description": "The file's path in the project's own folder."
         }
       },
-      "required": ["spaceId", "relativePath"],
+      "required": ["relativePath"],
       "additionalProperties": true
     }
   },

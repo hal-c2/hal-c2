@@ -6,13 +6,14 @@ defmodule HalC2.Steps.Space.ProjectFiles do
   "remove"); a step that changes files waits for `HalC2.Space.Files` to have followed
   the project folder since (`Files.await/2`), never for a time. A `\\n` in a step's
   text is a line end. The last open is `context.opened`, the one before it
-  `context.first_opened`; the last refusal is `context.space_reply`.
+  `context.first_opened`; the last refusal is `context.space_reply`. An open makes the
+  project's Space the scenario's Space (`context.space`), where its pages are found.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
   alias HalC2.{ProjectFile, Space, StreamState, Streams}
-  alias HalC2.Space.{Blocks, Files}
+  alias HalC2.Space.{Blocks, Files, Pages}
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
@@ -190,11 +191,21 @@ defmodule HalC2.Steps.Space.ProjectFiles do
     context
   end
 
-  step "{string} is listed as the page {string} in {string}",
-       %{args: [path, title, space]} = context do
+  step "{string} is listed as the page {string} in the Space of {string}",
+       %{args: [path, title, project]} = context do
     file = Enum.find(context.space_files["files"], &(&1["relativePath"] == path))
     assert %{"title" => ^title, "spaceId" => id} = file["page"]
-    assert id == context.spaces[space]
+    assert id == project_space!(context, project)
+    context
+  end
+
+  step "the list names the Space of {string}", %{args: [project]} = context do
+    assert context.space_files["spaceId"] == project_space!(context, project)
+    context
+  end
+
+  step "the list names no Space yet", context do
+    assert context.space_files["spaceId"] == nil
     context
   end
 
@@ -242,25 +253,22 @@ defmodule HalC2.Steps.Space.ProjectFiles do
 
   # --- opening -----------------------------------------------------------------------
 
-  step "the user opens {string} of {string} in {string}",
-       %{args: [path, project, space]} = context do
-    open(context, World.project(context, project).id, path, space)
+  step "the user opens {string} of {string}", %{args: [path, project]} = context do
+    open(context, World.project(context, project).id, path)
   end
 
-  step "the user has opened {string} of {string} in {string}",
-       %{args: [path, project, space]} = context do
-    context = open(context, World.project(context, project).id, path, space)
+  step "the user has opened {string} of {string}", %{args: [path, project]} = context do
+    context = open(context, World.project(context, project).id, path)
     assert {:ok, _} = context.space_reply
     context
   end
 
-  step "the user opens {string} of the project {string} in {string}",
-       %{args: [path, project, space]} = context do
-    open(context, project, path, space)
+  step "the user opens {string} of the project {string}", %{args: [path, project]} = context do
+    open(context, project, path)
   end
 
-  step "the user opens {string} from a worktree of {string} in {string}",
-       %{args: [path, project, space]} = context do
+  step "the user opens {string} from a worktree of {string}",
+       %{args: [path, project]} = context do
     root = root(context, project)
     worktree = Path.join(Mc.tmp_dir(context.mc, "worktree"), "copy")
     World.git!(root, ["worktree", "add", "-q", "-b", "copy", worktree])
@@ -268,7 +276,7 @@ defmodule HalC2.Steps.Space.ProjectFiles do
     # A client opening the worktree's copy names the file by its place in the project.
     context
     |> Map.put(:worktree, worktree)
-    |> open(World.project(context, project).id, path, space)
+    |> open(World.project(context, project).id, path)
   end
 
   step "the user was taken to the page they opened before", context do
@@ -421,18 +429,8 @@ defmodule HalC2.Steps.Space.ProjectFiles do
     context
   end
 
-  step "the user unlinks the page {string} from its file", %{args: [title]} = context do
-    {reply, context} = World.call(context, "space.page.unlinkFile", page_ref(context, title))
-    Map.put(context, :space_reply, reply)
-  end
-
-  step "the user unlinked the page {string} from its file", %{args: [title]} = context do
-    {_, context} = World.call!(context, "space.page.unlinkFile", page_ref(context, title))
-    context
-  end
-
-  step "the page request is accepted", context do
-    assert {:ok, _} = context.space_reply
+  step "the user deleted the page {string} for good", %{args: [title]} = context do
+    {_, context} = World.call!(context, "space.page.delete", page_ref(context, title))
     context
   end
 
@@ -535,14 +533,12 @@ defmodule HalC2.Steps.Space.ProjectFiles do
     context
   end
 
-  step "the agent in {string} opens {string} of {string} in {string}",
-       %{args: [thread, path, _project, space]} = context do
-    arguments = %{"spaceId" => context.spaces[space], "relativePath" => path}
+  step "the agent in {string} opens {string} of {string}",
+       %{args: [thread, path, _project]} = context do
+    assert {:ok, %{"spaceId" => space, "page" => _}} =
+             World.mcp_tool(context, thread, "hal_c2_page_open_file", %{"relativePath" => path})
 
-    assert {:ok, %{"page" => _}} =
-             World.mcp_tool(context, thread, "hal_c2_page_open_file", arguments)
-
-    context
+    Map.put(context, :space, space)
   end
 
   step "the agent sees the page is backed by {string} of {string}",
@@ -600,7 +596,81 @@ defmodule HalC2.Steps.Space.ProjectFiles do
     %{context | mc: mc, clients: %{}}
   end
 
+  # --- the project's Space ----------------------------------------------------------------
+
+  step "the pages of the Space of {string} are {string}",
+       %{args: [project, titles]} = context do
+    state = Streams.state(Space.stream_id(project_space!(context, project)))
+    assert Enum.map_join(Pages.live(state), ", ", & &1["title"]) == titles
+    context
+  end
+
+  step "the user deletes every Space they have", context do
+    {%{"spaces" => spaces}, context} = World.call!(context, "space.list", %{})
+
+    Enum.reduce(spaces, context, fn space, context ->
+      {_, context} = World.call!(context, "space.delete", %{"spaceId" => space["id"]})
+      context
+    end)
+  end
+
+  step "the user deletes the Space of {string}", %{args: [project]} = context do
+    payload = %{"spaceId" => project_space!(context, project)}
+    {reply, context} = World.call(context, "space.delete", payload)
+    Map.put(context, :space_reply, reply)
+  end
+
+  step "a second client watching the Space of {string}", %{args: [project]} = context do
+    stream = Space.stream_id(project_space!(context, project))
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => stream}
+    client = context.mc |> Mc.connect() |> Mc.sub(71, shape)
+    {_, client} = Mc.await(client, &(&1["t"] == "live" and &1["id"] == 71))
+    World.put_client(context, "second", client)
+  end
+
+  # A page a file had in one of the user's Spaces before the project's Space, as #855
+  # opened it: the page carries the file, and the MC has not started since.
+  step "{string} of {string} was opened as a page of {string} before",
+       %{args: [path, project, space]} = context do
+    context = files(context)
+    text = File.read!(Path.join(root(context, project), path))
+
+    file = %{
+      "projectId" => World.project(context, project).id,
+      "path" => path,
+      "hash" => :crypto.hash(:sha256, text) |> Base.encode16(case: :lower),
+      "size" => byte_size(text),
+      "missing" => false,
+      "unwritten" => false,
+      "conflictAt" => nil
+    }
+
+    space_id = context.spaces[space]
+    {:ok, _} = Space.import_markdown(space_id, text, nil, nil, %{"file" => file})
+    Map.put(context, :space, space_id)
+  end
+
+  step "the MC starts after the update", context do
+    restart_followed(context)
+  end
+
+  step "the MC started after the update", context do
+    restart_followed(context)
+  end
+
   # --- helpers ---------------------------------------------------------------------------
+
+  # The MC started again, once its files server has looked at every Space's pages.
+  defp restart_followed(context) do
+    mc = Mc.restart(context.mc)
+    :ok = Files.drain()
+    %{context | mc: mc, clients: %{}}
+  end
+
+  defp project_space!(context, project),
+    do:
+      Space.project_space_id(World.project(context, project).id) ||
+        flunk("#{project} has no Space yet")
 
   # The server that follows the files, for the scenario.
   defp files(context) do
@@ -677,14 +747,9 @@ defmodule HalC2.Steps.Space.ProjectFiles do
     Map.put(context, :scan, reply)
   end
 
-  defp open(context, project_id, path, space) do
+  defp open(context, project_id, path) do
     context = files(context)
-
-    payload = %{
-      "spaceId" => context.spaces[space],
-      "projectId" => project_id,
-      "relativePath" => path
-    }
+    payload = %{"projectId" => project_id, "relativePath" => path}
 
     {reply, context} = World.call(context, "space.page.openFile", payload)
 
