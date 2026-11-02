@@ -1459,7 +1459,23 @@ defmodule HalC2Plugins.Planner.Sync do
     do: id in held and Plan.same_ref?(issue, ref(items, id))
 
   @doc """
-  `items` with the milestones GitHub took the issues `moved` (`run/2`) to, kept on
+  The moves of `moved` (`run/2`) newer than any taken for their issue, without their
+  `at`, and `latest`, issue → when GitHub last took a move for it, with them. A push
+  reports when all its ops are answered, so a move it took early is reported after
+  moves other milestones' pushes took later, and is no longer where GitHub has the
+  issue. Dropping it leaves the issue where the later move put it, so a milestone that
+  holds the task again sees it elsewhere and moves it (`held_pushes/4`).
+  """
+  def newest(moved, latest) do
+    Enum.flat_map_reduce(moved, latest, fn %{"at" => at} = move, latest ->
+      if at < Map.get(latest, key(move), at),
+        do: {[], latest},
+        else: {[Map.delete(move, "at")], Map.put(latest, key(move), at)}
+    end)
+  end
+
+  @doc """
+  `items` with the milestones GitHub took the issues `moved` (`newest/2`) to, kept on
   their tasks' issues as a look reads them.
   """
   def landed(items, moved) do
@@ -1515,7 +1531,10 @@ defmodule HalC2Plugins.Planner.Sync do
 
   defp stated(extra, _method, _input), do: extra
 
-  defp move(input), do: Map.take(input, ~w(repository number milestone))
+  # `at` orders it against the moves other milestones' pushes took for the issue.
+  defp move(input),
+    do:
+      input |> Map.take(~w(repository number milestone)) |> Map.put("at", System.monotonic_time())
 
   defp ask(:board, input), do: Host.issues(@id, "addBoardItem", input)
 

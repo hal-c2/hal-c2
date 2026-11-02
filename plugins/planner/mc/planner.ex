@@ -1088,7 +1088,8 @@ defmodule HalC2Plugins.Planner do
     extra = if leg_board == board, do: extra, else: Map.delete(extra, "boardItemId")
     {moved, extra} = Map.pop(extra, "moved", [])
     {stated, extra} = Map.pop(extra, "stated")
-    state = %{state | items: Sync.landed(state.items, moved)}
+    {moved, latest} = Sync.newest(moved, state.latest_moves)
+    state = %{state | items: Sync.landed(state.items, moved), latest_moves: latest}
     item = state.items[id] |> Map.merge(extra) |> Map.put("syncError", error)
     item = if stated, do: %{item | "issue" => Map.merge(item["issue"], stated)}, else: item
     # What the task's change meanwhile left behind: the report's `synced` was made without,
@@ -2178,8 +2179,22 @@ defmodule HalC2Plugins.Planner do
       views: data["views"] || Plan.default_views(),
       updates: data["updates"] || [],
       plan_feedback: data["planFeedback"] || [],
-      runs: prune(runs)
+      runs: prune(runs),
+      latest_moves: loaded_latest(data["latestMoves"])
     }
+  end
+
+  # When GitHub last took a move for each issue (`Sync.newest/2`), as `save/1` wrote it.
+  # The runners of this MC run outlive a restart of the plugin and report moves stamped
+  # by the same clock, so the stamps stand; another MC run's mean nothing, and its
+  # runners are gone.
+  defp loaded_latest(saved) do
+    run_id = run_id()
+
+    case loaded_term(saved) do
+      {^run_id, latest} when is_map(latest) -> latest
+      _ -> %{}
+    end
   end
 
   # Names this MC run: an OS pid alone can come back after a restart (in a container the
@@ -2286,7 +2301,8 @@ defmodule HalC2Plugins.Planner do
           }
 
           {id, saved}
-        end)
+        end),
+      "latestMoves" => saved_term({run_id(), state.latest_moves})
     }
 
     tmp = file() <> ".tmp"

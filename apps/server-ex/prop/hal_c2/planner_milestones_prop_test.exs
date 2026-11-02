@@ -14,7 +14,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
   of its own, as another window's would, so it can wait on GitHub while the case goes
   on. GitHub answers the moves it holds one at a time, and now and then refuses one, and
   the plugin now and then looks at GitHub, which lists each issue in the milestone it
-  took for it last. After every step, a look's included, the plan has each task where
+  took for it last, or restarts, its changes going on. After every step, a look's included, the plan has each task where
   it was moved to last and naming the issue it was linked to last, and once GitHub has
   answered everything:
 
@@ -150,6 +150,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
           {4, {:call, __MODULE__, :answer, [integer(0, 3)]}},
           {1, {:call, __MODULE__, :refuse, [integer(0, 3)]}},
           {1, {:call, __MODULE__, :look, []}},
+          {1, {:call, __MODULE__, :restart, []}},
           {1, {:call, __MODULE__, :settle, []}}
         ]
     )
@@ -166,6 +167,8 @@ defmodule HalC2.PlannerMilestonesPropTest do
 
   def precondition(m, {:call, _, :remove, [t, from]}), do: live?(m, t, from)
   def precondition(m, {:call, _, :look, []}), do: not m.relinked
+  # A restart looks at GitHub as it starts.
+  def precondition(m, {:call, _, :restart, []}), do: not m.relinked
   def precondition(_m, _call), do: true
 
   defp live?(m, t, from), do: is_map_key(m.tasks, t) and m.tasks[t].at == from
@@ -289,6 +292,15 @@ defmodule HalC2.PlannerMilestonesPropTest do
   def look do
     rules(github())
     {:ok, _} = call("sync", %{})
+    observe()
+  end
+
+  # The plugin restarts, its changes on the way to GitHub going on, and returns once it
+  # has looked at GitHub, which it does on starting, as `look/0` has GitHub list each issue.
+  def restart do
+    rules(github())
+    {:ok, _} = HalC2.Plugins.handle("restart", %{"id" => @id})
+    drain()
     observe()
   end
 

@@ -1306,6 +1306,42 @@ Feature: Planner
       When the user moves "Issue 7" from "Beta" to "Launch", then to "Release" before GitHub answers
       Then GitHub has #7 in the milestone "Release" last
 
+    # A push reports once GitHub answered all of it, so a move it took early can be reported
+    # after a later move of another milestone's, and is not where GitHub has the issue.
+    @mc
+    Scenario: A move reported after a later one does not hide that GitHub has the issue elsewhere
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta", #9 in "Launch" and #12 in "Release" on GitHub
+      And GitHub refuses moving #7 to "Release" once, and takes moving #9 to "Release" late
+      When the user moves "Issue 7" from "Beta" to "Release", which GitHub refuses
+      And the user moves "Issue 7" to "Launch" and back to "Release" while GitHub holds moving "Issue 9" from "Launch" to "Release"
+      Then GitHub has #7 in the milestone "Release" last
+      And nothing in the plan is marked as not synced
+
+    # The pushes GitHub holds report to the plugin restarted in the same MC run, which
+    # still knows when GitHub took each issue's last move.
+    @mc
+    Scenario: A move reported after a restart of the plugin and a later move does not hide that GitHub has the issue elsewhere
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta", #9 in "Launch" and #12 in "Release" on GitHub
+      And GitHub refuses moving #7 to "Release" once, and takes moving #9 to "Release" late
+      When the user moves "Issue 7" from "Beta" to "Release", which GitHub refuses
+      And the user moves "Issue 7" to "Launch" and back to "Release" while GitHub holds moving "Issue 9" from "Launch" to "Release", then "planner" is restarted before GitHub answers it
+      Then GitHub has #7 in the milestone "Release" last
+      And nothing in the plan is marked as not synced
+
+    # Another MC run's clock is not this one's, so when it saw GitHub take a move says
+    # nothing about the moves of this run.
+    @mc
+    Scenario: A move GitHub took in an earlier MC run does not hold back a move of this one
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta", #9 in "Launch" and #12 in "Release" on GitHub
+      And an earlier MC run saw GitHub take a move of #7 at a time this run's clock has not reached
+      When the user moves "Issue 7" from "Beta" to "Launch"
+      Then GitHub is asked once to move #7 to the milestone "Launch"
+      And the plan knows GitHub has #7 in the milestone "Launch"
+      And nothing in the plan is marked as not synced
+
     # The correction is the milestone's to send, so one GitHub refused goes again with
     # the milestone's next change, though the milestone the task is in asked GitHub already.
     @mc
