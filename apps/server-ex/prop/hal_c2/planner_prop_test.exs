@@ -50,7 +50,9 @@ defmodule HalC2.PlannerPropTest do
   A task is also linked to a pull request of a repository no project has, by a link whose
   url names a host the MC has a project on, a host it has none on, or no web address,
   and GitHub merges it; only a host the MC has a project on is asked, the one the link
-  names when it names one.
+  names when it names one. A client makes a login a task's owner, again in another case,
+  or clears it; GitHub starts or stops refusing to add or to take off assignees, and
+  someone on GitHub adds or takes off an assignee, a name that is no login among them.
   After every step:
 
   - nothing waits for itself, no task is its own ancestor, a removed task's subtasks move
@@ -99,6 +101,15 @@ defmodule HalC2.PlannerPropTest do
     made on that issue at once and dropped from the one before, and the tasks tied to it
     move theirs to its new issue at once too, or drop them when it is unlinked, which
     leaves its own on the issue it had;
+  - an owner change goes to GitHub as the old login off the issue GitHub had the task
+    on and the new one onto the task's issue, after the name and before the relations,
+    one login at a time, so the issue's other assignees stay. A change of case, a link
+    or a relink asks nothing. GitHub refusing either ends the push and marks the task,
+    and the next change that pushes asks only what the refusal left, whatever a look
+    read in between, which leaves a marked task's owner alone;
+  - a look gives a task with no sync error and no push on the way the assignee it has,
+    in GitHub's case, while GitHub lists them, else GitHub's first, or no owner when the
+    issue has no assignee, and leaves its owner when that one is no login;
   - a look at GitHub brings a linked task's name up to date, makes it wait for the tasks
     whose issues GitHub has its open issue blocked by and for no other task with an
     issue, and the subtask of the task whose issue GitHub names as its open issue's
@@ -135,13 +146,8 @@ defmodule HalC2.PlannerPropTest do
   - the `plan` and `runs` the plugin answers match the model, and the topics clients
     follow match what it answers.
 
-  Task owners are deliberately not modelled here — an exemption, not an
-  equivalence claim: the owner-push ordering and retry semantics (remove old,
-  add new, retry only what a refusal left, relink and case-only changes pushing
-  nothing, a stored owner that is no login never being taken off) are pinned by
-  the planner Gherkin scenarios and the `Sync.pushes/5` unit tests in
-  `test/hal_c2/planner_test.exs`. Modelling owners here stays open if the
-  maintainer wants the interleavings explored too.
+  A stored owner that is no login, which no client can make any more, is never taken off;
+  the `Sync.pushes/5` unit tests in `test/hal_c2/planner_test.exs` pin that, not this model.
   """
   use ExUnit.Case, async: false
   use PropCheck
@@ -151,7 +157,7 @@ defmodule HalC2.PlannerPropTest do
 
   @id "planner"
   # What a case focused on a resent push report does (`focus/2`).
-  @focus [
+  @focus_resend [
     :add,
     :link,
     :rename,
@@ -161,6 +167,22 @@ defmodule HalC2.PlannerPropTest do
     :restart,
     :switch_board,
     :look
+  ]
+  # What a case focused on a task's owner does.
+  @focus_owner [
+    :add,
+    :link,
+    :relink,
+    :unlink,
+    :reown,
+    :refuse_assignees,
+    :assign,
+    :unassign,
+    :redate,
+    :rename,
+    :answer,
+    :look,
+    :restart
   ]
   @server HalC2Plugins.Planner
   @package Path.expand("../../../../plugins/planner", __DIR__)
@@ -195,6 +217,11 @@ defmodule HalC2.PlannerPropTest do
     57 => {:enterprise, "https://user:token@github.example.com/acme/other/pull/57/files?x=1#y"}
   }
   @bad_ref %{"repository" => 7, "number" => 1}
+  # What a client makes a task's owner, one a change of case of another.
+  @owners ["alice", "Alice", "dana", nil]
+  # What someone on GitHub assigns: a login a task has, one none has yet, and a name that
+  # is no login, which the plan must not take for an owner.
+  @assignees ["alice", "carol", "da na"]
   # A look may reuse what the one before read of the closed issues until `@full_read`
   # seconds have passed since a look read them all alone; `age/0` moves that look back by
   # `@shift`, so two of them expire it and one does not.
@@ -314,7 +341,24 @@ defmodule HalC2.PlannerPropTest do
     numtests: HalC2.Prop.numtests(20),
     start_size: 20,
     max_size: 40 do
-    forall cmds <- commands(__MODULE__, %{initial_state() | focus: true}) do
+    forall cmds <- commands(__MODULE__, %{initial_state() | focus: @focus_resend}) do
+      trap_exit do
+        begin_case()
+        {history, state, result} = run_commands(__MODULE__, cmds)
+        end_case()
+
+        (result == :ok)
+        |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
+        |> aggregate(command_names(cmds))
+      end
+    end
+  end
+
+  property "a task's owner reaches GitHub whole through refusals, looks and relinks",
+    numtests: HalC2.Prop.numtests(30),
+    start_size: 15,
+    max_size: 40 do
+    forall cmds <- commands(__MODULE__, %{initial_state() | focus: @focus_owner}) do
       trap_exit do
         begin_case()
         {history, state, result} = run_commands(__MODULE__, cmds)
@@ -336,7 +380,7 @@ defmodule HalC2.PlannerPropTest do
   # (its sync error: nil or {:refused, push}), board (the push that added its board item,
   # 0 for one that took at once, or nil), status (:todo, :done or :dropped), state (what
   # the plugin keeps of its issue's state: :open, :completed, :not_planned, or nil with
-  # no issue)}. `runs`: k (the order it was asked for,
+  # no issue), owner (its login or nil)}. `runs`: k (the order it was asked for,
   # from 1) → %{action, on ({slot, gen} of the task it runs on, or nil), gone (it failed
   # without a thread since its task was removed while it waited), status, seq
   # (order queued), started (its thread started at least once), changes ([{slot, gen, dismissed, outcome}]), health,
@@ -374,6 +418,10 @@ defmodule HalC2.PlannerPropTest do
   # issues linked tasks had at the look before, whose copies the next look reuses until
   # the age passes `@full_read`; `touched`: the issues GitHub has stamped as
   # changed since the look before, which its updated listing therefore names.
+  # `assignees`: issue of `@repository` → the names GitHub has assigned, in its order.
+  # `assignee_asks`: issue → the assignee changes pushes asked of it, `{:add | :remove, login}` in
+  # order, refused or not. `refusing`: which of those GitHub refuses, `:add`, `:remove` or
+  # nil.
   def initial_state,
     do: %{
       focus: false,
@@ -388,6 +436,9 @@ defmodule HalC2.PlannerPropTest do
       blockers: %{},
       merged: MapSet.new(),
       closing: %{},
+      assignees: %{},
+      assignee_asks: %{},
+      refusing: nil,
       items: %{},
       gens: %{},
       runs: %{},
@@ -634,8 +685,23 @@ defmodule HalC2.PlannerPropTest do
     # Renaming a task again while GitHub holds its push, so its answer chains one.
     flying = for slot <- pushed, Map.has_key?(m.flights, slot), do: slot
 
+    # A task's owner, most of all a pushed one's or while GitHub refuses it, and GitHub
+    # refusing assignees once a task has an owner to change.
+    owned = for slot <- pushed, m.items[slot].owner != nil, do: slot
+    # And most of all the change after GitHub refused one, which asks only what is left.
+    half = for {slot, %{sync: {:refused, :assignees}}} <- m.items, do: slot
+    unassign = for {n, names} <- m.assignees, name <- names, do: {n, name}
+
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
+       {if(pushed == [], do: 2, else: 10),
+        {:call, __MODULE__, :reown, [item, elements(@owners)]}},
+       {cond do
+          half != [] and m.refusing != nil -> 20
+          owned == [] -> 1
+          true -> 8
+        end,
+        {:call, __MODULE__, :refuse_assignees, [elements([:add, :remove, nil] -- [m.refusing])]}},
        {6, {:call, __MODULE__, :link_pr, [item, elements(@pulls)]}},
        {3, {:call, __MODULE__, :link_pr, [item, elements(Map.keys(@lone_pulls))]}},
        {4, {:call, __MODULE__, :wait, [item, item]}},
@@ -742,6 +808,31 @@ defmodule HalC2.PlannerPropTest do
            {looking, {:call, __MODULE__, :nest_while_looking, [item, oneof([nil, item])]}}
          ]
        ) ++
+       if(pushed == [],
+         do: [],
+         else: [
+           {6,
+            {:call, __MODULE__, :assign,
+             [elements(Enum.map(pushed, &issue_of(m, &1))), elements(@assignees)]}}
+         ]
+       ) ++
+       if(unassign == [],
+         do: [],
+         else: [
+           {6, oneof(for {n, name} <- unassign, do: {:call, __MODULE__, :unassign, [n, name]})}
+         ]
+       ) ++
+       if(half == [],
+         do: [],
+         else: [
+           {20, {:call, __MODULE__, :redate, [elements(half), elements([@due, @moved])]}},
+           {20, {:call, __MODULE__, :reown, [elements(half), elements(@owners)]}}
+         ]
+       ) ++
+       if(owned == [],
+         do: [],
+         else: [{12, {:call, __MODULE__, :reown, [elements(owned), elements(@owners)]}}]
+       ) ++
        if(against == [], do: [], else: [{40, oneof(against)}]) ++
        if(refer == [], do: [], else: [{if(m.closing == %{}, do: 24, else: 6), oneof(refer)}]) ++
        if(unrefer == [], do: [], else: [{4, oneof(unrefer)}]) ++
@@ -818,9 +909,10 @@ defmodule HalC2.PlannerPropTest do
 
   # A case `focus`ed on a push report sent again only adds tasks, links and renames them,
   # has GitHub answer and hold their pushes, and restarts the plugin, so its pushes get
-  # that far.
-  defp focus(commands, %{focus: true}),
-    do: for({_, {:call, _, f, _}} = command <- commands, f in @focus, do: command)
+  # that far; one focused on owners keeps to what moves them, so a refused push meets a
+  # look, a retry and a relink.
+  defp focus(commands, %{focus: focus}) when is_list(focus),
+    do: for({_, {:call, _, f, _}} = command <- commands, f in focus, do: command)
 
   defp focus(commands, _m), do: commands
 
@@ -836,6 +928,7 @@ defmodule HalC2.PlannerPropTest do
              :move,
              :work,
              :redate,
+             :reown,
              :link_pr,
              :unlink_pr
            ],
@@ -913,6 +1006,12 @@ defmodule HalC2.PlannerPropTest do
   def precondition(m, {:call, _, :unrefer, [number, pr]}),
     do: pr in Map.get(m.closing, number, [])
 
+  def precondition(_m, {:call, _, :assign, [number, _name]}), do: here?(number)
+
+  def precondition(m, {:call, _, :unassign, [number, name]}),
+    do: name in Map.get(m.assignees, number, [])
+
+  def precondition(m, {:call, _, :refuse_assignees, [what]}), do: what != m.refusing
   def precondition(_m, {:call, _, :close, [number, _reason]}), do: here?(number)
   def precondition(m, {:call, _, :reopen, [number]}), do: Map.has_key?(m.closed, number)
   def precondition(m, {:call, _, :switch_board, [board]}), do: board != m.board
@@ -951,6 +1050,8 @@ defmodule HalC2.PlannerPropTest do
       updates: m.updates,
       github: m.github,
       rel: m.rel,
+      assignees: m.assignees,
+      assignee_asks: m.assignee_asks,
       age: m.age,
       problems: []
     }
@@ -1018,7 +1119,8 @@ defmodule HalC2.PlannerPropTest do
       board: nil,
       status: :todo,
       state: nil,
-      pulls: []
+      pulls: [],
+      owner: nil
     }
 
     {%{put_in(m.items[slot], item) | synced: Map.delete(m.synced, slot)}, :ok}
@@ -1055,6 +1157,24 @@ defmodule HalC2.PlannerPropTest do
       do: {m, :ok},
       else: {m |> put_in([:items, slot, :due], due) |> changed(slot, m), :ok}
   end
+
+  # A client gives the task an owner, or none.
+  defp step(m, {:call, _, :reown, [slot, login]}) do
+    if m.items[slot].owner == login,
+      do: {m, :ok},
+      else: {m |> put_in([:items, slot, :owner], login) |> changed(slot, m), :ok}
+  end
+
+  # GitHub starts or stops refusing to change assignees, which reaches whatever it answers
+  # next, a push it holds too.
+  defp step(m, {:call, _, :refuse_assignees, [what]}), do: {%{m | refusing: what}, :ok}
+
+  # Someone on GitHub changes an issue's assignees; the plan hears of it at the next look.
+  defp step(m, {:call, _, :assign, [number, name]}),
+    do: {assigned(touch(m, [number]), number, name), :ok}
+
+  defp step(m, {:call, _, :unassign, [number, name]}),
+    do: {unassigned(touch(m, [number]), number, name), :ok}
 
   # `slot` stops holding up the milestone `from` and holds up `to`; nil is no milestone.
   defp step(m, {:call, _, :move, [slot, from, to]}) do
@@ -1148,13 +1268,15 @@ defmodule HalC2.PlannerPropTest do
   # An issue made for the task links it as linking an issue does, but it is open and on
   # no board: the push closes it for a task done or dropped, which GitHub takes, and adds
   # it to the board with the task's due date. The plugin takes it to be as the push left
-  # it until a look reads it, so GitHub reopening it since moves the task.
+  # it until a look reads it, so GitHub reopening it since moves the task. The issue is
+  # made with the task's owner as its only assignee, so no push asks for them.
   defp step(before, {:call, _, :create, [slot]}) do
     item = %{before.items[slot] | issue: @issues[slot], state: :open}
-    made = %{baseline(before, slot) | due: nil, state: :open}
+    made = %{baseline(before, slot) | due: nil, state: :open, owner: item.owner}
+    names = if item.owner, do: [item.owner], else: []
+    m = put_in(before.assignees[@issues[slot]], names)
 
-    {before |> put_in([:items, slot], item) |> push_now(slot, made) |> ties_moved(slot, before),
-     :ok}
+    {m |> put_in([:items, slot], item) |> push_now(slot, made) |> ties_moved(slot, before), :ok}
   end
 
   # Linking a task to the issue it has changes nothing: the plugin keeps what it last
@@ -1596,6 +1718,7 @@ defmodule HalC2.PlannerPropTest do
       name: item.name,
       due: item.due,
       state: state_of(item.status),
+      owner: item.owner,
       after: Enum.filter(after_keys, &is_map_key(refs, &1)),
       parent: if(is_map_key(refs, parent), do: parent),
       refs: refs,
@@ -1624,7 +1747,9 @@ defmodule HalC2.PlannerPropTest do
   # name and state, in one change, the parts GitHub lacks; the relations it drops, from the issue it had them on (`b.issue`) when that is
   # of `@repository`, by the issue it had for the other task when it can: the issues it
   # no longer waits for, the parent it leaves; then the relations it makes on its issue:
-  # the issues it waits for and the parent it joins, of `@repository` only; the board,
+  # the issues it waits for and the parent it joins, of `@repository` only; between the
+  # name and the relations, the owner it had off the issue it had them on and its owner
+  # onto its issue, unless only the case changed; the board,
   # when it is not on it, and its due date there. A relation to a task linked to another
   # issue since, or of a task linked to another issue since, is dropped and made anew.
   defp ops(m, slot, b) do
@@ -1668,10 +1793,15 @@ defmodule HalC2.PlannerPropTest do
         true -> [{:due, item.due}]
       end
 
-    title ++ unblocks ++ unsub ++ blocks ++ sub ++ due
+    owner? = not same_login?(b.owner, item.owner)
+    off = if owner? and b.owner != nil and here?(was), do: [{:unassign, was, b.owner}], else: []
+    on = if owner? and item.owner != nil, do: [{:assign, n, item.owner}], else: []
+
+    title ++ off ++ on ++ unblocks ++ unsub ++ blocks ++ sub ++ due
   end
 
-  # GitHub takes `ops` in order, of which it had `b`, until it refuses a name, a board
+  # GitHub takes `ops` in order, of which it had `b`, until it refuses a name or an
+  # assignee, a board
   # item it adds to the board `on` named after `board`: `{m with what GitHub has, %{error,
   # b, board, stated}}`, `b` with what took, `board` set when it added one and `stated`
   # when it gave the issue a state. A change GitHub refuses the name of gives it no state
@@ -1692,6 +1822,20 @@ defmodule HalC2.PlannerPropTest do
 
               {:cont, if(state, do: stated(m, took, n, state), else: {m, took})}
           end
+
+        {:assign, n, login} ->
+          m = asked(m, n, {:add, login})
+
+          if m.refusing == :add,
+            do: {:halt, {m, %{took | error: {:refused, :assignees}}}},
+            else: {:cont, {assigned(touch(m, [n]), n, login), put_in(took.b.owner, login)}}
+
+        {:unassign, n, login} ->
+          m = asked(m, n, {:remove, login})
+
+          if m.refusing == :remove,
+            do: {:halt, {m, %{took | error: {:refused, :assignees}}}},
+            else: {:cont, {unassigned(touch(m, [n]), n, login), put_in(took.b.owner, nil)}}
 
         {:block, {n, r} = pair, k} ->
           b = %{
@@ -1722,6 +1866,38 @@ defmodule HalC2.PlannerPropTest do
           {:cont, {m, put_in(took.b.due, due)}}
       end
     end)
+  end
+
+  defp asked(m, n, ask),
+    do: %{m | assignee_asks: Map.update(m.assignee_asks, n, [ask], &(&1 ++ [ask]))}
+
+  # GitHub has `name` on issue `n`, once whatever its case, or no longer.
+  defp assigned(m, n, name) do
+    names = Map.get(m.assignees, n, [])
+
+    if Enum.any?(names, &same_login?(&1, name)),
+      do: m,
+      else: put_in(m.assignees[n], names ++ [name])
+  end
+
+  defp unassigned(m, n, name) do
+    names = Enum.reject(Map.get(m.assignees, n, []), &same_login?(&1, name))
+    put_in(m.assignees[n], names)
+  end
+
+  defp same_login?(a, a), do: true
+
+  defp same_login?(a, b) when is_binary(a) and is_binary(b),
+    do: String.downcase(a) == String.downcase(b)
+
+  defp same_login?(_a, _b), do: false
+
+  # The owner a look gives the task `item`: the assignee it has while GitHub lists them,
+  # in GitHub's case, else GitHub's first, unless that is no login, which leaves its own.
+  defp owner_after(m, item) do
+    names = Map.get(m.assignees, item.issue, [])
+    owner = Enum.find(names, &same_login?(&1, item.owner)) || List.first(names)
+    if owner == "da na", do: item.owner, else: owner
   end
 
   # GitHub closes the issue `n` for a task done or dropped, or opens it, as a push asks.
@@ -1818,7 +1994,8 @@ defmodule HalC2.PlannerPropTest do
           item
           | name: "Issue #{item.issue}",
             status: status_after(item, state),
-            state: state
+            state: state,
+            owner: owner_after(m, item)
         }
 
         %{put_in(acc.items[slot], item) | synced: Map.delete(acc.synced, slot)}
@@ -2119,6 +2296,78 @@ defmodule HalC2.PlannerPropTest do
   def redate(slot, due),
     do:
       observe(elem(call("updateItem", %{"id" => item_id(slot), "fields" => %{"due" => due}}), 0))
+
+  def reown(slot, login),
+    do:
+      observe(
+        elem(call("updateItem", %{"id" => item_id(slot), "fields" => %{"owner" => login}}), 0)
+      )
+
+  # GitHub starts refusing to add or take off assignees, or stops: `:add`, `:remove`, nil.
+  def refuse_assignees(what) do
+    path = System.get_env("FAKE_GH_RULES")
+    rules = Enum.reject(path |> File.read!() |> JSON.decode!(), & &1["refusal"])
+
+    refusal =
+      for {refused, verb} <- [add: "POST", remove: "DELETE"], refused == what do
+        %{
+          "refusal" => true,
+          "args" => ["--method #{verb}", "/assignees"],
+          "stdout" => "{}",
+          "exit" => 1,
+          "stderr" => "HTTP 422: refused assignees\n"
+        }
+      end
+
+    File.write!(path <> ".tmp", JSON.encode!(refusal ++ rules))
+    File.rename!(path <> ".tmp", path)
+    observe(:ok)
+  end
+
+  # Someone on GitHub assigns `name` to issue `number`, or takes them off.
+  def assign(number, name) do
+    change_assignees(number, name, "add")
+    observe(:ok)
+  end
+
+  def unassign(number, name) do
+    change_assignees(number, name, "remove")
+    observe(:ok)
+  end
+
+  defp change_assignees(number, name, change) do
+    assignees = Process.get(:pl_assignees)
+    names = Map.get(assignees, number, [])
+    same = &(String.downcase(&1) == String.downcase(name))
+
+    names =
+      cond do
+        change == "remove" -> Enum.reject(names, same)
+        Enum.any?(names, same) -> names
+        true -> names ++ [name]
+      end
+
+    Process.put(:pl_assignees, Map.put(assignees, number, names))
+    touch([number])
+    issue_read(number)
+  end
+
+  # GitHub's answer to changing the assignees of issue `number`, unless a refusal comes
+  # first: it writes down what it took (`assignees_taken/0`), and every login a push can
+  # ask is one a client or someone on GitHub gave.
+  defp assignee_rules(number) do
+    taken = Path.join(Process.get(:pl_gh), "assignees")
+
+    for {verb, change} <- [{"POST", "add"}, {"DELETE", "remove"}],
+        login <- ~w(alice Alice dana carol) do
+      %{
+        "args" => ["--method #{verb}", "repos/#{@repository}/issues/#{number}/assignees"],
+        "stdin" => [~s("assignees":["#{login}"])],
+        "run" => "echo '#{number} #{change} #{login}' >> '#{taken}'",
+        "stdout" => %{"assignees" => []}
+      }
+    end
+  end
 
   def move(slot, from, to) do
     ids = %{"id" => item_id(slot), "from" => from && item_id(from), "to" => to && item_id(to)}
@@ -2461,14 +2710,18 @@ defmodule HalC2.PlannerPropTest do
     number = @issues[slot]
 
     gh_rule(%{
-      "args" => ["--method POST", "repos/#{@repository}/issues"],
+      # The issues path alone, not an issue's assignees under it.
+      "args" => ["--method POST", "repos/#{@repository}/issues --input"],
       "stdout" => %{"number" => number}
     })
 
     issue_read(number)
     input = %{"itemId" => item_id(slot), "repository" => @repository}
+    owner = item(slot)["owner"]
     {reply, _} = call("createIssue", input)
     if reply == :ok, do: Process.put({:pl_issue, slot}, number)
+    names = if owner, do: [owner], else: []
+    Process.put(:pl_assignees, Map.put(Process.get(:pl_assignees), number, names))
     listed()
     observe(reply)
   end
@@ -2545,6 +2798,10 @@ defmodule HalC2.PlannerPropTest do
       "stateReason" => reason,
       "url" => "https://github.com/#{@repository}/issues/#{number}",
       "repository" => %{"nameWithOwner" => @repository},
+      "assignees" => %{
+        "nodes" =>
+          for(name <- Map.get(Process.get(:pl_assignees), number, []), do: %{"login" => name})
+      },
       "updatedAt" => Map.get(Process.get(:pl_updated), number, "2026-10-01T00:00:00Z"),
       "closedByPullRequestsReferences" => %{
         "nodes" =>
@@ -2860,6 +3117,22 @@ defmodule HalC2.PlannerPropTest do
     Process.put(:pl_states_read, length(lines))
   end
 
+  # The assignee changes GitHub took since the last step, which a next look reads.
+  defp assignees_taken do
+    lines =
+      case File.read(Path.join(Process.get(:pl_gh), "assignees")) do
+        {:ok, text} -> String.split(text, "\n", trim: true)
+        {:error, :enoent} -> []
+      end
+
+    for line <- Enum.drop(lines, Process.get(:pl_assignees_read)) do
+      [number, change, login] = String.split(line, " ")
+      change_assignees(String.to_integer(number), login, change)
+    end
+
+    Process.put(:pl_assignees_read, length(lines))
+  end
+
   # GitHub answers the push, naming a board item it adds after it, and its caller tells
   # the planner, then pushes what the planner answers with until it answers nothing.
   def answer(push) do
@@ -2996,6 +3269,7 @@ defmodule HalC2.PlannerPropTest do
   defp observe(reply) do
     drain()
     states_taken()
+    assignees_taken()
     # The plugin publishes through a cast to the host, which sends to watchers.
     :sys.get_state(HalC2.Plugins)
     take_messages()
@@ -3034,7 +3308,8 @@ defmodule HalC2.PlannerPropTest do
            pulls:
              for pr <- item["pullRequests"] || [] do
                {pr["number"], pr["fromIssue"] == true, String.to_existing_atom(pr["state"])}
-             end
+             end,
+           owner: item["owner"]
          }}
       end
 
@@ -3073,6 +3348,8 @@ defmodule HalC2.PlannerPropTest do
       updates: length(plan["updates"]),
       github: named(),
       rel: related(),
+      assignees: Process.get(:pl_assignees),
+      assignee_asks: assignee_asks(),
       age: full_age(),
       problems: Process.put(:pl_problems, []) |> Enum.reverse(),
       alone: alone
@@ -3252,6 +3529,20 @@ defmodule HalC2.PlannerPropTest do
     end)
   end
 
+  # Issue → the assignee changes asked of it, refused or not, in order.
+  defp assignee_asks do
+    Enum.reduce(gh_calls(), %{}, fn line, asks ->
+      with %{"args" => args, "stdin" => stdin} <- JSON.decode!(line),
+           [_, number] <- Regex.run(~r{issues/(\d+)/assignees}, Enum.join(args, " ")),
+           %{"assignees" => [login]} <- JSON.decode!(stdin) do
+        ask = {if("POST" in args, do: :add, else: :remove), login}
+        Map.update(asks, String.to_integer(number), [ask], &(&1 ++ [ask]))
+      else
+        _ -> asks
+      end
+    end)
+  end
+
   defp issue_number("I_" <> n), do: String.to_integer(n)
 
   # The state the plugin keeps of a task's issue.
@@ -3264,8 +3555,9 @@ defmodule HalC2.PlannerPropTest do
   defp sync_error(nil), do: nil
 
   defp sync_error(error) do
-    case Regex.run(~r/refused push (\d+)/, error) do
+    case Regex.run(~r/refused (?:push (\d+)|assignees)/, error) do
       [_, push] -> {:refused, String.to_integer(push)}
+      [_] -> {:refused, :assignees}
       nil -> {:other, error}
     end
   end
@@ -3446,6 +3738,7 @@ defmodule HalC2.PlannerPropTest do
         [issue_list([]), board_item(0), pr_list()] ++
           for({n, {kind, _}} <- @lone_pulls, kind != :unknown, do: lone_view(n, "OPEN")) ++
           pairs ++
+          Enum.flat_map(here, &assignee_rules/1) ++
           [%{"args" => ["api user"], "stdout" => %{"id" => 1, "login" => "octocat"}}] ++
           Enum.flat_map(here, fn number ->
             rule = %{
@@ -3478,6 +3771,8 @@ defmodule HalC2.PlannerPropTest do
     Process.put(:pl_items, %{})
     Process.put(:pl_closed, %{})
     Process.put(:pl_states_read, 0)
+    Process.put(:pl_assignees, %{})
+    Process.put(:pl_assignees_read, 0)
     Process.put(:pl_updated, %{})
     Process.put(:pl_parents, %{})
     Process.put(:pl_blockers, %{})
