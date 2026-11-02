@@ -20,6 +20,9 @@ struct FakeStreams {
   int ordinal = 0;
 };
 
+// Changes an entity of the thread's stream as an `events` frame's patch
+// does ({"s": set, "a": append}), and tells whoever follows it.
+void changeEntity(FakeMc& mc, const QString& thread, const QString& kind, const QString& id, const QJsonObject& patch);
 // Sets fields of an entity of the thread's stream and tells whoever follows it.
 void setEntity(FakeMc& mc, const QString& thread, const QString& kind, const QString& id, const QJsonObject& fields);
 // Changes the thread's row in the shell and sends it.

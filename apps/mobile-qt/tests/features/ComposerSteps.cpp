@@ -154,10 +154,13 @@ std::pair<QString, QString> listedModel(World& world, const QString& name) {
 
 }  // namespace
 
-void setEntity(FakeMc& mc, const QString& thread, const QString& kind, const QString& id, const QJsonObject& fields) {
+void changeEntity(FakeMc& mc, const QString& thread, const QString& kind, const QString& id, const QJsonObject& patch) {
   FakeStreams& fake = mc.part<FakeStreams>();
   QJsonObject& entity = fake.threads[thread][kind + QLatin1Char('\n') + id];
-  for (auto it = fields.begin(); it != fields.end(); ++it) entity.insert(it.key(), it.value());
+  const QJsonObject set = patch.value(QLatin1String("s")).toObject();
+  for (auto it = set.begin(); it != set.end(); ++it) entity.insert(it.key(), it.value());
+  const QJsonObject append = patch.value(QLatin1String("a")).toObject();
+  for (auto it = append.begin(); it != append.end(); ++it) entity.insert(it.key(), entity.value(it.key()).toString() + it.value().toString());
   const int seq = ++fake.seq;
   // QJsonValue keeps the event nested: Apple clang before 20 reads
   // QJsonArray{QJsonArray{...}} as a copy of the inner array.
@@ -165,8 +168,12 @@ void setEntity(FakeMc& mc, const QString& thread, const QString& kind, const QSt
     mc.send({{QStringLiteral("t"), QStringLiteral("events")},
              {QStringLiteral("id"), follower},
              {QStringLiteral("offset"), seq},
-             {QStringLiteral("events"), QJsonArray{QJsonValue(QJsonArray{seq, kind, id, QJsonObject{{QStringLiteral("s"), fields}}, kNow})}}});
+             {QStringLiteral("events"), QJsonArray{QJsonValue(QJsonArray{seq, kind, id, patch, kNow})}}});
   }
+}
+
+void setEntity(FakeMc& mc, const QString& thread, const QString& kind, const QString& id, const QJsonObject& fields) {
+  changeEntity(mc, thread, kind, id, {{QStringLiteral("s"), fields}});
 }
 
 void updateRow(FakeMc& mc, const QString& thread, const QJsonObject& fields) {

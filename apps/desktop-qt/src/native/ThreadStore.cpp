@@ -140,8 +140,17 @@ void ThreadStore::readSettings() {
   emit timesChanged();
 }
 
+void ThreadStore::setBriefTimelines(bool brief) {
+  if (brief == m_brief) return;
+  m_brief = brief;
+  for (const Followed& followed : std::as_const(m_threads)) {
+    if (followed.model) followed.model->setBrief(brief);
+  }
+}
+
 void ThreadStore::configure(TimelineModel* model) const {
   model->setTimestampFormat(m_timestampFormat);
+  model->setBrief(m_brief);
   model->setLocale(m_locale);
   // The other threads of its environment, by the titles the shell lists.
   const QString key = model->threadKey();
