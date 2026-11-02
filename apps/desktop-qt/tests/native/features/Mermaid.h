@@ -21,4 +21,9 @@ QList<QQuickItem*> drawn(World& world);
 // How often the MC was asked to draw one.
 int asked(World& world);
 
+// A page's diagram (SpaceSteps.cpp): whether the shown brick is a Space page,
+// and a check that it shows the diagram's source and no picture.
+bool onPage(World& world);
+void expectPageSource(World& world);
+
 }  // namespace mermaid

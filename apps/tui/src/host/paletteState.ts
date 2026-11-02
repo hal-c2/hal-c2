@@ -47,6 +47,8 @@ export interface TuiPaletteState {
 export interface PaletteContext {
   /** A new-thread draft is open (workspace and branch pickers apply). */
   readonly newDraft: boolean;
+  /** A Space page has the prompt (the ask's project and block kind pickers apply). */
+  readonly page: boolean;
   readonly workspaceMode: "current" | "new-worktree" | null;
   /** The selected thread, when replying to one. */
   readonly threadId: string | null;
@@ -65,7 +67,7 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
   const list: PaletteCommand[] = [
     { id: "new", title: "New thread", hint: "^N", action: "thread.new" },
   ];
-  const composing = context.newDraft || context.threadId !== null;
+  const composing = context.newDraft || context.page || context.threadId !== null;
   if (composing) {
     list.push({
       id: "plan",
@@ -86,6 +88,22 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
           id: "branch",
           title: context.workspaceMode === "new-worktree" ? "Change base branch" : "Change branch",
           keywords: "git ref",
+          action: "composer.branchPicker.toggle",
+        },
+      );
+    }
+    if (context.page) {
+      list.push(
+        {
+          id: "ask-project",
+          title: "Change where an ask runs",
+          keywords: "project agent",
+          action: "composer.workspacePicker.toggle",
+        },
+        {
+          id: "block-kind",
+          title: "Change the kind of block",
+          keywords: "heading checklist callout visualize",
           action: "composer.branchPicker.toggle",
         },
       );

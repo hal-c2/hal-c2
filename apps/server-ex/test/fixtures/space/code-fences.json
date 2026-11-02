@@ -1,0 +1,146 @@
+{
+  "read": [
+    {
+      "markdown": "```ts\nconst a = 1\n\n// two\n```",
+      "blocks": [
+        {
+          "kind": "code",
+          "text": "const a = 1\n\n// two",
+          "language": "ts",
+          "checked": false,
+          "linkedPageId": null
+        }
+      ]
+    },
+    {
+      "markdown": "```mermaid\nflowchart LR\n  Cart --> Pay\n```",
+      "blocks": [
+        {
+          "kind": "code",
+          "text": "flowchart LR\n  Cart --> Pay",
+          "language": "mermaid",
+          "checked": false,
+          "linkedPageId": null
+        }
+      ]
+    },
+    {
+      "markdown": "````md\n```js\nx\n```\n````",
+      "blocks": [
+        {
+          "kind": "code",
+          "text": "```js\nx\n```",
+          "fence": "````",
+          "language": "md",
+          "checked": false,
+          "linkedPageId": null
+        }
+      ]
+    },
+    {
+      "markdown": "```md\n```js\nx\n```",
+      "blocks": [
+        {
+          "kind": "code",
+          "text": "```js\nx",
+          "language": "md",
+          "checked": false,
+          "linkedPageId": null
+        }
+      ]
+    },
+    {
+      "markdown": "~~~~js filename=\"a.js\"\n~~~\n~~~~",
+      "blocks": [
+        {
+          "kind": "code",
+          "text": "~~~",
+          "fence": "~~~~",
+          "language": "js",
+          "info": " filename=\"a.js\"",
+          "checked": false,
+          "linkedPageId": null
+        }
+      ]
+    },
+    {
+      "markdown": "~~~\nx\n```\n~~~",
+      "blocks": [
+        { "kind": "code", "text": "x\n```", "fence": "~~~", "checked": false, "linkedPageId": null }
+      ]
+    },
+    {
+      "markdown": "~~~a`b\nx\n~~~",
+      "blocks": [
+        {
+          "kind": "code",
+          "text": "x",
+          "fence": "~~~",
+          "language": "a`b",
+          "checked": false,
+          "linkedPageId": null
+        }
+      ]
+    },
+    {
+      "markdown": "```\n```",
+      "blocks": [{ "kind": "code", "text": "", "checked": false, "linkedPageId": null }]
+    },
+    {
+      "markdown": "```ts\nx\n````",
+      "blocks": [
+        { "kind": "raw", "text": "```ts\nx\n````", "checked": false, "linkedPageId": null }
+      ]
+    },
+    {
+      "markdown": "```ts\nx\n```  ",
+      "blocks": [
+        { "kind": "raw", "text": "```ts\nx\n```  ", "checked": false, "linkedPageId": null }
+      ]
+    },
+    {
+      "markdown": "```\nx\n   ```",
+      "blocks": [
+        { "kind": "raw", "text": "```\nx\n   ```", "checked": false, "linkedPageId": null }
+      ]
+    },
+    {
+      "markdown": "  ```ts\n  x\n  ```",
+      "blocks": [
+        { "kind": "raw", "text": "  ```ts\n  x\n  ```", "checked": false, "linkedPageId": null }
+      ]
+    },
+    {
+      "markdown": "``` ts\nx\n```",
+      "blocks": [
+        { "kind": "raw", "text": "``` ts\nx\n```", "checked": false, "linkedPageId": null }
+      ]
+    },
+    {
+      "markdown": "```js\nx\n\n\n",
+      "blocks": [{ "kind": "raw", "text": "```js\nx", "checked": false, "linkedPageId": null }]
+    },
+    {
+      "markdown": "````md\n```\nx",
+      "blocks": [
+        { "kind": "raw", "text": "````md\n```\nx", "checked": false, "linkedPageId": null }
+      ]
+    }
+  ],
+  "notFences": ["```a`b", "````js `x`"],
+  "write": [
+    {
+      "block": { "kind": "code", "text": "```\ninside\n```", "language": "md" },
+      "markdown": "````md\n```\ninside\n```\n````"
+    },
+    {
+      "block": { "kind": "code", "text": "```js\nx\n````", "language": "md" },
+      "markdown": "`````md\n```js\nx\n````\n`````"
+    },
+    {
+      "block": { "kind": "code", "text": "x\n~~~", "fence": "~~~" },
+      "markdown": "~~~~\nx\n~~~\n~~~~"
+    },
+    { "block": { "kind": "code", "text": "" }, "markdown": "```\n```" }
+  ]
+}
