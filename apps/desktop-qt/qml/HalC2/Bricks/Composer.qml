@@ -14,6 +14,10 @@ import "js/providerIcons.js" as ProviderIcons
 Rectangle {
     id: composer
 
+    // Files dropped on the card attach. A layout that lays a ConversationDrop
+    // over the whole conversation turns this off, so a drop on a sheet or
+    // scrim over the card does not fall through to it.
+    property bool takesDrops: true
     readonly property var model: Shell.state.composer ?? null
     readonly property var workspace: Shell.state.workspace ?? null
     // This machine's stashed prompts (ComposerController), newest first.
@@ -40,7 +44,7 @@ Rectangle {
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color secondary: Theme.palette.color("secondaryLabel", "#a1a1aa")
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")
-    readonly property color branchColor: Theme.palette.color("branchForeground", Qt.alpha(muted, 0.7))
+    readonly property color branchColor: Theme.palette.color("branchForeground", muted)
     readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
     // The model's other options, such as Claude's fast mode and context window.
     // By id: every read of model.options converts to fresh objects, so identity never matches.
@@ -242,7 +246,7 @@ Rectangle {
     }
 
     // Files join the draft (or the answer the agent waits on); a folder is
-    // named by its path.
+    // named by its path. The picker and ConversationDrop hand them here.
     function attach(urls) {
         const files = Shell.readAttachmentFiles(urls);
         const folders = Shell.directoryPaths(urls);
@@ -441,6 +445,15 @@ Rectangle {
                     required property var modelData
                     required property int index
 
+                    // The prompt's arrows move through the rows and Enter or
+                    // Tab takes one.
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: [suggestion.modelData.label, suggestion.modelData.description].filter(part => (part ?? "").length > 0).join(", ")
+                    Accessible.selected: ListView.isCurrentItem
+                    Accessible.onPressAction: {
+                        composer.flushText();
+                        composer.selectSuggestion(suggestion.index);
+                    }
                     width: ListView.view.width
                     height: 34
                     radius: 10
@@ -585,6 +598,12 @@ Rectangle {
                     required property int index
 
                     objectName: "stashEntry-" + index
+                    // The prompt's arrows move through the rows and Enter
+                    // restores one.
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: qsTr("Restore stashed prompt: %1").arg(stashRow.modelData.snippet)
+                    Accessible.selected: ListView.isCurrentItem
+                    Accessible.onPressAction: composer.restoreStash(stashRow.modelData.id)
                     width: ListView.view.width
                     height: 34
                     radius: 10
@@ -658,15 +677,12 @@ Rectangle {
             border.color: composer.outline
             border.width: 1
 
-            DropArea {
+            ConversationDrop {
+                objectName: "composerDrop"
                 anchors.fill: parent
-                keys: ["text/uri-list"]
-                onDropped: drop => {
-                    if (drop.hasUrls) {
-                        composer.attach(drop.urls);
-                        drop.accept(Qt.CopyAction);
-                    }
-                }
+                z: 1
+                enabled: composer.takesDrops
+                composer: composer
             }
 
             ColumnLayout {
@@ -943,6 +959,10 @@ Rectangle {
                                 event.accepted = composer.paste(false);
                                 if (event.accepted) return;
                             }
+                            if (editorMenu.keyPressed(event)) {
+                                event.accepted = true;
+                                return;
+                            }
                             if (composer.suggesting && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))) {
                                 if (event.key === Qt.Key_Escape) {
                                     event.accepted = true;
@@ -1010,6 +1030,21 @@ Rectangle {
                             }
                             event.accepted = true;
                             composer.submit(intent);
+                        }
+
+                        // Its Paste is the composer's, which attaches copied
+                        // pictures and files. A MouseArea, as it takes the
+                        // press from Qt's own TextArea menu.
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.RightButton
+                            onClicked: mouse => editorMenu.openAt(mouse.x, mouse.y)
+                        }
+                        TextEditMenu {
+                            id: editorMenu
+                            objectName: "editorMenu"
+                            editor: input
+                            paste: () => composer.paste(false)
                         }
                     }
                 }
@@ -1254,6 +1289,17 @@ Rectangle {
                             radius: 16
                             color: primaryAction.stopMode ? Qt.alpha(Theme.palette.color("error", "#ef4444"), 0.9) : Theme.palette.color("messageAction", "#2563eb")
 
+                            // The keyboard's ring, just outside the round button.
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: -3
+                                radius: parent.radius + 3
+                                visible: primaryAction.visualFocus
+                                color: "transparent"
+                                border.width: 2
+                                border.color: Theme.palette.color("focus", "#3b82f6")
+                            }
+
                             Behavior on color {
                                 ColorAnimation {
                                     duration: 120
@@ -1434,30 +1480,39 @@ Rectangle {
                 }
 
                 // PR badge.
-                Rectangle {
+                AbstractButton {
+                    id: prBadge
+
                     readonly property var pr: contextStrip.wsReady && contextStrip.ws.git ? contextStrip.ws.git.pullRequest : null
-                    readonly property color prColor: pr === null ? "transparent" : pr.state === "merged" ? Theme.palette.color("merged", "#a855f7") : pr.state === "closed" ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#34d399")
+                    readonly property color prColor: pr === null ? "transparent" : pr.state === "merged" ? Theme.palette.color("merged", "#a855f7") : pr.state === "closed" ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("success", "#34d399")
 
                     visible: pr !== null && contextStrip.ws.canOpenPullRequest
+                    text: pr ? "#" + pr.number : ""
+                    Accessible.name: qsTr("%1 Open pull request").arg(text)
+                    focusPolicy: Qt.TabFocus
                     implicitWidth: prLabel.implicitWidth + 8
                     implicitHeight: 18
-                    radius: 4
-                    color: Qt.alpha(prColor, 0.15)
+                    padding: 0
+                    onClicked: Shell.dispatch("workspace.openPullRequest")
 
                     HoverHandler {
                         cursorShape: Qt.PointingHandCursor
                     }
 
-                    TapHandler {
-                        onTapped: Shell.dispatch("workspace.openPullRequest")
+                    background: Rectangle {
+                        radius: 4
+                        color: Qt.alpha(prBadge.prColor, 0.15)
+                        border.color: Theme.palette.color("focus", "#3b82f6")
+                        border.width: prBadge.visualFocus ? 1 : 0
                     }
 
-                    Text {
+                    contentItem: Text {
                         id: prLabel
 
-                        anchors.centerIn: parent
-                        text: parent.pr ? "#" + parent.pr.number : ""
-                        color: parent.prColor
+                        text: prBadge.text
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        color: prBadge.prColor
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
@@ -1542,6 +1597,7 @@ Rectangle {
                                 from: 1
                                 to: 0
                                 duration: 90
+                                easing.type: Easing.InCubic
                             }
                         }
 
@@ -1554,6 +1610,9 @@ Rectangle {
                         ColumnLayout {
                             id: branchColumn
 
+                            // A Popup is no Item, so its name is on its content.
+                            Accessible.role: Accessible.Pane
+                            Accessible.name: qsTr("Branches")
                             anchors.fill: parent
                             spacing: 4
 
@@ -1562,6 +1621,7 @@ Rectangle {
 
                                 Layout.fillWidth: true
                                 placeholderText: qsTr("Search or create a branch")
+                                Accessible.name: qsTr("Search or create a branch")
                                 onTextEdited: Shell.dispatch("workspace.branch.search", {
                                     query: text
                                 })
@@ -1624,6 +1684,15 @@ Rectangle {
 
                                     readonly property string badge: modelData.current ? qsTr("current") : modelData.isDefault ? qsTr("default") : modelData.isRemote ? qsTr("remote") : ""
 
+                                    // Typing a ref's name and Enter picks it from the keyboard.
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: [branchRow.modelData.name, branchRow.badge].filter(part => part.length > 0).join(", ")
+                                    Accessible.onPressAction: {
+                                        Shell.dispatch("workspace.branch.select", {
+                                            name: branchRow.modelData.name
+                                        });
+                                        branchPicker.close();
+                                    }
                                     width: ListView.view.width
                                     height: 28
                                     radius: 6
@@ -1659,7 +1728,7 @@ Rectangle {
                                         Text {
                                             visible: branchRow.badge.length > 0
                                             text: branchRow.badge
-                                            color: Qt.alpha(composer.muted, 0.45)
+                                            color: composer.muted
                                             font.pixelSize: Math.round(10 * Theme.fontScale)
                                         }
                                     }
@@ -1680,6 +1749,7 @@ Rectangle {
                                 Layout.bottomMargin: 4
                                 visible: contextStrip.wsReady && contextStrip.ws.branchesTotal > contextStrip.ws.branches.length
                                 text: contextStrip.wsReady ? qsTr("Showing %1 of %2 refs — type to narrow").arg(contextStrip.ws.branches.length).arg(contextStrip.ws.branchesTotal) : ""
+                                wrapMode: Text.Wrap
                                 color: composer.muted
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }

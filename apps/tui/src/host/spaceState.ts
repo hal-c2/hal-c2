@@ -8,12 +8,14 @@
 // RPCs. A page's history (h) is the exception: it is not on a stream, so it is asked
 // for while it is open, again when the Space's stream moves. The SpaceView brick
 // paints `space` and dispatches `space.*`. A chart block draws as text (`spaceChart.ts`)
-// and is asked for in words. A Mermaid diagram (a `code` block in "mermaid", or a `raw`
-// block that is one Mermaid fence the page keeps as written) shows as the MC drew it in
-// characters (`mermaidDiagrams.ts`). Any other `raw`, `table` or `code` block shows as
-// its source, line for line; a heading carries its level's `#` marks. An
-// entry taller than the pane, as a chart can be, scrolls through itself before the
-// selection moves on.
+// and is asked for in words. A Mermaid diagram (a `code` block in "mermaid", or, as the
+// fallback, a `raw` block that is one Mermaid fence the page keeps as written) shows as
+// the MC drew it in characters (`mermaidDiagrams.ts`). Any other `raw`, `table` or
+// `code` block shows as its source, line for line. An image, the Space's or one by its
+// address, is named in words and never fetched. A heading carries its level's `#`
+// marks, a checklist item its box and a callout a bar; a bullet, a numbered item, a
+// divider, a footnote, a `details` and a `details_end` show their text. An entry taller
+// than the pane, as a chart can be, scrolls through itself before the selection moves on.
 import * as NodePath from "node:path";
 
 import {
@@ -650,8 +652,12 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     });
   };
 
-  /** A placed image in words. Its caption names it once the image is gone from the stream. */
+  /**
+   * A placed image in words. Its caption names it once the image is gone from the stream.
+   * An image by its address is never fetched: its caption and where it is.
+   */
   const imagePlaceholder = (block: SpaceBlock): string => {
+    if (block.url) return `[image${block.text ? `: ${block.text}` : ""}] ${block.url}`;
     const image = imageById(block.imageId);
     if (!image) return `[image: ${block.text} was deleted]`;
     if (image.trashedAt !== null) return `[image: ${image.name} is in the trash]`;

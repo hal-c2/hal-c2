@@ -59,6 +59,9 @@ Item {
     implicitWidth: cardWidth
     implicitHeight: Math.min(stackHeight, maximumHeight)
     visible: items.length > 0
+    Accessible.role: Accessible.Grouping
+    Accessible.name: qsTr("Notifications")
+    Accessible.onPressAction: host.pinned = !host.expanded
 
     onItemsChanged: sync()
     Component.onCompleted: sync()
@@ -234,8 +237,6 @@ Item {
                 objectName: "notification-" + toastId
                 anchors.top: host.fromBottom ? undefined : parent.top
                 anchors.bottom: host.fromBottom ? parent.bottom : undefined
-                anchors.topMargin: edge
-                anchors.bottomMargin: edge
                 width: host.cardWidth
                 height: behind ? host.frontHeight : naturalHeight
                 z: -index
@@ -248,9 +249,12 @@ Item {
                 color: host.opaque ? Qt.tint(Theme.palette.color("canvas", "#0b0b0d"), Theme.palette.color("surfaceOverlay", "#18181b")) : Theme.palette.color("surfaceOverlay", "#18181b")
                 border.color: Theme.palette.color("border", "#27272a")
                 border.width: 1
-                // Slides in from the edge.
+                // Slides in from the side, and moves to its place in the stack
+                // by a translation, so the stack is not laid out again on each
+                // frame.
                 transform: Translate {
                     x: card.entered ? 0 : 24
+                    y: host.fromBottom ? -card.edge : card.edge
 
                     Behavior on x {
                         NumberAnimation {
@@ -258,23 +262,16 @@ Item {
                             easing.type: Easing.OutCubic
                         }
                     }
+
+                    Behavior on y {
+                        NumberAnimation {
+                            duration: 250
+                            easing.type: Easing.OutCubic
+                        }
+                    }
                 }
                 onNaturalHeightChanged: Qt.callLater(host.measure)
                 Component.onCompleted: entered = true
-
-                Behavior on anchors.topMargin {
-                    NumberAnimation {
-                        duration: 250
-                        easing.type: Easing.OutCubic
-                    }
-                }
-
-                Behavior on anchors.bottomMargin {
-                    NumberAnimation {
-                        duration: 250
-                        easing.type: Easing.OutCubic
-                    }
-                }
 
                 Behavior on scale {
                     NumberAnimation {
@@ -286,6 +283,7 @@ Item {
                 Behavior on opacity {
                     NumberAnimation {
                         duration: 180
+                        easing.type: Easing.OutCubic
                     }
                 }
 
@@ -316,6 +314,7 @@ Item {
                     Behavior on opacity {
                         NumberAnimation {
                             duration: 180
+                            easing.type: Easing.OutCubic
                         }
                     }
 

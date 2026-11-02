@@ -173,8 +173,10 @@ Rectangle {
                     Keys.onEnterPressed: clicked()
                     onClicked: Shell.dispatch("rightPanel.activate", { id: tab.modelData.id })
                     background: Rectangle {
-                        color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered || tab.visualFocus ? Theme.palette.color("surface", "#141416") : "transparent"
+                        color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered ? Theme.palette.color("surface", "#141416") : "transparent"
                         radius: 6
+                        border.width: tab.visualFocus ? 1 : 0
+                        border.color: Theme.palette.color("focus", "#3b82f6")
                     }
 
                     Row {
@@ -480,12 +482,18 @@ Rectangle {
     }
 
     // The left edge: drag to resize, double click for the default width.
+    // From the keyboard it is a Tab stop: the arrows move it, Enter puts the
+    // default width back.
     MouseArea {
         id: edge
         objectName: "panelEdge"
 
         property real pressX: 0
         property int pressWidth: 0
+
+        function step(by: int) {
+            Shell.dispatch("rightPanel.resize", { width: Math.max(panel.minimumWidth, Math.min(panel.openWidth + by, panel.maximumWidth)) });
+        }
 
         anchors.left: parent.left
         anchors.top: parent.top
@@ -494,6 +502,14 @@ Rectangle {
         visible: panel.open && !panel.maximized && panel.resizable
         cursorShape: Qt.SplitHCursor
         preventStealing: true
+        activeFocusOnTab: true
+        Accessible.role: Accessible.Splitter
+        Accessible.name: qsTr("Resize panel")
+        Accessible.onPressAction: Shell.dispatch("rightPanel.resize", {})
+        Keys.onLeftPressed: step(16)
+        Keys.onRightPressed: step(-16)
+        Keys.onReturnPressed: Shell.dispatch("rightPanel.resize", {})
+        Keys.onEnterPressed: Shell.dispatch("rightPanel.resize", {})
         onPressed: mouse => {
             pressX = mapToItem(panel.parent, mouse.x, 0).x;
             pressWidth = panel.openWidth;
@@ -510,5 +526,14 @@ Rectangle {
         }
         onCanceled: panel.dragWidth = -1
         onDoubleClicked: Shell.dispatch("rightPanel.resize", {})
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: 2
+            visible: edge.activeFocus
+            color: Theme.palette.color("focus", "#3b82f6")
+        }
     }
 }

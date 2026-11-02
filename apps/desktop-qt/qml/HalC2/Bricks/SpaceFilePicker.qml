@@ -149,6 +149,8 @@ Dialog {
             wrapMode: Text.Wrap
             text: dialog.listed === undefined
                 ? qsTr("Looking for the files of %1…").arg(dialog.projectTitle)
+                : (dialog.listed.error ?? "") !== ""
+                    ? qsTr("The files of %1 could not be listed: %2").arg(dialog.projectTitle).arg(dialog.listed.error)
                 : dialog.listed.config === "invalid"
                     ? qsTr("The spaces section of %1's hal-c2.json cannot be read.").arg(dialog.projectTitle)
                     : qsTr("%1 has no files for a Space. A scan writes a spaces section for its Markdown files.").arg(dialog.projectTitle)

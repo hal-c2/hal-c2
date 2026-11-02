@@ -85,12 +85,13 @@ QString describe(const QList<FakeMc::Rpc>& calls) {
   return told.isEmpty() ? QStringLiteral("nothing") : told.join(QStringLiteral(", "));
 }
 
-QStringList toastTitles(World& world) {
-  QStringList titles;
+// Whether a toast says `told` and nothing under it.
+bool toldAlone(World& world, const QString& told) {
   for (const QVariant& item : world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
-    titles.append(item.toMap().value(QStringLiteral("title")).toString());
+    const QVariantMap toast = item.toMap();
+    if (toast.value(QStringLiteral("title")).toString() == told && toast.value(QStringLiteral("description")).toString().isEmpty()) return true;
   }
-  return titles;
+  return false;
 }
 
 const Steps steps([] {
@@ -166,14 +167,14 @@ const Steps steps([] {
 
   step(QStringLiteral("the user is told the file is on %1 and what to install to open it here").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString told = QStringLiteral("The file is on \"%1\". To open it here, install FUSE 3 (fuse3).").arg(c[0]);
-    world.waitFor([&] { return toastTitles(world).contains(told); },
-                  [&] { return QStringLiteral("\"%1\"; the toasts are %2").arg(told, show(world.state(QStringLiteral("toasts")))); });
+    world.waitFor([&] { return toldAlone(world, told); },
+                  [&] { return QStringLiteral("\"%1\" alone; the toasts are %2").arg(told, show(world.state(QStringLiteral("toasts")))); });
     expect(startedSinceActing(world).isEmpty(), QStringLiteral("the MC was asked %1").arg(describe(startedSinceActing(world))));
   });
   step(QStringLiteral("the user is told the file is on %1 and to edit or copy it in HAL-C2's file viewer").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString told = unsupportedMessage(c[0], QStringLiteral("macOS"));
-    world.waitFor([&] { return toastTitles(world).contains(told); },
-                  [&] { return QStringLiteral("\"%1\"; the toasts are %2").arg(told, show(world.state(QStringLiteral("toasts")))); });
+    world.waitFor([&] { return toldAlone(world, told); },
+                  [&] { return QStringLiteral("\"%1\" alone; the toasts are %2").arg(told, show(world.state(QStringLiteral("toasts")))); });
   });
 });
 

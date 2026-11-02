@@ -29,4 +29,24 @@ defmodule HalC2.SpaceSitesTest do
 
     assert {[], {:ok, ^site}} = Sites.publish(state, "p", @reached, at: at)
   end
+
+  test "a footnote shows its label, and each collapsed section is closed once" do
+    blocks = [
+      %{"kind" => "details_end", "text" => ""},
+      %{"kind" => "footnote", "label" => "1", "text" => "A <note>"},
+      %{"kind" => "details", "text" => "Logs"},
+      %{"kind" => "paragraph", "text" => "Inside"}
+    ]
+
+    site = %{
+      "snapshot" => %{"title" => "Roadmap", "blocks" => blocks},
+      "publishedAt" => "2026-11-01T00:00:00.000Z"
+    }
+
+    main = site |> Sites.html() |> IO.iodata_to_binary()
+    [_, main] = String.split(main, "</h1>")
+
+    assert main =~
+             "<p><sup>1</sup> A &lt;note&gt;</p><details><summary>Logs</summary><p>Inside</p></details></main>"
+  end
 end

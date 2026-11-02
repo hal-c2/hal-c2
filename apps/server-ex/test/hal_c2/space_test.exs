@@ -660,6 +660,108 @@ defmodule HalC2.SpaceTest do
                Space.insert_block(space, page, %{"kind" => "divider", "marker" => "**"})
     end
 
+    test "a footnote has a label, and only a footnote has one", %{space: space} do
+      page = page!(space, "Plan")
+      spec = %{"kind" => "footnote", "text" => "A source.\nOn two lines."}
+      assert {:error, :invalid, _} = Space.insert_block(space, page, spec)
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, Map.put(spec, "label", "a b"))
+
+      {:ok, note} = Space.insert_block(space, page, Map.put(spec, "label", "1"))
+      {:ok, _} = Space.insert_block(space, page, %{"kind" => "footnote", "label" => "2"})
+
+      assert Space.export_markdown(space, page) ==
+               {:ok, "# Plan\n\n[^1]: A source.\n    On two lines.\n[^2]:\n"}
+
+      {:ok, note} = Space.edit_block(space, note["id"], %{"label" => "source"})
+      assert note["label"] == "source"
+      assert {:error, :invalid, _} = Space.edit_block(space, note["id"], %{"label" => "[x]"})
+
+      {:ok, paragraph} =
+        Space.insert_block(space, page, %{"kind" => "paragraph", "text" => "x", "label" => "1"})
+
+      refute Map.has_key?(paragraph, "label")
+
+      assert {:error, :invalid, "Only a footnote has a label."} =
+               Space.edit_block(space, paragraph["id"], %{"label" => "1"})
+    end
+
+    test "math keeps `$$` only while it is math", %{space: space} do
+      {:ok, page} = Space.import_markdown(space, "# Plan\n\n$$\nx^2\n$$\n")
+      {:ok, %{blocks: [math]}} = Space.page(space, page["id"])
+      assert {math["language"], math["fence"]} == {"math", "$$"}
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page["id"], %{"kind" => "code", "fence" => "$$"})
+
+      {:ok, code} = Space.edit_block(space, math["id"], %{"language" => "tex"})
+      refute Map.has_key?(code, "fence")
+      assert Space.export_markdown(space, page["id"]) == {:ok, "# Plan\n\n```tex\nx^2\n```\n"}
+    end
+
+    test "a collapsed section's summary is one line, and its end has no text", %{space: space} do
+      page = page!(space, "Plan")
+
+      # Found in review: a summary that closes the section would read back raw.
+      for summary <- ["a\nb", "a</details>", "x</summary>", "<details><summary>y"] do
+        assert {:error, :invalid, _} =
+                 Space.insert_block(space, page, %{"kind" => "details", "text" => summary})
+      end
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{"kind" => "details", "marker" => "<div>"})
+
+      {:ok, details} = Space.insert_block(space, page, %{"kind" => "details", "text" => "Logs"})
+      {:ok, _} = Space.insert_block(space, page, %{"kind" => "paragraph", "text" => "Inside"})
+      {:ok, ending} = Space.insert_block(space, page, %{"kind" => "details_end"})
+
+      assert Space.export_markdown(space, page) ==
+               {:ok, "# Plan\n\n<details>\n<summary>Logs</summary>\n\nInside\n\n</details>\n"}
+
+      assert {:error, :invalid, _} = Space.edit_block(space, details["id"], %{"text" => "a\nb"})
+
+      assert {:error, :invalid, _} =
+               Space.edit_block(space, details["id"], %{"text" => "a</DETAILS>"})
+
+      {:ok, %{"text" => "a <b>b</b>"}} =
+        Space.edit_block(space, details["id"], %{"text" => "a <b>b</b>"})
+
+      assert {:error, :invalid, _} = Space.edit_block(space, ending["id"], %{"text" => "x"})
+      {:ok, details} = Space.edit_block(space, details["id"], %{"text" => "All logs"})
+      assert details["text"] == "All logs"
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{"kind" => "details_end", "text" => "x"})
+    end
+
+    test "an image by its address keeps it, and is never one of the Space's", %{space: space} do
+      page = page!(space, "Plan")
+      spec = %{"kind" => "image", "text" => "A cat", "url" => "https://x.test/cat.png"}
+      {:ok, image} = Space.insert_block(space, page, spec)
+      assert {image["url"], image["imageId"]} == {"https://x.test/cat.png", nil}
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, Map.put(spec, "imageId", "img"))
+
+      assert {:error, :invalid, _} = Space.insert_block(space, page, %{spec | "url" => "a b"})
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{spec | "url" => "space-image:img"})
+
+      {:ok, image} = Space.edit_block(space, image["id"], %{"url" => "./cat.png"})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n![A cat](./cat.png)\n"}
+      assert {:error, :invalid, _} = Space.edit_block(space, image["id"], %{"url" => "a)b"})
+
+      {:ok, imported} = Space.import_markdown(space, "# Web\n\n![A dog](https://x.test/d.png)\n")
+      assert texts(space, imported["id"]) == ["A dog"]
+
+      {:ok, paragraph} = Space.insert_block(space, page, %{"kind" => "paragraph", "text" => "x"})
+
+      assert {:error, :invalid, "Only an image by its address has a url."} =
+               Space.edit_block(space, paragraph["id"], %{"url" => "a.png"})
+    end
+
     test "a link to a page the Space lacks is imported as a paragraph", %{space: space} do
       {:ok, page} = Space.import_markdown(space, "[Old](#gone)", "Copy")
       assert texts(space, page["id"]) == ["[Old](#gone)"]

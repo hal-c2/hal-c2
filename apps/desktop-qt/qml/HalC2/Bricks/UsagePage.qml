@@ -18,7 +18,7 @@ Rectangle {
     readonly property var limits: model && model.limits ? model.limits : ({ pools: [], notices: [] })
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color warning: Theme.palette.color("warning", "#f59e0b")
+    readonly property color warning: Theme.palette.color("warningForeground", "#f59e0b")
 
     function usd(value) {
         return "$" + Number(value).toLocaleString(Qt.locale("en_US"), "f", 2);
@@ -295,6 +295,7 @@ Rectangle {
                                         Label {
                                             Layout.fillWidth: true
                                             text: card.modelData.label
+                                            wrapMode: Text.Wrap
                                             color: page.muted
                                             font.pixelSize: Math.round(12 * Theme.fontScale)
                                         }
@@ -516,6 +517,7 @@ Rectangle {
                             Label {
                                 Layout.fillWidth: true
                                 text: total.modelData[0]
+                                wrapMode: Text.Wrap
                                 color: page.muted
                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
@@ -586,6 +588,7 @@ Rectangle {
                             Label {
                                 Layout.preferredWidth: 64
                                 text: periodRow.modelData.label
+                                elide: Text.ElideRight
                                 color: page.muted
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
@@ -606,6 +609,7 @@ Rectangle {
                                 Layout.preferredWidth: 72
                                 horizontalAlignment: Text.AlignRight
                                 text: page.amount(periodRow.modelData)
+                                elide: Text.ElideRight
                                 color: page.foreground
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
