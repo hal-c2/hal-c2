@@ -46,6 +46,20 @@ defmodule HalC2.SpaceTest do
     Enum.map(blocks, & &1["text"])
   end
 
+  defp await_page_agent(stream, page, status) do
+    case HalC2.StreamState.get(Streams.state(stream), "pageAgent")[page] do
+      %{"status" => ^status} ->
+        :ok
+
+      _ ->
+        receive do
+          {:hal_c2_stream, ^stream, _} -> await_page_agent(stream, page, status)
+        after
+          5_000 -> flunk("the page's agent never said #{status}")
+        end
+    end
+  end
+
   describe "the agent asked on a page" do
     # A second stop found the first still waiting for the run, and wrote an empty patch
     # that took the Space's stream down.
@@ -87,7 +101,11 @@ defmodule HalC2.SpaceTest do
       test = self()
       home = Application.get_env(:hal_c2, :home)
       Application.put_env(:hal_c2, :home, dir)
-      Application.put_env(:hal_c2, :page_agent_launch, &send(test, {:launched, &1}))
+      # The launch waits, so the page's agent is still at work for the second ask.
+      Application.put_env(:hal_c2, :page_agent_launch, fn input ->
+        send(test, {:launched, input})
+        receive do: (:never -> {:ok, nil})
+      end)
 
       on_exit(fn ->
         Application.put_env(:hal_c2, :home, home)
@@ -146,6 +164,37 @@ defmodule HalC2.SpaceTest do
                Space.PageAgent.ask(space, page, "again", %{"attachments" => [image]}, target)
 
       assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == kept
+    end
+
+    test "an ask whose thread cannot start keeps no image", %{space: space, tmp_dir: dir} do
+      page = page!(space, "Roadmap")
+      home = Application.get_env(:hal_c2, :home)
+      Application.put_env(:hal_c2, :home, dir)
+      Application.put_env(:hal_c2, :page_agent_launch, fn _ -> {:error, "No provider."} end)
+
+      on_exit(fn ->
+        Application.put_env(:hal_c2, :home, home)
+        Application.delete_env(:hal_c2, :page_agent_launch)
+      end)
+
+      target = fn _ ->
+        {:ok, %{project_id: nil, model: nil, runtime_mode: nil, interaction_mode: nil}}
+      end
+
+      image = %{
+        "type" => "image",
+        "name" => "sketch.png",
+        "mimeType" => "image/png",
+        "dataUrl" =>
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII="
+      }
+
+      stream = Space.stream_id(space)
+      :ok = Streams.subscribe(stream, self(), nil)
+      {:ok, _} = Space.PageAgent.ask(space, page, "tidy", %{"attachments" => [image]}, target)
+      await_page_agent(stream, page, "failed")
+
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), "*")) == []
     end
   end
 
@@ -645,6 +694,89 @@ defmodule HalC2.SpaceTest do
       {:ok, block} = Space.insert_block(space, page, %{spec | "level" => 4})
       assert block["level"] == 4
       assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n#### Deep\n"}
+    end
+
+    test "a list item is indented and outdented by its depth, and only a list item has one",
+         %{space: space} do
+      {:ok, page} = Space.import_markdown(space, "# Plan\n\n- a\n    - b\n- c\n\nd\n")
+      {:ok, %{blocks: [_a, b, c, d]}} = Space.page(space, page["id"])
+      assert b["indent"] == 4
+
+      {:ok, c} = Space.edit_block(space, c["id"], %{"depth" => 1})
+      assert c["depth"] == 1
+      {:ok, b} = Space.edit_block(space, b["id"], %{"depth" => 0})
+      refute Map.has_key?(b, "depth") or Map.has_key?(b, "indent")
+      assert Space.export_markdown(space, page["id"]) == {:ok, "# Plan\n\n- a\n- b\n  - c\n\nd\n"}
+
+      assert {:error, :invalid, "Only a list item has a depth."} =
+               Space.edit_block(space, d["id"], %{"depth" => 1})
+
+      assert {:error, :invalid, _} = Space.edit_block(space, c["id"], %{"depth" => -1})
+    end
+
+    test "a numbered list starts where its first item says", %{space: space} do
+      page = page!(space, "Plan")
+      {:ok, one} = Space.insert_block(space, page, %{"kind" => "numbered", "text" => "a"})
+      {:ok, two} = Space.insert_block(space, page, %{"kind" => "numbered", "text" => "b"})
+      {:ok, one} = Space.edit_block(space, one["id"], %{"start" => 4})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n4. a\n5. b\n"}
+
+      {:ok, one} = Space.edit_block(space, one["id"], %{"start" => nil})
+      refute Map.has_key?(one, "start")
+
+      # An item that continues its list keeps a start for when it begins one.
+      {:ok, _} = Space.edit_block(space, two["id"], %{"start" => 7})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n1. a\n2. b\n"}
+      {:ok, _} = Space.delete_block(space, one["id"])
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n7. b\n"}
+
+      {:ok, bullet} =
+        Space.insert_block(space, page, %{"kind" => "bullet", "text" => "c", "start" => 2})
+
+      refute Map.has_key?(bullet, "start")
+
+      assert {:error, :invalid, "Only a numbered item has a start."} =
+               Space.edit_block(space, bullet["id"], %{"start" => 2})
+    end
+
+    test "a callout's alert is one of GitHub's, and only a callout has one", %{space: space} do
+      page = page!(space, "Plan")
+
+      {:ok, callout} =
+        Space.insert_block(space, page, %{"kind" => "callout", "text" => "Mind", "alert" => "tip"})
+
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n> [!TIP]\n> Mind\n"}
+      {:ok, callout} = Space.edit_block(space, callout["id"], %{"alert" => nil})
+      refute Map.has_key?(callout, "alert")
+
+      assert {:error, :invalid, _} =
+               Space.edit_block(space, callout["id"], %{"alert" => "danger"})
+
+      {:ok, paragraph} =
+        Space.insert_block(space, page, %{"kind" => "paragraph", "text" => "x", "alert" => "note"})
+
+      refute Map.has_key?(paragraph, "alert")
+
+      assert {:error, :invalid, "Only a callout has an alert."} =
+               Space.edit_block(space, paragraph["id"], %{"alert" => "note"})
+    end
+
+    test "a divider has no text", %{space: space} do
+      page = page!(space, "Plan")
+      {:ok, divider} = Space.insert_block(space, page, %{"kind" => "divider"})
+      assert divider["text"] == ""
+      assert {:error, :invalid, _} = Space.edit_block(space, divider["id"], %{"text" => "x"})
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{"kind" => "divider", "text" => "x"})
+
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n---\n"}
+
+      {:ok, _} = Space.insert_block(space, page, %{"kind" => "divider", "marker" => "* * *"})
+      assert Space.export_markdown(space, page) == {:ok, "# Plan\n\n---\n\n* * *\n"}
+
+      assert {:error, :invalid, _} =
+               Space.insert_block(space, page, %{"kind" => "divider", "marker" => "**"})
     end
 
     test "a link to a page the Space lacks is imported as a paragraph", %{space: space} do

@@ -163,6 +163,98 @@ Item {
             tryCompare(button, "iconName", "copy", 3000);
         }
 
+        // What the MC draws for a small flowchart, as MermaidController keeps it.
+        function drawnFlowchart() {
+            const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" fill="#336699"/></svg>';
+            return { status: "drawn", kind: "flowchart", url: "data:image/svg+xml;base64," + Qt.btoa(Array.from(svg, c => c.charCodeAt(0))), width: 120, height: 40 };
+        }
+
+        function test_aMermaidBlockIsDrawnOnceTheMcAnswers() {
+            Diagrams.reset();
+            const source = "flowchart LR\n  A --> B";
+            const md = make("Here:\n\n```mermaid\n" + source + "\n```");
+            const status = findChild(md, "mermaidStatus");
+            verify(status.visible, "it says the diagram is being drawn");
+            compare(status.text, "Drawing the diagram…");
+            verify(findChild(md, "codeText").visible, "the source shows until it is drawn");
+            verify(("dark\n" + source) in Diagrams.asked, "asked for in the client's theme");
+
+            Diagrams.answer(source, "dark", drawnFlowchart());
+            const image = findChild(md, "mermaidImage");
+            verify(image.visible);
+            tryCompare(image, "status", Image.Ready);
+            compare(image.width, 120);
+            verify(!findChild(md, "codeText").visible, "the picture takes the code's place");
+            verify(!status.visible);
+
+            // Its source is one switch away, and copies.
+            const toggle = findChild(md, "diagramSource");
+            verify(toggle.visible);
+            // Placed in its row on the next polish.
+            verify(waitForPolish(toggle.parent));
+            mouseClick(toggle);
+            verify(findChild(md, "codeText").visible);
+            verify(!image.visible);
+            mouseClick(findChild(md, "copyCode"));
+            compare(clipboardText(), source);
+            mouseClick(toggle);
+            verify(image.visible);
+        }
+
+        function test_aMermaidMistakeShowsTheSourceAndWhereItIs() {
+            Diagrams.reset();
+            const source = "flowchart LR\n  A[open --> B";
+            const md = make("```mermaid\n" + source + "\n```");
+            Diagrams.answer(source, "dark", { status: "invalid", kind: "flowchart", reason: "An unclosed bracket.", line: 2, column: 3 });
+            verify(findChild(md, "codeText").visible);
+            const status = findChild(md, "mermaidStatus");
+            verify(status.visible);
+            compare(status.text, "Line 2: An unclosed bracket.");
+            verify(!findChild(md, "diagramSource").visible, "nothing to switch to");
+            verify(!findChild(md, "mermaidRetry").visible, "a mistake is not asked for again");
+        }
+
+        function test_aDiagramTheMcCouldNotDrawCanBeAskedAgain() {
+            Diagrams.reset();
+            const source = "sequenceDiagram\n  A->>B: hi";
+            const md = make("```mermaid\n" + source + "\n```");
+            Diagrams.answer(source, "dark", { status: "failed", kind: "", reason: "The MC could not be reached to draw this diagram." });
+            compare(findChild(md, "mermaidStatus").text, "The MC could not be reached to draw this diagram.");
+            const retry = findChild(md, "mermaidRetry");
+            // Beside the note once the row is laid out.
+            tryVerify(() => retry.mapToItem(md, 0, 0).x > 100);
+            mouseClick(retry);
+            compare(Diagrams.retried, ["dark\n" + source]);
+        }
+
+        function test_aDiagramIsDrawnAgainInTheNewTheme() {
+            Diagrams.reset();
+            const source = "flowchart LR\n  A --> B";
+            const md = make("```mermaid\n" + source + "\n```");
+            Diagrams.answer(source, "dark", drawnFlowchart());
+            verify(findChild(md, "mermaidImage").visible);
+            Theme.appearance = "light";
+            try {
+                verify(("light\n" + source) in Diagrams.asked, "asked for in the new theme");
+                verify(!findChild(md, "mermaidImage").visible, "the dark picture is not kept");
+                compare(findChild(md, "mermaidStatus").text, "Drawing the diagram…");
+            } finally {
+                Theme.appearance = "dark";
+            }
+        }
+
+        function test_aMermaidBlockBeingWrittenIsNotDrawnYet() {
+            Diagrams.reset();
+            const md = make("Look:\n\n```mermaid\nflowchart LR\n  A --> B", { streaming: true });
+            const code = findChild(md, "markdownCode");
+            verify(code.code.length > 0);
+            verify(!findChild(md, "mermaidStatus").visible, "nothing claims it is being drawn");
+            compare(Object.keys(Diagrams.asked).length, 0, "nothing is asked while the fence is open");
+            md.text += "\n```";
+            verify(findChild(md, "mermaidStatus").visible);
+            compare(Object.keys(Diagrams.asked), ["dark\nflowchart LR\n  A --> B"]);
+        }
+
         function test_wrapToggleSwitchesLineWrap() {
             const md = make("```\n" + "word ".repeat(60) + "\n```");
             const toggle = findChild(md, "wrapCode");
