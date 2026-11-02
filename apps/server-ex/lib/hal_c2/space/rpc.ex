@@ -98,12 +98,15 @@ defmodule HalC2.Space.Rpc do
     do: page(Schedule.remove(s, p))
 
   defp call("block.insert", %{"spaceId" => s, "pageId" => p, "kind" => _} = i) do
-    spec = Map.take(i, ~w(kind text checked linkedPageId imageId level))
+    spec = Map.take(i, ~w(kind text checked linkedPageId imageId level table language))
     block(Space.insert_block(s, p, spec, Map.get(i, "afterBlockId", :last)))
   end
 
-  defp call("block.update", %{"spaceId" => s, "blockId" => b, "text" => text}),
-    do: block(Space.update_block(s, b, text))
+  defp call("block.update", %{"spaceId" => s, "blockId" => b} = i),
+    do: block(Space.edit_block(s, b, Map.take(i, ~w(text level language))))
+
+  defp call("block.editTable", %{"spaceId" => s, "blockId" => b, "edit" => edit}),
+    do: block(Space.edit_table(s, b, edit))
 
   defp call("block.setChecked", %{"spaceId" => s, "blockId" => b, "checked" => checked}),
     do: block(Space.set_checked(s, b, checked))
@@ -185,7 +188,7 @@ defmodule HalC2.Space.Rpc do
     page.createFromThread page.history page.version page.restoreVersion
     page.schedule.set page.schedule.setEnabled page.schedule.runNow page.schedule.remove
     page.askAgent page.stopAgent page.dismissAgent block.insert block.update block.setChecked
-    block.move block.delete block.visualize comment.add comment.resolve comment.reopen
+    block.editTable block.move block.delete block.visualize comment.add comment.resolve comment.reopen
     deck.create deck.createFromPage deck.rename deck.trash deck.restore deck.delete
     slide.insert slide.update slide.move slide.delete image.add image.generate image.trash
     image.restore image.delete image.providers)

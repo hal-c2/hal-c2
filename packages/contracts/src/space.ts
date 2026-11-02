@@ -82,7 +82,8 @@ export type SpacePage = typeof SpacePage.Type;
 /**
  * The kinds of block that can be written by hand. A `raw` block is Markdown a page does
  * not model, kept as its source and shown as written, so a page imported from Markdown
- * exports exactly as it was.
+ * exports exactly as it was. A `table`'s text is its Markdown, written by the MC; a
+ * `code` block's text is the code.
  */
 export const SpaceWritableBlockKind = Schema.Literals([
   "paragraph",
@@ -91,6 +92,8 @@ export const SpaceWritableBlockKind = Schema.Literals([
   "callout",
   "subpage_link",
   "image",
+  "table",
+  "code",
   "raw",
 ]);
 export type SpaceWritableBlockKind = typeof SpaceWritableBlockKind.Type;
@@ -147,6 +150,34 @@ export type SpaceChart = typeof SpaceChart.Type;
 
 export const SpaceHeadingLevel = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 6 }));
 
+/** How a table's column aligns; null is as the reader likes. */
+export const SpaceTableAlign = Schema.NullOr(Schema.Literals(["left", "center", "right"]));
+export type SpaceTableAlign = typeof SpaceTableAlign.Type;
+
+/**
+ * A table: the header row first in `rows`, every row a cell per column, each cell one
+ * line of inline Markdown. `widths` (how wide its Markdown pads each column) and `tight`
+ * (its rule row has no spaces) keep the Markdown as it was written; clients do not show
+ * them.
+ */
+export const SpaceTable = Schema.Struct({
+  align: Schema.Array(SpaceTableAlign),
+  rows: Schema.Array(Schema.Array(Schema.String)),
+  widths: Schema.Array(Schema.Int),
+  tight: Schema.optional(Schema.Boolean),
+});
+export type SpaceTable = typeof SpaceTable.Type;
+
+/** What `space.block.insert` takes for a table: its cells, and how its columns align. */
+export const SpaceTableInput = Schema.Struct({
+  rows: Schema.Array(Schema.Array(Schema.String)),
+  align: Schema.optional(Schema.Array(SpaceTableAlign)),
+});
+export type SpaceTableInput = typeof SpaceTableInput.Type;
+
+/** A code block's language: one word, such as `elixir` or `mermaid`. */
+export const SpaceCodeLanguage = Schema.String.check(Schema.isPattern(/^\S+$/u));
+
 export const SpaceBlock = Schema.Struct({
   id: SpaceBlockId,
   pageId: SpacePageId,
@@ -167,6 +198,16 @@ export const SpaceBlock = Schema.Struct({
   chart: Schema.optional(SpaceChart),
   /** The image an `image` block shows; its `text` is the caption. Only on image blocks. */
   imageId: Schema.optional(SpaceImageId),
+  /** A `table` block's cells. Its `text` is the table's Markdown. */
+  table: Schema.optional(SpaceTable),
+  /** A `code` block's language, when it has one. */
+  language: Schema.optional(Schema.String),
+  /**
+   * The fence a `code` block imported from Markdown was written with, when it is not
+   * three backticks, and the rest of its line after the language. Clients do not show them.
+   */
+  fence: Schema.optional(Schema.String),
+  info: Schema.optional(Schema.String),
   /**
    * Sorts the page's blocks: compare as plain strings. A block inserted or moved
    * gets a key between its neighbours', so no other block changes.
@@ -309,6 +350,10 @@ export const SpaceSiteBlock = Schema.Struct({
   kind: SpaceBlockKind,
   text: Schema.String,
   checked: Schema.optional(Schema.Boolean),
+  table: Schema.optional(
+    Schema.Struct({ align: SpaceTable.fields.align, rows: SpaceTable.fields.rows }),
+  ),
+  language: Schema.optional(Schema.String),
 });
 export type SpaceSiteBlock = typeof SpaceSiteBlock.Type;
 
@@ -427,16 +472,58 @@ export const SpaceBlockInsertInput = Schema.Struct({
   imageId: Schema.optional(SpaceImageId),
   /** For `heading`: 1 to 6, 2 when left out. */
   level: Schema.optional(SpaceHeadingLevel),
+  /** Required for `table`. Its `text` is written from it. */
+  table: Schema.optional(SpaceTableInput),
+  /** For `code`. */
+  language: Schema.optional(SpaceCodeLanguage),
   afterBlockId: AfterBlockId,
 });
 export type SpaceBlockInsertInput = typeof SpaceBlockInsertInput.Type;
 
+/**
+ * Changes what is given in one step, or nothing. A table's `text` is read as a table,
+ * kept as written when it is in the table's own form; `level` is a heading's, and
+ * `language` a code block's, null for none.
+ */
 export const SpaceBlockUpdateInput = Schema.Struct({
   spaceId: SpaceId,
   blockId: SpaceBlockId,
-  text: Schema.String,
+  text: Schema.optional(Schema.String),
+  level: Schema.optional(SpaceHeadingLevel),
+  language: Schema.optional(Schema.NullOr(SpaceCodeLanguage)),
 });
 export type SpaceBlockUpdateInput = typeof SpaceBlockUpdateInput.Type;
+
+/**
+ * One edit of a table, where it stands. Rows count from the header, row 0, which stays;
+ * `insertRow` puts a blank row at `at`, 1 or more. A table keeps one column at least.
+ */
+export const SpaceTableEdit = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("setCell"),
+    row: Schema.Int,
+    column: Schema.Int,
+    text: Schema.String,
+  }),
+  Schema.Struct({ type: Schema.Literal("insertRow"), at: Schema.Int }),
+  Schema.Struct({ type: Schema.Literal("deleteRow"), row: Schema.Int }),
+  Schema.Struct({
+    type: Schema.Literal("insertColumn"),
+    at: Schema.Int,
+    align: Schema.optional(SpaceTableAlign),
+  }),
+  Schema.Struct({ type: Schema.Literal("deleteColumn"), column: Schema.Int }),
+  Schema.Struct({ type: Schema.Literal("setAlign"), column: Schema.Int, align: SpaceTableAlign }),
+]);
+export type SpaceTableEdit = typeof SpaceTableEdit.Type;
+
+/** Edits a `table` block's cells; its `text` is written again, only the rows it changes. */
+export const SpaceBlockEditTableInput = Schema.Struct({
+  spaceId: SpaceId,
+  blockId: SpaceBlockId,
+  edit: SpaceTableEdit,
+});
+export type SpaceBlockEditTableInput = typeof SpaceBlockEditTableInput.Type;
 
 /** Ticks or unticks a checklist item. */
 export const SpaceBlockSetCheckedInput = Schema.Struct({

@@ -325,6 +325,7 @@ import {
   SpaceBlockInsertInput,
   SpaceBlockMoveInput,
   SpaceBlockResult,
+  SpaceBlockEditTableInput,
   SpaceBlockSetCheckedInput,
   SpaceBlockUpdateInput,
   SpaceCommentAddInput,
@@ -572,6 +573,7 @@ export const WS_METHODS = {
   spaceBlockInsert: "space.block.insert",
   spaceBlockUpdate: "space.block.update",
   spaceBlockSetChecked: "space.block.setChecked",
+  spaceBlockEditTable: "space.block.editTable",
   spaceBlockMove: "space.block.move",
   spaceBlockDelete: "space.block.delete",
   spaceBlockVisualize: "space.block.visualize",
@@ -2009,6 +2011,12 @@ const WsSpaceBlockSetCheckedRpc = Rpc.make(WS_METHODS.spaceBlockSetChecked, {
   error: SpaceRpcError,
 });
 
+const WsSpaceBlockEditTableRpc = Rpc.make(WS_METHODS.spaceBlockEditTable, {
+  payload: SpaceBlockEditTableInput,
+  success: SpaceBlockResult,
+  error: SpaceRpcError,
+});
+
 const WsSpaceBlockMoveRpc = Rpc.make(WS_METHODS.spaceBlockMove, {
   payload: SpaceBlockMoveInput,
   success: SpaceBlockResult,
@@ -2242,6 +2250,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpaceBlockInsertRpc,
   WsSpaceBlockUpdateRpc,
   WsSpaceBlockSetCheckedRpc,
+  WsSpaceBlockEditTableRpc,
   WsSpaceBlockMoveRpc,
   WsSpaceBlockDeleteRpc,
   WsSpaceBlockVisualizeRpc,

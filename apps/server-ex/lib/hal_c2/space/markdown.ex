@@ -5,8 +5,10 @@ defmodule HalC2.Space.Markdown do
   A page's Markdown is its title as a `# ` heading on top, then its blocks. Headings are
   `#` to `######` by their `level` (2 when a block has none), checklist items `- [ ]`
   and `- [x]`, callouts `> ` quotes, a link to a subpage `[Title](#pageId)` and an image
-  `![Caption](space-image:imageId)`. A run of checklist items is one list; other blocks
-  are apart by a blank line.
+  `![Caption](space-image:imageId)`. A table is written as `HalC2.Space.Table` says, and
+  code between fences: three backticks unless the block keeps another `fence`, then its
+  `language` and the rest of the fence's line as `info`. A run of checklist items is one
+  list; other blocks are apart by a blank line.
 
   Anything else, and anything written in a way those forms would not give back exactly,
   is a `raw` block: its Markdown source, kept as written. A block whose blank lines
@@ -26,7 +28,7 @@ defmodule HalC2.Space.Markdown do
   draws a chart.
   """
 
-  alias HalC2.Space.Chart
+  alias HalC2.Space.{Chart, Table}
 
   @doc "The Markdown of a page; `title_of` names the page a subpage link points at."
   @spec export(map, [map], (String.t() -> String.t() | nil)) :: String.t()
@@ -79,10 +81,45 @@ defmodule HalC2.Space.Markdown do
 
   def render(%{"kind" => "chart", "chart" => chart}, _), do: Chart.markdown(chart)
 
+  def render(%{"kind" => "table", "table" => table}, _), do: Table.markdown(table)
+
+  def render(%{"kind" => "code", "text" => text} = block, _) do
+    lines = if text == "", do: [], else: String.split(text, "\n")
+    fence = fence_for(block["fence"] || "```", lines)
+
+    Enum.join(
+      [fence <> (block["language"] || "") <> (block["info"] || "") | lines] ++ [fence],
+      "\n"
+    )
+  end
+
   def render(%{"kind" => "image", "imageId" => id, "text" => text}, _),
     do: "![#{String.replace(text, "\n", " ")}](space-image:#{id})"
 
   def render(%{"text" => text}, _), do: text
+
+  # A fence no line of the code closes: longer than any that would.
+  defp fence_for(fence, lines) do
+    if Enum.any?(lines, &closes_fence?(&1, fence)),
+      do: fence_for(fence <> String.first(fence), lines),
+      else: fence
+  end
+
+  @doc """
+  Whether a code block's `fence`, `language` and `info` write a line that opens it again:
+  three or more backticks or tildes, a language of no spaces, and the rest of the line,
+  with no backtick after backticks.
+  """
+  def code?(block) do
+    fence = block["fence"] || "```"
+    {language, info} = {block["language"], block["info"]}
+
+    Regex.match?(~r/^(`{3,}|~{3,})$/, fence) and
+      (is_nil(language) or (is_binary(language) and Regex.match?(~r/^\S+$/u, language))) and
+      (is_nil(info) or (is_binary(info) and not String.contains?(info, ["\n", "\r"]))) and
+      (is_nil(info) or language != nil) and
+      fence(fence <> (language || "") <> (info || "")) == fence
+  end
 
   @doc "A heading's level, 1 to 6; a heading written before levels is a 2."
   def level(%{"level" => level}) when level in 1..6, do: level
@@ -139,7 +176,7 @@ defmodule HalC2.Space.Markdown do
         front_matter(lines)
 
       fence = fence(line) ->
-        closed(lines, &closes_fence?(&1, fence))
+        closed(lines, &closes_fence?(&1, fence), :code)
 
       String.trim(line) == "$$" ->
         closed(lines, &(String.trim(&1) == "$$"))
@@ -159,7 +196,7 @@ defmodule HalC2.Space.Markdown do
         {:heading, [line], rest}
 
       table?(lines) ->
-        until_blank(:raw, lines)
+        until_blank(:table, lines)
 
       Regex.match?(~r/^ {0,3}>/, line) ->
         quoted(rest, [line])
@@ -179,10 +216,10 @@ defmodule HalC2.Space.Markdown do
   end
 
   # Lines up to and including the first after the opener that `close?` holds for, or
-  # to the last line that is not blank when none does.
-  defp closed([open | rest], close?) do
+  # to the last line that is not blank when none does, which is raw.
+  defp closed([open | rest], close?, what \\ :raw) do
     case Enum.split_while(rest, &(not close?.(&1))) do
-      {inside, [close | rest]} -> {:raw, [open | inside] ++ [close], rest}
+      {inside, [close | rest]} -> {what, [open | inside] ++ [close], rest}
       {inside, []} -> unclosed([open | inside])
     end
   end
@@ -409,9 +446,39 @@ defmodule HalC2.Space.Markdown do
   end
 
   defp block(:paragraph, lines), do: new("paragraph", Enum.join(lines, "\n"))
+
+  defp block(:table, lines) do
+    case Table.read(lines) do
+      nil -> raw(lines)
+      table -> "table" |> new(Table.markdown(table)) |> Map.put("table", table)
+    end
+  end
+
+  # Code fenced from the start of the line, its language the first word after the fence
+  # and anything after that its info. A fence indented or with a space before the
+  # language is kept as written.
+  defp block(:code, [open | rest] = lines) do
+    {inside, _close} = Enum.split(rest, -1)
+
+    case Regex.run(~r/^(`{3,}|~{3,})(?:(\S+)(.*))?$/u, open) do
+      [_, fence | info] ->
+        "code"
+        |> new(Enum.join(inside, "\n"))
+        |> put_unless("fence", fence, "```")
+        |> put_unless("language", Enum.at(info, 0), nil)
+        |> put_unless("info", Enum.at(info, 1) || "", "")
+
+      nil ->
+        raw(lines)
+    end
+  end
+
   defp block(:raw, lines), do: raw(lines)
 
   defp raw(lines), do: new("raw", Enum.join(lines, "\n"))
+
+  defp put_unless(block, _key, value, value), do: block
+  defp put_unless(block, key, value, _usual), do: Map.put(block, key, value)
 
   defp trim_one(" " <> text), do: text
   defp trim_one(text), do: text
