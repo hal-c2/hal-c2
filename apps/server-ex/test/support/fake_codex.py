@@ -404,6 +404,13 @@ for line in sys.stdin:
         if text.startswith("write-all "):
             for name in text.split()[1:]:
                 open(name, "w").write(text + "\n")
+        # 'put NAME "text"' writes exactly the JSON string given to NAME; "remove NAME" deletes it.
+        if text.startswith("put "):
+            _, name, contents = text.split(" ", 2)
+            os.makedirs(os.path.dirname(name) or ".", exist_ok=True)
+            open(name, "w", newline="").write(json.loads(contents))
+        if text.startswith("remove "):
+            os.remove(text.split()[1])
         # "fail" ends the turn as failed.
         if text.startswith("fail"):
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "failed", "error": {"message": "the turn failed"}}}})

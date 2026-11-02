@@ -37,12 +37,33 @@ defmodule HalC2.Workspace do
     {:ok, nil}
   end
 
-  @doc "Forgets a root's cached entries (a turn may have changed its files)."
+  @doc """
+  Forgets a root's cached entries (a turn may have changed its files), and tells the
+  Space pages that are files of it to look again (`HalC2.Space.Files`).
+  """
   def invalidate(root) do
+    HalC2.Space.Files.changed(root)
+    forget(root)
+  end
+
+  defp forget(root) do
     :ets.delete(@table, Path.expand(root))
     :ok
   rescue
     ArgumentError -> :ok
+  end
+
+  @doc """
+  The paths of the files under `root` as they are now, relative to it and not cached:
+  what the entries list, but only files that are there.
+  """
+  def files(root) do
+    root = Path.expand(root)
+    {entries, _truncated} = scan(root)
+
+    for %{"kind" => "file", "path" => path} <- entries,
+        File.regular?(Path.join(root, path)),
+        do: path
   end
 
   # --- RPCs ------------------------------------------------------------------------

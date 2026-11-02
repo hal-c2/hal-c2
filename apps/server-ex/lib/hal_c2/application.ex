@@ -67,6 +67,8 @@ defmodule HalC2.Application do
       HalC2.WorktreeSetup,
       HalC2.Space.Presence,
       HalC2.ScheduledTasks,
+      # Pages that are project files follow them, from what changed while it was stopped.
+      HalC2.Space.Files,
       HalC2.ProjectClones,
       HalC2.Preview,
       # Dev servers on another MC, reached from this machine's browser.
