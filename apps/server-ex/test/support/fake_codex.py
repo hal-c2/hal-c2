@@ -636,8 +636,13 @@ for line in sys.stdin:
             if outcome == "reset":
                 open(os.environ["FAKE_CODEX_CONSUME_LOG"] + ".reset", "w").close()
             send({"id": mid, "result": {"outcome": outcome}})
+    # A "terminal-stays" file in the working directory has the terminal outlive the
+    # terminate, still listed.
     elif method == "thread/backgroundTerminals/terminate":
-        send({"id": mid, "result": {"terminated": True}})
+        send({"id": mid, "result": {"terminated": not os.path.exists("terminal-stays")}})
+    elif method == "thread/backgroundTerminals/list":
+        stays = [{"processId": "4275"}] if os.path.exists("terminal-stays") else []
+        send({"id": mid, "result": {"data": stays, "nextCursor": None}})
     elif method == "turn/interrupt":
         if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
             interrupted_turns.add(params["turnId"])

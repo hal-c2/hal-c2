@@ -49,10 +49,14 @@ defmodule HalC2.Application do
       HalC2.MachineFiles,
       # Turns this MC was running when it stopped end as interrupted.
       %{id: :recovery, start: {HalC2.Orchestration.Recovery, :start_link, []}},
+      # Stopped after the runtimes: a clean stop settles the turns they leave.
+      HalC2.Orchestration.Recovery.Shutdown,
       HalC2.Orchestration.TurnWatch,
       # The recorded side effects of accepted commands, replayed or cancelled
       # for what the last boot left unfinished.
       HalC2.Orchestration.Effects,
+      # Wakes threads for work their provider finished in the background.
+      HalC2.Orchestration.Wake,
       Supervisor.child_spec({Task, &HalC2.Search.backfill/0}, id: :search_backfill),
       {Registry, keys: :unique, name: HalC2.Codex.Registry},
       {Registry, keys: :unique, name: HalC2.Claude.Registry},

@@ -45,6 +45,7 @@ defmodule HalC2.Test.Mc do
     start_supervised!(HalC2.Subprocess.Orphans)
     web = start_supervised!(Supervisor.child_spec(HalC2.Web, id: HalC2.Web))
     start_supervised!(HalC2.RuntimeRecord)
+    start_supervised!(HalC2.Orchestration.Wake)
 
     {:ok, {_ip, port}} = ThousandIsland.listener_info(web)
     # The port it got, as a configured MC knows its own (`mix hal_c2.pair` reads it).
@@ -76,6 +77,9 @@ defmodule HalC2.Test.Mc do
         do: ExUnit.Callbacks.stop_supervised(Supervisor.child_spec(child, []).id)
 
     for child <- [
+          # Settles what the runtimes left, as a clean stop does, where a step started it.
+          HalC2.Orchestration.Recovery.Shutdown,
+          HalC2.Orchestration.Wake,
           HalC2.RuntimeRecord,
           HalC2.Web,
           HalC2.Subprocess.Orphans,

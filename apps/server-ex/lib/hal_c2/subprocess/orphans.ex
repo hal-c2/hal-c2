@@ -18,11 +18,11 @@ defmodule HalC2.Subprocess.Orphans do
   SIGKILL rather than a polite signal: once `kill` returns the program runs no more
   code, so nothing the boot resumes races it.
 
-  The group is as far as the kill reaches. A descendant that started a session or
-  group of its own (`setsid`, `setpgid`: a shell on a pty, a `node` child spawned
-  `detached`) is not in it and keeps running, a dev server holding its port with it.
-  The agent that would resume is dead either way. Reaching those would take a cgroup,
-  or the ancestry recorded at spawn (hal-c2/hal-c2#387).
+  A descendant that started a session or group of its own (`setsid`, `setpgid`: a
+  shell on a pty, a `node` child spawned `detached`) is not in that group. It still
+  carries the program's mark (below), so once the program is gone the boot kills every
+  process with the mark, whatever its group (hal-c2/hal-c2#387). One that stripped the
+  mark from its environment, or any of them on macOS, keeps running.
 
   A program that had already exited by the boot (a CLI that stopped on its closed
   stdin) may have left background commands in its group. A leader that exited but is
@@ -31,7 +31,7 @@ defmodule HalC2.Subprocess.Orphans do
   id alone cannot be told from a later group's: a daemon that reused the pid and
   called `setsid` has the same one. So each program runs with a random mark in its
   environment (`HAL_C2_PROGRAM_ID`), which its record names and its descendants
-  inherit, and the boot kills, one pid at a time, the processes in that group whose
+  inherit, and the boot kills, one pid at a time, the processes whose
   `/proc/<pid>/environ` holds the mark. A command started with the mark stripped from
   its environment is not told from a stranger and keeps running. macOS offers no
   `/proc`, so there such a record is dropped with its commands left running
@@ -669,7 +669,7 @@ defmodule HalC2.Subprocess.Orphans do
       # It exited since the last read, and nothing was signalled, so what it left in
       # its group is still there.
       {_, @not_that_process} ->
-        sweep(path, pid, mark)
+        sweep(path, :any, mark)
 
       {_, 0} ->
         # Exit 0 proves the signal was delivered, not that the program died:
@@ -679,8 +679,8 @@ defmodule HalC2.Subprocess.Orphans do
         # group may have survived); nothing signals an outside process's
         # death, so that is awaited bounded rather than read once.
         if await_left(pid, started) do
-          File.rm(path)
-          :killed
+          # What it ran in a session of its own is outside the group just killed.
+          with :gone <- sweep(path, :any, mark), do: :killed
         else
           Logger.warning(
             "kill of #{pid}, which an earlier MC left running, was delivered but it is still there"
@@ -714,8 +714,7 @@ defmodule HalC2.Subprocess.Orphans do
             :kept
 
           _gone_or_reused ->
-            File.rm(path)
-            :killed
+            with :gone <- sweep(path, :any, mark), do: :killed
         end
     end
   end
@@ -791,7 +790,7 @@ defmodule HalC2.Subprocess.Orphans do
             :kept
 
           _gone_or_reused ->
-            sweep(path, pid, record["mark"])
+            sweep(path, :any, record["mark"])
         end
     end
   end
@@ -801,7 +800,8 @@ defmodule HalC2.Subprocess.Orphans do
     :gone
   end
 
-  # The program is gone: kills what it left in its group, until none is left. With no
+  # The program is gone: kills what it left in its group (`:any` for every group, as
+  # the mark alone names the program's descendants), until none is left. With no
   # `/proc` to read marks from, or no mark (a record from before marks), nothing can
   # be told from a stranger, so nothing is signalled.
   @doc """
@@ -837,7 +837,7 @@ defmodule HalC2.Subprocess.Orphans do
 
       _left when tries == 0 ->
         Logger.warning(
-          "commands of group #{group}, which an earlier MC left, are still there or unreadable"
+          "commands of #{if group == :any, do: "a program", else: "group #{group}"}, which an earlier MC left, are still there or unreadable"
         )
 
         :kept
@@ -890,6 +890,9 @@ defmodule HalC2.Subprocess.Orphans do
   # `hidepid`, which stays that way) must not keep the record at every boot. `marked?`
   # is a function so most processes, in other groups, have no environ read.
   def member({:ok, {state, _started, group}}, group, marked?) when state not in ["Z", "X"],
+    do: if(marked?.(), do: :member, else: :stranger)
+
+  def member({:ok, {state, _started, _group}}, :any, marked?) when state not in ["Z", "X"],
     do: if(marked?.(), do: :member, else: :stranger)
 
   def member(:unknown, _group, marked?), do: if(marked?.(), do: :unreadable, else: :stranger)
