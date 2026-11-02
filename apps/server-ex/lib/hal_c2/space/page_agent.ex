@@ -141,22 +141,40 @@ defmodule HalC2.Space.PageAgent do
   the crash lost on the way. `continued` are the threads about to go on, whose runs do not
   exist yet. A stop the crash cut short is finished here, as nothing else will repeat it:
   what the restart put back in the queue goes with it.
+
+  `started` is when this MC started, taken before it listened: an ask taken since then
+  has a launch of its own, which may still be writing its thread, and is left to it.
   """
-  def reconcile(continued \\ []) do
+  def reconcile(continued \\ [], started \\ nil) do
     for %{"id" => space_id} <- StreamState.list(Streams.state(Space.index()), "space"),
-        %{"pageId" => page_id, "threadId" => thread_id, "status" => status} <- working(space_id),
+        %{"pageId" => page_id, "threadId" => thread_id, "status" => status} = agent <-
+          working(space_id),
+        asked_before?(agent, started),
         status == "stopping" or thread_id not in continued do
       retrying(thread_id, fn ->
         if status == "stopping", do: stop_thread(thread_id)
         settle(space_id, page_id, thread_id)
       end)
 
-      # No launch is under way at a start, so one with no thread never will be.
+      # No launch from before this start is under way, so one with no thread never will be.
       drop_unstarted(thread_id)
     end
 
     :ok
   end
+
+  # The listener comes up after `started` was taken, so no ask of this MC's shares its
+  # millisecond.
+  defp asked_before?(_agent, nil), do: true
+
+  defp asked_before?(%{"startedAt" => at}, started) when is_binary(at) do
+    case DateTime.from_iso8601(at) do
+      {:ok, at, _} -> DateTime.compare(at, started) != :gt
+      _ -> true
+    end
+  end
+
+  defp asked_before?(_agent, _started), do: true
 
   @doc "Whether the page `thread_id` works on asked it to stop: a restart does not start it again."
   def stopping?(thread_id) do

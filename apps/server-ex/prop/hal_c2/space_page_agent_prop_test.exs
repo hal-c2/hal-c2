@@ -22,7 +22,8 @@ defmodule HalC2.SpacePageAgentPropTest do
   - nothing can leave an agent working once its thread has nothing left to do: a deleted
     or moved thread settles it with the reason, a move given up reports what it held
     back, and the reconciliation settles every lost launch and report, but never a run
-    still going, a thread moving or one about to continue;
+    still going, a thread moving or one about to continue, nor an ask taken since the MC
+    started, whose launch may still be under way;
   - a queued run held for the user is not work: it does not keep the page working or
     decide how the agent ended, and neither does one the user cancelled;
   - background work its run left keeps an agent working until it ends, unless a stop was
@@ -76,6 +77,7 @@ defmodule HalC2.SpacePageAgentPropTest do
         Application.put_env(:hal_c2, :page_agent_launch, &fake_thread(&1, test))
         {:ok, space} = Space.create("Prop")
         Process.put(:space, space["id"])
+        Process.put(:started, nil)
         Process.put(:names, %{})
         Process.put(:threads, %{})
         {history, state, result} = run_commands(__MODULE__, cmds)
@@ -95,9 +97,11 @@ defmodule HalC2.SpacePageAgentPropTest do
   # wrote, said, run, moving}: it wrote as it edits, and says edited once it ends; said is
   # whether it gave a reason; run is what its run is (nil before a launch that never
   # came); moving is whether its thread is in a move. asks counts this page's threads, so
-  # a report can name an old one. image is whether its ask sent one.
-  # images counts the images saved for the threads of asks.
-  def initial_state, do: %{pages: %{}, images: 0}
+  # a report can name an old one. image is whether its ask sent one. fresh is whether
+  # it was asked since the MC last started, which the reconciliation leaves alone.
+  # images counts the images saved for the threads of asks; started is whether the MC
+  # has a start the reconciliation goes by.
+  def initial_state, do: %{pages: %{}, images: 0, started: false}
 
   def command(s) do
     pages = Map.keys(s.pages)
@@ -137,12 +141,18 @@ defmodule HalC2.SpacePageAgentPropTest do
             {1, {:call, __MODULE__, :delete, [elements(pages)]}}
           ]
         ) ++
-        [{1, {:call, __MODULE__, :restart, []}}, {2, {:call, __MODULE__, :reconcile, []}}]
+        [
+          {1, {:call, __MODULE__, :restart, []}},
+          {1, {:call, __MODULE__, :start, []}},
+          {2, {:call, __MODULE__, :reconcile, []}}
+        ]
     )
   end
 
   def precondition(s, {:call, _, :create_page, [name]}), do: not Map.has_key?(s.pages, name)
-  def precondition(_s, {:call, _, cmd, []}) when cmd in [:restart, :reconcile], do: true
+
+  def precondition(_s, {:call, _, cmd, []}) when cmd in [:restart, :start, :reconcile],
+    do: true
 
   def precondition(s, {:call, _, :edit, [name]}),
     do: going?(s, name) and not s.pages[name].trashed
@@ -220,7 +230,7 @@ defmodule HalC2.SpacePageAgentPropTest do
         {:invalid, s, 0}
 
       true ->
-        asked = put(s, name, %{page | asks: page.asks + 1, agent: agent("running", image)})
+        asked = put(s, name, %{page | asks: page.asks + 1, agent: agent("running", image, s)})
         {:ok, %{asked | images: s.images + if(image, do: 1, else: 0)}, 1}
     end
   end
@@ -237,7 +247,7 @@ defmodule HalC2.SpacePageAgentPropTest do
         {:invalid, s, 0}
 
       true ->
-        asked = put(s, name, %{page | asks: page.asks + 1, agent: agent(nil, image)})
+        asked = put(s, name, %{page | asks: page.asks + 1, agent: agent(nil, image, s)})
         {:ok, %{asked | images: s.images + if(image, do: 1, else: 0)}, 1}
     end
   end
@@ -254,7 +264,7 @@ defmodule HalC2.SpacePageAgentPropTest do
         {:invalid, s, 0}
 
       true ->
-        failed = %{agent(nil, false) | status: "failed", said: true}
+        failed = %{agent(nil, false, s) | status: "failed", said: true}
         {:ok, put(s, name, %{page | asks: page.asks + 1, agent: failed}), 1}
     end
   end
@@ -366,11 +376,23 @@ defmodule HalC2.SpacePageAgentPropTest do
 
   defp step(s, :restart, []), do: {:ok, s, 0}
 
+  # Every ask so far was before this start.
+  defp step(s, :start, []) do
+    pages =
+      Map.new(s.pages, fn
+        {name, %{agent: %{} = agent} = page} -> {name, %{page | agent: %{agent | fresh: false}}}
+        other -> other
+      end)
+
+    {:ok, %{s | pages: pages, started: true}, 0}
+  end
+
   # A thread about to go on is left, whatever else settles, unless it was asked to stop.
   defp reconcile(s, continuing) do
     next =
       for {name, _} <- s.pages,
           active?(s, name),
+          not s.pages[name].agent.fresh,
           name != continuing or s.pages[name].agent.status == "stopping",
           reduce: s do
         acc -> if stops_now?(acc.pages[name].agent), do: run_over(acc, name), else: acc
@@ -379,9 +401,10 @@ defmodule HalC2.SpacePageAgentPropTest do
     {:ok, next, if(next == s, do: 0, else: 1)}
   end
 
-  defp agent(run, image) do
+  defp agent(run, image, s) do
     %{
       image: image,
+      fresh: s.started,
       status: "running",
       edited: false,
       wrote: false,
@@ -781,8 +804,21 @@ defmodule HalC2.SpacePageAgentPropTest do
     end)
   end
 
-  def reconcile, do: act(fn _ -> PageAgent.reconcile() end)
-  def reconcile_continuing(name), do: act(fn _ -> PageAgent.reconcile([thread(name)]) end)
+  def reconcile, do: act(fn _ -> PageAgent.reconcile([], Process.get(:started)) end)
+
+  def reconcile_continuing(name),
+    do: act(fn _ -> PageAgent.reconcile([thread(name)], Process.get(:started)) end)
+
+  # Takes the time the MC starts at, as `HalC2.Orchestration.Recovery` does before it
+  # listens, and lets the clock pass it, as the listener coming up does.
+  def start do
+    act(fn _ ->
+      started = DateTime.truncate(DateTime.utc_now(), :millisecond)
+      Process.put(:started, started)
+      past(started)
+      :ok
+    end)
+  end
 
   def report_running(name), do: act(fn _ -> PageAgent.report(thread(name)) end)
   def report_old(name), do: act(fn _ -> PageAgent.report(List.last(threads(name))) end)
@@ -810,6 +846,12 @@ defmodule HalC2.SpacePageAgentPropTest do
   end
 
   # --- helpers --------------------------------------------------------------------
+
+  defp past(started) do
+    if DateTime.compare(DateTime.truncate(DateTime.utc_now(), :millisecond), started) == :gt,
+      do: :ok,
+      else: past(started)
+  end
 
   # Runs `fun` and reports what it replied, the events it wrote and what the page says.
   defp act(fun) do
