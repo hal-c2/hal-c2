@@ -362,6 +362,157 @@ defmodule HalC2.SpaceMarkdownTest do
       assert Markdown.document([%{"kind" => "divider", "text" => ""}], &none/1) == "---\n"
     end
 
+    test "inline formatting stays in the text as written" do
+      written =
+        "**Bold**, _it_, ~~struck~~, `code`, [a](https://x.test \"T\"), <https://x.test>, " <>
+          "www.x.test, $x^2$, a note[^1] and ![icon](i.png) inline"
+
+      assert [%{"kind" => "paragraph", "text" => ^written}] = Markdown.blocks(written)
+      assert round_trip(written) == written <> "\n"
+    end
+
+    test "a footnote is its label and its note, the note's lines under it indented" do
+      written =
+        "Intro[^1].\n\n[^1]: A source.\n[^long-note]: On\n    two lines.\n\n    And a second."
+
+      assert [
+               %{"kind" => "paragraph"},
+               %{"kind" => "footnote", "label" => "1", "text" => "A source."},
+               %{"kind" => "footnote", "label" => "long-note", "text" => text}
+             ] = Markdown.blocks(written)
+
+      assert text == "On\ntwo lines.\n\nAnd a second."
+      assert round_trip(written) == written <> "\n"
+      assert [%{"kind" => "footnote", "text" => ""}] = Markdown.blocks("[^1]:")
+
+      # Written another way, a footnote is raw; under a paragraph it is more of its text.
+      # Found by the property: a note whose first line starts with spaces is raw too.
+      for other <- [
+            "[^1]:\tTab",
+            " [^1]: Set in",
+            "[^1]: Lazy\nline",
+            "[^1]: Two\n  spaces",
+            "[^1]:     set in"
+          ] do
+        assert kinds(other) == ["raw"], other
+        assert round_trip(other) == other <> "\n"
+      end
+
+      assert kinds("Text\n[^1]: more of it") == ["paragraph"]
+    end
+
+    test "math between `$$` lines is code in math that keeps its fence" do
+      assert [%{"kind" => "code", "language" => "math", "fence" => "$$", "text" => "x^2\ny"}] =
+               Markdown.blocks("$$\nx^2\ny\n$$")
+
+      assert [%{"kind" => "code", "language" => "math"} = fenced] =
+               Markdown.blocks("```math\nx^2\n```")
+
+      refute Map.has_key?(fenced, "fence")
+
+      for written <- ["$$\nx^2\ny\n$$", "$$\n$$", "```math\nx^2\n```"],
+          do: assert(round_trip(written) == written <> "\n")
+
+      # GitHub ends `$$` math at a blank line; such math, or math holding a `$$` line,
+      # is written between backticks instead.
+      assert kinds("$$\nx\n\ny\n$$") == ["raw"]
+
+      for text <- ["x\n\ny", "x\n$$\ny"] do
+        block = %{"kind" => "code", "language" => "math", "fence" => "$$", "text" => text}
+        assert Markdown.render(block) == "```math\n#{text}\n```"
+      end
+
+      assert Markdown.code?(%{"fence" => "$$", "language" => "math"})
+      refute Markdown.code?(%{"fence" => "$$", "language" => "tex"})
+      refute Markdown.code?(%{"fence" => "$$", "language" => "math", "info" => " x"})
+    end
+
+    test "a collapsed section is a details block, the blocks inside, then its end" do
+      written =
+        "<details>\n<summary>Logs</summary>\n\n| a |\n| - |\n| 1 |\n\n- item\n\n</details>"
+
+      assert [
+               %{"kind" => "details", "text" => "Logs"} = details,
+               %{"kind" => "table"},
+               %{"kind" => "bullet", "text" => "item"},
+               %{"kind" => "details_end", "text" => ""}
+             ] = Markdown.blocks(written)
+
+      refute Map.has_key?(details, "marker")
+      assert round_trip(written) == written <> "\n"
+
+      for opening <- [
+            "<details open>\n<summary>Logs</summary>",
+            "<details><summary>Logs</summary>",
+            "<details>\n  <summary>Logs</summary>"
+          ] do
+        written = opening <> "\n\nInside\n</details>\n\nAfter"
+        marker = String.replace_suffix(opening, "Logs</summary>", "")
+
+        assert [
+                 %{"kind" => "details", "text" => "Logs", "marker" => ^marker},
+                 %{"kind" => "paragraph"},
+                 %{"kind" => "details_end", "gap" => "\n"},
+                 %{"kind" => "paragraph"}
+               ] = Markdown.blocks(written)
+
+        assert round_trip(written) == written <> "\n"
+        assert Markdown.details?(marker)
+      end
+
+      nested =
+        "<details>\n<summary>Out</summary>\n\n<details>\n<summary>In</summary>\n\nDeep\n\n" <>
+          "</details>\n\n</details>"
+
+      assert kinds(nested) == ~w(details details paragraph details_end details_end)
+      assert round_trip(nested) == nested <> "\n"
+
+      # Two closings line under line are one HTML block, so the outer section is raw.
+      tight = String.replace(nested, "</details>\n\n</details>", "</details>\n</details>")
+      assert kinds(tight) == ["raw"]
+      assert round_trip(tight) == tight <> "\n"
+    end
+
+    test "a collapsed section written another way is raw whole, on to a blank line" do
+      for other <- [
+            "<details>\n<summary>\nLogs\n</summary>\n\nInside\n\n</details>",
+            "<details>\n<summary>Logs</summary>\nInside\n\n</details>",
+            "<details>\n<summary>Logs</summary>\n\nInside\n\n </details>",
+            "<details>\n<summary>Logs</summary>\n\nInside\n\n</details>\nRight under",
+            "<details class=\"x\">\n<summary>Logs</summary>\n\nInside\n\n</details>"
+          ] do
+        assert kinds(other) == ["raw"], other
+        assert round_trip(other) == other <> "\n"
+      end
+
+      refute Markdown.details?("<details>\n<p>")
+    end
+
+    test "an image alone on its line by its address is an image that keeps the address" do
+      for {written, caption, url} <- [
+            {"![A cat](https://x.test/cat.png)", "A cat", "https://x.test/cat.png"},
+            {"![](./docs/a.png)", "", "./docs/a.png"}
+          ] do
+        assert [%{"kind" => "image", "text" => ^caption, "url" => ^url} = image] =
+                 Markdown.blocks(written)
+
+        refute Map.has_key?(image, "imageId")
+        assert round_trip(written) == written <> "\n"
+      end
+
+      # With a title, a link inside, or beside other text, it is part of a paragraph.
+      for other <- [
+            "![A](a.png \"Title\")",
+            "[![badge](b.svg)](https://x.test)",
+            "![A](a.png) and text"
+          ] do
+        assert [%{"kind" => "paragraph", "text" => ^other}] = Markdown.blocks(other)
+      end
+
+      refute Markdown.url?("space-image:x")
+      refute Markdown.url?("a b.png")
+    end
+
     test "blank lines that are not the usual ones are the block's gap" do
       assert [_, %{"gap" => "\n"}, %{"gap" => "\n\n\n"}] =
                Markdown.blocks("# Plan\nText under it\n\n\nTwo lines down")
@@ -393,7 +544,7 @@ defmodule HalC2.SpaceMarkdownTest do
       end
     end
 
-    test "front matter, details, comments and math are kept whole" do
+    test "front matter, comments, and details and math written another way are kept whole" do
       markdown = """
       ---
       name: role
@@ -422,7 +573,7 @@ defmodule HalC2.SpaceMarkdownTest do
       $$
       """
 
-      assert kinds(markdown) == ~w(raw raw raw raw)
+      assert kinds(markdown) == ~w(raw details raw paragraph details_end raw raw)
       assert round_trip(markdown) == markdown
     end
 
