@@ -7,13 +7,17 @@ defmodule HalC2.SpaceMarkdownPropTest do
     exactly one newline at the end;
   - a document with a title on top imports as a page of that title and exports as it was;
   - writing back what was written back changes nothing more;
-  - every block is a kind a page has, and every heading has a level.
+  - every block is a kind a page has, and every heading has a level;
+  - a table (`HalC2.Space.Table`) reads back from its Markdown as the same cells writing
+    the same Markdown, before and after any edits, an edit of a cell rewrites only its row, and adding a row or a column then
+    removing it gives the table back;
+  - a code block reads back from its Markdown as itself, whatever its text holds.
   """
 
   use ExUnit.Case, async: true
   use PropCheck
 
-  alias HalC2.Space.{Blocks, Markdown}
+  alias HalC2.Space.{Blocks, Markdown, Table}
 
   # Lines of GitHub Markdown, many of them odd: what the corpus holds and what breaks a
   # reader that guesses. Documents are runs of them, with blank lines between or not.
@@ -47,6 +51,14 @@ defmodule HalC2.SpaceMarkdownPropTest do
     "| :- | -: |",
     "|---|---|",
     "| `x \\| y` | 2 |",
+    "| Name | Note |",
+    "| ---- | :--: |",
+    "| x    | y    |",
+    "|:-|-:|",
+    "|a|b|",
+    "| --- | --- |",
+    "a | b",
+    "--- | ---",
     "```",
     "```ts",
     "```mermaid",
@@ -54,6 +66,12 @@ defmodule HalC2.SpaceMarkdownPropTest do
     "    A --> B",
     "~~~",
     "````",
+    "~~~~js filename=\"a.js\"",
+    "``` ts",
+    "```ts title",
+    "   ```",
+    "```js`",
+    "~~~~~",
     "    indented code",
     "\tTab code",
     "$$",
@@ -175,6 +193,199 @@ defmodule HalC2.SpaceMarkdownPropTest do
         block["kind"] in Blocks.kinds() and
           (block["kind"] != "heading" or block["level"] in 1..6)
       end)
+    end
+  end
+
+  # --- tables -------------------------------------------------------------------------
+
+  @cells ["", "a", "Step", "a | b", "`x \\| y`", "**bold**", "é€", " spaced ", "\\", "-", ":--"]
+
+  defp cell, do: oneof([elements(@cells), utf8(6)])
+
+  defp table do
+    let [columns, rows, tight, widths?, rule?] <- [
+          integer(1, 4),
+          integer(0, 3),
+          boolean(),
+          boolean(),
+          boolean()
+        ] do
+      let [rows, align, widths, rule] <- [
+            vector(rows + 1, vector(columns, cell())),
+            vector(columns, elements([nil, "left", "center", "right"])),
+            vector(columns, integer(0, 8)),
+            vector(columns, integer(0, 8))
+          ] do
+        rows = Enum.map(rows, fn row -> Enum.map(row, &String.replace(&1, ~r/[\r\n]/, "")) end)
+
+        spec =
+          %{"rows" => rows, "align" => align, "tight" => tight}
+          |> then(&if(widths?, do: Map.put(&1, "widths", widths), else: &1))
+          |> then(&if(rule?, do: Map.put(&1, "ruleWidths", rule), else: &1))
+
+        {:ok, table} = Table.cast(spec)
+        table
+      end
+    end
+  end
+
+  defp table_edit do
+    oneof([
+      {:setCell, integer(0, 4), integer(0, 4), cell()},
+      {:insertRow, integer(0, 5)},
+      {:deleteRow, integer(0, 4)},
+      {:insertColumn, integer(0, 4), elements([nil, "left", "center", "right"])},
+      {:deleteColumn, integer(0, 4)},
+      {:setAlign, integer(0, 4), elements([nil, "left", "center", "right"])}
+    ])
+  end
+
+  defp edit_of({:setCell, r, c, text}),
+    do: %{
+      "type" => "setCell",
+      "row" => r,
+      "column" => c,
+      "text" => String.replace(text, ~r/[\r\n]/, "")
+    }
+
+  defp edit_of({:insertRow, at}), do: %{"type" => "insertRow", "at" => at}
+  defp edit_of({:deleteRow, r}), do: %{"type" => "deleteRow", "row" => r}
+  defp edit_of({:insertColumn, at, a}), do: %{"type" => "insertColumn", "at" => at, "align" => a}
+  defp edit_of({:deleteColumn, c}), do: %{"type" => "deleteColumn", "column" => c}
+  defp edit_of({:setAlign, c, a}), do: %{"type" => "setAlign", "column" => c, "align" => a}
+
+  # Its Markdown reads as a table of the same cells that writes that Markdown again, and
+  # as one table block of it. Widths a table's Markdown does not show (a column whose
+  # cells are all as wide as it or wider) need not come back.
+  defp reads_back?(table) do
+    markdown = Table.markdown(table)
+    read = Table.read(String.split(markdown, "\n"))
+    same = &Map.take(&1, ~w(align rows tight))
+
+    read != nil and same.(read) == same.(table) and Table.markdown(read) == markdown and
+      match?([%{"kind" => "table", "table" => ^read}], Markdown.blocks(markdown))
+  end
+
+  property "a table reads back as the same table, before and after any edits",
+    numtests: HalC2.Prop.numtests(500) do
+    forall {table, edits} <- {table(), list(table_edit())} do
+      tables =
+        Enum.scan(edits, table, fn edit, table ->
+          case Table.edit(table, edit_of(edit)) do
+            {:ok, edited} -> edited
+            {:error, _} -> table
+          end
+        end)
+
+      Enum.all?([table | tables], &reads_back?/1)
+      |> when_fail(IO.puts("table: #{inspect(table)}\nedits: #{inspect(edits)}"))
+    end
+  end
+
+  property "an edit of a cell rewrites only its row", numtests: HalC2.Prop.numtests(500) do
+    forall {table, r, c, text} <- {table(), integer(0, 3), integer(0, 3), cell()} do
+      edit = edit_of({:setCell, r, c, text})
+
+      case Table.edit(table, edit) do
+        {:ok, edited} ->
+          line = if r == 0, do: 0, else: r + 1
+          before = String.split(Table.markdown(table), "\n")
+          now = String.split(Table.markdown(edited), "\n")
+          List.delete_at(before, line) == List.delete_at(now, line)
+
+        {:error, _} ->
+          r >= length(table["rows"]) or c >= length(table["align"])
+      end
+    end
+  end
+
+  property "adding a row or a column then removing it gives the table back",
+    numtests: HalC2.Prop.numtests(500) do
+    forall {table, at} <- {table(), integer(0, 4)} do
+      row =
+        with {:ok, more} <- Table.edit(table, %{"type" => "insertRow", "at" => at}),
+             do: Table.edit(more, %{"type" => "deleteRow", "row" => at})
+
+      column =
+        with {:ok, more} <- Table.edit(table, %{"type" => "insertColumn", "at" => at}),
+             do: Table.edit(more, %{"type" => "deleteColumn", "column" => at})
+
+      (row == {:ok, table} or (at == 0 or at > length(table["rows"]))) and
+        (column == {:ok, table} or at > length(table["align"]))
+    end
+  end
+
+  @table_lines [
+    "| a | b |",
+    "|---|---|",
+    "| --- | :-: |",
+    "|a\rb|c|",
+    "",
+    "Notes for later",
+    "| Step |",
+    "| --- |",
+    "a | b",
+    "--- | ---",
+    "| x \\| y |"
+  ]
+
+  property "text read as a table is a table a page accepts, every line of it a row",
+    numtests: HalC2.Prop.numtests(500) do
+    forall lines <- list(oneof([elements(@table_lines), utf8(6)])) do
+      case Table.read(lines) do
+        nil ->
+          true
+
+        read ->
+          Table.cast(Map.take(read, ~w(rows align widths ruleWidths tight))) == {:ok, read} and
+            length(read["rows"]) == length(lines) - 1
+      end
+    end
+  end
+
+  # --- code ---------------------------------------------------------------------------
+
+  @code_lines [
+    "",
+    "  ",
+    "x = 1",
+    "```",
+    "~~~",
+    "````",
+    "  ```",
+    "```ts",
+    "~~~~",
+    "   ~~~ ",
+    "\tTab"
+  ]
+
+  defp code_block do
+    let [lines, fence, language, info] <- [
+          resize(6, list(oneof([elements(@code_lines), utf8(6)]))),
+          elements(["```", "~~~", "````", "~~~~"]),
+          elements([nil, "ts", "mermaid", "c++", "x`y", "~js"]),
+          elements([nil, "", " title=\"a\"", "  {.x} ", "x"])
+        ] do
+      text = lines |> Enum.join("\n") |> String.replace("\r", "")
+
+      %{"kind" => "code", "text" => text, "fence" => fence}
+      |> then(&if(language, do: Map.put(&1, "language", language), else: &1))
+      |> then(&if(info, do: Map.put(&1, "info", info), else: &1))
+    end
+  end
+
+  property "a code block reads back as itself, whatever its text holds",
+    numtests: HalC2.Prop.numtests(500) do
+    forall block <- code_block() do
+      implies Markdown.code?(block) do
+        read = Markdown.blocks(Markdown.render(block))
+        fields = &Map.take(&1, ~w(kind text language info))
+
+        (match?([_], read) and
+           fields.(hd(read)) ==
+             fields.(if(block["info"] == "", do: Map.delete(block, "info"), else: block)))
+        |> when_fail(IO.puts("block: #{inspect(block)}\nread: #{inspect(read)}"))
+      end
     end
   end
 end

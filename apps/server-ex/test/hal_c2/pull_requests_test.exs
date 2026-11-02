@@ -104,8 +104,9 @@ defmodule HalC2.PullRequestsTest do
     rules!(dir, [
       viewer_rule(),
       %{
-        "args" => ["pr list", "--repo github.com/acme/widgets"],
-        "stdout" => [
+        "args" => ["api graphql"],
+        "stdin" => ["PullRequestList", "repo:acme/widgets"],
+        "pulls" => [
           pr(5, "2026-03-02T00:00:00Z", %{
             "reviewRequests" => [%{"login" => "octo"}],
             "latestReviews" => [%{"state" => "APPROVED", "author" => %{"login" => "bot"}}],
@@ -153,9 +154,8 @@ defmodule HalC2.PullRequestsTest do
     assert %{"github.com acme/widgets" => cursor} = result["nextCursors"]
     assert cursor == "2026-03-02T00:00:00Z|1|5"
 
-    [list | _] = calls(dir, "pr list")
-    assert "--search" in list["args"]
-    assert Enum.any?(list["args"], &String.ends_with?(&1, "sort:updated-desc"))
+    [list | _] = listings(dir)
+    assert list["variables"]["q"] =~ ~r/^repo:acme\/widgets is:pr is:open .*sort:updated-desc$/
 
     assert {:ok, next} =
              PullRequests.list(%{
@@ -167,9 +167,7 @@ defmodule HalC2.PullRequestsTest do
     # The row already sent at the boundary is not sent again.
     assert Enum.map(next["entries"], & &1["number"]) == [4]
 
-    assert Enum.any?(calls(dir, "pr list"), fn call ->
-             Enum.any?(call["args"], &String.contains?(&1, "updated:<=2026-03-02T00:00:00Z"))
-           end)
+    assert Enum.any?(listings(dir), &(&1["variables"]["q"] =~ "updated:<=2026-03-02T00:00:00Z"))
 
     assert {:error, %{"_tag" => "PullRequestOperationError", "operation" => "list"}} =
              PullRequests.list(%{"state" => "open", "cursors" => %{"x" => "nonsense"}})
@@ -198,7 +196,8 @@ defmodule HalC2.PullRequestsTest do
     rules!(dir, [
       viewer_rule(),
       %{
-        "args" => ["pr list", "--repo github.com/acme/widgets"],
+        "args" => ["api graphql"],
+        "stdin" => ["PullRequestList", "repo:acme/widgets"],
         "exit" => 1,
         "stderr" => "HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)\n"
       }
@@ -207,10 +206,78 @@ defmodule HalC2.PullRequestsTest do
     assert {:ok, %{"entries" => [], "errors" => [error]}} =
              PullRequests.list(%{"state" => "open"})
 
+    # Each smaller page was tried before giving up.
+    assert Enum.map(listings(dir), & &1["variables"]["first"]) == [50, 25, 12, 10]
+
     assert error["reason"] == "github.com did not answer in time. Try again."
     assert error["message"] == "acme/widgets could not be read: #{error["reason"]}"
     assert error["detail"] =~ "https://api.github.com/graphql"
     refute error["message"] =~ "http"
+  end
+
+  test "a repository too busy to list in one page is read in smaller pages", %{dir: dir} do
+    rows =
+      for n <- 30..1//-1,
+          do: pr(n, "2026-03-#{String.pad_leading("#{n}", 2, "0")}T00:00:00Z", %{})
+
+    rules!(dir, [
+      viewer_rule(),
+      # GitHub gives up on a page of fifty, and once cuts a smaller one short.
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["PullRequestList", ~s("first":50)],
+        "exit" => 1,
+        "stderr" => "HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)\n"
+      },
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["PullRequestList", ~s("first":25), ~s("after":null)],
+        "exit" => 1,
+        "stderr" => "unexpected end of JSON input\n"
+      },
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestList"], "pulls" => rows}
+    ])
+
+    assert {:ok, %{"entries" => entries, "errors" => [], "truncated" => false}} =
+             PullRequests.list(%{"state" => "open"})
+
+    assert Enum.map(entries, & &1["number"]) == Enum.to_list(30..1//-1)
+
+    # The page that answered sets the size of the rest.
+    assert Enum.map(listings(dir), &{&1["variables"]["first"], &1["variables"]["after"]}) ==
+             [{50, nil}, {25, nil}, {12, nil}, {12, "12"}, {12, "24"}]
+  end
+
+  test "an empty search is read again from the repository only when the index holds none of it",
+       %{dir: dir} do
+    rows = for n <- 300..1//-1, do: pr(n, "2026-03-01T00:00:00Z", %{})
+    own = %{"args" => ["api graphql"], "stdin" => ["PullRequestListRepository"], "pulls" => rows}
+
+    # Nothing of the viewer's, in a repository the index holds: the empty answer stands.
+    rules!(dir, [
+      viewer_rule(),
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestListIndexed"], "pulls" => rows},
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestListSearch"], "pulls" => []},
+      own
+    ])
+
+    assert {:ok, %{"entries" => [], "errors" => [], "truncated" => false}} =
+             PullRequests.list(%{"state" => "closed", "involvement" => "authored"})
+
+    refute Enum.any?(listings(dir), &(&1["query"] =~ "PullRequestListRepository"))
+
+    # A repository the index leaves out is read from its own list.
+    File.rm!(Path.join(dir, "gh.log"))
+
+    rules!(dir, [
+      viewer_rule(),
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestListSearch"], "pulls" => []},
+      %{"args" => ["api graphql"], "stdin" => ["PullRequestListIndexed"], "pulls" => []},
+      own
+    ])
+
+    assert {:ok, %{"entries" => [_ | _]}} = PullRequests.list(%{"state" => "open"})
+    assert Enum.any?(listings(dir), &(&1["query"] =~ "PullRequestListRepository"))
   end
 
   test "a project on another host is unsupported", %{dir: dir} do
@@ -779,6 +846,14 @@ defmodule HalC2.PullRequestsTest do
   end
 
   defp rules!(dir, rules), do: File.write!(Path.join(dir, "rules.json"), JSON.encode!(rules))
+
+  # The GraphQL pull request listings sent so far, oldest first.
+  defp listings(dir) do
+    for call <- calls(dir, "api graphql"),
+        request = JSON.decode!(call["stdin"]),
+        request["query"] =~ "PullRequestList",
+        do: request
+  end
 
   defp calls(dir, fragment) do
     dir

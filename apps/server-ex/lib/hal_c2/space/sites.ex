@@ -155,6 +155,18 @@ defmodule HalC2.Space.Sites do
       }
     ]
 
+  # A table is its cells and how its columns align, not how its Markdown is padded.
+  defp published(_state, %{"kind" => "table", "table" => table} = block),
+    do: [
+      %{"kind" => "table", "text" => block["text"], "table" => Map.take(table, ~w(align rows))}
+    ]
+
+  defp published(_state, %{"kind" => "code"} = block),
+    do: [
+      %{"kind" => "code", "text" => block["text"] || ""}
+      |> then(&if(block["language"], do: Map.put(&1, "language", block["language"]), else: &1))
+    ]
+
   defp published(_state, block), do: [%{"kind" => block["kind"], "text" => block["text"] || ""}]
 
   # 192 bits from the system's strong random source, URL-safe.
@@ -169,6 +181,10 @@ defmodule HalC2.Space.Sites do
   p,li,aside{white-space:pre-wrap;overflow-wrap:anywhere}
   ul{list-style:none;padding:0}
   aside{border-left:3px solid;padding:.5em 1em;margin:1em 0}
+  pre{overflow-x:auto;padding:.75em 1em;border:1px solid;border-radius:4px}
+  table{border-collapse:collapse;display:block;overflow-x:auto;margin:1em 0}
+  th,td{border:1px solid;padding:.25em .6em;overflow-wrap:anywhere}
+  .l{text-align:left}.c{text-align:center}.r{text-align:right}
   footer{margin-top:3em;font-size:.85em;opacity:.7}
   """
 
@@ -217,7 +233,35 @@ defmodule HalC2.Space.Sites do
 
   defp block(%{"kind" => "heading", "text" => text}), do: ["<h2>", esc(text), "</h2>"]
   defp block(%{"kind" => "callout", "text" => text}), do: ["<aside>", esc(text), "</aside>"]
+
+  defp block(%{"kind" => "code", "text" => text}),
+    do: ["<pre><code>", esc(text), "</code></pre>"]
+
+  defp block(%{"kind" => "table", "table" => %{"align" => align, "rows" => [head | body]}}) do
+    [
+      "<table><thead>",
+      row("th", align, head),
+      "</thead><tbody>",
+      Enum.map(body, &row("td", align, &1)),
+      "</tbody></table>"
+    ]
+  end
+
   defp block(%{"text" => text}), do: ["<p>", esc(text), "</p>"]
+
+  defp row(tag, align, cells) do
+    cells =
+      Enum.zip_with(align, cells, fn a, cell ->
+        ["<", tag, aligned(a), ">", esc(cell), "</", tag, ">"]
+      end)
+
+    ["<tr>", cells, "</tr>"]
+  end
+
+  defp aligned("left"), do: " class=\"l\""
+  defp aligned("center"), do: " class=\"c\""
+  defp aligned("right"), do: " class=\"r\""
+  defp aligned(nil), do: ""
 
   defp esc(text), do: Plug.HTML.html_escape(text)
 end

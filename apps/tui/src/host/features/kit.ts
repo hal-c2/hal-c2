@@ -14,6 +14,10 @@ import type { DiffReview } from "../threadView.ts";
 export interface FeatureWorkspace {
   readonly threadId: string;
   readonly projectId: string | null;
+  /** The project is this MC's own, not another machine's in the cluster. */
+  readonly home: boolean;
+  /** The thread works in a worktree, not the project's own folder. */
+  readonly worktree: boolean;
   readonly cwd: string;
 }
 

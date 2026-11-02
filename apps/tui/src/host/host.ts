@@ -35,7 +35,7 @@ import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
 import { createComposer } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
-import { createFilesController } from "./filesState.ts";
+import { createFilesController, type TuiFilesState } from "./filesState.ts";
 import { createMermaidDiagrams } from "./mermaidDiagrams.ts";
 import { createSpaceController } from "./spaceState.ts";
 import {
@@ -723,16 +723,34 @@ export function createHost(options: HostOptions): Host {
     copyToClipboard: options.copyToClipboard ?? (() => false),
     publish: (next) => state.set("terminal", next),
   });
+  /** This MC's own projects: the Spaces here open only their files. */
+  const homeProjects = () => {
+    const shell = store.getState().shell;
+    const home = shell?.machines?.[0]?.id;
+    return (shell?.projects ?? []).filter(
+      (project) => project.machineId === undefined || project.machineId === home,
+    );
+  };
+  // The project whose folder the file browser shows, and the one it opens on next instead
+  // of the thread's (a Space page's file).
+  let filesProject: string | null = null;
+  let filesFor: { readonly projectId: string; readonly cwd: string } | null = null;
   // The file browser and viewer take the conversation pane's place.
   const files = createFilesController({
     client,
     diagrams,
-    cwd: () => selectedWorkspace()?.cwd ?? null,
+    cwd: () => filesFor?.cwd ?? selectedWorkspace()?.cwd ?? null,
     height: () => layout.panesRows,
     width: () => layout.chatWidth,
     setOpen: (open) => {
       filesOpen = open;
-      if (open) space.close();
+      if (open) {
+        space.close();
+        filesProject = filesFor?.projectId ?? selectedWorkspace()?.projectId ?? null;
+        if (filesProject !== null && homeProjects().some((p) => p.id === filesProject)) {
+          space.refreshSpaceFiles(filesProject);
+        }
+      }
       publishLayout();
       if (open) setMode("files");
       else if (mode === "files" || mode === "fileEdit") setMode(restingMode());
@@ -806,6 +824,19 @@ export function createHost(options: HostOptions): Host {
       space.close();
       dispatch("thread.open", { key: threadKey(threadId) });
     },
+    projects: () => homeProjects().map((project) => ({ id: project.id, title: project.title })),
+    showFile: (projectId, path) => {
+      const project = homeProjects().find((entry) => entry.id === projectId);
+      if (!project) {
+        store.setStatus("The page's project is not on this machine.", "error");
+        return;
+      }
+      space.close();
+      filesFor = { projectId, cwd: project.workspaceRoot };
+      dispatch("files.view", { path });
+      filesFor = null;
+    },
+    commandsChanged: () => palette.sync(),
   });
   // Adding a project is a page over the conversation (mode "project").
   const addProject = createAddProjectController({
@@ -917,11 +948,31 @@ export function createHost(options: HostOptions): Host {
       palette.sync();
     },
   });
+  /** The file in the browser or viewer as a page, when the MC counts it Space content. */
+  const fileInSpace = () => {
+    const path = files.target();
+    const projectId = filesProject;
+    if (path === null || projectId === null) return [];
+    const project = homeProjects().find((entry) => entry.id === projectId);
+    // Offered for what the MC lists in the project's own folder, which is what opens:
+    // a page follows the project's copy, never a thread's worktree.
+    if (!project || !space.isSpaceFile(projectId, path)) return [];
+    const browsing = (state.get("files") as TuiFilesState | undefined)?.cwd ?? null;
+    const worktree = browsing !== null && browsing !== project.workspaceRoot;
+    return [
+      {
+        title: worktree ? "Open the project's copy in a Space" : "Open this file in a Space",
+        action: "space.openProjectFile",
+        payload: { projectId, path },
+      },
+    ];
+  };
   /** The files, Spaces, add-project and terminal entries, as palette commands. */
   const areaCommands = (): PaletteCommand[] =>
     [
       ...addProject.commands(),
       ...files.commands(),
+      ...fileInSpace(),
       ...space.commands(),
       ...terminal.commands(),
     ].map((command) => ({
@@ -1463,7 +1514,9 @@ export function createHost(options: HostOptions): Host {
           (current.detail?.id === workspace.threadId ? current.detail.projectId : null) ??
           current.shell?.threads.find((thread) => thread.id === workspace.threadId)?.projectId ??
           null;
-        return { threadId: workspace.threadId, projectId, cwd: workspace.cwd };
+        const home = projectId !== null && homeProjects().some((p) => p.id === projectId);
+        const worktree = workspace.worktreePath !== null;
+        return { threadId: workspace.threadId, projectId, home, worktree, cwd: workspace.cwd };
       },
       nowMs: () => Date.parse(now()),
       showDiff: (review) => threadView.showReview(review),

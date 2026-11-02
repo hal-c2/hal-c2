@@ -119,6 +119,12 @@ export interface FakeSpaceMc {
   readonly agentGone: (title: string) => void;
   /** How many clients are on the page. */
   readonly clientsOn: (pageId: string) => number;
+  /** Writes (null deletes) a file in a project's folder on this MC, as an agent or an editor does. */
+  readonly writeProjectFile: (projectId: string, path: string, text: string | null) => void;
+  /** A project's files on this MC by relative path, as its folder holds them. */
+  readonly projectFilesOf: (projectId: string) => ReadonlyMap<string, string>;
+  /** A user's edit of a file-backed page lost to a change of its file: it is a version now. */
+  readonly fileWinsOver: (pageId: string) => void;
 }
 
 /** One author's run of edits on a page, with what the page held at its end. */
@@ -186,6 +192,10 @@ function exportMarkdown(page: Entity, blocks: Entity[], titleOf: (id: string) =>
           .join("\n");
       case "subpage_link":
         return `[${titleOf(block.linkedPageId) ?? block.text}](#${block.linkedPageId})`;
+      case "code": {
+        const fence = block.fence ?? "```";
+        return `${fence}${block.language ?? ""}${block.info ?? ""}\n${block.text}\n${fence}`;
+      }
       default:
         return block.text;
     }
@@ -220,7 +230,6 @@ function parseMarkdown(markdown: string): { title: string | null; blocks: Entity
       out.push(block("checklist", match[2]!, match[1] !== " "));
       index += 1;
     } else if ((match = /^ {0,3}(`{3,}|~{3,})/.exec(line))) {
-      // A fenced block is kept as written, as the MC keeps it: a raw block.
       const close = new RegExp(`^ {0,3}\\${match[1]![0]}{${match[1]!.length},}\\s*$`);
       const fenced = [line];
       index += 1;
@@ -229,7 +238,17 @@ function parseMarkdown(markdown: string): { title: string | null; blocks: Entity
         index += 1;
         if (close.test(fenced.at(-1)!)) break;
       }
-      out.push(block("raw", fenced.join("\n")));
+      // A closed fence from the start of the line is a code block, its language the first
+      // word after the fence; any other is kept as written, a raw block.
+      const open = /^(`{3,}|~{3,})(?:(\S+)(.*))?$/.exec(line);
+      if (open && fenced.length > 1 && close.test(fenced.at(-1)!)) {
+        out.push({
+          ...block("code", fenced.slice(1, -1).join("\n")),
+          ...(open[1] !== "```" ? { fence: open[1] } : {}),
+          ...(open[2] ? { language: open[2] } : {}),
+          ...(open[3] ? { info: open[3] } : {}),
+        });
+      } else out.push(block("raw", fenced.join("\n")));
     } else if (line.startsWith(">")) {
       const quote: string[] = [];
       while (index < lines.length && lines[index]!.startsWith(">")) {
@@ -306,6 +325,11 @@ export function fakeSpaceMc(options: {
   const user: SpaceAuthor = { type: "user" };
   /** A page's update writes as itself, whoever ran it. */
   const update: SpaceAuthor = { type: "schedule" };
+  /** What a page reads from its project file is the file's. */
+  const fromFile: SpaceAuthor = { type: "file" };
+  // Each project's files on this MC, by relative path, and the spaces section a scan wrote.
+  const projectFiles = new Map<string, Map<string, string>>();
+  const spacesSections = new Map<string, ReadonlyArray<{ path: string; kind: string }>>();
   // Each page's versions, oldest first: what space/history.ex folds from the log.
   const versions = new Map<string, FakeVersion[]>();
   let versionSeq = 0;
@@ -635,7 +659,17 @@ export function fakeSpaceMc(options: {
     order: string,
     by: SpaceAuthor,
   ) => {
-    const kinds = ["paragraph", "heading", "checklist", "callout", "subpage_link", "image", "raw"];
+    const kinds = [
+      "paragraph",
+      "heading",
+      "checklist",
+      "callout",
+      "subpage_link",
+      "image",
+      "raw",
+      "table",
+      "code",
+    ];
     if (!kinds.includes(spec.kind)) refuse("invalid", `A block is one of ${kinds.join(", ")}.`);
     const level = spec.kind === "heading" ? spec.level : undefined;
     if (level !== undefined && !(Number.isInteger(level) && level >= 1 && level <= 6)) {
@@ -658,6 +692,9 @@ export function fakeSpaceMc(options: {
       linkedPageId: spec.kind === "subpage_link" ? spec.linkedPageId : null,
       ...(placed ? { imageId: placed.id } : {}),
       ...(level !== undefined ? { level } : {}),
+      ...(spec.kind === "code" && spec.language ? { language: spec.language } : {}),
+      ...(spec.kind === "code" && spec.fence ? { fence: spec.fence } : {}),
+      ...(spec.kind === "code" && spec.info ? { info: spec.info } : {}),
       order,
       createdBy: by,
       updatedBy: by,
@@ -732,6 +769,66 @@ export function fakeSpaceMc(options: {
     ]);
     return { agent: table(spaceId, "pageAgent").get(pageId) };
   };
+  // --- project files (lib/hal_c2/space/files.ex) ---
+
+  const hashOf = (text: string) => {
+    let hash = 0;
+    for (const char of text) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    return hash.toString(16);
+  };
+  const filesOf = (projectId: unknown): Map<string, string> =>
+    projectFiles.get(String(projectId)) ??
+    refuse("notFound", `There is no project ${String(projectId)} on this MC.`);
+  const globRegExp = (glob: string) =>
+    new RegExp(
+      `^${glob
+        .split("**/")
+        .map((part) =>
+          part
+            .split("*")
+            .map((text) => text.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+            .join("[^/]*"),
+        )
+        .join("(?:.*/)?")}$`,
+    );
+  /** Without a spaces section every Markdown file is a page. */
+  const isSpaceFile = (projectId: string, path: string) => {
+    const section = spacesSections.get(projectId);
+    return section
+      ? section.some((entry) => globRegExp(entry.path).test(path))
+      : path.toLowerCase().endsWith(".md");
+  };
+  const fileIndicator = (projectId: string, path: string, text: string) => ({
+    projectId,
+    path,
+    hash: hashOf(text),
+    size: text.length,
+    missing: false,
+    conflictAt: null,
+  });
+  const pageOfFile = (projectId: string, path: string) =>
+    all("page").find((entry) => entry.file?.projectId === projectId && entry.file.path === path);
+  /** The page reads as the file says now: its blocks, and its title when the file has one. */
+  const readFile = (spaceId: string, entry: Entity, text: string, file: Entity) => {
+    const parsed = parseMarkdown(text);
+    const changes: Change[] = blocksOf(spaceId, entry.id).map(
+      (block) => ["block", block.id, { d: true }] as Change,
+    );
+    let previous: string | null = null;
+    for (const spec of parsed.blocks) {
+      const order = orderBetween(previous, null);
+      previous = order;
+      const added = newBlock(spaceId, entry.id, spec, order, fromFile);
+      changes.push(["block", added.id, { s: added }]);
+    }
+    changes.push([
+      "page",
+      entry.id,
+      { s: { title: parsed.title ?? entry.title, file, updatedAt: now() } },
+    ]);
+    commit(`space:${spaceId}`, changes);
+  };
+
   let refusingAsk = false;
   let ignoringStops = false;
   let stops = 0;
@@ -791,6 +888,86 @@ export function fakeSpaceMc(options: {
       }
       commit(`space:${input.spaceId}`, [["pageAgent", input.pageId, { d: true }]]);
       return { pageId: input.pageId };
+    },
+    "space.files.list": (input) => {
+      const files = filesOf(input.projectId);
+      return {
+        config: spacesSections.has(input.projectId) ? "project" : "default",
+        files: [...files.keys()]
+          .filter((path) => isSpaceFile(input.projectId, path))
+          .sort()
+          .map((relativePath) => {
+            const entry = pageOfFile(input.projectId, relativePath);
+            return {
+              relativePath,
+              kind: "page",
+              page: entry ? { spaceId: entry.spaceId, pageId: entry.id, title: entry.title } : null,
+            };
+          }),
+      };
+    },
+    "space.files.scan": (input) => {
+      const markdown = [...filesOf(input.projectId).keys()].filter((path) =>
+        path.toLowerCase().endsWith(".md"),
+      );
+      if (markdown.length === 0) return { status: "empty", entries: [] };
+      const folders = [...new Set(markdown.map((path) => path.split("/").slice(0, -1).join("/")))];
+      const entries = folders
+        .sort()
+        .map((folder) => ({ path: folder === "" ? "*.md" : `${folder}/*.md`, kind: "page" }));
+      const written = spacesSections.get(input.projectId);
+      if (written && JSON.stringify(written) === JSON.stringify(entries)) {
+        return { status: "current", entries };
+      }
+      spacesSections.set(input.projectId, entries);
+      return { status: "written", entries };
+    },
+    "space.page.openFile": (input) => {
+      space(input.spaceId);
+      const files = filesOf(input.projectId);
+      const path = String(input.relativePath);
+      if (path.startsWith("/") || path.split("/").includes("..")) {
+        refuse("invalid", `${path} is outside the project.`);
+      }
+      if (!isSpaceFile(input.projectId, path)) {
+        refuse("notSpaceFile", `${path} is not Space content of this project.`);
+      }
+      const text = files.get(path) ?? refuse("notFound", `There is no file ${path}.`);
+      const existing = pageOfFile(input.projectId, path);
+      if (existing) return { spaceId: existing.spaceId, page: existing, created: false };
+      const { page: entry } = importPage(
+        input.spaceId,
+        text,
+        undefined,
+        null,
+        { file: fileIndicator(input.projectId, path, text) },
+        fromFile,
+      );
+      return { spaceId: input.spaceId, page: entry, created: true };
+    },
+    "space.page.syncFile": (input) => {
+      const found = livePage(input.spaceId, input.pageId);
+      const file = found.file ?? refuse("invalid", "This page is not a project file.");
+      const text = projectFiles.get(file.projectId)?.get(file.path);
+      if (text === undefined) {
+        if (!file.missing) {
+          commit(`space:${input.spaceId}`, [
+            ["page", found.id, { s: { file: { ...file, missing: true } } }],
+          ]);
+        }
+      } else if (file.missing || hashOf(text) !== file.hash) {
+        readFile(input.spaceId, found, text, {
+          ...fileIndicator(file.projectId, file.path, text),
+          conflictAt: file.conflictAt,
+        });
+      }
+      return { page: table(input.spaceId, "page").get(found.id) };
+    },
+    "space.page.unlinkFile": (input) => {
+      const found = livePage(input.spaceId, input.pageId);
+      if (!found.file) refuse("invalid", "This page is not a project file.");
+      commit(`space:${input.spaceId}`, [["page", found.id, { s: { file: null } }]]);
+      return { page: table(input.spaceId, "page").get(found.id) };
     },
     "space.list": () => {
       commit("spaces", seeded());
@@ -1439,8 +1616,13 @@ export function fakeSpaceMc(options: {
       const handler = methods[method];
       if (!handler) throw new Error("unsupported");
       const result = handler(payload, author);
-      if (spaces.has(payload.spaceId))
-        noteVersions(payload.spaceId, method === "space.page.schedule.runNow" ? update : author);
+      const by =
+        method === "space.page.schedule.runNow"
+          ? update
+          : method === "space.page.openFile" || method === "space.page.syncFile"
+            ? fromFile
+            : author;
+      if (spaces.has(payload.spaceId)) noteVersions(payload.spaceId, by);
       return result;
     },
     spaceNamed: (value) => {
@@ -1513,6 +1695,28 @@ export function fakeSpaceMc(options: {
     agentOn: (pageId, title) => on(agentsOn, pageId, title),
     agentGone: (title) => gone(agentsOn, title),
     clientsOn: (pageId) => pageClients.get(pageId)?.size ?? 0,
+    writeProjectFile: (projectId, path, text) => {
+      let files = projectFiles.get(projectId);
+      if (!files) projectFiles.set(projectId, (files = new Map()));
+      if (text === null) files.delete(path);
+      else files.set(path, text);
+    },
+    projectFilesOf: (projectId) => projectFiles.get(projectId) ?? new Map(),
+    fileWinsOver: (pageId) => {
+      const entry = all("page").find((candidate) => candidate.id === pageId)!;
+      const { spaceId, file } = entry;
+      // The user's edit lands, then the file's change: the file wins and the edit is a version.
+      mc.run("space.block.insert", {
+        spaceId,
+        pageId,
+        kind: "paragraph",
+        text: "The user's edit.",
+      });
+      stretch += 1;
+      const text = projectFiles.get(file.projectId)!.get(file.path)!;
+      readFile(spaceId, entry, text, { ...file, conflictAt: now() });
+      noteVersions(spaceId, fromFile);
+    },
   };
   return mc;
 }

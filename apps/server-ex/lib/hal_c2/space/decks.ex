@@ -9,7 +9,7 @@ defmodule HalC2.Space.Decks do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, Space, StreamState}
-  alias HalC2.Space.{Blocks, Order, Pages}
+  alias HalC2.Space.{Blocks, Markdown, Order, Pages}
 
   @doc "The deck `id`, or nil."
   def get(state, id), do: StreamState.get(state, "deck")[id]
@@ -96,6 +96,7 @@ defmodule HalC2.Space.Decks do
   defp line(_state, %{"kind" => "checklist"} = b), do: "- [ ] " <> b["text"]
   defp line(_state, %{"kind" => "callout"} = b), do: "> " <> b["text"]
   defp line(_state, %{"kind" => "image"} = b), do: "[image: " <> b["text"] <> "]"
+  defp line(_state, %{"kind" => "code"} = b), do: Markdown.render(b)
 
   defp line(state, %{"kind" => "subpage_link"} = b),
     do: (Pages.get(state, b["linkedPageId"]) || %{})["title"] || b["text"]

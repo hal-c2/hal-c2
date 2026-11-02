@@ -1443,6 +1443,21 @@ defmodule HalC2.Test.Mc.World do
   end
 
   @doc """
+  The pull request listings the fake `gh` was sent so far (`HalC2.PullRequests.GitHub.list/2`),
+  a GraphQL request (`query`, `variables`) per page, oldest first; `first_pages/1` keeps
+  the first page of each.
+  """
+  def pull_listings(context) do
+    for call <- cli_calls(context, "api graphql"),
+        request = JSON.decode!(call["stdin"]),
+        request["query"] =~ "PullRequestList",
+        do: request
+  end
+
+  @doc "Of `pull_listings/1`, the first page of each listing."
+  def first_pages(listings), do: Enum.filter(listings, &(&1["variables"]["after"] == nil))
+
+  @doc """
   Makes `tool` impossible to find: its fake goes, `gh` is looked up under a name
   that does not exist (`:gh_command`), and other tools lose the PATH entries
   outside the system directories that hold them.
