@@ -482,13 +482,16 @@ defmodule HalC2.Space.Files do
     end
   end
 
-  # Whether any of `paths` under `root` goes through a link (or can't be told).
-  defp links?(root, paths) do
-    case real(root) do
-      {:ok, top} -> Enum.any?(paths, &(under(top, &1) != {:ok, Path.join(top, &1)}))
-      _ -> true
-    end
-  end
+  # Where `relative` is, given `top`, what `real/1` said of the root.
+  defp at({:ok, top}, relative), do: under(top, relative)
+  defp at(error, _relative), do: error
+
+  # Whether `relative` goes through a link (or can't be told), given `top`, what `real/1`
+  # said of the root, and where `relative` was found under it.
+  defp through?(top, relative, located \\ nil)
+  defp through?({:ok, _} = top, relative, nil), do: through?(top, relative, at(top, relative))
+  defp through?({:ok, top}, relative, located), do: located != {:ok, Path.join(top, relative)}
+  defp through?(_, _, _), do: true
 
   # `path` with every link in it followed; what does not exist is taken as written.
   defp real(path), do: real(Path.split(path), "/", 40)
@@ -589,7 +592,7 @@ defmodule HalC2.Space.Files do
         linked =
           case root(project_id) do
             {:ok, root} ->
-              if links?(root, [page["file"]["path"]]),
+              if through?(real(root), page["file"]["path"]),
                 do: MapSet.put(state.linked, root),
                 else: state.linked
 
@@ -686,35 +689,43 @@ defmodule HalC2.Space.Files do
   end
 
   defp follow_project(state, project_id, root) do
+    top = real(root)
+
     linked =
       Enum.sort_by(linked(state, project_id), fn {_, _, page} -> page["file"]["path"] end)
 
     taken = MapSet.new(linked, fn {_, _, page} -> page["file"]["path"] end)
+    {live, idle} = Enum.split_with(linked, fn {_, space, page} -> Pages.live?(space, page) end)
 
-    taken =
-      for {space_id, space, page} <- linked, Pages.live?(space, page), reduce: taken do
-        taken ->
+    {_taken, links} =
+      for {space_id, _, page} <- live, reduce: {taken, false} do
+        {taken, links} ->
           file = page["file"]
+          located = at(top, file["path"])
+          links = links or through?(top, file["path"], located)
 
-          case read(page) do
+          case with({:ok, path} <- located, do: File.read(path)) do
             {:ok, text} ->
               if hash(text) != file["hash"] or file["missing"],
                 do: Space.transact(space_id, &sync(&1, page["id"]))
 
-              taken
+              {taken, links}
 
             {:error, reason} when reason in @gone ->
               path = moved(root, file, taken)
               Space.transact(space_id, &sync(&1, page["id"], path))
-              if path, do: MapSet.put(taken, path), else: taken
+
+              if path,
+                do: {MapSet.put(taken, path), links or through?(top, path)},
+                else: {taken, links}
 
             # Not readable for now: the page stays as it is until it is.
             {:error, _} ->
-              taken
+              {taken, links}
           end
       end
 
-    links?(root, taken)
+    links or Enum.any?(idle, fn {_, _, page} -> through?(top, page["file"]["path"]) end)
   end
 
   # Where the file went, when exactly one Space file no page has is it as it was: of two

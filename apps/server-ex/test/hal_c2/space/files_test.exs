@@ -95,4 +95,23 @@ defmodule HalC2.Space.FilesTest do
     assert File.read!(Path.join(root, "a.md")) == "# A\n\ngamma\n"
     assert texts(space, a) == ["gamma"]
   end
+
+  test "a link seen when the server follows the folder keeps its page taking the file's edits",
+       %{space: space, root: root} do
+    a = open!(space, root, "a.md", "# A\n\nalpha\n")
+    File.ln_s!("a.md", Path.join(root, "l.md"))
+    {:ok, %{"page" => %{"id" => l}}} = Space.open_file(space, "demo", "l.md")
+
+    seen = Files.generation(root)
+    Files.changed(root)
+    :ok = Files.await(root, seen)
+
+    # The edit is on a.md itself; only the follow knew a page goes through a link.
+    {:ok, state} = Space.state(space)
+    [block] = Blocks.of_page(state, a)
+    {:ok, _} = Space.update_block(space, block["id"], "gamma")
+    :ok = Files.drain()
+
+    assert texts(space, l) == ["gamma"]
+  end
 end
