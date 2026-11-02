@@ -13,6 +13,7 @@
 
 #include <algorithm>
 
+#include "Browser.h"
 #include "KeybindingController.h"
 #include "Keybindings.h"
 #include "LayoutController.h"
@@ -35,6 +36,7 @@ const NativeControllerRegistrar<RightPanelController> registrar(QStringLiteral("
 const QString kTerminalTab = QStringLiteral("terminal:");
 const QString kReviewTab = QStringLiteral("pull-request:");
 const QString kDeviceTab = QStringLiteral("device:");
+const QString kBrowserTab = QStringLiteral("browser:");
 
 // A conversation link that names a project file rather than an address:
 // "src/cart.ts", "src/cart.ts#L12" or "src/cart.ts:12:3", as ThreadView's
@@ -135,6 +137,11 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
   connect(&m_files, &WorkspaceFiles::previewRefused, this, [this](const QString& reason) {
     toast(this, QStringLiteral("error"), QStringLiteral("Could not open the file in the browser"), reason);
   });
+  // With the in-app browser each of the thread's MC browser tabs is a tab here.
+  m_previews.setEmbedded(Browser::supported());
+  connect(&m_previews, &ThreadPreviews::showRequested, this, [this](const QString& tabId) { showTab(kBrowserTab + tabId); });
+  connect(&m_previews, &ThreadPreviews::tabChanged, this, &RightPanelController::followBrowserTabs);
+  connect(&m_previews, &ThreadPreviews::statusChanged, this, &RightPanelController::followBrowserTabs);
   connect(&m_devices, &ThreadDevices::opened, this, &RightPanelController::openDevice);
   connect(&m_devices, &ThreadDevices::floated, this, &RightPanelController::floatDevice);
   connect(&m_devices, &ThreadDevices::closed, this, &RightPanelController::closeTabIn);
@@ -184,6 +191,10 @@ void RightPanelController::activate() {
       });
     }
   }
+  if (auto* settings = shell->controller<SettingsController>(); settings && Browser::supported()) {
+    Browser::instance()->setStore([settings](const QString& key) { return settings->deviceValue(key); },
+                                  [settings](const QString& key, const QVariant& value) { settings->writeDevice(key, value); });
+  }
   // Its panel groups come and go with their terminals.
   if (auto* terminals = shell->controller<TerminalController>()) {
     connect(terminals, &TerminalController::changed, this, &RightPanelController::update);
@@ -205,6 +216,14 @@ void RightPanelController::activate() {
     add(QStringLiteral("threadPanel.toggle"), [this] { toggleDetails(); });
     add(QStringLiteral("diff.toggle"), [this] { toggleDiff(); });
     add(QStringLiteral("preview.toggle"), [this] { togglePreviews(); });
+    // The page in the browser tab showing does these (BrowserPanel).
+    for (const QString& command : {QStringLiteral("preview.refresh"), QStringLiteral("preview.focusUrl"), QStringLiteral("preview.zoomIn"),
+                                   QStringLiteral("preview.zoomOut"), QStringLiteral("preview.resetZoom")}) {
+      add(command, [this, command] {
+        if (!isOpen() || kindOf(activeTab()) != QLatin1String("browser")) return;
+        if (BrowserPage* page = Browser::page(activeTab().mid(kBrowserTab.size()))) emit page->commandRequested(command);
+      });
+    }
     add(QStringLiteral("pullRequest.copyNumber"), [this] {
       if (isOpen() && kindOf(activeTab()) == QLatin1String("pull-request")) m_review.copyNumber();
     });
@@ -238,6 +257,10 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
         isFile ? MenuController::Item{QStringLiteral("open"), tr("Open file"), QStringLiteral("file")}
                : MenuController::Item{QStringLiteral("open"), tr("Open link"), QStringLiteral("external-link")},
         {QStringLiteral("copy"), isFile ? tr("Copy path") : tr("Copy link"), QStringLiteral("copy")}};
+    // A dev server's link opens in the panel's browser; the user's own is a choice.
+    if (!isFile && m_onThread && m_previews.embedded() && ThreadPreviews::opensHere(QUrl(url))) {
+      items.insert(1, {QStringLiteral("external"), tr("Open in system browser"), QStringLiteral("globe")});
+    }
     const QString environmentId = m_thread.left(m_thread.indexOf(QLatin1Char(':')));
     if (m_onThread && ThreadPullRequests::parseUrl(url) &&
         (m_store->supports(environmentId, QStringLiteral("threadPullRequests")) ||
@@ -252,6 +275,8 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
             } else {
               open(QStringLiteral("files"), {{QStringLiteral("path"), file.path}, {QStringLiteral("line"), file.line}});
             }
+          } else if (id == QLatin1String("external")) {
+            m_bridge->openExternal(QUrl(url));
           } else if (id == QLatin1String("copy")) {
             m_bridge->setClipboardText(file.path.isEmpty() ? url : file.path);
           } else {
@@ -397,6 +422,7 @@ QString RightPanelController::kindOf(const QString& id) {
   if (id.startsWith(kTerminalTab)) return QStringLiteral("terminal");
   if (id.startsWith(kReviewTab)) return QStringLiteral("pull-request");
   if (id.startsWith(kDeviceTab)) return QStringLiteral("device");
+  if (id.startsWith(kBrowserTab)) return QStringLiteral("browser");
   return id;
 }
 
@@ -485,6 +511,9 @@ void RightPanelController::showTab(const QString& id) {
   } else if (id.startsWith(kDeviceTab)) {
     if (ThreadDevices::targetOf(id).first.isEmpty()) return;
     if (!state.tabs.contains(id)) state.tabs.append(id);
+  } else if (id.startsWith(kBrowserTab)) {
+    if (m_previews.tab(id.mid(kBrowserTab.size())).isEmpty()) return;
+    if (!state.tabs.contains(id)) state.tabs.append(id);
   } else if (nativeKinds.contains(id)) {
     if (!state.tabs.contains(id)) state.tabs.append(id);
   } else {
@@ -535,6 +564,8 @@ void RightPanelController::closeTab(const QString& id) {
   Panel& state = panel();
   const QString closing = id.isEmpty() ? (state.open ? state.active : QString()) : id;
   if (closing.isEmpty() || !state.tabs.contains(closing)) return;
+  // A browser tab is the MC's: closing it here closes it there.
+  if (closing.startsWith(kBrowserTab)) m_previews.close(closing.mid(kBrowserTab.size()));
   auto* terminals = kindOf(closing) == QLatin1String("terminal") ? NativeShell::of(this)->controller<TerminalController>() : nullptr;
   if (!terminals) {
     if (removeTab(state, closing)) update();
@@ -560,8 +591,9 @@ void RightPanelController::addTab(const QString& kind) {
     return;
   }
   if (kind == QLatin1String("browser")) {
-    // A new browser tab: an empty one on the MC, filled from the Previews tab.
-    showTab(QStringLiteral("previews"));
+    // A new browser tab: an empty one on the MC, shown here once it is
+    // (showRequested), else filled from the Previews tab.
+    if (!m_previews.embedded()) showTab(QStringLiteral("previews"));
     m_previews.newTab();
     return;
   }
@@ -680,6 +712,41 @@ void RightPanelController::openThread(const QString& threadKey) {
   NativeShell::of(this)->controller<NavigationController>()->open(NavigationController::Route::thread(threadKey));
 }
 
+// The shown thread's browser tabs are its MC tabs: one the MC lists that is
+// not here yet comes in behind the others, and one it no longer has goes.
+void RightPanelController::followBrowserTabs() {
+  if (!m_onThread || !m_previews.embedded() || m_previews.status() != QLatin1String("ready")) return;
+  Panel& state = panel();
+  QStringList listed;
+  for (int row = 0; row < m_previews.rowCount(); ++row) {
+    listed.append(kBrowserTab + m_previews.data(m_previews.index(row), ThreadPreviews::TabIdRole).toString());
+  }
+  bool changed = false;
+  for (const QString& id : QStringList(state.tabs)) {
+    if (id.startsWith(kBrowserTab) && !listed.contains(id)) changed = removeTab(state, id) || changed;
+  }
+  for (const QString& id : std::as_const(listed)) {
+    if (!state.tabs.contains(id)) {
+      state.tabs.append(id);
+      changed = true;
+    }
+  }
+  if (changed) {
+    update();
+  } else {
+    // A page's title is its tab's.
+    publish();
+  }
+}
+
+QString RightPanelController::browserTitle(const QString& id) const {
+  const QJsonObject nav = m_previews.tab(id.mid(kBrowserTab.size())).value(QLatin1String("navStatus")).toObject();
+  const QString title = nav.value(QLatin1String("title")).toString();
+  if (!title.isEmpty()) return title;
+  const QUrl url(nav.value(QLatin1String("url")).toString());
+  return url.isEmpty() ? QStringLiteral("New tab") : url.host() + (url.port() > 0 ? QStringLiteral(":%1").arg(url.port()) : QString());
+}
+
 // --- Out -----------------------------------------------------------------------------
 
 void RightPanelController::update() {
@@ -707,7 +774,16 @@ void RightPanelController::update() {
   m_diff.setActive(open && activeTab() == QLatin1String("diff"));
   m_files.setActive(open && activeTab() == QLatin1String("files"));
   m_agents.setActive(open && activeTab() == QLatin1String("agents"));
-  m_previews.setActive(open && activeTab() == QLatin1String("previews"));
+  if (m_previews.embedded()) {
+    // The thread's browser tabs are followed while it shows; its machine's
+    // servers while the overview or an empty tab offers them.
+    m_previews.setActive(m_onThread);
+    const bool empty = kindOf(activeTab()) == QLatin1String("browser") &&
+                       m_previews.tab(activeTab().mid(kBrowserTab.size())).value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString().isEmpty();
+    m_previews.setSuggesting(open && (activeTab() == QLatin1String("previews") || empty));
+  } else {
+    m_previews.setActive(open && activeTab() == QLatin1String("previews"));
+  }
   // A floating device keeps streaming while the panel is closed.
   m_devices.setTab(m_onThread && !current().floating.isEmpty()        ? current().floating
                    : open && kindOf(activeTab()) == QLatin1String("device") ? activeTab()
@@ -745,7 +821,7 @@ void RightPanelController::publish() {
   for (const QString& id : state.tabs) {
     tabs.append(QVariantMap{{QStringLiteral("id"), id},
                             {QStringLiteral("kind"), kindOf(id)},
-                            {QStringLiteral("title"), state.titles.value(id, titleOf(id, m_devices))}});
+                            {QStringLiteral("title"), state.titles.value(id, id.startsWith(kBrowserTab) ? browserTitle(id) : titleOf(id, m_devices))}});
   }
   // Terminals need the thread's place.
   auto* terminals = NativeShell::of(this)->controller<TerminalController>();
@@ -771,6 +847,7 @@ void RightPanelController::publish() {
                                      {QStringLiteral("pullRequests"), m_pullRequests.count() > 0},
                                      {QStringLiteral("pullRequest"), m_pullRequests.count() > 0},
                                      {QStringLiteral("previews"), true},
+                                     {QStringLiteral("browser"), true},
                                      {QStringLiteral("device"), true}}},
                         // Why a kind cannot be added, for the Add menu to show under it.
                         {QStringLiteral("addReasons"),
@@ -883,11 +960,12 @@ void RightPanelController::save() {
     const Panel state = m_panels.value(threadKey);
     // Terminal tabs end with the app.
     QJsonArray tabs;
+    // Browser tabs are the MC's, listed again when the thread shows.
     for (const QString& id : state.tabs) {
-      if (kindOf(id) != QLatin1String("terminal")) tabs.append(id);
+      if (kindOf(id) != QLatin1String("terminal") && kindOf(id) != QLatin1String("browser")) tabs.append(id);
     }
     if (tabs.isEmpty() && !state.details) continue;
-    const bool terminalShown = kindOf(state.active) == QLatin1String("terminal");
+    const bool terminalShown = kindOf(state.active) == QLatin1String("terminal") || kindOf(state.active) == QLatin1String("browser");
     QJsonObject titles;
     for (auto it = state.titles.begin(); it != state.titles.end(); ++it) titles.insert(it.key(), it.value());
     threads.prepend(QJsonObject{{QStringLiteral("threadKey"), threadKey},

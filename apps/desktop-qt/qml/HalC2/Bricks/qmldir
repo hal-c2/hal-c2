@@ -154,3 +154,4 @@ PluginSettings 1.0 PluginSettings.qml
 NotificationsSettings 1.0 NotificationsSettings.qml
 PairingSettings 1.0 PairingSettings.qml
 MaintenanceSettings 1.0 MaintenanceSettings.qml
+BrowserPanel 1.0 BrowserPanel.qml

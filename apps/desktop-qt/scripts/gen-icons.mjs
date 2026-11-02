@@ -143,6 +143,22 @@ const ICONS = [
   "shield",
   "heart",
   "download",
+  // The in-app browser (BrowserPanel) and its Devices view.
+  "arrow-left",
+  "arrow-right",
+  "rotate-cw",
+  "volume-2",
+  "volume-x",
+  "sun",
+  "moon",
+  "sun-moon",
+  "zoom-in",
+  "zoom-out",
+  "tablet",
+  "code-xml",
+  "rotate-3d",
+  "columns-3",
+  "monitor-smartphone",
 ];
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));

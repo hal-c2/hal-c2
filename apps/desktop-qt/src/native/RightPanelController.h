@@ -27,7 +27,11 @@ class ShellStore;
 // and a tab per device streamed (`device:<host>:<device>`, ThreadDevices; an
 // agent's device opens its tab unless the user closed it), and a terminal tab per
 // terminal group TerminalController keeps for the panel (`terminal:<group>`;
-// closing the tab closes its terminals).
+// closing the tab closes its terminals). A build with the in-app browser
+// (Browser::supported) has a tab per MC browser tab of the thread
+// (`browser:<tabId>`, ThreadPreviews embedded): the MC's list decides which
+// there are, closing one closes it on the MC, and one opened by the user,
+// a dev server link, an agent or another window shows.
 //
 // Each thread's panel (open, tabs, active tab, thread details shown) and the
 // panel's width outlive a restart in the store file (setStorePath); terminal
@@ -191,6 +195,10 @@ private:
   void closeTabIn(const QString& threadKey, const QString& id);
   // A web address from the conversation, opened in the browser.
   void openAddress(const QString& url);
+  // With the in-app browser: the thread's MC browser tabs as tabs here
+  // (`browser:<tabId>`), and what each is called.
+  void followBrowserTabs();
+  QString browserTitle(const QString& id) const;
 
   ShellBridge* m_bridge;
   McClient* m_client;

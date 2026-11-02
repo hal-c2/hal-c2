@@ -432,6 +432,8 @@ Rectangle {
         }
 
         Item {
+            id: bodies
+
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: panel.open
@@ -440,7 +442,7 @@ Rectangle {
             // hidden, while another tab shows, so it keeps its scroll and what
             // it loaded.
             Repeater {
-                model: Object.keys(PanelTabs.tabs)
+                model: PanelTabs.sharedKinds()
 
                 delegate: Loader {
                     id: nativeBody
@@ -463,6 +465,61 @@ Rectangle {
                     }
                 }
             }
+
+            // A per-tab kind's tabs (a browser tab's page) each have a body,
+            // made when the tab comes and kept until it goes, so a page is
+            // never loaded again for showing another tab.
+            Repeater {
+                model: ListModel {
+                    id: perTabBodies
+                }
+
+                delegate: Loader {
+                    id: tabBody
+
+                    required property string tabId
+                    required property string kind
+                    readonly property var tab: PanelTabs.tabs[kind]
+                    readonly property bool shown: panel.activeId === tabId
+
+                    objectName: "panelBody-" + tabId
+                    anchors.fill: parent
+                    visible: shown
+                    Component.onCompleted: setSource(Qt.resolvedUrl(tab.brick + ".qml"), {
+                        source: Qt.binding(() => tabBody.tab.source ? Panel[tabBody.tab.source] : null),
+                        tabId: tabId.slice(tabId.indexOf(":") + 1)
+                    })
+                }
+            }
+
+            // Follows the panel's per-tab tabs by id: a tab that comes gets a
+            // body, one that goes takes its body with it, the rest keep theirs.
+            function syncPerTabBodies() {
+                const tabs = (panel.model?.tabs ?? []).filter(tab => PanelTabs.tabs[tab.kind]?.perTab === true);
+                const ids = tabs.map(tab => tab.id);
+                for (let row = perTabBodies.count - 1; row >= 0; --row) {
+                    if (ids.indexOf(perTabBodies.get(row).tabId) < 0)
+                        perTabBodies.remove(row);
+                }
+                for (const tab of tabs) {
+                    let known = false;
+                    for (let row = 0; row < perTabBodies.count && !known; ++row)
+                        known = perTabBodies.get(row).tabId === tab.id;
+                    if (!known)
+                        perTabBodies.append({
+                            tabId: tab.id,
+                            kind: tab.kind
+                        });
+                }
+            }
+
+            Connections {
+                target: panel
+                function onModelChanged() {
+                    bodies.syncPerTabBodies();
+                }
+            }
+            Component.onCompleted: syncPerTabBodies()
         }
     }
 
