@@ -27,6 +27,10 @@ Closing a browser tab closes it for the agent too.
   leaves pages at their size.
 - **Device size** shows the page at a phone, tablet or desktop size, scaled
   down to fit.
+- **Devices** shows the page in several device sizes side by side at once.
+  Pick which sizes from its menu, and optionally show phones and tablets on a
+  3D body instead of a flat frame. The sizes shown and the 3D toggle are
+  remembered.
 - **DevTools** opens the developer tools below the page; **More** docks them to
   the right instead. Drag the divider to size them. The dock and size are
   remembered.
