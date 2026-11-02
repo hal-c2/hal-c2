@@ -101,6 +101,15 @@ defmodule HalC2Plugins.Maintenance.Schedule do
     {starting, Enum.reduce(waiting, planned, &Map.put(&2, &1, slots[&1]))}
   end
 
+  @doc """
+  The slots after a start refused for the runs at once hands `repository`'s slot
+  back: the one it had before it was planned, so it stays due. A schedule changed
+  while the start was pending leaves nil, and then the repository is dropped so the
+  next plan stamps it as new; a nil slot is never due again.
+  """
+  def give_back(slots, repository, nil), do: Map.delete(slots, repository)
+  def give_back(slots, repository, previous), do: Map.put(slots, repository, previous)
+
   defp period(%{"schedule" => "daily"}), do: {:ok, 1}
 
   defp period(%{"schedule" => "weekly", "weekday" => weekday}) when weekday in @weekdays,

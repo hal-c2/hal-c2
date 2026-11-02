@@ -273,6 +273,27 @@ defmodule HalC2.MaintenancePropTest do
     end
   end
 
+  # A start refused for the runs at once gives back the slot it was planned from. When
+  # the schedule changed meanwhile that slot is nil, and the repository must come back
+  # as new, stamped and due on the next slot, never stuck on a nil slot.
+  property "a slot given back as nil leaves the repository due on the next slot",
+    numtests: HalC2.Prop.numtests(200) do
+    forall {settings, now, slots, _held, _room} <- plan_input() do
+      Enum.all?(@repositories, fn repository ->
+        given = Schedule.give_back(slots, repository, nil)
+        {_, replanned} = Schedule.plan(settings, @repositories, given, now, fn _ -> false end, 0)
+
+        case Schedule.next_slot(settings, now) do
+          nil ->
+            true
+
+          later ->
+            Schedule.due?(settings, replanned[repository], NaiveDateTime.add(later, 1))
+        end
+      end)
+    end
+  end
+
   # --- redaction -------------------------------------------------------------------------
 
   defp token_char, do: elements(Enum.concat([?a..?z, ?A..?Z, ?0..?9]) |> Enum.map(&<<&1>>))

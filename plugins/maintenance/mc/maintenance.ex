@@ -101,19 +101,23 @@ defmodule HalC2Plugins.Maintenance do
   # What the settings page offers: the agents and models, and the repositories of
   # this MC's GitHub projects, the ones a run can start in.
   def call("settings", _input, context) do
-    {:ok, providers} = Host.providers(@id)
+    case Host.providers(@id) do
+      {:ok, providers} ->
+        {:ok,
+         %{
+           "settings" => context.settings,
+           "providers" => providers,
+           "repositories" =>
+             for(
+               %{"repository" => repository} <- projects(),
+               uniq: true,
+               do: repository
+             )
+         }}
 
-    {:ok,
-     %{
-       "settings" => context.settings,
-       "providers" => providers,
-       "repositories" =>
-         for(
-           %{"repository" => repository} <- projects(),
-           uniq: true,
-           do: repository
-         )
-     }}
+      _ ->
+        {:error, "The MC would not list its agents."}
+    end
   end
 
   # Run now, and rerun: a new run of the repository with the settings as they are.
@@ -770,8 +774,7 @@ defmodule HalC2Plugins.Maintenance do
 
     case started(run, limit, state) do
       {:busy, _message} when previous != :none ->
-        slots = Map.put(state.slots, run["repository"], previous)
-        state = %{state | slots: slots}
+        state = %{state | slots: Schedule.give_back(state.slots, run["repository"], previous)}
         write_state(state)
         {:reply, {:error, :later}, state}
 
