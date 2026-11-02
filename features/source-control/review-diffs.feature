@@ -52,13 +52,15 @@ Feature: Reviewing working tree and branch changes
     Then "src/cart.ts" is still the only staged file afterwards
 
   # The review must not trust a copied index's timestamps to tell an unchanged file from a new one.
-  @backlog @mc
-  Scenario: An untracked file edited again within the same second shows its newest content
-    Given the user has an untracked file "src/tax.ts" of 40 bytes
-    And the user reviews the working tree once
-    When the user rewrites "src/tax.ts" within the same second, to 40 bytes with different content
-    And the user reviews the working tree again
-    Then the review shows the newest content of "src/tax.ts"
+  # Untracked files are what make the review copy the index.
+  @mc
+  Scenario: A file edited again within the same second shows its newest content
+    Given "src/cart.ts" was committed within the second the index was last written
+    And the user created the untracked "src/tax.ts"
+    When the user rewrites "src/cart.ts" within that same second, to the same size with different content
+    And the user reviews the working tree
+    Then the review shows the newest content of "src/cart.ts"
+    And the user's index is as it was
 
   @mc
   Scenario: Reviewing the branch against its base
@@ -73,15 +75,15 @@ Feature: Reviewing working tree and branch changes
     Then "src/cart.ts" shows no changed lines
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (getReviewDiffPreview: PATCH_RENDER_PREFIX_ARGS)
-  @mc @backlog
+  @mc
   Scenario: A repository set to show diffs without path prefixes still reviews correctly
-    Given the repository of "shop" is configured to show diffs without path prefixes
+    Given the user set git to show diffs without path prefixes in "shop"
     And "src/cart.ts" has an uncommitted change
     When the user reviews the working tree
     Then "src/cart.ts" is shown as one file with its change
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (getReviewDiffPreview: unborn HEAD)
-  @mc @backlog
+  @mc
   Scenario: A repository with no commits reviews everything as added
     Given the project "notes" is a git repository with no commits
     And "notes" holds a staged "a.txt" and an untracked "b.txt"
@@ -362,26 +364,26 @@ Feature: Reviewing working tree and branch changes
     When the user presses mod+enter
     Then nothing is added to the composer
 
-  @backlog @mc
+  @mc
   Scenario: A folder under no version control reviews as nothing to compare
     Given the thread's folder is not under version control
     When the user reviews the working tree
     Then the review lists no sources to compare
     And no error is shown
 
-  @backlog @mc
+  @mc
   Scenario: A folder under a version control the MC cannot preview says so
     Given the thread's folder is managed by a version control other than git that cannot preview changes
     When the user reviews the working tree
     Then the user is told "The <kind> VCS driver does not support review diff previews." with the version control's own name
 
-  @backlog @mc
+  @mc
   Scenario: Expanding unchanged lines needs a git repository
     Given the thread's folder is not a git repository
     When the user expands the unchanged lines of "src/cart.ts"
     Then the user is told "Unchanged diff expansion currently requires a Git repository."
 
-  @backlog @mc
+  @mc
   Scenario Outline: A thread's own worktree can be reviewed and nothing outside the projects can
     When a client asks <request> for a folder <place>
     Then <outcome>
