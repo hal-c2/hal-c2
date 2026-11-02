@@ -4,6 +4,7 @@
 // read what the pane shows, the status line and the clipboard. A second client is
 // a second host on the same MC, following the same streams.
 import { expect } from "bun:test";
+import { TextAttributes } from "@opentui/core";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -17,6 +18,7 @@ import {
   type TuiSpaceRow,
   type TuiSpaceState,
 } from "../../../src/host/spaceState.ts";
+import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
 import { env, projectNamed, threadNamed, ui } from "../environment.ts";
 import { fakeClient } from "../fakeClient.ts";
@@ -236,10 +238,16 @@ async function blockRows(ctx: SpaceWorld, title: string) {
   return pane(ctx).rows.filter((row) => row.kind === "block" && row.first);
 }
 
-/** A block's words, after its tick box, bar or arrow and before the agent that wrote it. */
+/** The mark each kind draws before a block's words: tick box, bar, arrow, `#`s or gutter. */
+const BLOCK_MARK: Partial<Record<string, RegExp>> = {
+  heading: /^#{1,6} /,
+  raw: /^│ /,
+};
+
+/** A block's words, after its mark and before the agent that wrote it. */
 const blockText = (row: TuiSpaceRow) =>
   words(row)
-    .replace(/^(\[[ x]\] |▌ |↳ |#{1,6} |│ )/, "")
+    .replace((row.blockKind && BLOCK_MARK[row.blockKind]) ?? /^(\[[ x]\] |▌ |↳ )/, "")
     .replace(/ {2}· .*$/, "");
 
 // --- Spaces ---
@@ -2329,4 +2337,27 @@ step(
 step("each heading is smaller than the one of the level above it", (ctx: SpaceWorld) => {
   const headings = pane(ctx).rows.filter((row) => row.blockKind === "heading" && row.first);
   expect(headings.map(words)).toEqual([1, 2, 3, 4, 5, 6].map((n) => `${"#".repeat(n)} Level ${n}`));
+  // The words' own chunk: every level bold, the top one underlined, and the colour
+  // stepping down from accent (1, 2) through text (3, 4) to dim (5, 6).
+  const styles = headings.map((row, index) => {
+    const part = row.line.chunks.find((chunk) => chunk.text === `Level ${index + 1}`);
+    if (!part) throw new Error(`no chunk for "Level ${index + 1}"`);
+    const attributes = part.attributes ?? 0;
+    return {
+      fg: part.fg?.toString(),
+      bold: (attributes & TextAttributes.BOLD) !== 0,
+      underline: (attributes & TextAttributes.UNDERLINE) !== 0,
+    };
+  });
+  expect(styles.map((style) => style.bold)).toEqual([true, true, true, true, true, true]);
+  expect(styles.map((style) => style.underline)).toEqual([true, false, false, false, false, false]);
+  const [one, two, three, four, five, six] = styles.map((style) => style.fg);
+  expect([one, two, three, four, five, six]).toEqual([
+    THEME.accent.toString(),
+    THEME.accent.toString(),
+    THEME.text.toString(),
+    THEME.text.toString(),
+    THEME.dim.toString(),
+    THEME.dim.toString(),
+  ]);
 });
