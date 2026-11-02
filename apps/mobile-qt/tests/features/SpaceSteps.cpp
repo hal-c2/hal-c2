@@ -15,6 +15,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
+#include <QQuickWindow>
 #include <QRegularExpression>
 #include <QSet>
 #include <QTest>
