@@ -635,6 +635,24 @@ Item {
             compare(root.dispatched("space.block.update"), [{ blockId: "b1", text: table + "\n|" }]);
         }
 
+        function test_a_scrolled_raw_block_comes_back_when_its_lines_get_shorter() {
+            const long = "| " + "x".repeat(400) + " |";
+            const view = root.research({ blocks: [root.block("b1", long, { kind: "raw" })] });
+            const scroller = findChild(view, "spaceBlockScroll:" + long);
+            verify(scroller.contentWidth > scroller.width);
+            mouseWheel(scroller, 10, 10, -100000, 0);
+            verify(scroller.contentX > 0);
+            compare(scroller.contentX, scroller.contentWidth - scroller.width);
+            // A wider page shows more of the line, and none of it past its end.
+            const narrow = scroller.width;
+            view.width += 300;
+            tryVerify(() => scroller.width > narrow);
+            tryCompare(scroller, "contentX", scroller.contentWidth - scroller.width);
+            // Another client writes it shorter: the start of its lines shows again.
+            Spaces.blocks.setProperty(0, "text", "| x |");
+            tryCompare(scroller, "contentX", 0);
+        }
+
         function test_headings_step_down_in_size_from_level_one() {
             const levels = [1, 2, 3, 4, 5, 6];
             const headings = levels.map(level => root.block("h" + level, "Level " + level, { kind: "heading", level: level }));
