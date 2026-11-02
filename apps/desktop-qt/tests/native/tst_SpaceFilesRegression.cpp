@@ -146,6 +146,38 @@ private slots:
     QTRY_COMPARE(shell.written, (QStringList{QStringLiteral("page-1"), QString(), QStringLiteral("page-1")}));
     QCOMPARE(shell.error(), QString());
   }
+
+  // OpenFile(beta, page-1), SelectPage(page-2): the file's page was shown already,
+  // so it stayed awaited, and the next rebuild took the view back from page-2.
+  void aPageOpenedWhileShownIsNotAwaited() {
+    Shell shell;
+    shell.mc.onRpc(QStringLiteral("space.page.openFile"), [&](const FakeMc::Rpc& rpc) {
+      shell.mc.reply(rpc, QJsonObject{{QStringLiteral("spaceId"), QStringLiteral("space-1")},
+                                      {QStringLiteral("page"), QJsonObject{{QStringLiteral("id"), QStringLiteral("page-1")}}},
+                                      {QStringLiteral("created"), false}});
+    });
+    QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
+    const QJsonObject research{{QStringLiteral("id"), QStringLiteral("space-1")}, {QStringLiteral("name"), QStringLiteral("Research")},
+                               {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}};
+    shell.space()->receiveIndex({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("offset"), 1}, {QStringLiteral("part"), 0},
+                                 {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{QStringLiteral("space"), QStringLiteral("space-1"), research})}},
+                                 {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("index-1")}});
+    shell.space()->selectSpace(QStringLiteral("space-1"));
+    QJsonArray rows;
+    for (const QString id : {QStringLiteral("page-1"), QStringLiteral("page-2")}) {
+      rows.append(QJsonArray{QStringLiteral("page"), id,
+                             QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("title"), id}, {QStringLiteral("parentPageId"), QJsonValue::Null},
+                                         {QStringLiteral("trashedAt"), QJsonValue::Null}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}}});
+    }
+    shell.space()->receiveSpace({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("offset"), 1}, {QStringLiteral("part"), 0},
+                                 {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
+    shell.space()->selectPage(QStringLiteral("page-1"));
+
+    QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
+    QTRY_COMPARE(shell.written, QStringList{QStringLiteral("page-1")});
+    QVERIFY(shell.space()->handle(QStringLiteral("space.selectPage"), QVariantMap{{QStringLiteral("pageId"), QStringLiteral("page-2")}}));
+    QCOMPARE(shell.space()->pageId(), QStringLiteral("page-2"));
+  }
 };
 
 int main(int argc, char** argv) {
