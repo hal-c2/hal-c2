@@ -290,6 +290,36 @@ Rectangle {
             }
 
             ShellButton {
+                id: devicesButton
+
+                objectName: "browserDevices"
+                subtle: true
+                checked: Browser.devicesView
+                iconName: "layout-grid"
+                Accessible.name: Browser.devicesView ? qsTr("Close Devices view") : qsTr("Devices view")
+                onClicked: Browser.devicesView = !Browser.devicesView
+            }
+
+            ShellButton {
+                id: devicesPickButton
+
+                objectName: "browserDevicesPick"
+                visible: Browser.devicesView
+                subtle: true
+                iconName: "sliders-horizontal"
+                Accessible.name: qsTr("Choose devices")
+                onClicked: devicesPicker.visible ? devicesPicker.close() : devicesPicker.open()
+
+                DevicesPicker {
+                    id: devicesPicker
+
+                    objectName: "browserDevicesPicker"
+                    x: devicesPickButton.width - width
+                    y: devicesPickButton.height + 4
+                }
+            }
+
+            ShellButton {
                 objectName: "browserDevTools"
                 subtle: true
                 checked: page.devTools
@@ -451,6 +481,9 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
+        // Hidden, not torn down, while the Devices view shows: the page
+        // underneath keeps following the MC's tab and reporting to it.
+        visible: !Browser.devicesView
         clip: true
 
         // The page's own pixels: the app's zoom undone.
@@ -757,6 +790,25 @@ Rectangle {
                     onClicked: root.reload()
                 }
             }
+        }
+    }
+
+    // The Devices view: made only while shown, so its frames exist only then.
+    Loader {
+        id: devicesViewLoader
+
+        anchors.top: chrome.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        active: Browser.devicesView
+        visible: Browser.devicesView
+        sourceComponent: BrowserDevicesView {
+            pageUrl: root.address
+            profile: webView.profile
+            pageBackground: root.color
+            presetIds: Browser.devicesPresetIds
+            show3d: Browser.devices3d
         }
     }
 
