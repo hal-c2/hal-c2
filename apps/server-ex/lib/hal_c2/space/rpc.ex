@@ -7,6 +7,7 @@ defmodule HalC2.Space.Rpc do
   """
 
   alias HalC2.Space
+  alias HalC2.Space.Schedule
 
   @doc "Answers `space.<method>` with `input`."
   def handle(method, input) when is_map(input), do: method |> call(input) |> reply()
@@ -50,6 +51,20 @@ defmodule HalC2.Space.Rpc do
 
   defp call("page.createFromThread", %{"spaceId" => s, "threadId" => t} = i),
     do: page(Space.create_page_from_thread(s, t, i["parentPageId"]))
+
+  defp call("page.schedule.set", %{"spaceId" => s, "pageId" => p} = i)
+       when is_map_key(i, "instruction") and is_map_key(i, "cadence"),
+       do: page(Schedule.set(s, p, i["instruction"], i["cadence"]))
+
+  defp call("page.schedule.setEnabled", %{"spaceId" => s, "pageId" => p, "enabled" => enabled})
+       when is_boolean(enabled),
+       do: page(Schedule.set_enabled(s, p, enabled))
+
+  defp call("page.schedule.runNow", %{"spaceId" => s, "pageId" => p}),
+    do: page(Schedule.run_now(s, p))
+
+  defp call("page.schedule.remove", %{"spaceId" => s, "pageId" => p}),
+    do: page(Schedule.remove(s, p))
 
   defp call("block.insert", %{"spaceId" => s, "pageId" => p, "kind" => _} = i) do
     spec = Map.take(i, ~w(kind text checked linkedPageId imageId))
@@ -137,6 +152,7 @@ defmodule HalC2.Space.Rpc do
   @methods ~w(list create rename delete page.create page.rename page.move page.trash
     page.restore page.delete page.publish page.unpublish page.exportMarkdown page.importMarkdown
     page.createFromThread
+    page.schedule.set page.schedule.setEnabled page.schedule.runNow page.schedule.remove
     block.insert block.update block.setChecked block.move block.delete block.visualize
     comment.add comment.resolve comment.reopen deck.create deck.createFromPage deck.rename
     deck.trash deck.restore deck.delete slide.insert slide.update slide.move slide.delete

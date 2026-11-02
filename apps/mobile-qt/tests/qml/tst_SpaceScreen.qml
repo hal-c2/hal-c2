@@ -468,6 +468,92 @@ Item {
             verify(!findChild(screen, "spaceCommentResolve:Note").visible);
         }
 
+        function updateOf(more) {
+            return Object.assign({ instruction: "Summarise", cadence: { type: "interval", everyMs: 7200000 }, cadenceLabel: "Every 2 hours", enabled: true, nextRunAt: "2026-09-23T12:00:00Z", lastRunStatus: "never" }, more ?? {});
+        }
+
+        function openPageWith(schedule, more, blocks) {
+            const screen = makeScreen({ page: root.pageOf("p1", Object.assign({ schedule: schedule }, more ?? {})), blocks: blocks ?? [] });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            return screen;
+        }
+
+        function test_aPageWithNoUpdateOffersOnlyTheWayToGiveItOne() {
+            const screen = openPageWith(null);
+            screen.pageMenu("p1", "Roadmap", "");
+            const ids = sheetOf(screen).rows.map(row => row.id);
+            verify(ids.includes("update"));
+            verify(!ids.includes("updateRun"));
+            verify(!ids.includes("updatePause"));
+            verify(!ids.includes("updateRemove"));
+        }
+
+        function test_theTreeDoesNotOfferAnUpdateItCannotSee() {
+            const screen = makeScreen({ page: root.pageOf("p1", { schedule: updateOf() }) });
+            screen.openSpace("s1");
+            screen.pageMenu("p1", "Roadmap", "");
+            verify(!sheetOf(screen).rows.map(row => row.id).includes("update"));
+        }
+
+        function test_aPausedUpdateResumesAndARunningOneCannotBeRunAgain() {
+            const screen = openPageWith(updateOf({ enabled: false, lastRunStatus: "running" }));
+            screen.pageMenu("p1", "Roadmap", "");
+            compare(sheetOf(screen).rows.find(row => row.id === "updateRun").enabled, false);
+            sheetOf(screen).choose("updatePause");
+            compare(dispatched("space.page.schedule.setEnabled")[0].enabled, true);
+        }
+
+        function test_theCadenceCanBeKeptAsItIs() {
+            const held = { type: "fixed_time", timeOfDay: "07:30", weekdays: [1, 3] };
+            const screen = openPageWith(updateOf({ cadence: held, cadenceLabel: "Mon, Wed at 07:30" }));
+            screen.askUpdate();
+            dialogOf(screen).save();
+            sheetOf(screen).choose("keep");
+            const set = dispatched("space.page.schedule.set")[0];
+            compare(set.instruction, "Summarise");
+            compare(set.cadence.timeOfDay, "07:30");
+            compare(set.cadence.weekdays, [1, 3]);
+        }
+
+        function test_aNewTimeKeepsTheDaysItRunsOn() {
+            const held = { type: "fixed_time", timeOfDay: "07:30", weekdays: [1, 3] };
+            const screen = openPageWith(updateOf({ cadence: held, cadenceLabel: "Mon, Wed at 07:30" }));
+            screen.askUpdate();
+            dialogOf(screen).save();
+            sheetOf(screen).choose("time");
+            findChild(screen, "spaceTextField").text = "09:15";
+            dialogOf(screen).save();
+            const set = dispatched("space.page.schedule.set")[0];
+            compare(set.cadence.timeOfDay, "09:15");
+            compare(set.cadence.weekdays, [1, 3]);
+        }
+
+        function test_anIntervalGoesToTheMcInMilliseconds() {
+            const screen = openPageWith(null);
+            screen.askUpdate();
+            findChild(screen, "spaceTextField").text = " List open questions ";
+            dialogOf(screen).save();
+            verify(!sheetOf(screen).rows.map(row => row.id).includes("keep"));
+            sheetOf(screen).choose("every:6");
+            const set = dispatched("space.page.schedule.set")[0];
+            compare(set.instruction, "List open questions");
+            compare(set.cadence.type, "interval");
+            compare(set.cadence.everyMs, 21600000);
+        }
+
+        function test_thePageShowsItsUpdateAndWhatItWrote() {
+            const screen = openPageWith(updateOf({ lastRunStatus: "failed", lastRunError: "the model is overloaded" }), { writtenAt: "2026-09-23T08:00:00Z" }, [root.block("b1", "Three threads", { kind: "generated" })]);
+            waitForRendering(screen);
+            const card = findChild(screen, "spacePageUpdate");
+            verify(card.visible);
+            compare(findChild(card, "spaceUpdateSays").text, "Summarise");
+            verify(findChild(card, "spaceUpdateFailure").text.includes("the model is overloaded"));
+            verify(!findChild(card, "spaceUpdateRun").visible);
+            verify(!findChild(screen, "spaceBlockEditor:Three threads").visible);
+            tryVerify(() => findChild(screen, "spaceGenerated") !== null);
+        }
+
         function test_whatWasWrittenGoesToTheMcWhenTheEditorLosesFocus() {
             const screen = makeScreen({ blocks: [root.block("b1", "Draft")] });
             screen.openSpace("s1");

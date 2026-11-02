@@ -7,8 +7,9 @@ import HalC2.Shell
 // One block of a page (a row of Spaces.blocks): its text edited in place and
 // written when the user leaves it or presses Return, a checklist item's tick,
 // a callout's tint, a subpage link that opens the page, an image above its
-// caption, a chart drawn from its description, and the block's own actions (comment,
-// add a block below, ask again for a chart, move up or down, delete).
+// caption, a chart drawn from its description, what a page's update wrote (Markdown
+// nobody edits by hand), and the block's own actions (comment, add a block below,
+// ask again for a chart, move up or down, delete).
 Item {
     id: block
 
@@ -164,7 +165,7 @@ Item {
 
             objectName: "spaceBlockEditor:" + block.text
             Layout.fillWidth: true
-            visible: block.kind !== "subpage_link" && block.kind !== "chart"
+            visible: block.kind !== "subpage_link" && block.kind !== "chart" && block.kind !== "generated"
             readOnly: block.readOnly
             wrapMode: TextEdit.Wrap
             selectByMouse: true
@@ -194,6 +195,28 @@ Item {
             Keys.onEscapePressed: {
                 editor.text = block.text;
                 editor.focus = false;
+            }
+        }
+
+        Loader {
+            Layout.fillWidth: true
+            active: block.kind === "generated"
+            visible: active
+
+            sourceComponent: ColumnLayout {
+                spacing: 2
+
+                Markdown {
+                    objectName: "spaceGenerated"
+                    Layout.fillWidth: true
+                    text: block.text
+                }
+
+                Text {
+                    text: qsTr("Written by this page's update")
+                    color: block.muted
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                }
             }
         }
 

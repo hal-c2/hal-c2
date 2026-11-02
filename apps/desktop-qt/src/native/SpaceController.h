@@ -160,6 +160,9 @@ public:
   QString spaceId() const { return m_spaceId; }
   QString spaceName() const;
   QString pageId() const { return m_pageId; }
+  // The open page: {id, title, parentPageId, trashed, sourceThreadId,
+  // sourceThreadTitle, schedule, writtenAt}. `schedule` is what the MC shows of
+  // the page's update plus its `cadenceLabel`, empty when it has none.
   QVariantMap page() const;
   QString deckId() const { return m_deckId; }
   bool imagesShown() const { return m_imagesShown; }
@@ -171,6 +174,8 @@ public:
   QVariantMap siteOf(const QString& pageId) const;
   QString status() const;
   QVariantMap viewers() const { return m_viewers; }
+  // "Every 2 hours", "Every day at 07:30", "Mon, Wed at 09:00".
+  static QString cadenceLabel(const QJsonObject& cadence);
 
   SpaceStream& index() { return m_index; }
   SpaceStream& space() { return m_space; }
@@ -222,6 +227,7 @@ public:
   void setClock(std::function<qint64()> now) { m_now = std::move(now); }
 
   // Titles for what a page names: a page's own, or "Untitled".
+  static QVariantMap updateOf(const QJsonObject& page);
   QString titleOf(const QString& pageId) const;
   QString threadTitle(const QString& threadId) const;
   void setThreadTitles(std::function<QString(const QString&)> title) { m_threadTitle = std::move(title); }
@@ -315,6 +321,9 @@ private:
 // `space.page.create {title, parentPageId, link}`, `space.page.rename {pageId, title}`,
 // `space.page.move {pageId, parentPageId}`, `space.page.trash {pageId}`,
 // `space.page.restore {pageId}`, `space.page.delete {pageId}`,
+// `space.page.schedule.set {pageId, instruction, cadence}`,
+// `space.page.schedule.setEnabled {pageId, enabled}`,
+// `space.page.schedule.runNow {pageId}`, `space.page.schedule.remove {pageId}`,
 // `space.page.copyMarkdown {pageId}`, `space.page.saveMarkdown {pageId, url}`,
 // `space.page.publish {pageId, tailscale}`, `space.page.unpublish {pageId}`,
 // `space.page.copySiteLink {pageId}`,

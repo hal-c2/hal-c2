@@ -6,8 +6,8 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// The open page: its blocks, the way to add one, its comments and what can be
-// done with it. A page in the trash is only read, and says so.
+// The open page: its update, its blocks, the way to add one, its comments and
+// what can be done with it. A page in the trash is only read, and says so.
 ColumnLayout {
     id: view
 
@@ -103,6 +103,14 @@ ColumnLayout {
                 text: qsTr("This page is in the trash. Restore it to edit it.")
                 color: Theme.palette.color("error", "#ef4444")
                 font.pixelSize: Math.round(13 * Theme.fontScale)
+            }
+
+            // Its actions are in the page's menu, a finger wide.
+            SpacePageUpdate {
+                Layout.fillWidth: true
+                Layout.margins: 12
+                Layout.bottomMargin: 4
+                actions: false
             }
 
             // The page's site: where it is, whether it is behind the page, and the ways on and back.
