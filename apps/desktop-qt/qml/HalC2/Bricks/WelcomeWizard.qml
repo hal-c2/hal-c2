@@ -120,6 +120,7 @@ Item {
                     }
                     HalC2Wordmark {
                         size: 14
+                        dev: Shell.state.stage?.artwork === "dev"
                         Accessible.name: "HAL-C2"
                     }
                 }

@@ -94,6 +94,10 @@ target_compile_definitions(hal-c2-qt PRIVATE
   HAL_C2_HOST_ENTRY="${HAL_C2_HOST_ENTRY}"
   HAL_C2_NODE_ENTRY="${HAL_C2_NODE_ENTRY}"
   HAL_C2_APP_VERSION="${PROJECT_VERSION}"
+  # Any build but Release is a development shell (main.cpp). Its icon is read
+  # from the checkout, so release binaries do not carry it.
+  HAL_C2_DEV_BUILD=$<IF:$<CONFIG:Release>,false,true>
+  HAL_C2_DEV_ICON="${CMAKE_CURRENT_SOURCE_DIR}/../../assets/dev/blueprint-universal-1024.png"
 )
 
 include(cmake/PlatformWindow.cmake)
