@@ -379,6 +379,8 @@ import {
   SpacePageVersionRef,
   SpacePageAskAgentInput,
   SpacePageAgentRef,
+  SpacePageAgentTarget,
+  SpacePageAgentTargetInput,
   SpacePageAgentResult,
   SpacePageDismissAgentResult,
   SpaceRenameInput,
@@ -576,6 +578,7 @@ export const WS_METHODS = {
   spacePageVersion: "space.page.version",
   spacePageRestoreVersion: "space.page.restoreVersion",
   spacePageAskAgent: "space.page.askAgent",
+  spacePageAgentTarget: "space.page.agentTarget",
   spacePageStopAgent: "space.page.stopAgent",
   spacePageDismissAgent: "space.page.dismissAgent",
   spacePageScheduleSet: "space.page.schedule.set",
@@ -1992,6 +1995,12 @@ const WsSpacePageAskAgentRpc = Rpc.make(WS_METHODS.spacePageAskAgent, {
   error: SpaceRpcError,
 });
 
+const WsSpacePageAgentTargetRpc = Rpc.make(WS_METHODS.spacePageAgentTarget, {
+  payload: SpacePageAgentTargetInput,
+  success: SpacePageAgentTarget,
+  error: SpaceRpcError,
+});
+
 const WsSpacePageStopAgentRpc = Rpc.make(WS_METHODS.spacePageStopAgent, {
   payload: SpacePageAgentRef,
   success: SpacePageAgentResult,
@@ -2299,6 +2308,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageVersionRpc,
   WsSpacePageRestoreVersionRpc,
   WsSpacePageAskAgentRpc,
+  WsSpacePageAgentTargetRpc,
   WsSpacePageStopAgentRpc,
   WsSpacePageDismissAgentRpc,
   WsSpacePageScheduleSetRpc,

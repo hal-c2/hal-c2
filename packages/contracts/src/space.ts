@@ -15,6 +15,10 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ChatAttachment, UploadChatAttachment } from "./chatAttachment.ts";
+import { OrchestrationMessageContext } from "./composerContext.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ScheduledTaskRunStatus, ScheduledTaskUpsertSchedule } from "./scheduledTask.ts";
 
 /**
@@ -783,16 +787,43 @@ export const SpacePageAgent = Schema.Struct({
   error: Schema.NullOr(Schema.String),
   startedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
+  /** Which start of its MC took the ask; none on one from before there were tokens. */
+  boot: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type SpacePageAgent = typeof SpacePageAgent.Type;
 
+/**
+ * An ask from a page's prompt, which is the timeline's prompt: what it may choose is what a
+ * thread's first turn may. Each choice left out is made as for an older client, which sends
+ * none: the project `space.page.agentTarget` names and the model a new thread there would use.
+ */
 export const SpacePageAskAgentInput = Schema.Struct({
   spaceId: SpaceId,
   pageId: SpacePageId,
   /** What the agent should do; a leading `@agent` is not part of it. */
   request: Schema.String,
+  /** The project the agent's thread runs in, at its own checkout. */
+  projectId: Schema.optional(ProjectId),
+  /** The model and its options, such as effort. One whose provider cannot run is refused. */
+  modelSelection: Schema.optional(ModelSelection),
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
+  /** As a turn's: images inline, or what the MC already holds, such as an uploaded file. */
+  attachments: Schema.optional(Schema.Array(Schema.Union([UploadChatAttachment, ChatAttachment]))),
+  /** As a turn's message carries them: mentions, skills and the other context records. */
+  context: Schema.optional(OrchestrationMessageContext),
 });
 export type SpacePageAskAgentInput = typeof SpacePageAskAgentInput.Type;
+
+/** `space.page.agentTarget`: where an ask that picks no project would run, for the prompt to show. */
+export const SpacePageAgentTargetInput = Schema.Struct({});
+export type SpacePageAgentTargetInput = typeof SpacePageAgentTargetInput.Type;
+
+export const SpacePageAgentTarget = Schema.Struct({
+  /** The project the user last worked in; null when this MC has none to run in. */
+  projectId: Schema.NullOr(ProjectId),
+});
+export type SpacePageAgentTarget = typeof SpacePageAgentTarget.Type;
 
 /** Names a page for `space.page.stopAgent` and `space.page.dismissAgent`. */
 export const SpacePageAgentRef = Schema.Struct({

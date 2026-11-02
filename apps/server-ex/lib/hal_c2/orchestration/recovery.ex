@@ -130,6 +130,9 @@ defmodule HalC2.Orchestration.Recovery do
   @doc false
   # Connects before the MC takes requests; `continue/0` acts on what failed.
   def start_reattach do
+    # Before the listener, so a page's agent asked after it is not the reconciliation's.
+    HalC2.Space.PageAgent.boot()
+
     :persistent_term.put({__MODULE__, :failed}, reattach())
     :ignore
   end
