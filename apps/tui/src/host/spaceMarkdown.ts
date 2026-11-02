@@ -83,11 +83,20 @@ export function markdownFrame(block: SpaceBlock, item: SpaceListItem | null): Sp
     case "callout":
       return block.alert ? { ...none, above: `[!${block.alert.toUpperCase()}]` } : none;
     case "divider":
-      return { ...none, lead: "---" };
+      return { ...none, lead: block.marker ?? "---" };
     case "footnote":
       return { ...none, lead: `[^${block.label ?? ""}]: ` };
-    case "details":
-      return { ...none, above: "<details>", lead: "<summary>", tail: "</summary>" };
+    case "details": {
+      // The opening as the page wrote it, `<details>` then `<summary>` on its own line or both on one.
+      const opening = block.marker ?? "<details>\n<summary>";
+      const newline = opening.lastIndexOf("\n");
+      return {
+        ...none,
+        above: opening.slice(0, Math.max(newline, 0)),
+        lead: opening.slice(newline + 1),
+        tail: "</summary>",
+      };
+    }
     case "details_end":
       return { ...none, lead: "</details>" };
     case "code": {

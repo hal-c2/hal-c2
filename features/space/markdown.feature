@@ -227,26 +227,38 @@ Feature: GitHub Markdown in a page
         ```
 
         ![Logo](https://example.com/logo.png)
+
+        ***
+
+        <details open><summary>More</summary>
+
+        Ship it.
+
+        </details>
         """
       Then the blocks of "Plan" are:
-        | kind        | text                   | depth | start | checked | alert   | label | language | fence | url                          |
-        | numbered    | Release                | -     | 3     | false   | -       | -     | -        | -     | -                            |
-        | numbered    | Ship                   | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | bullet      | Tag                    | 1     | -     | false   | -       | -     | -        | -     | -                            |
-        | numbered    | Notes                  | 2     | -     | false   | -       | -     | -        | -     | -                            |
-        | numbered    | Docs                   | 2     | -     | false   | -       | -     | -        | -     | -                            |
-        | checklist   | Changelog              | 3     | -     | true    | -       | -     | -        | -     | -                            |
-        | numbered    | Announce               | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | callout     | Ship on a weekday.     | -     | -     | false   | warning | -     | -        | -     | -                            |
-        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | paragraph   | Read the notes.[^wiki] | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | footnote    | Kept in the wiki.      | -     | -     | false   | -       | wiki  | -        | -     | -                            |
-        | details     | Steps                  | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | paragraph   | Tag it.                | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | code        | E = mc^2               | -     | -     | false   | -       | -     | math     | $$    | -                            |
-        | code        | a^2 + b^2 = c^2        | -     | -     | false   | -       | -     | math     | -     | -                            |
-        | image       | Logo                   | -     | -     | false   | -       | -     | -        | -     | https://example.com/logo.png |
+        | kind        | text                   | depth | start | checked | alert   | label | language | fence | url                          | marker                  |
+        | numbered    | Release                | -     | 3     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Ship                   | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | bullet      | Tag                    | 1     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Notes                  | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Docs                   | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | checklist   | Changelog              | 3     | -     | true    | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Announce               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | callout     | Ship on a weekday.     | -     | -     | false   | warning | -     | -        | -     | -                            | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Read the notes.[^wiki] | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | footnote    | Kept in the wiki.      | -     | -     | false   | -       | wiki  | -        | -     | -                            | -                       |
+        | details     | Steps                  | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Tag it.                | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | code        | E = mc^2               | -     | -     | false   | -       | -     | math     | $$    | -                            | -                       |
+        | code        | a^2 + b^2 = c^2        | -     | -     | false   | -       | -     | math     | -     | -                            | -                       |
+        | image       | Logo                   | -     | -     | false   | -       | -     | -        | -     | https://example.com/logo.png | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | ***                     |
+        | details     | More                   | -     | -     | false   | -       | -     | -        | -     | -                            | <details open><summary> |
+        | paragraph   | Ship it.               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
 
     # Until the clients draw these kinds, each shows what the MC writes around its text, and
     # the text stays editable as before; a checklist item keeps its tick and a callout its
@@ -256,24 +268,28 @@ Feature: GitHub Markdown in a page
     @shared
     Scenario: Blocks the clients do not draw yet are shown as the MC writes them
       Given the page "Plan" holds the blocks:
-        | kind        | text                   | depth | start | checked | alert   | label | language | fence | url                          |
-        | numbered    | Release                | -     | 3     | false   | -       | -     | -        | -     | -                            |
-        | numbered    | Ship                   | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | bullet      | Tag                    | 1     | -     | false   | -       | -     | -        | -     | -                            |
-        | numbered    | Notes                  | 2     | -     | false   | -       | -     | -        | -     | -                            |
-        | numbered    | Docs                   | 2     | -     | false   | -       | -     | -        | -     | -                            |
-        | checklist   | Changelog              | 3     | -     | true    | -       | -     | -        | -     | -                            |
-        | numbered    | Announce               | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | callout     | Ship on a weekday.     | -     | -     | false   | warning | -     | -        | -     | -                            |
-        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | paragraph   | Read the notes.[^wiki] | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | footnote    | Kept in the wiki.      | -     | -     | false   | -       | wiki  | -        | -     | -                            |
-        | details     | Steps                  | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | paragraph   | Tag it.                | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            |
-        | code        | E = mc^2               | -     | -     | false   | -       | -     | math     | $$    | -                            |
-        | code        | a^2 + b^2 = c^2        | -     | -     | false   | -       | -     | math     | -     | -                            |
-        | image       | Logo                   | -     | -     | false   | -       | -     | -        | -     | https://example.com/logo.png |
+        | kind        | text                   | depth | start | checked | alert   | label | language | fence | url                          | marker                  |
+        | numbered    | Release                | -     | 3     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Ship                   | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | bullet      | Tag                    | 1     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Notes                  | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Docs                   | 2     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | checklist   | Changelog              | 3     | -     | true    | -       | -     | -        | -     | -                            | -                       |
+        | numbered    | Announce               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | callout     | Ship on a weekday.     | -     | -     | false   | warning | -     | -        | -     | -                            | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Read the notes.[^wiki] | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | footnote    | Kept in the wiki.      | -     | -     | false   | -       | wiki  | -        | -     | -                            | -                       |
+        | details     | Steps                  | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | paragraph   | Tag it.                | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | code        | E = mc^2               | -     | -     | false   | -       | -     | math     | $$    | -                            | -                       |
+        | code        | a^2 + b^2 = c^2        | -     | -     | false   | -       | -     | math     | -     | -                            | -                       |
+        | image       | Logo                   | -     | -     | false   | -       | -     | -        | -     | https://example.com/logo.png | -                       |
+        | divider     | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | ***                     |
+        | details     | More                   | -     | -     | false   | -       | -     | -        | -     | -                            | <details open><summary> |
+        | paragraph   | Ship it.               | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
+        | details_end | -                      | -     | -     | false   | -       | -     | -        | -     | -                            | -                       |
       When the user opens "Plan"
       Then each block is shown as this Markdown, line for line:
         """
@@ -300,6 +316,10 @@ Feature: GitHub Markdown in a page
         a^2 + b^2 = c^2
         ```
         ![Logo](https://example.com/logo.png)
+        ***
+        <details open><summary>More</summary>
+        Ship it.
+        </details>
         """
 
   Rule: Headings

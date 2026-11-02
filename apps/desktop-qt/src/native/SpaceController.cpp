@@ -176,12 +176,15 @@ QVariantMap markdownFrame(const QJsonObject& block, const std::optional<ListItem
     const QString alert = text(block, QLatin1String("alert"));
     if (alerts.contains(alert)) above = QStringLiteral("[!%1]").arg(alert.toUpper());
   } else if (kind == QLatin1String("divider")) {
-    lead = QStringLiteral("---");
+    lead = block.contains(QLatin1String("marker")) ? text(block, QLatin1String("marker")) : QStringLiteral("---");
   } else if (kind == QLatin1String("footnote")) {
     lead = QStringLiteral("[^%1]: ").arg(text(block, QLatin1String("label")));
   } else if (kind == QLatin1String("details")) {
-    above = QStringLiteral("<details>");
-    lead = QStringLiteral("<summary>");
+    // The opening as the page wrote it, `<details>` then `<summary>` on its own line or both on one.
+    const QString opening = block.contains(QLatin1String("marker")) ? text(block, QLatin1String("marker")) : QStringLiteral("<details>\n<summary>");
+    const qsizetype newline = opening.lastIndexOf(QLatin1Char('\n'));
+    above = opening.left(std::max<qsizetype>(newline, 0));
+    lead = opening.mid(newline + 1);
     tail = QStringLiteral("</summary>");
   } else if (kind == QLatin1String("details_end")) {
     lead = QStringLiteral("</details>");

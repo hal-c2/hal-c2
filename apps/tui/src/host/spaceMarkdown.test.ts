@@ -81,3 +81,21 @@ describe("math", () => {
     });
   });
 });
+
+describe("markers a page kept", () => {
+  test("a divider is the rule it was written with", () => {
+    expect(markdownFrame(block({ kind: "divider" }), null).lead).toBe("---");
+    expect(markdownFrame(block({ kind: "divider", marker: "* * *" }), null).lead).toBe("* * *");
+  });
+
+  test("a section opens as written, on one line or two", () => {
+    const frame = (marker?: string) =>
+      markdownFrame(block({ kind: "details", text: "Steps", ...(marker ? { marker } : {}) }), null);
+    expect(frame()).toMatchObject({ above: "<details>", lead: "<summary>", tail: "</summary>" });
+    expect(frame("<details open>\n  <summary>")).toMatchObject({
+      above: "<details open>",
+      lead: "  <summary>",
+    });
+    expect(frame("<details><summary>")).toMatchObject({ above: "", lead: "<details><summary>" });
+  });
+});
