@@ -214,7 +214,7 @@ Feature: Delegating tasks to subagents
   # completion that lands after the second wake has ended wakes nobody. Here the
   # later two land while the caller is busy, and ride one wake.
   @mc
-  Scenario: Each later completion wakes the caller again
+  Scenario: Later completions that land while the caller works share its second wake
     Given the agent in "parent" delegated tasks "one", "two" and "three" without waiting
     And "parent" was woken for the completion of "one"
     When "two" and "three" complete afterwards, while "parent" works on another turn
