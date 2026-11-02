@@ -254,7 +254,7 @@ Feature: Tool calls and file changes
     When the user closes the group
     Then the calls collapse back into the summary
 
-  @desktop @backlog
+  @desktop
   Scenario Outline: A command's details say how it ended
     Given the agent ran a command that exited with code <code>
     When the user opens the command's details
@@ -266,20 +266,20 @@ Feature: Tool calls and file changes
       | 0    | a success |
       | 2    | a failure |
 
-  @desktop @backlog
+  @desktop
   Scenario: A command that has not exited gives no exit code
     Given the agent's command is still running
     When the user opens the command's details
     Then the details show its input
     And no exit code is shown
 
-  @desktop @backlog
+  @desktop
   Scenario: A file search's details list where each match is
     Given the agent searched the files and found "cart.total" in "src/cart.ts" at line 12 column 4
     When the user opens the search's details
     Then the match is listed as "src/cart.ts:12:4" with its preview line
 
-  @desktop @backlog
+  @desktop
   Scenario Outline: A web search's details link only to safe addresses
     Given the agent searched the web and a result has the address <address>
     When the user opens the search's details
@@ -290,27 +290,27 @@ Feature: Tool calls and file changes
       | "https://example.com/tax" | a link titled with the page's title    |
       | "javascript:alert(1)"     | its title as plain text with no link   |
 
-  @desktop @backlog
+  @desktop
   Scenario: A web result without a title shows its address or a generic name
     Given the agent searched the web and a result has no title
     When the user opens the search's details
     Then the result shows its address
     And a result with neither is called "Search result"
 
-  @desktop @backlog
+  @desktop
   Scenario: A to-do list's details show what is done
     Given the agent's plan has one finished step "Add the tax line" and one open step "Write tests"
     When the user opens the plan's details
     Then the finished step is marked done and the open step is marked not done
 
-  @desktop @backlog
+  @desktop
   Scenario: A file change's details name the file relative to the project
     Given the agent changed "/work/shop/src/cart.ts" adding 3 lines and removing 1
     When the user opens the file change's details
     Then the details show "src/cart.ts" with "+3" and "-1"
     And the details offer "Open diff" for that file
 
-  @desktop @backlog
+  @desktop
   Scenario: A file change that renamed a file shows where it came from
     Given the agent renamed "src/cart.ts" to "src/basket.ts"
     When the user opens the file change's details
@@ -478,7 +478,7 @@ Feature: Tool calls and file changes
     When the user collapses all folders of the changed files
     Then the reply lists the folder "src" with its files hidden
 
-  @desktop @backlog
+  @desktop
   Scenario Outline: A turn's changed files say how many there are and how much changed
     Given a turn changed <files>
     Then the changed files' heading reads "<heading>"
@@ -489,31 +489,31 @@ Feature: Tool calls and file changes
       | "src/cart.ts" and "src/checkout.ts" with 5 lines added in all      | 2 changed files +5            |
       | "src/cart.ts" and "src/checkout.ts" with no line counts            | 2 changed files               |
 
-  @desktop @backlog
+  @desktop
   Scenario: A folder of changed files carries the totals of what is inside it
     Given a turn changed "src/cart.ts" with 3 lines added and "src/checkout.ts" with 2 lines added
     Then the folder "src" is listed with "+5"
     And each file is listed with its own line counts
 
-  @desktop @backlog
+  @desktop
   Scenario: One folder can be opened without opening the rest
     Given a turn changed "src/cart.ts" and "test/cart.test.ts"
     When the user opens the folder "src" of the changed files
     Then "cart.ts" is listed under "src"
     And the folder "test" is still shown with its files hidden
 
-  @desktop @backlog
+  @desktop
   Scenario: A turn's changed files stay open or closed as the user left them
     Given a turn's changed files have all their folders expanded
     When the user opens another thread and comes back
     Then the turn's changed files still have all their folders expanded
 
-  @desktop @backlog
+  @desktop
   Scenario: A turn that changed only files at the project's top has no folders to open
     Given a turn changed "package.json" and "README.md"
     Then the changed files are listed without a control to expand or collapse folders
 
-  @desktop @backlog
+  @desktop
   Scenario: A changed file offers the file's own actions on right click
     Given a turn changed "src/cart.ts"
     When the user right-clicks "src/cart.ts" in the changed files
@@ -615,7 +615,7 @@ Feature: Tool calls and file changes
     Then the details show "/bin/zsh -lc 'git diff --stat'"
 
   # Legacy: packages/client-runtime/src/work-log/presentation.ts (commandDetailRepeatsCommand, extractCommandOutputText)
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A command's own text is not shown again as its output
     Given the provider reported the command "npm test" with no output but its own text as the detail
     When the user opens the command's details
@@ -623,7 +623,7 @@ Feature: Tool calls and file changes
     And no output is shown
 
   # Legacy: packages/client-runtime/src/work-log/presentation.ts (workEntryViewedImagePath, resolveViewedImageAsset)
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: An image the agent looked at is shown in the call's details only when it is in the workspace
     Given the agent viewed <image>
     When the user opens the call's details
@@ -636,7 +636,7 @@ Feature: Tool calls and file changes
       | "notes.txt" in the thread's workspace       | the path is shown and no image is loaded  |
 
   # Legacy: packages/client-runtime/src/work-log/userInput.ts (getQuestionAnswerPreview)
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario Outline: A question the user answered is previewed in the tool call by what they said
     Given the agent asked a question that the user answered with <answer>
     Then the call's row previews <preview>
@@ -648,14 +648,14 @@ Feature: Tool calls and file changes
       | nothing but the question "Which database?"   | "Which database?"            |
 
   # Legacy: packages/client-runtime/src/work-log/scrollAnchor.ts, apps/web/src/components/chat/MessagesTimeline.logic.ts (resolveWorkGroupScrollIndex, shouldFollowWorkGroupAppend)
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: A long group opens again where the user had left it
     Given a long group of tool calls that the user scrolled partway down
     When the user closes the group and opens it again
     Then the group shows the call the user was reading at the same place
 
   # Legacy: apps/web/src/components/chat/MessagesTimeline.logic.ts (shouldFollowWorkGroupAppend)
-  @backlog @desktop
+  @desktop
   Scenario: An open group follows new calls only while the user is at its end
     Given the user has a long group of tool calls open and is looking at its last call
     When the agent adds another call to the group

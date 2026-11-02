@@ -242,10 +242,18 @@ void ThreadStore::reload(const QString& threadKey) {
 
 // A signed address stops working a little before the MC says, so an image
 // asked for at the last moment still loads.
+// An id "workspace-file:<path>" is an image a tool call viewed in the
+// thread's workspace.
 void ThreadStore::signAttachment(TimelineModel* model, const QString& threadKey, const QString& id) {
-  const QJsonObject resource{{QStringLiteral("_tag"), QStringLiteral("attachment")},
-                             {QStringLiteral("attachmentId"), id},
-                             {QStringLiteral("disposition"), QStringLiteral("inline")}};
+  static const QLatin1String kWorkspaceFile("workspace-file:");
+  const QJsonObject resource =
+      id.startsWith(kWorkspaceFile)
+          ? QJsonObject{{QStringLiteral("_tag"), QStringLiteral("workspace-file")},
+                        {QStringLiteral("threadId"), threadKey.mid(threadKey.indexOf(QLatin1Char(':')) + 1)},
+                        {QStringLiteral("path"), id.mid(kWorkspaceFile.size())}}
+          : QJsonObject{{QStringLiteral("_tag"), QStringLiteral("attachment")},
+                        {QStringLiteral("attachmentId"), id},
+                        {QStringLiteral("disposition"), QStringLiteral("inline")}};
   m_client->call(model, threadKey.left(threadKey.indexOf(QLatin1Char(':'))), QStringLiteral("assets.createUrl"),
                  QJsonObject{{QStringLiteral("resource"), resource}},
                  [this, model, id](const QJsonValue& result, const std::optional<QString>& error) {

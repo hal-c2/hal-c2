@@ -242,7 +242,7 @@ const Steps steps([] {
       return lines.size() == 3;
     }, QStringLiteral("the timeline to draw the three calls"));
     click(world, lines.at(1));
-    world.waitFor([&] { return brick.shows(QStringLiteral("$ bun lint")) && brick.shows(QStringLiteral("Exit code 2")); },
+    world.waitFor([&] { return brick.shows(QStringLiteral("$ bun lint")) && brick.shows(QStringLiteral("Process exited with code 2")); },
                   QStringLiteral("the call's command and exit code"));
   });
   step(QStringLiteral("the calls collapse back into the summary"), [](World& world, const Captures&, const Table&) {

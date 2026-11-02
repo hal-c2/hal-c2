@@ -34,6 +34,14 @@ Item {
         model: root.model
     }
 
+    // A changed file's own actions (FileActionsController).
+    FileEntryMenu {
+        id: changedFileMenu
+    }
+    // Whether the environment can find the thread's files on its machine:
+    // only then does a changed file offer its actions.
+    readonly property bool locatable: (Shell.state.workspace?.worktreePath ?? Shell.state.workspace?.projectRoot ?? "").length > 0
+
     property var model: null
     // Whether the agent is working and what the indicator says; the model's
     // own when it has them.
@@ -107,6 +115,11 @@ Item {
     // Folders are kept without a prototype so one named "constructor" or
     // "__proto__" is a folder like any other.
     property var changedFolders: ({})
+    // Where the user left each long group of calls, by row:
+    // {entryId, offset} of the call at its top (scrollAnchor).
+    property var groupAnchors: ({})
+    // How tall an open group grows before it scrolls (max-h min(18rem, 50dvh)).
+    readonly property real openGroupHeight: Math.min(288, height / 2)
     function foldersOf(rowId) {
         return root.changedFolders[rowId] ?? { all: false, folders: Object.create(null) };
     }
@@ -368,13 +381,15 @@ Item {
         property color labelColor: root.labelColor
         property int labelWeight: Font.Normal
         property bool interactive: false
+        // What an answered question was answered with, after the label.
+        property string preview
         default property alias trailing: trailingRow.data
         readonly property bool hovered: lineHover.hovered
         // A changed file's path keeps its end, the file name.
         property int labelElide: Text.ElideRight
         signal clicked(point position)
         Accessible.role: line.interactive ? Accessible.Button : Accessible.StaticText
-        Accessible.name: line.label
+        Accessible.name: line.preview.length > 0 ? line.label + ": " + line.preview : line.label
         Accessible.onPressAction: if (line.interactive)
             line.clicked(Qt.point(0, 0))
         implicitHeight: 28
@@ -390,8 +405,10 @@ Item {
             color: line.iconTint
         }
         Text {
+            id: lineLabel
+            readonly property real room: Math.max(0, trailingRow.x - x - 6)
             x: 32
-            width: Math.max(0, trailingRow.x - x - 6)
+            width: line.preview.length > 0 ? Math.min(implicitWidth, room) : room
             anchors.verticalCenter: parent.verticalCenter
             text: line.label
             textFormat: Text.PlainText
@@ -400,6 +417,20 @@ Item {
             font.pixelSize: Math.round(14 * Theme.fontScale)
             font.weight: line.labelWeight
             elide: line.labelElide
+            maximumLineCount: 1
+        }
+        Text {
+            objectName: "workCallPreview"
+            visible: line.preview.length > 0
+            x: lineLabel.x + lineLabel.width + 6
+            width: Math.max(0, trailingRow.x - x - 6)
+            anchors.verticalCenter: parent.verticalCenter
+            text: line.preview
+            textFormat: Text.PlainText
+            color: root.textColor
+            font.family: root.uiFamily
+            font.pixelSize: Math.round(14 * Theme.fontScale)
+            elide: Text.ElideRight
             maximumLineCount: 1
         }
         Row {
@@ -1036,7 +1067,9 @@ Item {
                                 Item {
                                     width: parent.width
                                     height: 32
+                                    // How many files and lines; a count of none is left out (DiffStatLabel).
                                     Row {
+                                        objectName: "changedFilesHeading"
                                         x: 12
                                         anchors.verticalCenter: parent.verticalCenter
                                         spacing: 12
@@ -1050,12 +1083,14 @@ Item {
                                             readonly property var totals: changedFiles.changed.reduce((sum, file) => [sum[0] + (file.additions ?? 0), sum[1] + (file.deletions ?? 0)], [0, 0])
                                             spacing: 4
                                             RowText {
+                                                visible: parent.totals[0] > 0
                                                 text: "+" + parent.totals[0]
                                                 color: root.successColor
                                                 font.family: root.monoFamily
                                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                                             }
                                             RowText {
+                                                visible: parent.totals[1] > 0
                                                 text: "-" + parent.totals[1]
                                                 color: root.errorColor
                                                 font.family: root.monoFamily
@@ -1178,12 +1213,14 @@ Item {
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 spacing: 4
                                                 RowText {
+                                                    visible: changedFile.modelData.additions > 0
                                                     text: "+" + changedFile.modelData.additions
                                                     color: root.successColor
                                                     font.family: root.monoFamily
                                                     font.pixelSize: Math.round(10 * Theme.fontScale)
                                                 }
                                                 RowText {
+                                                    visible: changedFile.modelData.deletions > 0
                                                     text: "-" + changedFile.modelData.deletions
                                                     color: root.errorColor
                                                     font.family: root.monoFamily
@@ -1196,6 +1233,15 @@ Item {
                                             }
                                             TapHandler {
                                                 onTapped: changedFile.activate()
+                                            }
+                                            // A file's own actions, where the environment can find it.
+                                            TapHandler {
+                                                acceptedButtons: Qt.RightButton
+                                                enabled: !changedFile.folder && root.locatable
+                                                onTapped: {
+                                                    changedFileMenu.path = changedFile.modelData.path;
+                                                    changedFileMenu.popup(changedFile);
+                                                }
                                             }
                                         }
                                     }
@@ -1282,7 +1328,20 @@ Item {
                             command: entry.command ?? "",
                             path: entry.path ?? "",
                             exited: entry.exitCode !== undefined && entry.exitCode !== null,
-                            exitCode: entry.exitCode ?? 0
+                            exitCode: entry.exitCode ?? 0,
+                            preview: entry.preview ?? "",
+                            // The rest of the details, as one value a list model keeps.
+                            extra: JSON.stringify({
+                                matches: root.list(entry.matches),
+                                results: root.list(entry.results),
+                                changes: root.list(entry.changes),
+                                additions: entry.additions,
+                                deletions: entry.deletions,
+                                diffPath: entry.diffPath ?? "",
+                                viewedPath: entry.viewedPath ?? "",
+                                imageId: entry.imageId ?? "",
+                                imageUrl: String(entry.imageUrl ?? "")
+                            })
                         };
                     }
                     function syncCalls() {
@@ -1351,123 +1410,345 @@ Item {
                             }
                         }
                     }
-                    Repeater {
-                        model: calls
-                        delegate: Column {
-                            id: call
-                            // The call's fields, each of which changes on its own.
-                            required property var model
-                            readonly property var modelData: model
-                            // Kept on the row, so streamed output does not close it.
-                            readonly property bool open: row.openCalls[modelData.id] === true
-                            readonly property bool hasDetails: (modelData.detail ?? "").length > 0 || (modelData.command ?? "").length > 0
-                            readonly property bool failed: modelData.status === "failed" || modelData.statusLabel === qsTr("Failed")
-                            // Reasoning opens into text, the rest into a panel
-                            // (WorkLogDetails).
-                            readonly property bool panel: modelData.type !== "reasoning"
-                            width: parent.width
-                            WorkLine {
-                                id: callLine
-                                objectName: "workCall"
-                                width: parent.width
-                                iconName: call.modelData.icon || "hammer"
-                                iconTint: call.failed ? Qt.alpha(root.toolErrorColor, 0.4) : root.iconColor
-                                label: call.modelData.label ?? ""
-                                labelElide: (call.modelData.path ?? "").length > 0 ? Text.ElideMiddle : Text.ElideRight
-                                interactive: call.hasDetails
-                                onClicked: position => {
-                                    // Open takes its own tap.
-                                    if (openLink.visible && openLink.contains(openLink.mapFromItem(callLine, position)))
-                                        return;
-                                    const next = Object.assign({}, row.openCalls);
-                                    next[call.modelData.id] = !call.open;
-                                    row.openCalls = next;
-                                }
-                                ActionLink {
-                                    id: openLink
-                                    objectName: "openFile"
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    visible: (call.modelData.path ?? "").length > 0
-                                    text: qsTr("Open")
-                                    onClicked: root.fileActivated(call.modelData.path, "files", row.rowId)
-                                }
-                                RowText {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    visible: text.length > 0
-                                    text: call.modelData.statusLabel ?? ""
-                                    wrapMode: Text.NoWrap
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                                    color: call.failed ? root.toolErrorColor : root.mutedColor
-                                }
-                                Stamp {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    // ljos-allow(focus-hover-only): a call's time is a detail with no action; touch shows it always (alwaysShowMeta), and the timeline's rows take no keyboard focus to show it on
-                                    visible: text.length > 0 && (callLine.hovered || root.alwaysShowMeta)
-                                    rowId: row.rowId
-                                    entryId: call.modelData.id ?? ""
-                                    text: call.modelData.time ?? ""
-                                }
-                                Item {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: 16
-                                    height: 16
-                                    ShellIcon {
-                                        anchors.centerIn: parent
-                                        visible: call.hasDetails
-                                        name: "chevron-right"
-                                        size: 12
-                                        color: Qt.alpha(root.iconColor, 0.7)
-                                        rotation: call.open ? 90 : 0
-                                    }
+                    // An open group scrolls in a window of its own
+                    // (ExpandedWorkGroupEntries): it opens again where the
+                    // user left it, and follows new calls only while they are
+                    // at its end (shouldFollowWorkGroupAppend).
+                    Flickable {
+                        id: callsView
+                        objectName: "workCalls"
+                        readonly property bool windowed: row.expanded === true && contentHeight > height
+                        // Whether the end was in view before the last change.
+                        property bool atEnd: true
+                        property int seen: 0
+                        width: parent.width
+                        height: row.expanded === true ? Math.min(contentHeight, root.openGroupHeight) : contentHeight
+                        contentWidth: width
+                        contentHeight: callsColumn.height
+                        interactive: windowed
+                        clip: windowed
+                        boundsBehavior: Flickable.StopAtBounds
+                        // The call at the top and how far into it the view is.
+                        function anchor() {
+                            for (let at = 0; at < callsRepeater.count; ++at) {
+                                const item = callsRepeater.itemAt(at);
+                                if (item && item.y + item.height > contentY)
+                                    return { entryId: item.modelData.id, offset: contentY - item.y };
+                            }
+                            return null;
+                        }
+                        function restore() {
+                            const saved = root.groupAnchors[row.rowId];
+                            if (!saved || !windowed)
+                                return false;
+                            for (let at = 0; at < callsRepeater.count; ++at) {
+                                const item = callsRepeater.itemAt(at);
+                                if (item && item.modelData.id === saved.entryId) {
+                                    contentY = Math.max(0, Math.min(item.y + saved.offset, contentHeight - height));
+                                    return true;
                                 }
                             }
-                            Item {
-                                visible: call.open
-                                x: 28
-                                width: parent.width - 28
-                                height: detailsBox.y + detailsBox.height
-                                Rectangle {
-                                    id: detailsBox
-                                    y: call.panel ? 4 : 0
+                            return false;
+                        }
+                        // Opened: back to the saved place once its calls are laid out.
+                        property bool restoring: false
+                        function reopen() {
+                            contentY = 0;
+                            restoring = row.expanded === true;
+                            atEnd = !restoring;
+                            if (restoring)
+                                Qt.callLater(settle);
+                        }
+                        function settle() {
+                            if (!restoring || calls.count !== root.list(row.entries).length)
+                                return;
+                            callsColumn.forceLayout();
+                            restoring = false;
+                            seen = calls.count;
+                            if (!restore())
+                                atEnd = contentHeight - height - contentY <= 1;
+                        }
+                        Connections {
+                            target: row
+                            function onExpandedChanged() {
+                                callsView.reopen();
+                            }
+                        }
+                        Component.onCompleted: reopen()
+                        onContentYChanged: {
+                            if (!row.expanded || restoring)
+                                return;
+                            atEnd = contentHeight - height - contentY <= 1;
+                            const at = anchor();
+                            if (at)
+                                root.groupAnchors[row.rowId] = at;
+                        }
+                        onContentHeightChanged: {
+                            if (restoring) {
+                                settle();
+                                return;
+                            }
+                            // Only a call added moves the view, and only from the end.
+                            if (row.expanded === true && calls.count > seen && seen > 0 && atEnd)
+                                contentY = Math.max(0, contentHeight - height);
+                            else if (row.expanded === true)
+                                atEnd = contentHeight - height - contentY <= 1;
+                            seen = calls.count;
+                        }
+                        Column {
+                            id: callsColumn
+                            width: callsView.width
+                            Repeater {
+                                id: callsRepeater
+                                model: calls
+                                delegate: Column {
+                                    id: call
+                                    // The call's fields, each of which changes on its own.
+                                    required property var model
+                                    readonly property var modelData: model
+                                    // Kept on the row, so streamed output does not close it.
+                                    readonly property bool open: row.openCalls[modelData.id] === true
+                                    readonly property var extra: JSON.parse(modelData.extra || "{}")
+                                    readonly property bool hasDetails: (modelData.detail ?? "").length > 0 || (modelData.command ?? "").length > 0 || (extra.matches ?? []).length > 0 || (extra.results ?? []).length > 0 || (extra.changes ?? []).length > 0 || (extra.diffPath ?? "").length > 0 || (extra.viewedPath ?? "").length > 0
+                                    readonly property bool failed: modelData.status === "failed" || modelData.statusLabel === qsTr("Failed")
+                                    // Reasoning opens into text, the rest into a panel
+                                    // (WorkLogDetails).
+                                    readonly property bool panel: modelData.type !== "reasoning"
                                     width: parent.width
-                                    height: details.implicitHeight + details.y * 2
-                                    radius: 6
-                                    color: call.panel ? Qt.alpha(root.mutedSurfaceColor, 0.4) : "transparent"
-                                    Column {
-                                        id: details
-                                        x: call.panel ? 12 : 2
-                                        y: call.panel ? 8 : 4
-                                        width: parent.width - x * 2
-                                        spacing: call.panel ? 4 : 12
-                                        RowText {
-                                            visible: text.length > 0
-                                            width: parent.width
-                                            text: call.modelData.command ? "$ " + call.modelData.command : ""
-                                            textFormat: Text.PlainText
-                                            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-                                            font.family: root.monoFamily
-                                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                                    WorkLine {
+                                        id: callLine
+                                        objectName: "workCall"
+                                        width: parent.width
+                                        iconName: call.modelData.icon || "hammer"
+                                        iconTint: call.failed ? Qt.alpha(root.toolErrorColor, 0.4) : root.iconColor
+                                        label: call.modelData.label ?? ""
+                                        preview: call.modelData.preview ?? ""
+                                        labelElide: (call.modelData.path ?? "").length > 0 ? Text.ElideMiddle : Text.ElideRight
+                                        interactive: call.hasDetails
+                                        onClicked: position => {
+                                            // Open takes its own tap.
+                                            if (openLink.visible && openLink.contains(openLink.mapFromItem(callLine, position)))
+                                                return;
+                                            const next = Object.assign({}, row.openCalls);
+                                            next[call.modelData.id] = !call.open;
+                                            row.openCalls = next;
+                                        }
+                                        ActionLink {
+                                            id: openLink
+                                            objectName: "openFile"
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            visible: (call.modelData.path ?? "").length > 0
+                                            text: qsTr("Open")
+                                            onClicked: root.fileActivated(call.modelData.path, "files", row.rowId)
                                         }
                                         RowText {
+                                            anchors.verticalCenter: parent.verticalCenter
                                             visible: text.length > 0
-                                            width: parent.width
-                                            // Laid out once it shows: text streamed
-                                            // into a closed call costs nothing.
-                                            text: call.open ? call.modelData.detail ?? "" : ""
-                                            textFormat: Text.PlainText
-                                            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-                                            font.family: call.panel ? root.monoFamily : root.uiFamily
-                                            font.pixelSize: call.panel ? 11 : 14
-                                            lineHeight: 1.15
-                                            color: call.panel ? root.labelColor : root.textColor
-                                            maximumLineCount: 40
-                                            elide: Text.ElideRight
+                                            text: call.modelData.statusLabel ?? ""
+                                            wrapMode: Text.NoWrap
+                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            color: call.failed ? root.toolErrorColor : root.mutedColor
                                         }
-                                        RowText {
-                                            visible: call.modelData.exited
-                                            text: qsTr("Exit code %1").arg(call.modelData.exitCode)
-                                            font.pixelSize: Math.round(11 * Theme.fontScale)
-                                            color: root.mutedColor
+                                        Stamp {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            // ljos-allow(focus-hover-only): a call's time is a detail with no action; touch shows it always (alwaysShowMeta), and the timeline's rows take no keyboard focus to show it on
+                                            visible: text.length > 0 && (callLine.hovered || root.alwaysShowMeta)
+                                            rowId: row.rowId
+                                            entryId: call.modelData.id ?? ""
+                                            text: call.modelData.time ?? ""
+                                        }
+                                        Item {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: 16
+                                            height: 16
+                                            ShellIcon {
+                                                anchors.centerIn: parent
+                                                visible: call.hasDetails
+                                                name: "chevron-right"
+                                                size: 12
+                                                color: Qt.alpha(root.iconColor, 0.7)
+                                                rotation: call.open ? 90 : 0
+                                            }
+                                        }
+                                    }
+                                    Item {
+                                        visible: call.open
+                                        x: 28
+                                        width: parent.width - 28
+                                        height: detailsBox.y + detailsBox.height
+                                        Rectangle {
+                                            id: detailsBox
+                                            y: call.panel ? 4 : 0
+                                            width: parent.width
+                                            height: details.implicitHeight + details.y * 2
+                                            radius: 6
+                                            color: call.panel ? Qt.alpha(root.mutedSurfaceColor, 0.4) : "transparent"
+                                            Column {
+                                                id: details
+                                                x: call.panel ? 12 : 2
+                                                y: call.panel ? 8 : 4
+                                                width: parent.width - x * 2
+                                                spacing: call.panel ? 4 : 12
+                                                RowText {
+                                                    visible: text.length > 0
+                                                    width: parent.width
+                                                    text: call.modelData.command ? "$ " + call.modelData.command : ""
+                                                    textFormat: Text.PlainText
+                                                    wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                                                    font.family: root.monoFamily
+                                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                }
+                                                RowText {
+                                                    visible: text.length > 0
+                                                    width: parent.width
+                                                    // Laid out once it shows: text streamed
+                                                    // into a closed call costs nothing.
+                                                    text: call.open ? call.modelData.detail ?? "" : ""
+                                                    textFormat: Text.PlainText
+                                                    wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                                                    font.family: call.panel ? root.monoFamily : root.uiFamily
+                                                    font.pixelSize: call.panel ? 11 : 14
+                                                    lineHeight: 1.15
+                                                    color: call.panel ? root.labelColor : root.textColor
+                                                    maximumLineCount: 40
+                                                    elide: Text.ElideRight
+                                                }
+                                                // A changed file: where, how much, its diff, and each change.
+                                                Row {
+                                                    visible: call.modelData.type === "file_change"
+                                                    spacing: 6
+                                                    RowText {
+                                                        text: call.modelData.label ?? ""
+                                                        wrapMode: Text.NoWrap
+                                                        font.family: root.monoFamily
+                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    }
+                                                    RowText {
+                                                        visible: call.extra.additions !== undefined
+                                                        text: "+" + (call.extra.additions ?? 0)
+                                                        color: root.successColor
+                                                        font.family: root.monoFamily
+                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    }
+                                                    RowText {
+                                                        visible: call.extra.deletions !== undefined
+                                                        text: "-" + (call.extra.deletions ?? 0)
+                                                        color: root.errorColor
+                                                        font.family: root.monoFamily
+                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    }
+                                                    ActionLink {
+                                                        objectName: "openCallDiff"
+                                                        visible: (call.extra.diffPath ?? "").length > 0
+                                                        text: qsTr("Open diff")
+                                                        onClicked: root.fileActivated(call.extra.diffPath, "diff", row.rowId)
+                                                    }
+                                                }
+                                                Repeater {
+                                                    model: call.open ? call.extra.changes ?? [] : []
+                                                    RowText {
+                                                        required property string modelData
+                                                        width: details.width
+                                                        text: modelData
+                                                        textFormat: Text.PlainText
+                                                        wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                                                        font.family: root.monoFamily
+                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                        color: root.mutedColor
+                                                    }
+                                                }
+                                                // Where a search found its matches.
+                                                Repeater {
+                                                    model: call.open ? call.extra.matches ?? [] : []
+                                                    Column {
+                                                        required property var modelData
+                                                        objectName: "searchMatch"
+                                                        width: details.width
+                                                        RowText {
+                                                            width: parent.width
+                                                            text: parent.modelData.location
+                                                            textFormat: Text.PlainText
+                                                            elide: Text.ElideMiddle
+                                                            wrapMode: Text.NoWrap
+                                                            font.family: root.monoFamily
+                                                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                        }
+                                                        RowText {
+                                                            visible: text.length > 0
+                                                            width: parent.width
+                                                            text: parent.modelData.preview
+                                                            textFormat: Text.PlainText
+                                                            elide: Text.ElideRight
+                                                            wrapMode: Text.NoWrap
+                                                            font.family: root.monoFamily
+                                                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                            color: root.mutedColor
+                                                        }
+                                                    }
+                                                }
+                                                // A web search's results: a link only to a web address.
+                                                Repeater {
+                                                    model: call.open ? call.extra.results ?? [] : []
+                                                    Text {
+                                                        id: webResult
+                                                        required property var modelData
+                                                        readonly property string link: modelData.url
+                                                        objectName: "webResult"
+                                                        width: details.width
+                                                        text: modelData.title
+                                                        textFormat: Text.PlainText
+                                                        elide: Text.ElideRight
+                                                        font.family: root.uiFamily
+                                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                        font.underline: link.length > 0
+                                                        color: link.length > 0 ? root.textColor : root.labelColor
+                                                        Accessible.role: link.length > 0 ? Accessible.Link : Accessible.StaticText
+                                                        Accessible.name: text
+                                                        HoverHandler {
+                                                            enabled: webResult.link.length > 0
+                                                            cursorShape: Qt.PointingHandCursor
+                                                        }
+                                                        TapHandler {
+                                                            enabled: webResult.link.length > 0
+                                                            onTapped: root.linkActivated(webResult.link)
+                                                        }
+                                                    }
+                                                }
+                                                // An image the agent looked at, served from the
+                                                // workspace; any other is named by its path.
+                                                Image {
+                                                    objectName: "viewedImage"
+                                                    readonly property string imageId: call.extra.imageId ?? ""
+                                                    visible: imageId.length > 0
+                                                    width: Math.min(details.width, 320)
+                                                    height: visible && status === Image.Ready ? Math.min(240, width * implicitHeight / Math.max(1, implicitWidth)) : 0
+                                                    fillMode: Image.PreserveAspectFit
+                                                    asynchronous: true
+                                                    source: call.extra.imageUrl ?? ""
+                                                    readonly property bool wanted: call.open && imageId.length > 0
+                                                    onWantedChanged: if (wanted && root.model !== null && typeof root.model.loadAttachment === "function")
+                                                        root.model.loadAttachment(imageId)
+                                                    Component.onCompleted: wantedChanged()
+                                                }
+                                                RowText {
+                                                    objectName: "viewedImagePath"
+                                                    visible: text.length > 0
+                                                    width: parent.width
+                                                    text: (call.extra.imageId ?? "").length > 0 ? "" : call.extra.viewedPath ?? ""
+                                                    textFormat: Text.PlainText
+                                                    wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                                                    font.family: root.monoFamily
+                                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    color: root.mutedColor
+                                                }
+                                                RowText {
+                                                    objectName: "exitStatus"
+                                                    visible: call.modelData.exited
+                                                    text: qsTr("Process exited with code %1").arg(call.modelData.exitCode)
+                                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    color: call.modelData.exitCode === 0 ? root.successColor : root.errorColor
+                                                }
+                                            }
                                         }
                                     }
                                 }

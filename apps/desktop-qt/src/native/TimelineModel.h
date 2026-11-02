@@ -64,7 +64,13 @@ public:
     // How a user message reached the agent, when not as a new turn.
     MarkerRole,
     // A work group's calls on screen: [{id, type, label, detail, command,
-    // status, statusLabel, exitCode, path (a changed file's)}].
+    // status, statusLabel, exitCode, path (a changed file's)}], with what a
+    // call's details show by its type: a changed file's additions,
+    // deletions, diffPath (relative, for its diff) and changes ("rename
+    // src/a → src/b"); a file search's matches [{location ("src/cart.ts:12:4"), preview}]; a web
+    // search's results [{title, url (empty unless http or https)}]; an
+    // answered question's preview; a viewed image's viewedPath, and its
+    // imageId and imageUrl when the workspace serves it (loadAttachment).
     EntriesRole,
     // A work group's calls behind "+N previous tool calls", a fold's rows.
     HiddenCountRole,
@@ -205,8 +211,9 @@ public:
   // restart forgot, folds as any turn does; toggle() still closes it.
   void keepOpen(const QString& runId);
   Q_INVOKABLE int indexOf(const QString& rowId) const;
-  // The checkpoint an agent reply's settled turn left, to revert the thread
-  // to: {checkpointId, scopeId, turn} (turn counts from 1), or empty.
+  // The checkpoint an agent reply's or a work group's settled turn left, to
+  // revert the thread to or diff: {checkpointId, scopeId, turn} (turn counts
+  // from 1), or empty.
   Q_INVOKABLE QVariantMap checkpointOf(const QString& rowId) const;
   // The run an assistant reply's row belongs to once it has finished (a fork
   // can start from it), else empty.
@@ -220,7 +227,8 @@ public:
   // Puts a message's markdown on the clipboard; false for any other row.
   Q_INVOKABLE bool copy(const QString& rowId) const;
   // Asks for an image's address (attachmentWanted) unless one that still
-  // works is known or on its way; its row's `attachments` carry it once
+  // works is known or on its way; its row's `attachments` (or, for a call's
+  // imageId "workspace-file:<path>", its `entries`) carry it once
   // setAttachmentUrl lands.
   Q_INVOKABLE void loadAttachment(const QString& id);
   // The address the MC signed for an image and when it stops working; an

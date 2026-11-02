@@ -590,9 +590,11 @@ Item {
             const label = findText(list.itemAtIndex(0), "Ran command");
             const command = findText(list.itemAtIndex(0), "$ bun test cart");
             verify(!visibleIn(command), "details start closed");
+            // The calls take clicks once laid out.
+            waitForRendering(timeline);
             mouseClick(label);
             tryVerify(() => visibleIn(command), 2000, "the call shows its command");
-            verify(visibleIn(findText(list.itemAtIndex(0), "Exit code 1")));
+            verify(visibleIn(findText(list.itemAtIndex(0), "Process exited with code 1")));
             // Streamed output keeps it open.
             rows.set(0, root.row({
                 rowId: "work:1",

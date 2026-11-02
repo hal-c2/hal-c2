@@ -1,6 +1,7 @@
 #include "TimelineModel.h"
 
 #include <QCache>
+#include <QDir>
 #include <QClipboard>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -133,6 +134,88 @@ QString workspacePath(const QString& path, const QString& root) {
   while (base.size() > 1 && base.endsWith(QLatin1Char('/'))) base.chop(1);
   if (base.isEmpty() || base == QLatin1String("/") || !path.startsWith(base + QLatin1Char('/'))) return path;
   return path.mid(base.size() + 1);
+}
+
+// Whether a command's output is only its own text echoed back
+// (commandDetailRepeatsCommand): equal to it, or a start of it cut off with
+// "..." or "…".
+bool repeatsCommand(const QString& output, const QStringList& commands) {
+  const QString shown = output.trimmed();
+  QString cut;
+  if (shown.endsWith(QLatin1String("..."))) cut = shown.chopped(3);
+  else if (shown.endsWith(QChar(0x2026))) cut = shown.chopped(1);
+  return std::any_of(commands.cbegin(), commands.cend(), [&](const QString& candidate) {
+    const QString command = candidate.trimmed();
+    if (command.isEmpty()) return false;
+    return command == shown || (!cut.isEmpty() && command.size() > cut.size() && command.startsWith(cut));
+  });
+}
+
+// A web address the details may link to: http(s) only, "//host" read as
+// https (resolveExternalWebLinkHref); empty for anything else.
+QString safeWebAddress(const QString& address) {
+  if (address.isEmpty()) return {};
+  const QUrl url(address.startsWith(QLatin1String("//")) ? QStringLiteral("https:") + address : address, QUrl::StrictMode);
+  const QString scheme = url.scheme().toLower();
+  if (!url.isValid() || (scheme != QLatin1String("http") && scheme != QLatin1String("https")) || url.host().isEmpty()) return {};
+  return url.toString(QUrl::FullyEncoded);
+}
+
+// An image a call viewed that the thread's workspace can serve: relative to
+// the workspace (the path as it is in it), with an image's extension; empty
+// for one outside it or any other file.
+QString workspaceImage(const QString& path, const QString& root) {
+  static const QStringList kImages{QStringLiteral("avif"), QStringLiteral("gif"), QStringLiteral("ico"), QStringLiteral("jpeg"),
+                                   QStringLiteral("jpg"), QStringLiteral("png"), QStringLiteral("svg"), QStringLiteral("webp")};
+  const QString trimmed = path.trimmed();
+  if (trimmed.isEmpty() || trimmed.contains(QLatin1Char('\n')) || trimmed.contains(QLatin1Char('\r'))) return {};
+  if (!kImages.contains(QFileInfo(trimmed).suffix().toLower())) return {};
+  const QString relative = workspacePath(trimmed, root);
+  // A full path left as it was is outside the workspace; so is one climbing out of it.
+  if (relative.startsWith(QLatin1Char('/')) || relative.contains(QLatin1String(":\\")) || relative.startsWith(QLatin1String("~"))) return {};
+  const QString clean = QDir::cleanPath(relative);
+  if (clean == QLatin1String("..") || clean.startsWith(QLatin1String("../"))) return {};
+  return clean;
+}
+
+// One answer as its preview reads (getQuestionAnswerText): text, a list's
+// items joined, an object's `answers`.
+QString answerText(const QJsonValue& value) {
+  if (value.isString()) return value.toString();
+  if (value.isArray()) {
+    QStringList parts;
+    for (const QJsonValue& part : value.toArray()) {
+      if (const QString shown = answerText(part); !shown.isEmpty()) parts.append(shown);
+    }
+    return parts.join(QStringLiteral(", "));
+  }
+  return value.isObject() ? answerText(value.toObject().value(QLatin1String("answers"))) : QString();
+}
+
+// What the user answered a question with, on one line
+// (getQuestionAnswerPreview): the answers, else the files sent, else the
+// questions themselves.
+QString answerPreview(const QJsonObject& answer) {
+  QStringList parts;
+  const QJsonObject answers = answer.value(QLatin1String("answers")).toObject();
+  for (auto it = answers.constBegin(); it != answers.constEnd(); ++it) {
+    if (const QString shown = answerText(*it); !shown.isEmpty()) parts.append(shown);
+  }
+  QString preview = parts.join(QStringLiteral(" · "));
+  if (preview.isEmpty()) {
+    const QJsonObject attachments = answer.value(QLatin1String("attachmentsByQuestionId")).toObject();
+    for (auto it = attachments.constBegin(); it != attachments.constEnd(); ++it) {
+      for (const QJsonValue& attachment : it->toArray()) parts.append(attachment.toObject().value(QLatin1String("name")).toString());
+    }
+    preview = parts.join(QStringLiteral(", "));
+  }
+  if (preview.isEmpty()) {
+    const QJsonObject questions = answer.value(QLatin1String("questionTextById")).toObject();
+    for (auto it = questions.constBegin(); it != questions.constEnd(); ++it) parts.append(it->toString());
+    preview = parts.join(QStringLiteral(" · "));
+  }
+  static const QRegularExpression space(QStringLiteral(R"(\s+)"));
+  return preview.replace(space, QStringLiteral(" ")).trimmed();
 }
 
 // A thought as its row labels it: the words
@@ -1275,9 +1358,10 @@ QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
   const int at = indexOf(rowId);
   if (at < 0) return {};
   const Row& row = m_rows.at(at);
-  if (row.kind != QLatin1String("message") || row.items.isEmpty()) return {};
+  const bool work = row.kind == QLatin1String("work");
+  if ((row.kind != QLatin1String("message") && !work) || row.items.isEmpty()) return {};
   const QJsonObject item = entity(QStringLiteral("turn-item"), row.items.constFirst());
-  if (text(item, QLatin1String("type")) != QLatin1String("assistant_message")) return {};
+  if (!work && text(item, QLatin1String("type")) != QLatin1String("assistant_message")) return {};
   const QString runId = text(item, QLatin1String("runId"));
   const QJsonObject run = entity(QStringLiteral("run"), runId);
   if (!kSettled.contains(text(run, QLatin1String("status")))) return {};
@@ -1311,6 +1395,13 @@ void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const Q
     return;
   }
   m_attachmentUrls.insert(id, {url, expiresAt});
+  if (id.startsWith(QLatin1String("workspace-file:"))) {
+    // An image a call viewed: the work groups that show it.
+    for (int row = 0; row < m_rows.size(); ++row) {
+      if (m_rows.at(row).kind == QLatin1String("work")) emit dataChanged(index(row), index(row), {EntriesRole});
+    }
+    return;
+  }
   for (int row = 0; row < m_rows.size(); ++row) {
     if (m_rows.at(row).kind != QLatin1String("message")) continue;
     const QJsonArray attachments =
@@ -1376,6 +1467,8 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
     const QString command = timeline::commandDisplayText(text(item, QLatin1String("input")));
     label = command.isEmpty() ? QStringLiteral("Ran command") : command;
     detail = text(item, QLatin1String("output"));
+    // An output that only echoes the command says nothing new.
+    if (repeatsCommand(detail, {text(item, QLatin1String("input")), command})) detail.clear();
     entry.insert(QStringLiteral("command"), text(item, QLatin1String("input")));
     const QJsonValue exitCode = item.value(QLatin1String("exitCode"));
     if (exitCode.isDouble()) entry.insert(QStringLiteral("exitCode"), exitCode.toInt());
@@ -1383,16 +1476,58 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
     const QString root = m_workspaceRoot ? m_workspaceRoot() : QString();
     label = workspacePath(text(item, QLatin1String("fileName")), root);
     entry.insert(QStringLiteral("path"), text(item, QLatin1String("fileName")));
-    detail = QStringLiteral("+%1 -%2").arg(item.value(QLatin1String("additions")).toInt()).arg(item.value(QLatin1String("deletions")).toInt());
+    // The turn's diff names it as the checkpoint does: relative to the project.
+    entry.insert(QStringLiteral("diffPath"), label);
+    const QJsonValue additions = item.value(QLatin1String("additions"));
+    const QJsonValue deletions = item.value(QLatin1String("deletions"));
+    if (additions.isDouble() || deletions.isDouble()) {
+      entry.insert(QStringLiteral("additions"), additions.toInt());
+      entry.insert(QStringLiteral("deletions"), deletions.toInt());
+    }
+    // What each change did, a rename with where the file came from.
+    QStringList changes;
+    for (const QJsonValue& value : item.value(QLatin1String("changes")).toArray()) {
+      const QJsonObject change = value.toObject();
+      const QString from = text(change, QLatin1String("oldPath"));
+      changes.append(QStringLiteral("%1 %2%3").arg(text(change, QLatin1String("operation")),
+                                                   from.isEmpty() ? QString() : workspacePath(from, root) + QStringLiteral(" → "),
+                                                   workspacePath(text(change, QLatin1String("path")), root)));
+    }
+    entry.insert(QStringLiteral("changes"), changes);
   } else if (type == QLatin1String("file_search")) {
     // What it looked for; a read's file (an ACP agent's `read`).
     label = timeline::isFileRead(item) ? QStringLiteral("Read file") : QStringLiteral("Searched files");
     detail = text(item, QLatin1String("pattern"));
+    // Where each match is, as "path:line:column", with its line.
+    const QString root = m_workspaceRoot ? m_workspaceRoot() : QString();
+    QVariantList matches;
+    for (const QJsonValue& value : item.value(QLatin1String("results")).toArray()) {
+      const QJsonObject result = value.toObject();
+      QString location = workspacePath(text(result, QLatin1String("fileName")), root);
+      if (const QJsonValue line = result.value(QLatin1String("line")); line.isDouble()) {
+        location += QStringLiteral(":%1").arg(line.toInt());
+        if (const QJsonValue column = result.value(QLatin1String("column")); column.isDouble()) location += QStringLiteral(":%1").arg(column.toInt());
+      }
+      matches.append(QVariantMap{{QStringLiteral("location"), location}, {QStringLiteral("preview"), text(result, QLatin1String("preview")).trimmed()}});
+    }
+    entry.insert(QStringLiteral("matches"), matches);
   } else if (type == QLatin1String("web_search")) {
     label = QStringLiteral("Searched the web");
     QStringList patterns;
     for (const QJsonValue& pattern : item.value(QLatin1String("patterns")).toArray()) patterns.append(pattern.toString());
     detail = patterns.join(QLatin1Char('\n'));
+    // A result links to its page only at a web address; any other stays text.
+    QVariantList results;
+    for (const QJsonValue& value : item.value(QLatin1String("results")).toArray()) {
+      const QJsonObject result = value.toObject();
+      const QString title = text(result, QLatin1String("title")).trimmed();
+      const QString address = text(result, QLatin1String("url")).trimmed();
+      results.append(QVariantMap{
+          {QStringLiteral("title"), !title.isEmpty() ? title : !address.isEmpty() ? address : QStringLiteral("Search result")},
+          {QStringLiteral("url"), safeWebAddress(address)},
+      });
+    }
+    entry.insert(QStringLiteral("results"), results);
   } else if (type == QLatin1String("dynamic_tool")) {
     label = item.value(QLatin1String("toolName")).toString(QStringLiteral("Used tool"));
     // Its input; a result's body is not shown (docs/user/activity-log.md).
@@ -1400,6 +1535,17 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
       detail = QString::fromUtf8(QJsonDocument(input.toObject()).toJson(QJsonDocument::Indented)).trimmed();
     } else if (input.isString()) {
       detail = input.toString();
+    }
+    // An image the agent looked at: shown only from the workspace, else its path.
+    if (const QString viewed = text(item, QLatin1String("viewedImagePath")); !viewed.isEmpty()) {
+      const QString image = workspaceImage(viewed, m_workspaceRoot ? m_workspaceRoot() : QString());
+      entry.insert(QStringLiteral("viewedPath"), viewed);
+      if (!image.isEmpty()) {
+        const QString id = QStringLiteral("workspace-file:") + image;
+        const AttachmentUrl known = m_attachmentUrls.value(id);
+        entry.insert(QStringLiteral("imageId"), id);
+        entry.insert(QStringLiteral("imageUrl"), known.expiresAt > m_now() ? known.url : QUrl());
+      }
     }
   } else if (type == QLatin1String("approval_request") || type == QLatin1String("user_input_request")) {
     // Answered in the composer (ComposerController); the row records the ask.
@@ -1413,6 +1559,10 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
         questions.append(text(question.toObject(), QLatin1String("question")));
       }
       detail = questions.join(QLatin1Char('\n'));
+      // Answered: what the user said.
+      if (const QJsonValue answer = item.value(QLatin1String("questionAnswer")); answer.isObject()) {
+        entry.insert(QStringLiteral("preview"), answerPreview(answer.toObject()));
+      }
     }
     const QJsonObject request = entity(QStringLiteral("runtime-request"), text(item, QLatin1String("requestId")));
     if (text(request, QLatin1String("decision")) == QLatin1String("decline")) {
@@ -1424,7 +1574,8 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
     label = QStringLiteral("Updated plan");
     QStringList steps;
     for (const QJsonValue& step : item.value(QLatin1String("steps")).toArray()) {
-      steps.append(QStringLiteral("%1: %2").arg(text(step.toObject(), QLatin1String("status")), text(step.toObject(), QLatin1String("text"))));
+      const bool done = text(step.toObject(), QLatin1String("status")) == QLatin1String("completed");
+      steps.append((done ? QStringLiteral("✓ ") : QStringLiteral("○ ")) + text(step.toObject(), QLatin1String("text")));
     }
     detail = steps.join(QLatin1Char('\n'));
   } else if (type == QLatin1String("run_interrupt_request")) {

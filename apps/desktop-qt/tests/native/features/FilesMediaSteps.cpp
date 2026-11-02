@@ -11,6 +11,9 @@
 #include "FilesWorkspace.h"
 #include "Stream.h"
 
+// An image a tool call viewed (TimelineDetailsSteps.cpp).
+bool expectViewedImage(World& world);
+
 namespace {
 
 using namespace filesteps;
@@ -120,6 +123,7 @@ const Steps steps([] {
     world.waitFor([&] { return player->property("playing").toBool(); }, [&] { return describeMedia(world); });
   });
   step(QStringLiteral("the image is shown"), [](World& world, const Captures&, const Table&) {
+    if (expectViewedImage(world)) return;
     QQuickItem* image = loadedImage(world);
     expect(image->property("source").toUrl() == files(world).mediaUrl(), describeMedia(world));
   });
