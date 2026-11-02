@@ -107,6 +107,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.delegated?/1" => "reads a thread's lineage",
       "HalC2.Orchestration.cancel_queued/1" =>
         "the model has no cancel of one queued run: it only shortens the queue",
+      "HalC2.Orchestration.cancel_queued_run/2" =>
+        "the model has no cancel of one queued run: it only shortens the queue",
       "HalC2.Orchestration.warn_prepared/4" => @items,
       "HalC2.Orchestration.upsert/4" => @changes,
       "HalC2.Orchestration.create/3" => @changes,
