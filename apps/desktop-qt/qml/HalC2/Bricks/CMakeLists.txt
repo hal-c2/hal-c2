@@ -157,6 +157,7 @@ set(hal_c2_bricks_qml_files
     OnboardingTerminal.qml
     SnapShotSettings.qml
     Markdown.qml
+    MermaidDiagram.qml
     js/markdown.js
 )
 set(hal_c2_bricks_resources
