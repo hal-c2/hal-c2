@@ -31,10 +31,13 @@ FocusScope {
     property real fontPointSize: 0
     // Moves as terminals come and go, for a binding on terminalOf.
     property int cellRevision: 0
+    // What covers the top of the scrollbars, such as the drawer's buttons over a
+    // single terminal's corner.
+    property real scrollbarTopInset: 0
 
-    // Prompt symbols for a machine with no Nerd Font: TerminalController makes
-    // it the font Qt falls back to first, glyph by glyph, so cells keep the
-    // terminal font's size.
+    // Prompt symbols for a machine with no Nerd Font: the second of the
+    // terminal font's families, which Qt falls back to glyph by glyph, so cells
+    // keep the terminal font's size and no other text in the app changes.
     FontLoader {
         id: symbols
 
@@ -158,13 +161,7 @@ FocusScope {
                 padding: 6
                 // A whole font: the Terminal's default carries a point size,
                 // which a pixel size set over it warns about.
-                font: splits.fontPointSize > 0 ? Qt.font({
-                    family: Theme.fontTerminal.length > 0 ? Theme.fontTerminal : "monospace",
-                    pointSize: splits.fontPointSize
-                }) : Qt.font({
-                    family: Theme.fontTerminal.length > 0 ? Theme.fontTerminal : "monospace",
-                    pixelSize: Theme.fontSizeTerminal
-                })
+                font: Terminals.terminalFont(Theme.fontTerminal, Theme.fontSizeTerminal, splits.fontPointSize)
                 backgroundColor: splits.background
                 foregroundColor: splits.foreground
                 cursorColor: splits.foreground
@@ -383,6 +380,7 @@ FocusScope {
                     objectName: "terminalScrollbar"
                     terminal: terminal
                     anchors.top: parent.top
+                    anchors.topMargin: splits.scrollbarTopInset
                     anchors.bottom: parent.bottom
                     anchors.bottomMargin: cell.hasHistory ? cell.spare : 0
                     anchors.right: parent.right

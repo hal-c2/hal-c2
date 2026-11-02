@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QFont>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -108,6 +109,10 @@ private:
   qsizetype m_transcriptSize = 0;
   QString m_pendingWrite;
   bool m_writing = false;
+  // What the last failed write said, until a write goes through or the session
+  // attaches again: a write that keeps failing the same way (no MC) is said
+  // once, not once per keystroke.
+  QString m_writeFailure;
   QSize m_wanted;
   QSize m_sent;
   bool m_resizing = false;
@@ -276,6 +281,11 @@ public:
   // A terminal took the keyboard: it becomes its group's active one, and the
   // one split and keybindings act on.
   Q_INVOKABLE void focusTerminal(const QString& terminalId);
+  // A terminal's font: `family` at `pixelSize`, or at `pointSize` when above
+  // zero, then the bundled prompt symbols (TerminalSplits' FontLoader), which
+  // Qt falls back to glyph by glyph. QML's font type cannot hold a list of
+  // families.
+  Q_INVOKABLE QFont terminalFont(const QString& family, int pixelSize, qreal pointSize = 0) const;
   // Opens a terminal in a new group of the right panel's; returns the group,
   // or nothing when the thread has no place for terminals or no room.
   QString addPanelGroup();

@@ -665,15 +665,17 @@ void SpacePages::awaitSpace(const QString& id) {
   selectSpace(id);
 }
 
+// A page already in the Space's copy is shown now, and is not awaited: an await
+// left standing would take the view back to it when the user picks another.
 void SpacePages::awaitPage(const QString& id) {
   m_awaitedDeck.clear();
-  m_awaitedPage = id;
+  m_awaitedPage = m_space.of(QStringLiteral("page")).contains(id) ? QString() : id;
   selectPage(id);
 }
 
 void SpacePages::awaitDeck(const QString& id) {
   m_awaitedPage.clear();
-  m_awaitedDeck = id;
+  m_awaitedDeck = m_space.of(QStringLiteral("deck")).contains(id) ? QString() : id;
   selectDeck(id);
 }
 

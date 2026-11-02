@@ -3,7 +3,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QSaveFile>
@@ -158,6 +157,8 @@ void TerminalSession::onFrame(const QJsonObject& frame) {
     m_unacked = snapshot.value(QLatin1String("sequence")).toInteger(-1);
     m_unackedSize = 0;
     if (!m_parked) sendAck();
+    // Attached again: the next outage is a new one, and is said.
+    m_writeFailure.clear();
     if (!m_attached) {
       m_attached = true;
       flushWrites();
@@ -274,9 +275,11 @@ void TerminalSession::flushWrites() {
                    if (error) {
                      // Typing into an ended shell, or no MC: what was typed is gone.
                      self->m_pendingWrite.clear();
-                     self->report(!error->isEmpty() ? *error : writeFailure(chunk));
+                     const QString failure = !error->isEmpty() ? *error : writeFailure(chunk);
+                     if (failure != std::exchange(self->m_writeFailure, failure)) self->report(failure);
                      return;
                    }
+                   self->m_writeFailure.clear();
                    self->flushWrites();
                  });
 }
@@ -423,13 +426,6 @@ void TerminalTabs::clear() {
 TerminalController::TerminalController(ShellBridge* bridge, McClient* client, ShellStore* store,
                                        QObject* parent)
     : QObject(parent), m_bridge(bridge), m_client(client), m_tabs(this) {
-  // The prompt symbols TerminalSplits bundles, for the glyphs a terminal's own
-  // font lacks. Qt asks for private-use characters under the Common script.
-  static const bool symbolFallback = [] {
-    QFontDatabase::addApplicationFallbackFontFamily(QChar::Script_Common, QStringLiteral("Symbols Nerd Font Mono"));
-    return true;
-  }();
-  Q_UNUSED(symbolFallback);
   connect(store, &ShellStore::changed, this, &TerminalController::refresh);
   // A new socket starts a new list, which owes nothing of what the old one did.
   connect(client, &McClient::readyChanged, this, [this](bool ready) {
@@ -1029,6 +1025,17 @@ void TerminalController::abandonStart(const QString& threadKey, const QString& t
     if (m_ui[threadKey].open) emit focusRequested(activeTerminalId());
   }
   if (!starting.quiet) toast(QStringLiteral("Unable to open terminal"), reason);
+}
+
+QFont TerminalController::terminalFont(const QString& family, int pixelSize, qreal pointSize) const {
+  QFont font;
+  font.setFamilies({family.isEmpty() ? QStringLiteral("monospace") : family, QStringLiteral("Symbols Nerd Font Mono")});
+  if (pointSize > 0) {
+    font.setPointSizeF(pointSize);
+  } else {
+    font.setPixelSize(pixelSize);
+  }
+  return font;
 }
 
 void TerminalController::focusTerminal(const QString& terminalId) {

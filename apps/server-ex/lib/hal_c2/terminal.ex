@@ -86,9 +86,11 @@ defmodule HalC2.Terminal do
 
   @doc "Stops sending a terminal's events to `subscriber`."
   def detach(thread_id, terminal_id, subscriber) do
-    # The hub may still hold it for a process that has not reported yet.
-    Hub.forget(thread_id, terminal_id, subscriber)
     if pid = lookup(thread_id, terminal_id), do: GenServer.cast(pid, {:detach, subscriber})
+    # The hub may still hold it for a process that has not reported yet, or be handed
+    # it by one closing now. Told after the terminal, the hub hears this after any
+    # `Hub.closed` the detach arrived too late for (`retire/2`).
+    Hub.forget(thread_id, terminal_id, subscriber)
     :ok
   end
 
@@ -524,7 +526,6 @@ defmodule HalC2.Terminal do
   # one stays.
   def handle_info(:evict, %{os_pid: nil} = state), do: {:stop, :normal, retire(state, false)}
 
-  # From a restarted `HalC2.Terminal.Hub`, which lost its list.
   # Who followed this terminal when its last process closed.
   def handle_info({:followers, pids}, state) do
     state = flush_output(state)
@@ -544,6 +545,7 @@ defmodule HalC2.Terminal do
     {:noreply, %{state | subscribers: subscribers}}
   end
 
+  # From a restarted `HalC2.Terminal.Hub`, which lost its list.
   def handle_info(:report, state) do
     Hub.upsert(summary(state), self())
     {:noreply, state}
@@ -590,8 +592,23 @@ defmodule HalC2.Terminal do
   defp retire(state, delete_history) do
     state = emit(state, %{"type" => "closed"})
     Hub.closed(state.thread_id, state.terminal_id, Map.keys(state.subscribers))
+    forget_detached(state)
     unless delete_history, do: persist(state)
     %{state | persist_timer: nil, cwd: nil}
+  end
+
+  # Detaches that arrived while the close was stopping the shell, too late for the
+  # list `Hub.closed` took: the hub hears of them after it, from this process, so it
+  # drops them. One that arrives later still finds the hub told, as `detach/3` tells
+  # the hub after this process.
+  defp forget_detached(state) do
+    receive do
+      {:"$gen_cast", {:detach, subscriber}} ->
+        Hub.forget(state.thread_id, state.terminal_id, subscriber)
+        forget_detached(state)
+    after
+      0 -> :ok
+    end
   end
 
   # Starts the shell, or updates a running one, the way `terminal.open` does: a new

@@ -507,6 +507,7 @@ Feature: Terminal input and output
     Scenario: The terminal shows a scrollbar for its history
       Given the terminal has more output than fits on screen
       Then a scrollbar shows where the view sits in the history
+      And the drawer's buttons leave the scrollbar clear
       And the scrollbar is hidden while everything fits
 
     @desktop
@@ -567,6 +568,7 @@ Feature: Terminal input and output
       When the shell prints a prompt with powerline separators and file-type icons
       Then the terminal draws those symbols
       And the text keeps its own font and cell size
+      And text outside the terminal does not take the symbol font
 
     @desktop
     Scenario: The cursor blinks only while the terminal has focus

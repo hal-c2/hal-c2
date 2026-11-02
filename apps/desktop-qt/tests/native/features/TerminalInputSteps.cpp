@@ -5,6 +5,7 @@
 
 #include <QCoreApplication>
 #include <QFont>
+#include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QGlyphRun>
 #include <QGuiApplication>
@@ -357,6 +358,16 @@ const Steps steps([] {
     QMetaObject::invokeMethod(terminal, "scrollToBottom");
     expect(std::abs(thumb->y() + thumb->height() - bar->height()) < 1, QStringLiteral("at the newest output the thumb ends at %1 of %2").arg(thumb->y() + thumb->height()).arg(bar->height()));
   });
+  step(QStringLiteral("the drawer's buttons leave the scrollbar clear"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* terminal = drawnTerminal(world);
+    QQuickItem* thumb = world.brick->item(QStringLiteral("terminalScrollbarThumb"));
+    QQuickItem* actions = world.brick->item(QStringLiteral("terminalDrawerActions"));
+    scrollViewTo(terminal, 0);
+    // The buttons sit on a background 2 pixels wider than they are.
+    const QRectF buttons = actions->mapRectToScene(actions->boundingRect()).adjusted(-2, -2, 2, 2);
+    const QRectF grip = thumb->mapRectToScene(thumb->boundingRect());
+    expect(!buttons.intersects(grip), QStringLiteral("at the oldest output the thumb is under the buttons"));
+  });
   step(QStringLiteral("the scrollbar is hidden while everything fits"), [](World& world, const Captures&, const Table&) {
     QQuickItem* terminal = drawnTerminal(world);
     QMetaObject::invokeMethod(terminal, "reset");
@@ -575,6 +586,15 @@ const Steps steps([] {
     const QFontMetricsF metrics(own);
     expect(number(terminal, "cellWidth") == std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))), QStringLiteral("cells are %1 wide").arg(number(terminal, "cellWidth")));
     expect(number(terminal, "cellHeight") == std::ceil(metrics.height()), QStringLiteral("cells are %1 tall").arg(number(terminal, "cellHeight")));
+  });
+
+  step(QStringLiteral("text outside the terminal does not take the symbol font"), [](World& world, const Captures&, const Table&) {
+    drawnTerminal(world);
+    // Only the terminal's font names it; nothing puts it before another font's own fallbacks.
+    for (const QChar::Script script : {QChar::Script_Common, QChar::Script_Unknown, QChar::Script_Latin}) {
+      expect(!QFontDatabase::applicationFallbackFontFamilies(script).contains(QStringLiteral("Symbols Nerd Font Mono")),
+             QStringLiteral("the symbol font is a fallback for every font in the app"));
+    }
   });
 
   // The cursor.
