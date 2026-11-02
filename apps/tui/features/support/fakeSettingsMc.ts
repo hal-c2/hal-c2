@@ -8,6 +8,7 @@ import type {
   ResourceTelemetrySnapshot,
   ScheduledTask,
   ServerSettings,
+  SpacePresenceViewer,
 } from "@hal-c2/contracts";
 
 import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
@@ -50,6 +51,13 @@ export interface FakeSettingsMc {
   /** Called when a client starts following the access list (send it the snapshot). */
   onAuthAccessSubscribe: (() => void) | null;
   readonly authAccessWatchers: () => number;
+  /** Serves `subscribeSpacePresence`: returns the leaving of the page. Unset, nobody else is on it. */
+  presence:
+    | ((
+        pageId: string,
+        onViewers: (viewers: ReadonlyArray<SpacePresenceViewer>) => void,
+      ) => () => void)
+    | null;
   /**
    * Serves `subscribeMcStream` (a Space's stream, the Spaces index): returns the
    * unsubscribe. Unset, a stream sends nothing.
@@ -99,6 +107,7 @@ export function fakeSettingsMc(): FakeSettingsMc {
     },
     telemetryWatchers: () => telemetryWatchers.size,
     onTelemetrySubscribe: null,
+    presence: null,
     streams: null,
     client: {
       mcCall: async <T>(method: string, payload: unknown, environmentId?: string) => {
@@ -156,6 +165,8 @@ export function fakeSettingsMc(): FakeSettingsMc {
       },
       subscribeMcStream: (stream, onFrame, onError) =>
         fake.streams?.(stream, onFrame, onError) ?? (() => {}),
+      subscribeSpacePresence: (_spaceId, pageId, onViewers) =>
+        fake.presence?.(pageId, onViewers) ?? (() => {}),
     },
   };
   return fake;

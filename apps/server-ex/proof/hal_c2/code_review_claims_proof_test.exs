@@ -21,7 +21,9 @@ defmodule HalC2.CodeReviewClaimsProofTest do
     model: "code_review_claims.maude",
     module: "CODE-REVIEW-CLAIMS",
     check: "CODE-REVIEW-CLAIMS-PROPS",
-    timeout: 1_200_000,
+    # three(1,0,0,0,0,0,0) has run past 20 minutes on a slow runner, on a model that
+    # passes in a 13-minute job on a fast one.
+    timeout: 1_800_000,
     code: [
       {:exports, HalC2Plugins.CodeReview},
       {:messages, HalC2Plugins.CodeReview},

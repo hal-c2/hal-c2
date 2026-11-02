@@ -361,6 +361,8 @@ import {
   SpacePageImportMarkdownInput,
   SpacePageMoveInput,
   SpacePageRef,
+  SpacePresenceStreamEvent,
+  SpacePresenceSubscribeInput,
   SpacePageRenameInput,
   SpacePageResult,
   SpacePageScheduleSetEnabledInput,
@@ -647,6 +649,7 @@ export const WS_METHODS = {
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeWorktreeSetup: "subscribeWorktreeSetup",
+  subscribeSpacePresence: "subscribeSpacePresence",
   worktreeSetupCancel: "worktreeSetup.cancel",
   worktreeSetupRetry: "worktreeSetup.retry",
   subscribeTerminalEvents: "subscribeTerminalEvents",
@@ -1394,6 +1397,13 @@ const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
 const WsSubscribeWorktreeSetupRpc = Rpc.make(WS_METHODS.subscribeWorktreeSetup, {
   payload: WorktreeSetupSubscribeInput,
   success: WorktreeSetupStreamEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsSubscribeSpacePresenceRpc = Rpc.make(WS_METHODS.subscribeSpacePresence, {
+  payload: SpacePresenceSubscribeInput,
+  success: SpacePresenceStreamEvent,
   error: EnvironmentAuthorizationError,
   stream: true,
 });
@@ -2319,6 +2329,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderUploadFeedbackRpc,
   WsSubscribeVcsStatusRpc,
   WsSubscribeWorktreeSetupRpc,
+  WsSubscribeSpacePresenceRpc,
   WsWorktreeSetupCancelRpc,
   WsWorktreeSetupRetryRpc,
   WsVcsPullRpc,

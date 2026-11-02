@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 #include "CommandRegistry.h"
 #include "KeybindingController.h"
@@ -44,6 +45,8 @@ const int kAddressRetryMs = 30'000;
 // Long enough to take in the signed addresses of one batch, which arrive over
 // several turns of the event loop.
 const int kRebuildSoonMs = 50;
+// How long a page the MC could not say who is on waits to ask it again.
+const int kViewersRetryMs = 1000;
 
 // HalC2.Patch: `s` sets, `u` unsets, `a` appends to strings, `d` deletes
 // (alone) or replaces (with `s`/`a`). nullopt when the entity is gone.
@@ -65,6 +68,11 @@ QString text(const QJsonObject& entity, QLatin1String field) { return entity.val
 
 bool byAgent(const QJsonValue& author) {
   return author.toObject().value(QLatin1String("type")).toString() == QLatin1String("agent");
+}
+
+// Written by the page's own update rather than by a person or a thread.
+bool byUpdate(const QJsonValue& author) {
+  return author.toObject().value(QLatin1String("type")).toString() == QLatin1String("schedule");
 }
 
 // In the order the MC keeps them: by `field`, then id.
@@ -251,7 +259,7 @@ SpaceHistory::SpaceHistory(std::function<QString(const QString&)> titleOf,
     : QObject(parent),
       m_titleOf(std::move(titleOf)),
       m_imageFields(std::move(imageFields)),
-      m_versions(new SpaceRows({"id", "version", "at", "byAgent", "threadTitle", "restoredFromAt"}, this)),
+      m_versions(new SpaceRows({"id", "version", "at", "byAgent", "byUpdate", "threadTitle", "restoredFromAt"}, this)),
       m_blocks(new SpaceRows({"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
                               "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
                              this)) {}
@@ -328,6 +336,7 @@ SpaceHistory::Next SpaceHistory::receive(int token, const QJsonObject& result) {
                  {QStringLiteral("version"), number},
                  {QStringLiteral("at"), text(version, QLatin1String("at"))},
                  {QStringLiteral("byAgent"), byAgent(version.value(QLatin1String("author")))},
+                 {QStringLiteral("byUpdate"), byUpdate(version.value(QLatin1String("author")))},
                  {QStringLiteral("threadTitle"), text(version, QLatin1String("threadTitle"))},
                  {QStringLiteral("restoredFromAt"), text(version, QLatin1String("restoredFromAt"))}});
   }
@@ -919,6 +928,7 @@ void SpacePages::rebuild() {
                      {QStringLiteral("createdAt"), text(comment, QLatin1String("createdAt"))}});
   }
   m_comments->setRows(comments);
+  if (m_viewersPage != m_pageId) clearViewers();
 
   const QHash<QString, QJsonObject>& decks = m_space.of(QStringLiteral("deck"));
   if (m_space.hasCopy() && !decks.contains(m_deckId)) m_deckId.clear();
@@ -971,10 +981,43 @@ void SpacePages::armAddressRefresh(const QSet<QString>& wanted) {
   m_addressRefresh->start(int(std::clamp<qint64>(delay, 0, std::numeric_limits<int>::max())));
 }
 
+void SpacePages::receiveViewers(const QString& pageId, const QJsonObject& frame) {
+  if (pageId != m_pageId || frame.value(QLatin1String("t")).toString() != QLatin1String("spacePresence")) return;
+  QStringList devices;
+  QStringList agents;
+  for (const QJsonValue& viewer : frame.value(QLatin1String("viewers")).toArray()) {
+    const QJsonObject row = viewer.toObject();
+    if (row.value(QLatin1String("type")).toString() == QLatin1String("agent")) {
+      agents.append(row.value(QLatin1String("title")).toString());
+    } else {
+      for (const QJsonValue& device : row.value(QLatin1String("devices")).toArray()) devices.append(device.toString());
+    }
+  }
+  m_viewersPage = pageId;
+  const QVariantMap viewers{{QStringLiteral("devices"), devices}, {QStringLiteral("agents"), agents}};
+  if (viewers == m_viewers) return;
+  m_viewers = viewers;
+  emit viewersChanged();
+}
+
+void SpacePages::clearViewers() {
+  m_viewersPage.clear();
+  if (m_viewers.isEmpty()) return;
+  m_viewers.clear();
+  emit viewersChanged();
+}
+
 // --- SpaceController ------------------------------------------------------------------
 
 SpaceController::SpaceController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent)
     : SpacePages(parent), m_bridge(bridge), m_client(client), m_store(store) {
+  m_viewersRetry = new QTimer(this);
+  m_viewersRetry->setObjectName(QStringLiteral("spaceViewersRetry"));
+  m_viewersRetry->setSingleShot(true);
+  m_viewersRetry->setInterval(kViewersRetryMs);
+  connect(m_viewersRetry, &QTimer::timeout, this, [this] {
+    if (!m_viewersSubscription && !m_followedViewers.isEmpty()) subscribeViewers();
+  });
   setThreadTitles([this](const QString& threadId) {
     const auto thread = m_store->thread(m_client->environment() + QLatin1Char(':') + threadId);
     return thread ? thread->title : QString();
@@ -987,6 +1030,7 @@ SpaceController::SpaceController(ShellBridge* bridge, McClient* client, ShellSto
   m_historyRefresh->setInterval(kHistoryRefreshMs);
   connect(m_historyRefresh, &QTimer::timeout, this, [this] { askHistory(history()->refresh()); });
   connect(this, &SpacePages::changed, this, &SpaceController::followHistory);
+  connect(this, &SpacePages::changed, this, &SpaceController::followViewers);
   connect(this, &SpacePages::imagesNeeded, this, &SpaceController::signImages);
 }
 
@@ -1053,6 +1097,7 @@ void SpaceController::activate() {
           [this, navigation] { setOpen(navigation->route().kind == kRoute); });
   connect(m_client, &McClient::readyChanged, this, [this](bool ready) {
     if (ready && m_open) follow();
+    followViewers();
   });
   setOpen(navigation->route().kind == kRoute);
   publish();
@@ -1067,7 +1112,14 @@ void SpaceController::setOpen(bool open) {
     unfollow();
     history()->close();
     m_historyRefresh->stop();
+    m_pageShown = false;
   }
+  followViewers();
+}
+
+void SpaceController::setPageShownBySteps(bool bySteps) {
+  m_pageShownBySteps = bySteps;
+  followViewers();
 }
 
 void SpaceController::follow() {
@@ -1108,6 +1160,43 @@ void SpaceController::followSpace() {
         }
       },
       [this, followed] { return followed == spaceId() ? space().subscribing() : QJsonObject(); });
+}
+
+void SpaceController::followViewers() {
+  // A deck or the image browser takes the selected page's place.
+  const bool onShow = m_open && m_client->isReady() && deckId().isEmpty() && !imagesShown() && (!m_pageShownBySteps || m_pageShown);
+  const QString page = onShow ? pageId() : QString();
+  if (page == m_followedViewers) return;
+  if (m_viewersSubscription) m_client->unsubscribe(std::exchange(m_viewersSubscription, 0));
+  m_followedViewers = page;
+  clearViewers();
+  if (page.isEmpty()) return;
+  subscribeViewers();
+}
+
+void SpaceController::setViewersRetryMs(int ms) {
+  m_viewersRetry->setInterval(ms);
+}
+
+void SpaceController::subscribeViewers() {
+  const QString page = m_followedViewers;
+  m_viewersSubscription = m_client->subscribe(
+      this,
+      {{QStringLiteral("type"), QStringLiteral("spacePresence")},
+       {QStringLiteral("environment"), m_client->environment()},
+       {QStringLiteral("spaceId"), spaceId()},
+       {QStringLiteral("pageId"), page}},
+      [this, page](const QJsonObject& frame) {
+        if (frame.value(QLatin1String("t")).toString() == QLatin1String("error")) {
+          // The MC could not say (its presence service is down, or the page's MC out of
+          // reach) and keeps nothing of this subscription: nobody is shown until it can.
+          m_client->unsubscribe(std::exchange(m_viewersSubscription, 0));
+          clearViewers();
+          m_viewersRetry->start();
+          return;
+        }
+        receiveViewers(page, frame);
+      });
 }
 
 void SpaceController::unfollow() {
@@ -1379,6 +1468,9 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     if (input.contains(QLatin1String("pageId"))) awaitPage(pageId);
   } else if (action == QLatin1String("space.select")) {
     selectSpace(field(QLatin1String("spaceId")));
+  } else if (action == QLatin1String("space.pageShown")) {
+    m_pageShown = input.value(QLatin1String("shown")).toBool();
+    followViewers();
   } else if (action == QLatin1String("space.selectPage")) {
     selectPage(pageId);
   } else if (action == QLatin1String("space.create")) {

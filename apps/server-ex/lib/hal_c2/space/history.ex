@@ -25,12 +25,17 @@ defmodule HalC2.Space.History do
   themselves are not versioned, and those a user deleted with a block stay deleted.
   Neither are images: a version's image block shows the image as it is now, and comes
   back saying so when the image is in the trash or deleted for good.
+
+  A page's update is not content either (`HalC2.Space.Schedule`): a restore keeps its
+  instruction and cadence, and a run's write is an edit by the update. A restore never
+  writes the generated part, which is the update's: it leaves the page's as it is, and
+  brings a version's back as ordinary blocks only to a page that no longer updates itself.
   """
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, Store}
   alias HalC2.Space
-  alias HalC2.Space.Pages
+  alias HalC2.Space.{Order, Pages}
 
   @gap :timer.minutes(5)
   @content ~w(kind text checked linkedPageId imageId chart order)
@@ -78,8 +83,15 @@ defmodule HalC2.Space.History do
   def restore(state, page_id, version, author, at \\ Entities.now()) do
     with {:ok, page} <- Pages.fetch_live(state, page_id) do
       stamp = &Map.merge(&1, %{"updatedBy" => author, "updatedAt" => at})
-      current = Map.new(Space.Blocks.of_page(state, page_id), &{&1["id"], &1})
-      wanted = Enum.map(version.blocks, &wanted_block(state, &1))
+
+      current =
+        for block <- Space.Blocks.of_page(state, page_id),
+            block["kind"] != "generated",
+            into: %{},
+            do: {block["id"], block}
+
+      new = &new_block(&1, page_id, author, at)
+      wanted = ours(Enum.map(version.blocks, &wanted_block(state, &1)), state, page, current, new)
       ids = MapSet.new(wanted, & &1["id"])
 
       blocks =
@@ -95,9 +107,10 @@ defmodule HalC2.Space.History do
         end)
 
       gone = for id <- Map.keys(current), id not in ids, do: {"block", id, Patch.delete()}
+      restored = blocks ++ gone
       retitled = page["title"] != version.title
 
-      if blocks == [] and gone == [] and not retitled do
+      if restored == [] and not retitled do
         {[], {:ok, page}}
       else
         next = %{page | "title" => version.title, "updatedAt" => at}
@@ -111,10 +124,80 @@ defmodule HalC2.Space.History do
           end
 
         {[{"page", page_id, %{"s" => %{"restoring" => marker}}}] ++
-           updated ++ blocks ++ gone ++ [{"page", page_id, %{"u" => ["restoring"]}}], {:ok, next}}
+           updated ++ restored ++ [{"page", page_id, %{"u" => ["restoring"]}}], {:ok, next}}
       end
     end
     |> Pages.refused()
+  end
+
+  # A restore never writes a generated part: the page's own, left out of `current`, stays
+  # as it is. A page that updates itself takes none of a version's. Any other gets a
+  # version's back as the blocks it reads as, as when the update is removed
+  # (`HalC2.Space.Blocks.release_generated/4`), in blocks that release left and nobody
+  # has written since where the page has them, so a version from before the removal is
+  # the page as it is. A block someone wrote is theirs, with its comments, whatever it says.
+  defp ours(blocks, _state, %{"schedule" => %{}}, _current, _new),
+    do: Enum.reject(blocks, &(&1["kind"] == "generated"))
+
+  defp ours(blocks, state, _page, current, new) do
+    ids = MapSet.new(blocks, & &1["id"])
+
+    spare =
+      current
+      |> Map.values()
+      |> Enum.filter(&(&1["id"] not in ids and &1["updatedBy"] == Space.Schedule.author()))
+      |> Enum.sort_by(& &1["order"])
+
+    blocks
+    |> Enum.zip(Enum.drop(blocks, 1) ++ [nil])
+    |> Enum.flat_map_reduce(spare, fn
+      {%{"kind" => "generated"} = block, next}, spare ->
+        released(Space.written(state, block["text"]), block, next, spare, new)
+
+      {block, _next}, spare ->
+        {[block], spare}
+    end)
+    |> elem(0)
+  end
+
+  defp released([], _block, _next, spare, _new), do: {[], spare}
+
+  defp released([first | rest], block, next, spare, new) do
+    high = next && next["order"]
+
+    {rest, {spare, _low}} =
+      Enum.map_reduce(rest, {spare, block["order"]}, fn spec, {spare, low} ->
+        order = Order.between(low, high)
+        fields = spec |> from_spec() |> Map.put("order", order)
+
+        case Enum.find(spare, &(Map.merge(&1, Map.delete(fields, "order")) == &1)) do
+          nil -> {new.(fields), {spare, order}}
+          found -> {Map.merge(found, fields), {List.delete(spare, found), order}}
+        end
+      end)
+
+    {[Map.merge(block, from_spec(first)) | rest], spare}
+  end
+
+  # A block's content as `HalC2.Space.Blocks` makes it from a spec of `Space.written/2`.
+  defp from_spec(spec) do
+    spec
+    |> Map.take(["imageId"])
+    |> Map.merge(%{
+      "kind" => spec["kind"],
+      "text" => spec["text"] || "",
+      "checked" => spec["kind"] == "checklist" and spec["checked"] == true,
+      "linkedPageId" => if(spec["kind"] == "subpage_link", do: spec["linkedPageId"])
+    })
+  end
+
+  defp new_block(fields, page_id, author, at) do
+    Map.merge(fields, %{
+      "id" => HalC2.Environment.uuid4(),
+      "pageId" => page_id,
+      "createdBy" => author,
+      "createdAt" => at
+    })
   end
 
   # An image block stays one whatever became of its image: it says what did.

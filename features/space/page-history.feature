@@ -6,6 +6,8 @@
 #   apps/server-ex/lib/hal_c2/space/history.ex
 #   features/space/images.feature (a block on an image that left stays and says so)
 #   features/space/sites.feature (a site is behind when publishing again would change it)
+#   features/space/self-updating-pages.feature and apps/server-ex/lib/hal_c2/space/schedule.ex
+#     (a page's update, its generated part, and what removing it releases)
 
 Feature: A page's history
   A page's history is read from the Space's event log, on demand and a stretch at a
@@ -133,6 +135,68 @@ Feature: A page's history
       Then 3 versions come, and there are more
       When the user asks for the versions after those
       Then 1 version comes, and there are no more
+
+  # A page's update is not content: a restore keeps its instruction and cadence, and
+  # never writes the generated part, which is the update's. A page that updates itself
+  # keeps the part it has; one that no longer does gets a version's back as its own blocks.
+  @mc @desktop @mobile @tui
+  Rule: A page that updates itself
+
+    Scenario: What a run writes is a version by the page's update
+      Given text generation writes "Three threads moved forward"
+      And "Roadmap" updates itself with "Summarise yesterday's threads" every 2 hours
+      When the user runs the update of "Roadmap" now
+      And the user opens the history of "Roadmap"
+      Then the history has 3 versions
+      And the newest version was written by the page's update
+
+    Scenario: A restore keeps the page's update
+      Given text generation writes "Three threads moved forward"
+      And "Roadmap" updates itself with "Summarise yesterday's threads" every 2 hours
+      And the update of "Roadmap" has run
+      When the user restores the version 2 back on "Roadmap"
+      Then the blocks of "Roadmap" read "Draft, Three threads moved forward"
+      And "Roadmap" shows the instruction "Summarise yesterday's threads"
+      And "Roadmap" shows it updates every 2 hours
+
+    Scenario: A restore while the update is on leaves the generated part alone
+      Given text generation writes "Three threads moved forward"
+      And "Roadmap" updates itself with "Summarise yesterday's threads" every 2 hours
+      And the update of "Roadmap" has run
+      And the user changes the block "Final" to "Later"
+      And text generation writes "Five threads moved forward"
+      And the update of "Roadmap" has run
+      When the user restores the version 2 back on "Roadmap"
+      Then the blocks of "Roadmap" read "Final, Five threads moved forward"
+      And the generated part of "Roadmap" reads "Five threads moved forward"
+
+    Scenario: Restoring a version from before the update was removed
+      Given text generation writes "Three threads moved forward"
+      And "Roadmap" updates itself with "Summarise yesterday's threads" every 2 hours
+      And the update of "Roadmap" has run
+      And a while passes
+      And the user removes the update of "Roadmap"
+      And a while passes
+      And the user changes the block "Final" to "Later"
+      When the user restores the version 2 back on "Roadmap"
+      Then "Roadmap" has no generated part
+      And the blocks of "Roadmap" read "Final, Three threads moved forward"
+
+  @mc
+  Rule: What a restore brings back of a page's update
+
+    Scenario: A page that no longer updates itself gets a run's words back as its own blocks
+      Given text generation writes "Three threads moved forward"
+      And "Roadmap" updates itself with "Summarise yesterday's threads" every 2 hours
+      And the update of "Roadmap" has run
+      And a while passes
+      And the user has deleted the generated part of "Roadmap"
+      And the user has removed the update of "Roadmap"
+      When the user restores the version 1 back on "Roadmap"
+      Then "Roadmap" has no generated part
+      And the blocks of "Roadmap" read "Final, Three threads moved forward"
+      When the user changes the block "Three threads moved forward" to "Edited by hand"
+      Then the blocks of "Roadmap" read "Final, Edited by hand"
 
   @desktop
   Rule: Beside a deck

@@ -1542,6 +1542,7 @@ export function createHost(options: HostOptions): Host {
     const before = connectionPhase;
     connectionPhase = phase;
     state.set("connection", connectionState(phase));
+    if (phase === "reconnecting") space.connectionLost();
     if (before === "connected" && phase === "reconnecting") {
       store.setStatus("The server went away; reconnecting…", "busy");
     } else if (before === "reconnecting" && phase === "connected") {

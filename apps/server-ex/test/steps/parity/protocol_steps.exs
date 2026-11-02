@@ -194,6 +194,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "a checkout's status changes" => "vcs",
     "a provider's sign-in state changes" => "providerAuth",
     "a thread's worktree setup progresses" => "worktreeSetup",
+    "who else is on an open page changes" => "spacePresence",
     "a scheduled task changes" => "scheduledTasks",
     "a pairing link or paired client changes" => "authAccess",
     "a project clone progresses" => "projectClones",
@@ -209,7 +210,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "the MC asks the desktop app to update" => "desktopUpdateControl"
   }
 
-  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one MC change|an MC's environment descriptor changes|an MC joins or leaves the cluster|a stream subscription starts without a usable offset|stream entities change|a stream has caught up|a client asks for the runs before its window|a client falls behind|a shape is over|a config subscription opens|the MC moves to another version in place|the MC's settings change|the MC's published themes change|the MC's usage limit sources change|the MC's keybinding rules change|the MC's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the MC asks the desktop app to update)$/,
+  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one MC change|an MC's environment descriptor changes|an MC joins or leaves the cluster|a stream subscription starts without a usable offset|stream entities change|a stream has caught up|a client asks for the runs before its window|a client falls behind|a shape is over|a config subscription opens|the MC moves to another version in place|the MC's settings change|the MC's published themes change|the MC's usage limit sources change|the MC's keybinding rules change|the MC's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|who else is on an open page changes|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the MC asks the desktop app to update)$/,
        %{args: [text]} = context do
     frame = Map.fetch!(@whens, text)
 
@@ -271,6 +272,7 @@ defmodule HalC2.Steps.Parity.Protocol do
     "config.keybindings" => ~w(id rules),
     "config.providers" => ~w(id providers),
     "providerAuth" => ~w(id state),
+    "spacePresence" => ~w(id viewers),
     "providerInstall" => ~w(id state),
     "scheduledTasks" => ~w(id tasks),
     "projectClones" => ~w(id clones),
@@ -545,7 +547,8 @@ defmodule HalC2.Steps.Parity.Shapes do
     "gitAction" => 18,
     "serverUpdate" => 19,
     "providerInstall" => 20,
-    "desktopUpdateControl" => 21
+    "spacePresence" => 21,
+    "desktopUpdateControl" => 22
   }
 
   # The services an MC-wide shape reads, as `HalC2.Application` starts them.
@@ -557,6 +560,7 @@ defmodule HalC2.Steps.Parity.Shapes do
     "localServers" => HalC2.LocalServers,
     "pullRequestRefreshes" => HalC2.PullRequests.Refreshes,
     "worktreeSetup" => HalC2.WorktreeSetup,
+    "spacePresence" => HalC2.Space.Presence,
     "previewAutomation" => HalC2.PreviewAutomation
   }
 
@@ -691,6 +695,9 @@ defmodule HalC2.Steps.Parity.Shapes do
         assert %{"t" => "worktreeSetup"} = frame
         assert frame["event"] == nil or is_map(frame["event"])
 
+      {"spacePresence", [frame]} ->
+        assert %{"t" => "spacePresence", "viewers" => []} = frame
+
       {"scheduledTasks", [frame]} ->
         assert %{"t" => "scheduledTasks", "tasks" => tasks} = frame
         assert is_list(tasks)
@@ -779,6 +786,10 @@ defmodule HalC2.Steps.Parity.Shapes do
       "worktreeSetup" ->
         ensure([@services[type]])
         {Map.put(mc, "threadId", f.thread), context}
+
+      "spacePresence" ->
+        ensure([@services[type]])
+        {Map.merge(mc, %{"spaceId" => "parity-space", "pageId" => "parity-page"}), context}
 
       "previewAutomation" ->
         ensure([@services[type]])
@@ -935,6 +946,10 @@ defmodule HalC2.Steps.Parity.Shapes do
         project = %{"workspaceRoot" => f.root}
         strategy = %{"branch" => "parity", "baseRef" => "main"}
         HalC2.WorktreeSetup.start(f.thread, "run-parity", project, strategy, "go")
+        await(context, t, id)
+
+      "spacePresence" ->
+        HalC2.Space.Presence.agent_touched(f.thread, "Parity", "parity-space", "parity-page")
         await(context, t, id)
 
       "scheduledTasks" ->

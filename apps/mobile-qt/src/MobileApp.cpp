@@ -20,6 +20,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "SpaceController.h"
 #include "TerminalController.h"
 #include "ThemeStore.h"
 
@@ -59,18 +60,22 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   // The root says which layout it shows (`layout.desktop {shown}`), at start
   // and as the window changes size, for the two things about it that live
   // here. The phone layout's home is the thread list, not a draft to land on,
-  // and the desktop layout's is one. And only the desktop layout draws a
-  // terminal, so in the phone's a thread has no place for one.
+  // and the desktop layout's is one. Only the desktop layout draws a terminal,
+  // so in the phone's a thread has no place for one. And only the phone's Space
+  // screen has steps, so in the desktop layout the selected page is on show.
   m_native->controller<DraftController>()->setLandsOnDraft(false);
   m_native->controller<TerminalController>()->setDrawn(false);
+  m_native->controller<SpaceController>()->setPageShownBySteps(true);
   m_bridge->addInterceptor([drafts = QPointer<DraftController>(m_native->controller<DraftController>()),
-                            terminals = QPointer<TerminalController>(m_native->controller<TerminalController>())](const QString& action, const QVariant& payload) {
+                            terminals = QPointer<TerminalController>(m_native->controller<TerminalController>()),
+                            spaces = QPointer<SpaceController>(m_native->controller<SpaceController>())](const QString& action, const QVariant& payload) {
     if (action != QLatin1String("layout.desktop")) return false;
-    if (!drafts || !terminals) return true;
+    if (!drafts || !terminals || !spaces) return true;
     const bool desktop = payload.toMap().value(QStringLiteral("shown")).toBool();
     drafts->setLandsOnDraft(desktop);
     if (desktop) drafts->land();
     terminals->setDrawn(desktop);
+    spaces->setPageShownBySteps(!desktop);
     return true;
   });
   m_theme = std::make_unique<ThemeStore>(configDir);

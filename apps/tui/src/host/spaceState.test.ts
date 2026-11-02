@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { SpacePresenceViewer } from "@hal-c2/contracts";
 import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 
 import type { AskSpec } from "./askState.ts";
@@ -73,6 +74,8 @@ function setup(origin?: string) {
   const statuses: string[] = [];
   const menus: PickRequest[] = [];
   const opened: string[] = [];
+  const onPage = new Set<string>();
+  const tellPage: Array<(viewers: ReadonlyArray<SpacePresenceViewer>) => void> = [];
   const asks: AskSpec[] = [];
   const uploads = { fails: false, sent: 0 };
   let state: TuiSpaceState | null = null;
@@ -92,6 +95,13 @@ function setup(origin?: string) {
         list.push(onFrame);
         streams.set(stream, list);
         return () => {};
+      },
+      subscribeSpacePresence: (_spaceId, pageId, onViewers) => {
+        onPage.add(pageId);
+        tellPage.push(onViewers);
+        return () => {
+          onPage.delete(pageId);
+        };
       },
       uploadToMc: async () => {
         if (uploads.fails) throw new Error("The MC refused the upload (413).");
@@ -136,6 +146,8 @@ function setup(origin?: string) {
     uploads,
     streams,
     opened,
+    onPage,
+    tellPage,
   };
 }
 
@@ -205,6 +217,58 @@ describe("the Space's stream", () => {
     t.send("space:s1", events([11, "page", "p9", { s: page("p9", "Stray")[2] }]), 0);
     expect(t.view().title).toBe("space · Lab");
     expect(t.texts("page")).toEqual(["Bench"]);
+  });
+});
+
+describe("who else is on the page", () => {
+  const onRoadmap = () => {
+    const t = inResearch([page("p1", "Roadmap")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+
+  test("the pages of a Space are not being on a page", () => {
+    expect(inResearch([page("p1", "Roadmap")]).onPage.size).toBe(0);
+  });
+
+  test("a page deleted while open is left", () => {
+    const t = onRoadmap();
+    expect([...t.onPage]).toEqual(["p1"]);
+    t.send("space:s1", events([11, "page", "p1", { d: true }]));
+    expect(t.onPage.size).toBe(0);
+  });
+
+  test("closing the pane leaves the page and forgets who was on it", () => {
+    const t = onRoadmap();
+    t.tellPage[0]!([{ type: "user", devices: ["Phone"] }]);
+    expect(t.view().viewers).toBe("Also here: Phone");
+    t.controller.close();
+    expect(t.onPage.size).toBe(0);
+    expect(t.view().viewers).toBe("");
+  });
+
+  test("a lost connection forgets who was on the page until the MC says again", () => {
+    const t = onRoadmap();
+    t.tellPage[0]!([{ type: "user", devices: ["Phone"] }]);
+    t.controller.connectionLost();
+    expect(t.view().viewers).toBe("");
+    expect([...t.onPage]).toEqual(["p1"]);
+    t.tellPage[0]!([{ type: "user", devices: ["Laptop"] }]);
+    expect(t.view().viewers).toBe("Also here: Laptop");
+  });
+
+  test("a late answer for a page the user left does not reach the next", () => {
+    const t = onRoadmap();
+    t.controller.dispatch("space.back", {});
+    t.tellPage[0]!([{ type: "user", devices: ["Phone"] }]);
+    expect(t.view().viewers).toBe("");
+  });
+
+  test("ending the client leaves the page", () => {
+    const t = onRoadmap();
+    t.controller.dispose();
+    expect(t.onPage.size).toBe(0);
   });
 });
 

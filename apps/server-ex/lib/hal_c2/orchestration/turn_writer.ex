@@ -700,6 +700,8 @@ defmodule HalC2.Orchestration.TurnWriter do
       HalC2.Plugins.turn_finished(thread_id, status, failure)
     end)
 
+    HalC2.Space.Presence.agent_done(thread_id)
+
     # A delegated task reports back to the thread that asked for it, apart from the
     # rest so their failures cannot lose the report.
     Task.start(fn -> HalC2.Orchestration.Delegation.report(thread_id, ids.run, status) end)

@@ -62,8 +62,8 @@ Item {
         // "Roadmap" with its history open: "Final" now, "Draft" before it.
         function withHistory(more) {
             const versions = [
-                { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: true, threadTitle: "Work", restoredFromAt: "" },
-                { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, threadTitle: "", restoredFromAt: "" }
+                { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: true, byUpdate: false, threadTitle: "Work", restoredFromAt: "" },
+                { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" }
             ];
             return root.research({ history: Object.assign({ shown: true, pageId: "page-1", versions: versions }, more) });
         }
@@ -90,8 +90,8 @@ Item {
             const view = root.research({
                 page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: true, sourceThreadId: "", sourceThreadTitle: "" },
                 history: { shown: true, pageId: "page-1", versions: [
-                    { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: false, threadTitle: "", restoredFromAt: "" },
-                    { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, threadTitle: "", restoredFromAt: "" }
+                    { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" },
+                    { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" }
                 ] }
             });
             tryVerify(() => findChild(view, "spaceHistoryRow:1") !== null);
@@ -1131,6 +1131,18 @@ Item {
             const source = findChild(view, "spacePageSource");
             verify(source.visible);
             compare(source.text, "Made from the thread “Work”");
+        }
+
+        function test_nobodyElseTakesNoRoom() {
+            const view = root.research({ viewers: { devices: [], agents: [] } });
+            verify(!findChild(view, "spaceViewers").visible);
+        }
+
+        function test_whoElseIsOnThePageIsNamed() {
+            const view = root.research({ viewers: { devices: ["HAL-C2 on SM-F741B"], agents: ["Work"] } });
+            const viewers = findChild(view, "spaceViewers");
+            verify(viewers.visible);
+            compare(viewers.text, "Also here: HAL-C2 on SM-F741B, the agent of “Work”");
         }
     }
 }

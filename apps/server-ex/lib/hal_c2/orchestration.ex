@@ -1347,6 +1347,7 @@ defmodule HalC2.Orchestration do
   # they run apart from the caller, who stops waiting at the deadline.
   defp await_stop(thread_id, timeout) do
     deadline = System.monotonic_time(:millisecond) + @thread_stop_ms
+
     {stopper, ref} = spawn_monitor(fn -> stop_thread_tree(thread_id, deadline) end)
 
     receive do
@@ -1398,21 +1399,24 @@ defmodule HalC2.Orchestration do
     end)
   end
 
-  # A run promoted from the queue meanwhile is interrupted too; a runtime still closing
-  # its turn after the run ended answers `:busy`, and is asked again. Tasks are looked at
+  # A message queued after the queue was cancelled can start when the interrupted run ends,
+  # and is interrupted by the next pass; a runtime still closing its turn after the run
+  # ended answers `:busy`, and is asked again. Tasks are looked at
   # on every pass: the turn being stopped can still delegate, or a task's wake be queued.
   defp stop_runs(thread_id, asked, deadline, tasks) do
     tasks = stop_tasks(thread_id, tasks, deadline)
     runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
     active = Enum.find_value(runs, &(&1["status"] in @active_statuses && &1["id"]))
 
+    # The queue goes before the interrupt, so nothing the agent stops for is left behind it.
+    # `active` is read before it: nothing was active and nothing is queued, so nothing is
+    # left for the end of a run to start. Whatever it held is looked at again.
+    queued = cancel_queued(thread_id)
+
     if active && active != asked do
       dispatch(%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => active})
     end
 
-    # Read before the queue: nothing was active and nothing is queued, so nothing is left
-    # for the end of a run to start. Whatever the queue held is looked at again.
-    queued = cancel_queued(thread_id)
     released = if active || queued, do: :busy, else: release_session(thread_id)
     left = deadline - System.monotonic_time(:millisecond)
 
@@ -1434,9 +1438,11 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # Whether a queued run was cancelled. A thread that refuses it, deleted or moved, starts
-  # nothing from its queue here anyway.
-  defp cancel_queued(thread_id) do
+  @doc """
+  Cancels the thread's queue, and answers whether a queued run was cancelled. A thread that
+  refuses it, deleted or moved, starts nothing from its queue here anyway.
+  """
+  def cancel_queued(thread_id) do
     thread_id
     |> HalC2.Streams.state()
     |> queued_runs()

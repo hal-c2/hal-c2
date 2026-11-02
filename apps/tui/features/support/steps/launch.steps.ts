@@ -22,6 +22,7 @@ import {
   runClient,
   runningMc,
   savedSessions,
+  shellLoadHeldPreload,
   startDirect,
   writeMcRecord,
   type LaunchWorld,
@@ -478,6 +479,16 @@ step("the terminal client receives {word}", async (ctx: LaunchWorld, signal: str
   if (signal !== "SIGINT" && signal !== "SIGTERM") throw new Error(`unexpected signal ${signal}`);
   await runClient(ctx, { leaveWith: signal });
 });
+
+step(
+  "the user leaves with {word} before the shell has loaded",
+  async (ctx: LaunchWorld, way: string) => {
+    if (way !== "ctrl+c" && way !== "SIGINT" && way !== "SIGTERM") {
+      throw new Error(`unexpected way to leave ${way}`);
+    }
+    await runClient(ctx, { preload: shellLoadHeldPreload(ctx), leaveWith: way });
+  },
+);
 
 step("the terminal client closes and restores the terminal", (ctx: LaunchWorld) => {
   expectTerminalRestored(client(ctx));

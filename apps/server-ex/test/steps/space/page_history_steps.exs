@@ -72,6 +72,11 @@ defmodule HalC2.Steps.Space.PageHistory do
     context
   end
 
+  step "the newest version was written by the page's update", context do
+    assert hd(context.versions)["author"] == %{"type" => "schedule"}
+    context
+  end
+
   step "the version {int} back was written by the thread {string}",
        %{args: [back, thread]} = context do
     assert_written_by(context, Enum.at(context.versions, back), thread)

@@ -29,6 +29,8 @@ Item {
     // The step this screen was on before a layout change made it again.
     property var resumeStep: null
     readonly property var step: ({ view: view, spaceId: openedSpaceId, pageId: openedPageId, deckId: openedDeckId })
+    // The user is on the page only here, not while its Space's list shows.
+    readonly property bool pageOnShow: view === "page" || view === "comments"
     // What the controller already holds when the screen loads is no arrival:
     // the bindings report it as a change while the screen is being made.
     property bool settled: false
@@ -563,6 +565,10 @@ Item {
         if (settled)
             stepMoved(step);
     }
+    onPageOnShowChanged: {
+        if (settled)
+            Shell.dispatch("space.pageShown", { shown: pageOnShow });
+    }
     onErrorChanged: {
         if (error !== "") {
             pageExpected = false;
@@ -581,6 +587,7 @@ Item {
         // Selected before the screen was made.
         if (pageId !== "" && pageId === awaitedPageId)
             openArrived();
+        Shell.dispatch("space.pageShown", { shown: pageOnShow });
     }
 
     objectName: "spaceScreen"

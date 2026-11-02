@@ -123,6 +123,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/queue-and-steer.feature:An edit whose message starts running*"),
     QStringLiteral("composer/queue-and-steer.feature:Leaving the thread ends the edit"),
     QStringLiteral("composer/context-references.feature:A bare @*"),
+    QStringLiteral("composer/context-references.feature:The @ menu says it cannot search*"),
     QStringLiteral("composer/queue-and-steer.feature:A held queue*"),
     QStringLiteral("composer/queue-and-steer.feature:A resume that the MC refuses*"),
     QStringLiteral("composer/queue-and-steer.feature:A resume while reconnecting*"),
@@ -649,6 +650,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("space/slides.feature"),
     QStringLiteral("space/sites.feature"),
     QStringLiteral("space/images.feature"),
+    QStringLiteral("space/presence.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

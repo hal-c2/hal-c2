@@ -192,6 +192,54 @@ Feature: Charts on a page
       And the user asks for "/visualize weekly turns" on the page "Status"
       Then the chart holds the turns the MC counted
 
+    Scenario: Going back to an older MC and returning reads its threads again
+      Given this MC's threads took turns this week
+      And an older MC has run on this store since it read them
+      And text generation charts the request from the MC's threads and invents the values
+      When the user asks for "/visualize weekly turns" on the page "Status"
+      Then the user is told no chart was drawn
+      When the MC has read its older threads
+      And the user asks for "/visualize weekly turns" on the page "Status"
+      Then the chart holds the turns the MC counted
+
+    Scenario: A thread imported while the MC runs is counted
+      Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+      When the user imports "Alpha" from that install
+      Then the MC counts 1 turn for "Alpha"
+
+    Scenario: A thread file imported with no MC up is counted
+      Given this MC's threads took turns this week
+      And a thread file holds one turn of the thread "filed"
+      When the operator imports the thread file with no MC up
+      Then the MC counts 1 turn for the imported thread "filed"
+
+    Scenario: A previous server's thread file imported with no MC up is counted
+      Given this MC's threads took turns this week
+      And a previous server's thread file holds one turn of the thread "filed"
+      When the operator imports the thread file with no MC up
+      Then the MC counts 1 turn for the imported thread "filed"
+
+    Scenario: A thread file with one message fewer takes it from the count
+      Given this MC's threads took turns this week
+      And a thread of "shop" kept two turns here
+      And that thread moved away, and a thread file holds it with one turn fewer
+      When the operator imports the thread file with no MC up
+      Then the MC counts 1 turn for the thread that came back
+
+    Scenario: A previous server's thread file that reverted a turn takes it from the count
+      Given this MC's threads took turns this week
+      And a thread of "shop" kept two turns here
+      And that thread moved away, and a previous server's thread file reverts its last turn
+      When the operator imports the thread file with no MC up
+      Then the MC counts 1 turn for the thread that came back
+
+    Scenario: A thread that moved away is no longer one of this MC's
+      Given this MC's threads took turns this week
+      And a thread of "shop" moved to another MC
+      And text generation charts the request from the dataset "threads_by_project"
+      When the user asks for "/visualize it" on the page "Status"
+      Then the chart holds one thread for "shop"
+
     Scenario: A worker is not one of the threads counted
       Given this MC's threads took turns this week
       And a worker took turns on this MC

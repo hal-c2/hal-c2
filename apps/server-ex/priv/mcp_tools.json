@@ -3827,7 +3827,7 @@
   },
   {
     "name": "task_cancel",
-    "description": "Interrupt a running delegated task and drop its pending result message. Fails with task_not_cancellable if the task already finished; use task_status for its result.",
+    "description": "Interrupt a running delegated task, drop its pending result message, and cancel what its child thread has queued, including messages a user sent it. Fails with task_not_cancellable if the task already finished; use task_status for its result.",
     "inputSchema": {
       "type": "object",
       "properties": {

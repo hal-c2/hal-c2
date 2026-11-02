@@ -200,7 +200,7 @@ function withTerminal(env: Record<string, string>, terminal: LaunchSetup["env"])
 interface Spawned {
   readonly proc: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">>;
   readonly output: { stdout: string; stderr: string };
-  /** True once the first frame is on screen, false if the process exits first. */
+  /** True once the client took the alternate screen, false if the process exits first. */
   readonly drawn: Promise<boolean>;
   readonly exited: Promise<number>;
   /** The terminal the client's output draws, as the user would see it. */
@@ -436,6 +436,29 @@ process.once = ((event, listener) => {
   if (event === "SIGINT") throw new Error("unrecoverable test fault");
   return once(event, listener);
 });
+`,
+  );
+  return path;
+}
+
+/**
+ * A preload that holds the shell's load until the renderer is destroyed, then lets it finish:
+ * the client sits with the alternate screen taken and no keymap for as long as a scenario needs,
+ * and a load that outlives the exit still runs.
+ */
+export function shellLoadHeldPreload(ctx: LaunchWorld): string {
+  const path = NodePath.join(home(ctx), "shell-held.ts");
+  NodeFS.writeFileSync(
+    path,
+    `const { QmlEngine } = await import(Bun.resolveSync("opentui-qml", ${JSON.stringify(TUI_DIR)}));
+const loadFile = QmlEngine.prototype.loadFile;
+if (typeof loadFile !== "function") {
+  throw new Error("shellLoadHeldPreload: opentui-qml's QmlEngine no longer has loadFile; update the hold");
+}
+QmlEngine.prototype.loadFile = async function (...args: unknown[]) {
+  await new Promise((resolve) => this.renderer.once("destroy", resolve));
+  return loadFile.apply(this, args);
+};
 `,
   );
   return path;
