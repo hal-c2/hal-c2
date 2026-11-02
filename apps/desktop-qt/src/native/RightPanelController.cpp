@@ -1146,7 +1146,14 @@ void RightPanelController::setStorePath(const QString& path) {
                                                                 : kind != QLatin1String("terminal") && nativeKinds.contains(kind);
       if (known && !state.tabs.contains(tab)) state.tabs.append(tab);
     }
-    state.stage = PanelStage::fromJson(thread.value(QLatin1String("stage")).toObject(), [&state](const QString& id) { return state.tabs.contains(id); });
+    // A browser tab on the stage comes back there: the MC's list keeps it
+    // once the thread shows, or takes it off (followBrowserTabs).
+    state.stage = PanelStage::fromJson(thread.value(QLatin1String("stage")).toObject(), [this, &state](const QString& id) {
+      return state.tabs.contains(id) || (m_previews.embedded() && id.startsWith(kBrowserTab));
+    });
+    for (const QString& id : std::as_const(state.stage.tabs)) {
+      if (!state.tabs.contains(id)) state.tabs.append(id);
+    }
     const QStringList docked = panelTabs(state);
     state.active = thread.value(QLatin1String("active")).toString();
     if (!docked.contains(state.active)) state.active = docked.value(0);
@@ -1171,18 +1178,19 @@ void RightPanelController::save() {
     const Panel state = m_panels.value(threadKey);
     // Terminal tabs end with the app.
     QJsonArray tabs;
-    // Browser tabs are the MC's, listed again when the thread shows.
+    // Browser tabs are the MC's, listed again when the thread shows (the
+    // stage's are kept, for the list to put back there).
     for (const QString& id : state.tabs) {
       if (kindOf(id) != QLatin1String("terminal") && kindOf(id) != QLatin1String("browser")) tabs.append(id);
     }
-    if (tabs.isEmpty() && !state.details) continue;
-    const bool terminalShown = kindOf(state.active) == QLatin1String("terminal") || kindOf(state.active) == QLatin1String("browser");
-    QJsonObject titles;
-    for (auto it = state.titles.begin(); it != state.titles.end(); ++it) titles.insert(it.key(), it.value());
     PanelStage stage = state.stage;
     for (const QString& id : state.stage.tabs) {
       if (kindOf(id) == QLatin1String("terminal")) stage.remove(id);
     }
+    if (tabs.isEmpty() && stage == PanelStage() && !state.details) continue;
+    const bool terminalShown = kindOf(state.active) == QLatin1String("terminal") || kindOf(state.active) == QLatin1String("browser");
+    QJsonObject titles;
+    for (auto it = state.titles.begin(); it != state.titles.end(); ++it) titles.insert(it.key(), it.value());
     threads.prepend(QJsonObject{{QStringLiteral("threadKey"), threadKey},
                                 {QStringLiteral("open"), state.open},
                                 {QStringLiteral("tabs"), tabs},
