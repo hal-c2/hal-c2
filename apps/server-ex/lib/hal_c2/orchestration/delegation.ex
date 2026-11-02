@@ -236,6 +236,9 @@ defmodule HalC2.Orchestration.Delegation do
          :ok <- cancellable(task),
          {:settled, _, _} <-
            settle(thread_id, task, "cancelled", task["result"], "disposed", :once) do
+      # Before the interrupt, or the end of the interrupted run starts it for a task that
+      # is over; after `cancellable/1`, which counts it as work there is to cancel.
+      Orchestration.cancel_queued(task["childThreadId"])
       hook(:cancelling, task_id)
 
       _ =

@@ -12,7 +12,8 @@ defmodule HalC2.OrchestrationPropTest do
   client that read it as active does (#403, #474);
   crash a provider runtime mid-turn; release a thread's provider session as
   IdleSessions does; stop a thread as the plugin that started it does, after which no
-  message queued at the stop ever starts; and restart the MC mid-turn (boot recovery). A message can also
+  message queued at the stop ever starts, on it or on a task delegated from it; and
+  restart the MC mid-turn (boot recovery). A message can also
   stop its turn on a usage limit, which holds the queue behind it; the user can then
   choose to resume at the reset, and the limit recovery sweep at the reset resumes the
   held queue, or sends "Continue where you left off." when nothing was held.
@@ -174,7 +175,7 @@ defmodule HalC2.OrchestrationPropTest do
       {1, {:call, __MODULE__, :unarchive, [tid]}},
       {1, {:call, __MODULE__, :delete, [tid]}},
       {3, {:call, __MODULE__, :interrupt, [tid]}},
-      {2, {:call, __MODULE__, :stop, [tid]}},
+      {2, {:call, __MODULE__, :stop, [tid, oneof([:alone, :with_task])]}},
       {1, {:call, __MODULE__, :resume, [tid]}},
       {1, {:call, __MODULE__, :release, [tid]}}
     ]
@@ -366,7 +367,7 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   # A plugin's stop ends the turn and starts nothing: what was queued is cancelled.
-  def next_state(state, _result, {:call, _, :stop, [tid]}) do
+  def next_state(state, _result, {:call, _, :stop, [tid, _]}) do
     case state.threads[tid] do
       %{status: status} when status != :deleted ->
         update(state, tid, &(&1 |> cancel_queue() |> end_running(:interrupted)))
@@ -626,7 +627,7 @@ defmodule HalC2.OrchestrationPropTest do
        when fun in [:archive, :unarchive, :delete, :interrupt],
        do: refusal(state, tid, fun) || :ok
 
-  defp expected_reply(state, :stop, [tid]),
+  defp expected_reply(state, :stop, [tid, _]),
     do: if(state.threads[tid], do: :ok, else: {:error, "unknown thread #{tid}"})
 
   defp expected_reply(state, :edit, [tid, msg, _]),
@@ -1065,11 +1066,17 @@ defmodule HalC2.OrchestrationPropTest do
     reply(Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => tid}), ending)
   end
 
-  # What was queued when the stop began never starts: a run that did carries an attempt,
-  # or ended as something other than cancelled, whatever a later command makes of it.
-  def stop(tid) do
+  # What was queued when the stop began never starts, on the thread or on a task delegated
+  # from it (`:with_task`, when the thread has a turn to delegate from): a run that did
+  # carries an attempt, or ended as something other than cancelled, whatever a later command
+  # makes of it. A task's thread is no thread of the model's, so nothing else looks at it.
+  def stop(tid, how) do
+    child = if how == :with_task, do: delegate_with_queue(tid)
     ending = active_runs(tid)
     queued = for run <- runs(current(tid)), run["status"] == "queued", do: run["id"]
+
+    child_queued =
+      child && for run <- runs(current(child)), run["status"] == "queued", do: run["id"]
 
     result =
       case Orchestration.stop_plugin_thread(tid, @plugin) do
@@ -1078,12 +1085,39 @@ defmodule HalC2.OrchestrationPropTest do
         error -> error
       end
 
+    refute_started(tid, queued)
+    if child, do: refute_started(child, child_queued)
+
+    reply(result, ending)
+  end
+
+  # A task that stays at work, with a message queued behind its turn.
+  defp delegate_with_queue(tid) do
+    with %{"providerInstanceId" => instance} <-
+           Enum.find(runs(current(tid)), &(&1["status"] in ~w(running waiting))),
+         {:ok, %{"childThreadId" => child}} <-
+           HalC2.Orchestration.Delegation.delegate(%{"id" => tid}, instance, %{"task" => "wait"}) do
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "message.dispatch",
+          "threadId" => child,
+          "messageId" => "behind-#{child}",
+          "text" => "wait behind",
+          "attachments" => [],
+          "dispatchMode" => %{"type" => "queue_after_active"}
+        })
+
+      child
+    else
+      _ -> nil
+    end
+  end
+
+  defp refute_started(tid, queued) do
     for run <- runs(current(tid)),
         run["id"] in queued,
         run["status"] != "cancelled" or run["startedAt"] != nil,
         do: raise("a run queued at the stop of #{tid} started: #{inspect(run)}")
-
-    reply(result, ending)
   end
 
   def interrupt_run(tid, msg) do
