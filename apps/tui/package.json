@@ -27,7 +27,7 @@
     "@xterm/headless": "^5.5.0",
     "effect": "catalog:",
     "opentui-qml": "github:hal-c2/opentui-qml",
-    "sharp": "0.34.5"
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@cucumber/gherkin": "^42.0.1",
