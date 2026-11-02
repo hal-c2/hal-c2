@@ -13,8 +13,8 @@
 // the MC drew it in characters (`mermaidDiagrams.ts`). Any other `raw`, `table` or
 // `code` block shows as its source, line for line. An image, the Space's or one by its
 // address, is named in words and never fetched. A heading carries its level's `#`
-// marks, a checklist item its box and a callout a bar; a bullet, a numbered item, a
-// divider, a footnote, a `details` and a `details_end` show their text. An entry taller
+// marks and a callout a bar. A list item, an alert, a divider, a footnote, a collapsed
+// section and math show as the MC writes them (`spaceMarkdown.ts`). An entry taller
 // than the pane, as a chart can be, scrolls through itself before the selection moves on.
 import * as NodePath from "node:path";
 
@@ -32,7 +32,6 @@ import {
   type SpaceId,
   type SpaceImage,
   type SpaceImageProvidersResult,
-  type SpaceListResult,
   type SpacePage,
   type SpacePageAgent,
   type SpacePageAgentTarget,
@@ -66,6 +65,7 @@ import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
 import { chartData, chartLines } from "./spaceChart.ts";
 import { createMermaidDiagrams, type MermaidDiagrams } from "./mermaidDiagrams.ts";
+import { listItems, markdownFrame, type SpaceListItem } from "./spaceMarkdown.ts";
 import { chunk, mermaidFenceSource, mermaidLines, styled, type StyledText } from "./styledText.ts";
 
 /** Rows the pane's border and header take. */
@@ -112,6 +112,8 @@ export interface TuiSpaceRow {
   readonly resolved?: boolean;
   /** The first line of an entry (a wrapped block's later lines are false). */
   readonly first: boolean;
+  /** A line the MC writes above a block's text, as an alert's kind; the text follows it. */
+  readonly above?: boolean;
 }
 
 /** Published under `space`. */
@@ -398,8 +400,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   let spacesError: string | null = null;
   let unsubscribeSpaces: (() => void) | null = null;
   let spaceId: string | null = null;
-  // The Space last open, where a project file opened from outside the pane goes.
-  let lastSpaceId: string | null = null;
   let space: StreamEntities = EMPTY_STREAM_ENTITIES;
   let spaceError: string | null = null;
   let unsubscribeSpace: (() => void) | null = null;
@@ -472,7 +472,12 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   // --- what the streams hold ---
 
   const spaceList = (): Space[] => entitiesOf(spaces, "space") as unknown as Space[];
-  const currentSpace = (): Space | undefined => spaceList().find((s) => s.id === spaceId);
+  // The open Space: one of the user's, or a project's own (its files' pages), which the
+  // index holds as a `projectSpace` and the list of Spaces leaves out.
+  const currentSpace = (): Space | undefined =>
+    [...spaceList(), ...(entitiesOf(spaces, "projectSpace") as unknown as Space[])].find(
+      (s) => s.id === spaceId,
+    );
   const pages = (): SpacePage[] => entitiesOf(space, "page") as unknown as SpacePage[];
   const pageById = (id: string | null) => pages().find((page) => page.id === id);
   const blocksOf = (id: string): SpaceBlock[] =>
@@ -720,7 +725,13 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const bg = active ? { bg: palette.selectedBg } : {};
     const agent = agentOf(block);
     const room = width() - 2 - Bun.stringWidth(RAW_GUTTER);
-    const lines = block.text.split("\n").map(expandTabs);
+    // Math is shown with the fences the MC writes around it.
+    const { above, below } = markdownFrame(block, null);
+    const lines = [
+      ...(above ? [above] : []),
+      ...block.text.split("\n").map(expandTabs),
+      ...(below ? [below] : []),
+    ];
     return lines.map((source, index) => {
       const first = index === 0;
       const lead = `${first ? marker(active) : "  "}${RAW_GUTTER}`;
@@ -738,11 +749,17 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         selected: active,
         blockKind: block.kind,
         first,
+        ...(first && above ? { above: true } : {}),
       } satisfies TuiSpaceRow;
     });
   };
 
-  const blockRows = (block: SpaceBlock): TuiSpaceRow[] => {
+  /**
+   * A block's rows. A list item, an alert, a divider, a footnote and a collapsed section
+   * are shown as the MC writes them (#869, #877): `item` is where the block sits in its
+   * list, from `listItems` over the page's blocks.
+   */
+  const blockRows = (block: SpaceBlock, item: SpaceListItem | null = null): TuiSpaceRow[] => {
     // A chart this client cannot read shows what it says of itself, as any block does.
     const chart = block.kind === "chart" ? chartData(block.chart) : null;
     if (chart) return chartRows(block, chart);
@@ -753,24 +770,27 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const active = selected[view] === key;
     const linked = block.kind === "subpage_link" ? pageById(block.linkedPageId) : undefined;
     const level = block.kind === "heading" ? (block.level ?? 2) : 0;
+    const frame = markdownFrame(block, item);
+    // A divider and a section's end have no text: what the MC writes is all there is.
+    const bare = block.kind === "divider" || block.kind === "details_end";
     const prefix =
       block.kind === "heading"
         ? `${"#".repeat(level)} `
-        : block.kind === "checklist"
-          ? block.checked
-            ? "[x] "
-            : "[ ] "
-          : block.kind === "callout"
-            ? "▌ "
-            : block.kind === "subpage_link"
-              ? "↳ "
-              : "";
+        : block.kind === "callout"
+          ? "▌ "
+          : block.kind === "subpage_link"
+            ? "↳ "
+            : bare
+              ? ""
+              : frame.lead;
     const body =
       block.kind === "subpage_link"
         ? (linked?.title ?? (block.text || "(a deleted page)"))
         : block.kind === "image"
           ? imagePlaceholder(block)
-          : block.text;
+          : bare
+            ? frame.lead
+            : `${block.text}${frame.tail}`;
     const agent = block.kind === "generated" ? "written by its update" : agentOf(block);
     const room = width() - 2 - Bun.stringWidth(prefix);
     const lines = wrapWords(body === "" ? " " : body, room);
@@ -790,12 +810,33 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
               ? palette.dim
               : palette.text;
     const bg = active ? { bg: palette.selectedBg } : {};
-    return lines.map((text, index) => {
-      const first = index === 0;
+    // An alert's kind stands above its text, behind the same bar.
+    const aboveLead = `${marker(active)}${block.kind === "callout" ? "▌ " : ""}`;
+    const aboveRows: TuiSpaceRow[] = frame.above
+      ? [
+          {
+            key,
+            kind: "block",
+            text: `${aboveLead}${frame.above}`,
+            line: styled(
+              chunk(aboveLead, { fg: palette.dim, ...bg }),
+              chunk(frame.above, { fg, ...bg }),
+            ),
+            selected: active,
+            blockKind: block.kind,
+            checked: block.checked,
+            first: true,
+            above: true,
+          },
+        ]
+      : [];
+    const textRows = lines.map((text, index) => {
+      const first = index === 0 && aboveRows.length === 0;
       const last = index === lines.length - 1;
-      const lead = first
-        ? `${marker(active)}${prefix}`
-        : `  ${" ".repeat(Bun.stringWidth(prefix))}`;
+      const lead =
+        index === 0
+          ? `${first ? marker(active) : "  "}${prefix}`
+          : `  ${" ".repeat(Bun.stringWidth(prefix))}`;
       const by = last && agent ? `  · ${agent}` : "";
       return {
         key,
@@ -812,6 +853,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         first,
       } satisfies TuiSpaceRow;
     });
+    return [...aboveRows, ...textRows];
   };
 
   /** A note above a page's blocks, wrapped. Not selectable. */
@@ -838,7 +880,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return [
       ...noteRows(
         "file:path",
-        `File: ${file.path} of ${projectTitle(file.projectId)} · f opens it · F unlinks`,
+        `File: ${file.path} of ${projectTitle(file.projectId)} · f opens it`,
         palette.dim,
       ),
       ...(file.missing
@@ -1038,7 +1080,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       return rows;
     }
     if (view === "version") {
-      return (reading?.blocks ?? []).flatMap((block) => blockRows(block));
+      const read = reading?.blocks ?? [];
+      const items = listItems(read);
+      return read.flatMap((block, index) => blockRows(block, items[index]));
     }
     if (view === "deck") return slidesOf(deckId).flatMap(slideRows);
     if (view === "present") return presenterRows();
@@ -1067,8 +1111,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       ...(open ? updateRows(open) : []),
       ...siteRows(id),
     ];
-    for (const block of blocks) {
-      rows.push(...blockRows(block));
+    const items = listItems(blocks);
+    for (const [index, block] of blocks.entries()) {
+      rows.push(...blockRows(block, items[index]));
       for (const comment of comments.filter((entry) => entry.blockId === block.id)) {
         rows.push(commentRow(comment));
       }
@@ -1380,7 +1425,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   const openSpace = (id: string, then: TuiSpaceView = "pages") => {
     generation += 1;
-    lastSpaceId = id;
     if (spaceId !== id) {
       spaceId = id;
       selected.pages = null;
@@ -2841,40 +2885,13 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return refusalText(error);
   };
 
-  /**
-   * Where a file opens from outside a Space: the Space last open, else the first; null
-   * when there is none, and the refusal when the Spaces could not be listed.
-   */
-  const targetSpace = async (): Promise<string | null | { readonly error: unknown }> => {
-    if (open && spaceId !== null) return spaceId;
-    let result: SpaceListResult;
-    try {
-      result = await call<SpaceListResult>(WS_METHODS.spaceList, {});
-    } catch (error) {
-      return { error };
-    }
-    const ids = result.spaces.map((entry) => entry.id as string);
-    return ids.find((id) => id === lastSpaceId) ?? ids[0] ?? null;
-  };
-
-  /** Opens a project's file as a page in `into` (else `targetSpace`) and shows it. */
-  const openProjectFile = (projectId: string, path: string, into: string | null = null) => {
+  /** Opens a project's file as a page of the project's own Space and shows it. */
+  const openProjectFile = (projectId: string, path: string) => {
     void track(
       (async () => {
-        const target = into ?? (await targetSpace());
-        if (target !== null && typeof target === "object") {
-          options.status(refusalText(target.error), "error");
-          return;
-        }
-        // The MC makes a Space when it lists none, so this is a last resort.
-        if (target === null) {
-          options.status("There is no Space to open it in: make one first (^X p, then n).", "info");
-          return;
-        }
         let result: SpacePageOpenFileResult;
         try {
           result = await call<SpacePageOpenFileResult>(WS_METHODS.spacePageOpenFile, {
-            spaceId: target,
             projectId,
             relativePath: path,
           });
@@ -2882,19 +2899,14 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           options.status(fileRefusalText(error, path), "error");
           return;
         }
-        // The file may be a page of another Space already: that is where it shows.
         closeHistory();
         show();
         openSpace(result.spaceId);
         openPage(result.page.id);
-        const elsewhere =
-          result.spaceId === target
-            ? ""
-            : ` in ${spaceList().find((entry) => entry.id === result.spaceId)?.name ?? "another Space"}`;
         options.status(
           result.created
             ? `Opened ${path} as the page “${result.page.title}”.`
-            : `${path} is the page “${result.page.title}”${elsewhere}.`,
+            : `${path} is the page “${result.page.title}”.`,
           "info",
         );
       })(),
@@ -2922,7 +2934,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
    * Picks a project's Space file and opens it, among `only` when given (the paths a
    * message names, one of which opens without asking).
    */
-  const pickFile = (projectId: string, into: string | null, only?: ReadonlyArray<string>) => {
+  const pickFile = (projectId: string, only?: ReadonlyArray<string>) => {
     void send<SpaceFilesListResult>(WS_METHODS.spaceFilesList, { projectId }).then((result) => {
       if (!result) return;
       knowSpaceFiles(projectId, result);
@@ -2940,7 +2952,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           "info",
         );
       } else if (only && files.length === 1) {
-        openProjectFile(projectId, files[0]!.relativePath, into);
+        openProjectFile(projectId, files[0]!.relativePath);
       } else {
         options.menu({
           title: `Open a file of ${name} as a page`,
@@ -2950,7 +2962,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
             value: file.relativePath,
             ...(file.page ? { description: `the page “${file.page.title}”` } : {}),
           })),
-          onChoose: (path) => openProjectFile(projectId, path, into),
+          onChoose: (path) => openProjectFile(projectId, path),
         });
       }
     });
@@ -2968,7 +2980,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       : undefined;
     const then = (id: string) => {
       if (typeof path === "string") openProjectFile(id, path);
-      else pickFile(id, null, only);
+      else pickFile(id, only);
     };
     if (typeof projectId !== "string") pickProject("Open a file of which project?", then);
     else if ((options.projects?.() ?? []).some((project) => project.id === projectId)) {
@@ -2982,16 +2994,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     }
   };
 
-  /** Inside a Space: a page from one of a project's files. */
+  /** From the pages: one of a project's files, edited as a page of the project's Space. */
   const fromFiles = () => {
-    const into = spaceId;
-    if (view !== "pages" || into === null) {
-      options.status("Open a Space to add a page from a project's files.", "info");
-      return;
-    }
-    pickProject("Add a page from the files of which project?", (projectId) =>
-      pickFile(projectId, into),
-    );
+    pickProject("Edit a file of which project as a page?", (projectId) => pickFile(projectId));
   };
 
   /** From a page to its file, in the file viewer. */
@@ -3002,35 +3007,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     } else if (file.missing) {
       options.status(`${file.path} is gone from the project.`, "info");
     } else options.showFile?.(file.projectId, file.path);
-  };
-
-  /** The way out: the page stops following its file, which stays as it is. */
-  const unlinkFile = () => {
-    const page = view === "page" ? pageById(pageId) : undefined;
-    const file = page?.file;
-    if (!page || !file) {
-      options.status("This page is not a project file.", "info");
-      return;
-    }
-    const target = { spaceId, pageId: page.id };
-    options.menu({
-      title: `Stop “${page.title}” following ${file.path}? Opening the file again makes a new page.`,
-      options: [
-        { label: "Keep following it", value: "keep" },
-        { label: "Unlink it", value: "unlink" },
-      ],
-      onChoose: (choice) => {
-        if (choice !== "unlink") return;
-        void send(WS_METHODS.spacePageUnlinkFile, target).then((result) => {
-          if (result) {
-            options.status(
-              `“${page.title}” is an ordinary page; ${file.path} stays as it is.`,
-              "info",
-            );
-          }
-        });
-      },
-    });
   };
 
   /** Proposes the project's spaces section and writes it, or offers replacing one someone wrote. */
@@ -3285,7 +3261,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.presentOrPublish": onPages(presentOrPublish),
     "space.images": onPages(showImages),
     "space.files": onPages(() => (view === "page" ? showPageFile() : fromFiles())),
-    "space.unlinkFile": onPages(unlinkFile),
     // From anywhere: the palette, the file browser and viewer, a message's links.
     "space.openProjectFile": (payload) => {
       openFileFrom(payload);
@@ -3419,10 +3394,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Images in this Space", action: "space.images" },
         );
         if (pageById(pageId)?.file) {
-          entries.push(
-            { title: "Show the page's file", action: "space.files" },
-            { title: "Unlink the page from its file", action: "space.unlinkFile" },
-          );
+          entries.push({ title: "Show the page's file", action: "space.files" });
         }
         const agent = agentOfPage(pageId);
         if (!agent || !isActive(agent)) {

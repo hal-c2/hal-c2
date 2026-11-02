@@ -1090,23 +1090,43 @@ describe("images", () => {
 });
 
 describe("project files", () => {
-  test("with no Space to open into, opening a file says so and asks nothing", async () => {
+  test("a file opens as a page of its project's Space, with no Space of the user's", async () => {
     const t = setup();
     t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", { spaceId: "ps1", page: page("g1", "Guide")[2], created: true });
     await t.controller.settled();
-    expect(t.statuses.at(-1)).toBe(
-      "There is no Space to open it in: make one first (^X p, then n).",
-    );
-    expect(t.calls.map((call) => call.method)).toEqual(["space.list"]);
+    // The pane it shows asks for its Spaces afterwards; nothing is asked before the file.
+    expect(t.calls[0]).toEqual({
+      method: "space.page.openFile",
+      payload: { projectId: "p1", relativePath: "docs/guide.md" },
+    });
+    expect(t.statuses.at(-1)).toBe("Opened docs/guide.md as the page “Guide”.");
   });
 
-  test("Spaces that could not be listed say why, not to make one", async () => {
+  test("the project's Space stays open once the Spaces arrive without it", async () => {
     const t = setup();
-    t.lists.fails = true;
     t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", { spaceId: "ps1", page: page("g1", "Guide")[2], created: true });
     await t.controller.settled();
-    expect(t.statuses).toEqual(["The connection to the MC was lost."]);
-    expect(t.calls.map((call) => call.method)).toEqual(["space.list"]);
+    const shop = { id: "ps1", projectId: "p1", name: "shop", createdAt: at, updatedAt: at };
+    t.send("spaces", snapshot(1, [space("s1", "Research"), ["projectSpace", "ps1", shop]]));
+    t.send("space:ps1", snapshot(10, [page("g1", "Guide")]));
+    expect(t.statuses).not.toContain("The Space was deleted.");
+    expect(t.view().title).toBe("page · Guide");
+    t.controller.dispatch("space.back", {});
+    expect(t.view().title).toBe("space · shop");
+  });
+
+  test("a file opened again is the page it already is", async () => {
+    const t = setup();
+    t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", {
+      spaceId: "ps1",
+      page: page("g1", "Guide")[2],
+      created: false,
+    });
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toBe("docs/guide.md is the page “Guide”.");
   });
 
   test("a project of another machine is not asked of this MC", async () => {

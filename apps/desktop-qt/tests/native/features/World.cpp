@@ -22,6 +22,7 @@
 #include "FileActionsController.h"
 #include "PluginController.h"
 #include "ThreadMenuController.h"
+#include "ThreadPullRequests.h"
 #include "RightPanelController.h"
 #include "ServerUpdateController.h"
 #include "ThisMachine.h"
@@ -62,7 +63,11 @@ void World::start() {
   QObject::connect(m_bridge.get(), &ShellBridge::stateEntryChanged, m_theme.get(), [this](const QString& key, const QVariant& value) {
     if (key == QLatin1String("theme")) m_theme->applyBaseTheme(value);
   });
-  m_bridge->setUrlOpener([this](const QUrl& url) { openedUrls.append(url); });
+  m_bridge->setUrlOpener([this](const QUrl& url) {
+    if (browserFails) return false;
+    openedUrls.append(url);
+    return true;
+  });
   const auto writeClipboard = [this](const QString& text) {
     if (clipboardFails) return false;
     clipboard = text;
@@ -72,6 +77,7 @@ void World::start() {
   m_native->controller<FileActionsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<ProviderSettingsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<RightPanelController>()->review()->setClipboardWriter(writeClipboard);
+  m_native->controller<RightPanelController>()->pullRequests()->setClipboardWriter(writeClipboard);
   m_native->shared<ServerUpdateController>()->setClipboardWriter(writeClipboard);
   m_bridge->setClipboardWriter(writeClipboard);
   setTime(m_now);
@@ -153,6 +159,8 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<ToastController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ThreadStore>()->setClock([now] { return now.toUTC(); });
   m_native->controller<RightPanelController>()->agents()->setClock([now] { return now.toUTC(); });
+  m_native->controller<RightPanelController>()->pullRequests()->setClock([now] { return now.toUTC(); });
+  m_native->controller<RightPanelController>()->linkPreviews()->setClock([now] { return now.toUTC(); });
   m_native->controller<UsageController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<OnboardingController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ProviderUpdateNotice>()->setClock([now] { return now.toUTC(); });

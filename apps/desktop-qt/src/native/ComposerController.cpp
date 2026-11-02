@@ -30,6 +30,7 @@
 #include "ShellStore.h"
 #include "SidebarController.h"
 #include "SidebarModel.h"
+#include "SpaceController.h"
 #include "ThisMachine.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
@@ -227,6 +228,7 @@ void ComposerController::activate() {
   });
   // A dropped connection fails its calls while the store still says online.
   connect(m_client, &McClient::readyChanged, this, [this] {
+    if (onPage() && !m_pageProjectAsked) askPageProject();
     refreshPathSearch();
     publish();
   });
@@ -246,6 +248,12 @@ void ComposerController::activate() {
   }
   connect(shell->controller<KeybindingController>(), &KeybindingController::bindingsChanged, this,
           &ComposerController::publish);
+  // A Space page on show takes the prompt when no thread or draft has it.
+  if (auto* spaces = shell->controller<SpaceController>()) {
+    connect(spaces, &SpacePages::changed, this, &ComposerController::followPage);
+    connect(spaces, &SpacePages::promptPageChanged, this, &ComposerController::followPage);
+    connect(spaces, &SpacePages::agentAskRequested, this, &ComposerController::startAsk);
+  }
   refreshCatalogue();
   follow();
 }
@@ -275,9 +283,23 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     if (!target.isEmpty()) stepHistory(target, map.value(QStringLiteral("direction")).toString() != QLatin1String("forward"));
     return true;
   }
-  if (action == QLatin1String("composer.terminalContext.add")) return addTerminalContext(map);
-  if (action == QLatin1String("composer.reviewComment.add")) return addReviewComment(map);
-  if (action == QLatin1String("composer.citation.add")) return addCitation(map);
+  // A page has no terminal, diff or replies of its own to quote.
+  if (action == QLatin1String("composer.terminalContext.add")) return onPage() || addTerminalContext(map);
+  if (action == QLatin1String("composer.reviewComment.add")) return onPage() || addReviewComment(map);
+  if (action == QLatin1String("composer.citation.add")) return onPage() || addCitation(map);
+  if (action == QLatin1String("composer.ask")) {
+    startAsk();
+    return true;
+  }
+  if (action == QLatin1String("composer.project.set")) {
+    const QString projectId = map.value(QStringLiteral("projectId")).toString();
+    if (!onPage() || target.isEmpty() || m_store->projectRow(m_client->environment(), projectId).isEmpty()) return true;
+    m_drafts[target].projectId = projectId;
+    save();
+    refreshPathSearch();
+    publish();
+    return true;
+  }
   if (action == QLatin1String("composer.citation.comment")) {
     if (target.isEmpty()) return true;
     const QString id = map.value(QStringLiteral("id")).toString();
@@ -405,7 +427,7 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
   if (action == QLatin1String("composer.attachment.retry")) {
     const QString id = map.value(QStringLiteral("id")).toString();
     if (const Attachment* found = findAttachment(id); found && found->file && found->upload == QLatin1String("failed")) {
-      uploadFile(id, found->environmentId.isEmpty() ? environmentOf(m_thread) : found->environmentId);
+      uploadFile(id, found->environmentId.isEmpty() ? environmentOf(target) : found->environmentId);
     }
     return true;
   }
@@ -605,6 +627,12 @@ QVariantMap ComposerController::stashState() const {
 // Stops the thread's active run, or the latest one while it still waits on
 // the provider or background work.
 bool ComposerController::interrupt() {
+  if (onPage()) {
+    if (auto* spaces = NativeShell::of(this)->controller<SpaceController>()) {
+      spaces->handle(QStringLiteral("space.agent.stop"), QVariantMap());
+    }
+    return true;
+  }
   const auto thread = m_store->thread(openThread());
   if (!thread) return false;
   sidebar::Nullable runId = thread->activeRunId;
@@ -646,6 +674,7 @@ bool ComposerController::submit(const QVariantMap& payload) {
     toast(QStringLiteral("Message not sent"), problem);
     return true;
   }
+  if (onPage()) return submitPage(target, text);
   if (m_queuedEdit && m_queuedEdit->thread == target) return saveQueuedEdit(target, text);
   if (slashMode(target, text)) return true;
   if (slashUsageLimits(target, text)) return true;
@@ -1693,6 +1722,8 @@ ComposerController::Attachment* ComposerController::findAttachment(const QString
 
 QString ComposerController::environmentOf(const QString& target) const {
   if (const auto thread = m_store->thread(target)) return thread->environmentId;
+  // A page's ask runs on the MC its Space is on.
+  if (target.startsWith(pageKey({}))) return m_client->environment();
   auto* shell = NativeShell::of(this);
   if (!shell->controller<DraftController>()->draft(target)) return {};
   return shell->controller<WorkspaceController>()->launch(target).environmentId;
@@ -2237,19 +2268,44 @@ QString ComposerController::openDraft() const {
 // project's, then the default for new threads. Empty lets the MC choose.
 QJsonObject ComposerController::baseSelection(const QString& key) const {
   if (const auto thread = m_store->thread(key)) return thread->modelSelection;
-  auto* shell = NativeShell::of(this);
-  const auto kept = shell->controller<DraftController>()->draft(key);
+  // A page's ask starts as a new thread in its project would.
+  if (onPage() && key == pageKey(m_pageId)) return newThreadSelection(m_client->environment(), pageProject());
+  const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(key);
   if (!kept) return {};
-  const auto* settings = shell->controller<SettingsController>();
+  return newThreadSelection(kept->environmentId, kept->projectId);
+}
+
+QJsonObject ComposerController::newThreadSelection(const QString& environmentId, const QString& projectId) const {
+  const auto* settings = NativeShell::of(this)->controller<SettingsController>();
   const auto setting = [settings](const QString& path) {
     return settings ? QJsonValue::fromVariant(settings->value(path)).toObject() : QJsonObject();
   };
-  QJsonObject selection = setting(QStringLiteral("projectSettingsOverrides.%1.defaultModelSelection").arg(kept->projectId));
-  if (selection.isEmpty()) {
-    selection = m_store->projectRow(kept->environmentId, kept->projectId).value(QLatin1String("defaultModelSelection")).toObject();
+  QJsonObject selection;
+  if (!projectId.isEmpty()) {
+    selection = setting(QStringLiteral("projectSettingsOverrides.%1.defaultModelSelection").arg(projectId));
+    if (selection.isEmpty()) {
+      selection = m_store->projectRow(environmentId, projectId).value(QLatin1String("defaultModelSelection")).toObject();
+    }
   }
   if (selection.isEmpty()) selection = setting(QStringLiteral("defaultModelSelection"));
-  // Then the model last sent with, while its provider can still run it.
+  // A page's ask then takes the model of the user's latest thread in its project,
+  // from the threads the MC counts (page_agent.ex): not those a plugin or an agent
+  // started, and deleted ones have left the store. Where the MC would give way to
+  // the first provider that runs, this takes an older thread whose provider can.
+  if (selection.isEmpty() && onPage() && !projectId.isEmpty() && projectId == pageProject()) {
+    QString latest;
+    for (const sidebar::Thread& thread : m_store->threads()) {
+      if (thread.environmentId != environmentId || thread.projectId != projectId || thread.updatedAt < latest) continue;
+      if (!thread.createdBy.isEmpty() && thread.createdBy != QLatin1String("user")) continue;
+      const composer::Instance* instance = instanceOf(thread.modelSelection);
+      if (!instance || !instance->ready()) continue;
+      latest = thread.updatedAt;
+      selection = thread.modelSelection;
+    }
+  }
+  // Then the model last sent with from this device, while its provider can still
+  // run it. The MC has no such fallback; a page's ask lands here only when the
+  // project has no thread of the user's to take a model from.
   if (selection.isEmpty()) {
     const QJsonObject last = m_kept.lastModels.value(m_kept.lastInstance);
     const composer::Instance* instance = instanceOf(last);
@@ -2258,6 +2314,133 @@ QJsonObject ComposerController::baseSelection(const QString& key) const {
     }
   }
   return selection;
+}
+
+QString ComposerController::openPage() const {
+  const auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+  return spaces ? spaces->promptPage() : QString();
+}
+
+QString ComposerController::pageProject() const {
+  const QString picked = m_drafts.value(pageKey(m_pageId)).projectId;
+  if (!picked.isEmpty() && !m_store->projectRow(m_client->environment(), picked).isEmpty()) return picked;
+  return m_pageProject;
+}
+
+void ComposerController::askPageProject() {
+  auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+  if (!spaces || !m_client->isReady()) return;
+  m_pageProjectAsked = true;
+  spaces->agentTarget([self = QPointer(this)](const QString& projectId) {
+    if (!self || self->m_pageProject == projectId) return;
+    self->m_pageProject = projectId;
+    self->refreshPathSearch();
+    self->publish();
+  });
+}
+
+bool ComposerController::pageAgentRunning() const {
+  const auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+  if (!onPage() || !spaces || spaces->pageId() != m_pageId) return false;
+  const QString status = spaces->agent().value(QStringLiteral("status")).toString();
+  return status == QLatin1String("running") || status == QLatin1String("stopping");
+}
+
+void ComposerController::followPage() {
+  if (openThread().isEmpty() && openDraft().isEmpty() && openPage() != m_pageId) {
+    follow();
+  } else if (std::exchange(m_pageRunning, pageAgentRunning()) != m_pageRunning) {
+    publish();
+  }
+}
+
+namespace {
+// The words of an ask: they start with `@agent`.
+bool isAsk(const QString& text) {
+  static const QRegularExpression ask(QStringLiteral("^@agent(\\s|$)"), QRegularExpression::CaseInsensitiveOption);
+  return ask.match(text.trimmed()).hasMatch();
+}
+}  // namespace
+
+bool ComposerController::submitPage(const QString& target, const QString& text) {
+  const QString trimmed = text.trimmed();
+  const Draft kept = m_drafts.value(target);
+  if (!isAsk(trimmed)) {
+    if (!kept.attachments.isEmpty() || !kept.excerpts.isEmpty()) {
+      toast(QStringLiteral("Not written"), QStringLiteral("Attachments go to an agent: start the prompt with @agent."));
+    } else if (!trimmed.isEmpty()) {
+      // The page writes the block, or picks a kind or a chart (SpacePage).
+      m_bridge->sendToBricks(QStringLiteral("space.prompt.write"),
+                             QVariantMap{{QStringLiteral("pageId"), m_pageId}, {QStringLiteral("text"), trimmed}});
+    }
+    return true;
+  }
+  auto* spaces = NativeShell::of(this)->controller<SpaceController>();
+  if (!spaces || m_launching.contains(target)) return true;
+  if (!m_client->isReady() || !m_store->environmentOnline(m_client->environment())) {
+    NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("warning"), QStringLiteral("Not connected: message not sent"),
+                                                               QStringLiteral("Reconnecting to the environment. Try again once it is connected."));
+    return true;
+  }
+  if (filesBlock(kept.attachments, QStringLiteral("sending"))) return true;
+  // What a turn's message would carry; the MC takes `@agent` off the request.
+  QJsonObject message{{QStringLiteral("text"), trimmed}};
+  withExcerpts(message, kept.excerpts);
+  QJsonArray attachments;
+  for (const Attachment& attachment : kept.attachments) {
+    if (attachment.file) continue;
+    QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
+                      {QStringLiteral("name"), attachment.name},
+                      {QStringLiteral("mimeType"), attachment.mimeType},
+                      {QStringLiteral("sizeBytes"), attachment.sizeBytes},
+                      {QStringLiteral("dataUrl"), attachment.dataUrl}};
+    if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
+    attachments.append(image);
+  }
+  for (const QJsonValue& file : fileRecords(kept.attachments)) attachments.append(file);
+  const QJsonObject modelSelection = selection(target);
+  QJsonObject ask{{QStringLiteral("request"), message.value(QLatin1String("text")).toString()},
+                  {QStringLiteral("runtimeMode"), runtimeModeOf(target)},
+                  {QStringLiteral("interactionMode"), interactionModeOf(target)}};
+  if (const QString projectId = pageProject(); !projectId.isEmpty()) ask.insert(QStringLiteral("projectId"), projectId);
+  if (!modelSelection.isEmpty()) ask.insert(QStringLiteral("modelSelection"), modelSelection);
+  if (!attachments.isEmpty()) ask.insert(QStringLiteral("attachments"), attachments);
+  if (message.contains(QLatin1String("context"))) ask.insert(QStringLiteral("context"), message.value(QLatin1String("context")));
+  rememberModel(modelSelection);
+  m_launching.insert(target);
+  publish();
+  QStringList sent;
+  for (const Attachment& attachment : kept.attachments) sent.append(attachment.id);
+  for (const Excerpt& excerpt : kept.excerpts) sent.append(excerpt.id);
+  // The prompt keeps what it asked until the MC takes it: a refusal leaves
+  // every word and attachment there to try again.
+  spaces->askAgent(m_pageId, ask, [self = QPointer(this), target, text, sent](bool taken) {
+    if (!self) return;
+    self->m_launching.remove(target);
+    if (taken) {
+      Draft& draft = self->m_drafts[target];
+      draft.attachments.removeIf([&sent](const Attachment& a) { return sent.contains(a.id); });
+      draft.excerpts.removeIf([&sent](const Excerpt& e) { return sent.contains(e.id); });
+      if (self->draft(target) == text) {
+        self->setText(target, QString(), 0);
+      } else {
+        self->save();
+      }
+    }
+    self->publish();
+  });
+  return true;
+}
+
+void ComposerController::startAsk() {
+  const QString target = this->target();
+  if (!onPage() || target.isEmpty()) return;
+  const QString text = draft(target);
+  if (!isAsk(text)) {
+    const QString next = QStringLiteral("@agent ") + text;
+    setText(target, next, int(next.size()));
+  }
+  m_bridge->sendToBricks(QStringLiteral("composer.focus"), QVariantMap());
 }
 
 bool ComposerController::running(const QString& target) const {
@@ -2275,6 +2458,9 @@ void ComposerController::follow() {
   const QString draftId = openDraft();
   m_thread = draftId.isEmpty() ? thread : draftId;
   m_draftId = draftId;
+  const QString page = thread.isEmpty() && draftId.isEmpty() ? openPage() : QString();
+  if (std::exchange(m_pageId, page) != page && !page.isEmpty()) askPageProject();
+  m_pageRunning = pageAgentRunning();
   // Leaving the thread leaves its edit, as cancelling would.
   if (m_queuedEdit && m_queuedEdit->thread != m_thread) endQueuedEdit();
   TimelineModel* timeline = thread.isEmpty() ? nullptr : NativeShell::of(this)->controller<ThreadStore>()->timeline(thread);
@@ -2338,6 +2524,20 @@ bool ComposerController::queueHeld() const {
 QVariantMap ComposerController::turnState() const {
   const auto thread = m_store->thread(m_thread);
   const bool isRunning = thread && thread->activeRunId.has_value();
+  // A Space page: its agent's requests are asked in the agent's thread.
+  if (onPage()) {
+    return {{QStringLiteral("threadKey"), QString()},
+            {QStringLiteral("kind"), QStringLiteral("page")},
+            {QStringLiteral("running"), false},
+            {QStringLiteral("sending"), m_launching.contains(pageKey(m_pageId))},
+            {QStringLiteral("approvals"), QVariantList()},
+            {QStringLiteral("questions"), QVariantList()},
+            {QStringLiteral("plan"), QVariant()},
+            {QStringLiteral("queue"), QVariantList()},
+            {QStringLiteral("waiting"), QVariantList()},
+            {QStringLiteral("queueHeld"), false},
+            {QStringLiteral("queueResuming"), false}};
+  }
   // A new thread's draft.
   if (!m_draftId.isEmpty()) {
     const bool kept = NativeShell::of(this)->controller<DraftController>()->draft(m_draftId).has_value();
@@ -2459,6 +2659,7 @@ QVariantMap ComposerController::turnState() const {
 // --- The draft and what the composer shows -------------------------------------
 
 QString ComposerController::target() const {
+  if (onPage()) return pageKey(m_pageId);
   if (!m_draftId.isEmpty()) {
     return NativeShell::of(this)->controller<DraftController>()->draft(m_draftId) ? m_draftId : QString();
   }
@@ -2755,7 +2956,7 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
 // Puts the suggestion in the trigger's place; the composer's own commands act instead.
 bool ComposerController::selectSuggestion(const QString& target, const QString& id) {
   const QString text = draft(target);
-  const std::optional<composer::Trigger> trigger = composer::trigger(text, m_drafts.value(target).cursor);
+  const std::optional<composer::Trigger> trigger = triggerOf(target);
   if (!trigger || m_drafts.value(target).dismissed) return false;
   const QList<composer::Suggestion> offered = suggestions(target, trigger);
   const auto chosen = std::find_if(offered.cbegin(), offered.cend(), [&](const composer::Suggestion& item) { return item.id == id; });
@@ -2791,14 +2992,14 @@ QList<composer::Suggestion> ComposerController::suggestions(const QString& targe
 // The @ menu asks the MC's workspace search (the Files tab's) for the
 // route's checkout; the answer counts only while it is still the question.
 void ComposerController::searchPaths(const QString& target) {
-  const std::optional<composer::Trigger> trigger = composer::trigger(draft(target), m_drafts.value(target).cursor);
+  const std::optional<composer::Trigger> trigger = triggerOf(target);
   if (!trigger || trigger->kind != QLatin1String("path") || trigger->query.isEmpty()) return;
   if (m_paths.target == target && m_paths.query == trigger->query) return;
   if (!canSearchPaths(target)) return;
-  const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
-  m_paths = {target, trigger->query, place->environmentId, place->cwd(), false, false, {}, m_paths.request + 1};
+  const auto [environmentId, cwd] = searchPlace(target);
+  m_paths = {target, trigger->query, environmentId, cwd, false, false, {}, m_paths.request + 1};
   const int request = m_paths.request;
-  WorkspaceFiles::searchEntries(m_client, this, place->environmentId, place->cwd(), trigger->query, 80,
+  WorkspaceFiles::searchEntries(m_client, this, environmentId, cwd, trigger->query, 80,
                                 [this, request](const QList<FileTreeModel::Entry>& entries, bool,
                                                 const std::optional<QString>& error) {
                                   if (request != m_paths.request) return;
@@ -2811,11 +3012,37 @@ void ComposerController::searchPaths(const QString& target) {
                                 });
 }
 
-// Whether the route's own checkout is known and its environment reachable.
-bool ComposerController::canSearchPaths(const QString& target) const {
+// Where `target`'s @ words are searched: the route's own checkout, or the
+// root of the project a page's ask runs in; empty when it is neither.
+std::pair<QString, QString> ComposerController::searchPlace(const QString& target) const {
+  if (onPage()) {
+    if (target != pageKey(m_pageId)) return {};
+    const QString environmentId = m_client->environment();
+    return {environmentId, m_store->projectRow(environmentId, pageProject()).value(QLatin1String("workspaceRoot")).toString()};
+  }
   const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
-  if (!m_client->isReady() || !place || place->cwd().isEmpty() || !m_store->environmentOnline(place->environmentId)) return false;
-  return (place->draftId.isEmpty() ? place->threadKey() : place->draftId) == target;
+  if (!place || (place->draftId.isEmpty() ? place->threadKey() : place->draftId) != target) return {};
+  return {place->environmentId, place->cwd()};
+}
+
+// Whether that place is known and its environment reachable.
+bool ComposerController::canSearchPaths(const QString& target) const {
+  const auto [environmentId, cwd] = searchPlace(target);
+  return m_client->isReady() && !cwd.isEmpty() && m_store->environmentOnline(environmentId);
+}
+
+// The trigger at the draft's caret. On a page `/` picks a kind of block
+// (SpacePage's menu) and the leading `@agent` is the ask, not a file.
+std::optional<composer::Trigger> ComposerController::triggerOf(const QString& target) const {
+  const QString text = draft(target);
+  std::optional<composer::Trigger> trigger = composer::trigger(text, m_drafts.value(target).cursor);
+  if (!trigger || !target.startsWith(pageKey({}))) return trigger;
+  if (trigger->kind == QLatin1String("slash-command")) return std::nullopt;
+  const bool first = text.left(trigger->start).trimmed().isEmpty();
+  if (trigger->kind == QLatin1String("path") && first && QStringLiteral("agent").startsWith(trigger->query, Qt::CaseInsensitive)) {
+    return std::nullopt;
+  }
+  return trigger;
 }
 
 // A search the environment took down with it (unanswered, or failed) is
@@ -2826,8 +3053,8 @@ void ComposerController::refreshPathSearch() {
   if (target.isEmpty()) return;
   bool stale = (!m_paths.done || m_paths.failed) && !canSearchPaths(m_paths.target);
   if (m_paths.target == target && canSearchPaths(target)) {
-    const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
-    stale = stale || m_paths.environmentId != place->environmentId || m_paths.cwd != place->cwd();
+    const auto [environmentId, cwd] = searchPlace(target);
+    stale = stale || m_paths.environmentId != environmentId || m_paths.cwd != cwd;
   }
   if (stale && !m_paths.query.isEmpty()) m_paths = {{}, {}, {}, {}, false, false, {}, m_paths.request + 1};
   searchPaths(target);
@@ -2866,12 +3093,18 @@ bool ComposerController::planModeOn(const composer::Instance* instance) const {
 QString ComposerController::runtimeModeOf(const QString& target) const {
   if (const QString mode = m_drafts.value(target).runtimeMode; !mode.isEmpty()) return mode;
   if (const auto thread = m_store->thread(target); thread && !thread->runtimeMode.isEmpty()) return thread->runtimeMode;
-  // A new thread: its project's default permissions, else the default for
-  // new threads (Settings → Project defaults).
-  auto* shell = NativeShell::of(this);
-  const auto* settings = shell->controller<SettingsController>();
-  if (const auto kept = shell->controller<DraftController>()->draft(target); kept && settings) {
-    for (const QString& path : {QStringLiteral("projectSettingsOverrides.%1.defaultRuntimeMode").arg(kept->projectId),
+  // A new thread, or a page's ask: its project's default permissions, else
+  // the default for new threads (Settings → Project defaults).
+  if (onPage() && target == pageKey(m_pageId)) return newThreadRuntimeMode(pageProject());
+  if (const auto kept = NativeShell::of(this)->controller<DraftController>()->draft(target)) {
+    return newThreadRuntimeMode(kept->projectId);
+  }
+  return QStringLiteral("full-access");
+}
+
+QString ComposerController::newThreadRuntimeMode(const QString& projectId) const {
+  if (const auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
+    for (const QString& path : {QStringLiteral("projectSettingsOverrides.%1.defaultRuntimeMode").arg(projectId),
                                 QStringLiteral("defaultRuntimeMode")}) {
       if (const QString mode = settings->value(path).toString(); !mode.isEmpty()) return mode;
     }
@@ -2902,7 +3135,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   const composer::Instance* instance = instanceOf(chosen);
   const bool planOn = planModeOn(instance);
 
-  const std::optional<composer::Trigger> trigger = kept.dismissed ? std::nullopt : composer::trigger(text, cursor);
+  const std::optional<composer::Trigger> trigger = kept.dismissed ? std::nullopt : triggerOf(target);
   QVariantList suggestionList;
   for (const composer::Suggestion& item : suggestions(target, trigger)) {
     suggestionList.append(QVariantMap{{QStringLiteral("id"), item.id},
@@ -2966,15 +3199,20 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       environmentId = draft->environmentId;
     }
   }
+  const bool page = onPage();
+  if (page) environmentId = m_client->environment();
   const bool offline = !m_store->environmentOnline(environmentId);
-  const bool noProvider =
-      std::none_of(m_catalogue.cbegin(), m_catalogue.cend(), [](const composer::Instance& entry) { return entry.ready(); });
-  const bool busy = isDraft && m_launching.contains(target);
+  // A page writes blocks with no provider; an ask with none is refused by the MC.
+  const bool noProvider = !page && std::none_of(m_catalogue.cbegin(), m_catalogue.cend(),
+                                                [](const composer::Instance& entry) { return entry.ready(); });
+  const bool busy = (isDraft || page) && m_launching.contains(target);
   const bool hasContent = !text.trimmed().isEmpty() || !kept.attachments.isEmpty() || !kept.excerpts.isEmpty();
-  const bool isRunning = thread && thread->activeRunId.has_value();
+  const bool isRunning = page ? m_pageRunning : thread && thread->activeRunId.has_value();
 
   QString placeholder = QStringLiteral("Ask anything, @tag files/folders, $use skills, or / for commands");
-  if (!approvals.isEmpty()) {
+  if (page) {
+    placeholder = QStringLiteral("Write, type / for a kind of block, or @agent to ask an agent");
+  } else if (!approvals.isEmpty()) {
     placeholder = QStringLiteral("Resolve this approval request to continue");
   } else if (showPlanFollowUp) {
     placeholder = QStringLiteral("Add feedback to refine the plan, or leave this blank to implement it");
@@ -3010,12 +3248,25 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
     }
   }
   const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
-  return QVariantMap{
+  // A page's ask: the project it runs in and the ones it could.
+  QVariant project = QVariant::fromValue(nullptr);
+  QVariantList projects;
+  if (page) {
+    const QString projectId = pageProject();
+    for (const QJsonObject& row : m_store->projectRows(environmentId)) {
+      const QVariantMap entry{{QStringLiteral("id"), row.value(QLatin1String("id")).toString()},
+                              {QStringLiteral("title"), row.value(QLatin1String("title")).toString()}};
+      if (entry.value(QStringLiteral("id")).toString() == projectId) project = entry;
+      projects.append(entry);
+    }
+  }
+  QVariantMap state{
       {QStringLiteral("target"), target},
-      {QStringLiteral("routeKind"), isDraft ? QStringLiteral("draft") : QStringLiteral("server")},
+      {QStringLiteral("routeKind"), page ? QStringLiteral("page") : isDraft ? QStringLiteral("draft") : QStringLiteral("server")},
       // The branch and worktree controls under the composer: a new thread's,
       // and kept once it has started only when the user asks (Composer context).
-      {QStringLiteral("showContextStrip"), isDraft || setting(QStringLiteral("persistComposerContextStrip")).toBool()},
+      // A page's agent runs in its project's own checkout.
+      {QStringLiteral("showContextStrip"), !page && (isDraft || setting(QStringLiteral("persistComposerContextStrip")).toBool())},
       {QStringLiteral("edit"), kept.edit.isValid() ? kept.edit : QVariant::fromValue(nullptr)},
       {QStringLiteral("text"), text},
       {QStringLiteral("cursor"), cursor},
@@ -3031,12 +3282,15 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("canSend"), !(busy || offline || noProvider) && (hasContent || showPlanFollowUp)},
       {QStringLiteral("sendDisabledReason"), disabledReason},
       {QStringLiteral("isRunning"), isRunning},
-      {QStringLiteral("followUpBehavior"), setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue")
+      // More words for a page's working agent go to its thread, so a page
+      // has no queue or steering: its send button sends, or stops.
+      {QStringLiteral("followUpBehavior"), page ? QString()
+                                         : setting(QStringLiteral("followUpBehavior")).toString() == QLatin1String("queue")
                                                ? QStringLiteral("queue")
                                                : QStringLiteral("steer")},
       {QStringLiteral("enterIntents"), composer::enterIntents(keys->resolved(), keys->mac(),
                                                               setting(QStringLiteral("sendShortcut")).toString(), isDraft,
-                                                              isRunning)},
+                                                              isRunning && !page)},
       // A first message launching, or a message on its way to the MC.
       {QStringLiteral("isSendBusy"), busy || m_queues.contains(target)},
       {QStringLiteral("isConnecting"), false},
@@ -3055,6 +3309,12 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
                                                  ? QVariant(m_queuedEdit->runId)
                                                  : QVariant::fromValue(nullptr)},
   };
+  if (page) {
+    state.insert(QStringLiteral("pageId"), m_pageId);
+    state.insert(QStringLiteral("project"), project);
+    state.insert(QStringLiteral("projects"), projects);
+  }
+  return state;
 }
 
 // ShellModelPickerState: the rail for the route's thread or draft.
@@ -3180,6 +3440,7 @@ void ComposerController::setStorePath(const QString& path) {
     }
     kept.runtimeMode = entry.value(QLatin1String("runtimeMode")).toString();
     kept.interactionMode = entry.value(QLatin1String("interactionMode")).toString();
+    kept.projectId = entry.value(QLatin1String("projectId")).toString();
   }
   QFile images(imagesPath());
   QJsonObject unsentImages;
@@ -3240,6 +3501,7 @@ void ComposerController::save() const {
     if (kept.modelSelection) entry.insert(QStringLiteral("modelSelection"), *kept.modelSelection);
     if (!kept.runtimeMode.isEmpty()) entry.insert(QStringLiteral("runtimeMode"), kept.runtimeMode);
     if (!kept.interactionMode.isEmpty()) entry.insert(QStringLiteral("interactionMode"), kept.interactionMode);
+    if (!kept.projectId.isEmpty()) entry.insert(QStringLiteral("projectId"), kept.projectId);
     if (!entry.isEmpty()) targets.insert(it.key(), entry);
   }
   QJsonArray stash;

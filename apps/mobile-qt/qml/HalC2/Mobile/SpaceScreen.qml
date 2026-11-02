@@ -158,21 +158,19 @@ Item {
         });
     }
 
-    // What an agent should do to the page `id`, which opens to show the agent working.
-    // An ask the MC refuses comes back with its words (`words`).
-    function askAgent(id, words) {
-        text.ask({ title: qsTr("Ask an agent"), placeholder: qsTr("What should it do to this page?"), action: qsTr("Ask"), multiline: true, text: words ?? "" }, request => {
+    // Opens the page `id` with its prompt ready to ask an agent about it.
+    function askAgent(id) {
+        if (view !== "page" || Spaces.pageId !== id)
             openPage(id);
-            Shell.dispatch("space.agent.ask", { pageId: id, request: request });
-        });
+        pageView.startAsk();
     }
 
-    Connections {
-        target: Spaces
-        function onAgentAskAnswered(pageId, request, taken) {
-            if (!taken)
-                screen.askAgent(pageId, request);
-        }
+    // The projects an ask can run in (`projects`, the prompt's), `current` the one it runs in.
+    function pickAskProject(projects, current) {
+        const rows = projects.map(project => ({ id: project.id, label: project.title, icon: project.id === current ? "check" : "folder" }));
+        if (rows.length === 0)
+            rows.push({ id: "", label: qsTr("No projects"), enabled: false });
+        sheet.ask(rows, projectId => Shell.dispatch("composer.project.set", { projectId: projectId }));
     }
 
     function askImport() {
@@ -685,6 +683,8 @@ Item {
     }
 
     SpacePageView {
+        id: pageView
+
         anchors.fill: parent
         visible: screen.view === "page"
         screen: screen

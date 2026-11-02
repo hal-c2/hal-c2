@@ -80,6 +80,7 @@ defmodule HalC2.Application do
       HalC2.Devices,
       HalC2.Diagnostics,
       HalC2.PullRequests.Refreshes,
+      HalC2.PullRequests.Held,
       HalC2.PullRequests.Discovery,
       HalC2.PullRequests.Sync,
       HalC2.PullRequests.Wakes,

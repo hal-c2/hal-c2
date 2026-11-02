@@ -2,20 +2,23 @@ defmodule HalC2.PullRequests do
   @moduledoc """
   Pull requests for this MC's projects (`pullRequests.*`). A project's repository is
   its checkout's primary remote; GitHub repositories are read and changed through `gh`
-  (`HalC2.PullRequests.GitHub`). Projects on other hosts are counted in the listing and
-  otherwise answered with `PullRequestUnavailableError` (`provider-unsupported`).
+  (`HalC2.PullRequests.GitHub`). Projects on other hosts are counted in the listing, GitLab
+  ones previewed through `glab`, and otherwise answered with
+  `PullRequestUnavailableError` (`provider-unsupported`).
 
   A reference names a project and a repository. The project's own repository is
   served through its checkout; one that also names a `host` may point at any
   repository on that host, served through a checkout there.
 
-  Only who is signed in to each host is cached. Every change made here bumps
+  Who is signed in to each host is cached, and link previews for a few seconds
+  (`HalC2.PullRequests.Held`). Every change made here bumps
   `HalC2.PullRequests.Refreshes`, which clients follow to read again.
   """
 
   require Logger
 
-  alias HalC2.PullRequests.{GitHub, Refreshes}
+  alias HalC2.PullRequests.{GitHub, Held, Refreshes}
+  alias HalC2.SourceControl.ChangeRequests
 
   @default_limit 99
   @viewer_ttl 600_000
@@ -449,6 +452,8 @@ defmodule HalC2.PullRequests do
   def detail(ref) do
     read(ref, "detail", fn project, ctx ->
       at = System.system_time(:millisecond)
+      token = Held.token()
+      read_at = now()
 
       [detail, identity] =
         Task.await_many(
@@ -456,7 +461,7 @@ defmodule HalC2.PullRequests do
           :infinity
         )
 
-      with {:ok, detail, _head} <- detail do
+      with {:ok, detail, _head} <- held_detail(detail, project, ctx, read_at, token) do
         {:ok,
          detail
          |> Map.merge(%{
@@ -473,14 +478,114 @@ defmodule HalC2.PullRequests do
     end)
   end
 
+  @doc """
+  `pullRequests.preview`: the hover card of a pull request, from the host's narrow
+  read. One read in the last 15 seconds answers it, a preview or one cut from a full
+  details read (`HalC2.PullRequests.Held`); a details read still in flight is never
+  waited on. While the host's rate limit pauses reads, held previews are still
+  answered and the rest refused until it resets.
+  """
   def preview(ref) do
-    read(ref, "preview", fn project, ctx ->
-      with {:ok, preview} <- GitHub.preview(ctx),
-           do:
-             {:ok,
-              Map.merge(preview, %{"projectId" => project.id, "repository" => project.repository})}
-    end)
+    read(
+      ref,
+      "preview",
+      fn project, ctx ->
+        key = held_key(project, ctx.number)
+
+        case Held.lookup(key, now()) do
+          {:ok, preview} ->
+            {:ok, preview}
+
+          {:paused, until} ->
+            paused(project, until)
+
+          {:miss, token} ->
+            read_at = now()
+
+            case host_preview(project, ctx) do
+              {:ok, preview} ->
+                preview = preview_fields(preview, project)
+                Held.put_preview(key, preview, read_at, token)
+                {:ok, preview}
+
+              error ->
+                limited(error, project)
+            end
+        end
+      end,
+      ["github", "gitlab"]
+    )
   end
+
+  # GitHub has a narrow read for a preview; a host without one answers from its full
+  # read, cut down to the same fields. Its CLI's own failures are told as they are, not
+  # as `gh`'s.
+  defp host_preview(%{kind: "github"}, ctx), do: GitHub.preview(ctx)
+
+  defp host_preview(project, ctx) do
+    case ChangeRequests.view(project.root, project, ctx.number) do
+      {:error, {reason, detail}} when reason in [:missing, :unauthenticated] ->
+        {:error, {:failed, detail}}
+
+      other ->
+        other
+    end
+  end
+
+  # `PullRequestPreview`'s fields, from a preview or a full read.
+  defp preview_fields(read, project) do
+    read
+    |> Map.take(~w(number title url author state isDraft createdAt))
+    |> Map.merge(%{"projectId" => project.id, "repository" => project.repository})
+  end
+
+  defp held_detail({:ok, detail, _head} = read, project, ctx, read_at, token) do
+    Held.put_detail(
+      held_key(project, ctx.number),
+      preview_fields(detail, project),
+      read_at,
+      token
+    )
+
+    read
+  end
+
+  defp held_detail(error, project, _ctx, _read_at, _token) do
+    if rate_limited?(error), do: Held.rate_limited(lower(project.host), now())
+    error
+  end
+
+  defp held_key(project, number),
+    do: {lower(project.host), lower(project.repository), number, project.id}
+
+  # A host's rate limit pauses its previews until it resets.
+  defp limited(error, project) do
+    if rate_limited?(error),
+      do: paused(project, Held.rate_limited(lower(project.host), now())),
+      else: error
+  end
+
+  defp rate_limited?({:error, {_, detail}}) when is_binary(detail),
+    do: detail =~ ~r/HTTP 429|rate limit/i
+
+  defp rate_limited?(_), do: false
+
+  defp lower(nil), do: ""
+  defp lower(text), do: String.downcase(text)
+
+  defp paused(project, until) do
+    resets = DateTime.from_unix!(until, :millisecond) |> Calendar.strftime("%H:%M:%S UTC")
+
+    refuse(
+      "preview",
+      "#{project.host}'s rate limit was reached; previews are paused until it resets at #{resets}."
+    )
+  end
+
+  # Milliseconds since the epoch; `:pull_requests_clock` stands in for the system clock.
+  defp now, do: (Application.get_env(:hal_c2, :pull_requests_clock) || (&system_ms/0)).()
+
+  defp system_ms, do: System.system_time(:millisecond)
 
   def checks(ref) do
     read(ref, "checks", fn _project, ctx ->
@@ -736,19 +841,39 @@ defmodule HalC2.PullRequests do
   end
 
   @doc """
-  `pullRequests.invalidate`: nothing is cached but who is signed in, which a
-  refresh of the whole listing forgets. Readers are told to read again, except for a
-  refresh of review marks alone.
+  `pullRequests.invalidate`: forgets the held previews of the reference, or with no
+  reference every one and who is signed in. Readers are told to read again, except
+  for a refresh of review marks alone.
   """
   def invalidate(input) do
     if input["filesViewedOnly"] != true do
       if input["reference"] == nil, do: :persistent_term.erase(@viewers)
+      forget(input["reference"])
       # A reader asking for fresh host state wants the thread links it feeds to follow.
       if input["reference"], do: HalC2.PullRequests.Sync.request(input["reference"])
       Refreshes.bump()
     end
 
     {:ok, nil}
+  end
+
+  defp forget(nil), do: Held.forget_all()
+
+  defp forget(reference) do
+    with {:ok, project} <- project_for(reference),
+         do: Held.forget(project.host, project.repository, reference["number"])
+  end
+
+  @doc """
+  A turn that ran in `cwd` may have pushed to its repository or changed its pull
+  requests: what is held of that repository's pull requests is dropped, and only that.
+  """
+  def turn_finished(cwd) do
+    with true <- Held.holding?(),
+         %{host: host, repository: repository} <- remote(cwd),
+         do: Held.forget(host, repository)
+
+    :ok
   end
 
   # --- routing ----------------------------------------------------------------------
@@ -1015,8 +1140,9 @@ defmodule HalC2.PullRequests do
   end
 
   # The project that serves a reference: its own when the repository is its own,
-  # else, for a reference that names a host, a checkout on that host.
-  defp project_for(ref) do
+  # else, for a reference that names a host, a checkout on that host. Only GitHub is
+  # browsed; an operation names the other hosts it can serve in `kinds`.
+  defp project_for(ref, kinds \\ ["github"]) do
     all = projects()
     own = Enum.find(all, &(&1.id == ref["projectId"]))
     repository = String.trim(ref["repository"] || "")
@@ -1047,10 +1173,11 @@ defmodule HalC2.PullRequests do
 
     with {:ok, project} <- project do
       cond do
-        project.kind != "github" ->
+        project.kind not in kinds ->
           unavailable("provider-unsupported", project.kind)
 
-        not Regex.match?(~r/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/, project.repository) ->
+        project.kind == "github" and
+            not Regex.match?(~r/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/, project.repository) ->
           refuse("resolveRepository", "The repository cannot be addressed on GitHub.")
 
         true ->
@@ -1103,8 +1230,8 @@ defmodule HalC2.PullRequests do
 
   # --- plumbing -----------------------------------------------------------------------
 
-  defp read(ref, operation, fun) do
-    with {:ok, project} <- project_for(ref) do
+  defp read(ref, operation, fun, kinds \\ ["github"]) do
+    with {:ok, project} <- project_for(ref, kinds) do
       case fun.(project, ctx(project, ref["number"])) do
         :ok ->
           {:ok, nil}
@@ -1118,8 +1245,17 @@ defmodule HalC2.PullRequests do
     end
   end
 
+  # A change forgets what is held of the pull request, whether or not the host took it.
   defp change(ref, operation, fun) do
-    with {:ok, _} = done <- read(ref, operation, fun) do
+    forgetting = fn project, ctx ->
+      try do
+        fun.(project, ctx)
+      after
+        Held.forget(project.host, project.repository, ctx.number)
+      end
+    end
+
+    with {:ok, _} = done <- read(ref, operation, forgetting) do
       Refreshes.bump()
       done
     end

@@ -294,6 +294,8 @@ export function fakeSpaceMc(options: {
   readonly agentProjectId?: () => string | null;
 }) {
   const spaces = new Map<string, Entity>();
+  // Each project's own Space, where its files' pages are: in the index, never listed.
+  const projectSpaces = new Map<string, Entity>();
   // Per Space: its pages, blocks and comments, each in creation order.
   const content = new Map<string, Map<string, Map<string, Entity>>>();
   const seqs = new Map<string, number>();
@@ -362,9 +364,14 @@ export function fakeSpaceMc(options: {
   const table = (spaceId: string, kind: string) => kindsOf(spaceId).get(kind)!;
 
   const streamRows = (stream: string): Array<readonly [string, string, Entity]> => {
-    if (stream === "spaces") return [...spaces.values()].map((s) => ["space", s.id, { ...s }]);
+    if (stream === "spaces") {
+      return [
+        ...[...spaces.values()].map((s) => ["space", s.id, { ...s }] as const),
+        ...[...projectSpaces.values()].map((s) => ["projectSpace", s.id, { ...s }] as const),
+      ];
+    }
     const spaceId = stream.slice("space:".length);
-    if (!spaces.has(spaceId)) return [];
+    if (!spaces.has(spaceId) && !projectSpaces.has(spaceId)) return [];
     return [...kindsOf(spaceId)].flatMap(([kind, entities]) =>
       [...entities.values()].map((entity) => [kind, entity.id as string, { ...entity }] as const),
     );
@@ -399,7 +406,8 @@ export function fakeSpaceMc(options: {
     const spaceId = stream === "spaces" ? null : stream.slice("space:".length);
     const at = Date.now();
     const apply = ([kind, id, patch]: Change) => {
-      const entities = spaceId === null ? spaces : table(spaceId, kind);
+      const entities =
+        spaceId !== null ? table(spaceId, kind) : kind === "projectSpace" ? projectSpaces : spaces;
       if (patch.d) entities.delete(id);
       else entities.set(id, { ...entities.get(id), ...patch.s });
       const seq = (seqs.get(stream) ?? 0) + 1;
@@ -418,7 +426,9 @@ export function fakeSpaceMc(options: {
   // --- reads ---
 
   const space = (id: unknown): Entity =>
-    spaces.get(String(id)) ?? refuse("not_found", `There is no Space ${String(id)}.`);
+    spaces.get(String(id)) ??
+    projectSpaces.get(String(id)) ??
+    refuse("not_found", `There is no Space ${String(id)}.`);
   const pages = (spaceId: string) => [...table(spaceId, "page").values()];
   const page = (spaceId: string, id: unknown): Entity =>
     table(spaceId, "page").get(String(id)) ??
@@ -656,6 +666,27 @@ export function fakeSpaceMc(options: {
     return { entry, change: ["page", entry.id, { s: entry }] as Change };
   };
 
+  const extras = (spec: Entity): Entity => {
+    const code = spec.kind === "code";
+    const item = ["bullet", "numbered", "checklist"].includes(spec.kind);
+    const kept: Array<[string, boolean]> = [
+      ["language", code],
+      ["fence", code],
+      ["info", code],
+      ["depth", item && spec.depth !== 0],
+      ["indent", item],
+      ["marker", ["bullet", "numbered", "divider", "callout", "details"].includes(spec.kind)],
+      ["start", spec.kind === "numbered" && spec.start !== 1],
+      ["alert", spec.kind === "callout"],
+      ["label", spec.kind === "footnote"],
+    ];
+    return Object.fromEntries(
+      kept
+        .filter(([field, keep]) => keep && spec[field] != null)
+        .map(([field]) => [field, spec[field]]),
+    );
+  };
+
   const newBlock = (
     spaceId: string,
     pageId: string,
@@ -667,12 +698,18 @@ export function fakeSpaceMc(options: {
       "paragraph",
       "heading",
       "checklist",
+      "bullet",
+      "numbered",
       "callout",
+      "divider",
       "subpage_link",
       "image",
       "raw",
       "table",
       "code",
+      "footnote",
+      "details",
+      "details_end",
     ];
     if (!kinds.includes(spec.kind)) refuse("invalid", `A block is one of ${kinds.join(", ")}.`);
     const level = spec.kind === "heading" ? spec.level : undefined;
@@ -682,7 +719,8 @@ export function fakeSpaceMc(options: {
     if (spec.kind === "subpage_link" && !table(spaceId, "page").get(spec.linkedPageId)) {
       refuse("invalid", "A subpage link needs a page of this Space.");
     }
-    const placed = spec.kind === "image" ? image(spaceId, spec.imageId) : null;
+    const url = spec.kind === "image" && typeof spec.url === "string" ? spec.url : undefined;
+    const placed = spec.kind === "image" && url === undefined ? image(spaceId, spec.imageId) : null;
     if (placed && placed.trashedAt !== null) {
       refuse("trashed", `The image "${placed.name}" is in the trash.`);
     }
@@ -695,10 +733,10 @@ export function fakeSpaceMc(options: {
       checked: spec.kind === "checklist" && spec.checked === true,
       linkedPageId: spec.kind === "subpage_link" ? spec.linkedPageId : null,
       ...(placed ? { imageId: placed.id } : {}),
+      ...(url !== undefined ? { url } : {}),
       ...(level !== undefined ? { level } : {}),
-      ...(spec.kind === "code" && spec.language ? { language: spec.language } : {}),
-      ...(spec.kind === "code" && spec.fence ? { fence: spec.fence } : {}),
-      ...(spec.kind === "code" && spec.info ? { info: spec.info } : {}),
+      // The fields only some kinds keep, as the MC's `with_extras` keeps them.
+      ...extras(spec),
       order,
       createdBy: by,
       updatedBy: by,
@@ -753,6 +791,15 @@ export function fakeSpaceMc(options: {
   const newSpace = (spaceName: string) => {
     const at = now();
     return { id: nextId("space"), name: spaceName, createdAt: at, updatedAt: at };
+  };
+
+  /** The project's Space, made the first time one of its files is opened, as the MC does. */
+  const projectSpaceOf = (projectId: string): string => {
+    const found = [...projectSpaces.values()].find((entry) => entry.projectId === projectId);
+    if (found) return found.id as string;
+    const entry = { ...newSpace(projectId), projectId };
+    commit("spaces", [["projectSpace", entry.id, { s: entry }]]);
+    return entry.id;
   };
 
   // Whoever looks first, by listing or by making a Space, finds Personal there.
@@ -911,6 +958,9 @@ export function fakeSpaceMc(options: {
               page: entry ? { spaceId: entry.spaceId, pageId: entry.id, title: entry.title } : null,
             };
           }),
+        spaceId:
+          [...projectSpaces.values()].find((entry) => entry.projectId === input.projectId)?.id ??
+          null,
       };
     },
     "space.files.scan": (input) => {
@@ -930,7 +980,6 @@ export function fakeSpaceMc(options: {
       return { status: "written", entries };
     },
     "space.page.openFile": (input) => {
-      space(input.spaceId);
       const files = filesOf(input.projectId);
       const path = String(input.relativePath);
       if (path.startsWith("/") || path.split("/").includes("..")) {
@@ -942,15 +991,16 @@ export function fakeSpaceMc(options: {
       const text = files.get(path) ?? refuse("notFound", `There is no file ${path}.`);
       const existing = pageOfFile(input.projectId, path);
       if (existing) return { spaceId: existing.spaceId, page: existing, created: false };
+      const spaceId = projectSpaceOf(input.projectId);
       const { page: entry } = importPage(
-        input.spaceId,
+        spaceId,
         text,
         undefined,
         null,
         { file: fileIndicator(input.projectId, path, text) },
         fromFile,
       );
-      return { spaceId: input.spaceId, page: entry, created: true };
+      return { spaceId, page: entry, created: true };
     },
     "space.page.syncFile": (input) => {
       const found = livePage(input.spaceId, input.pageId);
@@ -968,12 +1018,6 @@ export function fakeSpaceMc(options: {
           conflictAt: file.conflictAt,
         });
       }
-      return { page: table(input.spaceId, "page").get(found.id) };
-    },
-    "space.page.unlinkFile": (input) => {
-      const found = livePage(input.spaceId, input.pageId);
-      if (!found.file) refuse("invalid", "This page is not a project file.");
-      commit(`space:${input.spaceId}`, [["page", found.id, { s: { file: null } }]]);
       return { page: table(input.spaceId, "page").get(found.id) };
     },
     "space.list": () => {
@@ -1629,7 +1673,8 @@ export function fakeSpaceMc(options: {
           : method === "space.page.openFile" || method === "space.page.syncFile"
             ? fromFile
             : author;
-      if (spaces.has(payload.spaceId)) noteVersions(payload.spaceId, by);
+      const spaceId = payload.spaceId ?? (result as { spaceId?: unknown } | undefined)?.spaceId;
+      if (spaces.has(spaceId) || projectSpaces.has(spaceId)) noteVersions(spaceId, by);
       return result;
     },
     spaceNamed: (value) => {

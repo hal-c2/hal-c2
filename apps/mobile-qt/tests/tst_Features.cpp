@@ -36,6 +36,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("space/pages.feature"),
     QStringLiteral("space/page-history.feature"),
     QStringLiteral("space/agent-in-page.feature"),
+    QStringLiteral("space/prompt.feature"),
     QStringLiteral("space/self-updating-pages.feature"),
     QStringLiteral("space/visualize.feature"),
     QStringLiteral("space/slides.feature"),
@@ -49,6 +50,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("providers/codex.feature:A plan Codex marked finished*"),
     QStringLiteral("settings/updates.feature"),
     QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
+    QStringLiteral("source-control/pull-request-threads.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

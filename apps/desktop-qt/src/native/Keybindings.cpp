@@ -335,7 +335,8 @@ const QStringList& commands() {
     list.append({QStringLiteral("thread.stop"), QStringLiteral("thread.steerQueuedMessage"),
                  QStringLiteral("thread.editQueuedMessage"), QStringLiteral("thread.previous"),
                  QStringLiteral("thread.next"), QStringLiteral("thread.copyReference"), QStringLiteral("thread.settle"),
-                 QStringLiteral("thread.pin"), QStringLiteral("thread.undo"), QStringLiteral("space.open")});
+                 QStringLiteral("thread.pin"), QStringLiteral("thread.undo"), QStringLiteral("space.open"),
+                 QStringLiteral("space.agent.focus")});
     for (int n = 1; n <= 9; ++n) list.append(QStringLiteral("thread.jump.%1").arg(n));
     return list;
   }();
@@ -460,6 +461,7 @@ QString commandLabel(const QString& command) {
       {QStringLiteral("thread.editQueuedMessage"), QStringLiteral("Queue: Edit Last Queued Message")},
       {QStringLiteral("thread.copyReference"), QStringLiteral("Pull Request: Copy Link or Thread ID")},
       {QStringLiteral("space.open"), QStringLiteral("Space: Open")},
+      {QStringLiteral("space.agent.focus"), QStringLiteral("Space: Ask an Agent About the Page")},
   };
   if (const auto label = special.constFind(command); label != special.cend()) return *label;
   if (command.startsWith(QLatin1String("script.")) && command.endsWith(QLatin1String(".run"))) {
