@@ -53,7 +53,7 @@ Rectangle {
         // Given its tab after it was made (PanelBodies): the view starts where the tab is.
         onTabIdChanged: if (url.length > 0 && webView.url.toString() !== url)
             webView.url = url
-        onEvaluateRequested: (request, script) => webView.runJavaScript(script, result => page.evaluated(request, result))
+        onEvaluateRequested: (request, script, world) => webView.runJavaScript(script, world, result => page.evaluated(request, result))
         onGrabRequested: request => {
             const grabbed = webView.grabToImage(result => page.grabbed(request, result.image));
             if (!grabbed)
@@ -569,6 +569,7 @@ Rectangle {
                         root.report("loaded", 0, "")
                     onTitleChanged: if (!loading)
                         root.report("loaded", 0, "")
+                    onJavaScriptConsoleMessage: (level, message, lineNumber, sourceID) => page.consoleMessage(level, message, lineNumber, sourceID)
                     onNewWindowRequested: request => {
                         // A sign-in popup is a real window, so it can answer
                         // the page; a link to a new window stays in the tab.
@@ -589,6 +590,17 @@ Rectangle {
                         if (page.url.length > 0)
                             webView.url = page.url;
                     }
+                }
+
+                // What an agent does in the page (PreviewAutomation's activity).
+                AgentCue {
+                    x: webView.x
+                    y: webView.y
+                    width: webView.width * webView.scale
+                    height: webView.height * webView.scale
+                    entry: PreviewAutomation.activity[root.tabId] ?? null
+                    pageScale: page.zoom * webView.scale
+                    reduceMotion: PreviewAutomation.reduceMotion
                 }
 
                 Text {

@@ -285,6 +285,7 @@ void BrowserPage::report(const QString& phase, const QString& url, const QString
   }
   QJsonObject navStatus{{QStringLiteral("url"), url}, {QStringLiteral("title"), title.left(kMaxTitle)}};
   if (phase == QLatin1String("failed")) {
+    emit loadFailed(url, description);
     navStatus.insert(QStringLiteral("_tag"), QStringLiteral("LoadFailed"));
     navStatus.insert(QStringLiteral("code"), code);
     navStatus.insert(QStringLiteral("description"), description);
@@ -326,10 +327,10 @@ void BrowserPage::setViewport(const QVariantMap& viewport) {
   });
 }
 
-void BrowserPage::evaluate(const QString& script, std::function<void(const QVariant&)> done) {
+void BrowserPage::evaluate(const QString& script, std::function<void(const QVariant&)> done, int world) {
   const int request = ++m_requests;
   m_evaluations.insert(request, std::move(done));
-  emit evaluateRequested(request, script);
+  emit evaluateRequested(request, script, world);
 }
 
 void BrowserPage::grab(std::function<void(const QImage&)> done) {
@@ -344,4 +345,10 @@ void BrowserPage::evaluated(int request, const QVariant& result) {
 
 void BrowserPage::grabbed(int request, const QImage& image) {
   if (auto done = m_grabs.take(request)) done(image);
+}
+
+void BrowserPage::consoleMessage(int level, const QString& message, int line, const QString& source) {
+  static const QString levels[] = {QStringLiteral("info"), QStringLiteral("warning"), QStringLiteral("error")};
+  const QString at = source.isEmpty() ? QString() : source + QLatin1Char(':') + QString::number(line);
+  emit logged(levels[std::clamp(level, 0, 2)], message, at);
 }

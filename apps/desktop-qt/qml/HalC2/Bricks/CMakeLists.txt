@@ -164,6 +164,7 @@ set(hal_c2_bricks_qml_files
     BrowserPanel.qml
     BrowserDevicesView.qml
     DevicesPicker.qml
+    AgentCue.qml
     js/browser.js
 )
 set(hal_c2_bricks_resources

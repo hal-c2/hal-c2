@@ -155,11 +155,15 @@ public:
 
   // Runs `script` in the page; `done` gets its result (undefined as an
   // invalid QVariant). Answered by the brick (evaluated()); dropped with the page.
-  void evaluate(const QString& script, std::function<void(const QVariant&)> done);
+  // `world` is the script world (WebEngineScript: 0 the page's own, 1 the
+  // application's, which shares only the DOM with the page's scripts).
+  void evaluate(const QString& script, std::function<void(const QVariant&)> done, int world = 0);
   // The page's picture as the view draws it, answered by the brick (grabbed()).
   void grab(std::function<void(const QImage&)> done);
   Q_INVOKABLE void evaluated(int request, const QVariant& result);
   Q_INVOKABLE void grabbed(int request, const QImage& image);
+  // What the page logged (WebEngineView's javaScriptConsoleMessage).
+  Q_INVOKABLE void consoleMessage(int level, const QString& message, int line, const QString& source);
 
 signals:
   void previewsChanged();
@@ -175,11 +179,15 @@ signals:
   void loadRequested(const QString& url);
   // For the brick: run `script` and answer evaluated(request, result); take
   // the view's picture and answer grabbed(request, image).
-  void evaluateRequested(int request, const QString& script);
+  void evaluateRequested(int request, const QString& script, int world);
   void grabRequested(int request);
   // A keybinding for the showing page: preview.refresh, preview.focusUrl,
   // preview.zoomIn, preview.zoomOut or preview.resetZoom.
   void commandRequested(const QString& command);
+  // For drivers: the page logged `text` (level info, warning or error), or a
+  // load failed.
+  void logged(const QString& level, const QString& text, const QString& source);
+  void loadFailed(const QString& url, const QString& description);
 
 private:
   void follow();

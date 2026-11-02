@@ -79,6 +79,8 @@ public:
   // The thread shown, and the MC whose events carry its tabs (empty when
   // none does).
   void setThread(const QString& environmentId, const QString& threadId, const QString& mc);
+  QString environmentId() const { return m_environment; }
+  QString threadId() const { return m_thread; }
   // Loads and follows while shown; forgets nothing when hidden.
   void setActive(bool active);
   // Pages open in the app's own browser (above).

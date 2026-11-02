@@ -162,3 +162,4 @@ MaintenanceSettings 1.0 MaintenanceSettings.qml
 BrowserPanel 1.0 BrowserPanel.qml
 BrowserDevicesView 1.0 BrowserDevicesView.qml
 DevicesPicker 1.0 DevicesPicker.qml
+AgentCue 1.0 AgentCue.qml

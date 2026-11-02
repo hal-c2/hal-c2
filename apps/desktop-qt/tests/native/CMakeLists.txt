@@ -126,3 +126,13 @@ hal_c2_add_glob_tests(PATTERN "tst_*Regression.cpp" LABEL regression
   INCLUDES ../../src ../../src/native features
   LIBRARIES hal_c2_native
 )
+# An agent driving a real page (PreviewAutomationHost on QtWebEngine), where
+# this Qt has the web engine.
+find_package(Qt6 6.9 QUIET COMPONENTS WebEngineQuick)
+if(TARGET Qt6::WebEngineQuick)
+  add_executable(tst_PreviewAutomationWeb tst_PreviewAutomationWeb.cpp features/FakeMc.cpp)
+  target_include_directories(tst_PreviewAutomationWeb PRIVATE . features)
+  target_link_libraries(tst_PreviewAutomationWeb PRIVATE hal_c2_native Qt6::Quick Qt6::WebEngineQuick Qt6::Test)
+  add_test(NAME PreviewAutomationWeb COMMAND tst_PreviewAutomationWeb)
+  set_tests_properties(PreviewAutomationWeb PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
+endif()
