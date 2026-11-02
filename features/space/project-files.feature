@@ -553,6 +553,21 @@ Feature: Project files as Space pages
       When the user shows the file of the page "Guide"
       Then the file viewer shows "docs/guide.md" of "shop"
 
+    # A running turn updates its thread's row often; the files change only with the project.
+    @backlog-tui
+    Scenario: A client asks for a project's files once while its thread runs
+      Given the user is browsing the files of "shop"
+      When the thread's row changes 5 times
+      Then the MC is not asked for the files of "shop" again
+
+    # The Files tab of a worktree thread shows the worktree's copy, not the file the page follows.
+    @backlog-tui
+    Scenario: Going to a page's file passes over a thread in a worktree
+      Given the user has opened "docs/guide.md" of "shop" in "Research"
+      And a newer thread of "shop" works in a worktree
+      When the user shows the file of the page "Guide"
+      Then the file viewer shows the project's own "docs/guide.md" of "shop"
+
     Scenario: A page whose file is gone says so
       Given the user has opened "docs/guide.md" of "shop" in "Research"
       And an agent in "shop" deleted "docs/guide.md"

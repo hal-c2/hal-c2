@@ -117,6 +117,8 @@ struct FakeSpaces {
   // because a client showed their page.
   QString scan = QStringLiteral("written");
   int syncs = 0;
+  // How many times a client asked for a project's files.
+  int listings = 0;
   // The link the agent's message has.
   QString link;
   // Whether the thread whose files the user browses works in a worktree of the project.
@@ -547,6 +549,7 @@ Answer filesCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
   const QString project = text(in, QLatin1String("projectId"));
   if (!mc.projects.contains(project)) return refused(QStringLiteral("notFound"), QStringLiteral("There is no project %1 on this MC.").arg(project));
   if (method == QLatin1String("files.list")) {
+    ++fake(mc).listings;
     QJsonArray files;
     const QMap<QString, QString>& contents = fakeFiles(mc).files;
     for (auto it = contents.cbegin(); it != contents.cend(); ++it) {
@@ -3309,6 +3312,39 @@ const Steps steps([] {
       return world.native().controller<NavigationController>()->route().kind == QLatin1String("thread") && filesteps::panel(world)->projectId() == c[1] &&
              filesteps::files(world).openPath() == c[0];
     }, [&] { return QStringLiteral("the Files tab of %1 to show %2; it shows \"%3\" of %4").arg(c[1], c[0], filesteps::files(world).openPath(), filesteps::panel(world)->projectId()); });
+  });
+  step(QStringLiteral("the thread's row changes (\\d+) times"), [](World& world, const Captures& c, const Table&) {
+    fake(world.mc).listings = 0;
+    for (int i = 0; i < c[0].toInt(); ++i) {
+      QJsonObject row = world.mc.threads.value(kThread);
+      row.insert(QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:%1:00Z").arg(i + 1, 2, 10, QLatin1Char('0')));
+      world.mc.threads.insert(kThread, row);
+      world.mc.sendRow(kThread, row);
+    }
+    world.sync();
+  });
+  step(QStringLiteral("the MC is not asked for the files of %1 again").arg(q), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    if (fake(world.mc).listings != 0) fail(QStringLiteral("the MC was asked for them %1 more times").arg(fake(world.mc).listings));
+  });
+  step(QStringLiteral("a newer thread of %1 works in a worktree").arg(q), [](World& world, const Captures& c, const Table&) {
+    ensureProject(world, c[0]);
+    const QString id = QStringLiteral("thread-worktree");
+    world.mc.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), QStringLiteral("Draft")}, {QStringLiteral("projectId"), c[0]},
+                                 {QStringLiteral("worktreePath"), QStringLiteral("/work/%1-worktree").arg(c[0])},
+                                 {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T10:00:00Z")}});
+    world.mc.sendRow(id, world.mc.threads.value(id));
+    world.sync();
+  });
+  step(QStringLiteral("the file viewer shows the project's own %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = world.mc.environmentId + QLatin1Char(':') + kThread;
+    world.waitFor([&] {
+      const auto route = world.native().controller<NavigationController>()->route();
+      return route.kind == QLatin1String("thread") && route.threadKey == key && filesteps::files(world).openPath() == c[0];
+    }, [&] {
+      return QStringLiteral("the Files tab of %1's thread on its folder (%2) to show %3; the route is %4, showing \"%5\"")
+          .arg(c[1], key, c[0], world.native().controller<NavigationController>()->route().threadKey, filesteps::files(world).openPath());
+    });
   });
   step(QStringLiteral("an agent in %1 deleted %1").arg(q), [](World& world, const Captures& c, const Table&) {
     fakeFiles(world.mc).files.remove(c[1]);

@@ -12,6 +12,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <utility>
 
 #include "KeybindingController.h"
 #include "Keybindings.h"
@@ -350,7 +351,10 @@ void RightPanelController::retarget() {
     m_files.setTarget(environmentId, root, threadId);
     // Which of the project's files open in a Space, for the tab's menus and the links.
     m_projectId = row.value(QLatin1String("projectId")).toString();
-    if (auto* spaces = shell->controller<SpaceController>()) spaces->listFiles(environmentId, m_projectId);
+    const QString listed = environmentId + QLatin1Char(':') + m_projectId + QLatin1Char('@') + m_client->environment();
+    if (auto* spaces = shell->controller<SpaceController>(); spaces && std::exchange(m_listedFiles, listed) != listed) {
+      spaces->listFiles(environmentId, m_projectId);
+    }
     m_files.setTimeline(timeline);
     m_pullRequests.setThread(threadKey);
     m_previews.setThread(environmentId, threadId, m_store->mcServing(environmentId));

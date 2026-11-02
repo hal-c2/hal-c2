@@ -211,6 +211,9 @@ private:
   // so coming back finds the tabs as they were.
   QString m_thread;
   QString m_projectId;
+  // Whose files were last asked for (environment, project, the Space's MC): the
+  // store changes on every row frame, and the list only with the project.
+  QString m_listedFiles;
   // The thread is on a worktree of its project, not the project folder.
   bool m_onWorktree = false;
   bool m_onThread = false;

@@ -1,6 +1,7 @@
 #include "SpaceController.h"
 
 #include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -1501,13 +1502,24 @@ void SpaceController::scanFiles(const QString& projectId, bool replace) {
 void SpaceController::showFile(const QString& pageId) {
   const QVariantMap file = fileOf(pageId);
   if (file.isEmpty()) return refuse(tr("This page is not a project file."));
-  // The Files tab is a thread's: the project's latest one shows it.
+  // The Files tab is a thread's: the project's latest one on the project folder
+  // shows the file the page follows; a worktree's copy only when there is no other.
   const QString environment = m_client->environment();
   const QString project = file.value(QStringLiteral("projectId")).toString();
+  const QString root = QDir::cleanPath(m_store->projectRow(environment, project).value(QLatin1String("workspaceRoot")).toString());
+  const auto onRoot = [&](const sidebar::Thread& thread) {
+    const QString worktree = m_store->threadRow(thread.key()).value(QLatin1String("worktreePath")).toString();
+    return worktree.isEmpty() || QDir::cleanPath(worktree) == root;
+  };
   std::optional<sidebar::Thread> latest;
+  bool latestOnRoot = false;
   for (const sidebar::Thread& thread : m_store->threads()) {
     if (thread.environmentId != environment || thread.projectId != project || thread.archivedAt || thread.subagent) continue;
-    if (!latest || thread.updatedAt > latest->updatedAt) latest = thread;
+    const bool here = onRoot(thread);
+    if (!latest || (here && !latestOnRoot) || (here == latestOnRoot && thread.updatedAt > latest->updatedAt)) {
+      latest = thread;
+      latestOnRoot = here;
+    }
   }
   if (!latest) {
     return refuse(tr("Start a thread in %1 to see its files.").arg(file.value(QStringLiteral("projectTitle")).toString()));
