@@ -93,4 +93,40 @@ describe("createMermaidDiagrams", () => {
     diagrams.get("scrolled away 0");
     expect(mc.calls).toHaveLength(311);
   });
+
+  it("asks again, after a wait that doubles, for a diagram the MC failed to draw", async () => {
+    const busy: MermaidRenderResult = {
+      status: "failed",
+      kind: null,
+      reason: "The MC is busy drawing other diagrams; try again.",
+    };
+    const answers: MermaidRenderResult[] = [
+      busy,
+      busy,
+      { status: "drawn", kind: "pie", text: "◔" },
+    ];
+    const mc = fakeMc(async () => answers.shift()!);
+    const waits: Array<() => void> = [];
+    const delays: number[] = [];
+    const diagrams = createMermaidDiagrams(mc, (ms, run) => {
+      delays.push(ms);
+      waits.push(run);
+    });
+    let changes = 0;
+    diagrams.listen(() => changes++);
+    for (let round = 0; round < 3; round++) {
+      diagrams.get("pie");
+      await diagrams.settled();
+      if (round < 2) {
+        expect(diagrams.get("pie")).toEqual(busy);
+        expect(mc.calls).toHaveLength(round + 1);
+        waits.shift()!();
+      }
+    }
+    expect(diagrams.get("pie")).toEqual({ status: "drawn", kind: "pie", text: "◔" });
+    expect(changes).toBe(5);
+    expect(delays).toEqual([10_000, 20_000]);
+    expect(waits).toEqual([]);
+    expect(mc.calls).toHaveLength(3);
+  });
 });
