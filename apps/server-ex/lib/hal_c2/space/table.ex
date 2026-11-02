@@ -10,24 +10,26 @@ defmodule HalC2.Space.Table do
   Every row is written `| a | b |`, each cell padded with spaces to its column's width
   (a longer cell is written whole, so only its row is wider), and the row under the
   header is the alignment marks filling the width, `| :--- |`, or with `tight` filling
-  the spaces beside it too, `|:-----|`. A table made in a page is padded to its widest
-  cell, 3 at least, and is not tight:
+  the spaces beside it too, `|:-----|`. When the marks are wider or narrower than the
+  cells, as in `| a |` over `| --- |`, `ruleWidths` holds their widths. A table made in
+  a page is padded to its widest cell, 3 at least, and is not tight:
 
       | Step | Owner |
       | ---- | ----- |
       | MC   | Ada   |
 
-  A table read from Markdown keeps the widths it was written with, so a padded table
-  comes back as it was, and so does one whose cells are not padded at all over a
-  `|---|` row (its widths are 1). An edit keeps the widths too: it rewrites only the
-  rows it changes.
+  A table read from Markdown keeps the widths it was written with: a column's width is
+  what its padded cells are padded to, or 0 when none is, so a padded table comes back
+  as it was, and so does one whose cells are not padded at all. An edit keeps the
+  widths too: it rewrites only the rows it changes.
   """
 
   @aligns [nil, "left", "center", "right"]
 
   @doc """
-  A table from a map of `rows` and, if given, `align`, `widths` and `tight`: widths
-  left out are each column's widest cell. A cell's spaces around it are dropped.
+  A table from a map of `rows` and, if given, `align`, `widths`, `ruleWidths` and
+  `tight`: widths left out are each column's widest cell. A cell's spaces around it
+  are dropped.
   """
   @spec cast(term) :: {:ok, map} | {:error, String.t()}
   def cast(%{"rows" => [[_ | _] = head | _] = rows} = table) do
@@ -44,7 +46,8 @@ defmodule HalC2.Space.Table do
       not (is_list(align) and length(align) == columns and Enum.all?(align, &(&1 in @aligns))) ->
         {:error, "A table's align is left, center, right or null for each column."}
 
-      not valid_widths?(table["widths"], columns) ->
+      not (valid_widths?(table["widths"], columns) and
+               valid_widths?(table["ruleWidths"], columns)) ->
         {:error, "A table's widths are a number for each column."}
 
       not is_nil(table["tight"]) and not is_boolean(table["tight"]) ->
@@ -53,7 +56,7 @@ defmodule HalC2.Space.Table do
       true ->
         rows = Enum.map(rows, fn row -> Enum.map(row, &String.trim/1) end)
         widths = table["widths"] || Enum.map(by_column(rows), &widest/1)
-        {:ok, made(align, rows, widths, table["tight"] == true)}
+        {:ok, made(align, rows, widths, table["tight"] == true, table["ruleWidths"])}
     end
   end
 
@@ -68,12 +71,16 @@ defmodule HalC2.Space.Table do
       is_list(widths) and length(widths) == columns and
         Enum.all?(widths, &(is_integer(&1) and &1 >= 0))
 
-  # The table, each width at least what its column's marks take.
-  defp made(align, rows, widths, tight) do
-    widths = Enum.zip_with(align, widths, &max(&2, least(&1, tight)))
+  # The table, its marks as wide as `rule` (its widths when nil) and at least what each
+  # column's marks take; `ruleWidths` only when that is not the cells' widths.
+  defp made(align, rows, widths, tight, rule) do
+    rule = Enum.zip_with(align, rule || widths, &max(&2, least(&1, tight)))
     table = %{"align" => align, "rows" => rows, "widths" => widths}
+    table = if rule == widths, do: table, else: Map.put(table, "ruleWidths", rule)
     if tight, do: Map.put(table, "tight", true), else: table
   end
+
+  defp rule_widths(table), do: table["ruleWidths"] || table["widths"]
 
   # The marks of a column take a dash, and a colon for each side it is aligned to.
   defp least(align, tight), do: max(need(align) - if(tight, do: 2, else: 0), 0)
@@ -93,7 +100,7 @@ defmodule HalC2.Space.Table do
     tight = table["tight"] == true
 
     marks =
-      Enum.zip_with(align, widths, fn a, w ->
+      Enum.zip_with(align, rule_widths(table), fn a, w ->
         if tight, do: marks(a, w + 2), else: " " <> marks(a, w) <> " "
       end)
 
@@ -121,14 +128,12 @@ defmodule HalC2.Space.Table do
   """
   @spec read([String.t()]) :: map | nil
   def read([head, rule | body]) do
-    with {:ok, align, widths, tight} <- rule(cells(rule)),
-         rows =
-           Enum.map(
-             [head | body],
-             &(&1 |> cells() |> Enum.map(fn c -> unescape(String.trim(c)) end))
-           ),
-         true <- Enum.all?(rows, &(length(&1) == length(align))) do
-      made(align, rows, widths, tight)
+    with {:ok, align, rule_widths, tight} <- rule(cells(rule)),
+         written = Enum.map([head | body], &cells/1),
+         true <- Enum.all?(written, &(length(&1) == length(align))) do
+      rows = Enum.map(written, fn row -> Enum.map(row, &unescape(String.trim(&1))) end)
+      widths = Enum.map(by_column(written), &padded_to/1)
+      made(align, rows, widths, tight, rule_widths)
     else
       _ -> nil
     end
@@ -148,6 +153,16 @@ defmodule HalC2.Space.Table do
         else: line
 
     Regex.split(~r/(?<!\\)\|/, line)
+  end
+
+  # What a column's cells, as written, are padded to: the least width that writes each
+  # of them as it was, so 0 when none is padded.
+  defp padded_to(cells) do
+    widest = cells |> Enum.map(&String.length/1) |> Enum.max()
+
+    Enum.find(0..widest//1, 0, fn width ->
+      Enum.all?(cells, &(&1 == " " <> String.pad_trailing(String.trim(&1), width) <> " "))
+    end)
   end
 
   defp rule(cells) do
@@ -223,7 +238,8 @@ defmodule HalC2.Space.Table do
            List.insert_at(as, at, align),
            Enum.map(rows, &List.insert_at(&1, at, "")),
            List.insert_at(widths, at, 3),
-           table["tight"] == true
+           table["tight"] == true,
+           List.insert_at(rule_widths(table), at, 3)
          )}
     end
   end
@@ -240,12 +256,13 @@ defmodule HalC2.Space.Table do
         %{"align" => as, "rows" => rows, "widths" => widths} = table
 
         {:ok,
-         %{
-           table
-           | "align" => List.delete_at(as, c),
-             "rows" => Enum.map(rows, &List.delete_at(&1, c)),
-             "widths" => List.delete_at(widths, c)
-         }}
+         made(
+           List.delete_at(as, c),
+           Enum.map(rows, &List.delete_at(&1, c)),
+           List.delete_at(widths, c),
+           table["tight"] == true,
+           List.delete_at(rule_widths(table), c)
+         )}
     end
   end
 
@@ -259,7 +276,9 @@ defmodule HalC2.Space.Table do
 
       true ->
         align = List.replace_at(table["align"], c, edit["align"])
-        {:ok, made(align, table["rows"], table["widths"], table["tight"] == true)}
+
+        {:ok,
+         made(align, table["rows"], table["widths"], table["tight"] == true, rule_widths(table))}
     end
   end
 

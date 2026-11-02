@@ -86,6 +86,8 @@ defmodule HalC2.SpaceMarkdownTest do
     test "a table comes back padded, compact or tight as it was written" do
       for table <- [
             "| a | b |\n|---|---|\n| 1 | 2 |",
+            "| a | b |\n| --- | --- |\n| 1 | 2 |",
+            "| Name     | Note |\n| --- | :-: |\n| x        | y    |\n| a longer one | four |",
             "| Name | Note |\n|------|------|\n| x    | a longer note |",
             "| a | b |\n|:-:|--:|\n| 1 | 2 |",
             "| Pipe | Code |\n| ---- | ---- |\n| a \\| b | `x`  |"
@@ -100,7 +102,7 @@ defmodule HalC2.SpaceMarkdownTest do
 
     test "a table written another way is raw" do
       for table <- [
-            "| a | b |\n| --- | --- |\n| 1 | 2 |",
+            "| a | b |\n| --- | --- |\n|  1 | 2 |",
             "a | b\n--- | ---\n1 | 2",
             "| a | b |\n|---|---|\n| 1 |",
             "| Total |\n| ----: |\n|    12 |"
@@ -117,6 +119,19 @@ defmodule HalC2.SpaceMarkdownTest do
                "| Step | Owner  |\n| ---- | ------ |\n| MC   | a \\| b |"
 
       assert Table.read(String.split(Table.markdown(table), "\n")) == table
+    end
+
+    test "cells not padded stay so, whatever the rule row's width" do
+      [%{"table" => table}] = Markdown.blocks("| Step | Owner |\n| --- | --- |\n| MC | Ada |")
+      assert %{"widths" => [0, 0], "ruleWidths" => [3, 3]} = table
+
+      {:ok, edited} =
+        Table.edit(table, %{"type" => "setCell", "row" => 1, "column" => 1, "text" => "Barbara"})
+
+      assert Table.markdown(edited) == "| Step | Owner |\n| --- | --- |\n| MC | Barbara |"
+      {:ok, wider} = Table.edit(table, %{"type" => "insertColumn", "at" => 2})
+      {:ok, back} = Table.edit(wider, %{"type" => "deleteColumn", "column" => 2})
+      assert back == table
     end
 
     test "an edit rewrites only the rows it changes" do

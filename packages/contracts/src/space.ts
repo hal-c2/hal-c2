@@ -156,14 +156,15 @@ export type SpaceTableAlign = typeof SpaceTableAlign.Type;
 
 /**
  * A table: the header row first in `rows`, every row a cell per column, each cell one
- * line of inline Markdown. `widths` (how wide its Markdown pads each column) and `tight`
- * (its rule row has no spaces) keep the Markdown as it was written; clients do not show
- * them.
+ * line of inline Markdown. `widths` (how wide its Markdown pads each column),
+ * `ruleWidths` (how wide its rule row's marks are, when not `widths`) and `tight` (its
+ * rule row has no spaces) keep the Markdown as it was written; clients do not show them.
  */
 export const SpaceTable = Schema.Struct({
   align: Schema.Array(SpaceTableAlign),
   rows: Schema.Array(Schema.Array(Schema.String)),
   widths: Schema.Array(Schema.Int),
+  ruleWidths: Schema.optional(Schema.Array(Schema.Int)),
   tight: Schema.optional(Schema.Boolean),
 });
 export type SpaceTable = typeof SpaceTable.Type;

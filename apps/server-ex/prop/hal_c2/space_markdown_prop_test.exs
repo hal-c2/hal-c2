@@ -8,8 +8,8 @@ defmodule HalC2.SpaceMarkdownPropTest do
   - a document with a title on top imports as a page of that title and exports as it was;
   - writing back what was written back changes nothing more;
   - every block is a kind a page has, and every heading has a level;
-  - a table (`HalC2.Space.Table`) reads back from its Markdown as itself, before and after
-    any edits, an edit of a cell rewrites only its row, and adding a row or a column then
+  - a table (`HalC2.Space.Table`) reads back from its Markdown as the same cells writing
+    the same Markdown, before and after any edits, an edit of a cell rewrites only its row, and adding a row or a column then
     removing it gives the table back;
   - a code block reads back from its Markdown as itself, whatever its text holds.
   """
@@ -203,20 +203,27 @@ defmodule HalC2.SpaceMarkdownPropTest do
   defp cell, do: oneof([elements(@cells), utf8(6)])
 
   defp table do
-    let [columns, rows, tight, widths?] <- [
+    let [columns, rows, tight, widths?, rule?] <- [
           integer(1, 4),
           integer(0, 3),
           boolean(),
+          boolean(),
           boolean()
         ] do
-      let [rows, align, widths] <- [
+      let [rows, align, widths, rule] <- [
             vector(rows + 1, vector(columns, cell())),
             vector(columns, elements([nil, "left", "center", "right"])),
+            vector(columns, integer(0, 8)),
             vector(columns, integer(0, 8))
           ] do
         rows = Enum.map(rows, fn row -> Enum.map(row, &String.replace(&1, ~r/[\r\n]/, "")) end)
-        spec = %{"rows" => rows, "align" => align, "tight" => tight}
-        {:ok, table} = Table.cast(if(widths?, do: Map.put(spec, "widths", widths), else: spec))
+
+        spec =
+          %{"rows" => rows, "align" => align, "tight" => tight}
+          |> then(&if(widths?, do: Map.put(&1, "widths", widths), else: &1))
+          |> then(&if(rule?, do: Map.put(&1, "ruleWidths", rule), else: &1))
+
+        {:ok, table} = Table.cast(spec)
         table
       end
     end
@@ -247,14 +254,19 @@ defmodule HalC2.SpaceMarkdownPropTest do
   defp edit_of({:deleteColumn, c}), do: %{"type" => "deleteColumn", "column" => c}
   defp edit_of({:setAlign, c, a}), do: %{"type" => "setAlign", "column" => c, "align" => a}
 
+  # Its Markdown reads as a table of the same cells that writes that Markdown again, and
+  # as one table block of it. Widths a table's Markdown does not show (a column whose
+  # cells are all as wide as it or wider) need not come back.
   defp reads_back?(table) do
     markdown = Table.markdown(table)
+    read = Table.read(String.split(markdown, "\n"))
+    same = &Map.take(&1, ~w(align rows tight))
 
-    Table.read(String.split(markdown, "\n")) == table and
-      match?([%{"kind" => "table", "table" => ^table}], Markdown.blocks(markdown))
+    read != nil and same.(read) == same.(table) and Table.markdown(read) == markdown and
+      match?([%{"kind" => "table", "table" => ^read}], Markdown.blocks(markdown))
   end
 
-  property "a table reads back as itself, before and after any edits",
+  property "a table reads back as the same table, before and after any edits",
     numtests: HalC2.Prop.numtests(500) do
     forall {table, edits} <- {table(), list(table_edit())} do
       tables =

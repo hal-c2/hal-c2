@@ -252,10 +252,11 @@ Feature: GitHub Markdown in a page
       Then each heading is smaller than the one of the level above it
 
   # A table is its cells and how its columns align. Its Markdown keeps the widths it was
-  # written with: a padded table comes back padded, a compact one compact, and editing a
-  # cell writes only that cell's row again. A table made in a page is padded to its widest
-  # cell. A table its own form would not write back exactly (rows of other lengths, a
-  # rule row spaced unlike its cells) is kept as written.
+  # written with, the cells' and the rule row's apart: a padded table comes back padded,
+  # one with unpadded cells unpadded, and editing a cell writes only that cell's row
+  # again. A table made in a page is padded to its widest cell. A table its own form would
+  # not write back exactly (rows of other lengths, no pipes at the ends, cells padded on
+  # the left) is kept as written.
   Rule: Tables
 
     @mc
@@ -272,6 +273,38 @@ Feature: GitHub Markdown in a page
       And the table of "Plan" has the rows:
         | Step | Owner | Done |
         | MC   | Ada   | yes  |
+
+    @mc
+    Scenario: A table keeps the spacing it was written with
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        | Step | Owner |
+        | --- | --- |
+        | MC | Ada |
+
+        | Step     | Owner |
+        |---|---|
+        | MC       | Ada   |
+        | Lovelace | Grace |
+        """
+      Then the blocks of "Plan" are of the kinds "table, table"
+      When the user changes the "Owner" of "MC" in the table of "Plan" to "Barbara"
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner |
+        | --- | --- |
+        | MC | Barbara |
+
+        | Step     | Owner |
+        |---|---|
+        | MC       | Ada   |
+        | Lovelace | Grace |
+        """
 
     @mc
     Scenario: A column keeps its alignment
@@ -405,9 +438,9 @@ Feature: GitHub Markdown in a page
         --- | ---
         1 | 2
 
-        | a | b |
-        | --- | --- |
-        | 1 | 2 |
+        | Total |
+        | ----: |
+        |    12 |
         """
       Then the blocks of "Plan" are of the kinds "raw, raw, raw"
       When the user exports "Plan" as Markdown
@@ -423,9 +456,9 @@ Feature: GitHub Markdown in a page
         --- | ---
         1 | 2
 
-        | a | b |
-        | --- | --- |
-        | 1 | 2 |
+        | Total |
+        | ----: |
+        |    12 |
         """
 
     # https://github.com/hal-c2/hal-c2/issues/854
