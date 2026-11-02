@@ -11,7 +11,11 @@ defmodule HalC2.SpaceMarkdownPropTest do
   - a table (`HalC2.Space.Table`) reads back from its Markdown as the same cells writing
     the same Markdown, before and after any edits, an edit of a cell rewrites only its row, and adding a row or a column then
     removing it gives the table back;
-  - a code block reads back from its Markdown as itself, whatever its text holds.
+  - a code block reads back from its Markdown as itself, whatever its text holds;
+  - list items the page writes, however nested, numbered and marked, read back as the
+    same items writing the same Markdown;
+  - a callout, alert or not, however its blank lines are written, and a divider, however
+    its rule is, read back as themselves.
   """
 
   use ExUnit.Case, async: true
@@ -47,6 +51,19 @@ defmodule HalC2.SpaceMarkdownPropTest do
     ">",
     ">lazy quote",
     "> [!NOTE]",
+    "> [!WARNING]",
+    "> [!tip]",
+    "- - -",
+    "* * *",
+    "___",
+    "  continued text",
+    "   1. three in",
+    "2. second",
+    "4) fourth",
+    "-",
+    "1.",
+    "- [ ] ",
+    "      - six in",
     "| a | b |",
     "| :- | -: |",
     "|---|---|",
@@ -358,6 +375,117 @@ defmodule HalC2.SpaceMarkdownPropTest do
              fields.(if(block["info"] == "", do: Map.delete(block, "info"), else: block)))
         |> when_fail(IO.puts("block: #{inspect(block)}\nread: #{inspect(read)}"))
       end
+    end
+  end
+
+  # --- lists, callouts and dividers -----------------------------------------------------
+
+  @item_texts ["Tag", "Ship it", "", "two\nlines", "a\n\nparagraph", "```\n- x\n```", "**bold**"]
+
+  defp list_item do
+    let [kind, depth, indent, text, marker, start, checked] <- [
+          elements(["bullet", "numbered", "checklist"]),
+          integer(0, 4),
+          oneof([nil, integer(0, 9)]),
+          elements(@item_texts),
+          elements([nil, "*", "+", ")"]),
+          oneof([nil, integer(0, 12)]),
+          boolean()
+        ] do
+      # A task's text starts as a paragraph after its `[ ]`, so it cannot open with code.
+      text = if kind == "checklist" and String.starts_with?(text, "```"), do: "Tag", else: text
+
+      %{"kind" => kind, "text" => text, "depth" => depth}
+      |> then(&if(indent, do: Map.put(&1, "indent", indent), else: &1))
+      |> then(&if(kind == "checklist", do: Map.put(&1, "checked", checked), else: &1))
+      |> then(&if(kind == "numbered" and start, do: Map.put(&1, "start", start), else: &1))
+      |> then(&if(marker(kind, marker), do: Map.put(&1, "marker", marker), else: &1))
+    end
+  end
+
+  defp marker("bullet", marker) when marker in ["*", "+"], do: true
+  defp marker("numbered", ")"), do: true
+  defp marker(_kind, _marker), do: false
+
+  # A page's blocks around its lists: items, now and then a paragraph or a divider.
+  defp list_blocks do
+    resize(
+      12,
+      list(
+        frequency([
+          {8, list_item()},
+          {1, exactly(%{"kind" => "paragraph", "text" => "Between"})},
+          {1, divider()}
+        ])
+      )
+    )
+  end
+
+  # A divider, written `---` or as a rule it keeps.
+  defp divider do
+    let marker <- elements([nil, "***", "___", "- - -", "----", "* * *"]) do
+      if marker,
+        do: %{"kind" => "divider", "text" => "", "marker" => marker},
+        else: %{"kind" => "divider", "text" => ""}
+    end
+  end
+
+  # Each item as it is written: its kind, text, tick, depth and number.
+  defp items(blocks) do
+    blocks
+    |> Enum.zip(Markdown.list_items(blocks))
+    |> Enum.map(fn
+      {block, nil} -> {block["kind"], block["text"], block["marker"]}
+      {block, item} -> {block["kind"], block["text"], checked(block), item.depth, item.number}
+    end)
+  end
+
+  defp checked(%{"kind" => "checklist", "checked" => checked}), do: checked
+  defp checked(_block), do: nil
+
+  # A page's Markdown, under its title, and the blocks it reads back as.
+  defp page(blocks) do
+    written = Markdown.export(%{"title" => "Plan"}, blocks, fn _ -> nil end)
+    {"Plan", read} = Markdown.parse(written)
+    {written, read}
+  end
+
+  property "list items the page writes read back as the same items",
+    numtests: HalC2.Prop.numtests(500) do
+    forall blocks <- list_blocks() do
+      {written, read} = page(blocks)
+
+      (items(read) == items(blocks) and elem(page(read), 0) == written)
+      |> when_fail(
+        IO.puts("""
+        blocks:  #{inspect(blocks)}
+        written: #{inspect(written)}
+        read:    #{inspect(read)}
+        """)
+      )
+    end
+  end
+
+  property "a callout and a divider read back as themselves",
+    numtests: HalC2.Prop.numtests(500) do
+    forall {text, alert, marker, divider} <-
+             {elements(["a line  \nbroken" | @item_texts]), elements([nil | Markdown.alerts()]),
+              elements([nil, "> "]), divider()} do
+      callout =
+        %{"kind" => "callout", "text" => text}
+        |> then(&if(alert, do: Map.put(&1, "alert", alert), else: &1))
+        |> then(
+          &if(marker && String.contains?(text, "\n\n"),
+            do: Map.put(&1, "marker", marker),
+            else: &1
+          )
+        )
+
+      blocks = [callout, divider]
+      {_, read} = page(blocks)
+
+      (Enum.map(read, &Map.take(&1, ~w(kind text alert marker))) == blocks)
+      |> when_fail(IO.puts("blocks: #{inspect(blocks)}\nread: #{inspect(read)}"))
     end
   end
 end
