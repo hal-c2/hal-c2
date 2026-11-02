@@ -23,8 +23,8 @@ defmodule HalC2.Mermaid do
   wait for that drawing. At most `:limit` drawings run at once, the rest in the order
   asked for; one still waiting for its turn after `:wait` ms is dropped and its callers
   told the MC is busy, so every caller is answered well inside `render/2`'s call timeout.
-  A diagram not started yet whose callers have all gone (their process ended) is
-  dropped; one being drawn is finished and kept. A `"failed"` result is not kept, so
+  A diagram not started yet whose callers have all gone (a caller's process, or the
+  socket it asks for, ended) is dropped; one being drawn is finished and kept. A `"failed"` result is not kept, so
   the next caller tries again.
   """
   use GenServer
@@ -52,12 +52,12 @@ defmodule HalC2.Mermaid do
 
   @doc """
   Serves `mermaid.render`: `{"source", "format"?: "svg" | "text", "theme"?: "light" |
-  "dark"}`.
+  "dark"}`, for `owner` (the asking socket) when given.
   """
-  @spec handle(term) :: {:ok, map} | {:error, String.t()}
-  def handle(input) do
+  @spec handle(term, pid | nil) :: {:ok, map} | {:error, String.t()}
+  def handle(input, owner \\ nil) do
     case request(input) do
-      {:ok, request} -> {:ok, render(request)}
+      {:ok, request} -> {:ok, render(__MODULE__, request, owner)}
       {:error, _} = error -> error
     end
   end
@@ -77,15 +77,19 @@ defmodule HalC2.Mermaid do
 
   def request(_input), do: {:error, "source must be a string"}
 
-  @doc "Draws `request`, or returns what was drawn for it before."
-  @spec render(GenServer.server(), request) :: map
-  def render(server \\ __MODULE__, request)
+  @doc """
+  Draws `request`, or returns what was drawn for it before. The caller waits while
+  `owner` (by default the caller) lives; when it ends, a diagram no one else waits for is
+  not drawn.
+  """
+  @spec render(GenServer.server(), request, pid | nil) :: map
+  def render(server \\ __MODULE__, request, owner \\ nil)
 
-  def render(_server, %{source: source}) when byte_size(source) > @max_source,
+  def render(_server, %{source: source}, _owner) when byte_size(source) > @max_source,
     do: result("invalid", nil, "This diagram is too long to draw.")
 
-  def render(server, request) do
-    GenServer.call(server, {:render, request}, @call_timeout)
+  def render(server, request, owner) do
+    GenServer.call(server, {:render, request, owner}, @call_timeout)
   catch
     :exit, {:timeout, _} -> failed("This diagram took too long to draw.")
   end
@@ -182,7 +186,11 @@ defmodule HalC2.Mermaid do
   end
 
   @impl true
-  def handle_call({:render, request}, from, state) do
+  def handle_call({:render, request}, from, state),
+    do: handle_call({:render, request, nil}, from, state)
+
+  def handle_call({:render, request, owner}, {caller, _} = from, state) do
+    owner = owner || caller
     key = :crypto.hash(:sha256, [request.format, 0, request.theme, 0, request.source])
 
     cond do
@@ -190,13 +198,13 @@ defmodule HalC2.Mermaid do
         {:reply, state.cache[key], state}
 
       Map.has_key?(state.waiting, key) ->
-        {:noreply, wait(state, key, from)}
+        {:noreply, wait(state, key, from, owner)}
 
       true ->
         ref = make_ref()
         Process.send_after(self(), {:waited_too_long, ref}, state.wait)
         state = %{state | queued: :queue.in({key, request, ref}, state.queued)}
-        {:noreply, start_next(wait(state, key, from))}
+        {:noreply, start_next(wait(state, key, from, owner))}
     end
   end
 
@@ -214,11 +222,13 @@ defmodule HalC2.Mermaid do
       when is_map_key(state.running, ref),
       do: {:noreply, finish(state, ref, failed("The diagram renderer failed."), false)}
 
-  # A caller gone: no one to answer. A diagram not started with no one left is dropped.
+  # A caller gone, or its socket: its caller, if alive, is let go. A diagram not started
+  # with no one left is dropped.
   def handle_info({:DOWN, monitor, :process, _pid, _reason}, state)
       when is_map_key(state.callers, monitor) do
     {key, callers} = Map.pop(state.callers, monitor)
-    left = Enum.reject(state.waiting[key], &match?({_, ^monitor}, &1))
+    {[{from, _}], left} = Enum.split_with(state.waiting[key], &match?({_, ^monitor}, &1))
+    GenServer.reply(from, failed("The client asking for this diagram has gone."))
     state = %{state | callers: callers, waiting: Map.put(state.waiting, key, left)}
 
     case {left, Enum.split_with(:queue.to_list(state.queued), &match?({^key, _, _}, &1))} do
@@ -274,9 +284,9 @@ defmodule HalC2.Mermaid do
     start_next(state)
   end
 
-  # Watches the caller, so a caller gone does not keep its diagram queued.
-  defp wait(state, key, {pid, _} = from) do
-    monitor = Process.monitor(pid)
+  # Watches the owner, so a caller gone does not keep its diagram queued.
+  defp wait(state, key, from, owner) do
+    monitor = Process.monitor(owner)
 
     %{
       state
