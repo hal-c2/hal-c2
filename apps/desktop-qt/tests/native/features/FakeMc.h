@@ -108,6 +108,9 @@ public:
   bool holding(const QString& what) const { return m_holds.contains(what); }
   void defer(std::function<void()> answer) { m_held.append(std::move(answer)); }
   void answerHeld();
+  // Sends the oldest held answer alone, leaving the rest and every hold.
+  void answerOldestHeld() { m_held.takeFirst()(); }
+  qsizetype heldAnswers() const { return m_held.size(); }
   // While set, row frames wait (versioned as they are made) until catchUp():
   // an answer reaches the client before the rows it changed.
   bool lagRows = false;

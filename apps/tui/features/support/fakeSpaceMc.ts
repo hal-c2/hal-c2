@@ -4,7 +4,7 @@
 // follows. One fake serves every client of a scenario, so a second client sees
 // the first one's edits as they land; `restart` sends each watcher a fresh
 // snapshot, as a reconnection after an MC restart does.
-import type { SpaceAuthor } from "@hal-c2/contracts";
+import type { SpaceAuthor, SpacePresenceViewer } from "@hal-c2/contracts";
 import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 
 import type { FakeSettingsMc } from "./fakeSettingsMc.ts";
@@ -73,6 +73,8 @@ export interface FakeSpaceMc {
   readonly commentsOf: (pageId: string) => Entity[];
   /** What text generation does when a page is made from a thread. */
   generation: FakeGeneration;
+  /** The chart the next `space.block.visualize` draws; null when it cannot be answered. */
+  chart: Entity | null;
   /** What image generation does. */
   imageGeneration: FakeImageGeneration;
   /** Where each summary was written: the folder of the thread the request named. */
@@ -91,6 +93,44 @@ export interface FakeSpaceMc {
   lastChanges: ReadonlyArray<Change>;
   /** Every watcher gets a fresh snapshot, as after a reconnection. */
   readonly restart: () => void;
+  /** Longer than the pause that ends a version: the next edit starts another. */
+  readonly aWhilePasses: () => void;
+  /** The agent of a page ends by itself, as its thread's turn does on the MC. */
+  readonly agentEnds: (
+    pageId: string,
+    status: "completed" | "failed" | "stopped",
+    error?: string,
+  ) => void;
+  /** The agent of a page comes to name a thread this client does not have. */
+  readonly agentThreadGone: (pageId: string) => void;
+  /** The next ask is refused, as when another client asked first. */
+  readonly refuseNextAsk: () => void;
+  /** Stops from now on leave an agent stopping, as a provider that ignores them does. */
+  readonly ignoreStops: () => void;
+  /** How many stops the MC was asked for. */
+  readonly stopsAsked: () => number;
+  /** Another device comes to the page, and goes from wherever it is. */
+  readonly deviceOn: (pageId: string, device: string) => void;
+  readonly deviceGone: (device: string) => void;
+  /** Answers the followers of every page again, as a reconnect's subscribe does. */
+  readonly retellViewers: () => void;
+  /** An agent, by its thread's title, comes to the page, and goes from wherever it is. */
+  readonly agentOn: (pageId: string, title: string) => void;
+  readonly agentGone: (title: string) => void;
+  /** How many clients are on the page. */
+  readonly clientsOn: (pageId: string) => number;
+}
+
+/** One author's run of edits on a page, with what the page held at its end. */
+interface FakeVersion {
+  readonly version: number;
+  at: string;
+  readonly author: SpaceAuthor;
+  readonly restoredFromAt: string | null;
+  /** Which stretch of time it was written in; a later one starts another version. */
+  readonly stretch: number;
+  title: string;
+  blocks: Entity[];
 }
 
 const DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz";
@@ -210,9 +250,15 @@ function parseMarkdown(markdown: string): { title: string | null; blocks: Entity
 
 /**
  * A fake MC's Spaces. `cwdOf` names the folder a thread's summary is written in
- * (its worktree or its project's), null when the MC has no such thread.
+ * (its worktree or its project's), null when the MC has no such thread; `titleOf`
+ * names a thread for the history, null when the MC has no such thread.
  */
-export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => string | null }) {
+export function fakeSpaceMc(options: {
+  readonly cwdOf: (threadId: string) => string | null;
+  readonly titleOf: (threadId: string) => string | null;
+  /** The thread an ask on a page runs in; the real MC starts a new one. */
+  readonly agentThreadId: () => string;
+}) {
   const spaces = new Map<string, Entity>();
   // Per Space: its pages, blocks and comments, each in creation order.
   const content = new Map<string, Map<string, Map<string, Entity>>>();
@@ -220,9 +266,39 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
   // What `attachments.createUploadUrl` signed, and the bytes sent to it; an upload is taken once.
   const uploads = new Map<string, { name: string; mimeType: string; bytes: Uint8Array | null }>();
   const watchers = new Map<string, Set<Watcher>>();
+  // Who is on each page, and the clients to tell.
+  const devicesOn = new Map<string, Set<string>>();
+  const agentsOn = new Map<string, Set<string>>();
+  const pageClients = new Map<string, Set<(viewers: ReadonlyArray<SpacePresenceViewer>) => void>>();
+  const viewersOf = (pageId: string) => {
+    const devices = [...(devicesOn.get(pageId) ?? [])].sort();
+    const agents = [...(agentsOn.get(pageId) ?? [])];
+    return [
+      ...(devices.length > 0 ? [{ type: "user", devices }] : []),
+      ...agents.map((title) => ({ type: "agent", threadId: `thread-${title}`, title })),
+    ] as ReadonlyArray<SpacePresenceViewer>;
+  };
+  const tellPage = (pageId: string) => {
+    for (const client of pageClients.get(pageId) ?? []) client(viewersOf(pageId));
+  };
+  const on = (who: Map<string, Set<string>>, pageId: string, name: string) => {
+    let names = who.get(pageId);
+    if (!names) who.set(pageId, (names = new Set()));
+    names.add(name);
+    tellPage(pageId);
+  };
+  const gone = (who: Map<string, Set<string>>, name: string) => {
+    for (const [pageId, names] of who) if (names.delete(name)) tellPage(pageId);
+  };
   let ids = 0;
   let clock = Date.parse("2026-07-15T12:00:00.000Z");
   const user: SpaceAuthor = { type: "user" };
+  /** A page's update writes as itself, whoever ran it. */
+  const update: SpaceAuthor = { type: "schedule" };
+  // Each page's versions, oldest first: what space/history.ex folds from the log.
+  const versions = new Map<string, FakeVersion[]>();
+  let versionSeq = 0;
+  let stretch = 0;
 
   const now = () => new Date((clock += 1000)).toISOString();
   const nextId = (prefix: string) => `${prefix}-${(ids += 1)}`;
@@ -234,6 +310,7 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
         ["page", new Map()],
         ["block", new Map()],
         ["comment", new Map()],
+        ["pageAgent", new Map()],
         ["deck", new Map()],
         ["slide", new Map()],
         ["site", new Map()],
@@ -449,6 +526,77 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     return orderBetween(blocks[index]!.order, blocks[index + 1]?.order ?? null);
   };
 
+  // --- a page's history ---
+
+  /** A page's title and blocks, as a version holds them. */
+  const pageContent = (spaceId: string, entry: Entity) => ({
+    title: entry.title as string,
+    blocks: blocksOf(spaceId, entry.id).map((block) => ({ ...block })),
+  });
+  /** What makes two versions differ: not who wrote a block, nor when. */
+  const sameContent = (a: ReturnType<typeof pageContent>, b: ReturnType<typeof pageContent>) => {
+    const authorship = new Set(["updatedBy", "updatedAt", "createdBy", "createdAt"]);
+    const words = ({ title, blocks }: ReturnType<typeof pageContent>) =>
+      JSON.stringify([title, blocks], (key, value) => (authorship.has(key) ? undefined : value));
+    return words(a) === words(b);
+  };
+  const addVersion = (
+    list: FakeVersion[],
+    content: ReturnType<typeof pageContent>,
+    author: SpaceAuthor,
+    restoredFromAt: string | null,
+  ) => {
+    list.push({
+      version: (versionSeq += 1),
+      at: now(),
+      author,
+      restoredFromAt,
+      stretch,
+      ...content,
+    });
+  };
+  /** After a write: it grows the newest version of each page it changed, or starts another. */
+  const noteVersions = (spaceId: string, by: SpaceAuthor) => {
+    for (const entry of pages(spaceId)) {
+      const list = versions.get(entry.id) ?? [];
+      versions.set(entry.id, list);
+      const content = pageContent(spaceId, entry);
+      const last = list.at(-1);
+      if (last && sameContent(last, content)) continue;
+      const sameRun =
+        last &&
+        last.restoredFromAt === null &&
+        last.stretch === stretch &&
+        JSON.stringify(last.author) === JSON.stringify(by);
+      if (sameRun) {
+        Object.assign(last, content, { at: now() });
+      } else addVersion(list, content, by, null);
+    }
+  };
+  const versionsOf = (input: Entity) => versions.get(page(input.spaceId, input.pageId).id) ?? [];
+  const versionOf = (input: Entity) =>
+    versionsOf(input).find((entry) => entry.version === input.version) ??
+    refuse("not_found", `There is no version ${String(input.version)} of this page.`);
+
+  // --- a page's update ---
+
+  const updatedPage = (spaceId: string, pageId: string) => {
+    const found = livePage(spaceId, pageId);
+    if (!found.schedule) refuse("not_found", "This page has no update.");
+    return found;
+  };
+
+  const generatedOf = (spaceId: string, pageId: string) =>
+    [...table(spaceId, "block").values()].find(
+      (block) => block.pageId === pageId && block.kind === "generated",
+    );
+
+  // `schedule` arrives whole, as the MC's does.
+  const showUpdate = (spaceId: string, pageId: string, fields: Entity) => {
+    const schedule = { ...table(spaceId, "page").get(pageId)?.schedule, ...fields };
+    commit(`space:${spaceId}`, [["page", pageId, { s: { schedule } }]]);
+  };
+
   // --- writes ---
 
   const newPage = (spaceId: string, title: unknown, parent: unknown, extra: Entity = {}) => {
@@ -557,7 +705,77 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     return [["space", personal.id, { s: personal }]];
   };
 
+  /** Ends the page's agent; like the MC, edited says whether its thread wrote to the page. */
+  const endAgent = (spaceId: string, pageId: string, status: string, error: string | null) => {
+    const threadId = table(spaceId, "pageAgent").get(pageId)!.threadId;
+    const edited = blocksOf(spaceId, pageId).some(
+      (entry) => entry.createdBy.type === "agent" && entry.createdBy.threadId === threadId,
+    );
+    commit(`space:${spaceId}`, [
+      ["pageAgent", pageId, { s: { status, edited, error, endedAt: now() } }],
+    ]);
+    return { agent: table(spaceId, "pageAgent").get(pageId) };
+  };
+  let refusingAsk = false;
+  let ignoringStops = false;
+  let stops = 0;
+  const isRunning = (agent: Entity | undefined) => agent !== undefined && agent.endedAt === null;
+
   const methods: Record<string, (input: Entity, by: SpaceAuthor) => unknown> = {
+    "space.page.askAgent": (input) => {
+      if (refusingAsk) {
+        refusingAsk = false;
+        refuse("invalid", "An agent is already working on this page.");
+      }
+      const found = livePage(input.spaceId, input.pageId);
+      const request = String(input.request)
+        .replace(/^@agent\b/i, "")
+        .trim();
+      if (request === "") refuse("invalid", "Say what the agent should do.");
+      if (isRunning(table(input.spaceId, "pageAgent").get(found.id))) {
+        refuse("invalid", "An agent is already working on this page.");
+      }
+      commit(`space:${input.spaceId}`, [
+        [
+          "pageAgent",
+          found.id,
+          {
+            s: {
+              id: found.id,
+              pageId: found.id,
+              threadId: options.agentThreadId(),
+              request,
+              status: "running",
+              edited: false,
+              error: null,
+              startedAt: now(),
+              endedAt: null,
+            },
+          },
+        ],
+      ]);
+      return { agent: table(input.spaceId, "pageAgent").get(found.id) };
+    },
+    "space.page.stopAgent": (input) => {
+      if (!isRunning(table(input.spaceId, "pageAgent").get(input.pageId))) {
+        refuse("invalid", "No agent is working on this page.");
+      }
+      stops += 1;
+      if (ignoringStops) {
+        commit(`space:${input.spaceId}`, [
+          ["pageAgent", input.pageId, { s: { status: "stopping" } }],
+        ]);
+        return { agent: table(input.spaceId, "pageAgent").get(input.pageId) };
+      }
+      return endAgent(input.spaceId, input.pageId, "stopped", null);
+    },
+    "space.page.dismissAgent": (input) => {
+      if (isRunning(table(input.spaceId, "pageAgent").get(input.pageId))) {
+        refuse("invalid", "The agent is still working on this page.");
+      }
+      commit(`space:${input.spaceId}`, [["pageAgent", input.pageId, { d: true }]]);
+      return { pageId: input.pageId };
+    },
     "space.list": () => {
       commit("spaces", seeded());
       return { spaces: [...spaces.values()] };
@@ -729,6 +947,141 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
         agent,
       );
     },
+    "space.page.history": (input) => {
+      const newestFirst = versionsOf(input).toReversed();
+      const from =
+        input.before === undefined
+          ? newestFirst
+          : newestFirst.filter((entry) => entry.version < input.before);
+      const stretchOf = from.slice(0, input.limit ?? 30);
+      return {
+        versions: stretchOf.map(({ version, at, author, restoredFromAt }) => ({
+          version,
+          at,
+          author,
+          threadTitle: author.type === "agent" ? options.titleOf(author.threadId) : null,
+          restoredFromAt,
+        })),
+        nextBefore: from.length > stretchOf.length ? stretchOf.at(-1)!.version : null,
+      };
+    },
+    "space.page.version": (input) => {
+      const { version, at, title, blocks } = versionOf(input);
+      return { version, at, title, blocks };
+    },
+    "space.page.restoreVersion": (input, by) => {
+      const found = livePage(input.spaceId, input.pageId);
+      const source = versionOf(input);
+      const at = now();
+      // HalC2.Space.History.restore/5 never writes a generated part: the page's stays as it
+      // is, a page that updates itself takes none of a version's, and any other gets it
+      // back as the block it reads as.
+      const held = blocksOf(input.spaceId, found.id).filter((block) => block.kind !== "generated");
+      const wanted = source.blocks.flatMap((entry) =>
+        entry.kind !== "generated"
+          ? [entry]
+          : found.schedule
+            ? []
+            : [{ ...entry, kind: "paragraph" }],
+      );
+      const changes: Change[] = [
+        ...(found.title === source.title
+          ? []
+          : [["page", found.id, { s: { title: source.title, updatedAt: at } }] as Change]),
+        ...held
+          .filter((block) => !wanted.some((entry) => entry.id === block.id))
+          .map((block) => ["block", block.id, { d: true }] as Change),
+        ...wanted
+          .filter((entry) => {
+            const block = held.find((candidate) => candidate.id === entry.id);
+            return (
+              !block || !sameContent({ title: "", blocks: [block] }, { title: "", blocks: [entry] })
+            );
+          })
+          .map(
+            (entry) =>
+              ["block", entry.id, { s: { ...entry, updatedBy: by, updatedAt: at } }] as Change,
+          ),
+      ];
+      if (changes.length > 0) {
+        commit(`space:${input.spaceId}`, changes);
+        addVersion(
+          versionsOf(input),
+          pageContent(input.spaceId, table(input.spaceId, "page").get(found.id)!),
+          by,
+          source.at,
+        );
+      }
+      return { page: table(input.spaceId, "page").get(found.id) };
+    },
+    // A page's update (lib/hal_c2/space/schedule.ex). The fake has no clock to wait on,
+    // so a run ends within its `runNow`.
+    "space.page.schedule.set": (input) => {
+      const found = livePage(input.spaceId, input.pageId);
+      const instruction = name(input.instruction, "A page's update needs an instruction.");
+      showUpdate(input.spaceId, found.id, {
+        instruction,
+        cadence: input.cadence,
+        enabled: found.schedule?.enabled ?? true,
+        nextRunAt: new Date(clock + 3_600_000).toISOString(),
+        lastRunStatus: found.schedule?.lastRunStatus ?? "never",
+      });
+      return { page: table(input.spaceId, "page").get(found.id) };
+    },
+    "space.page.schedule.setEnabled": (input) => {
+      const found = updatedPage(input.spaceId, input.pageId);
+      showUpdate(input.spaceId, found.id, {
+        enabled: input.enabled === true,
+        nextRunAt: input.enabled === true ? new Date(clock + 3_600_000).toISOString() : null,
+      });
+      return { page: table(input.spaceId, "page").get(found.id) };
+    },
+    "space.page.schedule.runNow": (input) => {
+      const found = updatedPage(input.spaceId, input.pageId);
+      const generation = mc.generation;
+      const at = now();
+      if (generation.kind !== "available") {
+        showUpdate(input.spaceId, found.id, {
+          lastRunAt: at,
+          lastRunStatus: "failed",
+          lastRunError:
+            generation.kind === "failed" ? "the model is overloaded" : generation.message,
+        });
+        return { page: table(input.spaceId, "page").get(found.id) };
+      }
+      const held = generatedOf(input.spaceId, found.id);
+      const part: Entity = held
+        ? { ...held, text: generation.markdown, updatedBy: update, updatedAt: at }
+        : {
+            ...newBlock(
+              input.spaceId,
+              found.id,
+              { kind: "paragraph", text: generation.markdown },
+              orderAt(input.spaceId, found.id, undefined),
+              update,
+            ),
+            kind: "generated",
+          };
+      commit(`space:${input.spaceId}`, [
+        ["block", part.id, { s: part }],
+        ["page", found.id, { s: { writtenAt: at } }],
+      ]);
+      showUpdate(input.spaceId, found.id, {
+        lastRunAt: at,
+        lastRunStatus: "succeeded",
+        lastRunError: null,
+      });
+      return { page: table(input.spaceId, "page").get(found.id) };
+    },
+    "space.page.schedule.remove": (input) => {
+      const found = updatedPage(input.spaceId, input.pageId);
+      const held = generatedOf(input.spaceId, found.id);
+      commit(`space:${input.spaceId}`, [
+        ...(held ? ([["block", held.id, { s: { kind: "paragraph" } }]] satisfies Change[]) : []),
+        ["page", found.id, { s: { schedule: null, writtenAt: null } }],
+      ]);
+      return { page: table(input.spaceId, "page").get(found.id) };
+    },
     "space.block.insert": (input, by) => {
       const target = livePage(input.spaceId, input.pageId);
       const order = orderAt(input.spaceId, target.id, input.afterBlockId);
@@ -736,8 +1089,40 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
       commit(`space:${input.spaceId}`, [["block", added.id, { s: added }]]);
       return { block: added };
     },
+    // HalC2.Space.Visualize's refusals, and the chart stored whole, in place or as a new block.
+    "space.block.visualize": (input, by) => {
+      const target = livePage(input.spaceId, input.pageId);
+      const words = String(input.request).replace(/^\/visualize\s*/, "");
+      const refuseChart = (reason: string, why: string): never => {
+        throw new FakeSpaceRefusal("SpaceChartError", reason, `No chart was drawn: ${why}`);
+      };
+      const generation = mc.generation;
+      if (generation.kind !== "available") refuseChart(generation.kind, generation.message);
+      const drawn = mc.chart ?? refuseChart("unanswerable", "neither answers that.");
+      const chart = { ...drawn, request: words };
+      const fields = { text: `${drawn.title} (a chart; ${drawn.source})`, chart };
+      if (input.blockId !== undefined) {
+        const found = liveBlock(input.spaceId, input.blockId);
+        if (found.kind !== "chart") refuse("invalid", "Only a chart can be asked for again.");
+        commit(`space:${input.spaceId}`, [
+          ["block", found.id, { s: { ...fields, updatedBy: by, updatedAt: now() } }],
+        ]);
+        return { block: table(input.spaceId, "block").get(found.id) };
+      }
+      const order = orderAt(input.spaceId, target.id, input.afterBlockId);
+      const added = {
+        ...newBlock(input.spaceId, target.id, { kind: "paragraph", text: "" }, order, by),
+        kind: "chart",
+        ...fields,
+      };
+      commit(`space:${input.spaceId}`, [["block", added.id, { s: added }]]);
+      return { block: added };
+    },
     "space.block.update": (input, by) => {
       const found = liveBlock(input.spaceId, input.blockId);
+      if (found.kind === "generated") {
+        refuse("invalid", "What a page's update wrote cannot be edited by hand.");
+      }
       if (typeof input.text !== "string") refuse("invalid", "A block's text is a string.");
       commit(`space:${input.spaceId}`, [
         ["block", found.id, { s: { text: input.text, updatedBy: by, updatedAt: now() } }],
@@ -1024,11 +1409,23 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
           set.delete(watcher);
         };
       };
+      settings.presence = (pageId, onViewers) => {
+        let clients = pageClients.get(pageId);
+        if (!clients) pageClients.set(pageId, (clients = new Set()));
+        clients.add(onViewers);
+        onViewers(viewersOf(pageId));
+        return () => {
+          clients.delete(onViewers);
+        };
+      };
     },
     run: (method, payload, author = user) => {
       const handler = methods[method];
       if (!handler) throw new Error("unsupported");
-      return handler(payload, author);
+      const result = handler(payload, author);
+      if (spaces.has(payload.spaceId))
+        noteVersions(payload.spaceId, method === "space.page.schedule.runNow" ? update : author);
+      return result;
     },
     spaceNamed: (value) => {
       const found = [...spaces.values()].find((entry) => entry.name === value);
@@ -1054,6 +1451,7 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     },
     commentsOf: (pageId) => all("comment").filter((entry) => entry.pageId === pageId),
     generation: { kind: "unavailable", message: "No text generation provider is set up." },
+    chart: null,
     imageGeneration: { kind: "unavailable", message: "No image generation provider is set up." },
     summaries: [],
     refusals: [],
@@ -1065,6 +1463,24 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
       return all("site").find((site) => site.pageId === found.id);
     },
     lastChanges: [],
+    aWhilePasses: () => {
+      stretch += 1;
+    },
+    refuseNextAsk: () => {
+      refusingAsk = true;
+    },
+    ignoreStops: () => {
+      ignoringStops = true;
+    },
+    stopsAsked: () => stops,
+    agentEnds: (pageId, status, error) => {
+      const { spaceId } = all("page").find((candidate) => candidate.id === pageId)!;
+      endAgent(spaceId, pageId, status, error ?? null);
+    },
+    agentThreadGone: (pageId) => {
+      const { spaceId } = all("page").find((candidate) => candidate.id === pageId)!;
+      commit(`space:${spaceId}`, [["pageAgent", pageId, { s: { threadId: "gone" } }]]);
+    },
     restart: () => {
       for (const [stream, set] of watchers) {
         for (const watcher of set) {
@@ -1073,6 +1489,14 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
         }
       }
     },
+    deviceOn: (pageId, device) => on(devicesOn, pageId, device),
+    deviceGone: (device) => gone(devicesOn, device),
+    retellViewers: () => {
+      for (const pageId of pageClients.keys()) tellPage(pageId);
+    },
+    agentOn: (pageId, title) => on(agentsOn, pageId, title),
+    agentGone: (title) => gone(agentsOn, title),
+    clientsOn: (pageId) => pageClients.get(pageId)?.size ?? 0,
   };
   return mc;
 }

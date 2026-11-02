@@ -37,6 +37,8 @@ defmodule HalC2.DelegationProofTest do
     abstracts: %{
       "HalC2.Orchestration.Delegation.request/1" => @tool,
       "HalC2.Orchestration.Delegation.task_status/2" => "reads a task; changes nothing",
+      "HalC2.Orchestration.Delegation.settled?/1" =>
+        "reads whether a thread is quiet, for a page asking after its agent; changes nothing",
       "HalC2.Orchestration.Delegation.wait_budget/1" =>
         "how long a wait lasts; the model's wait may give up at any time",
       "HalC2.Orchestration.Delegation.wake_policy/1" => @policy,

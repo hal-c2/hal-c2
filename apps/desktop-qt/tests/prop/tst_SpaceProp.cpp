@@ -40,6 +40,7 @@ namespace {
 
 const QString kSpace = QStringLiteral("space-1");
 const QString kPage = QStringLiteral("page");
+const QString kAgent = QStringLiteral("pageAgent");
 const QString kBlock = QStringLiteral("block");
 const QString kComment = QStringLiteral("comment");
 const QString kDeck = QStringLiteral("deck");
@@ -121,6 +122,9 @@ struct Model {
   bool unreachable = false;
   QJsonObject lastEvents;
   QString selected;
+  // Who the MC last said is on `viewersPage`; only the selected page shows it.
+  QStringList viewers;
+  QString viewersPage;
   QString deck;
   // The presenter: on which slide, and where it last was in the deck.
   bool presenting = false;
@@ -242,6 +246,7 @@ QList<QVariantMap> blocksOf(const Model& model) {
                  {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : titleOf(model.held, linked)},
                  {QStringLiteral("byAgent"), byAgent(block, "createdBy")},
                  {QStringLiteral("openComments"), open},
+                 {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()},
                  {QStringLiteral("imageId"), QString()},
                  {QStringLiteral("imageState"), QString()},
                  {QStringLiteral("imageUrl"), QString()},
@@ -260,12 +265,15 @@ QList<QVariantMap> commentRowsOf(const Model& model) {
     if (aResolved != bResolved) return !aResolved;
     return madeBefore(a, b);
   });
+  QSet<QString> onPage;
+  for (const QVariantMap& row : blocksOf(model)) onPage.insert(row.value(QStringLiteral("id")).toString());
   QList<QVariantMap> rows;
   for (const QJsonObject& comment : comments) {
     const QString block = str(comment, "blockId");
     rows.append({{QStringLiteral("id"), str(comment, "id")},
                  {QStringLiteral("blockId"), block},
                  {QStringLiteral("blockText"), str(model.held.value(keyOf(kBlock, block)), "text")},
+                 {QStringLiteral("blockGone"), !block.isEmpty() && !onPage.contains(block)},
                  {QStringLiteral("body"), str(comment, "body")},
                  {QStringLiteral("resolved"), !str(comment, "resolvedAt").isEmpty()},
                  {QStringLiteral("byAgent"), byAgent(comment, "author")},
@@ -285,6 +293,16 @@ bool untrashed(const Entities& held, const QJsonObject& page) {
     at = held.value(keyOf(kPage, parent));
   }
   return true;
+}
+
+// What the page shows of its update: the MC's field and the label of its cadence,
+// or nothing since the field went or was set to null.
+QVariantMap updateOf(const QJsonObject& page) {
+  const QJsonObject schedule = page.value(QLatin1String("schedule")).toObject();
+  if (schedule.isEmpty()) return {};
+  QVariantMap update = schedule.toVariantMap();
+  update.insert(QStringLiteral("cadenceLabel"), SpacePages::cadenceLabel(schedule.value(QLatin1String("cadence")).toObject()));
+  return update;
 }
 
 // What the page has published: one site at most, as the MC keeps it.
@@ -309,7 +327,20 @@ QVariantMap pageOf(const Model& model) {
           {QStringLiteral("trashed"), !untrashed(model.held, page)},
           {QStringLiteral("sourceThreadId"), thread},
           {QStringLiteral("sourceThreadTitle"), thread.isEmpty() ? QString() : QStringLiteral("a thread")},
+          {QStringLiteral("schedule"), updateOf(page)},
+          {QStringLiteral("writtenAt"), str(page, "writtenAt")},
           {QStringLiteral("site"), siteShownOf(model)}};
+}
+
+QVariantMap agentOf(const Model& model) {
+  const QJsonObject agent = model.held.value(keyOf(kAgent, model.selected));
+  if (agent.isEmpty()) return {};
+  return {{QStringLiteral("status"), str(agent, "status")},
+          {QStringLiteral("request"), str(agent, "request")},
+          {QStringLiteral("threadId"), str(agent, "threadId")},
+          {QStringLiteral("threadTitle"), QStringLiteral("a thread")},
+          {QStringLiteral("edited"), agent.value(QLatin1String("edited")).toBool()},
+          {QStringLiteral("error"), str(agent, "error")}};
 }
 
 // The decks out of the trash as they were made.
@@ -378,6 +409,11 @@ void reconcile(Model& model) {
   if (model.offset >= 0 && !model.held.contains(keyOf(kPage, model.selected))) {
     const QList<QVariantMap> tree = treeOf(model.held);
     model.selected = tree.isEmpty() ? QString() : tree.first().value(QStringLiteral("id")).toString();
+  }
+  // Whoever was on a page stops showing once another opens, and does not come back with it.
+  if (model.viewersPage != model.selected) {
+    model.viewers.clear();
+    model.viewersPage.clear();
   }
   if (model.offset >= 0 && !model.held.contains(keyOf(kDeck, model.deck))) model.deck.clear();
   if (!model.presenting) return;
@@ -486,18 +522,20 @@ struct Sut {
 
   void check(const Model& model) {
     RC_ASSERT(pages.spaceId() == kSpace);
-    for (const QString& kind : {kPage, kBlock, kComment, kDeck, kSlide, kSite}) {
+    for (const QString& kind : {kPage, kBlock, kComment, kAgent, kDeck, kSlide, kSite}) {
       QMap<QString, QJsonObject> got;
       for (auto it = pages.space().of(kind).cbegin(); it != pages.space().of(kind).cend(); ++it) got.insert(it.key(), *it);
       RC_ASSERT(got == ofKind(model.held, kind));
     }
     RC_ASSERT(pages.space().offset() == model.offset);
     RC_ASSERT(pages.pageId() == model.selected);
+    RC_ASSERT(pages.viewers().value(QStringLiteral("devices")).toStringList() == model.viewers);
     RC_ASSERT(pages.pages()->rows() == treeOf(model.held));
     RC_ASSERT(pages.trash()->rows() == trashOf(model.held));
     RC_ASSERT(pages.blocks()->rows() == blocksOf(model));
     RC_ASSERT(pages.comments()->rows() == commentRowsOf(model));
     RC_ASSERT(pages.page() == pageOf(model));
+    RC_ASSERT(pages.agent() == agentOf(model));
     RC_ASSERT(pages.deckId() == model.deck);
     RC_ASSERT(pages.decks()->rows() == decksOf(model.held));
     RC_ASSERT(pages.deckTrash()->rows() == deckTrashOf(model.held));
@@ -580,7 +618,11 @@ struct Write : Command {
       offer(2, "page.move");
       offer(3, "page.trash");
       offer(1, "page.delete");
+      offer(2, "page.schedule");
       if (blocks.size() < kMaxBlocks) offer(4, "block.create");
+      offer(1, "pageAgent.create");
+      offer(2, "pageAgent.status");
+      offer(1, "pageAgent.delete");
     }
     if (!blocks.isEmpty()) {
       offer(2, "block.text");
@@ -588,6 +630,7 @@ struct Write : Command {
       offer(1, "block.order");
       offer(2, "block.check");
       offer(1, "block.replace");
+      offer(1, "block.chart");
       offer(1, "block.delete");
       if (comments.size() < kMaxComments) offer(2, "comment.create");
     }
@@ -616,7 +659,7 @@ struct Write : Command {
     op = *rc::gen::elementOf(ops);
     const QString kind = op.section(QLatin1Char('.'), 0, 0);
     const bool creates = op.endsWith(QLatin1String(".create"));
-    id = creates ? unused(model, kind, kind == kPage ? kMaxPages : kind == kBlock ? kMaxBlocks : kind == kComment ? kMaxComments : kind == kDeck ? kMaxDecks : kind == kSite ? kMaxSites : kMaxSlides)
+    id = kind == kAgent ? pick(pages) : creates ? unused(model, kind, kind == kPage ? kMaxPages : kind == kBlock ? kMaxBlocks : kind == kComment ? kMaxComments : kind == kDeck ? kMaxDecks : kind == kSite ? kMaxSites : kMaxSlides)
                  : pick(kind == kPage ? pages : kind == kBlock ? blocks : kind == kComment ? comments : kind == kDeck ? decks : kind == kSite ? sites : slides);
     if (op == QLatin1String("page.create")) {
       value = pick({QStringLiteral("Roadmap"), QStringLiteral("Q3"), QStringLiteral("  "), QString()});
@@ -624,6 +667,10 @@ struct Write : Command {
       flag = *rc::gen::arbitrary<bool>();
     } else if (op == QLatin1String("page.rename")) {
       value = pick({QStringLiteral("Plans"), QStringLiteral("Roadmap"), QString()});
+    } else if (op == QLatin1String("page.schedule")) {
+      // An instruction, or "" for an update that was removed.
+      value = pick({QStringLiteral("Summarise"), QStringLiteral("List"), QString()});
+      flag = *rc::gen::arbitrary<bool>();
     } else if (op == QLatin1String("page.move")) {
       other = pick(pages + QStringList{QString()});
     } else if (op == QLatin1String("block.create")) {
@@ -636,6 +683,9 @@ struct Write : Command {
       value = pick({QStringLiteral(" more"), QStringLiteral("!")});
     } else if (op == QLatin1String("block.order")) {
       value = pick({QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("c")});
+    } else if (op == QLatin1String("pageAgent.status")) {
+      value = pick({QStringLiteral("stopping"), QStringLiteral("completed"), QStringLiteral("failed"), QStringLiteral("stopped")});
+      flag = *rc::gen::arbitrary<bool>();
     } else if (op == QLatin1String("deck.create") || op == QLatin1String("deck.rename")) {
       value = pick({QStringLiteral("Pitch"), QStringLiteral("Review")});
     } else if (op == QLatin1String("slide.create")) {
@@ -687,6 +737,13 @@ struct Write : Command {
                   {QStringLiteral("createdAt"), at}, {QStringLiteral("trashedAt"), QJsonValue::Null}});
     }
     if (op == QLatin1String("page.rename")) return set({{QStringLiteral("title"), value}, {QStringLiteral("updatedAt"), at}});
+    if (op == QLatin1String("page.schedule")) {
+      if (value.isEmpty()) return set({{QStringLiteral("schedule"), QJsonValue::Null}, {QStringLiteral("writtenAt"), QJsonValue::Null}});
+      const QJsonObject cadence = flag ? QJsonObject{{QStringLiteral("type"), QStringLiteral("interval")}, {QStringLiteral("everyMs"), 7200000}}
+                                       : QJsonObject{{QStringLiteral("type"), QStringLiteral("fixed_time")}, {QStringLiteral("timeOfDay"), QStringLiteral("07:30")}, {QStringLiteral("weekdays"), QJsonArray()}};
+      return set({{QStringLiteral("schedule"), QJsonObject{{QStringLiteral("instruction"), value}, {QStringLiteral("cadence"), cadence}, {QStringLiteral("enabled"), flag}, {QStringLiteral("nextRunAt"), QJsonValue::Null}}},
+                  {QStringLiteral("writtenAt"), at}});
+    }
     if (op == QLatin1String("page.move")) {
       if (!other.isEmpty() && (!model.mc.contains(keyOf(kPage, other)) || subtree(model, id).contains(other))) return std::nullopt;
       return set({{QStringLiteral("parentPageId"), nullable(other)}, {QStringLiteral("updatedAt"), at}});
@@ -709,6 +766,15 @@ struct Write : Command {
       after.remove(QStringLiteral("trashedAt"));
       return Made{kind, after, {{QStringLiteral("u"), QJsonArray{QStringLiteral("trashedAt")}}}};
     }
+    if (op == QLatin1String("pageAgent.create")) {
+      return set({{QStringLiteral("id"), id}, {QStringLiteral("pageId"), id}, {QStringLiteral("threadId"), QStringLiteral("thread-1")},
+                  {QStringLiteral("request"), QStringLiteral("tidy")}, {QStringLiteral("status"), QStringLiteral("running")},
+                  {QStringLiteral("edited"), false}, {QStringLiteral("error"), QJsonValue::Null}});
+    }
+    if (op == QLatin1String("pageAgent.status")) {
+      return set({{QStringLiteral("status"), value}, {QStringLiteral("edited"), flag},
+                  {QStringLiteral("error"), nullable(value == QLatin1String("failed") ? QStringLiteral("out of credits") : QString())}});
+    }
     if (op.endsWith(QLatin1String(".delete"))) return Made{kind, std::nullopt, {{QStringLiteral("d"), true}}};
     if (op == QLatin1String("block.create")) {
       if (!model.mc.contains(keyOf(kPage, other))) return std::nullopt;
@@ -729,6 +795,14 @@ struct Write : Command {
     if (op == QLatin1String("block.order")) return set({{QStringLiteral("order"), value}, {QStringLiteral("updatedAt"), at}});
     if (op == QLatin1String("block.check")) {
       return set({{QStringLiteral("checked"), !current.value(QLatin1String("checked")).toBool()}, {QStringLiteral("updatedAt"), at}});
+    }
+    if (op == QLatin1String("block.chart")) {
+      // A chart lands on the block, or asking again replaces it.
+      const QJsonObject chart{{QStringLiteral("type"), QStringLiteral("bar")}, {QStringLiteral("title"), QStringLiteral("Turns")},
+                              {QStringLiteral("labels"), QJsonArray{QStringLiteral("May")}},
+                              {QStringLiteral("series"), QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("Turns")}, {QStringLiteral("values"), QJsonArray{at.size()}}}}},
+                              {QStringLiteral("request"), QStringLiteral("turns")}, {QStringLiteral("source"), at}};
+      return set({{QStringLiteral("kind"), QStringLiteral("chart")}, {QStringLiteral("chart"), chart}, {QStringLiteral("updatedAt"), at}});
     }
     if (op == QLatin1String("block.replace")) {
       // The whole block written anew, as a replay sends one: what it leaves out goes.
@@ -986,6 +1060,32 @@ struct NewLog : Command {
 };
 
 // --- The user ---------------------------------------------------------------------
+
+// The MC says who is on a page, the open one or one the user just left.
+struct Viewers : Command {
+  QString id;
+  QStringList devices;
+  explicit Viewers(const Model& model) {
+    id = !model.selected.isEmpty() && *rc::gen::arbitrary<bool>() ? model.selected : QStringLiteral("page-%1").arg(*rc::gen::inRange(1, kMaxPages + 1));
+    if (*rc::gen::arbitrary<bool>()) devices.append(QStringLiteral("Phone"));
+    if (*rc::gen::arbitrary<bool>()) devices.append(QStringLiteral("Laptop"));
+  }
+  void apply(Model& model) const override {
+    if (id != model.selected) return;
+    model.viewers = devices;
+    model.viewersPage = id;
+  }
+  void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
+    sut.begin();
+    QJsonArray viewers;
+    if (!devices.isEmpty()) viewers.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("user")}, {QStringLiteral("devices"), QJsonArray::fromStringList(devices)}});
+    sut.pages.receiveViewers(id, {{QStringLiteral("t"), QStringLiteral("spacePresence")}, {QStringLiteral("viewers"), viewers}});
+    sut.check(next);
+  }
+  void show(std::ostream& os) const override { os << "Viewers(" << id.toStdString() << ", " << devices.join(QLatin1Char(',')).toStdString() << ")"; }
+};
 
 // The user opens a page; one the copy does not hold is not selected.
 struct SelectPage : Command {
@@ -1286,6 +1386,8 @@ struct ImagesModel {
   QMap<QString, QString> addresses;
   // The addresses whose end has come; shown until a new one arrives.
   QSet<QString> lapsed;
+  // An address was refused since the rows were last rebuilt: the client will try again.
+  bool retrying = false;
   // What the last step asked to have signed, sorted.
   QStringList asked;
   int seq = 1;
@@ -1312,6 +1414,7 @@ bool refreshDue(const ImagesModel& model) {
 
 // Whatever rebuilds the rows asks for each image on screen with no good address.
 void askForImages(ImagesModel& model) {
+  model.retrying = false;
   const QSet<QString> wanted = onScreen(model);
   for (const QString& id : wanted) {
     if (model.inFlight.contains(id) || (model.addresses.contains(id) && !model.lapsed.contains(id))) continue;
@@ -1397,12 +1500,32 @@ struct ImagesSut {
     }
     RC_ASSERT(listed(pages.images()) == kept);
     RC_ASSERT(listed(pages.imageTrash()) == binned);
-    RC_ASSERT(refreshTimer()->isActive() == refreshDue(model));
+    RC_ASSERT(refreshTimer()->isActive() == (model.retrying || refreshDue(model)));
+    // A retry owed is not left waiting on another image's address, an hour away.
+    // Qt runs a timer this long on whole seconds, so 30 seconds can read a little over.
+    if (model.retrying) RC_ASSERT(refreshTimer()->remainingTime() <= 31'000);
   }
 
   QTimer* refreshTimer() { return pages.findChild<QTimer*>(QStringLiteral("spaceAddressRefresh")); }
 
   void answer(const QString& image) { pages.setImageAddress(image, addressFor(image), now + 3'600'000); }
+
+  // Runs a timer that is due as though its time had come.
+  void fire(QTimer* timer) {
+    if (!timer->isActive()) return;
+    timer->start(0);
+    QCoreApplication::processEvents();
+  }
+
+  // An answer waits for the rest of its batch, but not so long that anyone sees it.
+  void rebuildNow() {
+    QTimer* timer = pages.findChild<QTimer*>(QStringLiteral("spaceRebuildSoon"));
+    const int waits = timer->interval();
+    RC_ASSERT(waits > 0);
+    RC_ASSERT(waits <= 50);
+    fire(timer);
+    timer->setInterval(waits);
+  }
 };
 
 using ImageCommand = rc::state::Command<ImagesModel, ImagesSut>;
@@ -1548,7 +1671,10 @@ struct AnswerAddress : ImageCommand {
   void apply(ImagesModel& model) const override {
     model.asked.clear();
     model.inFlight.remove(image);
-    if (!ok) return;
+    if (!ok) {
+      model.retrying = true;
+      return;
+    }
     model.lapsed.remove(image);
     if (model.order.contains(image)) model.addresses.insert(image, addressFor(image));
     askForImages(model);
@@ -1556,7 +1682,7 @@ struct AnswerAddress : ImageCommand {
   void act(const ImagesModel&, ImagesSut& sut) const {
     if (ok) {
       sut.answer(image);
-      QCoreApplication::processEvents();
+      sut.rebuildNow();
     } else {
       sut.pages.imageAddressFailed(image);
     }
@@ -1585,7 +1711,7 @@ struct AnswerAllAtOnce : ImageCommand {
     sut.asked.clear();
     sut.changes = 0;
     for (const QString& image : model.inFlight) sut.answer(image);
-    QCoreApplication::processEvents();
+    sut.rebuildNow();
     RC_ASSERT(sut.changes == 1);
     sut.check(next);
   }
@@ -1593,22 +1719,20 @@ struct AnswerAllAtOnce : ImageCommand {
 };
 
 // An hour or two pass with nothing changing in the Space. What is on screen is
-// signed anew by the client's own timer; what is not waits until it is shown.
+// signed anew by the client's own timer, and what was refused is asked for again;
+// what is not on screen waits until it is shown.
 struct AddressesLapse : ImageCommand {
-  explicit AddressesLapse(const ImagesModel& model) { RC_PRE(!model.addresses.isEmpty()); }
-  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(!model.addresses.isEmpty()); }
+  explicit AddressesLapse(const ImagesModel& model) { RC_PRE(!model.addresses.isEmpty() || model.retrying); }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(!model.addresses.isEmpty() || model.retrying); }
   void apply(ImagesModel& model) const override {
     model.asked.clear();
-    const bool fires = refreshDue(model);
+    const bool fires = model.retrying || refreshDue(model);
     for (auto it = model.addresses.cbegin(); it != model.addresses.cend(); ++it) model.lapsed.insert(it.key());
     if (fires) askForImages(model);
   }
   void act(const ImagesModel&, ImagesSut& sut) const {
     sut.now += 2 * 3'600'000;
-    if (sut.refreshTimer()->isActive()) {
-      sut.refreshTimer()->start(0);
-      QCoreApplication::processEvents();
-    }
+    sut.fire(sut.refreshTimer());
   }
   void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
   void show(std::ostream& os) const override { os << "AddressesLapse"; }
@@ -1665,7 +1789,7 @@ private slots:
       Sut sut;
       rc::state::check(model, sut,
                        rc::state::gen::execOneOfWithArgs<Write, Write, Write, Write, Write, Subscribe, Subscribe, Drop, Resync,
-                                                         Duplicate, NewLog, SelectPage, SelectPage, Edit, Edit, Answer, Answer,
+                                                         Duplicate, NewLog, SelectPage, SelectPage, Viewers, Edit, Edit, Answer, Answer,
                                                          SelectDeck, SelectDeck, Present, Present, Step, Step, Step, Leave>());
     }));
   }

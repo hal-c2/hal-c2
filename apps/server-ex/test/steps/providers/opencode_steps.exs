@@ -889,6 +889,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   step "no OpenCode process stays owned by the thread", context do
+    HalC2.Test.Mc.settle_registry(HalC2.Acp.Registry)
     assert Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, @thread)) == []
     refute Process.alive?(context.opencode_server.conn)
     context

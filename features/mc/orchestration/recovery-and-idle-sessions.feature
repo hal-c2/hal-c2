@@ -8,8 +8,10 @@
 #   apps/server-ex/lib/hal_c2/orchestration/idle_sessions.ex
 #   apps/server-ex/lib/hal_c2/subprocess/orphans.ex
 #   https://github.com/hal-c2/hal-c2/issues/254 (provider CLIs left running by an MC that died)
+#   https://github.com/hal-c2/hal-c2/issues/451 (tracking set up late, reaping first)
 #   https://github.com/hal-c2/hal-c2/issues/380 (commands a provider that already exited left in its group)
 #   https://github.com/hal-c2/hal-c2/issues/387 (commands in a session of their own outlive that kill)
+#   https://github.com/hal-c2/hal-c2/issues/411 (a pid reused between the check and the kill)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (background subagents and commands, also between turns)
 #   https://github.com/hal-c2/hal-c2/issues/474 (a stop naming an earlier run ended what a later run left)
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts (task_started, task_notification, pendingBackgroundTasks)
@@ -53,6 +55,17 @@ Feature: Recovering from restarts and releasing idle sessions
   Scenario: A provider process an MC that died left running is killed at its next boot
     Given a provider process with a command in the background was running when the MC died
     When the MC restarts
+    Then the provider process and its background command have been killed
+
+  # hal-c2/hal-c2#451: a program is refused while it could not be found again, and a
+  # moment's failure ends with the moment. What the boot could not reap goes first.
+  @mc
+  Scenario: Programs refused because tracking could not be set up at boot run once it can be
+    Given a provider process with a command in the background was running when the MC died
+    And the MC restarted unable to make the directory of its program records
+    Then a program start is refused
+    When the directory of program records can be made again
+    And a program starts
     Then the provider process and its background command have been killed
 
   # hal-c2/hal-c2#387: the boot kills the provider's process group, which a command

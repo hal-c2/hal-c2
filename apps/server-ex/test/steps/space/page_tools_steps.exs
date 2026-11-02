@@ -38,6 +38,17 @@ defmodule HalC2.Steps.Space.PageTools do
     tool(context, thread, "hal_c2_page_block_insert", arguments)
   end
 
+  step "the agent in {string} links {string} from {string}",
+       %{args: [thread, linked, title]} = context do
+    arguments =
+      Map.merge(page_ref(context, title), %{
+        "kind" => "subpage_link",
+        "linkedPageId" => page_ref(context, linked)["pageId"]
+      })
+
+    tool(context, thread, "hal_c2_page_block_insert", arguments)
+  end
+
   step "the block {string} was written by the thread {string}",
        %{args: [text, thread]} = context do
     author = Space.agent(World.thread_id(context, thread))

@@ -8,6 +8,9 @@ QtObject {
     property string spaceName: ""
     property string pageId: ""
     property var page: ({})
+    property var agent: ({})
+    signal agentAskRequested
+    signal agentAskAnswered(string pageId, string request, bool taken)
     property string deckId: ""
     property var deck: ({})
     property bool presenting: false
@@ -15,6 +18,7 @@ QtObject {
     property int slideNumber: 0
     property int slideCount: 0
     property string status: "live"
+    property var viewers: ({})
     readonly property SpaceRows spaces: SpaceRows {}
     readonly property SpaceRows pages: SpaceRows {}
     readonly property SpaceRows trash: SpaceRows {}
@@ -25,6 +29,19 @@ QtObject {
     readonly property SpaceRows slides: SpaceRows {}
     readonly property SpaceRows images: SpaceRows {}
     readonly property SpaceRows imageTrash: SpaceRows {}
+    // As SpaceHistory; load() takes `history` with its fields and rows.
+    readonly property QtObject history: QtObject {
+        signal changed
+        property bool shown: false
+        property string pageId: ""
+        property bool loading: false
+        property bool failed: false
+        property bool hasMore: false
+        property bool reading: false
+        property var version: ({})
+        readonly property SpaceRows versions: SpaceRows {}
+        readonly property SpaceRows blocks: SpaceRows {}
+    }
 
     function fill(model, rows) {
         model.clear();
@@ -36,6 +53,8 @@ QtObject {
         spaceId = state.spaceId ?? "";
         spaceName = state.spaceName ?? "";
         status = state.status ?? "live";
+        agent = state.agent ?? {};
+        viewers = state.viewers ?? {};
         fill(spaces, state.spaces);
         fill(pages, state.pages);
         fill(trash, state.trash);
@@ -46,6 +65,17 @@ QtObject {
         fill(slides, state.slides);
         fill(images, state.images);
         fill(imageTrash, state.imageTrash);
+        const history = state.history ?? {};
+        fill(this.history.versions, history.versions);
+        fill(this.history.blocks, history.blocks);
+        this.history.pageId = history.pageId ?? "";
+        this.history.loading = history.loading ?? false;
+        this.history.failed = history.failed ?? false;
+        this.history.hasMore = history.hasMore ?? false;
+        this.history.version = history.version ?? {};
+        this.history.reading = history.reading ?? false;
+        this.history.shown = history.shown ?? false;
+        this.history.changed();
         page = state.page ?? {};
         pageId = page.id ?? "";
         deck = state.deck ?? {};

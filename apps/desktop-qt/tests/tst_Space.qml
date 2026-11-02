@@ -3,8 +3,8 @@ import QtTest
 import "../qml/HalC2/Bricks"
 import HalC2.Shell
 
-// features/space/pages.feature and slides.feature: what the Space view asks of
-// SpaceController as the user writes a page or a deck, and what it shows of the
+// features/space/pages.feature, visualize.feature and slides.feature: what the Space view
+// asks of SpaceController as the user writes a page or a deck, and what it shows of the
 // Space it is given.
 Item {
     id: root
@@ -57,6 +57,257 @@ Item {
         function init() {
             Shell.reset();
             Spaces.reset();
+        }
+
+        // "Roadmap" with its history open: "Final" now, "Draft" before it.
+        function withHistory(more) {
+            const versions = [
+                { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: true, byUpdate: false, threadTitle: "Work", restoredFromAt: "" },
+                { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" }
+            ];
+            return root.research({ history: Object.assign({ shown: true, pageId: "page-1", versions: versions }, more) });
+        }
+
+        function test_the_page_menu_opens_its_history() {
+            const view = root.research({});
+            findChild(view, "spaceHistoryOpen").triggered();
+            compare(root.dispatched("space.history.open"), [{ pageId: "page-1" }]);
+        }
+
+        function test_only_a_version_before_the_newest_can_be_restored() {
+            const view = withHistory({});
+            const panel = findChild(view, "spaceHistoryPanel");
+            verify(panel.visible);
+            tryVerify(() => findChild(view, "spaceHistoryRow:1") !== null);
+            verify(!findChild(view, "spaceHistoryRestore:0").visible);
+            const restore = findChild(view, "spaceHistoryRestore:1");
+            verify(restore.visible);
+            mouseClick(restore);
+            compare(root.dispatched("space.history.restore"), [{ version: 7 }]);
+        }
+
+        function test_a_page_in_the_trash_restores_no_version() {
+            const view = root.research({
+                page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: true, sourceThreadId: "", sourceThreadTitle: "" },
+                history: { shown: true, pageId: "page-1", versions: [
+                    { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" },
+                    { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, byUpdate: false, threadTitle: "", restoredFromAt: "" }
+                ] }
+            });
+            tryVerify(() => findChild(view, "spaceHistoryRow:1") !== null);
+            verify(!findChild(view, "spaceHistoryRestore:1").visible);
+        }
+
+        function test_a_version_read_takes_the_page_place_and_has_a_way_back() {
+            const view = withHistory({
+                reading: true,
+                version: { version: 7, at: "2026-09-23T10:00:00Z", title: "Roadmap" },
+                blocks: [root.block("b1", "Draft")]
+            });
+            const reader = findChild(view, "spaceVersionView");
+            verify(reader.visible);
+            tryVerify(() => findChild(reader, "spaceBlock:Draft") !== null);
+            mouseClick(findChild(view, "spaceVersionBack"));
+            compare(root.dispatched("space.history.back").length, 1);
+            mouseClick(findChild(view, "spaceVersionRestore"));
+            compare(root.dispatched("space.history.restore"), [{ version: 7 }]);
+        }
+
+        function test_a_version_read_draws_its_chart_and_cannot_ask_again() {
+            const row = chartBlock("bar");
+            const view = withHistory({
+                reading: true,
+                version: { version: 7, at: "2026-09-23T10:00:00Z", title: "Roadmap" },
+                blocks: [row]
+            });
+            const chart = findChild(findChild(view, "spaceVersionView"), "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            compare(findChild(chart, "spaceChartTitle").text, "Signups");
+            verify(!findChild(view, "spaceAskAgain:" + row.text).visible);
+        }
+
+        function test_reading_the_newest_version_offers_no_restore() {
+            const view = withHistory({
+                reading: true,
+                version: { version: 12, at: "2026-09-23T10:10:00Z", title: "Roadmap" },
+                blocks: [root.block("b1", "Final")]
+            });
+            verify(!findChild(view, "spaceVersionRestore").visible);
+        }
+
+        function test_history_that_could_not_load_says_so_and_can_be_asked_again() {
+            const view = root.research({ history: { shown: true, pageId: "page-1", failed: true } });
+            compare(findChild(view, "spaceHistoryNote").text, "The history could not be loaded.");
+            mouseClick(findChild(view, "spaceHistoryRetry"));
+            compare(root.dispatched("space.history.open"), [{ pageId: "page-1" }]);
+        }
+
+        function test_opening_comments_closes_the_history() {
+            const view = withHistory({});
+            view.showComments("b1");
+            compare(root.dispatched("space.history.close").length, 1);
+        }
+
+        function test_a_comment_whose_block_a_restore_took_away_says_so() {
+            const view = root.research({ comments: [{ id: "c1", blockId: "gone", blockText: "", blockGone: true, body: "Why?", resolved: false, byAgent: false, createdAt: "" }] });
+            view.commentsShown = true;
+            compare(findChild(view, "spaceCommentBlock:Why?").text, "On a block no longer on this page");
+        }
+
+        function test_a_comment_on_the_page_itself_has_lost_no_block() {
+            const view = root.research({ comments: [{ id: "c1", blockId: "", blockText: "", blockGone: false, body: "Why?", resolved: false, byAgent: false, createdAt: "" }] });
+            view.commentsShown = true;
+            verify(findChild(view, "spaceCommentBlock:Why?").text !== "On a block no longer on this page");
+        }
+
+        function chartBlock(type) {
+            return root.block("c1", "Signups (a chart; Numbers from this page)", {
+                kind: "chart",
+                chart: { type: type, title: "Signups", labels: ["May", "June"], series: [{ name: "Signups", values: [3, 5] }], request: "signups", source: "Numbers from this page" }
+            });
+        }
+
+        function test_a_chart_draws_its_bars_and_says_where_its_numbers_came_from() {
+            const view = root.research({ blocks: [chartBlock("bar")] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            compare(findChild(chart, "spaceChartTitle").text, "Signups");
+            compare(findChild(chart, "spaceChartSource").text, "Numbers from this page");
+            verify(findChild(chart, "spaceChartLabel:May") !== null);
+            verify(findChild(chart, "spaceChartBar") !== null);
+            verify(findChild(chart, "spaceChartLine") === null);
+            verify(!findChild(chart, "spaceChartUnmatched").visible);
+            verify(!findChild(chart, "spaceChartLegend").visible, "one series needs no legend");
+            verify(!findChild(view, "spaceBlockEditor:" + chartBlock("bar").text).visible, "a chart is not edited as text");
+        }
+
+        function test_a_chart_keeps_a_long_label_inside_the_plot() {
+            const row = chartBlock("line");
+            row.chart.labels = ["The first week of the year", "The last week"];
+            const view = root.research({ blocks: [row] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            const label = findChild(chart, "spaceChartLabel:The last week");
+            verify(label.x + label.width <= chart.width);
+            verify(findChild(chart, "spaceChartLabel:The first week of the year").x >= 0);
+        }
+
+        function test_a_chart_draws_its_line() {
+            const view = root.research({ blocks: [chartBlock("line")] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            verify(findChild(chart, "spaceChartLine") !== null);
+            verify(findChild(chart, "spaceChartBar") === null);
+        }
+
+        function test_a_chart_shows_the_numbers_behind_it_and_hides_them_again() {
+            const view = root.research({ blocks: [chartBlock("bar")] });
+            const chart = findChild(view, "spaceChart");
+            tryVerify(() => chart !== null && chart.width > 0);
+            verify(findChild(chart, "spaceChartCell:May") === null);
+            mouseClick(findChild(chart, "spaceChartNumbers"));
+            tryVerify(() => findChild(chart, "spaceChartCell:May") !== null);
+            verify(findChild(chart, "spaceChartCell:5") !== null);
+            // In its own column: the empty corner holds the first one's place.
+            tryVerify(() => findChild(chart, "spaceChartCell:5").x > 0);
+            compare(findChild(chart, "spaceChartCell:May").x, 0);
+            compare(findChild(chart, "spaceChartCell:5").x, findChild(chart, "spaceChartCell:Signups").x);
+            mouseClick(findChild(chart, "spaceChartNumbers"));
+            tryVerify(() => !findChild(chart, "spaceChartTable").visible);
+        }
+
+        function test_a_chart_draws_nothing_when_its_numbers_do_not_match_its_labels() {
+            for (const values of [[3], [3, 5, 8], [3, "5"], [3, -5]]) {
+                const row = chartBlock("bar");
+                row.chart.series[0].values = values;
+                const view = root.research({ blocks: [row] });
+                const chart = findChild(view, "spaceChart");
+                tryVerify(() => chart !== null && chart.width > 0);
+                verify(findChild(chart, "spaceChartUnmatched").visible, JSON.stringify(values));
+                verify(findChild(chart, "spaceChartBar") === null);
+                verify(findChild(chart, "spaceChartLabel:May") === null);
+                verify(!findChild(chart, "spaceChartNumbers").visible);
+                compare(findChild(chart, "spaceChartTitle").text, "Signups");
+            }
+        }
+
+        function test_a_chart_shows_markup_as_plain_text() {
+            const row = chartBlock("bar");
+            row.chart.title = "<b>Signups</b>";
+            const view = root.research({ blocks: [row] });
+            const title = findChild(view, "spaceChartTitle");
+            tryVerify(() => title !== null);
+            compare(title.textFormat, Text.PlainText);
+            compare(title.text, "<b>Signups</b>");
+        }
+
+        function test_a_visualize_request_asks_the_mc_and_is_not_written_as_a_block() {
+            const view = root.research({});
+            const composer = findChild(view, "spaceComposer");
+            composer.forceActiveFocus();
+            composer.text = "/visualize weekly turns";
+            verify(!findChild(view, "spaceSlashMenu").visible);
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize weekly turns" }]);
+            compare(root.dispatched("space.block.insert").length, 0);
+            compare(composer.text, "");
+        }
+
+        function test_the_slash_menu_starts_a_visualize_request() {
+            const view = root.research({});
+            const composer = findChild(view, "spaceComposer");
+            composer.forceActiveFocus();
+            keyClick("/");
+            keyClick("v");
+            const slash = findChild(view, "spaceSlashMenu");
+            tryVerify(() => slash.visible);
+            compare(slash.shown.map(entry => entry.kind), ["chart"]);
+            keyClick(Qt.Key_Return);
+            tryVerify(() => !slash.visible);
+            compare(composer.text, "/visualize ");
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize").length, 0);
+        }
+
+        function test_asking_again_replaces_the_chart_and_can_be_dropped() {
+            const view = root.research({ blocks: [chartBlock("bar")] });
+            const again = findChild(view, "spaceAskAgain:" + chartBlock("bar").text);
+            tryVerify(() => again !== null);
+            again.clicked();
+            const composer = findChild(view, "spaceComposer");
+            compare(composer.text, "/visualize signups");
+            const hint = findChild(view, "spaceReplacing");
+            tryVerify(() => hint.visible);
+            mouseClick(hint);
+            tryVerify(() => !hint.visible);
+            compare(composer.text, "");
+            again.clicked();
+            composer.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", blockId: "c1" }]);
+        }
+
+        function test_writing_a_block_or_adding_below_ends_asking_again() {
+            const blocks = [chartBlock("bar"), root.block("b2", "Below", {})];
+            const view = root.research({ blocks: blocks });
+            const again = findChild(view, "spaceAskAgain:" + blocks[0].text);
+            tryVerify(() => again !== null);
+            const hint = findChild(view, "spaceReplacing");
+            const composer = findChild(view, "spaceComposer");
+            again.clicked();
+            tryVerify(() => hint.visible);
+            composer.text = "A plain paragraph";
+            composer.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            tryVerify(() => !hint.visible);
+            again.clicked();
+            tryVerify(() => hint.visible);
+            findChild(view, "spaceBlock:" + blocks[1].text).addBelowRequested("b2");
+            tryVerify(() => !hint.visible);
+            composer.text = "/visualize signups";
+            composer.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", afterBlockId: "b2" }]);
         }
 
         function pitch(more) {
@@ -315,6 +566,7 @@ Item {
             keyClick("/");
             keyClick("c");
             keyClick("h");
+            keyClick("e");
             const slash = findChild(view, "spaceSlashMenu");
             tryVerify(() => slash.visible);
             compare(slash.shown.map(entry => entry.kind), ["checklist"]);
@@ -480,8 +732,8 @@ Item {
 
         function test_a_comment_goes_on_the_chosen_block_and_is_resolved_or_reopened() {
             const view = root.research({
-                comments: [{ id: "c1", blockId: "b2", blockText: "Two", body: "Which week?", resolved: false, byAgent: false, createdAt: "" },
-                           { id: "c2", blockId: "b2", blockText: "Two", body: "Done", resolved: true, byAgent: true, createdAt: "" }]
+                comments: [{ id: "c1", blockId: "b2", blockText: "Two", blockGone: false, body: "Which week?", resolved: false, byAgent: false, createdAt: "" },
+                           { id: "c2", blockId: "b2", blockText: "Two", blockGone: false, body: "Done", resolved: true, byAgent: true, createdAt: "" }]
             });
             mouseClick(findChild(view, "spaceComment:One"));
             const comments = findChild(view, "spaceComments");
@@ -539,6 +791,238 @@ Item {
             keyClick("P");
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.page.rename"), [{ pageId: "page-1", title: "P" }]);
+        }
+
+        function test_the_composer_asks_an_agent_and_writes_no_block() {
+            const view = root.research({});
+            findChild(view, "spaceComposer").forceActiveFocus();
+            for (const key of "@agent tidy")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.agent.ask"), [{ pageId: "page-1", request: "@agent tidy" }]);
+            compare(root.dispatched("space.block.insert"), []);
+            compare(findChild(view, "spaceComposer").text, "@agent tidy");
+            Spaces.agentAskAnswered("page-1", "@agent tidy", true);
+            compare(findChild(view, "spaceComposer").text, "");
+        }
+
+        function test_an_ask_the_mc_refuses_keeps_its_words() {
+            const view = root.research({});
+            findChild(view, "spaceComposer").forceActiveFocus();
+            for (const key of "@agent tidy")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            Spaces.agentAskAnswered("page-1", "@agent tidy", false);
+            compare(findChild(view, "spaceComposer").text, "@agent tidy");
+        }
+
+        function test_words_changed_while_an_ask_is_answered_are_kept() {
+            const view = root.research({});
+            findChild(view, "spaceComposer").forceActiveFocus();
+            for (const key of "@agent tidy")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            keyClick("!");
+            Spaces.agentAskAnswered("page-1", "@agent tidy", true);
+            compare(findChild(view, "spaceComposer").text, "@agent tidy!");
+        }
+
+        function test_a_word_that_only_starts_like_the_mention_is_a_block() {
+            const view = root.research({});
+            findChild(view, "spaceComposer").forceActiveFocus();
+            for (const key of "@agents")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.agent.ask"), []);
+            compare(root.dispatched("space.block.insert").length, 1);
+        }
+
+        function test_an_ask_the_page_cannot_take_yet_keeps_its_words() {
+            const view = root.research({ agent: { status: "running", request: "tidy", threadId: "t9" } });
+            const composer = findChild(view, "spaceComposer");
+            composer.forceActiveFocus();
+            for (const key of "@agent more")
+                keyClick(key);
+            keyClick(Qt.Key_Return);
+            compare(composer.text, "@agent more");
+        }
+
+        function test_the_way_in_starts_the_words_of_an_ask() {
+            const view = root.research({});
+            Spaces.agentAskRequested();
+            const composer = findChild(view, "spaceComposer");
+            compare(composer.text, "@agent ");
+            verify(composer.activeFocus);
+        }
+
+        function test_the_way_in_keeps_a_draft() {
+            const view = root.research({});
+            const composer = findChild(view, "spaceComposer");
+            composer.text = "the plan";
+            Spaces.agentAskRequested();
+            compare(composer.text, "@agent the plan");
+            compare(composer.cursorPosition, "@agent ".length);
+            Spaces.agentAskRequested();
+            compare(composer.text, "@agent the plan");
+            verify(composer.activeFocus);
+        }
+
+        function test_a_working_agent_can_be_followed_and_stopped() {
+            const view = root.research({ agent: { status: "running", request: "tidy this", threadId: "t9" } });
+            compare(findChild(view, "spaceAgentText").text, "An agent is working on “tidy this”.");
+            verify(!findChild(view, "spaceAgentDismiss").visible);
+            mouseClick(findChild(view, "spaceAgentStop"));
+            compare(root.dispatched("space.agent.stop").length, 1);
+            mouseClick(findChild(view, "spaceAgentOpenThread"));
+            compare(root.dispatched("space.agent.openThread").length, 1);
+        }
+
+        function test_a_stopping_agent_can_be_stopped_again() {
+            const view = root.research({ agent: { status: "stopping", request: "tidy", threadId: "t9" } });
+            compare(findChild(view, "spaceAgentText").text, "Stopping the agent…");
+            mouseClick(findChild(view, "spaceAgentStop"));
+            compare(root.dispatched("space.agent.stop").length, 1);
+            verify(findChild(view, "spaceAgentOpenThread").visible);
+        }
+
+        function test_an_ended_agent_says_how_and_can_be_dismissed() {
+            const says = [
+                [{ status: "completed", edited: true }, "The agent finished and changed this page."],
+                [{ status: "completed", edited: false }, "The agent finished without changing this page."],
+                [{ status: "stopped" }, "The agent was stopped."],
+                [{ status: "stopped", error: "its thread was deleted" }, "The agent stopped: its thread was deleted."],
+                [{ status: "stopped", error: "It was cut off.\n" }, "The agent stopped: It was cut off."],
+                [{ status: "failed", error: "The agent's turn failed." }, "The agent failed: The agent's turn failed. The page stays as it last wrote it."],
+                [{ status: "failed", error: "out of credits" }, "The agent failed: out of credits. The page stays as it last wrote it."]
+            ];
+            const view = root.research({});
+            for (const [agent, text] of says) {
+                Spaces.agent = Object.assign({ request: "tidy", threadId: "t9" }, agent);
+                compare(findChild(view, "spaceAgentText").text, text);
+                verify(!findChild(view, "spaceAgentStop").visible);
+                verify(findChild(view, "spaceAgentHistory").visible);
+                mouseClick(findChild(view, "spaceAgentDismiss"));
+            }
+            compare(root.dispatched("space.agent.dismiss").length, says.length);
+        }
+
+        function test_a_page_with_no_agent_says_nothing() {
+            const view = root.research({});
+            verify(!findChild(view, "spaceAgentStrip").visible);
+        }
+
+        function update(more) {
+            return { schedule: Object.assign({ instruction: "Summarise", cadence: { type: "interval", everyMs: 7200000 }, cadenceLabel: "Every 2 hours", enabled: true, nextRunAt: "2026-11-01T09:00:00.000Z", lastRunStatus: "never" }, more), writtenAt: "" };
+        }
+
+        function pageWith(fields) {
+            return { page: Object.assign({ id: "page-1", title: "Roadmap", parentPageId: "", trashed: false, sourceThreadId: "", sourceThreadTitle: "" }, fields) };
+        }
+
+        function test_a_page_without_an_update_shows_none() {
+            const view = root.research({});
+            verify(!findChild(view, "spacePageUpdate").visible);
+            compare(findChild(view, "spaceUpdateMenu").text, "Update itself…");
+        }
+
+        function test_the_update_says_what_it_does_and_when() {
+            const view = root.research(pageWith(update({})));
+            verify(findChild(view, "spacePageUpdate").visible);
+            compare(findChild(view, "spaceUpdateSays").text, "Summarise");
+            verify(findChild(view, "spaceUpdateWhen").text.startsWith("Every 2 hours, next run "));
+            compare(findChild(view, "spaceUpdateWritten").text, "Not written yet");
+            verify(!findChild(view, "spaceUpdateFailure").visible);
+            compare(findChild(view, "spaceUpdateMenu").text, "Change its update…");
+        }
+
+        function test_the_update_is_run_paused_and_removed_from_the_page() {
+            const view = root.research(pageWith(update({})));
+            mouseClick(findChild(view, "spaceUpdateRun"));
+            compare(dispatched("space.page.schedule.runNow"), [{ pageId: "page-1" }]);
+            mouseClick(findChild(view, "spaceUpdatePause"));
+            compare(dispatched("space.page.schedule.setEnabled"), [{ pageId: "page-1", enabled: false }]);
+            mouseClick(findChild(view, "spaceUpdateRemove"));
+            compare(dispatched("space.page.schedule.remove"), [{ pageId: "page-1" }]);
+        }
+
+        function test_a_paused_update_says_so_and_offers_to_resume() {
+            const view = root.research(pageWith(update({ enabled: false, nextRunAt: null })));
+            compare(findChild(view, "spaceUpdateWhen").text, "Every 2 hours, paused");
+            compare(findChild(view, "spaceUpdatePause").text, "Resume");
+            mouseClick(findChild(view, "spaceUpdatePause"));
+            compare(dispatched("space.page.schedule.setEnabled"), [{ pageId: "page-1", enabled: true }]);
+        }
+
+        function test_a_run_under_way_cannot_be_started_again() {
+            const view = root.research(pageWith(update({ lastRunStatus: "running" })));
+            compare(findChild(view, "spaceUpdateWritten").text, "Writing now…");
+            verify(!findChild(view, "spaceUpdateRun").enabled);
+        }
+
+        function test_a_failed_run_shows_on_the_page() {
+            const view = root.research(pageWith(update({ lastRunStatus: "failed", lastRunError: "the model is overloaded" })));
+            compare(findChild(view, "spaceUpdateFailure").text, "Last run failed: the model is overloaded");
+            verify(findChild(view, "spaceUpdateFailure").visible);
+        }
+
+        function test_a_trashed_page_shows_its_update_stopped_and_offers_nothing() {
+            const view = root.research(pageWith(Object.assign(update({ nextRunAt: null }), { trashed: true })));
+            verify(findChild(view, "spaceUpdateWhen").text.includes("stopped while this page is in the trash"));
+            verify(!findChild(view, "spaceUpdateRun").visible);
+            verify(!findChild(view, "spaceUpdateMenu").enabled);
+        }
+
+        function test_the_dialog_writes_an_interval_and_needs_an_instruction() {
+            const view = root.research({});
+            const dialog = findChild(view, "spaceUpdateDialog");
+            dialog.ask();
+            tryVerify(() => dialog.opened);
+            verify(!findChild(dialog, "spaceUpdateSave").enabled);
+            findChild(dialog, "spaceUpdateInstruction").text = " Summarise ";
+            verify(findChild(dialog, "spaceUpdateSave").enabled);
+            findChild(dialog, "spaceUpdateEvery").text = "0";
+            verify(!findChild(dialog, "spaceUpdateSave").enabled);
+            findChild(dialog, "spaceUpdateEvery").text = "3";
+            mouseClick(findChild(dialog, "spaceUpdateSave"));
+            compare(dispatched("space.page.schedule.set"), [{ pageId: "page-1", instruction: "Summarise", cadence: { type: "interval", everyMs: 10800000 } }]);
+            tryVerify(() => !dialog.visible);
+        }
+
+        function test_the_dialog_writes_a_time_of_day_and_starts_from_what_the_page_has() {
+            const view = root.research(pageWith(update({ cadence: { type: "fixed_time", timeOfDay: "07:30", weekdays: [1, 3] } })));
+            const dialog = findChild(view, "spaceUpdateDialog");
+            dialog.ask();
+            tryVerify(() => dialog.opened);
+            compare(findChild(dialog, "spaceUpdateInstruction").text, "Summarise");
+            compare(findChild(dialog, "spaceUpdateMode").currentIndex, 0);
+            compare(findChild(dialog, "spaceUpdateTime").text, "07:30");
+            findChild(dialog, "spaceUpdateTime").text = "25:00";
+            verify(!findChild(dialog, "spaceUpdateSave").enabled);
+            findChild(dialog, "spaceUpdateTime").text = "09:15";
+            mouseClick(findChild(dialog, "spaceUpdateSave"));
+            compare(dispatched("space.page.schedule.set"), [{ pageId: "page-1", instruction: "Summarise", cadence: { type: "fixed_time", timeOfDay: "09:15", weekdays: [1, 3] } }]);
+        }
+
+        function test_the_dialog_starts_from_an_interval_in_minutes() {
+            const view = root.research(pageWith(update({ cadence: { type: "interval", everyMs: 900000 } })));
+            const dialog = findChild(view, "spaceUpdateDialog");
+            dialog.ask();
+            tryVerify(() => dialog.opened);
+            compare(findChild(dialog, "spaceUpdateEvery").text, "15");
+            compare(findChild(dialog, "spaceUpdateUnit").currentIndex, 1);
+        }
+
+        function test_the_generated_part_shows_as_markdown_and_cannot_be_edited() {
+            const view = root.research({ blocks: [root.block("b1", "Mine"), root.block("b2", "Three **threads**", { kind: "generated" })] });
+            tryVerify(() => findChild(view, "spaceBlock:Three **threads**") !== null);
+            const generated = findChild(view, "spaceBlock:Three **threads**");
+            verify(!findChild(generated, "spaceBlockEditor:Three **threads**").visible);
+            tryVerify(() => findChild(generated, "spaceGenerated") !== null);
+            compare(findChild(generated, "spaceGenerated").text, "Three **threads**");
+            verify(findChild(view, "spaceBlockEditor:Mine").visible);
+            // It can still be moved, deleted and commented on.
+            verify(findChild(generated, "spaceDeleteBlock:Three **threads**").visible);
+            verify(findChild(generated, "spaceComment:Three **threads**") !== null);
         }
 
         function test_an_image_block_is_placed_from_the_spaces_images() {
@@ -647,6 +1131,18 @@ Item {
             const source = findChild(view, "spacePageSource");
             verify(source.visible);
             compare(source.text, "Made from the thread “Work”");
+        }
+
+        function test_nobodyElseTakesNoRoom() {
+            const view = root.research({ viewers: { devices: [], agents: [] } });
+            verify(!findChild(view, "spaceViewers").visible);
+        }
+
+        function test_whoElseIsOnThePageIsNamed() {
+            const view = root.research({ viewers: { devices: ["HAL-C2 on SM-F741B"], agents: ["Work"] } });
+            const viewers = findChild(view, "spaceViewers");
+            verify(viewers.visible);
+            compare(viewers.text, "Also here: HAL-C2 on SM-F741B, the agent of “Work”");
         }
     }
 }

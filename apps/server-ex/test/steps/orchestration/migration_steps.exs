@@ -270,6 +270,46 @@ defmodule HalC2.Steps.Orchestration.Migration do
   # the import folds them (`HalC2.Import.V1Thread`) into a thread whose messages sit
   # outside any run.
 
+  step "the snapshot holds a message the user typed in thread {string}",
+       %{args: [id]} = context do
+    event(context, "thread", id, "message.updated", %{
+      "id" => "typed",
+      "threadId" => id,
+      "role" => "user",
+      "text" => "Typed",
+      "createdAt" => iso(@start)
+    })
+  end
+
+  step "the snapshot's thread {string} cannot be read", %{args: [id]} = context do
+    context
+    |> event("thread", id, "thread.created", thread(id))
+    |> Map.put(:unreadable_stream, id)
+  end
+
+  step "the operator's import of the snapshot fails partway", context do
+    source = snapshot(context)
+
+    mc =
+      Mc.restart(context.mc, fn ->
+        assert_raise JSON.DecodeError, fn -> import!(source) end
+      end)
+
+    %{context | mc: mc, clients: %{}}
+  end
+
+  step "the MC counts {int} turn(s) for the imported thread {string}",
+       %{args: [count, id]} = context do
+    HalC2.Store.put_meta("test.flush", "1")
+
+    assert [{^id, _day, ^count}] =
+             HalC2.Store.path()
+             |> HalC2.Store.typed_messages_since("2000-01-01")
+             |> Enum.filter(&(elem(&1, 0) == id))
+
+    context
+  end
+
   step "the snapshot holds a thread logged by the version 1 orchestrator", context do
     image = %{"type" => "image", "id" => "img-1", "name" => "cart.png", "mimeType" => "image/png"}
 
@@ -495,7 +535,18 @@ defmodule HalC2.Steps.Orchestration.Migration do
     path = Path.join(Mc.tmp_dir(context.mc, "mc-server"), "state.sqlite")
     World.node_log(path, context.snapshot)
     Enum.each(context[:v1_streams] || [], &version_1(path, &1))
+    if context[:unreadable_stream], do: unreadable(path, context.unreadable_stream)
     path
+  end
+
+  defp unreadable(path, stream) do
+    {:ok, db} = Sqlite3.open(path)
+    sql = "UPDATE orchestration_events SET payload_json = 'not json' WHERE stream_id = ?1"
+    {:ok, stmt} = Sqlite3.prepare(db, sql)
+    :ok = Sqlite3.bind(stmt, [stream])
+    :done = Sqlite3.step(db, stmt)
+    :ok = Sqlite3.release(db, stmt)
+    :ok = Sqlite3.close(db)
   end
 
   # Marks a thread's events as logged before an earlier install's v2 orchestrator.

@@ -125,7 +125,8 @@ defmodule HalC2.Steps.Providers.Cursor do
   end
 
   # Waits on client "default" (subscribed by `watch_providers/1`) for a provider list
-  # whose `id` entry matches `fun`.
+  # whose `id` entry matches `fun`. That frame ends the wait: it follows the agent's
+  # read, which starts a process and so takes as long as the machine makes it.
   defp await_entry(ctx, id, fun) do
     sub = ctx.config_sub
 
@@ -138,8 +139,7 @@ defmodule HalC2.Steps.Providers.Cursor do
               nil -> false
               entry -> fun.(entry)
             end
-        end,
-        5_000
+        end
       )
 
     {Enum.find(frame["providers"], &(&1["instanceId"] == id)), World.put_client(ctx, client)}
@@ -151,7 +151,7 @@ defmodule HalC2.Steps.Providers.Cursor do
     client =
       Mc.sub(World.client(ctx), sub, %{"type" => "config", "mc" => Atom.to_string(node())})
 
-    {_, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == sub), 5_000)
+    {_, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == sub))
     ctx |> World.put_client(client) |> Map.put(:config_sub, sub)
   end
 
@@ -285,9 +285,15 @@ defmodule HalC2.Steps.Providers.Cursor do
     started = System.system_time(:millisecond)
     ctx = start_sign_in(ctx)
     {state, ctx} = waiting(ctx)
+    seen = System.system_time(:millisecond)
     {:ok, expires, _} = DateTime.from_iso8601(state["expiresAt"])
-    left = DateTime.to_unix(expires, :millisecond) - started
-    assert left in 299_000..301_000, "the sign-in expires in #{left}ms"
+    # Five minutes from when the MC started the flow, which is after it read the
+    # agent's sign-in methods: between asking and being shown the page.
+    from = DateTime.to_unix(expires, :millisecond) - 300_000
+
+    assert from in started..seen,
+           "the five minutes start #{from - started}ms after sign-in was asked for"
+
     ctx
   end
 

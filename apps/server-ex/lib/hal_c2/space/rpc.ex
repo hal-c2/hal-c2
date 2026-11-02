@@ -2,11 +2,12 @@ defmodule HalC2.Space.Rpc do
   @moduledoc """
   The `space.*` RPC methods (`packages/contracts/src/space.ts`) on `HalC2.Space`.
   Refusals are `SpaceError`s, a page a thread could not be summarised into a
-  `SpaceTextGenerationError`, and an image that could not be generated a
-  `SpaceImageGenerationError`.
+  `SpaceTextGenerationError`, an image that could not be generated a
+  `SpaceImageGenerationError`, and a chart that could not be drawn a `SpaceChartError`.
   """
 
   alias HalC2.Space
+  alias HalC2.Space.Schedule
 
   @doc "Answers `space.<method>` with `input`."
   def handle(method, input) when is_map(input), do: method |> call(input) |> reply()
@@ -51,6 +52,51 @@ defmodule HalC2.Space.Rpc do
   defp call("page.createFromThread", %{"spaceId" => s, "threadId" => t} = i),
     do: page(Space.create_page_from_thread(s, t, i["parentPageId"]))
 
+  defp call("page.history", %{"spaceId" => s, "pageId" => p} = i) do
+    with {:ok, %{versions: versions, next_before: next}} <-
+           Space.page_versions(s, p, i["before"], i["limit"]) do
+      {:ok, %{"versions" => Enum.map(versions, &version/1), "nextBefore" => next}}
+    end
+  end
+
+  defp call("page.version", %{"spaceId" => s, "pageId" => p, "version" => v}) do
+    with {:ok, read} <- Space.page_version(s, p, v) do
+      {:ok,
+       %{
+         "version" => read.version,
+         "at" => read.at,
+         "title" => read.title,
+         "blocks" => read.blocks
+       }}
+    end
+  end
+
+  defp call("page.restoreVersion", %{"spaceId" => s, "pageId" => p, "version" => v}),
+    do: page(Space.restore_page_version(s, p, v))
+
+  defp call("page.askAgent", %{"spaceId" => s, "pageId" => p, "request" => request}),
+    do: agent(Space.ask_page_agent(s, p, request))
+
+  defp call("page.stopAgent", %{"spaceId" => s, "pageId" => p}),
+    do: agent(Space.stop_page_agent(s, p))
+
+  defp call("page.dismissAgent", %{"spaceId" => s, "pageId" => p}),
+    do: with({:ok, _} <- Space.dismiss_page_agent(s, p), do: {:ok, %{"pageId" => p}})
+
+  defp call("page.schedule.set", %{"spaceId" => s, "pageId" => p} = i)
+       when is_map_key(i, "instruction") and is_map_key(i, "cadence"),
+       do: page(Schedule.set(s, p, i["instruction"], i["cadence"]))
+
+  defp call("page.schedule.setEnabled", %{"spaceId" => s, "pageId" => p, "enabled" => enabled})
+       when is_boolean(enabled),
+       do: page(Schedule.set_enabled(s, p, enabled))
+
+  defp call("page.schedule.runNow", %{"spaceId" => s, "pageId" => p}),
+    do: page(Schedule.run_now(s, p))
+
+  defp call("page.schedule.remove", %{"spaceId" => s, "pageId" => p}),
+    do: page(Schedule.remove(s, p))
+
   defp call("block.insert", %{"spaceId" => s, "pageId" => p, "kind" => _} = i) do
     spec = Map.take(i, ~w(kind text checked linkedPageId imageId))
     block(Space.insert_block(s, p, spec, Map.get(i, "afterBlockId", :last)))
@@ -67,6 +113,11 @@ defmodule HalC2.Space.Rpc do
 
   defp call("block.delete", %{"spaceId" => s, "blockId" => b}),
     do: with({:ok, id} <- Space.delete_block(s, b), do: {:ok, %{"blockId" => id}})
+
+  defp call("block.visualize", %{"spaceId" => s, "pageId" => p, "request" => request} = i) do
+    after_id = Map.get(i, "afterBlockId", :last)
+    block(Space.visualize(s, p, request, i["blockId"], after_id))
+  end
 
   defp call("comment.add", %{"spaceId" => s, "pageId" => p, "body" => body} = i),
     do: comment(Space.add_comment(s, p, i["blockId"], body))
@@ -131,14 +182,29 @@ defmodule HalC2.Space.Rpc do
 
   @methods ~w(list create rename delete page.create page.rename page.move page.trash
     page.restore page.delete page.publish page.unpublish page.exportMarkdown page.importMarkdown
-    page.createFromThread
-    block.insert block.update block.setChecked block.move block.delete comment.add
-    comment.resolve comment.reopen deck.create deck.createFromPage deck.rename deck.trash
-    deck.restore deck.delete slide.insert slide.update slide.move slide.delete image.add
-    image.generate image.trash image.restore image.delete image.providers)
+    page.createFromThread page.history page.version page.restoreVersion
+    page.schedule.set page.schedule.setEnabled page.schedule.runNow page.schedule.remove
+    page.askAgent page.stopAgent page.dismissAgent block.insert block.update block.setChecked
+    block.move block.delete block.visualize comment.add comment.resolve comment.reopen
+    deck.create deck.createFromPage deck.rename deck.trash deck.restore deck.delete
+    slide.insert slide.update slide.move slide.delete image.add image.generate image.trash
+    image.restore image.delete image.providers)
+
+  defp agent({:ok, agent}), do: {:ok, %{"agent" => agent}}
+  defp agent(refused), do: refused
 
   @doc "The methods after `space.`."
   def methods, do: @methods
+
+  defp version(version) do
+    %{
+      "version" => version.version,
+      "at" => version.at,
+      "author" => version.author,
+      "threadTitle" => version.thread_title,
+      "restoredFromAt" => version.restored_from_at
+    }
+  end
 
   defp space(result), do: with({:ok, space} <- result, do: {:ok, %{"space" => space}})
   defp page(result), do: with({:ok, page} <- result, do: {:ok, %{"page" => page}})
@@ -164,6 +230,12 @@ defmodule HalC2.Space.Rpc do
        when reason in [:generation_unavailable, :generation_failed] do
     tag = if reason == :generation_unavailable, do: "unavailable", else: "failed"
     {:error, %{"_tag" => "SpaceTextGenerationError", "message" => message, "reason" => tag}}
+  end
+
+  defp reply({:error, reason, message})
+       when reason in [:chart_unavailable, :chart_failed, :chart_unanswerable] do
+    tag = reason |> Atom.to_string() |> String.replace_prefix("chart_", "")
+    {:error, %{"_tag" => "SpaceChartError", "message" => message, "reason" => tag}}
   end
 
   defp reply({:error, reason, message})

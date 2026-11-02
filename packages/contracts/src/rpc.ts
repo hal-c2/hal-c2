@@ -89,6 +89,8 @@ import {
 import {
   WorktreeSetupCancelInput,
   WorktreeSetupCancelResult,
+  WorktreeSetupRetryInput,
+  WorktreeSetupRetryResult,
   WorktreeSetupStreamEvent,
   WorktreeSetupSubscribeInput,
 } from "./worktreeSetup.ts";
@@ -351,16 +353,30 @@ import {
   SpacePageCreateInput,
   SpacePageDeleteResult,
   SpacePageExportMarkdownResult,
+  SpacePageHistoryInput,
+  SpacePageHistoryResult,
   SpacePagePublishInput,
   SpacePagePublishResult,
   SpacePageUnpublishResult,
   SpacePageImportMarkdownInput,
   SpacePageMoveInput,
   SpacePageRef,
+  SpacePresenceStreamEvent,
+  SpacePresenceSubscribeInput,
   SpacePageRenameInput,
   SpacePageResult,
+  SpacePageScheduleSetEnabledInput,
+  SpacePageScheduleSetInput,
+  SpacePageVersionContent,
+  SpacePageVersionRef,
+  SpacePageAskAgentInput,
+  SpacePageAgentRef,
+  SpacePageAgentResult,
+  SpacePageDismissAgentResult,
   SpaceRenameInput,
   SpaceResult,
+  SpaceBlockVisualizeInput,
+  SpaceChartError,
   SpaceSlideDeleteInput,
   SpaceSlideDeleteResult,
   SpaceSlideInsertInput,
@@ -543,11 +559,22 @@ export const WS_METHODS = {
   spacePageExportMarkdown: "space.page.exportMarkdown",
   spacePageImportMarkdown: "space.page.importMarkdown",
   spacePageCreateFromThread: "space.page.createFromThread",
+  spacePageHistory: "space.page.history",
+  spacePageVersion: "space.page.version",
+  spacePageRestoreVersion: "space.page.restoreVersion",
+  spacePageAskAgent: "space.page.askAgent",
+  spacePageStopAgent: "space.page.stopAgent",
+  spacePageDismissAgent: "space.page.dismissAgent",
+  spacePageScheduleSet: "space.page.schedule.set",
+  spacePageScheduleSetEnabled: "space.page.schedule.setEnabled",
+  spacePageScheduleRunNow: "space.page.schedule.runNow",
+  spacePageScheduleRemove: "space.page.schedule.remove",
   spaceBlockInsert: "space.block.insert",
   spaceBlockUpdate: "space.block.update",
   spaceBlockSetChecked: "space.block.setChecked",
   spaceBlockMove: "space.block.move",
   spaceBlockDelete: "space.block.delete",
+  spaceBlockVisualize: "space.block.visualize",
   spaceCommentAdd: "space.comment.add",
   spaceCommentResolve: "space.comment.resolve",
   spaceCommentReopen: "space.comment.reopen",
@@ -622,7 +649,9 @@ export const WS_METHODS = {
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeWorktreeSetup: "subscribeWorktreeSetup",
+  subscribeSpacePresence: "subscribeSpacePresence",
   worktreeSetupCancel: "worktreeSetup.cancel",
+  worktreeSetupRetry: "worktreeSetup.retry",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
   subscribePreviewEvents: "subscribePreviewEvents",
@@ -1372,9 +1401,22 @@ const WsSubscribeWorktreeSetupRpc = Rpc.make(WS_METHODS.subscribeWorktreeSetup, 
   stream: true,
 });
 
+const WsSubscribeSpacePresenceRpc = Rpc.make(WS_METHODS.subscribeSpacePresence, {
+  payload: SpacePresenceSubscribeInput,
+  success: SpacePresenceStreamEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsWorktreeSetupCancelRpc = Rpc.make(WS_METHODS.worktreeSetupCancel, {
   payload: WorktreeSetupCancelInput,
   success: WorktreeSetupCancelResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsWorktreeSetupRetryRpc = Rpc.make(WS_METHODS.worktreeSetupRetry, {
+  payload: WorktreeSetupRetryInput,
+  success: WorktreeSetupRetryResult,
   error: EnvironmentAuthorizationError,
 });
 
@@ -1883,6 +1925,72 @@ const WsSpacePageCreateFromThreadRpc = Rpc.make(WS_METHODS.spacePageCreateFromTh
   error: Schema.Union([SpaceError, SpaceTextGenerationError, EnvironmentAuthorizationError]),
 });
 
+const WsSpacePageHistoryRpc = Rpc.make(WS_METHODS.spacePageHistory, {
+  payload: SpacePageHistoryInput,
+  success: SpacePageHistoryResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageVersionRpc = Rpc.make(WS_METHODS.spacePageVersion, {
+  payload: SpacePageVersionRef,
+  success: SpacePageVersionContent,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageAskAgentRpc = Rpc.make(WS_METHODS.spacePageAskAgent, {
+  payload: SpacePageAskAgentInput,
+  success: SpacePageAgentResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageStopAgentRpc = Rpc.make(WS_METHODS.spacePageStopAgent, {
+  payload: SpacePageAgentRef,
+  success: SpacePageAgentResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageDismissAgentRpc = Rpc.make(WS_METHODS.spacePageDismissAgent, {
+  payload: SpacePageAgentRef,
+  success: SpacePageDismissAgentResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageRestoreVersionRpc = Rpc.make(WS_METHODS.spacePageRestoreVersion, {
+  payload: SpacePageVersionRef,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageScheduleSetRpc = Rpc.make(WS_METHODS.spacePageScheduleSet, {
+  payload: SpacePageScheduleSetInput,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageScheduleSetEnabledRpc = Rpc.make(WS_METHODS.spacePageScheduleSetEnabled, {
+  payload: SpacePageScheduleSetEnabledInput,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageScheduleRunNowRpc = Rpc.make(WS_METHODS.spacePageScheduleRunNow, {
+  payload: SpacePageRef,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageScheduleRemoveRpc = Rpc.make(WS_METHODS.spacePageScheduleRemove, {
+  payload: SpacePageRef,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceBlockVisualizeRpc = Rpc.make(WS_METHODS.spaceBlockVisualize, {
+  payload: SpaceBlockVisualizeInput,
+  success: SpaceBlockResult,
+  error: Schema.Union([SpaceError, SpaceChartError, EnvironmentAuthorizationError]),
+});
+
 const WsSpaceBlockInsertRpc = Rpc.make(WS_METHODS.spaceBlockInsert, {
   payload: SpaceBlockInsertInput,
   success: SpaceBlockResult,
@@ -2121,11 +2229,22 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageExportMarkdownRpc,
   WsSpacePageImportMarkdownRpc,
   WsSpacePageCreateFromThreadRpc,
+  WsSpacePageHistoryRpc,
+  WsSpacePageVersionRpc,
+  WsSpacePageRestoreVersionRpc,
+  WsSpacePageAskAgentRpc,
+  WsSpacePageStopAgentRpc,
+  WsSpacePageDismissAgentRpc,
+  WsSpacePageScheduleSetRpc,
+  WsSpacePageScheduleSetEnabledRpc,
+  WsSpacePageScheduleRunNowRpc,
+  WsSpacePageScheduleRemoveRpc,
   WsSpaceBlockInsertRpc,
   WsSpaceBlockUpdateRpc,
   WsSpaceBlockSetCheckedRpc,
   WsSpaceBlockMoveRpc,
   WsSpaceBlockDeleteRpc,
+  WsSpaceBlockVisualizeRpc,
   WsSpaceCommentAddRpc,
   WsSpaceCommentResolveRpc,
   WsSpaceCommentReopenRpc,
@@ -2210,7 +2329,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderUploadFeedbackRpc,
   WsSubscribeVcsStatusRpc,
   WsSubscribeWorktreeSetupRpc,
+  WsSubscribeSpacePresenceRpc,
   WsWorktreeSetupCancelRpc,
+  WsWorktreeSetupRetryRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
   WsGitRunStackedActionRpc,

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { SpacePresenceViewer } from "@hal-c2/contracts";
 import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 
 import type { AskSpec } from "./askState.ts";
@@ -72,6 +73,9 @@ function setup(origin?: string) {
   const calls: Array<{ method: string; payload: unknown }> = [];
   const statuses: string[] = [];
   const menus: PickRequest[] = [];
+  const opened: string[] = [];
+  const onPage = new Set<string>();
+  const tellPage: Array<(viewers: ReadonlyArray<SpacePresenceViewer>) => void> = [];
   const asks: AskSpec[] = [];
   const uploads = { fails: false, sent: 0 };
   let state: TuiSpaceState | null = null;
@@ -92,6 +96,13 @@ function setup(origin?: string) {
         streams.set(stream, list);
         return () => {};
       },
+      subscribeSpacePresence: (_spaceId, pageId, onViewers) => {
+        onPage.add(pageId);
+        tellPage.push(onViewers);
+        return () => {
+          onPage.delete(pageId);
+        };
+      },
       uploadToMc: async () => {
         if (uploads.fails) throw new Error("The MC refused the upload (413).");
         uploads.sent += 1;
@@ -108,6 +119,7 @@ function setup(origin?: string) {
     ask: (spec) => asks.push(spec),
     menu: (spec) => menus.push(spec),
     threads: () => [{ id: "t1", title: "Work" }],
+    openThread: (threadId) => opened.push(threadId),
     ...(origin ? { origin } : {}),
   });
   /** Send a frame on `stream`; `subscription` picks an older follow of the same stream. */
@@ -133,6 +145,9 @@ function setup(origin?: string) {
     asks,
     uploads,
     streams,
+    opened,
+    onPage,
+    tellPage,
   };
 }
 
@@ -202,6 +217,58 @@ describe("the Space's stream", () => {
     t.send("space:s1", events([11, "page", "p9", { s: page("p9", "Stray")[2] }]), 0);
     expect(t.view().title).toBe("space · Lab");
     expect(t.texts("page")).toEqual(["Bench"]);
+  });
+});
+
+describe("who else is on the page", () => {
+  const onRoadmap = () => {
+    const t = inResearch([page("p1", "Roadmap")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+
+  test("the pages of a Space are not being on a page", () => {
+    expect(inResearch([page("p1", "Roadmap")]).onPage.size).toBe(0);
+  });
+
+  test("a page deleted while open is left", () => {
+    const t = onRoadmap();
+    expect([...t.onPage]).toEqual(["p1"]);
+    t.send("space:s1", events([11, "page", "p1", { d: true }]));
+    expect(t.onPage.size).toBe(0);
+  });
+
+  test("closing the pane leaves the page and forgets who was on it", () => {
+    const t = onRoadmap();
+    t.tellPage[0]!([{ type: "user", devices: ["Phone"] }]);
+    expect(t.view().viewers).toBe("Also here: Phone");
+    t.controller.close();
+    expect(t.onPage.size).toBe(0);
+    expect(t.view().viewers).toBe("");
+  });
+
+  test("a lost connection forgets who was on the page until the MC says again", () => {
+    const t = onRoadmap();
+    t.tellPage[0]!([{ type: "user", devices: ["Phone"] }]);
+    t.controller.connectionLost();
+    expect(t.view().viewers).toBe("");
+    expect([...t.onPage]).toEqual(["p1"]);
+    t.tellPage[0]!([{ type: "user", devices: ["Laptop"] }]);
+    expect(t.view().viewers).toBe("Also here: Laptop");
+  });
+
+  test("a late answer for a page the user left does not reach the next", () => {
+    const t = onRoadmap();
+    t.controller.dispatch("space.back", {});
+    t.tellPage[0]!([{ type: "user", devices: ["Phone"] }]);
+    expect(t.view().viewers).toBe("");
+  });
+
+  test("ending the client leaves the page", () => {
+    const t = onRoadmap();
+    t.controller.dispose();
+    expect(t.onPage.size).toBe(0);
   });
 });
 
@@ -344,6 +411,256 @@ describe("replies that come after the user moved on", () => {
   });
 });
 
+describe("a page's history", () => {
+  const version = (n: number, fields: Record<string, unknown> = {}) => ({
+    version: n,
+    at,
+    author: user,
+    threadTitle: null,
+    restoredFromAt: null,
+    ...fields,
+  });
+  const onRoadmap = (fields: Record<string, unknown> = {}) => {
+    const t = inResearch([page("p1", "Roadmap", fields), block("b1", "p1", "Final", "a")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    t.controller.dispatch("space.history", {});
+    return t;
+  };
+
+  test("is asked for from the tree too, and going back lands on the page", async () => {
+    const t = inResearch([page("p1", "Roadmap")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.history", {});
+    expect(t.view().title).toBe("history · Roadmap");
+    t.reply("space.page.history", { versions: [version(2)], nextBefore: null });
+    await t.controller.settled();
+    t.controller.dispatch("space.back", {});
+    expect(t.view().title).toBe("page · Roadmap");
+  });
+
+  test("loads more a stretch at a time", async () => {
+    const t = onRoadmap();
+    t.reply("space.page.history", { versions: [version(9), version(8)], nextBefore: 8 });
+    await t.controller.settled();
+    expect(t.texts("more")).toEqual(["Load more…"]);
+    t.select("more:more");
+    t.controller.dispatch("space.activate", {});
+    t.reply("space.page.history", { versions: [version(7)], nextBefore: null });
+    await t.controller.settled();
+    expect(t.calls.at(-1)!.payload).toEqual(expect.objectContaining({ before: 8 }));
+    expect(t.view().rows.filter((row) => row.kind === "version")).toHaveLength(3);
+    expect(t.texts("more")).toEqual([]);
+  });
+
+  test("a reply for a history the user left is dropped", async () => {
+    const t = onRoadmap();
+    t.controller.dispatch("space.back", {});
+    t.reply("space.page.history", { versions: [version(9)], nextBefore: null });
+    await t.controller.settled();
+    expect(t.view().view).toBe("page");
+    t.controller.dispatch("space.history", {});
+    expect(t.view().rows).toEqual([]);
+    expect(t.view().message).toBe("Loading…");
+  });
+
+  test("a refresh asked for while one is in flight goes after it", async () => {
+    const t = onRoadmap();
+    t.controller.dispatch("space.history", {});
+    expect(t.calls.filter((call) => call.method === "space.page.history")).toHaveLength(1);
+    t.reply("space.page.history", { versions: [version(9)], nextBefore: null });
+    await Promise.resolve();
+    await Promise.resolve();
+    t.reply("space.page.history", { versions: [version(10), version(9)], nextBefore: null });
+    await t.controller.settled();
+    expect(t.calls.filter((call) => call.method === "space.page.history")).toHaveLength(2);
+    expect(t.view().rows.filter((row) => row.kind === "version")).toHaveLength(2);
+  });
+
+  test("a refresh past what the MC sends at once keeps the older versions", async () => {
+    const t = onRoadmap();
+    t.reply("space.page.history", { versions: [version(9), version(8)], nextBefore: 8 });
+    await t.controller.settled();
+    t.select("more:more");
+    t.controller.dispatch("space.activate", {});
+    t.reply("space.page.history", { versions: [version(7), version(6)], nextBefore: 6 });
+    await t.controller.settled();
+    t.controller.dispatch("space.history", {});
+    t.reply("space.page.history", { versions: [version(10), version(9)], nextBefore: 9 });
+    await t.controller.settled();
+    const versions = t.view().rows.filter((row) => row.kind === "version");
+    expect(versions.map((row) => row.key)).toEqual([
+      "version:10",
+      "version:9",
+      "version:8",
+      "version:7",
+      "version:6",
+    ]);
+    expect(t.view().rows.some((row) => row.kind === "more")).toBe(true);
+  });
+
+  test("a version being read cannot be edited", async () => {
+    const t = onRoadmap();
+    t.reply("space.page.history", { versions: [version(9), version(8)], nextBefore: null });
+    await t.controller.settled();
+    t.select("version:8");
+    t.controller.dispatch("space.activate", {});
+    t.reply("space.page.version", {
+      version: 8,
+      at,
+      title: "Roadmap",
+      blocks: [block("b1", "p1", "Draft", "a")[2]],
+    });
+    await t.controller.settled();
+    expect(t.view().view).toBe("version");
+    const asked = t.calls.length;
+    for (const action of ["space.edit", "space.delete", "space.tick", "space.move"]) {
+      t.controller.dispatch(action, {});
+    }
+    t.controller.dispatch("space.activate", {});
+    expect(t.calls).toHaveLength(asked);
+  });
+
+  test("the newest version is not restored over itself", async () => {
+    const t = onRoadmap();
+    t.reply("space.page.history", { versions: [version(9), version(8)], nextBefore: null });
+    await t.controller.settled();
+    t.select("version:9");
+    t.controller.dispatch("space.restore", {});
+    expect(t.statuses.at(-1)).toBe("This version is the page as it is.");
+    expect(t.calls.some((call) => call.method === "space.page.restoreVersion")).toBe(false);
+  });
+
+  test("a comment whose block a restore took away is still shown", () => {
+    const comment = {
+      id: "c1",
+      pageId: "p1",
+      blockId: "gone",
+      author: user,
+      body: "Why?",
+      resolvedAt: null,
+      createdAt: at,
+      updatedAt: at,
+    };
+    const t = inResearch([page("p1", "Roadmap"), ["comment", "c1", comment]]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    expect(t.texts("comment")[0]).toContain("Why? · on a block no longer on this page");
+  });
+});
+
+describe("a chart on a page", () => {
+  const chart = (labels: number, series: number) => ({
+    type: "bar",
+    title: "Signups",
+    source: "Numbers from this page",
+    request: "signups by month",
+    labels: Array.from({ length: labels }, (_, index) => `m${index}`),
+    series: Array.from({ length: series }, (_, index) => ({
+      name: `s${index}`,
+      values: Array.from({ length: labels }, () => 1),
+    })),
+  });
+  const chartBlock = (id: string, labels = 2, series = 1) => {
+    const [kind, key, fields] = block(id, "p1", "Signups (a chart; Numbers from this page)", "b");
+    return [kind, key, { ...fields, kind: "chart", chart: chart(labels, series) }] as const;
+  };
+  const onPage = (...rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>) => {
+    const t = inResearch([page("p1", "Status"), ...rows]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+
+  test("draws its title, its numbers and where they came from", () => {
+    const t = onPage(chartBlock("c1"));
+    const rows = t.view().rows.filter((row) => row.blockKind === "chart");
+    expect(rows.map((row) => row.key)).toEqual(Array(4).fill("block:c1"));
+    expect(rows[0]!.text).toContain("Signups");
+    expect(rows[1]!.text).toEndWith(" 1");
+    expect(rows.at(-1)!.text.trim()).toBe("Numbers from this page");
+    expect(rows.filter((row) => row.first)).toHaveLength(1);
+  });
+
+  test("shows its own words when the description cannot be read", () => {
+    const [kind, key, fields] = chartBlock("c1");
+    const t = onPage([kind, key, { ...fields, chart: "not a chart" }]);
+    expect(t.texts("block")).toEqual(["Signups (a chart; Numbers from this page)"]);
+  });
+
+  test("shows its own words when its numbers do not match its labels", () => {
+    const [kind, key, fields] = chartBlock("c1");
+    const chart = { ...fields.chart, series: [{ name: "Signups", values: [3] }] };
+    const t = onPage([kind, key, { ...fields, chart }]);
+    expect(t.texts("block")).toEqual(["Signups (a chart; Numbers from this page)"]);
+  });
+
+  test("asks again from the words it was asked for in, and replaces itself", async () => {
+    const t = onPage(chartBlock("c1"));
+    t.select("block:c1");
+    t.controller.dispatch("space.activate", {});
+    const asked = t.asks.at(-1)!;
+    expect(asked.value).toBe("signups by month");
+    asked.onSubmit("signups by week");
+    expect(t.statuses.at(-1)).toBe("Drawing a chart…");
+    expect(t.calls.at(-1)).toEqual({
+      method: "space.block.visualize",
+      payload: { spaceId: "s1", pageId: "p1", request: "signups by week", blockId: "c1" },
+    });
+    t.reply("space.block.visualize", { block: chartBlock("c1")[2] });
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toBe("Drew “Signups”.");
+  });
+
+  test("a new chart goes after the selected block", () => {
+    const t = onPage(block("b1", "p1", "Before", "a"));
+    t.select("block:b1");
+    t.controller.dispatch("space.visualize", {});
+    expect(t.asks.at(-1)!.value).toBeUndefined();
+    t.asks.at(-1)!.onSubmit("signups");
+    expect(t.calls.at(-1)!.payload).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      request: "signups",
+      afterBlockId: "b1",
+    });
+  });
+
+  test("a chart from the add menu is a new one, even with a chart selected", () => {
+    const t = onPage(chartBlock("c1"));
+    t.select("block:c1");
+    t.controller.dispatch("space.new", {});
+    t.menus.at(-1)!.onChoose("chart");
+    expect(t.asks.at(-1)!.value).toBeUndefined();
+    t.asks.at(-1)!.onSubmit("signups");
+    expect(t.calls.at(-1)!.payload).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      request: "signups",
+      afterBlockId: "c1",
+    });
+  });
+
+  test("off a page there is nothing to chart on", () => {
+    const t = inResearch([page("p1", "Status")]);
+    t.controller.dispatch("space.visualize", {});
+    expect(t.asks).toEqual([]);
+    expect(t.statuses.at(-1)).toBe("Open a page to ask for a chart.");
+  });
+
+  test("scrolls through itself when it is taller than the pane, then moves on", () => {
+    const t = onPage(chartBlock("c1", 24, 4), block("b1", "p1", "After", "c"));
+    t.select("block:c1");
+    const top = () => t.view().rows[0]!.text;
+    const before = top();
+    t.controller.dispatch("space.next", {});
+    expect(top()).not.toBe(before);
+    expect(t.view().rows.some((row) => row.selected && row.key === "block:c1")).toBe(true);
+    for (let step = 0; step < 100; step += 1) t.controller.dispatch("space.next", {});
+    expect(t.view().rows.some((row) => row.selected && row.key === "block:b1")).toBe(true);
+  });
+});
+
 describe("publishing a page as a site", () => {
   const publishPayload = (origin: string, action = "space.publish") => {
     const t = inResearch([page("p1", "Roadmap")], origin);
@@ -388,6 +705,126 @@ describe("refusalText", () => {
       detail: { _tag: "SpaceError", reason: "cycle" },
     });
     expect(refusalText(error)).toBe("A page cannot move inside itself.");
+  });
+});
+
+describe("a page's agent", () => {
+  const agent = (fields: Record<string, unknown> = {}) =>
+    [
+      "pageAgent",
+      "p1",
+      {
+        id: "p1",
+        pageId: "p1",
+        threadId: "t1",
+        request: "tidy this",
+        status: "running",
+        edited: false,
+        error: null,
+        startedAt: at,
+        endedAt: null,
+        ...fields,
+      },
+    ] as const;
+
+  const onRoadmap = (...rows: Array<readonly [string, string, Record<string, unknown>]>) => {
+    const t = inResearch([page("p1", "Roadmap"), ...rows]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+
+  test("it can open the thread it runs in, and says when that thread is gone", () => {
+    const t = onRoadmap(agent());
+    t.controller.dispatch("space.openAgentThread", {});
+    expect(t.opened).toEqual(["t1"]);
+    t.send("space:s1", events([11, "pageAgent", "p1", { s: { threadId: "gone" } }]));
+    expect(t.view().message).toContain("o opens its thread");
+    t.controller.dispatch("space.openAgentThread", {});
+    expect(t.opened).toEqual(["t1"]);
+    expect(t.statuses).toEqual(["The agent's thread is not available."]);
+  });
+
+  test("a second ask is not started while one is working", () => {
+    const t = onRoadmap(agent());
+    t.controller.dispatch("space.askAgent", {});
+    expect(t.statuses).toEqual(["An agent is already working on this page: s stops it."]);
+  });
+
+  test("a page without an agent has nothing to stop", () => {
+    const t = onRoadmap();
+    t.controller.dispatch("space.stopAgent", {});
+    expect(t.calls.some((call) => call.method === "space.page.stopAgent")).toBe(false);
+    expect(t.statuses).toEqual(["No agent was asked on this page: A asks one."]);
+  });
+
+  test("an error that ends its own sentence is not given a second full stop", () => {
+    const failed = onRoadmap(agent({ status: "failed", error: "The agent's turn failed." }));
+    expect(failed.view().message).toStartWith(
+      "The agent failed: The agent's turn failed. The page stays as it last wrote it.",
+    );
+    const stopped = onRoadmap(agent({ status: "stopped", error: "It was cut off.\n" }));
+    expect(stopped.view().message).toStartWith("The agent stopped: It was cut off. ·");
+  });
+
+  test("a long request is clipped, and the rows make room for a wrapped message", () => {
+    const blocks = Array.from({ length: 40 }, (_, index) =>
+      block(`b${index}`, "p1", `Block ${index}`, `a${String(index).padStart(2, "0")}`),
+    );
+    const t = onRoadmap(...blocks, agent({ request: "tidy ".repeat(100) }));
+    const said = t.view().message;
+    expect(said.length).toBeLessThan(120);
+    expect(said).toContain("…");
+    const fitsOneLine = onRoadmap(...blocks).view().rows.length;
+    expect(t.view().rows.length).toBeLessThan(fitsOneLine);
+  });
+
+  test("a page down under a wrapped message steps by the rows on show", () => {
+    const blocks = Array.from({ length: 40 }, (_, index) =>
+      block(`b${index}`, "p1", `Block ${index}`, `a${String(index).padStart(2, "0")}`),
+    );
+    const t = onRoadmap(...blocks, agent({ request: "tidy ".repeat(100) }));
+    const selected = () =>
+      t
+        .view()
+        .rows.find((row) => row.selected)!
+        .text.slice(2)
+        .trim();
+    t.select("block:b0");
+    const onShow = t.view().rows.length;
+    t.controller.dispatch("space.pageDown", {});
+    expect(selected()).toBe(`Block ${onShow}`);
+  });
+
+  test("an entry taller than the pane under a wrapped message scrolls a row at a time to its end", () => {
+    const tall = `${Array.from({ length: 800 }, (_, index) => `w${index}`).join(" ")} end`;
+    const t = onRoadmap(
+      block("b0", "p1", tall, "a0"),
+      block("b1", "p1", "After", "a1"),
+      agent({ request: "tidy ".repeat(100) }),
+    );
+    t.select("block:b0");
+    const shown = () => t.view().rows.map((row) => row.text);
+    let before = shown();
+    for (let step = 0; step < 200 && !before.some((text) => text.endsWith(" end")); step += 1) {
+      t.controller.dispatch("space.next", {});
+      const after = shown();
+      expect(after[0]).toBe(before[1]);
+      before = after;
+    }
+    expect(before.some((text) => text.endsWith(" end"))).toBe(true);
+  });
+
+  test("the palette offers the way out that fits what the agent is doing", () => {
+    const titles = (t: ReturnType<typeof onRoadmap>) =>
+      t.controller.commands().map((command) => command.action);
+    const working = titles(onRoadmap(agent()));
+    expect(working).toContain("space.stopAgent");
+    expect(working).not.toContain("space.askAgent");
+    const ended = titles(onRoadmap(agent({ status: "completed", endedAt: at })));
+    expect(ended).toContain("space.dismissAgent");
+    expect(ended).toContain("space.askAgent");
+    expect(titles(onRoadmap())).not.toContain("space.openAgentThread");
   });
 });
 

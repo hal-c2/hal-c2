@@ -4,8 +4,8 @@ defmodule HalC2.Space do
   (`features/space/`).
 
   The `spaces` stream indexes the Spaces, one `space` entity each, and each Space's
-  own `space:<id>` stream holds its `page`, `block`, `comment`, `image`, `site`, `deck` and
-  `slide` entities. Every change is a `HalC2.Streams.transact/3` on one of them, so the
+  own `space:<id>` stream holds its `page`, `block`, `comment`, `image`, `site`, `deck`, `slide`
+  and `pageAgent` entities. Every change is a `HalC2.Streams.transact/3` on one of them, so the
   event log is the only record and clients follow both streams through the stream shape.
   The decisions live in `HalC2.Space.Pages`, `HalC2.Space.Blocks`, `HalC2.Space.Images`,
   `HalC2.Space.Sites` and `HalC2.Space.Decks`.
@@ -21,7 +21,21 @@ defmodule HalC2.Space do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState, Streams}
-  alias HalC2.Space.{Blocks, Decks, ImageFile, ImageGeneration, Images, Markdown, Pages, Sites}
+
+  alias HalC2.Space.{
+    Blocks,
+    Chart,
+    Decks,
+    History,
+    ImageFile,
+    ImageGeneration,
+    Images,
+    Markdown,
+    PageAgent,
+    Pages,
+    Sites,
+    Visualize
+  }
 
   @index "spaces"
 
@@ -166,9 +180,24 @@ defmodule HalC2.Space do
 
   def rename_page(space_id, id, title), do: transact(space_id, &Pages.rename(&1, id, title))
   def move_page(space_id, id, parent_id), do: transact(space_id, &Pages.move(&1, id, parent_id))
-  def trash_page(space_id, id), do: transact(space_id, &Pages.trash(&1, id))
-  def restore_page(space_id, id), do: transact(space_id, &Pages.restore(&1, id))
-  def delete_page(space_id, id), do: transact(space_id, &Pages.delete(&1, id))
+
+  def trash_page(space_id, id),
+    do: transact(space_id, &Pages.trash(&1, id)) |> settle_schedules(space_id)
+
+  def restore_page(space_id, id),
+    do: transact(space_id, &Pages.restore(&1, id)) |> settle_schedules(space_id)
+
+  def delete_page(space_id, id, author \\ @user),
+    do: transact(space_id, &Pages.delete(&1, id, author)) |> settle_schedules(space_id)
+
+  # The trash decides whether a page's update runs, and the scheduler is told after the
+  # stream's step is over: it writes to this stream, so it cannot be waited on inside one.
+  defp settle_schedules({:ok, _} = reply, space_id) do
+    :ok = HalC2.ScheduledTasks.reconcile_pages(space_id)
+    reply
+  end
+
+  defp settle_schedules(refused, _space_id), do: refused
 
   def insert_block(space_id, page_id, spec, after_id \\ :last, author \\ @user),
     do: transact(space_id, &Blocks.insert(&1, page_id, spec, after_id, author))
@@ -185,7 +214,31 @@ defmodule HalC2.Space do
   def move_block(space_id, id, after_id, author \\ @user),
     do: transact(space_id, &Blocks.move(&1, id, after_id, author))
 
-  def delete_block(space_id, id), do: transact(space_id, &Blocks.delete(&1, id))
+  def delete_block(space_id, id, author \\ @user),
+    do: transact(space_id, &Blocks.delete(&1, id, author))
+
+  @doc """
+  Draws a chart that answers `request` on a page (`HalC2.Space.Visualize`): a new block
+  placed by `after_id`, or, with `block_id`, in place of that chart. The model is asked
+  outside the stream, so nothing waits on it; when it cannot answer, the page is as it was.
+  """
+  def visualize(space_id, page_id, request, block_id \\ nil, after_id \\ :last, author \\ @user) do
+    with {:ok, request} <- chart_request(request),
+         {:ok, state} <- state(space_id),
+         {:ok, page} <- Blocks.chart_place(state, page_id, block_id),
+         {:ok, chart} <- Visualize.answer(request, page, Blocks.of_page(state, page_id)) do
+      put_chart(space_id, page_id, chart, block_id, after_id, author)
+    end
+  end
+
+  @doc "Writes a chart as `visualize/6` does, deciding again: the page may have changed."
+  def put_chart(space_id, page_id, chart, block_id, after_id \\ :last, author \\ @user) do
+    transact(space_id, &Blocks.put_chart(&1, page_id, chart, block_id, after_id, author))
+  end
+
+  defp chart_request(request) do
+    with {:error, message} <- Chart.request(request), do: {:error, :invalid, message}
+  end
 
   def add_comment(space_id, page_id, block_id, body, author \\ @user),
     do: transact(space_id, &Blocks.comment(&1, page_id, block_id, body, author))
@@ -231,6 +284,37 @@ defmodule HalC2.Space do
       end
     end
   end
+
+  # --- history -------------------------------------------------------------------------
+
+  @doc "See `HalC2.Space.History.versions/4`."
+  defdelegate page_versions(space_id, page_id, before \\ nil, limit \\ nil),
+    to: History,
+    as: :versions
+
+  @doc "See `HalC2.Space.History.read/3`."
+  defdelegate page_version(space_id, page_id, version), to: History, as: :read
+
+  @doc """
+  Makes the page look like `version` again, as a new edit (`HalC2.Space.History`). The
+  version is read before the stream decides: what it held never changes.
+  """
+  def restore_page_version(space_id, page_id, version, author \\ @user) do
+    with {:ok, read} <- History.read(space_id, page_id, version) do
+      transact(space_id, &History.restore(&1, page_id, read, author))
+    end
+  end
+
+  # --- the agent of a page ----------------------------------------------------------------
+
+  @doc "See `HalC2.Space.PageAgent.ask/3`."
+  defdelegate ask_page_agent(space_id, page_id, request), to: PageAgent, as: :ask
+
+  @doc "See `HalC2.Space.PageAgent.stop/2`."
+  defdelegate stop_page_agent(space_id, page_id), to: PageAgent, as: :stop
+
+  @doc "See `HalC2.Space.PageAgent.dismiss/2`."
+  defdelegate dismiss_page_agent(space_id, page_id), to: PageAgent, as: :dismiss
 
   # --- images --------------------------------------------------------------------------
 
@@ -383,9 +467,11 @@ defmodule HalC2.Space do
     end)
   end
 
-  # A link to a page this Space does not have is kept as a paragraph, and so is an image
-  # it does not have or that is in the trash.
-  defp links(state, %{"kind" => "image"} = spec) do
+  @doc """
+  `spec` as a block of this Space: a link to a page it does not have is a paragraph, and
+  so is an image it does not have or that is in the trash.
+  """
+  def links(state, %{"kind" => "image"} = spec) do
     case Images.fetch_live(state, spec["imageId"]) do
       {:ok, _} ->
         spec
@@ -400,7 +486,7 @@ defmodule HalC2.Space do
     end
   end
 
-  defp links(state, %{"kind" => "subpage_link"} = spec) do
+  def links(state, %{"kind" => "subpage_link"} = spec) do
     if Pages.get(state, spec["linkedPageId"]),
       do: spec,
       else: %{
@@ -411,7 +497,15 @@ defmodule HalC2.Space do
       }
   end
 
-  defp links(_state, spec), do: spec
+  def links(_state, spec), do: spec
+
+  @doc "A run's Markdown as the block specs it reads as in this Space, each with its text."
+  def written(state, markdown) do
+    markdown
+    |> Markdown.blocks()
+    |> Enum.map(&links(state, &1))
+    |> Enum.map(&Map.put(&1, "text", Blocks.text(state, &1)))
+  end
 
   @doc """
   A new page summarising a thread of this MC, written by text generation in the

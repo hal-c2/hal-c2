@@ -6,8 +6,8 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// The open page: its blocks, the way to add one, its comments and what can be
-// done with it. A page in the trash is only read, and says so.
+// The open page: its update, its blocks, the way to add one, its comments and
+// what can be done with it. A page in the trash is only read, and says so.
 ColumnLayout {
     id: view
 
@@ -56,6 +56,13 @@ ColumnLayout {
         }
     }
 
+    SpaceViewers {
+        Layout.fillWidth: true
+        Layout.leftMargin: 16
+        Layout.rightMargin: 16
+        Layout.topMargin: 4
+    }
+
     ListView {
         id: blocks
 
@@ -86,6 +93,14 @@ ColumnLayout {
                 font.pixelSize: Math.round(13 * Theme.fontScale)
             }
 
+            SpaceAgentStrip {
+                Layout.fillWidth: true
+                Layout.margins: 16
+                Layout.bottomMargin: 4
+                buttonHeight: 44
+                onHistoryRequested: view.screen.showHistory(Spaces.pageId)
+            }
+
             Label {
                 objectName: "spaceTrashedNotice"
                 Layout.fillWidth: true
@@ -96,6 +111,14 @@ ColumnLayout {
                 text: qsTr("This page is in the trash. Restore it to edit it.")
                 color: Theme.palette.color("error", "#ef4444")
                 font.pixelSize: Math.round(13 * Theme.fontScale)
+            }
+
+            // Its actions are in the page's menu, a finger wide.
+            SpacePageUpdate {
+                Layout.fillWidth: true
+                Layout.margins: 12
+                Layout.bottomMargin: 4
+                actions: false
             }
 
             // The page's site: where it is, whether it is behind the page, and the ways on and back.
@@ -187,7 +210,7 @@ ColumnLayout {
                     view.editing = null;
                 }
             }
-            onMenuRequested: view.screen.blockMenu(blockRow.index, blockRow.blockId, blockRow.text)
+            onMenuRequested: view.screen.blockMenu(blockRow.index, blockRow.blockId, blockRow.text, blockRow.kind === "chart" ? blockRow.chart.request : undefined)
             onLinkOpened: view.screen.openPage(blockRow.linkedPageId)
             onCommentsRequested: view.screen.showComments(blockRow.blockId)
         }
@@ -218,5 +241,15 @@ ColumnLayout {
                 onClicked: view.screen.addBlockMenu(undefined)
             }
         }
+    }
+
+    Label {
+        objectName: "spaceDrawing"
+        Layout.fillWidth: true
+        Layout.margins: 12
+        visible: Shell.state.space?.drawing === true
+        text: qsTr("Drawing a chart…")
+        color: Theme.palette.color("textMuted", "#a1a1aa")
+        font.pixelSize: Math.round(13 * Theme.fontScale)
     }
 }

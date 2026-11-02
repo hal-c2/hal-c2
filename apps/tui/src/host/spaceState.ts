@@ -5,7 +5,11 @@
 // listed by name and prompt: a terminal draws none.
 // Everything shown comes from the MC's streams (`spaces`, `space:<id>`), so an edit
 // from another client or an agent shows as it lands; the keys only send `space.*`
-// RPCs. The SpaceView brick paints `space` and dispatches `space.*`.
+// RPCs. A page's history (h) is the exception: it is not on a stream, so it is asked
+// for while it is open, again when the Space's stream moves. The SpaceView brick
+// paints `space` and dispatches `space.*`. A chart block draws as text (`spaceChart.ts`)
+// and is asked for in words; an entry taller than the pane, as a chart can be, scrolls
+// through itself before the selection moves on.
 import * as NodePath from "node:path";
 
 import {
@@ -21,6 +25,12 @@ import {
   type SpaceImage,
   type SpaceImageProvidersResult,
   type SpacePage,
+  type SpacePageAgent,
+  type SpacePageHistoryResult,
+  type SpacePageId,
+  type SpacePageSchedule,
+  type SpacePageVersion,
+  type SpacePageVersionContent,
   type SpaceSite,
   type SpaceSlide,
   spaceStreamId,
@@ -40,20 +50,30 @@ import type { StatusKind } from "../store.ts";
 import { type Palette, THEME } from "../theme.ts";
 import type { AskSpec } from "./askState.ts";
 import type { PickRequest } from "./composerState.ts";
+import { scheduleLabel } from "./sections/scheduledTasks.ts";
 import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
+import { chartData, chartLines } from "./spaceChart.ts";
 import { chunk, styled, type StyledText } from "./styledText.ts";
 
 /** Rows the pane's border and header take. */
 export const SPACE_CHROME_ROWS = 3;
 
-export type TuiSpaceView = "spaces" | "pages" | "page" | "deck" | "present" | "images";
+export type TuiSpaceView =
+  | "spaces"
+  | "pages"
+  | "page"
+  | "deck"
+  | "present"
+  | "images"
+  | "history"
+  | "version";
 
 export interface TuiSpaceRow {
   /**
    * `space:<id>`, `page:<id>`, `trash:<id>`, `deck:<id>`, `decktrash:<id>`, `block:<id>`,
-   * `comment:<id>`, `slide:<id>`, `image:<id>`, `imageTrash:<id>`; a wrapped block or a
-   * slide's body repeats its key.
+   * `comment:<id>`, `slide:<id>`, `image:<id>`, `imageTrash:<id>`, `version:<n>`,
+   * `more:more`; a wrapped block or a slide's body repeats its key.
    */
   readonly key: string;
   readonly kind:
@@ -66,6 +86,8 @@ export interface TuiSpaceRow {
     | "slide"
     | "image"
     | "trashedImage"
+    | "version"
+    | "more"
     | "label";
   /** The row as drawn, plain (steps read it). */
   readonly text: string;
@@ -86,11 +108,14 @@ export interface TuiSpaceState {
   readonly view: TuiSpaceView;
   /**
    * The header: `spaces`, `space · Research`, `page · Roadmap`, `deck · Pitch`,
-   * `present · Pitch · 2 / 3`, in accent; then the keys, dimmed.
+   * `present · Pitch · 2 / 3`, `history · Roadmap`, `version · Roadmap · <when>`, in
+   * accent; then the keys, dimmed.
    */
   readonly title: string;
   readonly hint: string;
   readonly status: "loading" | "ready" | "error";
+  /** Who else is on the open page, "" when nobody is. */
+  readonly viewers: string;
   /** The body line when there are no rows (loading, empty, the stream's refusal). */
   readonly message: string;
   /** The rows that fit, windowed around the selection. */
@@ -98,7 +123,10 @@ export interface TuiSpaceState {
 }
 
 export interface SpaceControllerOptions {
-  readonly client: Pick<TuiClient, "mcCall" | "subscribeMcStream" | "uploadToMc">;
+  readonly client: Pick<
+    TuiClient,
+    "mcCall" | "subscribeMcStream" | "subscribeSpacePresence" | "uploadToMc"
+  >;
   readonly height: () => number;
   readonly width: () => number;
   readonly palette?: Palette;
@@ -121,6 +149,8 @@ export interface SpaceControllerOptions {
   readonly threads: () => ReadonlyArray<{ readonly id: string; readonly title: string }>;
   /** The selected thread, offered first when making a page from a thread. */
   readonly currentThreadId?: () => string | null;
+  /** Leave the pane for a thread: the one a page's agent runs in. */
+  readonly openThread: (threadId: string) => void;
 }
 
 export interface SpaceController {
@@ -131,6 +161,8 @@ export interface SpaceController {
   readonly mode: () => "space";
   /** Republish after a resize or a theme change. */
   readonly sync: () => void;
+  /** The connection is down: who is on the page is unknown until the MC's next frame. */
+  readonly connectionLost: () => void;
   readonly commands: () => ReadonlyArray<{ readonly title: string; readonly action: string }>;
   /** Resolves once the RPCs in flight have answered. */
   readonly settled: () => Promise<void>;
@@ -143,6 +175,7 @@ const CLOSED: TuiSpaceState = {
   title: "",
   hint: "",
   status: "loading",
+  viewers: "",
   message: "",
   rows: [],
 };
@@ -150,12 +183,40 @@ const CLOSED: TuiSpaceState = {
 const HINTS: Record<TuiSpaceView, string> = {
   spaces: "  ⏎ open · n new · e rename · d delete · esc close",
   pages:
-    "  ⏎ open · n new · s new deck · S deck from page · a subpage · e rename · m move · d trash · r restore · D delete · p present a deck, publish a page · i import · t from thread · v images · esc back",
-  page: "  ⏎ edit · n add · c comment · x tick/resolve · m move · d delete · l link · y copy · S deck · p publish · v images · esc back",
+    "  ⏎ open · n new · s new deck · S deck from page · a subpage · e rename · m move · d trash · r restore · D delete · p present a deck, publish a page · i import · t from thread · h history · v images · esc back",
+  page: "  ⏎ edit · n add · g chart · c comment · x tick/resolve · m move · d delete · l link · u update · y copy · S deck · p publish · h history · v images · A ask an agent · esc back",
   deck: "  ⏎ edit · n add · m move · d delete · p present · r restore · v images · esc back",
   present: "  → next · ← back · pgup/pgdn scroll · esc leave",
   images: "  n generate · i add a file · d trash · r restore · D delete · esc back",
+  history: "  ⏎ read · r restore · esc back",
+  version: "  r restore · esc back",
 };
+
+/** The most of an agent's request and error the page repeats; its thread has them whole. */
+const AGENT_REQUEST_MOST = 60;
+const AGENT_ERROR_MOST = 200;
+
+/** How many versions a look at the history starts with, and the most a refresh asks for again. */
+const HISTORY_STRETCH = 30;
+const HISTORY_MOST = 100;
+/** How long after the Space's stream moves an open history asks again. */
+const HISTORY_REFRESH_MS = 1000;
+
+/** The open page's versions, as far back as the user has looked. */
+interface PageHistory {
+  readonly pageId: string;
+  versions: ReadonlyArray<SpacePageVersion>;
+  nextBefore: number | null;
+  loading: boolean;
+  failed: boolean;
+}
+
+/** A moment on the machine's clock, to the minute. */
+function when(iso: string): string {
+  const at = new Date(iso);
+  const two = (value: number) => String(value).padStart(2, "0");
+  return `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())} ${two(at.getHours())}:${two(at.getMinutes())}`;
+}
 
 const UNTITLED = "(untitled)";
 
@@ -176,8 +237,24 @@ const BLOCK_KINDS: ReadonlyArray<{ readonly kind: SpaceBlockKind; readonly label
   { kind: "checklist", label: "Checklist item" },
   { kind: "callout", label: "Callout" },
   { kind: "subpage_link", label: "Link to a subpage" },
+  { kind: "chart", label: "Chart" },
   { kind: "image", label: "Image" },
 ];
+
+const HOUR_MS = 3_600_000;
+
+/** How often a page's update runs. */
+function cadenceText(cadence: SpacePageSchedule["cadence"]): string {
+  if (cadence.type === "interval" && cadence.everyMs % HOUR_MS === 0) {
+    const hours = cadence.everyMs / HOUR_MS;
+    return hours === 1 ? "Every hour" : `Every ${hours} hours`;
+  }
+  return scheduleLabel(cadence);
+}
+
+/** The clock's time, not "5m ago", so a row nobody redraws does not go stale. */
+const clockText = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
 
 /** The contract error a refused RPC carries, wherever the client put it. */
 function refusal(error: unknown): {
@@ -250,6 +327,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   let spaceError: string | null = null;
   let unsubscribeSpace: (() => void) | null = null;
   let pageId: string | null = null;
+  let viewersPage: string | null = null;
+  let viewers = "";
+  let unsubscribeViewers: (() => void) | null = null;
+  // The rows the last publish had room for, which a move or a page up or down steps within.
+  let rowsOnShow = 1;
   let deckId: string | null = null;
   // The slide on show, by id so a move elsewhere keeps it; its index for when it goes.
   let shownSlideId: string | null = null;
@@ -264,6 +346,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     deck: null,
     present: null,
     images: null,
+    history: null,
+    version: null,
   };
   // The last selected index per level: where the selection lands when its row goes away.
   const selectedIndex: Record<TuiSpaceView, number> = {
@@ -273,12 +357,22 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     deck: 0,
     present: 0,
     images: 0,
+    history: 0,
+    version: 0,
   };
   let top = 0;
   // Bumped whenever the open Space or page changes (or the pane closes): a reply
   // that would navigate only does so while its generation is current.
   let generation = 0;
   const pending = new Set<Promise<unknown>>();
+  let history: PageHistory | null = null;
+  let reading: SpacePageVersionContent | null = null;
+  // Bumped when the history closes, and when a read is superseded: a late reply is dropped.
+  let historyAsked = 0;
+  let readAsked = 0;
+  // One history request at a time; a refresh asked for meanwhile goes after it.
+  let askAgain = false;
+  let historyTimer: ReturnType<typeof setTimeout> | null = null;
 
   const track = <T>(promise: Promise<T>): Promise<T> => {
     pending.add(promise);
@@ -348,6 +442,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   const trashed = (): SpacePage[] => pages().filter((page) => page.trashedAt !== null);
 
+  const agentOfPage = (id: string | null) =>
+    (entitiesOf(space, "pageAgent") as unknown as SpacePageAgent[]).find(
+      (agent) => agent.pageId === id,
+    );
+
   const images = (): SpaceImage[] => entitiesOf(space, "image") as unknown as SpaceImage[];
   const imageById = (id: string | undefined) => images().find((image) => image.id === id);
   const liveImages = () => images().filter((image) => image.trashedAt === null);
@@ -398,6 +497,66 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     first: true,
   });
 
+  /** Its title, its plot with the numbers, and where the numbers came from. */
+  const chartRows = (
+    block: SpaceBlock,
+    chart: NonNullable<ReturnType<typeof chartData>>,
+  ): TuiSpaceRow[] => {
+    const key = `block:${block.id}`;
+    const active = selected.page === key;
+    const bg = active ? { bg: palette.selectedBg } : {};
+    const room = width() - 2;
+    const row = (lead: string, line: StyledText, text: string, first = false): TuiSpaceRow => ({
+      key,
+      kind: "block",
+      text: `${lead}${text}`,
+      line,
+      selected: active,
+      blockKind: block.kind,
+      first,
+    });
+    const agent = agentOf(block);
+    const sources = wrapWords(chart.source === "" ? " " : chart.source, room);
+    return [
+      ...wrapWords(chart.title === "" ? " " : chart.title, room).map((text, index) => {
+        const lead = index === 0 ? marker(active) : "  ";
+        return row(
+          lead,
+          styled(
+            chunk(lead, { fg: palette.dim, ...bg }),
+            chunk(text, { fg: palette.text, bold: true, ...bg }),
+          ),
+          text,
+          index === 0,
+        );
+      }),
+      ...chartLines(chart, room).map(({ words, bar, number, header }) =>
+        row(
+          "  ",
+          styled(
+            chunk("  ", bg),
+            chunk(words, { fg: header ? palette.dim : palette.text, ...bg }),
+            bar !== "" && chunk(bar, { fg: palette.accent, ...bg }),
+            number !== "" && chunk(number, { fg: palette.text, ...bg }),
+          ),
+          `${words}${bar}${number}`,
+        ),
+      ),
+      ...sources.map((text, index) => {
+        const by = index === sources.length - 1 && agent ? `  · ${agent}` : "";
+        return row(
+          "  ",
+          styled(
+            chunk("  ", bg),
+            chunk(text, { fg: palette.dim, ...bg }),
+            by !== "" && chunk(by, { fg: palette.faint, ...bg }),
+          ),
+          `${text}${by}`,
+        );
+      }),
+    ];
+  };
+
   /** A placed image in words. Its caption names it once the image is gone from the stream. */
   const imagePlaceholder = (block: SpaceBlock): string => {
     const image = imageById(block.imageId);
@@ -412,8 +571,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     image.prompt ? `${image.name}  · ${image.prompt}` : image.name;
 
   const blockRows = (block: SpaceBlock): TuiSpaceRow[] => {
+    // A chart this client cannot read shows what it says of itself, as any block does.
+    const chart = block.kind === "chart" ? chartData(block.chart) : null;
+    if (chart) return chartRows(block, chart);
     const key = `block:${block.id}`;
-    const active = selected.page === key;
+    const active = selected[view] === key;
     const linked = block.kind === "subpage_link" ? pageById(block.linkedPageId) : undefined;
     const prefix =
       block.kind === "checklist"
@@ -431,7 +593,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         : block.kind === "image"
           ? imagePlaceholder(block)
           : block.text;
-    const agent = agentOf(block);
+    const agent = block.kind === "generated" ? "written by its update" : agentOf(block);
     const room = width() - 2 - Bun.stringWidth(prefix);
     const lines = wrapWords(body === "" ? " " : body, room);
     const fg =
@@ -467,14 +629,58 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     });
   };
 
-  const commentRow = (comment: SpaceComment): TuiSpaceRow => {
+  /** What the open page's update is and how it last went, above its blocks. Not selectable. */
+  const updateRows = (page: SpacePage): TuiSpaceRow[] => {
+    const update = page.schedule;
+    if (!update) return [];
+    const note = (key: string, text: string, fg: typeof palette.text): TuiSpaceRow[] =>
+      wrapWords(text, width() - 2).map((line, index) => {
+        const drawn = `  ${line}`;
+        return {
+          key: `label:update:${key}`,
+          kind: "label",
+          text: drawn,
+          line: styled(chunk(drawn, { fg })),
+          selected: false,
+          first: index === 0,
+        };
+      });
+    const cadence = cadenceText(update.cadence);
+    const when = !isLive(page)
+      ? `${cadence} · stopped while this page is in the trash`
+      : !update.enabled
+        ? `${cadence} · paused`
+        : update.nextRunAt
+          ? `${cadence} · next run ${clockText(update.nextRunAt)}`
+          : cadence;
+    const written =
+      update.lastRunStatus === "running"
+        ? "Writing now…"
+        : page.writtenAt
+          ? `Last written ${clockText(page.writtenAt)}`
+          : "Not written yet";
+    return [
+      ...note("instruction", `⟳ ${update.instruction}`, palette.text),
+      ...note("when", when, palette.dim),
+      ...note("written", written, palette.dim),
+      ...(update.lastRunStatus === "failed"
+        ? note(
+            "failed",
+            `Last run failed: ${update.lastRunError ?? "unknown error"}`,
+            palette.error,
+          )
+        : []),
+    ];
+  };
+
+  const commentRow = (comment: SpaceComment, note = ""): TuiSpaceRow => {
     const key = `comment:${comment.id}`;
     const active = selected.page === key;
     const resolved = comment.resolvedAt !== null;
     const author =
       comment.author.type === "agent" ? `${threadTitle(comment.author.threadId)}: ` : "";
     const text = clip(
-      `${marker(active)}  ┊ ${resolved ? "✓ " : ""}${author}${comment.body}${resolved ? " (resolved)" : ""}`,
+      `${marker(active)}  ┊ ${resolved ? "✓ " : ""}${author}${comment.body}${resolved ? " (resolved)" : ""}${note}`,
       width(),
     );
     const bg = active ? { bg: palette.selectedBg } : {};
@@ -487,6 +693,22 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       resolved,
       first: true,
     };
+  };
+
+  const versionRow = (entry: SpacePageVersion, newest: boolean): TuiSpaceRow => {
+    const by =
+      entry.author.type === "agent"
+        ? (entry.threadTitle ?? "an agent")
+        : entry.author.type === "schedule"
+          ? "The page's update"
+          : "You";
+    const current = newest ? " · current" : "";
+    const source = entry.restoredFromAt ? ` · restored from ${when(entry.restoredFromAt)}` : "";
+    return entryRow(
+      `version:${entry.version}`,
+      "version",
+      `${when(entry.at)}  ${by}${current}${source}`,
+    );
   };
 
   /** A slide in its deck: its number and title, then its body. */
@@ -583,6 +805,14 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       }
       return rows;
     }
+    if (view === "history") {
+      const rows = (history?.versions ?? []).map((entry, index) => versionRow(entry, index === 0));
+      if (history?.nextBefore != null) rows.push(entryRow("more:more", "more", "Load more…"));
+      return rows;
+    }
+    if (view === "version") {
+      return (reading?.blocks ?? []).flatMap((block) => blockRows(block));
+    }
     if (view === "deck") return slidesOf(deckId).flatMap(slideRows);
     if (view === "present") return presenterRows();
     if (view === "images") {
@@ -603,17 +833,27 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const id = pageId;
     if (id === null) return [];
     const comments = commentsOf(id);
-    const rows: TuiSpaceRow[] = siteRows(id);
-    for (const block of blocksOf(id)) {
+    const blocks = blocksOf(id);
+    const open = pageById(id);
+    const rows: TuiSpaceRow[] = [...(open ? updateRows(open) : []), ...siteRows(id)];
+    for (const block of blocks) {
       rows.push(...blockRows(block));
       for (const comment of comments.filter((entry) => entry.blockId === block.id)) {
         rows.push(commentRow(comment));
       }
     }
     const onPage = comments.filter((comment) => comment.blockId === null);
-    if (onPage.length > 0) {
+    // A restore can take a block away and leave its comments, until it comes back.
+    const orphaned = comments.filter(
+      (comment) =>
+        comment.blockId !== null && !blocks.some((block) => block.id === comment.blockId),
+    );
+    if (onPage.length + orphaned.length > 0) {
       rows.push(label("Comments"));
       for (const comment of onPage) rows.push(commentRow(comment));
+      for (const comment of orphaned) {
+        rows.push(commentRow(comment, " · on a block no longer on this page"));
+      }
     }
     return rows;
   };
@@ -658,11 +898,37 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     }
     if (view === "images") return `images · ${name}`;
     const page = pageById(pageId);
+    if (view === "history") return `history · ${page?.title ?? ""}`;
+    if (view === "version") {
+      return `version · ${reading?.title ?? ""} · ${reading ? when(reading.at) : ""}`;
+    }
     const from = page?.sourceThreadId ? ` · from ${threadTitle(page.sourceThreadId)}` : "";
     const bin = page && !isLive(page) ? " · in the trash" : "";
     const site = siteOf(pageId);
     const published = site ? (site.behind ? " · published, behind" : " · published") : "";
     return `page · ${page?.title ?? ""}${from}${bin}${published}`;
+  };
+
+  // An error as a sentence's middle: a provider's own text may end its sentence already.
+  const agentError = (error: string | null | undefined): string =>
+    clip((error ?? "").replace(/[.\s]+$/, ""), AGENT_ERROR_MOST);
+
+  /** What the open page says about its agent, and the keys that go with it. */
+  const agentText = (agent: SpacePageAgent): string => {
+    const title = options.threads().find((thread) => thread.id === agent.threadId)?.title;
+    const open = `o opens ${title ? `“${title}”` : "its thread"}`;
+    switch (agent.status) {
+      case "running":
+        return `An agent is working on “${clip(agent.request, AGENT_REQUEST_MOST)}” · s stops · ${open}`;
+      case "stopping":
+        return `Stopping the agent… · s stops · ${open}`;
+      case "completed":
+        return `The agent finished ${agent.edited ? "and changed" : "without changing"} this page. · ${open} · z clears`;
+      case "failed":
+        return `The agent failed: ${agentError(agent.error)}. The page stays as it last wrote it. · h history · ${open} · z clears`;
+      case "stopped":
+        return `${agent.error ? `The agent stopped: ${agentError(agent.error)}.` : "The agent was stopped."} · h history · ${open} · z clears`;
+    }
   };
 
   const feedState = (): { status: TuiSpaceState["status"]; message: string } => {
@@ -674,47 +940,102 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   const publish = () => {
+    followViewers();
     if (!open) {
       options.publish(CLOSED);
       return;
     }
     settleSelection();
     const rows = allRows();
-    const { status } = feedState();
-    let { message } = feedState();
-    if (status === "ready" && rows.length === 0) {
+    let { status, message } = feedState();
+    if (status === "ready" && view === "history") {
+      const page = pageById(pageId);
+      if (history?.failed) {
+        status = "error";
+        message = "The history could not be loaded · h tries again";
+      } else if (rows.length === 0) {
+        message = history?.loading ? "Loading…" : "This page has no versions yet";
+      } else if (page && !isLive(page)) {
+        message = "This page is in the trash: restore it to bring back a version.";
+      }
+    } else if (status === "ready" && rows.length === 0) {
       message =
         view === "spaces"
           ? "No Spaces yet · n makes one"
           : view === "pages"
             ? "No pages yet · n makes one · s makes a deck · i imports Markdown · t writes one from a thread"
-            : view === "deck"
-              ? "This deck has no slides · n adds one"
-              : view === "images"
-                ? "No images yet · n generates one · i adds one from a file"
-                : "An empty page · n adds a block";
+            : view === "version"
+              ? "This version has no blocks"
+              : view === "deck"
+                ? "This deck has no slides · n adds one"
+                : view === "images"
+                  ? "No images yet · n generates one · i adds one from a file"
+                  : "An empty page · n adds a block";
     }
-    // Window the rows around the selection.
-    const room = Math.max(1, options.height() - SPACE_CHROME_ROWS - (message === "" ? 0 : 1));
+    if (status === "ready" && view === "page") {
+      const agent = agentOfPage(pageId);
+      if (agent) {
+        message = agentText(agent);
+        if (agent.status === "failed") status = "error";
+      }
+    }
+    // Window the rows around the selection, under a message that may wrap and who else is here.
+    const messageRows = message === "" ? 0 : wrapWords(message, width()).length;
+    const room = Math.max(
+      1,
+      options.height() - SPACE_CHROME_ROWS - messageRows - (viewers === "" ? 0 : 1),
+    );
     const first = rows.findIndex((row) => row.selected);
     const last = rows.findLastIndex((row) => row.selected);
-    if (first >= 0) {
+    if (first >= 0 && last - first + 1 > room) {
+      top = Math.max(first, Math.min(top, last - room + 1));
+    } else if (first >= 0) {
       if (first < top) top = first;
       if (last >= top + room) top = Math.max(0, Math.min(first, last - room + 1));
     }
     top = Math.max(0, Math.min(top, Math.max(0, rows.length - room)));
+    rowsOnShow = room;
     options.publish({
       open: true,
       view,
       title: titleText(),
       hint: HINTS[view],
       status,
+      viewers,
       message,
       rows: rows.slice(top, top + room),
     });
   };
 
   // --- streams ---
+
+  // Being subscribed is being on the page, so only while the page shows.
+  const followViewers = () => {
+    const wanted = open && view === "page" && spaceId !== null ? pageId : null;
+    if (wanted === viewersPage) return;
+    unsubscribeViewers?.();
+    unsubscribeViewers = null;
+    viewersPage = wanted;
+    viewers = "";
+    if (wanted === null) return;
+    let live = true;
+    const stop = client.subscribeSpacePresence(
+      spaceId as SpaceId,
+      wanted as SpacePageId,
+      (next) => {
+        if (!live) return;
+        const names = next.flatMap((viewer) =>
+          viewer.type === "user" ? viewer.devices : [`the agent of “${viewer.title}”`],
+        );
+        viewers = names.length === 0 ? "" : `Also here: ${names.join(", ")}`;
+        publish();
+      },
+    );
+    unsubscribeViewers = () => {
+      live = false;
+      stop();
+    };
+  };
 
   const followSpaces = () => {
     if (unsubscribeSpaces) return;
@@ -782,11 +1103,20 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   // The open page went away (deleted for good): back to the tree.
   const onSpaceChanged = () => {
-    if (view === "page" && space.ready && !pageById(pageId)) {
+    const onPage = view === "page" || view === "history" || view === "version";
+    if (onPage && space.ready && !pageById(pageId)) {
+      closeHistory();
       pageId = null;
       generation += 1;
       view = "pages";
       top = 0;
+    }
+    // Any edit in the Space may be one to this page; the stream does not carry versions.
+    if (history && historyTimer === null) {
+      historyTimer = setTimeout(() => {
+        historyTimer = null;
+        askHistory();
+      }, HISTORY_REFRESH_MS);
     }
     if ((view === "deck" || view === "present") && space.ready && !deckById(deckId)) {
       deckId = null;
@@ -902,7 +1232,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   const showImages = () => {
-    if (view === "images" || view === "present") return;
+    if (view === "images" || view === "present" || view === "history" || view === "version") return;
     if (view === "spaces") {
       options.status("Open a Space to see its images.", "info");
       return;
@@ -915,6 +1245,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   const leaveSpace = () => {
     generation += 1;
+    closeHistory();
     stopSpace();
     spaceId = null;
     pageId = null;
@@ -959,6 +1290,17 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
             : "pages";
       top = 0;
       publish();
+    } else if (view === "version") {
+      readAsked += 1;
+      reading = null;
+      view = "history";
+      top = 0;
+      publish();
+    } else if (view === "history") {
+      closeHistory();
+      view = "page";
+      top = 0;
+      publish();
     } else if (view === "page" || view === "deck") {
       generation += 1;
       view = "pages";
@@ -973,8 +1315,20 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   const move = (delta: number) => {
-    const keys = entryKeys(allRows());
+    const rows = allRows();
+    const keys = entryKeys(rows);
     if (keys.length === 0) return;
+    // The rest of an entry taller than the pane comes before the next entry.
+    const first = rows.findIndex((row) => row.selected);
+    const last = rows.findLastIndex((row) => row.selected);
+    if (first >= 0 && last - first + 1 > rowsOnShow) {
+      const within = Math.max(first, Math.min(last - rowsOnShow + 1, top + delta));
+      if (within !== top) {
+        top = within;
+        publish();
+        return;
+      }
+    }
     const index = keys.indexOf(selected[view] ?? "");
     const next = Math.max(0, Math.min(keys.length - 1, (index < 0 ? 0 : index) + delta));
     selected[view] = keys[next] ?? null;
@@ -994,8 +1348,168 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     }
   };
 
+  // --- a page's history ---
+
+  /** Forgets the history and anything still being asked of it; the caller picks the view. */
+  const closeHistory = () => {
+    historyAsked += 1;
+    readAsked += 1;
+    history = null;
+    reading = null;
+    askAgain = false;
+    if (historyTimer !== null) clearTimeout(historyTimer);
+    historyTimer = null;
+  };
+
+  /**
+   * Asks for the versions again as far back as the user has looked, or with `more`
+   * for the stretch before those. One request at a time, and a late reply is dropped.
+   */
+  const askHistory = (more = false) => {
+    const current = history;
+    if (!current) return;
+    if (current.loading) {
+      askAgain ||= !more;
+      return;
+    }
+    const asked = historyAsked;
+    const seen = current.versions.length;
+    current.loading = true;
+    current.failed = false;
+    publish();
+    void track(
+      call<SpacePageHistoryResult>(WS_METHODS.spacePageHistory, {
+        spaceId,
+        pageId: current.pageId,
+        ...(more
+          ? { before: current.nextBefore, limit: HISTORY_STRETCH }
+          : { limit: Math.max(HISTORY_STRETCH, Math.min(seen, HISTORY_MOST)) }),
+      }).then(
+        (result) => {
+          if (asked !== historyAsked) return;
+          // A refresh that stopped at a row already held joins up with the older rows;
+          // one that stopped short of them leaves a gap, so they go.
+          const joined = current.versions.findIndex((row) => row.version === result.nextBefore);
+          const older = joined >= 0 ? current.versions.slice(joined + 1) : [];
+          if (more) {
+            current.versions = [...current.versions, ...result.versions];
+            current.nextBefore = result.nextBefore;
+          } else if (older.length > 0) {
+            current.versions = [...result.versions, ...older];
+          } else {
+            current.versions = result.versions;
+            current.nextBefore = result.nextBefore;
+          }
+          settleHistory(current);
+        },
+        () => {
+          if (asked !== historyAsked) return;
+          current.failed = true;
+          settleHistory(current);
+        },
+      ),
+    );
+  };
+
+  const settleHistory = (current: PageHistory) => {
+    current.loading = false;
+    const again = askAgain;
+    askAgain = false;
+    if (again) askHistory();
+    else publish();
+  };
+
+  /** h: the open or selected page's versions; in the history, asks for them again. */
+  const showHistory = () => {
+    if (view === "history") {
+      askHistory();
+      return;
+    }
+    if (view === "version") return;
+    const id = view === "spaces" ? null : pageInView();
+    if (id === null) {
+      options.status("Open or select a page to see its history.", "info");
+      return;
+    }
+    // Through the page, so that going back from the history lands on it.
+    if (view === "pages") openPage(id, selected.pages ?? `page:${id}`);
+    closeHistory();
+    history = { pageId: id, versions: [], nextBefore: null, loading: false, failed: false };
+    selected.history = null;
+    selectedIndex.history = 0;
+    view = "history";
+    top = 0;
+    askHistory();
+  };
+
+  const readVersion = (version: number) => {
+    const current = history;
+    if (!current) return;
+    readAsked += 1;
+    const asked = readAsked;
+    void send<SpacePageVersionContent>(WS_METHODS.spacePageVersion, {
+      spaceId,
+      pageId: current.pageId,
+      version,
+    }).then((result) => {
+      if (!result || asked !== readAsked) return;
+      reading = result;
+      selected.version = null;
+      selectedIndex.version = 0;
+      view = "version";
+      top = 0;
+      publish();
+    });
+  };
+
+  /** The selected version, or the one being read, back onto the page as a new edit. */
+  const restoreVersion = () => {
+    const current = history;
+    const entry = selectedEntry();
+    const version =
+      view === "version"
+        ? reading?.version
+        : entry?.kind === "version"
+          ? Number(entry.id)
+          : undefined;
+    if (!current || version === undefined) return;
+    if (current.versions[0]?.version === version) {
+      options.status("This version is the page as it is.", "info");
+      return;
+    }
+    const page = pageById(current.pageId);
+    if (page && !isLive(page)) {
+      options.status("This page is in the trash: restore it to bring back a version.", "info");
+      return;
+    }
+    const asked = historyAsked;
+    void send(WS_METHODS.spacePageRestoreVersion, {
+      spaceId,
+      pageId: current.pageId,
+      version,
+    }).then((result) => {
+      if (!result) return;
+      options.status("Version restored: restore the one before it to undo.", "info");
+      if (asked !== historyAsked) return;
+      readAsked += 1;
+      reading = null;
+      selected.history = null;
+      selectedIndex.history = 0;
+      view = "history";
+      top = 0;
+      askHistory();
+    });
+  };
+
   const activate = () => {
     const entry = selectedEntry();
+    if (view === "version") return;
+    if (view === "history") {
+      if (entry?.kind === "version") readVersion(Number(entry.id));
+      else if (entry?.kind === "more") askHistory(true);
+      else askHistory();
+      return;
+    }
     if (!entry) return;
     if (entry.kind === "space") openSpace(entry.id);
     else if (entry.kind === "page") openPage(entry.id);
@@ -1170,7 +1684,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (entry.kind === "block") return entry.id;
     if (entry.kind === "comment") {
       const comment = commentsOf(pageId ?? "").find((candidate) => candidate.id === entry.id);
-      return comment?.blockId ?? null;
+      const onPage = blocksOf(pageId ?? "").some((block) => block.id === comment?.blockId);
+      return onPage ? (comment?.blockId ?? null) : null;
     }
     return null;
   };
@@ -1204,6 +1719,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           link();
           return;
         }
+        if (kind === "chart") {
+          visualize(false);
+          return;
+        }
         if (kind === "image") {
           placeImage();
           return;
@@ -1213,6 +1732,50 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           label: name,
           placeholder: "text",
           onSubmit: (text) => insertBlock({ kind, text }),
+        });
+      },
+    });
+  };
+
+  /**
+   * Asks the MC for a chart in the user's words. On a chart it asks again, starting from
+   * the words that chart was asked for in, and replaces it; elsewhere a new chart goes
+   * where a new block would, as it always does from the add menu (`again` false). The MC
+   * draws it or says why not, and the stream shows it.
+   */
+  const visualize = (again = true) => {
+    const id = spaceId;
+    const page = pageId;
+    if (view !== "page" || id === null || page === null) {
+      options.status("Open a page to ask for a chart.", "info");
+      return;
+    }
+    const entry = selectedEntry();
+    const replacing =
+      again && entry?.kind === "block"
+        ? blocksOf(page).find((block) => block.id === entry.id && block.kind === "chart")
+        : undefined;
+    const asked = generation;
+    options.ask({
+      label: replacing ? "ask again" : "chart",
+      placeholder: "what should it show?",
+      ...(replacing ? { value: chartData(replacing.chart)?.request ?? "" } : {}),
+      onSubmit: (request) => {
+        const after = replacing ? null : anchorBlock();
+        options.status("Drawing a chart…", "info");
+        void send<{ block: SpaceBlock }>(WS_METHODS.spaceBlockVisualize, {
+          spaceId: id,
+          pageId: page,
+          request,
+          ...(replacing ? { blockId: replacing.id } : {}),
+          ...(after === null ? {} : { afterBlockId: after }),
+        }).then((result) => {
+          if (!result) return;
+          options.status(`Drew “${chartData(result.block.chart)?.title ?? "a chart"}”.`, "info");
+          if (asked === generation && pageId === page) {
+            selected.page = `block:${result.block.id}`;
+            publish();
+          }
         });
       },
     });
@@ -1291,6 +1854,17 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       const block = blocksOf(pageId ?? "").find((candidate) => candidate.id === entry.id);
       if (block?.kind === "subpage_link") {
         options.status("A link shows its page's title: rename the page instead.", "info");
+        return;
+      }
+      if (block?.kind === "generated") {
+        options.status(
+          "A page's update wrote this, so it cannot be edited: removing the update (u) keeps it to edit.",
+          "info",
+        );
+        return;
+      }
+      if (block?.kind === "chart") {
+        visualize();
         return;
       }
       options.ask({
@@ -1398,6 +1972,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   const restore = () => {
+    if (view === "history" || view === "version") {
+      restoreVersion();
+      return;
+    }
     const entry = selectedEntry();
     if (view === "images") {
       if (entry?.kind === "imageTrash") {
@@ -1438,6 +2016,64 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       );
     }
   };
+
+  const isActive = (agent: SpacePageAgent) =>
+    agent.status === "running" || agent.status === "stopping";
+
+  /**
+   * The MC takes the word @agent off what is asked, so the field takes it with or without.
+   * An ask it refuses comes back with its words.
+   */
+  const askFor = (page: string, words = "") => {
+    options.ask({
+      label: "ask an agent",
+      placeholder: "what to do to this page",
+      value: words,
+      onSubmit: async (request) => {
+        const asked = await send(WS_METHODS.spacePageAskAgent, {
+          spaceId,
+          pageId: page,
+          request,
+        });
+        if (asked === null && open && request !== "") askFor(page, request);
+      },
+    });
+  };
+
+  const askAgent = () => {
+    const page = pageId;
+    if (view !== "page" || page === null) return;
+    const current = agentOfPage(page);
+    if (current && isActive(current)) {
+      options.status("An agent is already working on this page: s stops it.", "info");
+      return;
+    }
+    askFor(page);
+  };
+
+  /** Runs `fn` on the open page's agent; a page without one says so. */
+  const withAgent = (fn: (agent: SpacePageAgent) => void) => () => {
+    if (view !== "page") return;
+    const agent = agentOfPage(pageId);
+    if (agent) fn(agent);
+    else options.status("No agent was asked on this page: A asks one.", "info");
+  };
+
+  const stopAgent = withAgent((agent) => {
+    void send(WS_METHODS.spacePageStopAgent, { spaceId, pageId: agent.pageId });
+  });
+
+  const dismissAgent = withAgent((agent) => {
+    void send(WS_METHODS.spacePageDismissAgent, { spaceId, pageId: agent.pageId });
+  });
+
+  const openAgentThread = withAgent((agent) => {
+    if (options.threads().some((thread) => thread.id === agent.threadId)) {
+      options.openThread(agent.threadId);
+    } else {
+      options.status("The agent's thread is not available.", "info");
+    }
+  });
 
   const comment = () => {
     const page = pageId;
@@ -1817,6 +2453,91 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     });
   };
 
+  const setUpdate = (id: string, instruction: string, cadence: unknown) => {
+    void send(WS_METHODS.spacePageScheduleSet, { spaceId, pageId: id, instruction, cadence });
+  };
+
+  /** The instruction, then the cadence. A time the MC cannot read comes back as its refusal. */
+  const askUpdate = (id: string, update: SpacePageSchedule | null | undefined) => {
+    options.ask({
+      label: update ? "change the update" : "have this page update itself",
+      placeholder: "Summarise yesterday's threads",
+      value: update?.instruction ?? "",
+      onSubmit: (instruction) => {
+        options.menu({
+          title: "How often?",
+          options: [
+            ...(update ? [{ label: `Keep: ${cadenceText(update.cadence)}`, value: "keep" }] : []),
+            ...[1, 2, 6, 12].map((hours) => ({
+              label: cadenceText({ type: "interval", everyMs: hours * HOUR_MS }),
+              value: String(hours),
+            })),
+            { label: "At a time of day…", value: "time" },
+          ],
+          onChoose: (choice) => {
+            const held = update?.cadence;
+            if (choice === "keep") setUpdate(id, instruction, held);
+            else if (choice === "time") {
+              const fixed = held?.type === "fixed_time" ? held : undefined;
+              options.ask({
+                label: "time of day",
+                placeholder: "09:00",
+                value: fixed?.timeOfDay ?? "09:00",
+                onSubmit: (timeOfDay) =>
+                  setUpdate(id, instruction, {
+                    type: "fixed_time",
+                    timeOfDay,
+                    weekdays: fixed?.weekdays ?? [],
+                  }),
+              });
+            } else
+              setUpdate(id, instruction, { type: "interval", everyMs: Number(choice) * HOUR_MS });
+          },
+        });
+      },
+    });
+  };
+
+  /** The open page's update: gives it one, or what can be done with the one it has. */
+  const pageUpdate = () => {
+    const open = view === "page" ? pageById(pageId) : undefined;
+    if (!open) {
+      options.status("Open a page to have it update itself.", "info");
+      return;
+    }
+    if (!isLive(open)) {
+      options.status("This page is in the trash: r restores it.", "info");
+      return;
+    }
+    const update = open.schedule;
+    if (!update) {
+      askUpdate(open.id, update);
+      return;
+    }
+    const target = { spaceId, pageId: open.id };
+    options.menu({
+      title: "This page's update",
+      options: [
+        { label: "Run it now", value: "run" },
+        { label: update.enabled ? "Pause it" : "Resume it", value: "pause" },
+        { label: "Change it…", value: "change" },
+        { label: "Remove it, keeping what it wrote", value: "remove" },
+      ],
+      onChoose: (choice) => {
+        if (choice === "change") askUpdate(open.id, update);
+        else if (choice === "pause") {
+          void send(WS_METHODS.spacePageScheduleSetEnabled, {
+            ...target,
+            enabled: !update.enabled,
+          });
+        } else if (choice === "remove") void send(WS_METHODS.spacePageScheduleRemove, target);
+        else if (update.lastRunStatus === "running") {
+          options.status("This page's update is running already.", "info");
+        } else void send(WS_METHODS.spacePageScheduleRunNow, target);
+      },
+    });
+  };
+
   const selectKey = (key: unknown) => {
     if (typeof key !== "string") return;
     const keys = entryKeys(allRows());
@@ -1827,8 +2548,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     publish();
   };
 
-  const page = (delta: number) =>
-    move(delta * Math.max(1, options.height() - SPACE_CHROME_ROWS - 1));
+  const page = (delta: number) => move(delta * rowsOnShow);
 
   /** A slide longer than the pane scrolls; `publish` keeps it in range. */
   const scrollSlide = (delta: number) => {
@@ -1854,6 +2574,12 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     return open;
   };
 
+  /** Editing keys: a page's history is only read, and restored from. */
+  const onPages = (fn: () => void) =>
+    inView(() => {
+      if (view !== "history" && view !== "version") fn();
+    });
+
   const actions: Record<string, (payload: unknown) => boolean> = {
     "space.open": () => {
       show();
@@ -1875,28 +2601,36 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.activate": inView(activate),
     "space.back": inView(back),
     "space.leave": inView(back),
-    "space.new": inView(newEntry),
-    "space.newInside": inView(newSubpage),
-    "space.edit": inView(edit),
-    "space.delete": inView(remove),
-    "space.deleteForGood": inView(deleteForGood),
+    "space.new": onPages(newEntry),
+    "space.newInside": onPages(newSubpage),
+    "space.edit": onPages(edit),
+    "space.delete": onPages(remove),
+    "space.deleteForGood": onPages(deleteForGood),
     "space.restore": inView(restore),
-    "space.tick": inView(toggle),
-    "space.comment": inView(comment),
-    "space.move": inView(moveEntry),
-    "space.link": inView(link),
-    "space.export": inView(exportMarkdown),
-    "space.publish": inView(() => publishSite(false)),
-    "space.publishTailscale": inView(() => publishSite(true)),
-    "space.copySiteLink": inView(copySiteLink),
-    "space.unpublish": inView(unpublishSite),
-    "space.import": inView(importMarkdown),
-    "space.fromThread": inView(fromThread),
-    "space.newDeck": inView(newDeck),
-    "space.deckFromPage": inView(deckFromPage),
-    "space.present": inView(present),
-    "space.presentOrPublish": inView(presentOrPublish),
-    "space.images": inView(showImages),
+    "space.history": inView(showHistory),
+    "space.tick": onPages(toggle),
+    "space.comment": onPages(comment),
+    "space.askAgent": onPages(askAgent),
+    "space.stopAgent": onPages(stopAgent),
+    "space.newDeckOrStopAgent": onPages(() => (view === "page" ? stopAgent() : newDeck())),
+    "space.dismissAgent": onPages(dismissAgent),
+    "space.openAgentThread": onPages(openAgentThread),
+    "space.move": onPages(moveEntry),
+    "space.link": onPages(link),
+    "space.export": onPages(exportMarkdown),
+    "space.publish": onPages(() => publishSite(false)),
+    "space.publishTailscale": onPages(() => publishSite(true)),
+    "space.copySiteLink": onPages(copySiteLink),
+    "space.unpublish": onPages(unpublishSite),
+    "space.import": onPages(importMarkdown),
+    "space.fromThread": onPages(fromThread),
+    "space.update": onPages(pageUpdate),
+    "space.visualize": onPages(visualize),
+    "space.newDeck": onPages(newDeck),
+    "space.deckFromPage": onPages(deckFromPage),
+    "space.present": onPages(present),
+    "space.presentOrPublish": onPages(presentOrPublish),
+    "space.images": onPages(showImages),
     "space.select": (payload) => {
       if (!open) return false;
       selectKey(
@@ -1925,6 +2659,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     sync: () => {
       if (open) publish();
     },
+    connectionLost: () => {
+      if (viewers === "") return;
+      viewers = "";
+      publish();
+    },
     commands: () => {
       const entries: Array<{ title: string; action: string }> = [
         { title: open ? "Close Spaces" : "Spaces", action: open ? "space.close" : "space.open" },
@@ -1948,6 +2687,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Import a Markdown file as a page", action: "space.import" },
           { title: "Write a page from a thread", action: "space.fromThread" },
           { title: "Copy page as Markdown", action: "space.export" },
+          { title: "Page history", action: "space.history" },
           { title: "New deck", action: "space.newDeck" },
           { title: "Make a deck from the selected page", action: "space.deckFromPage" },
           { title: "Present the selected deck", action: "space.present" },
@@ -1978,21 +2718,46 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Restore image from the trash", action: "space.restore" },
           { title: "Delete image for good", action: "space.deleteForGood" },
         );
+      } else if (view === "history") {
+        entries.push(
+          { title: "Read version", action: "space.activate" },
+          { title: "Restore version", action: "space.restore" },
+        );
+      } else if (view === "version") {
+        entries.push({ title: "Restore this version", action: "space.restore" });
       } else {
         entries.push(
           { title: "Add a block", action: "space.new" },
+          {
+            title: "Ask for a chart, or ask again for the selected one",
+            action: "space.visualize",
+          },
           { title: "Edit block", action: "space.edit" },
           { title: "Move block", action: "space.move" },
           { title: "Delete block", action: "space.delete" },
           { title: "Tick / untick, resolve / reopen", action: "space.tick" },
           { title: "Comment on the block", action: "space.comment" },
           { title: "Link a subpage", action: "space.link" },
+          { title: "This page's update", action: "space.update" },
           { title: "Copy page as Markdown", action: "space.export" },
           { title: "Make a deck from this page", action: "space.deckFromPage" },
           { title: "Restore page from the trash", action: "space.restore" },
+          { title: "Page history", action: "space.history" },
           ...siteCommands(),
           { title: "Images in this Space", action: "space.images" },
         );
+        const agent = agentOfPage(pageId);
+        if (!agent || !isActive(agent)) {
+          entries.push({ title: "Ask an agent about this page", action: "space.askAgent" });
+        }
+        if (agent) {
+          entries.push({ title: "Open the agent's thread", action: "space.openAgentThread" });
+          entries.push(
+            isActive(agent)
+              ? { title: "Stop the agent", action: "space.stopAgent" }
+              : { title: "Clear what the page says about its agent", action: "space.dismissAgent" },
+          );
+        }
       }
       return entries;
     },
@@ -2000,8 +2765,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       while (pending.size > 0) await Promise.allSettled(pending);
     },
     dispose: () => {
+      unsubscribeViewers?.();
+      unsubscribeViewers = null;
       unsubscribeSpaces?.();
       unsubscribeSpaces = null;
+      closeHistory();
       stopSpace();
     },
   };

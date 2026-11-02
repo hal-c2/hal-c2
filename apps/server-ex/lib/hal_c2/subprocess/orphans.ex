@@ -25,7 +25,9 @@ defmodule HalC2.Subprocess.Orphans do
   or the ancestry recorded at spawn (hal-c2/hal-c2#387).
 
   A program that had already exited by the boot (a CLI that stopped on its closed
-  stdin) may have left background commands in its group. With no leader, the group's
+  stdin) may have left background commands in its group. A leader that exited but is
+  not reaped yet still holds its pid, so its group can be no other and is killed whole,
+  as for a running one. With no leader, the group's
   id alone cannot be told from a later group's: a daemon that reused the pid and
   called `setsid` has the same one. So each program runs with a random mark in its
   environment (`HAL_C2_PROGRAM_ID`), which its record names and its descendants
@@ -36,10 +38,14 @@ defmodule HalC2.Subprocess.Orphans do
   (hal-c2/hal-c2#702). Nor does anything reach what a program left behind when it
   exited under a live MC, which removes the record at that exit.
 
-  Nor is the last identity read atomic with the signal: a pid reused in the moment
-  between that read and the external `kill` running would be signalled instead;
-  closing that needs a pidfd (`pidfd_open` + `pidfd_send_signal`), which no helper
-  here provides. Nor is a program recorded before it runs: its pid is only known
+  On Linux the signal goes through a pidfd (native/pid-kill, hal-c2/hal-c2#411): the
+  helper opens one on the pid, then compares the start time just read here, so a pid
+  reused at any point on the way is not signalled. Its group kill is as exact from
+  Linux 6.9, and before that only checks the program is still there right before it.
+  With no helper (a checkout that has not built it) or no pidfds in the kernel, and on
+  macOS, the external `kill` runs
+  instead, and a pid reused in the moment between the last read and that `kill` would
+  be signalled. Nor is a program recorded before it runs: its pid is only known
   once it is spawned, so it executes — argv and all — between the spawn and its
   record landing, and a VM that dies in that moment leaves an orphan no boot can
   find. Closing that would take spawning it held until tracked; the fail-closed
@@ -59,15 +65,26 @@ defmodule HalC2.Subprocess.Orphans do
 
   Off Windows, tracking that cannot be set up fails closed rather than quietly
   off. If the records dir cannot be made, or this MC's own start time cannot be
-  read, the MC still boots, but `track/3` returns an error for the whole boot, so
+  read, the MC still boots, but `track/3` returns an error, so
   `HalC2.Subprocess.start` refuses to run a program no later boot could find —
   the same answer a failed record write gets, given before the program is
   started at all when the failure is already known. That refusal covers every
   program `HalC2.Subprocess` runs, not only provider CLIs: the Claude session
   and every JSON-RPC provider connection, and the device hub alike, so a
-  broken state dir refuses all of them for the boot. A single program whose start
+  broken state dir refuses all of them. A single program whose start
   time cannot be read (as against one already gone) is refused the same way, and
   so is a start in a running MC before this service has started.
+
+  A refused start first has this service try the setup again, so a moment's read
+  failure does not outlast the moment (`handle_call/3`). The attempt runs in the
+  service, one at a time, with the owner `init/1` was given, and reaps before it marks
+  tracking on: a dir that can be made again may hold records of a dead MC that
+  `init/1` never reaped, and a caller waiting on the attempt is answered after that
+  reap, so nothing resumes ahead of it. A failed attempt logs a warning, once per
+  refused start, and otherwise changes nothing unless the dir has come back: then it
+  reaps, and only the start time is still missing. Attempts behind that mark do not
+  reap again until the start time reads, so a stuck orphan's wait is not paid by every
+  refused start.
 
   The boot-time reap is synchronous, in `init/1`, before Recovery resumes
   anything. Its cost is bounded per orphan, not in total: a program that does
@@ -82,7 +99,10 @@ defmodule HalC2.Subprocess.Orphans do
 
   require Logger
 
-  @doc "`opts[:owner]` replaces this MC's identity in the records it writes, for tests."
+  @doc """
+  `opts[:owner]` replaces this MC's identity in the records it writes, for tests: the
+  identity, or a function read at each attempt to set tracking up.
+  """
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   # The name is free of KEY, SECRET and TOKEN: providers that filter what their
@@ -95,9 +115,9 @@ defmodule HalC2.Subprocess.Orphans do
   @doc """
   Whether a program started now would be tracked, known before it exists: `:ok`,
   `{:error, reason}` with the reason `track/3` would refuse it (tracking could
-  not be set up this boot, or, in a running MC, this service has not started
-  yet), or `:off` where nothing is tracked by design (no MC services in this
-  VM, or Windows). `HalC2.Subprocess.start` refuses on the error before
+  not be set up, tried again just now, or, in a running MC, this service has not
+  started yet), or `:off` where nothing is tracked by design (no MC services in
+  this VM, or Windows). `HalC2.Subprocess.start` refuses on the error before
   spawning, so a known-unavailable boot starts no CLI just to kill it;
   `track/3` stays the authoritative check for what races past this one.
   """
@@ -105,9 +125,18 @@ defmodule HalC2.Subprocess.Orphans do
   def available? do
     case :persistent_term.get(__MODULE__, nil) do
       %{} -> :ok
-      {:unavailable, reason} -> {:error, reason}
+      {:unavailable, reason} -> retry_setup(reason)
       nil -> if tracking_expected?(), do: {:error, :not_started}, else: :off
     end
+  end
+
+  # Waits for the attempt, and for the reap that comes with it, as a boot waits for
+  # its own: bounded per orphan (see the moduledoc). A service that is not there
+  # (restarting) leaves the start refused, for the next one to try again.
+  defp retry_setup(reason) do
+    GenServer.call(__MODULE__, :retry_setup, :infinity)
+  catch
+    :exit, _ -> {:error, reason}
   end
 
   # An MC running its services off Windows is expected to track: no mark from
@@ -128,8 +157,8 @@ defmodule HalC2.Subprocess.Orphans do
   `track/3` writes the record in the calling process, not in this service, so a
   program started while the service restarts is still on disk for the next boot; only
   removing the record when the program ends needs the service. `{:error, reason}` when
-  the record could not be written, when tracking could not be set up this boot
-  (`:no_records_dir`, `:no_start_time`; see the moduledoc), or when the program's
+  the record could not be written, when tracking could not be set up, tried again
+  just now (`:no_records_dir`, `:no_start_time`; see the moduledoc), or when the program's
   start time could not be read (`:no_start_time`): the caller must stop the program
   rather than run it untracked. A program already gone has nothing to record. A
   no-op when this service has not been started in this VM and none is expected
@@ -141,7 +170,7 @@ defmodule HalC2.Subprocess.Orphans do
   def track(proc, os_pid, mark) do
     case :persistent_term.get(__MODULE__, nil) do
       %{dir: dir, owner: owner} -> record(dir, owner, proc, os_pid, mark)
-      {:unavailable, reason} -> {:error, reason}
+      {:unavailable, reason} -> with :ok <- retry_setup(reason), do: track(proc, os_pid, mark)
       nil -> untracked()
     end
   end
@@ -277,13 +306,16 @@ defmodule HalC2.Subprocess.Orphans do
         parse_stat(stat)
 
       {:error, reason} ->
-        cond do
-          not File.dir?("/proc/self") -> ps_process_result(pid)
-          reason == :enoent -> :gone
-          true -> :unknown
-        end
+        if File.dir?("/proc/self"), do: unreadable_stat(reason), else: ps_process_result(pid)
     end
   end
+
+  @doc false
+  # What a failed read of a stat proves. A process reaped between the read's open and
+  # its read answers `:esrch` where one already gone answers `:enoent`: gone both ways.
+  # Anything else says nothing about the process.
+  def unreadable_stat(reason) when reason in [:enoent, :esrch], do: :gone
+  def unreadable_stat(_reason), do: :unknown
 
   @doc false
   # Fields 3, 5 and 22, the state, the group and the start time in ticks since
@@ -408,17 +440,27 @@ defmodule HalC2.Subprocess.Orphans do
     # So a supervisor's shutdown runs `terminate/2`.
     Process.flag(:trap_exit, true)
 
-    owner =
-      Keyword.get_lazy(opts, :owner, fn ->
-        pid = String.to_integer(System.pid())
-        %{"pid" => pid, "started" => started(pid)}
-      end)
+    owner = Keyword.get(opts, :owner, &own_identity/0)
 
     # Tracking still on is a restart inside this MC, after a crash: a program may be
     # being recorded right now, so its record's `.tmp` is not this reap's to drop.
     # Only the tracking mark means that: after an unavailable boot no record
     # write can be in flight, so its restart reaps `.tmp` records like a boot.
-    restart? = match?(%{}, :persistent_term.get(__MODULE__, nil))
+    set_up(owner, match?(%{}, :persistent_term.get(__MODULE__, nil)))
+
+    {:ok, %{programs: %{}, owner: owner}}
+  end
+
+  defp own_identity do
+    pid = String.to_integer(System.pid())
+    %{"pid" => pid, "started" => started(pid)}
+  end
+
+  defp read_owner(owner) when is_function(owner), do: owner.()
+  defp read_owner(owner), do: owner
+
+  defp set_up(owner, restart?) do
+    owner = read_owner(owner)
     dir = dir()
 
     # Nothing here may stop the MC from booting (cf. `reap_one/1`): a records dir
@@ -455,8 +497,6 @@ defmodule HalC2.Subprocess.Orphans do
           do: :persistent_term.erase(__MODULE__),
           else: :persistent_term.put(__MODULE__, {:unavailable, :no_records_dir})
     end
-
-    {:ok, %{programs: %{}}}
   end
 
   defp mkdir(dir) do
@@ -467,6 +507,36 @@ defmodule HalC2.Subprocess.Orphans do
       Logger.warning("not tracking programs: cannot create #{dir}: #{Exception.message(e)}")
 
       :error
+  end
+
+  # Here rather than in the caller, so concurrent starts cannot reap twice, and the
+  # ones behind the attempt that succeeded find tracking on and do nothing. Reaps like
+  # a boot: the mark said no record write was in flight. One that began just before a
+  # crash and a failed `init/1` is at worst a live MC's record, which is kept, or a
+  # half-written `.tmp`, dropped, whose rename then fails and is written again.
+  @impl true
+  def handle_call(:retry_setup, _from, state) do
+    case :persistent_term.get(__MODULE__, nil) do
+      # Set up as far as the start time, reap included: without it there is no more to do.
+      {:unavailable, :no_start_time} ->
+        if read_owner(state.owner)["started"],
+          do: set_up(state.owner, false),
+          else: Logger.warning("not tracking programs: this MC's start time cannot be read")
+
+      {:unavailable, _} ->
+        set_up(state.owner, false)
+
+      _tracking ->
+        :ok
+    end
+
+    reply =
+      case :persistent_term.get(__MODULE__, nil) do
+        {:unavailable, reason} -> {:error, reason}
+        _tracking -> :ok
+      end
+
+    {:reply, reply, state}
   end
 
   @impl true
@@ -546,9 +616,61 @@ defmodule HalC2.Subprocess.Orphans do
     ["-KILL", "--" | targets]
   end
 
+  @pid_kill "hal-c2-pid-kill"
+  @not_that_process 3
+  # Its verdicts: delivered, failed, and no longer that process. Any other status (no
+  # pidfds in the kernel, a binary that will not load) says nothing about the program.
+  @pid_kill_verdicts [0, 1, @not_that_process]
+  # Built by `vp run build:pid-kill` in a checkout; a release bundles it in priv/bin.
+  @pid_kill_checkout Path.expand("../../../../../native/pid-kill/target", __DIR__)
+
+  # The helper binary: the configured one (`false` for none), the release's, or the
+  # checkout's. Never PATH's: it decides what gets killed.
+  defp pid_kill_helper do
+    case Application.get_env(:hal_c2, :pid_kill_helper) do
+      false ->
+        nil
+
+      configured ->
+        [
+          configured,
+          Application.app_dir(:hal_c2, "priv/bin/#{@pid_kill}"),
+          Path.join([@pid_kill_checkout, "release", @pid_kill]),
+          Path.join([@pid_kill_checkout, "debug", @pid_kill])
+        ]
+        |> Enum.find(&(is_binary(&1) and File.regular?(&1)))
+    end
+  end
+
+  # SIGKILLs the process `pid` that started at `started`, and the group it leads with
+  # `leader?`: `{output, status}`, non-zero when any of it was not delivered.
+  defp send_kill(pid, started, leader?) do
+    helper = pid_kill_helper()
+
+    case helper && pid_kill(helper, pid, started, leader?) do
+      {_out, status} = result when status in @pid_kill_verdicts -> result
+      _ -> System.cmd("kill", kill_args(pid, leader?), stderr_to_stdout: true)
+    end
+  end
+
+  # A start time here is `<boot>:<ticks>`, the boot having been compared with this one's.
+  defp pid_kill(helper, pid, started, leader?) do
+    ticks = started |> String.split(":") |> List.last()
+    args = if(leader?, do: ["--group"], else: []) ++ ["#{pid}", ticks]
+    System.cmd(helper, args, stderr_to_stdout: true)
+  rescue
+    # There at the check, but it cannot run (not executable, built for another machine).
+    ErlangError -> nil
+  end
+
   # A program that survives keeps its record, so the next boot tries again.
-  defp kill(path, pid, started, leader?) do
-    case System.cmd("kill", kill_args(pid, leader?), stderr_to_stdout: true) do
+  defp kill(path, pid, started, leader?, mark) do
+    case send_kill(pid, started, leader?) do
+      # It exited since the last read, and nothing was signalled, so what it left in
+      # its group is still there.
+      {_, @not_that_process} ->
+        sweep(path, pid, mark)
+
       {_, 0} ->
         # Exit 0 proves the signal was delivered, not that the program died:
         # one in uninterruptible sleep takes SIGKILL only when it wakes. The
@@ -658,12 +780,12 @@ defmodule HalC2.Subprocess.Orphans do
 
       true ->
         # Read again right before the signal, with the group the program leads now.
-        # Not atomic with the external `kill` (see the moduledoc's pidfd limit).
+        # The signal itself holds to this start time where it can (see the moduledoc).
         # Unreadable is not gone: the record stays for the next boot, as an
         # unreadable record does; dropping it would spare the orphan forever.
         case process_result(pid) do
           {:ok, {_state, ^started, group}} ->
-            kill(path, pid, started, group == pid)
+            kill(path, pid, started, group == pid, record["mark"])
 
           :unknown ->
             :kept
@@ -725,15 +847,15 @@ defmodule HalC2.Subprocess.Orphans do
         sweep(path, group, entry, tries - 1, outcome)
 
       {pids, _unreadable?} ->
-        System.cmd("kill", ["-KILL", "--" | Enum.map(pids, &to_string/1)], stderr_to_stdout: true)
+        for {pid, started} <- pids, do: send_kill(pid, started, false)
 
         Process.sleep(10)
         sweep(path, group, entry, tries - 1, :killed)
     end
   end
 
-  # `{running processes in group that carry entry, never this MC itself; whether a marked
-  # process could not be placed}`. No listing of `/proc` proves nothing, so it counts
+  # `{{pid, start time} of the running processes in group that carry entry, never this
+  # MC itself; whether a marked process could not be placed}`. No listing of `/proc` proves nothing, so it counts
   # as unreadable.
   defp members(group, entry) do
     case File.ls("/proc") do
@@ -742,10 +864,18 @@ defmodule HalC2.Subprocess.Orphans do
 
         for name <- names, name != me, name =~ ~r/^\d+$/, reduce: {[], false} do
           {pids, unreadable?} ->
-            case member(process_result(name), group, fn -> marked?(name, entry) end) do
-              :member -> {[String.to_integer(name) | pids], unreadable?}
-              :unreadable -> {pids, true}
-              :stranger -> {pids, unreadable?}
+            process = process_result(name)
+
+            case member(process, group, fn -> marked?(name, entry) end) do
+              :member ->
+                {:ok, {_state, started, _group}} = process
+                {[{String.to_integer(name), started} | pids], unreadable?}
+
+              :unreadable ->
+                {pids, true}
+
+              :stranger ->
+                {pids, unreadable?}
             end
         end
 

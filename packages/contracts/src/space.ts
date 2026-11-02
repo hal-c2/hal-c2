@@ -2,6 +2,8 @@ import * as Schema from "effect/Schema";
 
 import {
   IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
   SpaceBlockId,
   SpaceCommentId,
   SpaceDeckId,
@@ -12,23 +14,25 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ScheduledTaskRunStatus, ScheduledTaskUpsertSchedule } from "./scheduledTask.ts";
 
 /**
  * Spaces hold Pages that people and agents write together, and slide decks. Clients
  * read them from streams, the same subscribe/resume path as projects and threads:
  * `SPACES_STREAM_ID` holds one `space` entity per Space, and `spaceStreamId(id)`
- * holds that Space's `page`, `block`, `comment`, `image`, `site`, `deck` and `slide` entities.
- * The RPCs below change them. An image's bytes are never on a stream: fetch them on
+ * holds that Space's `page`, `block`, `comment`, `image`, `site`, `deck`, `slide` and `pageAgent`
+ * entities. The RPCs below change them. An image's bytes are never on a stream: fetch them on
  * demand from the address `assets.createUrl` signs for a `space-image`.
  */
 export const SPACES_STREAM_ID = "spaces";
 
 export const spaceStreamId = (spaceId: SpaceId) => `space:${spaceId}`;
 
-/** Who wrote something: the user, or the agent of a thread. */
+/** Who wrote something: the user, the agent of a thread, or a page's own update. */
 export const SpaceAuthor = Schema.Union([
   Schema.Struct({ type: Schema.Literal("user") }),
   Schema.Struct({ type: Schema.Literal("agent"), threadId: ThreadId }),
+  Schema.Struct({ type: Schema.Literal("schedule") }),
 ]);
 export type SpaceAuthor = typeof SpaceAuthor.Type;
 
@@ -40,6 +44,23 @@ export const Space = Schema.Struct({
 });
 export type Space = typeof Space.Type;
 
+/**
+ * What a page shows of its update: the MC's scheduler keeps it and mirrors it here, so
+ * a client changes it through `space.page.schedule.*` and never writes it.
+ */
+export const SpacePageSchedule = Schema.Struct({
+  instruction: TrimmedNonEmptyString,
+  cadence: ScheduledTaskUpsertSchedule,
+  /** False while the update is paused. */
+  enabled: Schema.Boolean,
+  /** Null while paused, or while the page is in the trash. */
+  nextRunAt: Schema.NullOr(IsoDateTime),
+  lastRunAt: Schema.NullOr(IsoDateTime),
+  lastRunStatus: ScheduledTaskRunStatus,
+  lastRunError: Schema.NullOr(Schema.String),
+});
+export type SpacePageSchedule = typeof SpacePageSchedule.Type;
+
 export const SpacePage = Schema.Struct({
   id: SpacePageId,
   spaceId: SpaceId,
@@ -49,12 +70,17 @@ export const SpacePage = Schema.Struct({
   sourceThreadId: Schema.NullOr(ThreadId),
   /** Set while the page is in the trash. Its subpages are hidden with it. */
   trashedAt: Schema.NullOr(IsoDateTime),
+  /** The page's update, if it has one. */
+  schedule: Schema.optional(Schema.NullOr(SpacePageSchedule)),
+  /** When a run of its update last wrote the page's generated part. */
+  writtenAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 export type SpacePage = typeof SpacePage.Type;
 
-export const SpaceBlockKind = Schema.Literals([
+/** The kinds of block that can be written by hand. */
+export const SpaceWritableBlockKind = Schema.Literals([
   "paragraph",
   "heading",
   "checklist",
@@ -62,7 +88,57 @@ export const SpaceBlockKind = Schema.Literals([
   "subpage_link",
   "image",
 ]);
+export type SpaceWritableBlockKind = typeof SpaceWritableBlockKind.Type;
+
+/**
+ * A `generated` block is the marked part of a page that updates itself: at most one on
+ * a page, its text is the Markdown of the last run, and only a run writes it. It can be
+ * moved, deleted and commented on. A `chart` is only made by `space.block.visualize`.
+ */
+export const SpaceBlockKind = Schema.Literals([
+  ...SpaceWritableBlockKind.literals,
+  "chart",
+  "generated",
+]);
 export type SpaceBlockKind = typeof SpaceBlockKind.Type;
+
+/** The limits of a chart, in UTF-8 bytes for text. `HalC2.Space.Chart` enforces them. */
+export const SPACE_CHART_LIMITS = {
+  labels: 24,
+  series: 4,
+  titleBytes: 120,
+  labelBytes: 40,
+  requestBytes: 200,
+  sourceBytes: 160,
+  value: 1e15,
+} as const;
+
+/** Plain text a client shows as it is, and never interprets. */
+const SpaceChartText = (maxLength: number) => Schema.String.check(Schema.isMaxLength(maxLength));
+
+/**
+ * A chart our own drawing code draws: data only, with no URL, script, QML or formatting.
+ * The MC refuses anything else, and clients still treat every field as untrusted text.
+ * Values are from zero up, one per label.
+ */
+export const SpaceChart = Schema.Struct({
+  type: Schema.Literals(["bar", "line"]),
+  title: SpaceChartText(SPACE_CHART_LIMITS.titleBytes),
+  labels: Schema.Array(SpaceChartText(SPACE_CHART_LIMITS.labelBytes)).check(
+    Schema.isMaxLength(SPACE_CHART_LIMITS.labels),
+  ),
+  series: Schema.Array(
+    Schema.Struct({
+      name: SpaceChartText(SPACE_CHART_LIMITS.labelBytes),
+      values: Schema.Array(Schema.Finite).check(Schema.isMaxLength(SPACE_CHART_LIMITS.labels)),
+    }),
+  ).check(Schema.isMaxLength(SPACE_CHART_LIMITS.series)),
+  /** What was asked for, offered again when the user asks again. */
+  request: SpaceChartText(SPACE_CHART_LIMITS.requestBytes),
+  /** Where the numbers came from, written by the MC and not the model. */
+  source: SpaceChartText(SPACE_CHART_LIMITS.sourceBytes),
+});
+export type SpaceChart = typeof SpaceChart.Type;
 
 export const SpaceBlock = Schema.Struct({
   id: SpaceBlockId,
@@ -73,6 +149,8 @@ export const SpaceBlock = Schema.Struct({
   checked: Schema.Boolean,
   /** The page a `subpage_link` block points at. */
   linkedPageId: Schema.NullOr(SpacePageId),
+  /** What a `chart` block draws. Its `text` says what it is, for clients that do not draw it. */
+  chart: Schema.optional(SpaceChart),
   /** The image an `image` block shows; its `text` is the caption. Only on image blocks. */
   imageId: Schema.optional(SpaceImageId),
   /**
@@ -289,6 +367,32 @@ export const SpacePageCreateFromThreadInput = Schema.Struct({
 });
 export type SpacePageCreateFromThreadInput = typeof SpacePageCreateFromThreadInput.Type;
 
+// A page's update
+
+/**
+ * Gives a live page an instruction and a cadence, or changes them. Each run writes the
+ * page's generated part. A paused update stays paused.
+ */
+export const SpacePageScheduleSetInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  instruction: TrimmedNonEmptyString,
+  cadence: ScheduledTaskUpsertSchedule,
+});
+export type SpacePageScheduleSetInput = typeof SpacePageScheduleSetInput.Type;
+
+/** Pauses or resumes a live page's update. Resuming does not run what was missed. */
+export const SpacePageScheduleSetEnabledInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  enabled: Schema.Boolean,
+});
+export type SpacePageScheduleSetEnabledInput = typeof SpacePageScheduleSetEnabledInput.Type;
+
+// `space.page.schedule.runNow` starts a run and answers at once; the page shows how it
+// goes. `space.page.schedule.remove` ends the update and leaves what it last wrote as
+// ordinary blocks. Both take a `SpacePageRef`.
+
 // Blocks
 
 /**
@@ -300,7 +404,7 @@ const AfterBlockId = Schema.optional(Schema.NullOr(SpaceBlockId));
 export const SpaceBlockInsertInput = Schema.Struct({
   spaceId: SpaceId,
   pageId: SpacePageId,
-  kind: SpaceBlockKind,
+  kind: SpaceWritableBlockKind,
   text: Schema.optional(Schema.String),
   checked: Schema.optional(Schema.Boolean),
   /** Required for `subpage_link`, which shows that page's title. */
@@ -359,6 +463,113 @@ export type SpaceCommentRef = typeof SpaceCommentRef.Type;
 
 export const SpaceCommentResult = Schema.Struct({ comment: SpaceComment });
 export type SpaceCommentResult = typeof SpaceCommentResult.Type;
+
+// The agent asked from inside a page
+
+/** An agent's state on its page: `stopping` until the runs it was stopped in have ended. */
+export const SpacePageAgentStatus = Schema.Literals([
+  "running",
+  "stopping",
+  "completed",
+  "failed",
+  "stopped",
+]);
+export type SpacePageAgentStatus = typeof SpacePageAgentStatus.Type;
+
+/** A `pageAgent` entity, keyed by its page: the agent asked last on that page. */
+export const SpacePageAgent = Schema.Struct({
+  id: SpacePageId,
+  pageId: SpacePageId,
+  /** An ordinary thread, which the page links to. */
+  threadId: ThreadId,
+  request: Schema.String,
+  status: SpacePageAgentStatus,
+  /** Set when the agent ends: whether page history holds an edit of its thread. */
+  edited: Schema.Boolean,
+  /** Why it failed, or why it stopped when the user did not stop it. */
+  error: Schema.NullOr(Schema.String),
+  startedAt: IsoDateTime,
+  endedAt: Schema.NullOr(IsoDateTime),
+});
+export type SpacePageAgent = typeof SpacePageAgent.Type;
+
+export const SpacePageAskAgentInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  /** What the agent should do; a leading `@agent` is not part of it. */
+  request: Schema.String,
+});
+export type SpacePageAskAgentInput = typeof SpacePageAskAgentInput.Type;
+
+/** Names a page for `space.page.stopAgent` and `space.page.dismissAgent`. */
+export const SpacePageAgentRef = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+});
+export type SpacePageAgentRef = typeof SpacePageAgentRef.Type;
+
+export const SpacePageAgentResult = Schema.Struct({ agent: SpacePageAgent });
+export type SpacePageAgentResult = typeof SpacePageAgentResult.Type;
+
+export const SpacePageDismissAgentResult = Schema.Struct({ pageId: SpacePageId });
+export type SpacePageDismissAgentResult = typeof SpacePageDismissAgentResult.Type;
+
+// A page's history (read on demand; never on the stream)
+
+/**
+ * Names a version: the event-log position of its last edit. Any position reads the
+ * page as it stood there, so a name stays good when its run of edits grows.
+ */
+export const SpacePageVersionId = NonNegativeInt;
+export type SpacePageVersionId = typeof SpacePageVersionId.Type;
+
+/** For `space.page.history`: from the newest version, or `before` the one given. */
+export const SpacePageHistoryInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  before: Schema.optional(SpacePageVersionId),
+  /** How many versions to send; the MC caps it. */
+  limit: Schema.optional(PositiveInt),
+});
+export type SpacePageHistoryInput = typeof SpacePageHistoryInput.Type;
+
+/** One author's run of edits on a page. */
+export const SpacePageVersion = Schema.Struct({
+  version: SpacePageVersionId,
+  /** When its last edit was written. */
+  at: IsoDateTime,
+  author: SpaceAuthor,
+  /** The title of the agent's thread, while it still exists. */
+  threadTitle: Schema.NullOr(Schema.String),
+  /** When the version this one restored was written, if it is a restore. */
+  restoredFromAt: Schema.NullOr(IsoDateTime),
+});
+export type SpacePageVersion = typeof SpacePageVersion.Type;
+
+export const SpacePageHistoryResult = Schema.Struct({
+  /** Newest first. */
+  versions: Schema.Array(SpacePageVersion),
+  /** What to pass as `before` for the next stretch; null at the oldest. */
+  nextBefore: Schema.NullOr(SpacePageVersionId),
+});
+export type SpacePageHistoryResult = typeof SpacePageHistoryResult.Type;
+
+/** Names one version for `space.page.version` and `space.page.restoreVersion`. */
+export const SpacePageVersionRef = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  version: SpacePageVersionId,
+});
+export type SpacePageVersionRef = typeof SpacePageVersionRef.Type;
+
+/** A version's title and blocks, without its comments, which are not versioned. */
+export const SpacePageVersionContent = Schema.Struct({
+  version: SpacePageVersionId,
+  at: IsoDateTime,
+  title: Schema.String,
+  blocks: Schema.Array(SpaceBlock),
+});
+export type SpacePageVersionContent = typeof SpacePageVersionContent.Type;
 
 // Decks
 
@@ -504,6 +715,29 @@ export class SpaceError extends Schema.TaggedError<SpaceError>()("SpaceError", {
   reason: Schema.Literals(["invalid", "notFound", "trashed", "notEmpty", "cycle", "unavailable"]),
 }) {}
 
+/**
+ * A chart from `request` ("weekly turns"), drawn from what the MC counts or what the page
+ * says, or refused. A new block goes where `afterBlockId` says; with `blockId` the chart
+ * in that block is replaced where it is, and stays as it was if this fails.
+ */
+export const SpaceBlockVisualizeInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  request: Schema.String.check(Schema.isMaxLength(SPACE_CHART_LIMITS.requestBytes)),
+  blockId: Schema.optional(SpaceBlockId),
+  afterBlockId: AfterBlockId,
+});
+export type SpaceBlockVisualizeInput = typeof SpaceBlockVisualizeInput.Type;
+
+/**
+ * No chart was drawn: no text generation provider (`unavailable`), it failed or its answer
+ * was refused (`failed`), or real data cannot answer the request (`unanswerable`).
+ */
+export class SpaceChartError extends Schema.TaggedError<SpaceChartError>()("SpaceChartError", {
+  message: Schema.String,
+  reason: Schema.Literals(["unavailable", "failed", "unanswerable"]),
+}) {}
+
 /** A page could not be written from a thread: no text generation provider, or it failed. */
 export class SpaceTextGenerationError extends Schema.TaggedError<SpaceTextGenerationError>()(
   "SpaceTextGenerationError",
@@ -524,3 +758,39 @@ export class SpaceImageGenerationError extends Schema.TaggedError<SpaceImageGene
     reason: Schema.Literals(["unsupported", "unavailable", "failed"]),
   },
 ) {}
+
+// Presence
+
+/**
+ * Follows who else has a page open (the `spacePresence` shape). Subscribing is what
+ * puts this client on the page; it leaves by unsubscribing or by its connection going.
+ * Nothing about it is stored, and it sends only when the viewers of this page change.
+ */
+export const SpacePresenceSubscribeInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+});
+export type SpacePresenceSubscribeInput = typeof SpacePresenceSubscribeInput.Type;
+
+/**
+ * Someone else on the page. HAL-C2 has no accounts, so every paired device is the one
+ * user: `devices` names the user's other devices on the page, and there is at most one
+ * such viewer. An agent is on the page it last read or wrote while its turn runs.
+ */
+export const SpacePresenceViewer = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("user"),
+    devices: Schema.Array(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("agent"),
+    threadId: ThreadId,
+    title: TrimmedNonEmptyString,
+  }),
+]);
+export type SpacePresenceViewer = typeof SpacePresenceViewer.Type;
+
+export const SpacePresenceStreamEvent = Schema.Struct({
+  viewers: Schema.Array(SpacePresenceViewer),
+});
+export type SpacePresenceStreamEvent = typeof SpacePresenceStreamEvent.Type;

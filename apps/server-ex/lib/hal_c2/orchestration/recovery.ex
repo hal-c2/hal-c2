@@ -245,24 +245,37 @@ defmodule HalC2.Orchestration.Recovery do
 
     :persistent_term.erase({__MODULE__, :background})
 
-    if Application.get_env(:hal_c2, :auto_actions, true) do
-      for thread_id <- requeued, do: HalC2.Orchestration.start_next(thread_id)
+    continued =
+      if Application.get_env(:hal_c2, :auto_actions, true) do
+        for thread_id <- requeued, not HalC2.Space.PageAgent.stopping?(thread_id) do
+          HalC2.Orchestration.start_next(thread_id)
+        end
 
-      for {thread_id, run} <- runs,
-          continue?(thread_id, run),
-          do: continuation(thread_id, run, "Continue where you left off.")
+        interrupted =
+          for {thread_id, run} <- runs, continue?(thread_id, run) do
+            continuation(thread_id, run, "Continue where you left off.")
+            thread_id
+          end
 
-      # A thread whose turn had finished hears which of its background commands the
-      # restart ended, so its agent can start them again rather than wait on them.
-      for {thread_id, run, commands} <- background,
-          continue?(thread_id, run),
-          do: continuation(thread_id, run, background_text(commands))
-    end
+        # A thread whose turn had finished hears which of its background commands the
+        # restart ended, so its agent can start them again rather than wait on them.
+        waiting =
+          for {thread_id, run, commands} <- background, continue?(thread_id, run) do
+            continuation(thread_id, run, background_text(commands))
+            thread_id
+          end
+
+        interrupted ++ waiting
+      else
+        []
+      end
 
     # A child this boot interrupted and nothing continued will not report: its task ends.
     delegating = :persistent_term.get({__MODULE__, :delegating}, [])
     :persistent_term.erase({__MODULE__, :delegating})
     for thread_id <- delegating, do: HalC2.Orchestration.Delegation.reconcile(thread_id, false)
+    # A page's agent that is not going on says so on its page, whatever the crash lost.
+    HalC2.Space.PageAgent.reconcile(continued)
 
     :ok
   end
@@ -272,7 +285,7 @@ defmodule HalC2.Orchestration.Recovery do
       {"thread", thread} ->
         thread["archivedAt"] == nil and thread["deletedAt"] == nil and
           HalC2.Settings.for_project(thread["projectId"])["continueThreadsAfterServerUpdate"] ==
-            true and latest?(thread_id, run)
+            true and latest?(thread_id, run) and not HalC2.Space.PageAgent.stopping?(thread_id)
 
       _ ->
         false

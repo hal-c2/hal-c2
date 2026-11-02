@@ -768,10 +768,12 @@ defmodule HalC2.OrchestrationTest do
     }
 
     # Both calls run at once, as when the first is still in the dropped socket's process.
+    # A launch answers once the provider has started the turn, so how long that takes is
+    # the machine's; ExUnit's own timeout bounds the wait.
     [first, second] =
       [input, input]
       |> Enum.map(&Task.async(fn -> Orchestration.launch_thread(&1) end))
-      |> Task.await_many()
+      |> Task.await_many(:infinity)
 
     assert {:ok, %{"threadId" => ^thread_id}} = first
     assert {:ok, %{"threadId" => ^thread_id}} = second

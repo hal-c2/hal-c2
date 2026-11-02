@@ -336,6 +336,21 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
 
   # --- moving within the cluster ---------------------------------------------------------
 
+  step "the move of {string} is given up", %{args: [title]} = context do
+    id = World.thread_id(context, title)
+    Process.exit(context.held.pid, :kill)
+    World.await_stream(id, &(HalC2.StreamState.get(&1, "thread")[id]["moving"] == nil))
+    context
+  end
+
+  step "{string} on {string} names no page", %{args: [title, machine]} = context do
+    id = World.thread_id(context, title)
+    thread = Machines.on(context, machine, HalC2.Streams, :get, [id, "thread", id])
+    assert thread["id"] == id
+    assert thread["spacePage"] == nil
+    context
+  end
+
   step "the user moves {string} to {string}", %{args: [title, to]} = context do
     move(context, title, to, context[:move_opts] || [])
   end

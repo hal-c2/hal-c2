@@ -8,7 +8,7 @@ import HalC2.Shell
 import HalC2.Bricks
 
 // The Spaces in the phone layout, one step at a time: the list of Spaces, a
-// Space's pages and decks or images, a page, its comments, a deck. Everything shown is SpaceController's
+// Space's pages and decks or images, a page, its comments or its history, a deck. Everything shown is SpaceController's
 // (`Spaces`) and everything done is its actions; which step shows is the only
 // thing kept here, because the controller always has a page selected, opened
 // by the user or not.
@@ -29,6 +29,8 @@ Item {
     // The step this screen was on before a layout change made it again.
     property var resumeStep: null
     readonly property var step: ({ view: view, spaceId: openedSpaceId, pageId: openedPageId, deckId: openedDeckId })
+    // The user is on the page only here, not while its Space's list shows.
+    readonly property bool pageOnShow: view === "page" || view === "comments"
     // What the controller already holds when the screen loads is no arrival:
     // the bindings report it as a change while the screen is being made.
     property bool settled: false
@@ -36,6 +38,7 @@ Item {
     readonly property string pageId: Spaces.pageId
     readonly property string deckId: Spaces.deckId
     readonly property string error: (Shell.state.space ?? {}).error ?? ""
+    readonly property bool readingVersion: Spaces.history.reading
     // Signing an address for every image lasts only as long as they are on screen.
     readonly property bool browsingImages: view === "images" && visible
 
@@ -52,7 +55,10 @@ Item {
         forceActiveFocus();
         if (Spaces.presenting)
             Shell.dispatch("space.deck.leave", {});
-        else if (view === "comments")
+        else if (view === "version") {
+            Shell.dispatch("space.history.back", {});
+            view = "history";
+        } else if (view === "comments" || view === "history")
             view = "page";
         else if (view === "page" || view === "deck")
             view = "pages";
@@ -117,6 +123,18 @@ Item {
             comments.showBlock(blockId);
     }
 
+    // The history of the page `id`, whichever list or screen asked for it.
+    function showHistory(id) {
+        openPage(id);
+        Shell.dispatch("space.history.open", { pageId: id });
+        view = "history";
+    }
+
+    function readVersion(version) {
+        Shell.dispatch("space.history.read", { version: version });
+        view = "version";
+    }
+
     function askNewSpace() {
         text.ask({ title: qsTr("New Space"), placeholder: qsTr("Name"), action: qsTr("Create") }, name => Shell.dispatch("space.create", { name: name }));
     }
@@ -140,10 +158,63 @@ Item {
         });
     }
 
+    // What an agent should do to the page `id`, which opens to show the agent working.
+    // An ask the MC refuses comes back with its words (`words`).
+    function askAgent(id, words) {
+        text.ask({ title: qsTr("Ask an agent"), placeholder: qsTr("What should it do to this page?"), action: qsTr("Ask"), multiline: true, text: words ?? "" }, request => {
+            openPage(id);
+            Shell.dispatch("space.agent.ask", { pageId: id, request: request });
+        });
+    }
+
+    Connections {
+        target: Spaces
+        function onAgentAskAnswered(pageId, request, taken) {
+            if (!taken)
+                screen.askAgent(pageId, request);
+        }
+    }
+
     function askImport() {
         text.ask({ title: qsTr("Import Markdown"), placeholder: qsTr("Paste Markdown here"), action: qsTr("Import"), multiline: true }, markdown => {
             pageExpected = true;
             Shell.dispatch("space.page.importMarkdown", { markdown: markdown });
+        });
+    }
+
+    // What can be done with the open page's update. Only the open page's is known,
+    // so the tree's menus do not offer it.
+    function updateRows(id) {
+        if (view !== "page" || id !== Spaces.pageId)
+            return [];
+        const schedule = Spaces.page.schedule ?? {};
+        if ((schedule.instruction ?? "") === "")
+            return [{ id: "update", label: qsTr("Update itself…"), icon: "clock" }];
+        return [
+            { id: "update", label: qsTr("Change its update…"), icon: "clock" },
+            { id: "updateRun", label: qsTr("Run its update now"), icon: "play", enabled: schedule.lastRunStatus !== "running" },
+            { id: "updatePause", label: schedule.enabled === true ? qsTr("Pause its update") : qsTr("Resume its update"), icon: schedule.enabled === true ? "pause" : "play" },
+            { id: "updateRemove", label: qsTr("Remove its update"), icon: "x" }
+        ];
+    }
+
+    // The instruction, then the cadence, each in a control a finger wide. A time
+    // the MC cannot read comes back as its refusal.
+    function askUpdate() {
+        const schedule = Spaces.page.schedule ?? {};
+        const given = (schedule.instruction ?? "") !== "";
+        text.ask({ title: given ? qsTr("Change this page's update") : qsTr("Have this page update itself"), placeholder: qsTr("Summarise yesterday's threads"), text: schedule.instruction ?? "", action: qsTr("Next"), multiline: true }, instruction => {
+            const save = cadence => Shell.dispatch("space.page.schedule.set", { pageId: Spaces.pageId, instruction: instruction, cadence: cadence });
+            const hours = [1, 2, 6, 12].map(count => ({ id: "every:" + count, label: count === 1 ? qsTr("Every hour") : qsTr("Every %1 hours").arg(count), icon: "clock" }));
+            const keep = given ? [{ id: "keep", label: qsTr("Keep: %1").arg(schedule.cadenceLabel), icon: "check" }] : [];
+            sheet.ask(keep.concat(hours, [{ id: "time", label: qsTr("At a time of day…"), icon: "clock" }]), choice => {
+                if (choice === "keep")
+                    save(schedule.cadence);
+                else if (choice === "time")
+                    text.ask({ title: qsTr("What time of day?"), placeholder: "09:00", text: schedule.cadence?.timeOfDay ?? "09:00", action: qsTr("Save") }, time => save({ type: "fixed_time", timeOfDay: time, weekdays: schedule.cadence?.weekdays ?? [] }));
+                else
+                    save({ type: "interval", everyMs: Number(choice.slice("every:".length)) * 3600000 });
+            });
         });
     }
 
@@ -160,13 +231,24 @@ Item {
         sheet.ask(siteRows.concat([
             { id: "rename", label: qsTr("Rename"), icon: "pencil" },
             { id: "subpage", label: qsTr("New subpage"), icon: "plus" },
+            { id: "agent", label: qsTr("Ask an agent…"), icon: "sparkles" },
             { id: "into", label: qsTr("Move into…"), icon: "folder" },
             { id: "top", label: qsTr("Move to the top"), icon: "arrow-up", enabled: parentPageId !== "" },
             { id: "copy", label: qsTr("Copy as Markdown"), icon: "copy" },
-            { id: "deck", label: qsTr("Make a deck"), icon: "play" },
+            { id: "history", label: qsTr("History"), icon: "clock" },
+            { id: "deck", label: qsTr("Make a deck"), icon: "play" }
+        ].concat(updateRows(id), [
             { id: "trash", label: qsTr("Move to trash"), icon: "trash", destructive: true }
-        ]), choice => {
-            if (choice === "publish") {
+        ])), choice => {
+            if (choice === "update") {
+                askUpdate();
+            } else if (choice === "updateRun") {
+                Shell.dispatch("space.page.schedule.runNow", { pageId: id });
+            } else if (choice === "updatePause") {
+                Shell.dispatch("space.page.schedule.setEnabled", { pageId: id, enabled: Spaces.page.schedule?.enabled !== true });
+            } else if (choice === "updateRemove") {
+                Shell.dispatch("space.page.schedule.remove", { pageId: id });
+            } else if (choice === "publish") {
                 Shell.dispatch("space.page.publish", { pageId: id });
             } else if (choice === "publishTailscale") {
                 Shell.dispatch("space.page.publish", { pageId: id, tailscale: true });
@@ -178,12 +260,16 @@ Item {
                 text.ask({ title: qsTr("Rename page"), placeholder: qsTr("Title"), text: title, action: qsTr("Rename") }, renamed => Shell.dispatch("space.page.rename", { pageId: id, title: renamed }));
             } else if (choice === "subpage") {
                 askNewPage(id);
+            } else if (choice === "agent") {
+                askAgent(id);
             } else if (choice === "into") {
                 pickParent(id);
             } else if (choice === "top") {
                 Shell.dispatch("space.page.move", { pageId: id, parentPageId: "" });
             } else if (choice === "copy") {
                 Shell.dispatch("space.page.copyMarkdown", { pageId: id });
+            } else if (choice === "history") {
+                showHistory(id);
             } else if (choice === "deck") {
                 deckExpected = true;
                 Shell.dispatch("space.deck.createFromPage", { pageId: id });
@@ -216,8 +302,14 @@ Item {
     function trashMenu(id) {
         sheet.ask([
             { id: "restore", label: qsTr("Restore"), icon: "archive-restore" },
+            { id: "history", label: qsTr("History"), icon: "clock" },
             { id: "delete", label: qsTr("Delete for good"), icon: "trash", destructive: true }
-        ], choice => Shell.dispatch(choice === "restore" ? "space.page.restore" : "space.page.delete", { pageId: id }));
+        ], choice => {
+            if (choice === "history")
+                showHistory(id);
+            else
+                Shell.dispatch(choice === "restore" ? "space.page.restore" : "space.page.delete", { pageId: id });
+        });
     }
 
     // The block menu: `afterBlockId` is where a new block goes (undefined: last).
@@ -228,10 +320,13 @@ Item {
             { id: "checklist", label: qsTr("Checklist"), icon: "square-check" },
             { id: "callout", label: qsTr("Callout"), icon: "info" },
             { id: "subpage_link", label: qsTr("Subpage link"), icon: "link" },
+            { id: "chart", label: qsTr("Chart"), icon: "chart-no-axes-column" },
             { id: "image", label: qsTr("Image"), icon: "image" }
         ], kind => {
             if (kind === "subpage_link")
                 pickLink(afterBlockId);
+            else if (kind === "chart")
+                askChart({ afterBlockId: afterBlockId });
             else if (kind === "image")
                 pickImage(afterBlockId);
             else
@@ -270,6 +365,19 @@ Item {
         });
     }
 
+    // A chart for the page: `where` holds the block it goes after, or the chart
+    // it replaces with the words that chart was asked for in.
+    function askChart(where, request) {
+        text.ask({ title: where.blockId === undefined ? qsTr("New chart") : qsTr("Ask again"), placeholder: qsTr("What should it show?"), text: request ?? "", action: qsTr("Draw") }, asked => {
+            const payload = { pageId: Spaces.pageId, request: asked };
+            if (where.blockId !== undefined)
+                payload.blockId = where.blockId;
+            else if (where.afterBlockId !== undefined)
+                payload.afterBlockId = where.afterBlockId;
+            Shell.dispatch("space.block.visualize", payload);
+        });
+    }
+
     function insert(block, afterBlockId) {
         const payload = Object.assign({ pageId: Spaces.pageId, checked: false }, block);
         if (afterBlockId !== undefined)
@@ -277,16 +385,20 @@ Item {
         Shell.dispatch("space.block.insert", payload);
     }
 
-    function blockMenu(row, id, said) {
+    // `chartRequest` is what a chart was asked for with; other blocks have none.
+    function blockMenu(row, id, said, chartRequest) {
         const blockAt = at => Spaces.blocks.get(at).id;
-        sheet.ask([
+        const again = chartRequest === undefined ? [] : [{ id: "again", label: qsTr("Ask again"), icon: "refresh-cw" }];
+        sheet.ask(again.concat([
             { id: "up", label: qsTr("Move up"), icon: "arrow-up", enabled: row > 0 },
             { id: "down", label: qsTr("Move down"), icon: "arrow-down", enabled: row < Spaces.blocks.count - 1 },
             { id: "below", label: qsTr("Add a block below"), icon: "plus" },
             { id: "comment", label: qsTr("Comment"), icon: "message-square-plus" },
             { id: "delete", label: qsTr("Delete"), icon: "trash", destructive: true }
-        ], choice => {
-            if (choice === "up")
+        ]), choice => {
+            if (choice === "again")
+                askChart({ blockId: id }, chartRequest);
+            else if (choice === "up")
                 Shell.dispatch("space.block.move", { blockId: id, afterBlockId: row > 1 ? blockAt(row - 2) : "" });
             else if (choice === "down")
                 Shell.dispatch("space.block.move", { blockId: id, afterBlockId: blockAt(row + 1) });
@@ -393,7 +505,14 @@ Item {
         openedPageId = resumeStep.pageId;
         openedDeckId = resumeStep.deckId ?? "";
         const selected = resumeStep.view === "deck" ? resumeStep.deckId === deckId : resumeStep.pageId === pageId;
-        view = resumeStep.view === "pages" || resumeStep.view === "images" || selected ? resumeStep.view : "pages";
+        const wanted = resumeStep.view === "pages" || resumeStep.view === "images" || selected ? resumeStep.view : "pages";
+        // The controller may have closed what the step was showing.
+        if (wanted === "version" && !readingVersion)
+            view = Spaces.history.shown ? "history" : "page";
+        else if (wanted === "history" && !Spaces.history.shown)
+            view = "page";
+        else
+            view = wanted;
     }
 
     function openArrived() {
@@ -410,7 +529,7 @@ Item {
         if (pageId !== "" && (pageExpected || pageId === awaitedPageId)) {
             pageExpected = false;
             openArrived();
-        } else if ((view === "page" || view === "comments") && pageId !== openedPageId) {
+        } else if (["page", "comments", "history", "version"].includes(view) && pageId !== openedPageId) {
             // The page went (another client deleted it): not some other page in its place.
             view = "pages";
         }
@@ -432,9 +551,23 @@ Item {
         if (settled && !pageExpected && !deckExpected && awaitedPageId === "" && view !== "spaces" && spaceId !== openedSpaceId)
             view = "spaces";
     }
+    // Every way out of the history closes it, so nothing keeps asking the MC for it.
+    onViewChanged: {
+        if (view !== "history" && view !== "version" && Spaces.history.shown)
+            Shell.dispatch("space.history.close", {});
+    }
+    // A restore landed, or the controller stopped reading: back to the versions.
+    onReadingVersionChanged: {
+        if (!readingVersion && view === "version")
+            view = "history";
+    }
     onStepChanged: {
         if (settled)
             stepMoved(step);
+    }
+    onPageOnShowChanged: {
+        if (settled)
+            Shell.dispatch("space.pageShown", { shown: pageOnShow });
     }
     onErrorChanged: {
         if (error !== "") {
@@ -454,6 +587,7 @@ Item {
         // Selected before the screen was made.
         if (pageId !== "" && pageId === awaitedPageId)
             openArrived();
+        Shell.dispatch("space.pageShown", { shown: pageOnShow });
     }
 
     objectName: "spaceScreen"
@@ -547,6 +681,18 @@ Item {
 
         anchors.fill: parent
         visible: screen.view === "comments"
+        screen: screen
+    }
+
+    SpaceHistoryView {
+        anchors.fill: parent
+        visible: screen.view === "history"
+        screen: screen
+    }
+
+    SpaceVersionScreen {
+        anchors.fill: parent
+        visible: screen.view === "version"
         screen: screen
     }
 

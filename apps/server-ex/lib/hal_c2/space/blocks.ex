@@ -6,15 +6,25 @@ defmodule HalC2.Space.Blocks do
   A block's place is its `order` key (`HalC2.Space.Order`): inserting or moving one
   writes that block alone. `afterBlockId` places it: after that block, first when
   nil, last when left out (`:last`).
+
+  A block of the kind `generated` is the marked part of a page that updates itself
+  (`HalC2.Space.Schedule`): a page has at most one, its text is the Markdown of the last
+  run, and only `write_generated/4` writes it. Anyone may move or delete it or comment on
+  it, but its text cannot be edited and it cannot be inserted.
   """
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState}
-  alias HalC2.Space.{Images, Order, Pages}
+  alias HalC2.Space.{Chart, Images, Order, Pages}
 
   @kinds ~w(paragraph heading checklist callout subpage_link image)
 
-  @doc "The kinds of block a page holds."
+  @generated "generated"
+
+  @doc """
+  The kinds of block written directly. A `chart` is only made by `put_chart/6`, and a
+  `generated` one by `write_generated/4`.
+  """
   def kinds, do: @kinds
 
   @doc "A page's blocks in order."
@@ -42,21 +52,7 @@ defmodule HalC2.Space.Blocks do
       {blocks, _} =
         Enum.map_reduce(specs, low, fn spec, low ->
           order = Order.between(low, high)
-
-          block = %{
-            "id" => HalC2.Environment.uuid4(),
-            "pageId" => page_id,
-            "kind" => spec["kind"],
-            "text" => text(state, spec),
-            "checked" => spec["kind"] == "checklist" and spec["checked"] == true,
-            "linkedPageId" => if(spec["kind"] == "subpage_link", do: spec["linkedPageId"]),
-            "order" => order,
-            "createdBy" => author,
-            "updatedBy" => author,
-            "createdAt" => at,
-            "updatedAt" => at
-          }
-
+          block = new_block(page_id, Map.put(spec, "text", text(state, spec)), order, author, at)
           {with_image(block, spec), order}
         end)
 
@@ -65,14 +61,31 @@ defmodule HalC2.Space.Blocks do
     |> Pages.refused()
   end
 
-  defp text(state, %{"kind" => "image"} = spec) do
+  defp new_block(page_id, spec, order, author, at) do
+    %{
+      "id" => HalC2.Environment.uuid4(),
+      "pageId" => page_id,
+      "kind" => spec["kind"],
+      "text" => spec["text"] || "",
+      "checked" => spec["kind"] == "checklist" and spec["checked"] == true,
+      "linkedPageId" => if(spec["kind"] == "subpage_link", do: spec["linkedPageId"]),
+      "order" => order,
+      "createdBy" => author,
+      "updatedBy" => author,
+      "createdAt" => at,
+      "updatedAt" => at
+    }
+  end
+
+  @doc "The text a block made from `spec` has: an image with no caption reads as its name."
+  def text(state, %{"kind" => "image"} = spec) do
     case spec["text"] do
       text when text in [nil, ""] -> Images.get(state, spec["imageId"])["name"]
       text -> text
     end
   end
 
-  defp text(_state, spec), do: spec["text"] || ""
+  def text(_state, spec), do: spec["text"] || ""
 
   # Only an image block has the key: every other block stays as it was written.
   defp with_image(block, %{"kind" => "image", "imageId" => id}), do: Map.put(block, "imageId", id)
@@ -83,6 +96,52 @@ defmodule HalC2.Space.Blocks do
       {changes, {:ok, [block]}} -> {changes, {:ok, block}}
       refused -> refused
     end
+  end
+
+  @doc """
+  Draws `chart` on a live page: a new block placed by `after_id`, or, with `block_id`,
+  in place of the chart in that block. A chart with a description `Chart.validate/1`
+  refuses is never written.
+  """
+  def put_chart(state, page_id, chart, nil, after_id, author) do
+    with {:ok, _page} <- Pages.fetch_live(state, page_id),
+         {:ok, low, high} <- place(state, page_id, after_id, nil),
+         {:ok, chart} <- valid_chart(chart) do
+      spec = %{"kind" => "chart", "text" => Chart.summary(chart)}
+      order = Order.between(low, high)
+      block = page_id |> new_block(spec, order, author, Entities.now()) |> Map.put("chart", chart)
+      {[{"block", block["id"], Patch.diff(nil, block)}], {:ok, block}}
+    end
+    |> Pages.refused()
+  end
+
+  def put_chart(state, page_id, chart, block_id, _after_id, author) do
+    with :ok <- chart_block(state, page_id, block_id),
+         {:ok, chart} <- valid_chart(chart) do
+      change(state, block_id, author, fn _ ->
+        {:ok, %{"chart" => chart, "text" => Chart.summary(chart)}}
+      end)
+    else
+      refused -> Pages.refused(refused)
+    end
+  end
+
+  @doc "Whether a chart can be drawn on the page, and in `block_id` when there is one."
+  def chart_place(state, page_id, block_id) do
+    with {:ok, page} <- Pages.fetch_live(state, page_id),
+         :ok <- if(block_id, do: chart_block(state, page_id, block_id), else: :ok),
+         do: {:ok, page}
+  end
+
+  defp chart_block(state, page_id, block_id) do
+    case StreamState.get(state, "block")[block_id] do
+      %{"pageId" => ^page_id, "kind" => "chart"} -> :ok
+      _ -> {:error, :not_found, "There is no chart #{block_id} on this page."}
+    end
+  end
+
+  defp valid_chart(chart) do
+    with {:error, message} <- Chart.validate(chart), do: {:error, :invalid, message}
   end
 
   def update_text(state, id, text, author) when is_binary(text),
@@ -103,15 +162,22 @@ defmodule HalC2.Space.Blocks do
   """
   def edit(state, id, text, checked, author) do
     change(state, id, author, fn block ->
-      with {:ok, text} <- text_change(text),
+      with {:ok, text} <- text_change(block, text),
            {:ok, tick} <- tick_change(block, checked),
            do: {:ok, Map.merge(text, tick)}
     end)
   end
 
-  defp text_change(nil), do: {:ok, %{}}
-  defp text_change(text) when is_binary(text), do: {:ok, %{"text" => text}}
-  defp text_change(_), do: {:error, :invalid, "A block's text is a string."}
+  defp text_change(_block, nil), do: {:ok, %{}}
+
+  defp text_change(%{"kind" => @generated}, _text),
+    do: {:error, :invalid, "What a page's update wrote cannot be edited by hand."}
+
+  defp text_change(%{"kind" => "chart"}, _),
+    do: {:error, :invalid, "A chart cannot be edited. Ask for it again."}
+
+  defp text_change(_block, text) when is_binary(text), do: {:ok, %{"text" => text}}
+  defp text_change(_block, _), do: {:error, :invalid, "A block's text is a string."}
 
   defp tick_change(_block, nil), do: {:ok, %{}}
 
@@ -130,8 +196,12 @@ defmodule HalC2.Space.Blocks do
     end)
   end
 
-  @doc "Deletes a block and the comments on it. Replies with the block's id."
-  def delete(state, id) do
+  @doc """
+  Deletes a block and the comments on it. Replies with the block's id. The deleting
+  author is written on the block first when it is not who last wrote it, which is how
+  the log says who deleted it (`HalC2.Space.History`).
+  """
+  def delete(state, id, author) do
     with {:ok, block} <- fetch(state, id),
          {:ok, _} <- Pages.fetch_live(state, block["pageId"]) do
       comments =
@@ -139,9 +209,78 @@ defmodule HalC2.Space.Blocks do
             c["blockId"] == id,
             do: {"comment", c["id"], Patch.delete()}
 
-      {[{"block", id, Patch.delete()} | comments], {:ok, id}}
+      stamp =
+        if block["updatedBy"] == author,
+          do: [],
+          else: [{"block", id, %{"s" => %{"updatedBy" => author}}}]
+
+      {stamp ++ [{"block", id, Patch.delete()} | comments], {:ok, id}}
     end
     |> Pages.refused()
+  end
+
+  # --- the generated part -----------------------------------------------------------
+
+  @doc """
+  A run's Markdown as the generated part of a live page, and no other block: the
+  page's generated block is rewritten, or made last on the page when it has none.
+  Replies with the block.
+  """
+  def write_generated(state, page_id, markdown, author) do
+    at = Entities.now()
+
+    case generated(state, page_id) do
+      nil ->
+        spec = %{"kind" => @generated, "text" => markdown}
+        order = Order.between(last_order(state, page_id), nil)
+        block = new_block(page_id, spec, order, author, at)
+        {[{"block", block["id"], Patch.diff(nil, block)}], {:ok, block}}
+
+      block ->
+        next = Map.merge(block, %{"text" => markdown, "updatedBy" => author, "updatedAt" => at})
+        {[{"block", block["id"], Patch.diff(block, next)}], {:ok, next}}
+    end
+  end
+
+  @doc """
+  Turns a page's generated part into ordinary blocks in the same place, from `specs`
+  (as `insert_all/5` takes them). Its first block keeps the id, and so the comments.
+  """
+  def release_generated(state, page_id, specs, author) do
+    case {generated(state, page_id), specs} do
+      {nil, _} ->
+        []
+
+      {block, []} ->
+        {changes, _} = delete(state, block["id"], author)
+        changes
+
+      {block, [first | rest]} ->
+        next =
+          block
+          |> Map.merge(%{
+            "kind" => first["kind"],
+            "text" => text(state, first),
+            "checked" => first["kind"] == "checklist" and first["checked"] == true,
+            "linkedPageId" => first["linkedPageId"],
+            "updatedBy" => author,
+            "updatedAt" => Entities.now()
+          })
+          |> with_image(first)
+
+        {inserted, _} = insert_all(state, page_id, rest, block["id"], author)
+        [{"block", block["id"], Patch.diff(block, next)} | inserted]
+    end
+  end
+
+  defp generated(state, page_id),
+    do: Enum.find(of_page(state, page_id), &(&1["kind"] == @generated))
+
+  defp last_order(state, page_id) do
+    case List.last(of_page(state, page_id)) do
+      nil -> nil
+      block -> block["order"]
+    end
   end
 
   # --- comments ---------------------------------------------------------------------

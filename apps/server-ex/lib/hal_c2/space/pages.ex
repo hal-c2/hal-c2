@@ -115,9 +115,11 @@ defmodule HalC2.Space.Pages do
 
   @doc """
   Deletes a page in the trash for good, with its subpages, their blocks and comments,
-  and the links to them from other pages. Replies with the deleted page ids.
+  and the links to them from other pages. Replies with the deleted page ids. A link on
+  a page that stays is an edit of that page, so `author` is written on it first when
+  it is not who last wrote it (`HalC2.Space.History`).
   """
-  def delete(state, id) do
+  def delete(state, id, author) do
     case get(state, id) do
       %{"trashedAt" => at} when at != nil ->
         ids = MapSet.new([id | descendants(state, id)])
@@ -135,9 +137,22 @@ defmodule HalC2.Space.Pages do
               comment["pageId"] in ids or comment["blockId"] in gone_blocks,
               do: {"comment", comment["id"], Patch.delete()}
 
+        agents =
+          for agent <- StreamState.list(state, "pageAgent"),
+              agent["pageId"] in ids,
+              do: {"pageAgent", agent["id"], Patch.delete()}
+
+        stamps =
+          for block <- blocks,
+              block["id"] in gone_blocks,
+              block["pageId"] not in ids,
+              block["updatedBy"] != author,
+              do: {"block", block["id"], %{"s" => %{"updatedBy" => author}}}
+
         changes =
-          Enum.map(ids, &{"page", &1, Patch.delete()}) ++
-            Enum.map(gone_blocks, &{"block", &1, Patch.delete()}) ++ comments
+          stamps ++
+            Enum.map(ids, &{"page", &1, Patch.delete()}) ++
+            Enum.map(gone_blocks, &{"block", &1, Patch.delete()}) ++ comments ++ agents
 
         {changes, {:ok, Enum.to_list(ids)}}
 

@@ -21,17 +21,22 @@ import { step } from "../../steps.ts";
 import { env, projectNamed, threadNamed, ui } from "../environment.ts";
 import { fakeClient } from "../fakeClient.ts";
 import { fakeSpaceMc, type FakeSpaceMc } from "../fakeSpaceMc.ts";
+import { presenceOverSession, type PresenceOverSession } from "../presenceOverSession.ts";
 import { findObject, pressKey, settle, typeText, type World } from "../world.ts";
 
 interface SpaceWorld extends World {
   /** The site link each page had when the scenario first saw it. */
   siteLinks?: Map<string, string>;
   spaceMc?: FakeSpaceMc;
+  /** Set when the scenario's presence goes through the real settings client. */
+  presence?: PresenceOverSession;
   /** The Space the scenario's pages are in: the newest one a Given named. */
   spaceName?: string;
   /** Page ids by title, kept so a Then can name pages deleted for good. */
   pageIds?: Map<string, string>;
   second?: Host;
+  /** The page whose history the scenario last opened. */
+  historyPage?: string;
 }
 
 const SUMMARY_TITLE = "Release plan";
@@ -44,6 +49,8 @@ Ship pages in July.
 - [ ] Cut the branch
 - [ ] Write the notes
 `;
+// The fake MC runs an agent asked on a page in this thread of the scenario's Background.
+const AGENT_THREAD = "Work";
 const UNAVAILABLE = "No text generation provider is set up.";
 const FAILED = "The provider returned no text.";
 
@@ -57,6 +64,9 @@ function mc(ctx: SpaceWorld): FakeSpaceMc {
       const project = env(ctx).projects.find((candidate) => candidate.id === thread.projectId);
       return thread.worktreePath ?? project?.workspaceRoot ?? null;
     },
+    titleOf: (threadId) =>
+      env(ctx).threads.find((candidate) => candidate.id === threadId)?.title ?? null,
+    agentThreadId: () => threadNamed(ctx, AGENT_THREAD).id,
   });
   return ctx.spaceMc;
 }
@@ -299,6 +309,90 @@ step("the user is told only a checklist item can be ticked", async (ctx: SpaceWo
 step("the Space {string} with the page {string}", (ctx: SpaceWorld, name: string, page) => {
   seedSpace(ctx, name);
   seedPage(ctx, page);
+});
+
+// --- who else is on the page ---
+
+step("the user opens the page {string}", (ctx: SpaceWorld, title: string) => openPage(ctx, title));
+
+step("the Space's page {string}", (ctx: SpaceWorld, title: string) => {
+  seedPage(ctx, title);
+});
+
+step("a thread {string}", () => {});
+
+step("the page {string} is open on the device {string}", (ctx: SpaceWorld, title, device) => {
+  mc(ctx).deviceOn(pageId(ctx, title), device);
+});
+
+step("the device {string} opens the page {string}", async (ctx: SpaceWorld, device, title) => {
+  mc(ctx).deviceOn(pageId(ctx, title), device);
+  await settle(ctx);
+});
+
+const deviceGone = async (ctx: SpaceWorld, device: string) => {
+  mc(ctx).deviceGone(device);
+  await settle(ctx);
+};
+step("the device {string} leaves the page {string}", deviceGone);
+step("the connection of the device {string} drops", deviceGone);
+
+step("the environment is connected again", async (ctx: SpaceWorld) => {
+  ctx.fake!.emitConnection("connected");
+  mc(ctx).retellViewers();
+  await settle(ctx);
+});
+
+step("the agent in {string} is working on the page {string}", (ctx: SpaceWorld, thread, title) => {
+  mc(ctx).agentOn(pageId(ctx, title), thread);
+});
+
+step("the turn of the agent in {string} ends", async (ctx: SpaceWorld, thread: string) => {
+  mc(ctx).agentGone(thread);
+  await settle(ctx);
+});
+
+step("the MC can say who is on a page", async (ctx: SpaceWorld) => {
+  await start(ctx);
+  ctx.presence = presenceOverSession(ctx.fake!.settings);
+});
+
+step("the MC can no longer say who is on a page", (ctx: SpaceWorld) => {
+  ctx.presence!.refuse();
+});
+
+step("the MC can say who is on a page again", (ctx: SpaceWorld) => {
+  ctx.presence!.answer();
+});
+
+/** What the page says, once presence that goes over a session has reached it. */
+async function viewersSay(ctx: SpaceWorld, said: string) {
+  await ctx.presence?.until(() => pane(ctx).viewers === said);
+  expect(pane(ctx).viewers).toBe(said);
+}
+
+step("the page shows nobody else", (ctx: SpaceWorld) => viewersSay(ctx, ""));
+
+step("the page shows the user also on {string}", (ctx: SpaceWorld, device: string) =>
+  viewersSay(ctx, `Also here: ${device}`),
+);
+
+step("the page shows one person, also on {string} and {string}", (ctx: World, a, b) => {
+  expect(pane(ctx).viewers).toBe(`Also here: ${a}, ${b}`);
+});
+
+step("the page shows the agent of {string}", (ctx: World, thread: string) => {
+  expect(pane(ctx).viewers).toBe(`Also here: the agent of “${thread}”`);
+});
+
+step("the user leaves the page", async (ctx: World) => {
+  await pressKey(ctx, "Esc");
+  await settle(ctx);
+  expect(pane(ctx).view).toBe("pages");
+});
+
+step("the user is no longer on the page {string}", (ctx: SpaceWorld, title: string) => {
+  expect(mc(ctx).clientsOn(pageId(ctx, title))).toBe(0);
 });
 
 // --- a second client ---
@@ -753,6 +847,161 @@ step("the thread {string} talked about a release plan", (ctx: SpaceWorld, title:
   threadNamed(ctx, title);
 });
 
+// --- a page that updates itself (space/self-updating-pages.feature) ---
+
+const updateRow = async (ctx: SpaceWorld, title: string, part: string) => {
+  await openPage(ctx, title);
+  return pane(ctx)
+    .rows.filter((row) => row.key === `label:update:${part}`)
+    .map((row) => row.text.trim())
+    .join(" ");
+};
+
+/** The update asked for through its key: the instruction, then the cadence. */
+async function askUpdate(ctx: SpaceWorld, page: string, instruction: string) {
+  await openPage(ctx, page);
+  await press(ctx, "u");
+  if (mode(ctx) === "select") await choose(ctx, "Change it…");
+  await answer(ctx, instruction);
+}
+
+async function updateMenu(ctx: SpaceWorld, page: string, label: string) {
+  await openPage(ctx, page);
+  await press(ctx, "u");
+  await choose(ctx, label);
+}
+
+const onPage = (ctx: SpaceWorld, title: string) => ({
+  spaceId: currentSpaceId(ctx),
+  pageId: pageId(ctx, title),
+});
+
+const everyHours = (hours: number) => ({ type: "interval", everyMs: hours * 3_600_000 });
+
+step(
+  "the user has {string} update itself with {string} every {int} hours",
+  async (ctx: SpaceWorld, page: string, instruction: string, hours: number) => {
+    await askUpdate(ctx, page, instruction);
+    await choose(ctx, `Every ${hours} hours`);
+  },
+);
+
+step(
+  "the user has {string} update itself with {string} every day at {string}",
+  async (ctx: SpaceWorld, page: string, instruction: string, time: string) => {
+    await askUpdate(ctx, page, instruction);
+    await choose(ctx, "At a time of day…");
+    await answer(ctx, time);
+  },
+);
+
+step(
+  "{string} updates itself with {string} every {int} hours",
+  (ctx: SpaceWorld, page: string, instruction: string, hours: number) => {
+    mc(ctx).run("space.page.schedule.set", {
+      ...onPage(ctx, page),
+      instruction,
+      cadence: everyHours(hours),
+    });
+  },
+);
+
+step("the updates of {string} are paused", (ctx: SpaceWorld, page: string) => {
+  mc(ctx).run("space.page.schedule.setEnabled", { ...onPage(ctx, page), enabled: false });
+});
+
+step("the update of {string} has run", (ctx: SpaceWorld, page: string) => {
+  mc(ctx).run("space.page.schedule.runNow", onPage(ctx, page));
+});
+
+step("text generation writes {string}", (ctx: SpaceWorld, markdown: string) => {
+  mc(ctx).generation = { kind: "available", title: "", markdown };
+});
+
+step("the user pauses the updates of {string}", (ctx: SpaceWorld, page: string) =>
+  updateMenu(ctx, page, "Pause it"),
+);
+step("the user resumes the updates of {string}", (ctx: SpaceWorld, page: string) =>
+  updateMenu(ctx, page, "Resume it"),
+);
+step("the user runs the update of {string} now", (ctx: SpaceWorld, page: string) =>
+  updateMenu(ctx, page, "Run it now"),
+);
+step("the user removes the update of {string}", (ctx: SpaceWorld, page: string) =>
+  updateMenu(ctx, page, "Remove it, keeping what it wrote"),
+);
+
+// The pane says why without asking the MC, and leaves the part as it is.
+step(
+  "the user tries to edit the generated part of {string}",
+  async (ctx: SpaceWorld, page: string) => {
+    await openPage(ctx, page);
+    const part = pane(ctx).rows.find((row) => row.blockKind === "generated");
+    expect(part).toBeDefined();
+    await selectRow(ctx, part!.key);
+    await press(ctx, "e");
+    expect(mode(ctx)).not.toBe("ask");
+    expect(status(ctx).text).toStartWith("A page's update wrote this");
+  },
+);
+
+step(
+  "{string} shows the instruction {string}",
+  async (ctx: SpaceWorld, page: string, instruction) => {
+    expect(await updateRow(ctx, page, "instruction")).toBe(`⟳ ${instruction}`);
+  },
+);
+step("{string} shows no instruction", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "instruction")).toBe("");
+});
+step(
+  "{string} shows it updates every {int} hours",
+  async (ctx: SpaceWorld, page: string, hours: number) => {
+    expect(await updateRow(ctx, page, "when")).toStartWith(`Every ${hours} hours`);
+  },
+);
+step(
+  "{string} shows it updates every day at {string}",
+  async (ctx: SpaceWorld, page: string, time) => {
+    expect(await updateRow(ctx, page, "when")).toStartWith(`${time} every day`);
+  },
+);
+step("{string} shows when it next runs", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "when")).toContain("next run ");
+});
+step("{string} shows no next run", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "when")).not.toContain("next run ");
+});
+step("{string} has not been written yet", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "written")).toBe("Not written yet");
+});
+step("{string} shows when it was last written", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "written")).toStartWith("Last written ");
+});
+step("{string} shows its updates are paused", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "when")).toEndWith(" · paused");
+});
+step("{string} shows its updates are not paused", async (ctx: SpaceWorld, page: string) => {
+  expect(await updateRow(ctx, page, "when")).not.toContain("paused");
+});
+step(
+  "{string} shows its last run failed with {string}",
+  async (ctx: SpaceWorld, page: string, message) => {
+    expect(await updateRow(ctx, page, "failed")).toBe(`Last run failed: ${message}`);
+  },
+);
+step(
+  "the generated part of {string} reads {string}",
+  async (ctx: SpaceWorld, page: string, text) => {
+    const rows = await blockRows(ctx, page);
+    expect(rows.filter((row) => row.blockKind === "generated").map(blockText)).toEqual([text]);
+  },
+);
+step("{string} has no generated part", async (ctx: SpaceWorld, page: string) => {
+  const rows = await blockRows(ctx, page);
+  expect(rows.filter((row) => row.blockKind === "generated")).toEqual([]);
+});
+
 step("text generation is available", (ctx: SpaceWorld) => {
   mc(ctx).generation = { kind: "available", title: SUMMARY_TITLE, markdown: SUMMARY };
 });
@@ -814,6 +1063,245 @@ step("the user is told text generation failed", async (ctx: SpaceWorld) => {
   expect(status(ctx).text).toBe(`Text generation failed, so no page was made: ${FAILED}`);
 });
 
+// --- charts ---
+
+const FROM_THIS_PAGE = "Numbers from this page";
+const COUNTED = "Counted by this MC from its 2 threads, 12 weeks to 2026-11-01";
+const AVAILABLE = { kind: "available", title: "", markdown: "" } as const;
+
+const chartOf = (
+  type: string,
+  title: string,
+  source: string,
+  points: ReadonlyArray<readonly [string, number]>,
+) => ({
+  type,
+  title,
+  source,
+  labels: points.map(([label]) => label),
+  series: [{ name: title, values: points.map(([, value]) => value) }],
+});
+
+/** The page the scenario's chart is on, for the steps that do not name it. */
+const chartPage = (ctx: SpaceWorld) => mc(ctx).pagesOf(currentSpaceId(ctx))[0]!.title as string;
+
+function seedChart(
+  ctx: SpaceWorld,
+  page: string,
+  points: ReadonlyArray<readonly [string, number]>,
+  values = points.map(([, value]) => value),
+) {
+  const before = mc(ctx).generation;
+  mc(ctx).generation = AVAILABLE;
+  mc(ctx).chart = {
+    ...chartOf("bar", "Signups", FROM_THIS_PAGE, points),
+    series: [{ name: "Signups", values }],
+  };
+  mc(ctx).run("space.block.visualize", {
+    spaceId: currentSpaceId(ctx),
+    pageId: seedPage(ctx, page),
+    request: "signups",
+  });
+  mc(ctx).chart = null;
+  mc(ctx).generation = before;
+}
+
+/** Every row the chart on the open page draws. */
+async function chartDrawn(ctx: SpaceWorld) {
+  await openPage(ctx, chartPage(ctx));
+  return pane(ctx).rows.filter((row) => row.blockKind === "chart");
+}
+
+/** What the chart's rows read as label and number, whichever way it is drawn. */
+const numbersOf = (rows: ReadonlyArray<TuiSpaceRow>) =>
+  rows.flatMap((row) => {
+    const match = /^\s+(\S+)\s+[█▏▎▍▌▋▊▉]*\s*(\d+)$/.exec(row.text);
+    return match ? [[match[1], Number(match[2])]] : [];
+  });
+
+const answerChart = (ctx: World, request: string) =>
+  answer(ctx, request.replace(/^\/visualize\s*/, ""));
+
+const selectChart = async (ctx: SpaceWorld) => {
+  const [title] = await chartDrawn(ctx);
+  expect(title).toBeDefined();
+  await selectRow(ctx, title!.key);
+};
+
+step("this MC's threads took turns this week", () => {});
+
+step("text generation charts the request from the MC's threads", (ctx: SpaceWorld) => {
+  mc(ctx).generation = AVAILABLE;
+  mc(ctx).chart = chartOf("bar", "Weekly turns", COUNTED, [
+    ["10-26", 4],
+    ["11-02", 7],
+  ]);
+});
+
+step(
+  "text generation answers with a {word} chart of {string} {int}",
+  (ctx: SpaceWorld, type: string, label: string, value: number) => {
+    mc(ctx).generation = AVAILABLE;
+    mc(ctx).chart = chartOf(type, "Signups", FROM_THIS_PAGE, [[label, value]]);
+  },
+);
+
+step(
+  "text generation answers with a {word} chart of {string} {int} and {string} {int}",
+  (ctx: SpaceWorld, type: string, a: string, x: number, b: string, y: number) => {
+    mc(ctx).generation = AVAILABLE;
+    mc(ctx).chart = chartOf(type, "Signups", FROM_THIS_PAGE, [
+      [a, x],
+      [b, y],
+    ]);
+  },
+);
+
+step("text generation says the request cannot be answered", (ctx: SpaceWorld) => {
+  mc(ctx).generation = AVAILABLE;
+  mc(ctx).chart = null;
+});
+
+step(
+  "the page {string} has a chart of {string} {int} and {string} {int}",
+  (ctx: SpaceWorld, page: string, a: string, x: number, b: string, y: number) => {
+    seedChart(ctx, page, [
+      [a, x],
+      [b, y],
+    ]);
+  },
+);
+
+step(
+  "the page {string} has the blocks {string} and a chart of {string} {int} and {string} {int} and the blocks {string}",
+  (
+    ctx: SpaceWorld,
+    page: string,
+    before: string,
+    a: string,
+    x: number,
+    b: string,
+    y: number,
+    after,
+  ) => {
+    seedBlock(ctx, page, "paragraph", before);
+    seedChart(ctx, page, [
+      [a, x],
+      [b, y],
+    ]);
+    seedBlock(ctx, page, "paragraph", after);
+  },
+);
+
+step("{string} also says {string}", (ctx: SpaceWorld, page: string, text: string) => {
+  seedBlock(ctx, page, "paragraph", text);
+});
+
+step(
+  "the user asks for {string} on the page {string}",
+  async (ctx: SpaceWorld, request: string, page: string) => {
+    await openPage(ctx, page);
+    await press(ctx, "n");
+    await choose(ctx, "Chart");
+    await answerChart(ctx, request);
+  },
+);
+
+step("the user asks again for {string}", async (ctx: SpaceWorld, request: string) => {
+  await selectChart(ctx);
+  await press(ctx, "g");
+  // It starts from the words the chart was asked for in.
+  expect(findObject(ctx, "askInput").get("text")).toBe("signups");
+  await answerChart(ctx, request);
+});
+
+step(
+  "the page shows a {word} chart titled {string}",
+  async (ctx: SpaceWorld, type: string, title: string) => {
+    const rows = await chartDrawn(ctx);
+    expect(rows[0] && words(rows[0])).toBe(title);
+    // Bars for a bar chart, a table with no bars for a line.
+    expect(rows.some((row) => row.text.includes("█"))).toBe(type === "bar");
+  },
+);
+
+step(
+  /^the chart says its numbers came from (this MC's threads|this page)$/,
+  async (ctx: SpaceWorld, where: string) => {
+    const shown = (await chartDrawn(ctx)).map(words).join(" ");
+    expect(shown.endsWith(where === "this page" ? FROM_THIS_PAGE : COUNTED)).toBe(true);
+  },
+);
+
+step("the second client sees a chart titled {string}", async (ctx: SpaceWorld, title: string) => {
+  await ctx.second!.settled();
+  const row = secondPane(ctx).rows.find((one) => one.blockKind === "chart");
+  expect(row && words(row)).toBe(title);
+});
+
+step(
+  "the page {string} has a chart with 2 labels and 1 number",
+  (ctx: SpaceWorld, page: string) => {
+    seedChart(
+      ctx,
+      page,
+      [
+        ["May", 3],
+        ["June", 5],
+      ],
+      [3],
+    );
+  },
+);
+
+step("the chart's numbers are not shown", async (ctx: SpaceWorld) => {
+  const rows = await chartDrawn(ctx);
+  expect(rows.map(words).join(" ")).toContain("a chart");
+  expect(numbersOf(rows)).toEqual([]);
+});
+
+// A terminal draws a chart's numbers beside it: there is nothing to open, only the chart to read.
+step("the user asks to see the numbers behind the chart", selectChart);
+
+step("the numbers read {string} {int}", async (ctx: SpaceWorld, label: string, value: number) => {
+  expect(numbersOf(await chartDrawn(ctx))).toEqual([[label, value]]);
+});
+
+step(
+  "the numbers read {string} {int} and {string} {int}",
+  async (ctx: SpaceWorld, a: string, x: number, b: string, y: number) => {
+    expect(numbersOf(await chartDrawn(ctx))).toEqual([
+      [a, x],
+      [b, y],
+    ]);
+  },
+);
+
+step(
+  "the page shows one chart, between {string} and {string}",
+  async (ctx: SpaceWorld, before: string, after: string) => {
+    const rows = await blockRows(ctx, chartPage(ctx));
+    expect(rows.filter((row) => row.blockKind === "chart")).toHaveLength(1);
+    const at = rows.findIndex((row) => row.blockKind === "chart");
+    expect([words(rows[at - 1]!), words(rows[at + 1]!)]).toEqual([before, after]);
+  },
+);
+
+step("the user deletes the chart", async (ctx: SpaceWorld) => {
+  await selectChart(ctx);
+  await press(ctx, "d");
+});
+
+step("the page shows no chart", async (ctx: SpaceWorld) => {
+  expect(await chartDrawn(ctx)).toEqual([]);
+});
+
+step("the user is told no chart was drawn", async (ctx: SpaceWorld) => {
+  await settle(ctx);
+  expect(status(ctx).kind).toBe("error");
+  expect(status(ctx).text.startsWith("No chart was drawn")).toBe(true);
+});
+
 // --- agents ---
 
 /** An agent's MCP tool writes to the MC while the user reads the page. */
@@ -867,6 +1355,293 @@ step(
     });
   },
 );
+
+// --- a page's history ---
+
+const versionRows = (ctx: World) => pane(ctx).rows.filter((row) => row.kind === "version");
+
+async function openHistory(ctx: SpaceWorld, title: string) {
+  ctx.historyPage = title;
+  if (pane(ctx)?.view === "history" && pane(ctx).title === `history · ${title}`) return;
+  await openPage(ctx, title);
+  await press(ctx, "h");
+  expect(pane(ctx).view).toBe("history");
+}
+
+/** Back on the history the scenario opened, wherever the last step left the pane. */
+const onHistory = (ctx: SpaceWorld) => openHistory(ctx, ctx.historyPage!);
+
+async function selectVersion(ctx: SpaceWorld, back: number, title: string) {
+  await openHistory(ctx, title);
+  await selectRow(ctx, versionRows(ctx)[back]!.key);
+}
+
+const versionBlocks = (ctx: World) =>
+  pane(ctx)
+    .rows.filter((row) => row.kind === "block" && row.first)
+    .map(blockText);
+
+step("a while passes", (ctx: SpaceWorld) => {
+  mc(ctx).aWhilePasses();
+});
+
+step("the user opens the history of {string}", openHistory);
+
+const historyHas = async (ctx: SpaceWorld, count: number) => {
+  await onHistory(ctx);
+  expect(versionRows(ctx)).toHaveLength(count);
+};
+step("the history has {int} versions", historyHas);
+step("the history has {int} version", historyHas);
+
+step("each version says when it was written and by the user", (ctx: SpaceWorld) => {
+  for (const row of versionRows(ctx)) {
+    expect(words(row)).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d {2}You/);
+  }
+});
+
+step("the newest version is the page as it is now", async (ctx: SpaceWorld) => {
+  expect(words(versionRows(ctx)[0]!)).toContain("· current");
+  const asItIs = mc(ctx)
+    .blocksOf(pageId(ctx, ctx.historyPage!))
+    .map((block) => block.text);
+  await selectRow(ctx, versionRows(ctx)[0]!.key);
+  await press(ctx, "Enter");
+  expect(versionBlocks(ctx)).toEqual(asItIs);
+  await press(ctx, "Esc");
+});
+
+step("the newest version was written by the thread {string}", (ctx: SpaceWorld, thread: string) => {
+  expect(words(versionRows(ctx)[0]!)).toContain(thread);
+});
+
+step("the newest version was written by the page's update", (ctx: SpaceWorld) => {
+  expect(words(versionRows(ctx)[0]!)).toContain("The page's update");
+});
+
+step(
+  "the user reads the version {int} back on {string}",
+  async (ctx: SpaceWorld, back: number, title: string) => {
+    await selectVersion(ctx, back, title);
+    await press(ctx, "Enter");
+    expect(pane(ctx).view).toBe("version");
+  },
+);
+
+step("the version reads {string}", (ctx: SpaceWorld, texts: string) => {
+  expect(pane(ctx).view).toBe("version");
+  expect(versionBlocks(ctx)).toEqual(list(texts));
+});
+
+step(
+  "the version draws a chart of {string} {int} and {string} {int}",
+  (ctx: SpaceWorld, first: string, a: number, next: string, b: number) => {
+    expect(pane(ctx).view).toBe("version");
+    const rows = pane(ctx).rows.filter((row) => row.blockKind === "chart");
+    expect(numbersOf(rows)).toEqual([
+      [first, a],
+      [next, b],
+    ]);
+  },
+);
+
+step("the version shows the image {string}", (ctx: SpaceWorld, name: string) => {
+  expect(versionBlocks(ctx)).toContain(`[image: ${name}]`);
+});
+
+step("the version says the image {string} is in the trash", async (ctx: SpaceWorld, name) => {
+  await settle(ctx);
+  expect(versionBlocks(ctx)).toContain(`[image: ${name} is in the trash]`);
+});
+
+step("the user goes back to the list of versions", (ctx: SpaceWorld) => press(ctx, "Esc"));
+
+step("no version is being read", (ctx: SpaceWorld) => {
+  expect(pane(ctx).view).toBe("history");
+});
+
+step(
+  "the user restores the version {int} back on {string}",
+  async (ctx: SpaceWorld, back: number, title: string) => {
+    await selectVersion(ctx, back, title);
+    await press(ctx, "r");
+  },
+);
+
+step("the newest version says it restored an earlier one", async (ctx: SpaceWorld) => {
+  await onHistory(ctx);
+  expect(words(versionRows(ctx)[0]!)).toContain("restored from");
+});
+
+// The pane says why without asking the MC, which would refuse it.
+step("the user cannot restore a version of {string}", async (ctx: SpaceWorld, title: string) => {
+  await selectVersion(ctx, 1, title);
+  await press(ctx, "r");
+  expect(mc(ctx).refusals).toEqual([]);
+  expect(status(ctx)).toEqual(
+    expect.objectContaining({
+      text: "This page is in the trash: restore it to bring back a version.",
+      kind: "info",
+    }),
+  );
+  expect(
+    mc(ctx)
+      .blocksOf(pageId(ctx, title))
+      .map((block) => block.text),
+  ).toEqual(["Final"]);
+});
+
+// --- an agent in a page ---
+
+const agentSays = async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page);
+  return pane(ctx).message;
+};
+
+step("the user asks {string} on the page {string}", async (ctx: SpaceWorld, ask: string, page) => {
+  await openPage(ctx, page);
+  await press(ctx, "A");
+  await answer(ctx, ask);
+});
+
+step(
+  "{string} says its agent is working on {string}",
+  async (ctx: SpaceWorld, page: string, request: string) => {
+    expect(await agentSays(ctx, page)).toStartWith(`An agent is working on “${request}”`);
+  },
+);
+
+step("{string} links to its agent's thread", async (ctx: SpaceWorld, page: string) => {
+  expect(await agentSays(ctx, page)).toContain(`o opens “${AGENT_THREAD}”`);
+  await press(ctx, "o");
+  expect(pane(ctx).open).toBe(false);
+  expect(mode(ctx)).toBe("compose");
+});
+
+step(
+  "the agent of {string} names a thread this client does not have",
+  async (ctx: SpaceWorld, page: string) => {
+    mc(ctx).agentThreadGone(pageId(ctx, page));
+    await settle(ctx);
+  },
+);
+
+step("the user follows the agent of {string} to its thread", async (ctx: SpaceWorld) => {
+  await press(ctx, "o");
+});
+
+step("the user is told the agent's thread is not available", async (ctx: SpaceWorld) => {
+  await settle(ctx);
+  expect(status(ctx).text).toBe("The agent's thread is not available.");
+});
+
+step("the agent of {string} adds the block {string}", (ctx: SpaceWorld, page: string, text) =>
+  asAgent(ctx, AGENT_THREAD, page, "space.block.insert", {
+    pageId: pageId(ctx, page),
+    kind: "paragraph",
+    text,
+  }),
+);
+
+step(
+  "the block {string} was written by the agent of {string}",
+  async (ctx: SpaceWorld, text: string, page: string) => {
+    await openPage(ctx, page);
+    const rows = pane(ctx).rows.filter((row) => row.key === blockKey(ctx, text));
+    expect(rows.at(-1)!.text.endsWith(`${text}  · ${AGENT_THREAD}`)).toBe(true);
+  },
+);
+
+step("the agent of {string} finishes", async (ctx: SpaceWorld, page: string) => {
+  mc(ctx).agentEnds(pageId(ctx, page), "completed");
+  await settle(ctx);
+});
+
+step(
+  "the agent of {string} fails with {string}",
+  async (ctx: SpaceWorld, page: string, error: string) => {
+    mc(ctx).agentEnds(pageId(ctx, page), "failed", error);
+    await settle(ctx);
+  },
+);
+
+step("{string} says its agent finished and changed the page", async (ctx: SpaceWorld, page) => {
+  expect(await agentSays(ctx, page)).toStartWith("The agent finished and changed this page.");
+});
+
+step(
+  "{string} says its agent finished without changing the page",
+  async (ctx: SpaceWorld, page) => {
+    expect(await agentSays(ctx, page)).toStartWith(
+      "The agent finished without changing this page.",
+    );
+  },
+);
+
+step("the user stops the agent of {string}", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page);
+  await press(ctx, "s");
+});
+
+step("the MC refuses the next ask", (ctx: SpaceWorld) => {
+  mc(ctx).refuseNextAsk();
+});
+
+step("the words {string} are kept to ask again", (ctx: SpaceWorld, words: string) => {
+  expect(mode(ctx)).toBe("ask");
+  expect(ctx.host!.state.get("ask")).toMatchObject({ value: words });
+});
+
+step("the agent of {string} does not stop when asked", (ctx: SpaceWorld) => {
+  mc(ctx).ignoreStops();
+});
+
+step("{string} says its agent is stopping", async (ctx: SpaceWorld, page: string) => {
+  const says = await agentSays(ctx, page);
+  expect(says).toStartWith("Stopping the agent…");
+  expect(says).toContain("s stops");
+});
+
+step("the user can stop the agent of {string} again", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page);
+  const before = mc(ctx).stopsAsked();
+  await press(ctx, "s");
+  await settle(ctx);
+  expect(mc(ctx).stopsAsked()).toBe(before + 1);
+});
+
+step("the thread of the agent of {string} is deleted", async (ctx: SpaceWorld, page: string) => {
+  mc(ctx).agentEnds(pageId(ctx, page), "stopped", "its thread was deleted");
+  await settle(ctx);
+});
+
+step(
+  "{string} says its agent stopped because {string}",
+  async (ctx: SpaceWorld, page: string, reason: string) => {
+    expect(await agentSays(ctx, page)).toStartWith(`The agent stopped: ${reason}.`);
+  },
+);
+
+step("{string} says its agent was stopped", async (ctx: SpaceWorld, page: string) => {
+  expect(await agentSays(ctx, page)).toStartWith("The agent was stopped.");
+});
+
+step(
+  "{string} says its agent failed with {string}",
+  async (ctx: SpaceWorld, page: string, error: string) => {
+    expect(await agentSays(ctx, page)).toStartWith(`The agent failed: ${error}.`);
+    expect(pane(ctx).status).toBe("error");
+  },
+);
+
+step("the user dismisses the agent of {string}", async (ctx: SpaceWorld, page: string) => {
+  await openPage(ctx, page);
+  await press(ctx, "z");
+});
+
+step("{string} says nothing about an agent", async (ctx: SpaceWorld, page: string) => {
+  expect(await agentSays(ctx, page)).toBe("");
+});
 
 // --- decks ---
 
@@ -937,6 +1712,8 @@ step("the user makes a deck from the page {string}", async (ctx: SpaceWorld, tit
   await selectPage(ctx, title);
   await press(ctx, "S");
 });
+
+step("the user opens the deck {string}", (ctx: SpaceWorld, title: string) => openDeck(ctx, title));
 
 step("the deck {string}", (ctx: SpaceWorld, title: string) => {
   seedDeck(ctx, title);
@@ -1050,7 +1827,7 @@ step("the site link of the page {string} is on the clipboard", (ctx: SpaceWorld,
 
 step("the user unpublishes the page {string}", async (ctx: SpaceWorld, title: string) => {
   await openPage(ctx, title);
-  await press(ctx, "u");
+  await press(ctx, "U");
 });
 
 step("the page {string} shows it is not published", async (ctx: SpaceWorld, title: string) => {
@@ -1157,6 +1934,14 @@ step(
   (ctx: SpaceWorld, name: string, space: string) =>
     addFile(ctx, name, new TextEncoder().encode("only words"), space),
 );
+
+step("the user opens the images of {string}", async (ctx: SpaceWorld, space: string) => {
+  if (pane(ctx).view === "page") await press(ctx, "v");
+  else await openImages(ctx, space);
+  expect(pane(ctx).view).toBe("images");
+});
+
+step("the user closes the images", (ctx: World) => press(ctx, "Esc"));
 
 step("the images of {string} are {string}", async (ctx: SpaceWorld, space: string, names) => {
   await openImages(ctx, space);
@@ -1455,8 +2240,6 @@ step("another client moves the deck {string} to the trash", async (ctx: SpaceWor
 step("the images list shows the prompt {string}", (ctx: SpaceWorld, prompt: string) => {
   expect(listed(pane(ctx).rows, "image").map((text) => text.split("  · ")[1])).toContain(prompt);
 });
-
-step("the user opens the page {string}", (ctx: SpaceWorld, title: string) => openPage(ctx, title));
 
 step("the page shows the text {string}", (ctx: SpaceWorld, text: string) => {
   const rows = pane(ctx).rows.filter((row) => row.kind === "block" && row.first);

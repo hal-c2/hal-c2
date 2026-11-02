@@ -788,6 +788,10 @@ QString emptyText(const QString& kind) {
   return {};
 }
 
+QString pathSearchUnavailableText() {
+  return QStringLiteral("Can't search files right now.");
+}
+
 std::optional<int> scoreQueryMatch(const QString& value, const QString& query, int exactBase, int prefixBase,
                                    std::optional<int> boundaryBase, std::optional<int> includesBase,
                                    std::optional<int> fuzzyBase, const QString& boundaryMarkers) {

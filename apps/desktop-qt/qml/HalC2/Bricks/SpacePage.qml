@@ -5,8 +5,9 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The open page of the Space view (Spaces.page): its title, where it sits,
-// the thread it was made from, its blocks, and a composer that adds a block
-// of the kind a `/` picks. A trashed page is read only, with the way back.
+// the thread it was made from, its update, its blocks, and a composer that adds
+// a block of the kind a `/` picks or asks for a chart with `/visualize <request>`.
+// A trashed page is read only, with the way back.
 Rectangle {
     id: page
 
@@ -23,6 +24,8 @@ Rectangle {
     // The kind the composer adds, and the block it goes after ("" for the end).
     property string newKind: "paragraph"
     property string insertAfter: ""
+    // The chart a `/visualize` replaces ("" for a new one).
+    property string replacing: ""
     readonly property string insertAfterText: {
         const row = Spaces.blocks.indexOf(page.insertAfter);
         return row < 0 ? "" : Spaces.blocks.get(row).text;
@@ -89,18 +92,70 @@ Rectangle {
             payload.afterBlockId = page.insertAfter;
         Shell.dispatch("space.block.insert", payload);
         page.insertAfter = "";
+        page.replacing = "";
     }
 
-    // Writes the composer's text as a block of the chosen kind, or opens the
-    // kinds when it starts with `/`.
+    Connections {
+        target: Spaces
+        function onAgentAskRequested() {
+            page.startAsk();
+        }
+        function onAgentAskAnswered(pageId, request, taken) {
+            if (taken && pageId === Spaces.pageId && composer.text.trim() === request)
+                composer.clear();
+        }
+    }
+
+    // Starts the words of an ask in the composer, ahead of a draft already there.
+    function startAsk() {
+        if (!composer.text.trim().startsWith("@agent")) {
+            composer.text = "@agent " + composer.text;
+            composer.cursorPosition = "@agent ".length;
+        }
+        composer.forceActiveFocus();
+    }
+
+    // Asks the MC to draw a chart for `/visualize <request>`, in place of the
+    // chart being replaced or where a new block goes.
+    function visualize(request) {
+        const payload = { pageId: Spaces.pageId, request: request };
+        if (page.replacing !== "")
+            payload.blockId = page.replacing;
+        else if (page.insertAfter !== "")
+            payload.afterBlockId = page.insertAfter;
+        Shell.dispatch("space.block.visualize", payload);
+        page.insertAfter = "";
+        page.replacing = "";
+    }
+
+    // Puts a chart's request back in the composer, to change and send again.
+    function askAgain(blockId, request) {
+        page.insertAfter = "";
+        page.replacing = blockId;
+        composer.text = "/visualize " + request;
+        composer.forceActiveFocus();
+    }
+
+    // Writes the composer's text as a block of the chosen kind, asks for the
+    // chart it names, opens the kinds when it starts with `/`, or asks an agent
+    // when it starts with `@agent`. An ask keeps its words until the MC takes it.
     function submit() {
         if (slash.visible) {
             slash.choose();
             return;
         }
         const text = composer.text.trim();
-        if (text.length === 0)
+        if (text.length === 0 || text === "/visualize")
             return;
+        if (/^@agent(\s|$)/i.test(text)) {
+            Shell.dispatch("space.agent.ask", { pageId: Spaces.pageId, request: text });
+            return;
+        }
+        if (text.startsWith("/visualize ")) {
+            page.visualize(text);
+            composer.clear();
+            return;
+        }
         page.insert(page.newKind, text, "");
         composer.clear();
         if (page.newKind === "heading" || page.newKind === "callout")
@@ -109,6 +164,11 @@ Rectangle {
 
     function chooseKind(kind) {
         composer.clear();
+        if (kind === "chart") {
+            composer.text = "/visualize ";
+            composer.forceActiveFocus();
+            return;
+        }
         if (kind === "subpage_link") {
             linkMenu.popup(kindButton, 0, -linkMenu.implicitHeight - 4);
             return;
@@ -125,6 +185,7 @@ Rectangle {
         if ((current.id ?? "") !== titleField.pageId) {
             titleField.pageId = current.id ?? "";
             page.insertAfter = "";
+            page.replacing = "";
             page.newKind = "paragraph";
             composer.clear();
         }
@@ -235,6 +296,29 @@ Rectangle {
             }
 
             ShellMenuItem {
+                objectName: "spaceAskAgent"
+                text: qsTr("Ask an agent…")
+                iconName: "sparkles"
+                enabled: !page.trashed
+                onTriggered: page.startAsk()
+            }
+
+            ShellMenuItem {
+                objectName: "spaceHistoryOpen"
+                text: qsTr("History")
+                iconName: "clock"
+                onTriggered: Shell.dispatch("space.history.open", { pageId: Spaces.pageId })
+            }
+
+            ShellMenuItem {
+                objectName: "spaceUpdateMenu"
+                text: (page.current.schedule?.instruction ?? "") !== "" ? qsTr("Change its update…") : qsTr("Update itself…")
+                iconName: "clock"
+                enabled: !page.trashed
+                onTriggered: updateDialog.ask()
+            }
+
+            ShellMenuItem {
                 objectName: "spaceCopyMarkdown"
                 text: qsTr("Copy as Markdown")
                 iconName: "copy"
@@ -310,12 +394,23 @@ Rectangle {
             }
         }
 
+        SpaceViewers {
+            Layout.fillWidth: true
+        }
+
         Text {
             objectName: "spacePageSource"
             visible: (page.current.sourceThreadId ?? "") !== ""
             text: qsTr("Made from the thread “%1”").arg(page.current.sourceThreadTitle ?? "")
             color: page.muted
             font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        SpaceAgentStrip {
+            id: agentStrip
+
+            Layout.fillWidth: true
+            onHistoryRequested: Shell.dispatch("space.history.open", { pageId: Spaces.pageId })
         }
 
         // The page's site: where it is, whether it is behind the page, and the ways on and back.
@@ -454,6 +549,11 @@ Rectangle {
             }
         }
 
+        SpacePageUpdate {
+            Layout.fillWidth: true
+            onChangeRequested: updateDialog.ask()
+        }
+
         ListView {
             id: blocks
 
@@ -472,13 +572,16 @@ Rectangle {
 
                 width: ListView.view.width
                 blockId: model.id
+                chart: model.chart ?? ({})
                 readOnly: page.trashed
                 previousId: index > 0 ? Spaces.blocks.get(index - 1).id : ""
                 beforePreviousId: index > 1 ? Spaces.blocks.get(index - 2).id : ""
                 nextId: index + 1 < Spaces.blocks.count ? Spaces.blocks.get(index + 1).id : ""
                 onCommentRequested: blockId => page.commentRequested(blockId)
+                onAskAgainRequested: (blockId, request) => page.askAgain(blockId, request)
                 onAddBelowRequested: blockId => {
                     page.insertAfter = blockId;
+                    page.replacing = "";
                     composer.forceActiveFocus();
                 }
             }
@@ -491,6 +594,31 @@ Rectangle {
                 text: page.trashed ? qsTr("This page has no blocks.") : qsTr("This page is empty. Write below, or type / to pick a kind of block.")
                 color: page.muted
                 font.pixelSize: Math.round(14 * Theme.fontScale)
+            }
+        }
+
+        Text {
+            objectName: "spaceDrawing"
+            visible: Shell.state.space?.drawing === true
+            text: qsTr("Drawing a chart…")
+            color: page.muted
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        Text {
+            objectName: "spaceReplacing"
+            visible: page.replacing !== "" && !page.trashed
+            text: qsTr("Replacing this chart. Click here to keep it.")
+            color: page.muted
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    page.replacing = "";
+                    composer.clear();
+                }
             }
         }
 
@@ -533,9 +661,9 @@ Rectangle {
 
                 objectName: "spaceComposer"
                 Layout.fillWidth: true
-                placeholderText: qsTr("Write, or type / for a kind of block")
+                placeholderText: qsTr("Write, type / for a kind of block, or @agent to ask an agent")
                 onTextChanged: {
-                    if (text.startsWith("/")) {
+                    if (text.startsWith("/") && !text.startsWith("/visualize ")) {
                         slash.query = text.slice(1);
                         if (!slash.visible)
                             slash.open();
@@ -573,6 +701,10 @@ Rectangle {
                     onChosen: kind => page.chooseKind(kind)
                 }
             }
+        }
+
+        SpaceUpdateDialog {
+            id: updateDialog
         }
 
         ShellMenu {

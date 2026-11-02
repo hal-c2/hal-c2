@@ -8,8 +8,9 @@ import HalC2.Bricks
 
 // One block of the open page in the phone layout. Its text is edited where it
 // is and goes to the MC when the editor loses focus; a checklist item is ticked
-// by its box, a link opens its page and an image shows above its caption. Moving, deleting and commenting are in
-// the menu at its end, where a desktop's hover would have them.
+// by its box, a link opens its page and an image shows above its caption. Moving,
+// deleting and commenting are in the menu at its end, where a desktop's hover would
+// have them. A chart is not written in: it is drawn, and asked for again from the menu.
 Rectangle {
     id: row
 
@@ -32,6 +33,8 @@ Rectangle {
     // A page in the trash is only read.
     property bool readOnly: false
     readonly property string blockId: model.id
+    // What a chart block draws; empty on the others.
+    readonly property var chart: model.chart ?? ({})
     readonly property bool editing: editor.activeFocus
 
     signal menuRequested
@@ -39,7 +42,7 @@ Rectangle {
     signal commentsRequested
 
     function commit() {
-        if (kind !== "subpage_link" && editor.text !== text)
+        if (kind !== "subpage_link" && kind !== "chart" && kind !== "generated" && editor.text !== text)
             Shell.dispatch("space.block.update", { blockId: blockId, text: editor.text });
     }
 
@@ -106,7 +109,7 @@ Rectangle {
 
                 objectName: "spaceBlockEditor:" + row.text
                 Layout.fillWidth: true
-                visible: row.kind !== "subpage_link"
+                visible: row.kind !== "subpage_link" && row.kind !== "chart" && row.kind !== "generated"
                 readOnly: row.readOnly
                 wrapMode: TextEdit.Wrap
                 color: Theme.palette.color("text", "#e4e4e7")
@@ -129,6 +132,40 @@ Rectangle {
                         editor.focus = false;
                     else
                         event.accepted = false;
+                }
+            }
+
+            // What a page's update wrote: Markdown nobody edits by hand.
+            Loader {
+                Layout.fillWidth: true
+                active: row.kind === "generated"
+                visible: active
+
+                sourceComponent: ColumnLayout {
+                    spacing: 2
+
+                    Markdown {
+                        objectName: "spaceGenerated"
+                        Layout.fillWidth: true
+                        text: row.text
+                    }
+
+                    Label {
+                        text: qsTr("Written by this page's update")
+                        color: Theme.palette.color("textMuted", "#a1a1aa")
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+                }
+            }
+
+            Loader {
+                Layout.fillWidth: true
+                Layout.topMargin: 6
+                active: row.kind === "chart"
+                visible: active
+
+                sourceComponent: SpaceChart {
+                    chart: row.chart
                 }
             }
 
@@ -159,6 +196,7 @@ Rectangle {
 
         MobileIconButton {
             objectName: "spaceBlockMenu:" + row.text
+            Layout.alignment: row.kind === "chart" ? Qt.AlignTop : Qt.AlignVCenter
             visible: !row.readOnly
             iconName: "ellipsis"
             label: qsTr("Actions for this block")

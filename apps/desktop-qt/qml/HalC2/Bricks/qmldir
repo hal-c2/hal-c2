@@ -100,13 +100,20 @@ SpaceWorkspace 1.0 SpaceWorkspace.qml
 SpaceSidebar 1.0 SpaceSidebar.qml
 SpaceDeck 1.0 SpaceDeck.qml
 SpacePage 1.0 SpacePage.qml
+SpaceAgentStrip 1.0 SpaceAgentStrip.qml
+SpaceViewers 1.0 SpaceViewers.qml
+SpacePageUpdate SpacePageUpdate.qml
+SpaceUpdateDialog SpaceUpdateDialog.qml
 SpacePresenter 1.0 SpacePresenter.qml
 SpaceBlock 1.0 SpaceBlock.qml
+SpaceChart 1.0 SpaceChart.qml
 SpaceSlashMenu 1.0 SpaceSlashMenu.qml
 SpaceBlockImage 1.0 SpaceBlockImage.qml
 SpaceImages 1.0 SpaceImages.qml
 SpaceImageDialog 1.0 SpaceImageDialog.qml
 SpaceComments 1.0 SpaceComments.qml
+SpaceHistoryPanel 1.0 SpaceHistoryPanel.qml
+SpaceVersionView 1.0 SpaceVersionView.qml
 UsageChart 1.0 UsageChart.qml
 ProvidersSettings 1.0 ProvidersSettings.qml
 ArchivedThreads 1.0 ArchivedThreads.qml
