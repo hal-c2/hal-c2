@@ -90,8 +90,13 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.IdleSessions handle_call :check" => ~w(end-abandoned release-session),
       "HalC2.Orchestration.IdleSessions handle_info :check" => ~w(end-abandoned release-session),
       "HalC2.Orchestration.Recovery.run/0" => ~w(restart settle hold),
-      "HalC2.Orchestration.Recovery.settle/1" => ~w(settle hold),
-      "HalC2.Orchestration.Recovery.continue/0" => "settle"
+      "HalC2.Orchestration.Recovery.settle/2" => ~w(settle hold),
+      # A clean stop settles, before the stop, what the next boot would.
+      "HalC2.Orchestration.Recovery.shut_down/0" => ~w(settle hold),
+      "HalC2.Orchestration.Recovery.continue/0" => "settle",
+      "HalC2.Orchestration.IdleSessions.live?/1" => "claimed?",
+      # The checkpoint a restart left to capture finishes its turn.
+      "HalC2.Orchestration.TurnWriter.checkpointed/4" => "finish"
     },
     abstracts: %{
       "HalC2.Orchestration.handle/2" =>
