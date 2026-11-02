@@ -635,6 +635,26 @@ Item {
             verify(findChild(view, "spaceDiagram:```mermaid\n" + edited + "\n```").visible, "drawn again with the new node");
         }
 
+        // Another client's or an agent's edit arriving mid-sentence neither
+        // hides the source nor takes the keyboard away.
+        function test_an_edit_from_elsewhere_leaves_the_diagram_source_being_written() {
+            const source = "flowchart LR\n  A --> B";
+            const row = mermaidBlock(source);
+            const view = root.research({ blocks: [row] });
+            Diagrams.answer(source, "dark", { status: "drawn", kind: "flowchart", url: "", width: 200, height: 80 });
+            mouseClick(findChild(view, "spaceDiagramSource:" + row.text));
+            const editor = findChild(view, "spaceBlockEditor:" + row.text);
+            editor.forceActiveFocus();
+            verify(editor.activeFocus);
+
+            const theirs = source + "\n  B --> C";
+            Spaces.blocks.setProperty(0, "text", "```mermaid\n" + theirs + "\n```");
+            Diagrams.answer(theirs, "dark", { status: "drawn", kind: "flowchart", url: "", width: 200, height: 120 });
+            verify(editor.visible, "the source stays");
+            verify(editor.activeFocus, "the user is still writing");
+            compare(root.dispatched("space.block.update").length, 0);
+        }
+
         function test_a_mermaid_block_with_a_mistake_shows_its_source_and_where() {
             const source = "flowchart LR\n  A[open --> B";
             const row = mermaidBlock(source);

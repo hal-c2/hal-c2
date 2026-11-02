@@ -67,10 +67,12 @@ Item {
     objectName: "spaceBlock:" + text
     implicitHeight: Math.max(row.implicitHeight, 28) + (block.kind === "heading" ? 10 : 4) + (picture.visible ? picture.height + 6 : 0) + diagramNote.height
 
-    // The editor follows the block while the user is not writing in it.
+    // The editor follows the block, and a diagram is drawn again, while the
+    // user is not writing in it.
     onTextChanged: {
-        if (!editor.activeFocus)
-            editor.text = block.text;
+        if (editor.activeFocus)
+            return;
+        editor.text = block.text;
         block.diagramSource = false;
     }
 

@@ -12,7 +12,10 @@
 #include "McClient.h"
 #include "MermaidController.h"
 
+#include <QHash>
 #include <QMap>
+
+#include <algorithm>
 
 #include <optional>
 #include <vector>
@@ -219,6 +222,39 @@ struct Reconnect : Command {
   void show(std::ostream& os) const override { os << "Reconnect"; }
 };
 
+// More diagrams on screen than are kept, every block reading its own again
+// whenever `revision` changes as a QML binding does: blocks come and go, and
+// the MC answers in any order.
+struct Screen {
+  McClient client;
+  MermaidController diagrams{nullptr, &client};
+  QList<Sut::Call> calls;
+  QStringList shown;             // keys a block shows
+  QHash<QString, int> askedFor;  // calls per key since its block came
+
+  Screen() {
+    diagrams.setKept(2);
+    diagrams.setAsk([this](QObject*, const QJsonObject& input, McClient::Reply reply) {
+      ++askedFor[keyOf(input.value(QLatin1String("source")).toString(), input.value(QLatin1String("theme")).toString())];
+      calls.append({input, std::move(reply)});
+    });
+    QObject::connect(&diagrams, &MermaidController::revisionChanged, &diagrams, [this] { read(); });
+  }
+
+  QVariantMap read(const QString& key) {
+    const qsizetype cut = key.indexOf(QLatin1Char('\n'));
+    return diagrams.diagram(key.mid(cut + 1), key.left(cut));
+  }
+  void read() {
+    for (const QString& key : std::as_const(shown)) read(key);
+  }
+  bool out(const QString& key) const {
+    return std::any_of(calls.cbegin(), calls.cend(), [&](const Sut::Call& call) {
+      return keyOf(call.input.value(QLatin1String("source")).toString(), call.input.value(QLatin1String("theme")).toString()) == key;
+    });
+  }
+};
+
 }  // namespace
 
 class MermaidProp : public QObject {
@@ -229,6 +265,37 @@ private slots:
     QVERIFY(rc::check("a diagram is asked for once per theme and source, and again only after it failed", [] {
       Sut sut;
       rc::state::check(Model{}, sut, rc::state::gen::execOneOfWithArgs<Show, Show, Answer, Answer, Retry, Reconnect>());
+    }));
+  }
+
+  void kept() {
+    QVERIFY(rc::check("a diagram on screen is asked for once, however many more are shown than are kept", [] {
+      Screen screen;
+      // What happens: a block comes (0) or goes (1) with diagram `which`, or
+      // the MC answers its call `which` (2).
+      const auto steps = *rc::gen::container<std::vector<std::pair<int, int>>>(rc::gen::pair(rc::gen::inRange(0, 3), rc::gen::inRange(0, 8)));
+      for (const auto& [what, which] : steps) {
+        const QString key = keyOf(QStringLiteral("flowchart LR\n  A --> N%1").arg(which / 2), kThemes.at(which % 2));
+        if (what == 0 && !screen.shown.contains(key)) {
+          screen.askedFor.remove(key);
+          screen.shown.append(key);
+          screen.read(key);
+        } else if (what == 1) {
+          screen.shown.removeAll(key);
+        } else if (what == 2 && !screen.calls.isEmpty()) {
+          const Sut::Call call = screen.calls.takeAt(which % screen.calls.size());
+          call.reply(QJsonObject{{QStringLiteral("status"), QStringLiteral("drawn")}, {QStringLiteral("kind"), QStringLiteral("flowchart")},
+                                 {QStringLiteral("svg"), QStringLiteral("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"5\"/>")},
+                                 {QStringLiteral("width"), 10}, {QStringLiteral("height"), 5}},
+                     std::nullopt);
+        }
+        for (const QString& on : std::as_const(screen.shown)) {
+          RC_ASSERT(screen.askedFor.value(on) <= 1);
+          // Drawn, or being drawn with its call out.
+          const QString status = screen.read(on).value(QStringLiteral("status")).toString();
+          RC_ASSERT(status == QLatin1String("drawn") || (status == QLatin1String("drawing") && screen.out(on)));
+        }
+      }
     }));
   }
 };
