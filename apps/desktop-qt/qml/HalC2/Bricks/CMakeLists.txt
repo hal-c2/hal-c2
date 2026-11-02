@@ -1,13 +1,7 @@
 # Pure-QML bricks. The qmldir is hand-written (no `prefer` line) so the same
 # directory works both compiled into the binary and as a disk import path for
 # hot reload.
-qt_add_qml_module(hal_c2_bricks
-  URI HalC2.Bricks
-  VERSION 1.0
-  STATIC
-  NO_GENERATE_QMLDIR
-  NO_PLUGIN_OPTIONAL
-  QML_FILES
+set(hal_c2_bricks_qml_files
     ClusterSettings.qml
     ConnectionsSettings.qml
     LoadBalancingGroup.qml
@@ -136,6 +130,7 @@ qt_add_qml_module(hal_c2_bricks
     PullRequestsPage.qml HomePage.qml UsagePage.qml UsageChart.qml
     SpaceWorkspace.qml SpaceSidebar.qml SpacePage.qml SpaceAgentStrip.qml SpaceViewers.qml SpaceBlock.qml SpaceSlashMenu.qml SpaceComments.qml SpaceBlockImage.qml SpaceImages.qml SpaceImageDialog.qml
     SpaceDeck.qml SpacePresenter.qml
+    SpaceChart.qml SpaceHistoryPanel.qml SpacePageUpdate.qml SpaceUpdateDialog.qml SpaceVersionView.qml
     ProvidersSettings.qml
     ProviderAuthTerminal.qml
     ProviderCustomModels.qml
@@ -160,11 +155,25 @@ qt_add_qml_module(hal_c2_bricks
     SnapShotSettings.qml
     Markdown.qml
     js/markdown.js
-  RESOURCES
+)
+set(hal_c2_bricks_resources
     qmldir
     plugin/Text.qml
     icons/antigravity.png
     models/phone.glb
     models/tablet.glb
     models/tablet-keyboard.glb
+)
+include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/QmldirCheck.cmake")
+hal_c2_check_qmldir(${hal_c2_bricks_qml_files} ${hal_c2_bricks_resources})
+qt_add_qml_module(hal_c2_bricks
+  URI HalC2.Bricks
+  VERSION 1.0
+  STATIC
+  NO_GENERATE_QMLDIR
+  NO_PLUGIN_OPTIONAL
+  QML_FILES
+    ${hal_c2_bricks_qml_files}
+  RESOURCES
+    ${hal_c2_bricks_resources}
 )
