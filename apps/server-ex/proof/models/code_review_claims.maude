@@ -872,9 +872,17 @@ mod CODE-REVIEW-CLAIMS is
   eq reposted({ repost(X, Y, S) C }) = true .
   eq reposted({ C }) = false [owise] .
 
+  --- An item or phase the symmetry did not rename, which a new constructor without its
+  --- equation leaves: the search would go on without it, so it counts as bad.
+  op unrenamed : Sys -> Bool .
+  eq unrenamed({ renamedItem(It, Pm) C }) = true .
+  eq unrenamed({ run(X, renamed(Ph, Pm)) C }) = true .
+  eq unrenamed({ pub(X, S, renamed(Ph, Pm)) C }) = true .
+  eq unrenamed({ C }) = false [owise] .
+
   --- Any of the three.
   op unsafe : Sys -> Bool .
-  eq unsafe(Y:Sys) = twice(Y:Sys) or again(Y:Sys) or reposted(Y:Sys) .
+  eq unsafe(Y:Sys) = twice(Y:Sys) or again(Y:Sys) or reposted(Y:Sys) or unrenamed(Y:Sys) .
 endm
 
 mod CODE-REVIEW-CLAIMS-PROPS is
