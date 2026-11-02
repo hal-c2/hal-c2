@@ -11,8 +11,9 @@
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (delegate_task, task_status, task_cancel)
 #   apps/server/src/orchestration-v2/ (delegated task reactor and completion delivery)
 #   apps/server/src/orchestration-v2/Orchestrator.ts (wake policy, completion cohorts, at most two
-#     wakes per turn, dropped in hal-c2/hal-c2#892), Notification.ts, NotificationMailbox.ts, SubagentProjection.ts (notification
-#     summaries, result fallbacks, work states, subagent thread titles)
+#     wakes per turn, dropped in hal-c2/hal-c2#892), Notification.ts, NotificationMailbox.ts,
+#     SubagentProjection.ts (notification summaries, result fallbacks, work states, subagent
+#     thread titles)
 #   apps/server/src/mcp/ (orchestrator toolkit)
 Feature: Delegating tasks to subagents
   A running agent can hand a task to a subagent. The engine starts a child thread
