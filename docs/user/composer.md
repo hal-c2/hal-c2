@@ -248,7 +248,10 @@ files show the copy that was attached to the message.
 ## Attached files
 
 Select a file chip in your draft or a sent message to preview it. Code and JSON use syntax
-highlighting; Markdown, HTML, CSV, and TSV offer rendered and raw views. Audio files have
+highlighting; Markdown, HTML, CSV, and TSV offer rendered and raw views. A Mermaid diagram, in a
+reply, a page or a rendered file, is drawn; one that can't be drawn shows its source and why, and
+the terminal client draws flowcharts, sequence, state and class diagrams in characters and shows
+other types as their source. Audio files have
 playback controls. Large text files show a limited preview; save the file to read it in full.
 
 On desktop, files open beside the conversation with the same controls as a workspace

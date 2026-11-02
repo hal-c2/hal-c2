@@ -3,7 +3,9 @@ import { TextAttributes } from "@opentui/core";
 
 import { THEME } from "../theme.ts";
 import { linkifyTimelineUrls } from "../timelineLinks.ts";
-import { markdownLines, plainText } from "./styledText.ts";
+import type { MermaidRenderResult } from "@hal-c2/contracts";
+
+import { markdownBlockLines, markdownLines, mermaidFenceSource, plainText } from "./styledText.ts";
 
 const render = (markdown: string) => markdownLines(linkifyTimelineUrls(markdown), THEME);
 const links = (markdown: string) =>
@@ -78,5 +80,143 @@ describe("markdownLines", () => {
 
   it("never links inside inline code", () => {
     expect(links("Run `curl https://example.com/api` now")).toEqual([]);
+  });
+});
+
+describe("Mermaid blocks", () => {
+  const FLOW = "flowchart LR\n  Cart --> Paid";
+  const DRAWN = "┌──────┐     ┌──────┐\n│ Cart │────►│ Paid │\n└──────┘     └──────┘";
+  const diagrams = (answers: Record<string, MermaidRenderResult>) => {
+    const asked: string[] = [];
+    return {
+      asked,
+      get: (source: string) => {
+        asked.push(source);
+        return answers[source];
+      },
+    };
+  };
+  const shown = (markdown: string, answers: Record<string, MermaidRenderResult>, width = 80) =>
+    markdownLines(markdown, THEME, width, diagrams(answers)).map(plainText);
+
+  it("draws a closed block as the MC drew it, named by its type", () => {
+    const lines = markdownBlockLines(
+      `Before\n\n\`\`\`mermaid\n${FLOW}\n\`\`\``,
+      THEME,
+      80,
+      undefined,
+      diagrams({ [FLOW]: { status: "drawn", kind: "flowchart", text: `${DRAWN}\n` } }),
+    );
+    expect(lines.map((line) => plainText(line.text))).toEqual([
+      "Before",
+      "",
+      "◇ flowchart diagram",
+      ...DRAWN.split("\n"),
+    ]);
+    expect(lines.slice(2).every((line) => line.code?.source === FLOW)).toBe(true);
+    expect(lines[2]!.diagram).toEqual({ index: 0, title: true, drawable: true });
+  });
+
+  it("does not ask while the block is still being written", () => {
+    const writing = diagrams({});
+    const lines = markdownLines("```mermaid\nflowchart LR\n  Cart -->", THEME, 80, writing);
+    expect(lines.map(plainText)).toEqual(["flowchart LR", "  Cart -->"]);
+    expect(writing.asked).toEqual([]);
+  });
+
+  it("says it is drawing until the MC answers", () => {
+    expect(shown(`\`\`\`mermaid\n${FLOW}\n\`\`\``, {})).toEqual([
+      "◇ flowchart diagram · drawing…",
+      "flowchart LR",
+      "  Cart --> Paid",
+    ]);
+  });
+
+  it("shows the source under where the mistake is", () => {
+    const broken = "flowchart LR\n  A[Cart --> B";
+    expect(
+      shown(`\`\`\`mermaid\n${broken}\n\`\`\``, {
+        [broken]: {
+          status: "invalid",
+          kind: "flowchart",
+          reason: "expected EOI",
+          line: 2,
+          column: 4,
+        },
+      }),
+    ).toEqual([
+      "◇ flowchart diagram",
+      "Line 2, column 4: expected EOI",
+      "flowchart LR",
+      "  A[Cart --> B",
+    ]);
+  });
+
+  it("shows the source of a type with no text drawing, with the MC's reason", () => {
+    const gantt = "gantt\n  title Launch";
+    expect(
+      shown(`~~~mermaid\n${gantt}\n~~~`, {
+        [gantt]: {
+          status: "unsupported",
+          kind: "gantt",
+          reason: "gantt diagrams have no text drawing yet.",
+        },
+      }),
+    ).toEqual([
+      "◇ gantt diagram",
+      "gantt diagrams have no text drawing yet.",
+      "gantt",
+      "  title Launch",
+    ]);
+  });
+
+  it("shows the source of a drawing too wide for the pane", () => {
+    const lines = shown(
+      `\`\`\`mermaid\n${FLOW}\n\`\`\``,
+      { [FLOW]: { status: "drawn", kind: "flowchart", text: DRAWN } },
+      12,
+    );
+    expect(lines).toEqual([
+      "◇ flowchart diagram",
+      "Drawn 21",
+      "columns",
+      "wide, wider",
+      "than the 12",
+      "here: its",
+      "source",
+      "instead.",
+      "flowchart LR",
+      "  Cart --> Paid",
+    ]);
+  });
+
+  it("switches a drawn diagram to its source and back", () => {
+    const answers = { [FLOW]: { status: "drawn", kind: "flowchart", text: DRAWN } } as const;
+    const markdown = `\`\`\`mermaid\n${FLOW}\n\`\`\``;
+    const lines = (source: boolean) =>
+      markdownLines(markdown, THEME, 80, {
+        get: (text) => answers[text as typeof FLOW],
+        showSource: () => source,
+      }).map(plainText);
+    expect(lines(true)).toEqual([
+      "◇ flowchart diagram · source",
+      "flowchart LR",
+      "  Cart --> Paid",
+    ]);
+    expect(lines(false)[1]).toBe(DRAWN.split("\n")[0]);
+  });
+
+  it("leaves a mermaid block as code where diagrams are not drawn", () => {
+    expect(markdownLines(`\`\`\`mermaid\n${FLOW}\n\`\`\``, THEME).map(plainText)).toEqual(
+      FLOW.split("\n"),
+    );
+  });
+
+  it("finds the source of text that is one Mermaid block", () => {
+    expect(mermaidFenceSource(`\`\`\`mermaid\n${FLOW}\n\`\`\`\n`)).toBe(FLOW);
+    expect(mermaidFenceSource(`\`\`\`\` mermaid\n${FLOW}\n\`\`\`\``)).toBe(FLOW);
+    expect(mermaidFenceSource(`\`\`\`ts\n${FLOW}\n\`\`\``)).toBeNull();
+    expect(mermaidFenceSource(`\`\`\`mermaid\n${FLOW}`)).toBeNull();
+    expect(mermaidFenceSource(`\`\`\`mermaid\n${FLOW}\n\`\`\`\nafter`)).toBeNull();
   });
 });
