@@ -113,7 +113,10 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
 
     {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
     await_statuses(thread_id, ["interrupted", "queued"])
-    {:ok, _} = Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id})
+
+    assert {:error, "Thread #{thread_id} is not active."} ==
+             Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id})
+
     assert ["interrupted", "queued"] = Enum.map(runs(current(thread_id)), & &1["status"])
 
     {:ok, _} = Orchestration.dispatch(%{"type" => "thread.unarchive", "threadId" => thread_id})
@@ -174,7 +177,8 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     await_statuses(thread_id, ["running", "queued"])
     restart(thread_id)
 
-    {:ok, _} = send_message(thread_id, "m3", "usage limit m3")
+    # Sent, not queued: an explicitly queued message would wait behind the held queue.
+    {:ok, _} = send_message(thread_id, "m3", "usage limit m3", "start_immediately")
     await_statuses(thread_id, ["interrupted", "failed", "queued"])
     {:ok, _} = recover(thread_id)
     restart(thread_id)
@@ -196,7 +200,8 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     await_statuses(thread_id, ["running", "queued"])
     restart(thread_id)
 
-    {:ok, _} = send_message(thread_id, "m3", "usage limit m3")
+    # Sent, not queued: an explicitly queued message would wait behind the held queue.
+    {:ok, _} = send_message(thread_id, "m3", "usage limit m3", "start_immediately")
     await_statuses(thread_id, ["interrupted", "failed", "queued"])
     {:ok, _} = recover(thread_id)
     restart(thread_id)
@@ -258,14 +263,14 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     await_statuses(thread_id, ["interrupted", "cancelled"])
   end
 
-  defp send_message(thread_id, message_id, text \\ nil) do
+  defp send_message(thread_id, message_id, text \\ nil, mode \\ "queue_after_active") do
     Orchestration.dispatch(%{
       "type" => "message.dispatch",
       "threadId" => thread_id,
       "messageId" => message_id,
       "text" => text || "wait #{message_id}",
       "attachments" => [],
-      "dispatchMode" => %{"type" => "queue_after_active"}
+      "dispatchMode" => %{"type" => mode}
     })
   end
 

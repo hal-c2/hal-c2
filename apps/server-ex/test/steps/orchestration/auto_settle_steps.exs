@@ -276,9 +276,18 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
     Map.put(context, :auto_settle_result, result)
   end
 
+  # An automatic settlement refused, or else the command the step before sent
+  # (`context.reply`).
   step "the command is refused", context do
-    assert {:error, message} = context.auto_settle_result
-    assert message =~ "changed before automatic settlement"
+    case context do
+      %{auto_settle_result: result} ->
+        assert {:error, message} = result
+        assert message =~ "changed before automatic settlement"
+
+      %{reply: reply} ->
+        assert elem(reply, 0) == :error, "expected a refusal, got #{inspect(reply)}"
+    end
+
     context
   end
 

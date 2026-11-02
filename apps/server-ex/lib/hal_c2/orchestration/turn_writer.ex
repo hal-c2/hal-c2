@@ -632,6 +632,7 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   # The changes that end the run.
   defp ended(stream, ids, status, failure, checkpoint, at) do
+    failure = queued_start_failure(stream, ids, status, failure)
     done = %{"status" => status, "completedAt" => at}
     run_done = if checkpoint, do: Map.put(done, "checkpointId", checkpoint["id"]), else: done
 
@@ -657,6 +658,25 @@ defmodule HalC2.Orchestration.TurnWriter do
       is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
     ] ++ held_queue(stream, status, failure)
   end
+
+  # A run that left the queue and failed before its provider turn began (the runtime's
+  # `start_failure/2`): the timeline says the queued message's provider could not start.
+  defp queued_start_failure(stream, ids, "failed", failure) when is_binary(failure) do
+    began = StreamState.get(stream, "provider-turn")[Map.get(ids, :provider_turn)] != nil
+    message = Map.get(ids, :message)
+    item = message && StreamState.get(stream, "turn-item")["turn-item:user:#{message}"]
+
+    if not began and is_map(item) and item["inputIntent"] == "queued_turn",
+      do: %{
+        "class" => "provider_error",
+        "code" => "queued_start_failed",
+        "message" => failure,
+        "retryable" => false
+      },
+      else: failure
+  end
+
+  defp queued_start_failure(_stream, _ids, _status, failure), do: failure
 
   # A run stopped by a usage limit leaves the queue as it is: the messages behind it
   # would only hit the same limit, so they wait, in order, until the user resumes the
@@ -858,10 +878,11 @@ defmodule HalC2.Orchestration.TurnWriter do
         at,
         %{
           "title" =>
-            if(failure["class"] == "usage_limit",
-              do: "Usage limit reached",
-              else: "Provider error"
-            ),
+            cond do
+              failure["class"] == "usage_limit" -> "Usage limit reached"
+              failure["code"] == "queued_start_failed" -> "Queued provider could not start"
+              true -> "Provider error"
+            end,
           "failure" => failure
         }
       )
