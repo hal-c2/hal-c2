@@ -2708,7 +2708,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     spaceFiles.set(projectId, null);
     call<SpaceFilesListResult>(WS_METHODS.spaceFilesList, { projectId }).then(
       (result) => knowSpaceFiles(projectId, result),
-      () => {},
+      // Not known, so the next look asks again.
+      () => spaceFiles.delete(projectId),
     );
   };
 
@@ -2737,7 +2738,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     void track(
       (async () => {
         const target = into ?? (await targetSpace());
-        if (target === null) return;
+        if (target === null) {
+          options.status("There is no Space to open it in: make one first (^X p, then n).", "info");
+          return;
+        }
         let result: SpacePageOpenFileResult;
         try {
           result = await call<SpacePageOpenFileResult>(WS_METHODS.spacePageOpenFile, {
@@ -2837,8 +2841,16 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       if (typeof path === "string") openProjectFile(id, path);
       else pickFile(id, null, only);
     };
-    if (typeof projectId === "string") then(projectId);
-    else pickProject("Open a file of which project?", then);
+    if (typeof projectId !== "string") pickProject("Open a file of which project?", then);
+    else if ((options.projects?.() ?? []).some((project) => project.id === projectId)) {
+      then(projectId);
+    } else {
+      // Its files open in its own machine's Spaces, which this pane does not follow (#860).
+      options.status(
+        "That project is on another machine: its files open in that machine's Spaces.",
+        "info",
+      );
+    }
   };
 
   /** Inside a Space: a page from one of a project's files. */
