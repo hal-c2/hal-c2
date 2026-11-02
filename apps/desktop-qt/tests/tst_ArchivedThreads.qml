@@ -68,7 +68,7 @@ Item {
             const page = createTemporaryObject(archiveComponent, root);
             compare(findChild(page, "settingsBreadcrumb").text, "Settings / Archive");
             const row = findChild(page, "thread_env-a:t1");
-            compare(findChild(row, "delete").tint, Theme.palette.color("error", "#ef4444"));
+            compare(findChild(row, "delete").tint, Theme.palette.color("errorForeground", "#ef4444"));
             verify(findChild(row, "unarchive").tint !== findChild(row, "delete").tint);
         }
     }

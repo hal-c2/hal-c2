@@ -52,7 +52,7 @@ MenuItem {
             Text {
                 text: control.text
                 font: control.font
-                color: control.destructive ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("text", "#e4e4e7")
+                color: control.destructive ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("text", "#e4e4e7")
                 opacity: control.enabled ? 1 : 0.5
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
@@ -107,6 +107,6 @@ MenuItem {
 
     background: Rectangle {
         radius: 6
-        color: control.highlighted || control.hovered ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
+        color: control.highlighted || control.hovered || control.visualFocus ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
     }
 }

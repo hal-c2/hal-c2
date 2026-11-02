@@ -97,6 +97,31 @@ Item {
             mouseClick(edit, rect.x + 1, rect.y + rect.height / 2, Qt.LeftButton, modifiers);
         }
 
+        // A link is drawn in the theme's link colour, not the platform's blue:
+        // the inkiest pixel of its letters is that colour.
+        function test_linksTakeTheThemesLinkColour() {
+            const md = make("See [the pull request](https://example.com/pull/135) now.");
+            const edit = prose(segmentsOf(md)[0]);
+            verify(waitForRendering(edit));
+            const shot = grabImage(edit);
+            const start = edit.positionToRectangle(plain(edit).indexOf("the pull"));
+            const end = edit.positionToRectangle(plain(edit).indexOf(" now"));
+            const x0 = Math.ceil(start.x);
+            const y0 = Math.ceil(start.y);
+            const rgb = (x, y) => [shot.red(x, y), shot.green(x, y), shot.blue(x, y)];
+            const away = (a, b) => Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
+            const paper = rgb(x0, y0);
+            let ink = paper;
+            for (let y = y0; y < start.y + start.height; ++y) {
+                for (let x = x0; x < end.x; ++x) {
+                    if (away(rgb(x, y), paper) > away(ink, paper))
+                        ink = rgb(x, y);
+                }
+            }
+            const link = [Theme.link.r, Theme.link.g, Theme.link.b].map(c => Math.round(c * 255));
+            verify(away(ink, link) <= 8, "the link is drawn in " + link + ", not " + ink);
+        }
+
         function test_hoveredLinkTipNamesTheLink() {
             const md = make("See the [pricing docs](https://example.com/docs/pricing) now.");
             const edit = prose(segmentsOf(md)[0]);
@@ -116,6 +141,38 @@ Item {
         function test_plainClickLeavesLinkAlone() {
             clickWord(make("See the [pricing docs](https://example.com/docs/pricing) now."), "pricing", "https://example.com/docs/pricing", Qt.NoModifier);
             compare(linkSpy.count, 0);
+        }
+
+        // A finger has no secondary button: holding a link offers its menu,
+        // where a tap would have opened it.
+        function test_aHeldLinkOffersItsMenu() {
+            Shell.reset();
+            const md = make("See the [guide](docs/guide.md) now.");
+            linkSpy.target = md;
+            linkSpy.clear();
+            const edit = prose(segmentsOf(md)[0]);
+            const rect = edit.positionToRectangle(plain(edit).indexOf("guide") + 2);
+            const y = rect.y + rect.height / 2;
+            const touch = touchEvent(edit);
+            touch.press(0, edit, rect.x + 1, y).commit();
+            tryVerify(() => Shell.dispatchedActions.some(a => a.action === "link.menu"), 3000);
+            touch.release(0, edit, rect.x + 1, y).commit();
+            const menu = Shell.dispatchedActions.find(a => a.action === "link.menu");
+            compare(menu.payload.url, "docs/guide.md");
+            compare(linkSpy.count, 0);
+        }
+
+        function test_aTappedLinkOpens() {
+            Shell.reset();
+            const md = make("See the [guide](docs/guide.md) now.");
+            linkSpy.target = md;
+            linkSpy.clear();
+            const edit = prose(segmentsOf(md)[0]);
+            const rect = edit.positionToRectangle(plain(edit).indexOf("guide") + 2);
+            const y = rect.y + rect.height / 2;
+            touchEvent(edit).press(0, edit, rect.x + 1, y).commit().release(0, edit, rect.x + 1, y).commit();
+            compare(linkSpy.count, 1);
+            verify(!Shell.dispatchedActions.some(a => a.action === "link.menu"));
         }
 
         // The Files viewer draws a file's task boxes as links to be ticked with

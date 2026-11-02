@@ -96,6 +96,9 @@ public:
   // Whether the sheet, dialog or menu named `objectName` is on screen, on its
   // way in or out included. A popup is not an item.
   bool popupShowing(const QString& objectName);
+  // The sheet, dialog or menu named `objectName`, shown or not; null when the
+  // window has none.
+  QObject* popup(const QString& objectName);
   // Waits for it to be up, its way in finished, or (`open` false) to be gone
   // from the screen.
   void awaitPopup(const QString& objectName, bool open = true);

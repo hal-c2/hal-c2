@@ -38,8 +38,8 @@ defmodule HalC2.Space.History do
   alias HalC2.Space.{Order, Pages}
 
   @gap :timer.minutes(5)
-  @content ~w(kind text checked linkedPageId imageId level table language fence info depth indent
-               marker start alert gap chart order)
+  @content ~w(kind text checked linkedPageId imageId url level table language fence info depth
+               indent marker start alert label gap chart order)
   @default_limit 30
   @max_limit 100
 
@@ -183,7 +183,9 @@ defmodule HalC2.Space.History do
   # A block's content as `HalC2.Space.Blocks` makes it from a spec of `Space.written/2`.
   defp from_spec(spec) do
     spec
-    |> Map.take(~w(imageId level table language fence info depth indent marker start alert gap))
+    |> Map.take(
+      ~w(imageId url level table language fence info depth indent marker start alert label gap)
+    )
     |> Map.merge(%{
       "kind" => spec["kind"],
       "text" => spec["text"] || "",

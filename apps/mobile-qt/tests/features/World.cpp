@@ -238,6 +238,10 @@ bool World::popupShowing(const QString& objectName) {
   return popup->property("visible").toBool();
 }
 
+QObject* World::popup(const QString& objectName) {
+  return searchObjects(&window(), objectName);
+}
+
 void World::awaitPopup(const QString& objectName, bool open) {
   waitFor(
       [&] {

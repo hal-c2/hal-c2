@@ -14,6 +14,11 @@
 #   ~/dev/pos-ecs again for lists, quotes and rules (1772 distinct .md files outside hidden directories:
 #     5388 lists, 77 of them kept raw; 24752 items, 1315 nested; 920 quotes, 23 of them alerts, 85 kept by
 #     their `> ` blank lines or two-space line breaks, and 4 kept raw; 598 rules, 152 of them not `---`)
+#   ~/dev/pos-ecs again for inline formatting, footnotes, math, collapsed sections and images (the same
+#     1772 files: no footnote definitions and 16 references, no `$$` or `math` blocks and 97 inline `$`
+#     spans, 229 collapsed sections read as blocks and 2569 `<details>` elements kept raw, most of them
+#     generated HTML with summaries over several lines; 176 images alone on a line read as images by
+#     their address, the rest titled, badges or inside text)
 #   apps/server-ex/lib/hal_c2/space/markdown.ex, apps/server-ex/lib/hal_c2/space/blocks.ex,
 #     apps/server-ex/lib/hal_c2/space/table.ex
 #   packages/contracts/src/space.ts (SpaceBlock, SpaceWritableBlockKind, SpaceTable, SpaceTableEdit,
@@ -1016,14 +1021,40 @@ Feature: GitHub Markdown in a page
       When the user opens "Plan"
       Then a line is shown between them
 
-  # https://github.com/hal-c2/hal-c2/issues/845
-  @backlog @mc @shared
+  # Inline formatting is part of a block's text, kept exactly as written: the MC sends
+  # nothing new for it, and a surface renders it where it shows the text.
   Rule: Inline formatting
 
-    Scenario Outline: Text keeps its inline formatting
-      When the user imports a paragraph holding <formatting>
+    @mc
+    Scenario: Text keeps its inline formatting as written
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        **Bold**, _italic_, ~~struck~~ and `code`, a [link](https://example.com "Title"),
+        <https://example.com>, www.example.com, $x^2$ and a note[^1].
+        """
+      Then the blocks of "Plan" are of the kinds "paragraph"
+      And "Plan" has a paragraph holding:
+        """
+        **Bold**, _italic_, ~~struck~~ and `code`, a [link](https://example.com "Title"),
+        <https://example.com>, www.example.com, $x^2$ and a note[^1].
+        """
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        **Bold**, _italic_, ~~struck~~ and `code`, a [link](https://example.com "Title"),
+        <https://example.com>, www.example.com, $x^2$ and a note[^1].
+        """
+
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared @backlog
+    Scenario Outline: Text is shown with its inline formatting
+      Given a page with a paragraph holding <formatting>
+      When the user opens the page
       Then the paragraph is shown with <formatting>
-      And the export writes it as it was
 
       Examples:
         | formatting                                |
@@ -1033,60 +1064,263 @@ Feature: GitHub Markdown in a page
         | a link with a title                       |
         | an autolinked address and a bare www link |
 
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared @backlog
     Scenario: A link in a page never loads anything by itself
-      When the user imports a paragraph linking to a web address
+      Given a page with a paragraph linking to a web address
+      When the user opens the page
       Then nothing is fetched until the user opens the link
 
-  # https://github.com/hal-c2/hal-c2/issues/845
-  @backlog @mc @shared
+  # A footnote is a block of its own, its `label` and its note: `[^1]: A source.`, the
+  # note's further lines indented four spaces. Footnotes follow one another line under
+  # line. A reference `[^1]` is part of a block's text. A footnote written another way
+  # stays raw.
   Rule: Footnotes
 
-    Scenario: A footnote reference and its note go together
-      When the user imports a paragraph with the reference "[^1]" and the note "[^1]: Source"
-      Then the reference is shown as a link to the note
-      And the export writes both as they were
+    @mc
+    Scenario: A footnote is its label and its note
+      Given the page "Plan" imported from:
+        """
+        # Plan
 
-  # https://github.com/hal-c2/hal-c2/issues/845
-  @backlog @mc @shared
+        Tag first[^1], then ship[^later].
+
+        [^1]: The release guide.
+        [^later]: Once the tag is pushed,
+            and CI is green.
+        """
+      Then the blocks of "Plan" are of the kinds "paragraph, footnote, footnote"
+      And "Plan" has the footnote "later" holding:
+        """
+        Once the tag is pushed,
+        and CI is green.
+        """
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        Tag first[^1], then ship[^later].
+
+        [^1]: The release guide.
+        [^later]: Once the tag is pushed,
+            and CI is green.
+        """
+
+    @mc
+    Scenario: The user changes a footnote's label
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        [^1]: The release guide.
+        """
+      When the user labels "The release guide." as "guide"
+      And the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n[^guide]: The release guide.\n"
+      When the user labels "The release guide." as "two words"
+      Then the user is told "A footnote's label is a word with no spaces or brackets, such as 1 or note."
+
+    @mc
+    Scenario: Only a footnote has a label
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        Ship it
+        """
+      When the user labels "Ship it" as "1"
+      Then the user is told "Only a footnote has a label."
+
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared @backlog
+    Scenario: A footnote reference and its note go together
+      Given a page with a paragraph holding the reference "[^1]" and the footnote "1"
+      When the user opens the page
+      Then the reference is shown as a link to the footnote
+      And the footnote is shown with its label
+
+  # Math is code in `math`. Math written between `$$` lines keeps that as its `fence`;
+  # such math with a blank line inside stays raw, as GitHub ends it there. Inline `$x^2$`
+  # is part of a block's text.
   Rule: Math
 
+    @mc
+    Scenario: Math between $$ lines is code in math
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        $$
+        x^2 + y^2 = z^2
+        $$
+
+        ```math
+        x^2
+        ```
+        """
+      Then the blocks of "Plan" are of the kinds "code, code"
+      And "Plan" has a code block in "math" holding:
+        """
+        x^2 + y^2 = z^2
+        """
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        $$
+        x^2 + y^2 = z^2
+        $$
+
+        ```math
+        x^2
+        ```
+        """
+
+    @mc
+    Scenario: Math made other code is written between fences
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        $$
+        x^2
+        $$
+        """
+      When the user makes the code block of "Plan" "latex" code holding:
+        """
+        x^2
+        """
+      And the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n```latex\nx^2\n```\n"
+
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared @backlog
     Scenario Outline: Math is shown as math
-      When the user imports a page holding <math>
+      Given a page holding <math>
+      When the user opens the page
       Then it is shown typeset where the surface can, else as its source
-      And the export writes it as it was
 
       Examples:
-        | math                    |
-        | inline "$x^2$"          |
-        | a "$$" block            |
-        | a "math" fenced block   |
+        | math                   |
+        | inline "$x^2$"         |
+        | a "$$" block           |
+        | a "math" fenced block  |
 
-  # https://github.com/hal-c2/hal-c2/issues/845
-  @backlog @mc @shared
+  # A collapsed section is a `details` block, its text the summary, then the blocks
+  # inside it, then a `details_end` block. The MC models it when it is written as a page
+  # writes it: `<details>` and `<summary>…</summary>` on a line or two, a blank line,
+  # Markdown, and `</details>` alone with a blank line or the end under it. An opening
+  # written on one line, `open` or indented is kept as the block's `marker`. Any other
+  # `<details>` element stays raw whole, as before.
   Rule: Collapsed sections
 
+    @mc
+    Scenario: The section's contents are blocks of their own
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        <details>
+        <summary>Logs</summary>
+
+        | Step | Took |
+        | ---- | ---- |
+        | Tag  | 2s   |
+
+        </details>
+        """
+      Then the blocks of "Plan" are of the kinds "details, table, details_end"
+      And the collapsed section of "Plan" is titled "Logs"
+      When the user changes the "Took" of "Tag" in the table of "Plan" to "3s"
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        <details>
+        <summary>Logs</summary>
+
+        | Step | Took |
+        | ---- | ---- |
+        | Tag  | 3s   |
+
+        </details>
+        """
+
+    @mc
+    Scenario: A section opened on one line keeps how it was written
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        <details open><summary>Logs</summary>
+
+        Tagged.
+        </details>
+        """
+      Then the blocks of "Plan" are of the kinds "details, paragraph, details_end"
+      When the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n<details open><summary>Logs</summary>\n\nTagged.\n</details>\n"
+
+    @mc
+    Scenario: A section written another way is kept as written
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        <details>
+        <summary>
+        Logs
+        </summary>
+
+        Tagged.
+
+        </details>
+        """
+      Then the blocks of "Plan" are of the kinds "raw"
+
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared @backlog
     Scenario: A collapsed section opens and closes
-      When the user imports a page holding a "<details>" section titled "Logs"
-      Then the page shows "Logs" closed
+      Given a page with a collapsed section titled "Logs"
+      When the user opens the page
+      Then "Logs" is shown closed
       When the user opens "Logs"
       Then its contents are shown
       When the user closes "Logs"
       Then its contents are hidden again
 
-    Scenario: The section's contents are blocks of their own
-      Given a page with a collapsed section holding a table
-      When the user edits the table
-      Then the export writes the section with the new table inside
-
-  # https://github.com/hal-c2/hal-c2/issues/845
-  @backlog @mc @shared
+  # An image alone on its line, `![A cat](https://example.com/cat.png)`, is an image
+  # block by its `url`, beside the Space's own images by `imageId`. The MC never fetches
+  # it, and a site shows only its caption. An image with a title, inside a link (a
+  # badge) or beside other text is part of a paragraph's text.
   Rule: Images
 
+    @mc
+    Scenario: An image from the web is an image by its address
+      Given the page "Plan" imported from:
+        """
+        # Plan
+
+        ![A cat](https://example.com/cat.png)
+        """
+      Then the blocks of "Plan" are of the kinds "image"
+      And "Plan" has the image "A cat" from "https://example.com/cat.png"
+      When the user exports "Plan" as Markdown
+      Then the exported Markdown is "# Plan\n\n![A cat](https://example.com/cat.png)\n"
+
+    # https://github.com/hal-c2/hal-c2/issues/877
+    @shared @backlog
     Scenario: An image from the web is shown only when the user asks
-      When the user imports a page holding an image from a web address
-      Then its description and address are shown in its place
+      Given a page with an image from a web address
+      When the user opens the page
+      Then its caption and address are shown in its place
       And nothing is fetched until the user asks to see it
 
+    # https://github.com/hal-c2/hal-c2/issues/878
+    @backlog @mc @shared
     Scenario: An image beside the file is shown from the project
       Given a page that is a project file holding an image beside it
       When the user opens the page

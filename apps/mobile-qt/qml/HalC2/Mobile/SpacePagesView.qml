@@ -37,6 +37,13 @@ ColumnLayout {
         }
 
         MobileIconButton {
+            objectName: "spaceFromProjectFiles"
+            iconName: "folder-open"
+            label: qsTr("Add a page from a project's files")
+            onClicked: Shell.dispatch("space.files.pick", {})
+        }
+
+        MobileIconButton {
             objectName: "spaceImport"
             iconName: "download"
             label: qsTr("Import Markdown")

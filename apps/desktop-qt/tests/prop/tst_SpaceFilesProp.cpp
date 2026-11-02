@@ -5,11 +5,14 @@
 // stopping following a file as the Space's copy brings them.
 //
 // After each step a project's files are what the MC last answered to the latest
-// list asked for it, an older answer coming late changing nothing, and none once
-// the latest was refused; a list asked offline goes out on connecting, and every
+// list asked for it, an older answer coming late changing nothing, and none, with
+// the MC's error, once the latest was refused; a list asked offline goes out on connecting, and every
 // project asked for is asked again on each connection. `space.page.syncFile` goes
 // out once each time a file-backed page comes on show, and not again while it
-// stays there, whatever else the Space's copy brings.
+// stays there, whatever else the Space's copy brings. Opening a file (answered
+// or refused) opens the Space on its page, says that page in `written` for the
+// phone's Space screen, and clears `written` first, so the same page said again
+// is a change.
 
 #include "Prop.h"
 
@@ -32,6 +35,7 @@ namespace {
 const QString kSpaceId = QStringLiteral("space-1");
 const QStringList kPages = {QStringLiteral("page-1"), QStringLiteral("page-2")};
 const QStringList kProjects = {QStringLiteral("alpha"), QStringLiteral("beta")};
+const QString kRefusal = QStringLiteral("The project could not be read.");
 
 QString oneOf(const QStringList& values) {
   return *rc::gen::elementOf(std::vector<QString>(values.cbegin(), values.cend()));
@@ -58,8 +62,10 @@ struct Model {
   QSet<QString> wanted;
   QMap<QString, int> asked;
   std::vector<Ask> pending;
-  // What the client says of each project: the answer it kept, or nothing.
+  // What the client says of each project: the answer it kept, 0 for a refusal, or nothing.
   QMap<QString, int> shown;
+  // Every value `written` took, in order.
+  QStringList written;
 
   QString onShow() const { return open && ready && filed.contains(page) ? page : QString(); }
   void settleSync() {
@@ -84,8 +90,22 @@ struct Shell {
   std::vector<std::pair<Ask, FakeMc::Rpc>> held;
   QMap<QString, int> arrived;
   QStringList syncs;
+  QStringList written;
+  // How the MC answers the next `space.page.openFile`: the page, or "" to refuse it.
+  QString opens;
 
   Shell() {
+    QObject::connect(&bridge, &ShellBridge::stateEntryChanged, &bridge, [this](const QString& key, const QVariant& value) {
+      if (key != QLatin1String("space")) return;
+      const QString now = value.toMap().value(QStringLiteral("written")).toString();
+      if (now != (written.isEmpty() ? QString() : written.last())) written.append(now);
+    });
+    mc.onRpc(QStringLiteral("space.page.openFile"), [this](const FakeMc::Rpc& rpc) {
+      if (opens.isEmpty()) return mc.refuse(rpc, QStringLiteral("There is no such file."));
+      mc.reply(rpc, QJsonObject{{QStringLiteral("spaceId"), kSpaceId},
+                                {QStringLiteral("page"), QJsonObject{{QStringLiteral("id"), opens}}},
+                                {QStringLiteral("created"), false}});
+    });
     mc.onRpc(QStringLiteral("space.files.list"), [this](const FakeMc::Rpc& rpc) {
       const QString project = rpc.payload.value(QLatin1String("projectId")).toString();
       held.push_back({{project, ++arrived[project]}, rpc});
@@ -136,16 +156,24 @@ struct Shell {
   // what the model does, then holds it to that.
   void check(const Model& model) {
     QMap<QString, QStringList> expected;
-    for (auto it = model.shown.cbegin(); it != model.shown.cend(); ++it) expected.insert(it.key(), {answeredFile({it.key(), it.value()})});
+    // A refused list reads as its error in place of its files.
+    for (auto it = model.shown.cbegin(); it != model.shown.cend(); ++it) {
+      expected.insert(it.key(), {it.value() == 0 ? kRefusal : answeredFile({it.key(), it.value()})});
+    }
     const auto said = [&] {
       QMap<QString, QStringList> paths;
       const QVariantMap now = files();
-      for (auto it = now.cbegin(); it != now.cend(); ++it) paths.insert(it.key(), it.value().toMap().value(QStringLiteral("paths")).toMap().keys());
+      for (auto it = now.cbegin(); it != now.cend(); ++it) {
+        const QVariantMap listed = it.value().toMap();
+        QStringList keys = listed.value(QStringLiteral("paths")).toMap().keys();
+        if (const QString error = listed.value(QStringLiteral("error")).toString(); !error.isEmpty()) keys.append(error);
+        paths.insert(it.key(), keys);
+      }
       return paths;
     };
     prop::until([&] {
       return native.client()->isReady() == model.ready && arrived == model.asked && held.size() == model.pending.size() && said() == expected &&
-             syncs.size() == model.syncs;
+             syncs.size() == model.syncs && written == model.written;
     });
     RC_ASSERT(native.client()->isReady() == model.ready);
     RC_ASSERT(arrived == model.asked);
@@ -154,6 +182,8 @@ struct Shell {
     RC_ASSERT(syncs.size() == model.syncs);
     if (!model.synced.isEmpty()) RC_ASSERT(syncs.last() == model.synced);
     RC_ASSERT(space()->pageId() == model.page);
+    RC_ASSERT(written == model.written);
+    RC_ASSERT((native.controller<NavigationController>()->route().kind == QLatin1String("space")) == model.open);
   }
 };
 
@@ -182,7 +212,7 @@ struct Answer : Command {
     std::erase(model.pending, ask);
     if (ask.n != model.asked.value(ask.project)) return;
     if (refused) {
-      model.shown.remove(ask.project);
+      model.shown.insert(ask.project, 0);
     } else {
       model.shown.insert(ask.project, ask.n);
     }
@@ -196,7 +226,7 @@ struct Answer : Command {
     const FakeMc::Rpc rpc = found->second;
     shell.held.erase(found);
     if (refused) {
-      shell.mc.refuse(rpc, QStringLiteral("The project could not be read."));
+      shell.mc.refuse(rpc, kRefusal);
     } else {
       const QJsonObject file{{QStringLiteral("relativePath"), answeredFile(ask)}, {QStringLiteral("kind"), QStringLiteral("markdown")}, {QStringLiteral("page"), QJsonValue::Null}};
       shell.mc.reply(rpc, QJsonObject{{QStringLiteral("config"), QStringLiteral("default")}, {QStringLiteral("files"), QJsonArray{file}}});
@@ -257,6 +287,33 @@ struct Filed : Command {
   void show(std::ostream& os) const override { os << "Filed(" << page.toStdString() << ", " << filed << ")"; }
 };
 
+// The user opens a project file, which the MC answers with one of the Space's
+// pages or refuses.
+struct OpenFile : Command {
+  QString project = oneOf(kProjects);
+  QString page = *rc::gen::weightedElement<QString>({{1, QString()}, {2, kPages.first()}, {2, kPages.last()}});
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.ready); }
+  void apply(Model& model) const override {
+    if (!model.written.isEmpty() && !model.written.last().isEmpty()) model.written.append(QString());
+    if (page.isEmpty()) return;
+    model.written.append(page);
+    model.open = true;
+    model.settleSync();
+    model.page = page;
+    model.settleSync();
+    model.ask(project);
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    shell.opens = page;
+    RC_ASSERT(shell.space()->handle(QStringLiteral("space.openFile"),
+                                    QVariantMap{{QStringLiteral("projectId"), project}, {QStringLiteral("relativePath"), QStringLiteral("guide.md")}}));
+    shell.check(expected);
+  }
+  void show(std::ostream& os) const override { os << "OpenFile(" << project.toStdString() << ", " << (page.isEmpty() ? "refused" : page.toStdString()) << ")"; }
+};
+
 // What the MC held is lost with the connection.
 struct GoOffline : Command {
   void checkPreconditions(const Model& model) const override { RC_PRE(model.ready); }
@@ -299,10 +356,10 @@ class SpaceFilesProp : public QObject {
 
 private slots:
   void keepsTheLatestListAndReadsTheShownFileOnce() {
-    QVERIFY(rc::check("a project's files are the latest list's answer, and a file-backed page is read again once each time it comes on show", [] {
+    QVERIFY(rc::check("a project's files are the latest list's answer, a file-backed page is read again once each time it comes on show, and an opened file's page is said anew", [] {
       Shell shell;
       rc::state::check(Model{}, shell,
-                       rc::state::gen::execOneOfWithArgs<ListFiles, ListFiles, Answer, Answer, Answer, SetRoute, SetRoute, SelectPage, Filed, GoOffline, GoOnline>());
+                       rc::state::gen::execOneOfWithArgs<ListFiles, ListFiles, Answer, Answer, Answer, SetRoute, SetRoute, SelectPage, Filed, OpenFile, GoOffline, GoOnline>());
     }));
   }
 };
