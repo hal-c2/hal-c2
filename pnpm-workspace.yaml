@@ -25,8 +25,8 @@ catalog:
   "@types/node": 24.12.4
   effect: 4.0.0-rc.115
   typescript: 7.0.2
-  vite: npm:@voidzero-dev/vite-plus-core@0.3.3
-  vite-plus: 0.3.3
+  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
+  vite-plus: 1.4.0
 
 minimumReleaseAgeExclude:
   - "@opentui/core-darwin-arm64@0.5.12"
@@ -53,6 +53,13 @@ overrides:
   "@types/node": "catalog:"
   effect: "catalog:"
   vite: "catalog:"
+  # Security floors for transitive pins their parents have not raised yet.
+  # Drop each one once `pnpm audit` stays clean without it.
+  "@vercel/config>zod": ^4.6.6
+  "@vercel/routing-utils>path-to-regexp": 6.3.0
+  "shell-quote@<1.11.0": ^1.12.0
+  "solid-js@<1.9.18": 1.9.18
+  yaml-language-server>yaml: ^2.8.3
 
 packageExtensions:
   "@effect/vitest@*":
