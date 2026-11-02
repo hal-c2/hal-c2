@@ -10,6 +10,7 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QRegularExpression>
 #include <QSet>
 #include <QTest>
@@ -25,6 +26,7 @@
 #include "FilesWorkspace.h"
 #include "Harness.h"
 #include "KeybindingController.h"
+#include "Mermaid.h"
 #include "NavigationController.h"
 #include "Space.h"
 #include "SpaceController.h"
@@ -337,6 +339,9 @@ QString exportMarkdown(FakeMc& mc, const QString& space, const QJsonObject& page
       QStringList quoted;
       for (const QString& part : said.split(QLatin1Char('\n'))) quoted.append((QStringLiteral("> ") + part).trimmed());
       line = quoted.join(QLatin1Char('\n'));
+    } else if (kind == QLatin1String("code")) {
+      const QString fence = text(block, QLatin1String("fence")).isEmpty() ? QStringLiteral("```") : text(block, QLatin1String("fence"));
+      line = fence + text(block, QLatin1String("language")) + text(block, QLatin1String("info")) + QLatin1Char('\n') + said + QLatin1Char('\n') + fence;
     } else if (kind == QLatin1String("subpage_link")) {
       const QString linked = text(block, QLatin1String("linkedPageId"));
       const QString title = titleOf(mc, space, linked);
@@ -362,7 +367,11 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
   static const QRegularExpression heading(QStringLiteral("^#{2,6}\\s+(.*)$"));
   static const QRegularExpression item(QStringLiteral("^\\s*[-*]\\s+\\[([ xX])\\]\\s?(.*)$"));
   static const QRegularExpression link(QStringLiteral("^\\[(.+)\\]\\(#([\\w-]+)\\)$"));
-  static const QRegularExpression notParagraph(QStringLiteral("^(#{1,6}\\s|>|```|\\s*[-*]\\s+\\[[ xX]\\])"));
+  static const QRegularExpression notParagraph(QStringLiteral("^(#{1,6}\\s|>| {0,3}(```|~~~)|\\s*[-*]\\s+\\[[ xX]\\])"));
+  static const QRegularExpression fenced(QStringLiteral("^ {0,3}(`{3,}|~{3,})"));
+  // A fence from the start of the line is a code block; indented, or with a space
+  // before its language, it is kept as written (block(:code)).
+  static const QRegularExpression code(QStringLiteral("^(`{3,}|~{3,})(?:(\\S+)(.*))?$"));
   const auto block = [](const QString& kind, const QString& said) {
     return QJsonObject{{QStringLiteral("kind"), kind}, {QStringLiteral("text"), said}, {QStringLiteral("checked"), false},
                        {QStringLiteral("linkedPageId"), QJsonValue::Null}};
@@ -375,11 +384,20 @@ std::pair<QString, QList<QJsonObject>> parseMarkdown(const QString& markdown) {
     QRegularExpressionMatch match;
     if (line.trimmed().isEmpty()) {
       ++i;
-    } else if (line.startsWith(QLatin1String("```"))) {
-      QStringList code{line};
-      while (++i < lines.size() && !lines.at(i).startsWith(QLatin1String("```"))) code.append(lines.at(i));
-      if (i < lines.size()) code.append(lines.at(i++));
-      blocks.append(block(QStringLiteral("paragraph"), code.join(QLatin1Char('\n'))));
+    } else if ((match = fenced.match(line)).hasMatch()) {
+      const QString fence = match.captured(1);
+      QStringList inside;
+      while (++i < lines.size() && !lines.at(i).trimmed().startsWith(fence)) inside.append(lines.at(i));
+      const QString close = i < lines.size() ? lines.at(i++) : QString();
+      if ((match = code.match(line)).hasMatch()) {
+        QJsonObject fencedCode = block(QStringLiteral("code"), inside.join(QLatin1Char('\n')));
+        if (fence != QLatin1String("```")) fencedCode.insert(QStringLiteral("fence"), fence);
+        if (!match.captured(2).isEmpty()) fencedCode.insert(QStringLiteral("language"), match.captured(2));
+        if (!match.captured(3).isEmpty()) fencedCode.insert(QStringLiteral("info"), match.captured(3));
+        blocks.append(fencedCode);
+      } else {
+        blocks.append(block(QStringLiteral("raw"), (QStringList{line} + inside + QStringList{close}).join(QLatin1Char('\n'))));
+      }
     } else if ((match = title.match(line)).hasMatch()) {
       // A `# ` heading anywhere but the top is an ordinary heading.
       if (blocks.isEmpty() && pageTitle.isNull()) {
@@ -478,6 +496,9 @@ Answer insertBlock(FakeMc& mc, const QString& space, const QString& pageId, cons
   if (kind == QLatin1String("checklist")) block.insert(QStringLiteral("checked"), spec.value(QLatin1String("checked")).toBool());
   if (kind == QLatin1String("subpage_link")) block.insert(QStringLiteral("linkedPageId"), linked);
   if (kind == QLatin1String("heading") && !level.isUndefined()) block.insert(QStringLiteral("level"), level.toInt());
+  for (const QLatin1String extra : {QLatin1String("language"), QLatin1String("fence"), QLatin1String("info")}) {
+    if (kind == QLatin1String("code") && !text(spec, extra).isEmpty()) block.insert(extra, spec.value(extra));
+  }
   if (kind == QLatin1String("image")) {
     block.insert(QStringLiteral("imageId"), imageId);
     if (text(block, QLatin1String("text")).isEmpty()) block.insert(QStringLiteral("text"), image.value(QLatin1String("name")));
@@ -1567,6 +1588,11 @@ void actOnBlock(World& world, const QString& said, const QString& action, QVaria
   act(world, action, payload);
 }
 
+// The diagram a page holds, as its block's text is now.
+struct Diagram {
+  QString source;
+};
+
 // The item named `objectName` in `item`'s tree (a ListView's delegates are only its items' children).
 QQuickItem* findEditor(QQuickItem* item, const QString& objectName) {
   if (item->objectName() == objectName) return item;
@@ -2240,6 +2266,105 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("the page to show the block %1; %2").arg(said, describe(world)); });
     return editor;
   };
+  // Mermaid diagrams on a page: imported as the MC reads a "mermaid" fence (a
+  // code block in "mermaid" holding the bare source), and drawn by the page
+  // through the fake renderer (MermaidSteps.cpp).
+  static const QMap<QString, QString> kDiagrams{
+      {QStringLiteral("flowchart"), mermaid::kFlowchart},
+      {QStringLiteral("graph"), QStringLiteral("graph TD\n  Cart --> Pay")},
+      {QStringLiteral("sequenceDiagram"), QStringLiteral("sequenceDiagram\n  Cart->>Pay: order")},
+      {QStringLiteral("stateDiagram-v2"), QStringLiteral("stateDiagram-v2\n  [*] --> Cart")},
+      {QStringLiteral("gantt"), QStringLiteral("gantt\n  title Launch\n  section Build\n  MC :a1, 2026-11-01, 3d")},
+      {QStringLiteral("block-beta"), QStringLiteral("block-beta\n  columns 2\n  Cart Pay")}};
+  // Imports a page holding `source`, then `after` paragraphs, and shows it.
+  const auto importDiagram = [drawPage](World& world, const QString& source, int after) {
+    QString markdown = QStringLiteral("# Ordering\n\nHow an order is paid:\n\n```mermaid\n%1\n```\n").arg(source);
+    for (int step = 1; step <= after; ++step) markdown += QStringLiteral("\nStep %1 of paying.\n").arg(step);
+    world.mc.part<Diagram>().source = source;
+    look(world, current(world));
+    act(world, QStringLiteral("space.page.importMarkdown"), {{QStringLiteral("markdown"), markdown}});
+    expectShown(world, [&] { return column(viewOf(world)->blocks(), QStringLiteral("text")).contains(source); }, QStringLiteral("the imported page"));
+    world.brick = drawPage(world);
+  };
+  const auto sourceEditor = [](World& world) {
+    return findEditor(world.brick->root(), QStringLiteral("spaceBlockEditor:") + world.mc.part<Diagram>().source);
+  };
+  step(QStringLiteral("the user imports a page holding a %1 Mermaid diagram").arg(q), [importDiagram](World& world, const Captures& c, const Table&) {
+    expect(kDiagrams.contains(c[0]), QStringLiteral("no %1 diagram to import").arg(c[0]));
+    importDiagram(world, kDiagrams.value(c[0]), 0);
+  });
+  step(QStringLiteral("the user imports a page holding a flowchart with an unclosed bracket"), [importDiagram](World& world, const Captures&, const Table&) {
+    importDiagram(world, mermaid::kBrokenFlowchart, 0);
+  });
+  // Paragraphs after it, enough to scroll it out of the page.
+  step(QStringLiteral("a page with a flowchart"), [importDiagram](World& world, const Captures&, const Table&) {
+    importDiagram(world, mermaid::kFlowchart, 40);
+  });
+  step(QStringLiteral("the page has a diagram block of the type %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString source = world.mc.part<Diagram>().source;
+    expect(source.section(QLatin1Char('\n'), 0, 0).section(QLatin1Char(' '), 0, 0) == c[0], QStringLiteral("the page holds a %1 diagram, not %2").arg(c[0], source));
+    expectShown(world, [&] {
+      const QList<QVariantMap>& rows = viewOf(world)->blocks()->rows();
+      return std::any_of(rows.cbegin(), rows.cend(), [&](const QVariantMap& block) {
+        return block.value(QStringLiteral("kind")) == QLatin1String("code") && block.value(QStringLiteral("language")) == QLatin1String("mermaid") &&
+               block.value(QStringLiteral("text")) == source;
+      });
+    }, QStringLiteral("a code block in \"mermaid\" holding the diagram"));
+  });
+  step(QStringLiteral("on the desktop and the phone the diagram is drawn"), [sourceEditor](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, [&] { return QStringLiteral("the diagram to be drawn; %1").arg(describe(world)); });
+    expect(mermaid::drawn(world).first()->property("width").toReal() > 0, QStringLiteral("the diagram is drawn with no width"));
+    expect(!sourceEditor(world)->isVisible(), QStringLiteral("the diagram's source shows with its picture"));
+  });
+  step(QStringLiteral("the user is told %1 diagrams cannot be drawn yet").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString wanted = c[0] + QStringLiteral(" diagrams cannot be drawn yet.");
+    world.waitFor([&] {
+      const QList<QQuickItem*> notes = mermaid::shown(world, QStringLiteral("mermaidStatus"));
+      return notes.size() == 1 && notes.first()->property("text") == wanted;
+    }, QStringLiteral("the user to be told \"%1\"").arg(wanted));
+  });
+  step(QStringLiteral("the user adds a node to its source"), [sourceEditor](World& world, const Captures&, const Table&) {
+    Diagram& diagram = world.mc.part<Diagram>();
+    Brick& page = *world.brick;
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, QStringLiteral("the diagram to be drawn"));
+    QQuickItem* toggle = findEditor(page.root(), QStringLiteral("spaceDiagramSource:") + diagram.source);
+    expect(toggle && toggle->isVisible(), QStringLiteral("no way to the diagram's source"));
+    QTest::mouseClick(&page.window(), Qt::LeftButton, Qt::NoModifier, page.at(toggle));
+    QQuickItem* editor = sourceEditor(world);
+    world.waitFor([&] { return editor->isVisible(); }, QStringLiteral("the diagram's source to show"));
+    QTest::mouseClick(&page.window(), Qt::LeftButton, Qt::NoModifier, page.at(editor, 0.05, 0.2));
+    world.waitFor([&] { return editor->hasActiveFocus(); }, QStringLiteral("the source to take the keyboard"));
+    QTest::keyClick(&page.window(), Qt::Key_End, Qt::ControlModifier);
+    QTest::keyClick(&page.window(), Qt::Key_Return);
+    for (const QChar character : QStringLiteral("  Pay --> Done")) QTest::keyClick(&page.window(), character.toLatin1());
+    QTest::keyClick(&page.window(), Qt::Key_Return, Qt::ControlModifier);
+    diagram.source += QStringLiteral("\n  Pay --> Done");
+  });
+  step(QStringLiteral("the diagram is drawn again with the new node"), [sourceEditor](World& world, const Captures&, const Table&) {
+    const QString source = world.mc.part<Diagram>().source;
+    world.waitFor([&] {
+      const QList<QQuickItem*> drawn = mermaid::drawn(world);
+      return drawn.size() == 1 && findEditor(world.brick->root(), QStringLiteral("spaceDiagram:") + source) && !sourceEditor(world)->isVisible();
+    }, [&] { return QStringLiteral("the new source to be drawn; %1").arg(describe(world)); });
+    expect(mermaid::asked(world) == 2, QStringLiteral("the MC was asked %1 times, not for the first and the new source").arg(mermaid::asked(world)));
+  });
+  step(QStringLiteral("the export writes the new source"), [](World& world, const Captures&, const Table&) {
+    world.clipboard.clear();
+    actOnPage(world, viewOf(world)->pageId(), QStringLiteral("space.page.copyMarkdown"), {});
+    const QString fence = QStringLiteral("```mermaid\n%1\n```").arg(world.mc.part<Diagram>().source);
+    world.waitFor([&] { return world.clipboard.contains(fence); }, [&] { return QStringLiteral("the export to hold %1; it holds \"%2\"").arg(fence, world.clipboard); });
+  });
+  step(QStringLiteral("the user scrolls the page past it and back"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, QStringLiteral("the diagram to be drawn"));
+    QQuickItem* list = findEditor(world.brick->root(), QStringLiteral("spaceBlocks"));
+    QMetaObject::invokeMethod(list, "positionViewAtEnd");
+    world.waitFor([&] { return mermaid::drawn(world).isEmpty(); }, QStringLiteral("the page to scroll past the diagram"));
+    QMetaObject::invokeMethod(list, "positionViewAtBeginning");
+    world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, QStringLiteral("the diagram to be back"));
+  });
+  step(QStringLiteral("the diagram is not drawn again"), [](World& world, const Captures&, const Table&) {
+    expect(mermaid::asked(world) == 1, QStringLiteral("the MC was asked to draw it %1 times").arg(mermaid::asked(world)));
+  });
   step(QStringLiteral("the page %1 holds a table the page does not model yet").arg(q), [](World& world, const Captures& c, const Table&) {
     givenBlock(world, c[0], QStringLiteral("raw"), kTable);
   });
@@ -3425,3 +3550,20 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+namespace mermaid {
+
+bool onPage(World& world) {
+  return world.brick && findEditor(world.brick->root(), QStringLiteral("spaceBlocks"));
+}
+
+void expectPageSource(World& world) {
+  const QString source = world.mc.part<Diagram>().source;
+  world.waitFor([&] {
+    QQuickItem* editor = findEditor(world.brick->root(), QStringLiteral("spaceBlockEditor:") + source);
+    return editor && editor->isVisible() && editor->property("text") == source && asked(world) == 1;
+  }, [&] { return QStringLiteral("the diagram's source; %1").arg(describe(world)); });
+  expect(drawn(world).isEmpty(), QStringLiteral("a picture is drawn"));
+}
+
+}  // namespace mermaid

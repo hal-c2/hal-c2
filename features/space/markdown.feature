@@ -12,6 +12,7 @@
 #   apps/server-ex/lib/hal_c2/space/markdown.ex, apps/server-ex/lib/hal_c2/space/blocks.ex,
 #     apps/server-ex/lib/hal_c2/space/table.ex
 #   packages/contracts/src/space.ts (SpaceBlock, SpaceWritableBlockKind, SpaceTable, SpaceTableEdit)
+#   apps/desktop-qt/qml/HalC2/Bricks/SpaceBlock.qml (a page's diagram on the desktop)
 
 Feature: GitHub Markdown in a page
   A page reads and writes GitHub Markdown. Whatever a page models (headings, paragraphs,
@@ -661,7 +662,7 @@ Feature: GitHub Markdown in a page
       Then the page shows the new text, named "bash"
 
   # https://github.com/hal-c2/hal-c2/issues/843
-  @backlog @mc @shared
+  @mc @shared @backlog-mc @backlog-mobile @backlog-tui
   Rule: Mermaid diagrams
 
     # The diagram is drawn by the one Mermaid renderer the pages, the chat and the file
