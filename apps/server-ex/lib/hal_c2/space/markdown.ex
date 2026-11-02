@@ -12,14 +12,17 @@ defmodule HalC2.Space.Markdown do
   is a `raw` block: its Markdown source, kept as written. A block whose blank lines
   above it are not the usual ones keeps them in `gap`, the text between the end of the
   line above and the block (`"\n"` for none, `"\n\n\n"` for two), so they are written
-  back too. `document/2` of `blocks/1` is therefore the Markdown it was given, apart from
+  back too, except for no blank line at all where the block would then join the one above
+  it now (a paragraph under a paragraph, once the heading between them is deleted).
+  `document/2` of `blocks/1` is therefore the Markdown it was given, apart from
   two normalisations: CRLF line ends are read as LF (as is any carriage return at the
   end of a line), and the document ends with exactly one newline (trailing blank lines
   are dropped, a missing newline is added).
 
   `parse/1` and `export/3` add the title: a document that starts with a `# ` heading
-  imports as a page of that title and exports as it was, while a page imported from a
-  document with no title on top gains one when exported. `blocks/1` and `document/2` are
+  imports as a page of that title and exports as it was (a title written another way,
+  `#  Title` or below blank lines, comes back as `# Title`), while a page imported from
+  a document with no title on top gains one when exported. `blocks/1` and `document/2` are
   the same without the title, for Markdown that is not a page's own.
 
   A chart's table comes back as Markdown too, as a raw block: only `space.block.visualize`
@@ -42,21 +45,38 @@ defmodule HalC2.Space.Markdown do
   defp join(blocks, title_of, start) do
     {parts, _} =
       Enum.map_reduce(blocks, start, fn block, above ->
-        {[separator(above, block), render(block, title_of)], block["kind"]}
+        text = render(block, title_of)
+        separator = separator(above, block, text)
+        # The document's first line reads as its top: `---` there is front matter.
+        lead = if above == :start and separator == "", do: "", else: "\n"
+        {[separator, text], {block["kind"], lead <> text}}
       end)
 
     IO.iodata_to_binary(parts)
   end
 
-  defp separator(above, block) do
-    case {above, block["kind"], gap(block)} do
-      {:start, _, nil} -> ""
-      {:start, _, "\n" <> gap} -> gap
-      {"checklist", "checklist", nil} -> "\n"
-      {_, _, nil} -> "\n\n"
-      {_, _, gap} -> gap
+  defp separator(above, block, text) do
+    case {gap(block), above} do
+      {nil, _} -> usual(above, block["kind"])
+      {"\n" <> gap, :start} -> gap
+      {"\n", {_kind, over}} -> if apart?(over, text), do: "\n", else: usual(above, block["kind"])
+      {gap, _} -> gap
     end
   end
+
+  # What is between a block and the one above it when it has no gap of its own.
+  defp usual(:start, _kind), do: ""
+  defp usual({"checklist", _text}, "checklist"), do: "\n"
+  defp usual(_above, _kind), do: "\n\n"
+
+  # Whether `text` right under the block above, with no blank line between, still reads as
+  # blocks of its own. It did where it was read, but not under any block: once the heading
+  # it sat under is deleted, a paragraph right under another paragraph would join it.
+  # `over` starts with a blank line unless it is the document's top.
+  defp apart?(over, text),
+    do: texts(over <> "\n" <> text) == texts(over) ++ texts("\n" <> text)
+
+  defp texts(markdown), do: markdown |> blocks() |> Enum.map(&{&1["kind"], &1["text"]})
 
   # Only blank lines below a line end make a gap; anything else reads as the usual one.
   defp gap(%{"gap" => "\n" <> _ = gap}), do: if(String.trim(gap) == "", do: gap)
@@ -91,18 +111,30 @@ defmodule HalC2.Space.Markdown do
   @doc """
   The title and blocks Markdown holds, each block a map of `kind`, `text`, `checked`,
   `linkedPageId` and, when it has them, `level`, `imageId` and `gap`. The title is a
-  leading `# ` heading, if any.
+  leading level 1 heading, if any.
   """
   @spec parse(String.t()) :: {String.t() | nil, [map]}
   def parse(markdown) do
-    case blocks(markdown) do
-      [%{"kind" => "heading", "level" => 1} = top | rest] when not is_map_key(top, "gap") ->
-        {top["text"], rest}
+    blocks = blocks(markdown)
 
-      blocks ->
-        {nil, blocks}
+    case blocks |> List.first(%{}) |> title() do
+      nil -> {nil, blocks}
+      title -> {title, tl(blocks)}
     end
   end
+
+  # The title a document's first block gives: a level 1 heading, however it is spaced and
+  # whatever blank lines are above it. The page writes it back as `# Title`.
+  defp title(%{"kind" => "heading", "level" => 1, "text" => text}), do: text
+
+  defp title(%{"kind" => "raw", "text" => text}) do
+    case Regex.run(~r/^ {0,3}#[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/, text) do
+      [_, title] when title != "" -> title
+      _ -> nil
+    end
+  end
+
+  defp title(_block), do: nil
 
   @doc "The blocks of `markdown`, a title at the top being an ordinary level 1 heading."
   @spec blocks(String.t()) :: [map]
@@ -340,7 +372,7 @@ defmodule HalC2.Space.Markdown do
   # --- the blocks of what was read ------------------------------------------------------
 
   # Each part as blocks: a block in a form `render/2` gives back exactly, else raw. A
-  # gap is kept on a block only where it is not what `separator/2` would write.
+  # gap is kept on a block only where it is not the usual one.
   defp specs(segments) do
     segments
     |> Enum.flat_map(fn {blank, what, lines} ->
@@ -348,9 +380,9 @@ defmodule HalC2.Space.Markdown do
       [{"\n" <> Enum.map_join(blank, &(&1 <> "\n")), first, first_lines} | rest]
     end)
     |> Enum.map_reduce(:start, fn {gap, block, _lines}, above ->
-      usual = separator(above, block) |> then(&if(above == :start, do: "\n" <> &1, else: &1))
+      usual = usual(above, block["kind"]) |> then(&if(above == :start, do: "\n" <> &1, else: &1))
       block = if gap == usual, do: block, else: Map.put(block, "gap", gap)
-      {block, block["kind"]}
+      {block, {block["kind"], nil}}
     end)
     |> elem(0)
   end
