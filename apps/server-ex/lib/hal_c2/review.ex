@@ -166,8 +166,11 @@ defmodule HalC2.Review do
 
         try do
           if File.exists?(index) do
+            # Dated before the copy: an index Git rewrites in between only makes
+            # the copy older, so more of its entries stay racy, never fewer.
+            {:ok, %{mtime: mtime}} = File.stat(index, time: :posix)
             File.cp!(index, scratch)
-            backdate(scratch, index)
+            backdate(scratch, mtime)
           else
             Git.ok(root, ~w(read-tree --empty), env: env)
           end
@@ -193,10 +196,7 @@ defmodule HalC2.Review do
   # older than its index: a file rewritten at the same size within the second the
   # index was written would read as unchanged. Dating the copy a second before the
   # index keeps those entries racy, so Git compares their contents.
-  defp backdate(scratch, index) do
-    {:ok, %{mtime: mtime}} = File.stat(index, time: :posix)
-    File.touch!(scratch, max(mtime - 1, 0))
-  end
+  defp backdate(scratch, mtime), do: File.touch!(scratch, max(mtime - 1, 0))
 
   # Numstat first, for complete file statistics; then the patch, capped at `limit`.
   defp tracked_diff(root, ref, paths, limit, ignore_ws, env) do
@@ -417,7 +417,10 @@ defmodule HalC2.Review do
     cwd = real(cwd)
     roots = [Path.join(HalC2.Paths.data_dir(), "worktrees") | HalC2.Projects.roots()]
 
-    if Enum.any?(roots, &inside?(cwd, real(&1))) do
+    # A resolved cwd under a root as written is under that root; only a root
+    # reached through a link needs resolving, and then only when none matched.
+    if Enum.any?(roots, &inside?(cwd, Path.expand(&1))) or
+         Enum.any?(roots, &inside?(cwd, real(&1))) do
       :ok
     else
       {:error,

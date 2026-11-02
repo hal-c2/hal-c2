@@ -56,9 +56,12 @@ void ThreadDiff::tell(const Facts& before) {
   if (now.canRevert != before.canRevert || now.revertTurn != before.revertTurn || now.reverting != before.reverting) emit revertChanged();
 }
 
-void ThreadDiff::setThread(const QString& environmentId, const QString& threadId, TimelineModel* timeline) {
+void ThreadDiff::setThread(const QString& environmentId, const QString& threadId, TimelineModel* timeline, const QString& cwd) {
   const bool sameThread = environmentId == m_environment && threadId == m_threadId;
-  if (sameThread && timeline == m_timeline) return;
+  if (sameThread && timeline == m_timeline) {
+    setCheckout(cwd);
+    return;
+  }
   const Facts before = facts();
   if (!sameThread) {
     if (!m_threadId.isEmpty()) m_choices.insert(m_environment + QLatin1Char(':') + m_threadId, {m_selection, m_baseRef});
@@ -102,6 +105,7 @@ void ThreadDiff::setThread(const QString& environmentId, const QString& threadId
       follow();
     });
   }
+  m_cwd = cwd;
   takeCheckpoints();
   tell(before);
 }

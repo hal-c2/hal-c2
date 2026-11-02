@@ -754,12 +754,24 @@ struct Rewind : Step<Rewind> {
 
 // --- The user ----------------------------------------------------------------------
 
+// The thread's checkout becomes `cwd`; the checkout's own choices go with it.
+void checkOut(Model& model, const QString& cwd) {
+  if (cwd == model.cwd) return;
+  model.cwd = cwd;
+  if (cwd.isEmpty() && model.selection <= ThreadDiff::WorkingTree) model.selection = -1;
+  model.load();
+}
+
 struct SetThread : Step<SetThread> {
   QString thread = *oneOf(kThreads);
   bool timeline = *rc::gen::weightedElement<bool>({{4, true}, {1, false}});
+  QString cwd = *oneOf(kCheckouts);
   explicit SetThread(const Model&) {}
   void apply(Model& model) const override {
-    if (thread == model.thread && timeline == model.timeline) return;
+    if (thread == model.thread && timeline == model.timeline) {
+      checkOut(model, cwd);
+      return;
+    }
     if (thread != model.thread) {
       if (!model.thread.isEmpty()) model.choices_.insert(model.thread, {model.selection, model.base});
       const auto [selection, base] = model.choices_.value(thread, {-1, QString()});
@@ -778,10 +790,16 @@ struct SetThread : Step<SetThread> {
       model.setStatus(QStringLiteral("idle"));
     }
     model.timeline = timeline;
+    // The thread's choice is checked against its own checkout.
+    model.cwd = cwd;
     model.readCheckpoints();
   }
-  void act(const Model&, Sut& sut) const { sut.diff->setThread(kEnvironment, thread, timeline ? sut.timelines.at(thread).get() : nullptr); }
-  void show(std::ostream& os) const override { os << "open " << thread.toStdString() << (timeline ? "" : " before its timeline"); }
+  void act(const Model&, Sut& sut) const {
+    sut.diff->setThread(kEnvironment, thread, timeline ? sut.timelines.at(thread).get() : nullptr, cwd);
+  }
+  void show(std::ostream& os) const override {
+    os << "open " << thread.toStdString() << (timeline ? "" : " before its timeline") << " on '" << cwd.toStdString() << "'";
+  }
 };
 
 struct SetActive : Step<SetActive> {
@@ -798,13 +816,7 @@ struct SetActive : Step<SetActive> {
 struct SetCheckout : Step<SetCheckout> {
   QString cwd = *oneOf(kCheckouts);
   explicit SetCheckout(const Model&) {}
-  void apply(Model& model) const override {
-    if (cwd == model.cwd) return;
-    model.cwd = cwd;
-    // The checkout's own choices go with it.
-    if (cwd.isEmpty() && model.selection <= ThreadDiff::WorkingTree) model.selection = -1;
-    model.load();
-  }
+  void apply(Model& model) const override { checkOut(model, cwd); }
   void act(const Model&, Sut& sut) const { sut.diff->setCheckout(cwd); }
   void show(std::ostream& os) const override { os << "checkout '" << cwd.toStdString() << "'"; }
 };

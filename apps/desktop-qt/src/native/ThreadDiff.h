@@ -100,9 +100,10 @@ public:
 
   ThreadDiff(McClient* client, Notify notify, QObject* parent = nullptr);
 
-  // The thread shown, and its timeline (for its checkpoints and whether it is
-  // working; it may come later than the thread).
-  void setThread(const QString& environmentId, const QString& threadId, TimelineModel* timeline);
+  // The thread shown, its timeline (for its checkpoints and whether it is
+  // working; it may come later than the thread) and its checkout, which the
+  // thread's restored choice is checked against.
+  void setThread(const QString& environmentId, const QString& threadId, TimelineModel* timeline, const QString& cwd);
   // The thread's checkout, for reviewing it; empty when it has none.
   void setCheckout(const QString& cwd);
   // Where the thread works in its repository ("packages/web"; empty at its
