@@ -2,7 +2,7 @@
 #   apps/server-ex/lib/hal_c2/upgrade.ex (plan, hot load, restart with exit 75, outcome)
 #   apps/server-ex/lib/hal_c2/upgrade/source.ex (cache, cluster peer, release URL, SHA-256)
 #   apps/server-ex/lib/hal_c2/upgrade/code.ex (a code-only version's release, on the running runtime)
-#   apps/server-ex/lib/hal_c2/hot.ex (md5 skip, code_change, soft purge, lingering modules)
+#   apps/server-ex/lib/hal_c2/hot.ex (md5 skip, code_change, soft purge, lingering modules, NIFs)
 #   apps/server-ex/lib/mix/tasks/hal_c2.upgrade.ex, hal_c2.bundle.ex
 #   apps/server-ex/lib/hal_c2/web/router.ex (GET /api/upgrade/:token, POST /api/dev/reload)
 #   mise-tasks/mc/reload
@@ -326,6 +326,20 @@ Feature: MC self-update and hot upgrades
     When new code loads
     Then that module is reported as lingering
     And the process is not killed
+
+  @mc
+  Scenario: A reload that cannot free the version before last names who holds it
+    Given a process is blocked inside a module being replaced
+    And new code loads
+    When newer code loads
+    Then the reload is refused naming the blocked process
+    And the process is not killed
+
+  @mc
+  Scenario: A module that loads native code is never loaded in place
+    Given a changed module that loads a NIF
+    When new code loads
+    Then it is reported as native and left unloaded
 
   @mc
   Scenario: Socket state from an older version is migrated at its next message

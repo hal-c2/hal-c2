@@ -78,7 +78,7 @@ const Steps steps([] {
     world.waitFor([&] { return mermaid::drawn(world).size() == 1; }, [&] { return describeNotes(world); });
   });
   // The terminal's; the desktop draws the diagram.
-  step(QStringLiteral("in the terminal the diagram's source is shown, named as a %1 diagram").arg(q), [](World&, const Captures&, const Table&) {});
+  step(QStringLiteral("in the terminal the diagram is drawn in characters, or its source is shown, named as a %1 diagram").arg(q), [](World&, const Captures&, const Table&) {});
   step(QStringLiteral("the user is told where the mistake is"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] {
       const QList<QQuickItem*> notes = mermaid::shown(world, QStringLiteral("mermaidStatus"));

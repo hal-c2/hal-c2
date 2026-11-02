@@ -10,7 +10,7 @@ defmodule HalC2.Web do
     _ = token()
 
     [
-      plug: HalC2.Web.Router,
+      plug: HalC2.Web.Entry,
       ip: ip,
       port: port,
       startup_log: false,

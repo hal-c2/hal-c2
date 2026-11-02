@@ -11,11 +11,14 @@ import {
   type TuiFilesState,
 } from "../../../src/host/filesState.ts";
 import { FILES_ELSEWHERE, hostedHere } from "../../../src/thisMachine.ts";
+import { plainText } from "../../../src/host/styledText.ts";
 import { step } from "../../steps.ts";
+import { BROKEN_FLOWCHART, MERMAID_SOURCES, mermaidFence, serveMermaid } from "../fakeMermaid.ts";
 import { PREVIEW_FILES } from "../filePreviewFixtures.ts";
 import { chooseCommand } from "../threadUi.ts";
 import { advance, findObject, pressKey, settle, typeText, type World } from "../world.ts";
 import { ensureOpen, type FilesWorld, openFile } from "./files.steps.ts";
+import { expectSource, type MermaidWorld } from "./mermaid.steps.ts";
 
 interface ViewerWorld extends World {
   /** The MC's reason for refusing to write a path. */
@@ -83,7 +86,10 @@ const writes = (ctx: World) =>
 async function expectShown(ctx: World, rendered: boolean) {
   const screen = await settle(ctx);
   const file = viewer(ctx);
-  const preview = PREVIEW_FILES[file.path]!;
+  const preview = PREVIEW_FILES[file.path];
+  // A Mermaid file the MC cannot draw shows its text under the reason.
+  if (!preview && (ctx as MermaidWorld).diagram) return expectSource(ctx);
+  if (!preview) throw new Error(`no preview fixture for ${file.path}`);
   expect(file).toMatchObject({ status: "ready", renderable: true });
   expect(file.rendered !== null).toBe(rendered);
   for (const text of rendered ? preview.rendered : preview.source) expect(screen).toContain(text);
@@ -101,6 +107,27 @@ step("the user switches to the source", async (ctx: World) => {
 step("the user switches back", async (ctx: World) => {
   await pressKey(ctx, "s");
 });
+
+// A Markdown file holds the diagram in a "mermaid" code block; a .mmd file is the diagram.
+step(
+  /^"[^"]+" holds the file "([^"]+)" with a flowchart( with an unclosed bracket| in it)$/,
+  (ctx: FilesWorld & MermaidWorld, path: string, how: string) => {
+    serveMermaid(ctx);
+    const source = how === " in it" ? MERMAID_SOURCES.flowchart! : BROKEN_FLOWCHART;
+    const contents = path.endsWith(".md")
+      ? `# Checkout\n\n${mermaidFence(source)}\n`
+      : `${source}\n`;
+    ctx.files = { ...ctx.files, [path]: contents };
+    ctx.diagram = {
+      source,
+      lines: async () => {
+        const screen = await settle(ctx);
+        const rendered = viewer(ctx).rendered;
+        return rendered ? rendered.map(plainText) : screen.split("\n");
+      },
+    };
+  },
+);
 
 // --- The environment's editor ---------------------------------------------------------
 

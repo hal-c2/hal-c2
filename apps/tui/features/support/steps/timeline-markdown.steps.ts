@@ -6,7 +6,16 @@ import { TextAttributes } from "@opentui/core";
 
 import { THEME } from "../../../src/theme.ts";
 import { step } from "../../steps.ts";
-import { findObject, snapshot } from "../world.ts";
+import {
+  BROKEN_FLOWCHART,
+  MERMAID_SOURCES,
+  mermaidAsks,
+  mermaidDrawing,
+  mermaidFence,
+  serveMermaid,
+} from "../fakeMermaid.ts";
+import { expectSource, type MermaidWorld } from "./mermaid.steps.ts";
+import { findObject, settle as settleUi, snapshot } from "../world.ts";
 import { clickText, hostState, plain, recorded, settle } from "../threadWorld.ts";
 import {
   addItem,
@@ -21,13 +30,15 @@ import {
   type TurnWorld,
 } from "../turnWorld.ts";
 
-interface MarkdownWorld extends TurnWorld {
+interface MarkdownWorld extends TurnWorld, MermaidWorld {
   /** The text of the reply being written. */
   written?: string;
   /** The drawn row of the first paragraph, before the reply grew. */
   firstParagraph?: unknown;
   /** The code block's lines before it was closed. */
   codeBefore?: string[];
+  /** The code the agent has written so far, in the block it is still writing. */
+  codeSoFar?: string[];
 }
 
 const SOURCE =
@@ -276,20 +287,20 @@ step("the paragraphs already shown are not drawn again", async (ctx: MarkdownWor
 });
 
 step("the agent is writing a code block", async (ctx: MarkdownWorld) => {
-  await startWriting(
-    ctx,
-    "Checking the refund path:\n\n```py\ndef refund(order):\n    return order.total",
-  );
+  ctx.codeSoFar = ["def refund(order):", "    return order.total"];
+  await startWriting(ctx, `Checking the refund path:\n\n\`\`\`py\n${ctx.codeSoFar.join("\n")}`);
 });
 
 step("the code written so far is shown as a code block", async (ctx: MarkdownWorld) => {
   const code = codeLines(ctx);
   ctx.codeBefore = code.map((line) => plain(line.text));
-  expect(ctx.codeBefore).toEqual(["def refund(order):", "    return order.total"]);
+  expect(ctx.codeBefore).toEqual(ctx.codeSoFar!);
   for (const line of code) expect(line.text.chunks[0]!.fg).toEqual(THEME.warning);
   const screen = await snapshot(ctx);
-  expect(screen).toContain("def refund(order):");
+  expect(screen).toContain(ctx.codeSoFar![0]!);
   expect(screen).not.toContain("```");
+  // Nothing is drawn from a block the agent is still writing.
+  expect(ctx.fake!.settings.callsTo("mermaid.render")).toEqual([]);
 });
 
 step("the agent closes the code block", async (ctx: MarkdownWorld) => {
@@ -337,4 +348,62 @@ step("the message is shown on two lines", async (ctx: MarkdownWorld) => {
   const first = rows.findIndex((row) => row.includes("Thanks!"));
   expect(first).toBeGreaterThan(-1);
   expect(rows[first + 1]).toContain("What about refunds?");
+});
+
+// --- Mermaid diagrams (the MC draws them in characters: fakeMermaid.ts) ----------------
+
+/** The reply's diagram is the one on screen; its lines are the reply's. */
+const showsDiagram = (ctx: MarkdownWorld, source: string) => {
+  ctx.diagram = { source, lines: async () => linesOf(reply(ctx)) };
+};
+
+step(
+  /^the agent answers with a "mermaid" code block holding a flowchart( with an unclosed bracket)?$/,
+  async (ctx: MarkdownWorld, broken?: string) => {
+    serveMermaid(ctx);
+    const source = broken ? BROKEN_FLOWCHART : MERMAID_SOURCES.flowchart!;
+    await answer(ctx, `Here is the checkout:\n\n${mermaidFence(source)}`);
+    await settleUi(ctx);
+    showsDiagram(ctx, source);
+  },
+);
+
+step("the user can switch to the diagram's source and copy it", async (ctx: MarkdownWorld) => {
+  const source = ctx.diagram!.source;
+  await clickText(ctx, "⇄ Source");
+  await expectSource(ctx);
+  expect(linesOf(reply(ctx))).toContain("◇ flowchart diagram · source");
+  await clickText(ctx, source.split("\n")[1]!.trim());
+  expect(ctx.clipboard).toEqual([source]);
+  await clickText(ctx, "⇄ Drawing");
+  expect(linesOf(reply(ctx))).toContain(mermaidDrawing(source)[1]!);
+});
+
+step("the diagram's source is shown as a code block", async (ctx: MarkdownWorld) => {
+  await expectSource(ctx);
+  const code = codeLines(ctx).filter((line) => copyOf(line)!.text === ctx.diagram!.source);
+  const sourceLines = ctx.diagram!.source.split("\n");
+  const shownSource = code.filter((line) => sourceLines.includes(plain(line.text)));
+  expect(shownSource).toHaveLength(sourceLines.length);
+  for (const line of shownSource) expect(line.text.chunks[0]!.fg).toEqual(THEME.warning);
+});
+
+step(
+  "the agent is still writing a {string} code block",
+  async (ctx: MarkdownWorld, info: string) => {
+    serveMermaid(ctx);
+    const source = MERMAID_SOURCES.flowchart!;
+    ctx.codeSoFar = source.split("\n");
+    await startWriting(ctx, `Here is the checkout:\n\n\`\`\`${info}\n${source}`);
+    showsDiagram(ctx, source);
+  },
+);
+
+step("the diagram is drawn", async (ctx: MarkdownWorld) => {
+  await settleUi(ctx);
+  const { source } = ctx.diagram!;
+  const lines = linesOf(reply(ctx));
+  expect(lines).toContain("◇ flowchart diagram");
+  for (const text of mermaidDrawing(source)) expect(lines).toContain(text);
+  expect(mermaidAsks(ctx, source)).toBe(1);
 });
