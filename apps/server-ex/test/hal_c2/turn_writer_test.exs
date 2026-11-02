@@ -35,7 +35,7 @@ defmodule HalC2.Orchestration.TurnWriterTest do
         turn: %{streaming_mode: mode},
         items: %{
           "a" => %{id: "i1", message: nil, kind: :assistant},
-          "c" => %{id: "i2", message: nil, kind: :command}
+          "c" => %{id: "i2", node: "n2", message: nil, kind: :command}
         },
         buffer: %{},
         flush_timer: nil
@@ -72,6 +72,33 @@ defmodule HalC2.Orchestration.TurnWriterTest do
       assert text("i1")["text"] == ""
       _ = TurnWriter.flush(state)
       assert text("i1")["text"] == "One\n\nTwo"
+    end
+
+    test "a completed command whose output says it failed is marked failed" do
+      {:ok, _} = HalC2.Streams.commit("t1", :thread, [{"node", "n2", %{"s" => %{"id" => "n2"}}}])
+
+      for {output, failed} <- [
+            {"zsh: command not found: vpx\n", true},
+            {"cat: x: No such file or directory\n", true},
+            {"Process exited with exit code 1\n", true},
+            {"Cannot find path 'C:\\x' because it does not exist.", true},
+            {"Process exited with exit code 0\n", nil},
+            {"ok\n", nil}
+          ] do
+        _ =
+          TurnWriter.finish_item(
+            state("paragraph"),
+            "c",
+            "completed",
+            &Map.put(&1, "output", output)
+          )
+
+        assert text("i2")["outputIndicatesFailure"] == failed, output
+
+        HalC2.Streams.commit("t1", :thread, [
+          {"turn-item", "i2", %{"u" => ["outputIndicatesFailure"]}}
+        ])
+      end
     end
   end
 end
