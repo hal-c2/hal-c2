@@ -102,6 +102,13 @@ defmodule HalC2.Steps.Space.Markdown do
     context
   end
 
+  step "the first row's {string} in the table of {string} reads {string}",
+       %{args: [column, title, text]} = context do
+    %{"table" => %{"rows" => [head, first | _]}} = table(context, title)
+    assert Enum.at(first, Enum.find_index(head, &(&1 == column))) == text
+    context
+  end
+
   step "the user changes the {string} of {string} in the table of {string} to {string}",
        %{args: [column, row, title, text]} = context do
     %{"table" => %{"rows" => [head | _] = rows}} = table(context, title)

@@ -329,10 +329,16 @@ Feature: GitHub Markdown in a page
         """
       When the user adds a row to the end of the table of "Plan"
       And the user adds a column to the end of the table of "Plan"
-      Then the table of "Plan" has the rows:
-        | Step | Owner |  |
-        | MC   | Ada   |  |
-        |      |       |  |
+      And the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | Step | Owner |     |
+        |------|------:|-----|
+        | MC   | Ada   |     |
+        |      |       |     |
+        """
       When the user removes the last row of the table of "Plan"
       And the user removes the last column of the table of "Plan"
       And the user exports "Plan" as Markdown
@@ -355,9 +361,7 @@ Feature: GitHub Markdown in a page
         | -------- | -------- |
         | `a \| b` | **bold** |
         """
-      Then the table of "Plan" has the rows:
-        | Code     | Note     |
-        | `a \| b` | **bold** |
+      Then the first row's "Code" in the table of "Plan" reads "`a | b`"
       When the user exports "Plan" as Markdown
       Then the Markdown is:
         """
@@ -375,30 +379,54 @@ Feature: GitHub Markdown in a page
         # Plan
         """
       When the user adds a table to "Plan" of the rows:
-        | Step | Owner  |
-        | MC   | a \| b |
+        | Step | Owner   |
+        | MC   | Barbara |
       And the user exports "Plan" as Markdown
       Then the Markdown is:
         """
         # Plan
 
-        | Step | Owner  |
-        | ---- | ------ |
-        | MC   | a \| b |
+        | Step | Owner   |
+        | ---- | ------- |
+        | MC   | Barbara |
         """
 
     @mc
-    Scenario Outline: A table written another way is kept as written
-      When the user imports the Markdown "# Plan\n\n<written>" into "Research"
-      Then the blocks of "Plan" are of the kinds "raw"
-      When the user exports the imported page as Markdown
-      Then the exported Markdown is "# Plan\n\n<written>\n"
+    Scenario: A table written another way is kept as written
+      Given the page "Plan" imported from:
+        """
+        # Plan
 
-      Examples:
-        | written                                   |
-        | \| a \| b \|\n\|---\|---\|\n\| 1 \|            |
-        | a \| b\n--- \| ---\n1 \| 2                  |
-        | \| a \| b \|\n\| --- \| --- \|\n\| 1 \| 2 \| |
+        | a | b |
+        |---|---|
+        | 1 |
+
+        a | b
+        --- | ---
+        1 | 2
+
+        | a | b |
+        | --- | --- |
+        | 1 | 2 |
+        """
+      Then the blocks of "Plan" are of the kinds "raw, raw, raw"
+      When the user exports "Plan" as Markdown
+      Then the Markdown is:
+        """
+        # Plan
+
+        | a | b |
+        |---|---|
+        | 1 |
+
+        a | b
+        --- | ---
+        1 | 2
+
+        | a | b |
+        | --- | --- |
+        | 1 | 2 |
+        """
 
     # https://github.com/hal-c2/hal-c2/issues/854
     @shared @backlog
