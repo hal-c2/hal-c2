@@ -1129,6 +1129,27 @@ Item {
             verify(!editor.visible);
         }
 
+        // What the user writes in the source is saved when they leave it, and
+        // drawn once the MC has it.
+        function test_aSavedEditToTheDiagramSourceIsDrawnAgain() {
+            const source = "flowchart LR\n  Cart --> Pay";
+            const page = openDiagram(source);
+            Diagrams.answer(source, "dark", { status: "drawn", kind: "flowchart", url: "", width: 120, height: 40 });
+            findChild(page.screen, "spaceDiagramSource:" + page.text).clicked();
+            const editor = findChild(page.screen, "spaceBlockEditor:" + page.text);
+            editor.forceActiveFocus();
+            const ours = "```mermaid\n" + source + "\n  Pay --> Ship\n```";
+            editor.text = ours;
+            editor.focus = false;
+            compare(dispatched("space.block.update")[0].text, ours);
+
+            Spaces.blocks.setProperty(0, "text", ours);
+            verify(("dark\n" + source + "\n  Pay --> Ship") in Diagrams.asked, "the new source is asked for");
+            Diagrams.answer(source + "\n  Pay --> Ship", "dark", { status: "drawn", kind: "flowchart", url: "", width: 120, height: 60 });
+            verify(findChild(page.screen, "spaceDiagram:" + ours).visible, "drawn again with the new node");
+            verify(!editor.visible, "in place of the source");
+        }
+
         // Another client's or an agent's edit arriving mid-sentence neither
         // hides the source nor takes the keyboard away.
         function test_anEditFromElsewhereLeavesTheDiagramSourceBeingWritten() {
