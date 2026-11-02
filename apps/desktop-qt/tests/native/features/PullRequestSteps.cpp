@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSet>
+#include <QUrl>
 
 #include <QQuickItem>
 #include <QTest>
@@ -48,6 +49,10 @@ struct FakePullRequests {
   // The host's stack: its base and its layers' numbers, bottom first.
   QString stackBase;
   QList<int> stack;
+  // The pull requests GitHub will not show (or knows as issues), and the
+  // link a message in the conversation mentions.
+  QSet<int> unreadable;
+  QString mentioned;
 };
 
 QString hostKey(const QJsonObject& reference) {
@@ -116,6 +121,22 @@ const FakeMc::Extension pullRequests([](FakeMc& mc) {
     mc.part<FakePullRequests>().invalidated.append(rpc.payload.value(QLatin1String("reference")).toObject());
     syncLinks(mc, mc.part<FakePullRequests>().thread);
     mc.reply(rpc, QJsonValue::Null);
+  });
+  // What a link's hover card shows (pull_requests.ex preview/1, through GitHub only).
+  mc.onRpc(QStringLiteral("pullRequests.preview"), [&mc](const FakeMc::Rpc& rpc) {
+    const FakePullRequests& fake = mc.part<FakePullRequests>();
+    const int number = rpc.payload.value(QLatin1String("number")).toInt();
+    const QJsonObject held = fake.host.value(hostKey(rpc.payload));
+    if (rpc.payload.value(QLatin1String("host")) != QLatin1String("github.com") || held.isEmpty() || fake.unreadable.contains(number)) {
+      return mc.refuse(rpc, QStringLiteral("Pull request not found."));
+    }
+    mc.reply(rpc, QJsonObject{{QStringLiteral("number"), number}, {QStringLiteral("title"), held.value(QLatin1String("title"))},
+                              {QStringLiteral("url"), QStringLiteral("https://github.com/%1/pull/%2").arg(rpc.payload.value(QLatin1String("repository")).toString()).arg(number)},
+                              {QStringLiteral("isDraft"), held.value(QLatin1String("isDraft"))}, {QStringLiteral("state"), held.value(QLatin1String("state"))},
+                              {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T06:00:00Z")},
+                              {QStringLiteral("author"), QJsonObject{{QStringLiteral("login"), QStringLiteral("ada")}, {QStringLiteral("name"), QStringLiteral("Ada Lovelace")}}},
+                              {QStringLiteral("projectId"), rpc.payload.value(QLatin1String("projectId"))},
+                              {QStringLiteral("repository"), rpc.payload.value(QLatin1String("repository"))}});
   });
 });
 
@@ -190,6 +211,40 @@ void setOnline(World& world, bool online) {
                    {QStringLiteral("mc"), world.mc.name}, {QStringLiteral("online"), online}});
   world.sync();
   world.waitFor([&] { return model(world).online() == online; }, [&] { return describe(world); });
+}
+
+// The link the scenario's message mentions, as drawn in the thread's view:
+// the Markdown text holding it and a point on it, in window coordinates.
+struct LinkSpot {
+  QQuickItem* text = nullptr;
+  QPoint at;
+};
+
+LinkSpot mentionedLink(World& world) {
+  if (!world.brick) world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nThreadView {}\n", QSize(820, 700));
+  const QString wanted = world.mc.part<FakePullRequests>().mentioned;
+  LinkSpot spot;
+  const std::function<void(QQuickItem*)> find = [&](QQuickItem* item) {
+    if (spot.text || !item->isVisible()) return;
+    if (item->inherits("QQuickTextEdit")) {
+      for (qreal y = 2; y < item->height() && !spot.text; y += 4) {
+        for (qreal x = 2; x < item->width(); x += 4) {
+          QString link;
+          QMetaObject::invokeMethod(item, "linkAt", Q_RETURN_ARG(QString, link), Q_ARG(qreal, x), Q_ARG(qreal, y));
+          if (link == wanted) {
+            spot = {item, item->mapToScene(QPointF(x, y)).toPoint()};
+            break;
+          }
+        }
+      }
+    }
+    for (QQuickItem* child : item->childItems()) find(child);
+  };
+  world.waitFor([&] {
+    find(world.brick->window().contentItem());
+    return spot.text != nullptr;
+  }, QStringLiteral("the message to show a link to %1").arg(wanted));
+  return spot;
 }
 
 const Steps steps([] {
@@ -672,6 +727,113 @@ const Steps reviewSteps([] {
     addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("I opened %1 for the tax line.").arg(c[1])}});
     settleRun(world, QStringLiteral("completed"), 30);
     waitForRow(world, 42, false);
+    world.mc.part<FakePullRequests>().mentioned = c[1];
+  });
+  // GitHub writes "#42" through its issue page, pull request or not.
+  step(QStringLiteral("a message in %1 mentions %1 of %1, which the message links to GitHub's page for issue (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAt(world, c[0]);
+    const QString url = QStringLiteral("https://github.com/%1/issues/%2").arg(c[2], c[3]);
+    startRun(world, 30);
+    addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("The tax line is fixed in [%1](%2).").arg(c[1], url)}});
+    settleRun(world, QStringLiteral("completed"), 30);
+    world.mc.part<FakePullRequests>().mentioned = url;
+  });
+  step(QStringLiteral("the host knows (\\d+) as (a pull request|an issue)"), [](World& world, const Captures& c, const Table&) {
+    if (c[1] == QLatin1String("an issue")) world.mc.part<FakePullRequests>().unreadable.insert(c[0].toInt());
+  });
+  step(QStringLiteral("the MC cannot read pull request (\\d+)"), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<FakePullRequests>().unreadable.insert(c[0].toInt());
+  });
+  step(QStringLiteral("no project is checked out from that host"), [](World& world, const Captures&, const Table&) {
+    const QString host = QUrl(world.mc.part<FakePullRequests>().mentioned).host();
+    for (const QJsonObject& project : std::as_const(world.mc.projects)) {
+      const QString key = project.value(QLatin1String("repositoryIdentity")).toObject().value(QLatin1String("canonicalKey")).toString();
+      expect(key.section(QLatin1Char('/'), 0, 0) != host, QStringLiteral("%1 is checked out from %2").arg(key, host));
+    }
+  });
+  step(QStringLiteral("the user rests the pointer on that link"), [](World& world, const Captures&, const Table&) {
+    // The card says how long ago the pull request was opened.
+    world.setTime(QStringLiteral("2026-09-23T09:00:00Z"));
+    const LinkSpot spot = mentionedLink(world);
+    // From off the text: the pointer may still rest where the previous scenario left it.
+    QTest::mouseMove(&world.brick->window(), QPoint(1, 1));
+    QTest::mouseMove(&world.brick->window(), spot.at);
+    world.sync();
+  });
+  step(QStringLiteral("a card shows %1 #(\\d+), its state, its title, its author and when it was opened").arg(q), [](World& world, const Captures& c, const Table&) {
+    Brick& brick = *world.brick;
+    const QStringList drawn{c[0], QStringLiteral("#") + c[1], QStringLiteral("Open"), QStringLiteral("Tax line fix"), QStringLiteral("Ada Lovelace (@ada)"), QStringLiteral("opened 3h ago")};
+    world.waitFor([&] { return std::all_of(drawn.cbegin(), drawn.cend(), [&](const QString& text) { return brick.shows(text); }); },
+                  [&] {
+                    QStringList missing;
+                    for (const QString& text : drawn) {
+                      if (!brick.shows(text)) missing.append(text);
+                    }
+                    return QStringLiteral("the card to show %1").arg(missing.join(QStringLiteral(", ")));
+                  });
+  });
+  step(QStringLiteral("the card shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    PullRequestLinkPreviews* previews = world.native().controller<RightPanelController>()->linkPreviews();
+    world.waitFor([&] { return world.brick->shows(c[0]); },
+                  [&] { return QStringLiteral("the card to show the address; the link is %1 and %2").arg(previews->address(), previews->status()); });
+    expect(!world.brick->shows(QStringLiteral("Tax line fix")), QStringLiteral("the card shows the pull request it could not read"));
+  });
+  step(QStringLiteral("the user clicks that link( holding the modifier key)?"), [](World& world, const Captures& c, const Table&) {
+    const LinkSpot spot = mentionedLink(world);
+    // The desktop follows a link on the primary modifier; Shift as well forces the browser.
+    Qt::KeyboardModifiers modifiers = Qt::ControlModifier;
+    if (!c[0].isEmpty()) modifiers |= Qt::ShiftModifier;
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, modifiers, spot.at);
+    world.sync();
+  });
+  step(QStringLiteral("pull request (\\d+) (opens|does not open) in HAL-C2"), [](World& world, const Captures& c, const Table&) {
+    const QString tab = QStringLiteral("pull-request:github.com/acme/shop#") + c[0];
+    const auto active = [&] { return at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")).toString(); };
+    if (c[1] == QLatin1String("opens")) {
+      world.waitFor([&] { return active() == tab; }, [&] { return QStringLiteral("the review to open; the panel is %1").arg(show(world.state(QStringLiteral("panel")))); });
+      expect(world.openedUrls.isEmpty(), QStringLiteral("the browser opened %1 as well").arg(world.openedUrls.value(0).toString()));
+    } else {
+      expect(active() != tab, QStringLiteral("the review opened"));
+    }
+  });
+  step(QStringLiteral("it is not opened as a pull request of the public host"), [](World& world, const Captures&, const Table&) {
+    for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+      expect(rpc.method != QLatin1String("pullRequests.preview"), QStringLiteral("the MC was asked to read %1").arg(show(rpc.payload.toVariantMap())));
+    }
+    expect(!at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")).toString().startsWith(QLatin1String("pull-request:")),
+           show(world.state(QStringLiteral("panel"))));
+  });
+
+  // The right-click on a pull request's number (PullRequestsPanel.qml, the review's header).
+  const auto numberMenu = [](World& world, const QString& url) {
+    world.bridge().dispatch(QStringLiteral("pullRequest.linkMenu"), QVariantMap{{QStringLiteral("url"), url}, {QStringLiteral("x"), 300}, {QStringLiteral("y"), 200}});
+    world.sync();
+  };
+  step(QStringLiteral("the user opens the menu of the number of a pull request of (GitHub|GitLab|Forgejo|Bitbucket|Azure DevOps)"), [numberMenu](World& world, const Captures& c, const Table&) {
+    static const QHash<QString, QString> pages{
+        {QStringLiteral("GitHub"), QStringLiteral("https://github.com/acme/shop/pull/42")},
+        {QStringLiteral("GitLab"), QStringLiteral("https://gitlab.com/acme/shop/-/merge_requests/42")},
+        {QStringLiteral("Forgejo"), QStringLiteral("https://codeberg.org/acme/shop/pulls/42")},
+        {QStringLiteral("Bitbucket"), QStringLiteral("https://bitbucket.org/acme/shop/pull-requests/42")},
+        {QStringLiteral("Azure DevOps"), QStringLiteral("https://dev.azure.com/acme/shop/_git/shop/pullrequest/42")},
+    };
+    numberMenu(world, pages.value(c[0]));
+  });
+  step(QStringLiteral("the clipboard cannot be written and the browser cannot be opened"), [](World& world, const Captures&, const Table&) {
+    world.clipboardFails = true;
+    world.browserFails = true;
+  });
+  step(QStringLiteral("the user chooses %1 from the menu of a pull request number").arg(q), [numberMenu](World& world, const Captures& c, const Table&) {
+    numberMenu(world, QStringLiteral("https://github.com/acme/shop/pull/42"));
+    const QVariant menu = world.state(QStringLiteral("menu"));
+    for (const QVariant& item : at(menu, QStringLiteral("items")).toList()) {
+      if (item.toMap().value(QStringLiteral("label")) != c[0]) continue;
+      world.bridge().dispatch(QStringLiteral("menu.select"),
+                              QVariantMap{{QStringLiteral("requestId"), at(menu, QStringLiteral("requestId"))}, {QStringLiteral("id"), item.toMap().value(QStringLiteral("id"))}});
+      world.sync();
+      return;
+    }
+    fail(QStringLiteral("the menu is %1").arg(show(menu)));
   });
   step(QStringLiteral("the user links that pull request from the mention"), [](World& world, const Captures&, const Table&) {
     world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nThreadView {}\n", QSize(820, 700));

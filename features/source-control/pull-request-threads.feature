@@ -453,26 +453,26 @@ Feature: Threads that work on or link pull requests
     When the user links that pull request from the mention
     Then "Tax work" lists pull request 42
 
-  @backlog @desktop
+  @desktop
   Scenario: Hovering a pull request link shows what it points to
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user rests the pointer on that link
     Then a card shows "acme/shop" #42, its state, its title, its author and when it was opened
 
-  @backlog @desktop
+  @desktop
   Scenario: A pull request link that cannot be read shows the address
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     And the MC cannot read pull request 42
     When the user rests the pointer on that link
     Then the card shows "https://github.com/acme/shop/pull/42"
 
-  @backlog @desktop
+  @desktop
   Scenario: Clicking a pull request link opens it in HAL-C2
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user clicks that link
     Then pull request 42 opens in HAL-C2
 
-  @backlog @desktop
+  @desktop
   Scenario: Clicking a pull request link the MC cannot resolve opens it in the browser
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     And the MC cannot read pull request 42
@@ -480,7 +480,7 @@ Feature: Threads that work on or link pull requests
     Then the browser opens "https://github.com/acme/shop/pull/42"
 
   # Legacy: apps/web/src/lib/openPullRequestLink.test.ts (shouldOpenPullRequestExternally)
-  @backlog @desktop
+  @desktop
   Scenario: A click with the modifier key opens a pull request link in the browser
     Given a message in "Tax work" mentions "https://github.com/acme/shop/pull/42"
     When the user clicks that link holding the modifier key
@@ -488,7 +488,7 @@ Feature: Threads that work on or link pull requests
     And pull request 42 does not open in HAL-C2
 
   # Legacy: apps/web/src/lib/openPullRequestLink.test.ts (findProjectForChangeRequest keeps two hosts apart, claims nothing for a lookalike host)
-  @backlog @desktop
+  @desktop
   Scenario Outline: A link on a host no project is checked out from goes to the browser
     Given a message in "Tax work" mentions "<link>"
     And no project is checked out from that host
@@ -502,7 +502,7 @@ Feature: Threads that work on or link pull requests
       | https://github.com.evil.test/acme/shop/pull/42 |
 
   # Legacy: apps/web/src/lib/openPullRequestLink.test.ts (parseChangeRequestUrl claims nothing it cannot be sure of)
-  @backlog @desktop
+  @desktop
   Scenario Outline: A link that is not a pull request is left to the browser
     Given a message in "Tax work" mentions "<link>"
     When the user clicks that link
@@ -517,7 +517,7 @@ Feature: Threads that work on or link pull requests
       | https://blog.example.test/2026/updates/pull/3   |
 
   # Legacy: apps/web/src/lib/openPullRequestLink.ts (pullRequestCandidateUrlFromReferenceAutolink), apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx (confirmBeforeOpen)
-  @backlog @desktop
+  @desktop
   Scenario: A written number that is a pull request opens as one
     Given a message in "Tax work" mentions "#42" of "acme/shop", which the message links to GitHub's page for issue 42
     And the host knows 42 as a pull request
@@ -525,14 +525,14 @@ Feature: Threads that work on or link pull requests
     Then pull request 42 opens in HAL-C2
 
   # Legacy: apps/web/src/lib/openPullRequestLink.ts (pullRequestCandidateUrlFromReferenceAutolink), apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx (onOpenFallback)
-  @backlog @desktop
+  @desktop
   Scenario: A written number that is an issue opens in the browser
     Given a message in "Tax work" mentions "#42" of "acme/shop", which the message links to GitHub's page for issue 42
     And the host knows 42 as an issue
     When the user clicks that link
     Then the browser opens "https://github.com/acme/shop/issues/42"
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A pull request number can be copied or opened where it lives
     When the user opens the menu of the number of a pull request of <host>
     Then the menu offers "Copy link" and "<open>"
@@ -545,7 +545,7 @@ Feature: Threads that work on or link pull requests
       | Bitbucket    | Open on Bitbucket    |
       | Azure DevOps | Open on Azure DevOps |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The pull request number's menu says when it could not act
     Given the clipboard cannot be written and the browser cannot be opened
     When the user chooses "<choice>" from the menu of a pull request number
