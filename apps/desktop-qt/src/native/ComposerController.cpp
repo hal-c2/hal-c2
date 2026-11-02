@@ -2288,20 +2288,24 @@ QJsonObject ComposerController::newThreadSelection(const QString& environmentId,
     }
   }
   if (selection.isEmpty()) selection = setting(QStringLiteral("defaultModelSelection"));
-  // A page's ask then takes the model of the thread the user worked in last, as
-  // the MC would (page_agent.ex), while its provider can run it.
-  if (selection.isEmpty() && onPage() && projectId == pageProject()) {
+  // A page's ask then takes the model of the user's latest thread in its project,
+  // from the threads the MC counts (page_agent.ex): not those a plugin or an agent
+  // started, and deleted ones have left the store. Where the MC would give way to
+  // the first provider that runs, this takes an older thread whose provider can.
+  if (selection.isEmpty() && onPage() && !projectId.isEmpty() && projectId == pageProject()) {
     QString latest;
     for (const sidebar::Thread& thread : m_store->threads()) {
-      if (thread.environmentId != environmentId || thread.updatedAt < latest) continue;
-      if (m_store->projectRow(environmentId, thread.projectId).isEmpty()) continue;
+      if (thread.environmentId != environmentId || thread.projectId != projectId || thread.updatedAt < latest) continue;
+      if (!thread.createdBy.isEmpty() && thread.createdBy != QLatin1String("user")) continue;
       const composer::Instance* instance = instanceOf(thread.modelSelection);
       if (!instance || !instance->ready()) continue;
       latest = thread.updatedAt;
       selection = thread.modelSelection;
     }
   }
-  // Then the model last sent with, while its provider can still run it.
+  // Then the model last sent with from this device, while its provider can still
+  // run it. The MC has no such fallback; a page's ask lands here only when the
+  // project has no thread of the user's to take a model from.
   if (selection.isEmpty()) {
     const QJsonObject last = m_kept.lastModels.value(m_kept.lastInstance);
     const composer::Instance* instance = instanceOf(last);

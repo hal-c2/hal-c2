@@ -110,6 +110,12 @@ Feature: A page's prompt is the timeline's prompt
       When the user starts an ask on "Roadmap"
       Then the prompt of "Roadmap" says the ask runs in the project "shop" on the model of "Work"
 
+    Scenario: An ask in another project takes the model the user last used there
+      Given the thread "Notes" of the project "docs" runs on another model
+      And the user starts an ask on "Roadmap"
+      When the user chooses the project "docs" in the prompt of "Roadmap"
+      Then the prompt of "Roadmap" says the ask runs in the project "docs" on the model of "Notes"
+
     Scenario Outline: An ask from a page's prompt takes what the user chose
       Given the user starts an ask on "Roadmap"
       And the user chooses <choice> in the prompt of "Roadmap"
