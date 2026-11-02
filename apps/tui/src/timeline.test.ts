@@ -220,14 +220,24 @@ describe("working indicator", () => {
     expect(workingElapsedSeconds(started, now)).toBe(12);
   });
 
-  it("counts from the message while the turn has not begun, and keeps counting from it", () => {
+  it("counts from the message while the turn has not begun, then from when it began", () => {
     const requestedAt = "2026-06-19T00:00:00.000Z";
     const starting = thread({ latestTurn: { requestedAt, startedAt: null } as never });
     expect(workingStartedAt(starting)).toBe(requestedAt);
+    const startedAt = "2026-06-19T00:00:04.000Z";
+    const begun = thread({ latestTurn: { requestedAt, startedAt } as never });
+    expect(workingStartedAt(begun)).toBe(startedAt);
+  });
+
+  it("does not count a promoted queued turn from when it was queued", () => {
+    // Queued an hour before the agent got to it; the timer starts when it began.
     const begun = thread({
-      latestTurn: { requestedAt, startedAt: "2026-06-19T00:00:04.000Z" } as never,
+      latestTurn: {
+        requestedAt: "2026-06-19T00:00:00.000Z",
+        startedAt: "2026-06-19T01:00:00.000Z",
+      } as never,
     });
-    expect(workingStartedAt(begun)).toBe(requestedAt);
+    expect(workingStartedAt(begun)).toBe("2026-06-19T01:00:00.000Z");
   });
 
   it("writes the timer in whole seconds, then minutes", () => {

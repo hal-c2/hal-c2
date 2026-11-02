@@ -28,6 +28,14 @@ describe("thoughtPreview", () => {
     expect(thoughtPreview("Try:\n```sh\nbun test\n```", "Thought")).toBe("Try: bun test");
   });
 
+  it("leaves snake_case and code spans alone", () => {
+    expect(thoughtPreview("Checking `user_id_map` in my_module_name", "Thought")).toBe(
+      "Checking user_id_map in my_module_name",
+    );
+    expect(thoughtPreview("It is _done_ and __done__", "Thought")).toBe("It is done and done");
+    expect(thoughtPreview("Use `a*b*c` or `**kwargs`", "Thought")).toBe("Use a*b*c or **kwargs");
+  });
+
   it("falls back when there are no words", () => {
     expect(thoughtPreview("  \n<br>\n", "Thought")).toBe("Thought");
     expect(thoughtPreview("", "Thought")).toBe("Thought");

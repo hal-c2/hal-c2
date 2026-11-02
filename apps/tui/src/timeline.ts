@@ -333,14 +333,14 @@ export function isWorking(detail: OrchestrationThread): boolean {
 }
 
 /**
- * When the working timer counts from: the message that asked for the turn.
- * The turn has no start time while the agent's session is still starting, and
- * counting from the message keeps the timer from blinking out, or jumping back,
- * when the agent begins.
+ * When the working timer counts from: when the agent began the turn, or the
+ * message that asked for it while the agent's session is still starting
+ * (deriveActiveWorkStartedAt), so the timer does not blink out meanwhile. Not
+ * the message once begun: a queued message keeps the time it was queued.
  */
 export function workingStartedAt(detail: OrchestrationThread): string | null {
   const turn = detail.latestTurn;
-  return turn?.requestedAt ?? turn?.startedAt ?? null;
+  return turn?.startedAt ?? turn?.requestedAt ?? null;
 }
 
 /** Whole seconds elapsed since the active turn started, or null if unknown. */

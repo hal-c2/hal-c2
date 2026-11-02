@@ -298,13 +298,13 @@ step("the elapsed time counts from when the message was sent", async (ctx: Strea
 step("it does not disappear and come back when the agent begins", async (ctx: StreamWorld) => {
   const fixture = await turns(ctx);
   const run = fixture.runs.at(-1)!;
-  // The agent begins two seconds on (`turns` pins the clock, so it moves after).
-  const begun = NOW_MS + 2000;
+  // The agent began at the pinned clock and two seconds have passed; from now on
+  // it counts from when the agent began (deriveActiveWorkStartedAt).
   run.status = "running";
-  run.startedAt = DateTime.makeUnsafe(new Date(begun));
-  ctx.nowMs = begun;
+  run.startedAt = DateTime.makeUnsafe(new Date(NOW_MS));
+  ctx.nowMs = NOW_MS + 2000;
   await sync(ctx);
-  expect(await workingRow(ctx)).toBe("● Working for 9s");
+  expect(await workingRow(ctx)).toBe("● Working for 2s");
 });
 
 // --- durations -------------------------------------------------------------------------

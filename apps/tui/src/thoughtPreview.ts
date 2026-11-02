@@ -6,6 +6,7 @@
  * `fallback`.
  */
 export function thoughtPreview(markdown: string, fallback: string): string {
+  const codes: string[] = [];
   const words = markdown
     // Fenced code keeps its code, not its fences.
     .replace(/^ {0,3}(`{3,}|~{3,})[^\n]*$/gm, "")
@@ -25,11 +26,19 @@ export function thoughtPreview(markdown: string, fallback: string): string {
     .replace(/^ {0,3}([-*_])([ \t]*\1){2,}[ \t]*$/gm, "")
     .replace(/^[ \t]*\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/gm, "")
     .replace(/\|/g, " ")
-    // Emphasis, strikethrough and code spans.
-    .replace(/(\*\*|__|~~)(?=\S)([\s\S]*?\S)\1/g, "$2")
-    .replace(/(\*|_)(?=\S)([^*_\n]*?\S)\1/g, "$2")
-    .replace(/`+([^`\n]*)`+/g, "$1")
+    // Code spans are set aside so emphasis leaves `user_id_map` alone.
+    .replace(/(`+)([^`\n]*?)\1/g, (_, _ticks, code: string) => {
+      codes.push(code);
+      return `\u0000${codes.length - 1}\u0000`;
+    })
+    // Emphasis and strikethrough. As in remark, `_` never opens or closes
+    // inside a word (snake_case), though `*` does (2*3*4 reads 234).
+    .replace(/(\*\*|~~)(?=\S)([\s\S]*?\S)\1/g, "$2")
+    .replace(/(?<![\p{L}\p{N}])__(?=\S)([\s\S]*?\S)__(?![\p{L}\p{N}])/gu, "$1")
+    .replace(/\*(?=\S)([^*\n]*?\S)\*/g, "$1")
+    .replace(/(?<![\p{L}\p{N}])_(?=\S)([^_\n]*?\S)_(?![\p{L}\p{N}])/gu, "$1")
     .replace(/\\([\\`*_{}[\]()#+\-.!|~>])/g, "$1")
+    .replace(/\u0000(\d+)\u0000/g, (_, index: string) => codes[Number(index)]!)
     .replace(/\s+/g, " ")
     .trim();
   return words || fallback;
