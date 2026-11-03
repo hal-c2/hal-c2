@@ -49,9 +49,11 @@ defmodule HalC2.ThreadArchive do
   """
   @spec build(String.t(), keyword) :: {:ok, archive} | {:error, String.t()}
   def build(ref, opts \\ []) do
-    with {:ok, id} <- find_thread(ref),
-         state = state(id),
-         %{} = thread <- StreamState.get(state, "thread")[id] || {:error, "No thread #{ref}."},
+    with {:ok, id} <- find_thread(ref), do: read(id, &build(&1, id, ref, opts))
+  end
+
+  defp build(state, id, ref, opts) do
+    with %{} = thread <- StreamState.get(state, "thread")[id] || {:error, "No thread #{ref}."},
          {:ok, meta} <- describe(thread) do
       root = meta["projectRoot"]
       cwd = thread["worktreePath"] || root
@@ -612,16 +614,18 @@ defmodule HalC2.ThreadArchive do
   # Every entity as a patch from what this MC has (nothing, or a forwarding record
   # and the copy it left behind), so a thread coming back does not repeat anything.
   defp changes(id, entities, at) do
-    current = state(id)
-    have = for {kind, eid, _} <- StreamState.rows(current), into: MapSet.new(), do: {kind, eid}
     incoming = for {kind, eid, _} <- entities, into: MapSet.new(), do: {kind, eid}
+
+    {have, existing} =
+      read(id, fn current ->
+        {for({kind, eid, _} <- StreamState.rows(current), into: MapSet.new(), do: {kind, eid}),
+         StreamState.lookup(current, incoming)}
+      end)
 
     deletes =
       for {kind, eid} <- have,
           not MapSet.member?(incoming, {kind, eid}),
           do: {kind, eid, Patch.delete(), at}
-
-    existing = StreamState.lookup(current, incoming)
 
     upserts =
       for {kind, eid, entity} <- entities,
@@ -1121,6 +1125,14 @@ defmodule HalC2.ThreadArchive do
     if Process.whereis(HalC2.Streams),
       do: HalC2.Streams.state(id),
       else: StreamState.load(Store.path(), id)
+  end
+
+  # `fun` of the thread's state, its older runs read from disk as they were when it was
+  # taken (`HalC2.Streams.read/2`).
+  defp read(id, fun) do
+    if Process.whereis(HalC2.Streams),
+      do: HalC2.Streams.read(id, fun),
+      else: fun.(StreamState.load(Store.path(), id))
   end
 
   defp project(nil), do: nil

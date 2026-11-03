@@ -262,7 +262,7 @@ defmodule HalC2.Space.PageAgent do
       runs == [] -> {"failed", @never_started}
       stopping? and Enum.any?(runs, &run_to_end?/1) -> nil
       not stopping? and not Delegation.settled?(stream) -> nil
-      true -> run_end(stream, runs)
+      true -> run_end(thread_id, runs)
     end
   end
 
@@ -275,33 +275,35 @@ defmodule HalC2.Space.PageAgent do
 
   # Of the runs that began: one cancelled reached here from the queue, and says nothing of
   # how the work ended.
-  defp run_end(stream, runs) do
+  defp run_end(thread_id, runs) do
     case runs
          |> Enum.reject(&(&1["status"] in ~w(rolled_back queued cancelled)))
          |> HalC2.Projection.Shell.latest_run() do
       %{"status" => "completed"} -> {"completed", nil}
-      %{"status" => "failed"} = run -> {"failed", failure(stream, run)}
+      %{"status" => "failed"} = run -> {"failed", failure(thread_id, run)}
       _ -> {"stopped", @interrupted}
     end
   end
 
   # A failed run's own word on why: its latest error item, or for a plain failure, what
   # its provider session last said.
-  defp failure(stream, %{"id" => run_id}) do
-    stream
-    |> StreamState.run_rows([run_id])
-    |> Enum.flat_map(fn
-      {"turn-item", _, %{"type" => "error"} = item} -> [item]
-      _ -> []
+  defp failure(thread_id, %{"id" => run_id}) do
+    Streams.read(thread_id, fn stream ->
+      stream
+      |> StreamState.run_rows([run_id])
+      |> Enum.flat_map(fn
+        {"turn-item", _, %{"type" => "error"} = item} -> [item]
+        _ -> []
+      end)
+      |> Enum.sort_by(&(&1["ordinal"] || 0))
+      |> List.last(%{})
+      |> Map.get("failure")
+      |> case do
+        %{"message" => message} when is_binary(message) and message != "" -> message
+        message when is_binary(message) and message != "" -> message
+        _ -> last_session_error(stream) || "The agent's turn failed."
+      end
     end)
-    |> Enum.sort_by(&(&1["ordinal"] || 0))
-    |> List.last(%{})
-    |> Map.get("failure")
-    |> case do
-      %{"message" => message} when is_binary(message) and message != "" -> message
-      message when is_binary(message) and message != "" -> message
-      _ -> last_session_error(stream) || "The agent's turn failed."
-    end
   end
 
   defp last_session_error(stream) do

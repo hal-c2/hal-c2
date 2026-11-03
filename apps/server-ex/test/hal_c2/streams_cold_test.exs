@@ -194,6 +194,75 @@ defmodule HalC2.StreamsColdTest do
     assert rows(Streams.state("th")) == whole(path, "th")
   end
 
+  # A read that walked the cold rows after a commit brought one back to memory and a
+  # snapshot wrote the table again saw it changed, or not at all (#964).
+  test "a read walks the cold rows as they were when it took the state", %{path: path} do
+    for i <- 1..8, do: run("th", i, 3)
+    reader = reader(fn -> Server.read(Streams.ensure("th")) end)
+    assert_receive {:took, ^reader, seq}
+
+    {:ok, _} =
+      Streams.commit("th", :thread, [
+        {"turn-item", "r1-i1", %{"a" => %{"text" => "!"}}},
+        {"turn-item", "r1-i2", HalC2.Patch.delete()}
+      ])
+
+    # Snapshots write both again: one as the next runs go cold, one on the way out.
+    for i <- 9..10, do: run("th", i, 3)
+    stop("th")
+
+    send(reader, :walk)
+    assert_receive {:walked, ^reader, walked}
+    assert walked == whole(path, "th", seq)
+    assert {"turn-item", "r1-i2", %{"text" => "1.2"}} = List.keyfind(walked, "r1-i2", 1)
+  end
+
+  test "a read taken while the stream migrates walks it as it took it", %{path: path} do
+    previous = Application.get_env(:hal_c2, :stream_max_legacy_bytes)
+    Application.put_env(:hal_c2, :stream_max_legacy_bytes, 1)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :stream_max_legacy_bytes, previous),
+        else: Application.delete_env(:hal_c2, :stream_max_legacy_bytes)
+    end)
+
+    start_supervised!(Streams.Migrations)
+    for i <- 1..8, do: run("th", i, 3)
+    stop("th")
+    legacy = legacy(path, "th", nil)
+    sql!(path, "DELETE FROM hot_snapshots")
+    sql!(path, "DELETE FROM cold")
+    put_legacy(path, "th", legacy.seq, legacy)
+
+    # The migration waits for its turn while the read is taken and a commit waits for it.
+    test = self()
+
+    holder =
+      spawn_link(fn ->
+        :ok = Streams.Migrations.turn()
+        send(test, :holding)
+        receive do: (:release -> :ok)
+      end)
+
+    assert_receive :holding
+    reader = reader(fn -> Server.read(Streams.ensure("th")) end)
+    assert_receive {:took, ^reader, seq}
+
+    committer =
+      Task.async(fn ->
+        Streams.commit("th", :thread, [{"turn-item", "r1-i2", HalC2.Patch.delete()}])
+      end)
+
+    send(holder, :release)
+    assert {:ok, _} = Task.await(committer)
+
+    send(reader, :walk)
+    assert_receive {:walked, ^reader, walked}
+    assert walked == whole(path, "th", seq)
+    assert List.keyfind(walked, "r1-i2", 1)
+  end
+
   test "the transcript counts what a whole fold shows, cold items included", %{path: path} do
     for i <- 1..3, do: run("src", i, 3)
     {:ok, _} = Streams.commit("src", :thread, [{"thread", "src", %{"s" => %{"id" => "src"}}}])
@@ -275,11 +344,28 @@ defmodule HalC2.StreamsColdTest do
 
   defp fold(events), do: Enum.reduce(events, StreamState.new(), &StreamState.apply_event(&2, &1))
 
-  defp whole(path, id),
+  defp whole(path, id, seq \\ nil),
     do:
       path
-      |> Store.reduce_stream(id, 0, StreamState.new(), &StreamState.apply_event(&2, &1))
+      |> Store.reduce_stream(id, 0, StreamState.new(), fn event, state ->
+        if seq == nil or event.seq <= seq, do: StreamState.apply_event(state, event), else: state
+      end)
       |> rows()
+
+  # A process that takes a state with `take` (`Server.read/1`), says so, and walks it
+  # in `StreamState.read/2` when told to.
+  defp reader(take) do
+    test = self()
+
+    spawn_link(fn ->
+      state = take.()
+      send(test, {:took, self(), state.seq})
+
+      StreamState.read(state, fn state ->
+        receive do: (:walk -> send(test, {:walked, self(), rows(state)}))
+      end)
+    end)
+  end
 
   defp rows(state), do: state |> StreamState.rows() |> Enum.to_list()
 

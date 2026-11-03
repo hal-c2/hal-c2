@@ -220,8 +220,20 @@ defmodule HalC2.Streams.Server do
     end
   end
 
+  @doc """
+  The stream's state as of now. Its cold rows are read as the store holds them when
+  they are read, which a commit since may have changed: a lookup by key
+  (`HalC2.StreamState.fetch/3`) is fine, but whatever walks them takes `read/1`.
+  """
   @spec state(GenServer.server()) :: StreamState.t()
   def state(server), do: GenServer.call(server, :state, :infinity)
+
+  @doc """
+  The stream's state as of now, its cold rows pinned to it (`HalC2.StreamState.pin/1`),
+  for `HalC2.StreamState.read/2`.
+  """
+  @spec read(GenServer.server()) :: StreamState.t()
+  def read(server), do: GenServer.call(server, :read, :infinity)
 
   @doc """
   Returns once the stream's cold rows are all on disk: at once, unless it is still
@@ -274,6 +286,8 @@ defmodule HalC2.Streams.Server do
        # The process writing an older MC's cold rows (`migrate/3`), and who waits on it.
        migration: migration,
        cold_waiters: [],
+       # Readers of the migrating state, sent its pin once the migration is done.
+       pins: [],
        # Memory holds this many turn items before the stream tries to demote some.
        demote_at: 2 * StreamState.hot_items(),
        shell_scheduled: false,
@@ -292,16 +306,19 @@ defmodule HalC2.Streams.Server do
     state = drop(state, pid)
     {view, initial} = initial(state, pid, offset, client)
 
-    relays =
+    state =
       if node(pid) == node() do
-        initial.()
-        state.relays
+        initial.(state.stream)
+        state
       else
-        Map.put(state.relays, pid, Relay.start(pid, initial))
+        # Its relay reads the cold rows after the stream moved on: pinned to now.
+        stream = StreamState.pin(state.stream)
+        relay = Relay.start(pid, fn -> StreamState.read(stream, initial) end)
+        %{state | relays: Map.put(state.relays, pid, relay)} |> pinned(stream, relay)
       end
 
     sub = %{ref: Process.monitor(pid), view: view, name: name(state.id, client)}
-    {:reply, :ok, %{state | subscribers: Map.put(state.subscribers, pid, sub), relays: relays}}
+    {:reply, :ok, %{state | subscribers: Map.put(state.subscribers, pid, sub)}}
   end
 
   # Nothing to write is nothing to tell anyone; the stream stays where it is.
@@ -349,6 +366,12 @@ defmodule HalC2.Streams.Server do
   end
 
   def handle_call(:state, _from, state), do: {:reply, state.stream, state, timeout(state)}
+
+  def handle_call(:read, {pid, _}, state) do
+    stream = StreamState.pin(state.stream)
+    state = pinned(state, stream, pid)
+    {:reply, stream, state, timeout(state)}
+  end
 
   def handle_call(:await_cold, from, %{migration: pid} = state) when is_pid(pid),
     do: {:noreply, %{state | cold_waiters: [from | state.cold_waiters]}, timeout(state)}
@@ -491,6 +514,8 @@ defmodule HalC2.Streams.Server do
   # The cold rows are on disk: the hot snapshot written with them makes them the
   # stream's, and the older MC's snapshot goes.
   def handle_info({:hal_c2_cold_migrated, pid}, %{migration: pid} = state) do
+    # Its readers' pins, before the snapshot changes what they read.
+    for reader <- state.pins, do: send(reader, {:hal_c2_pin, self(), Store.pin(state.path)})
     stream = StreamState.migrated(state.stream)
     {snapshot, cold} = StreamState.snapshot(stream, [], false)
     :ok = Store.put_snapshot(Store, state.id, stream.seq, snapshot, cold)
@@ -502,7 +527,8 @@ defmodule HalC2.Streams.Server do
       | stream: StreamState.written(stream),
         snapshot_seq: stream.seq,
         migration: nil,
-        cold_waiters: []
+        cold_waiters: [],
+        pins: []
     }
 
     {:noreply, compact(state), timeout(state)}
@@ -565,6 +591,7 @@ defmodule HalC2.Streams.Server do
      |> Map.put_new(:demote_at, 2 * StreamState.hot_items())
      |> Map.put_new(:migration, nil)
      |> Map.put_new(:cold_waiters, [])
+     |> Map.put_new(:pins, [])
      |> Map.merge(%{
        v: @state_version,
        stream:
@@ -635,17 +662,17 @@ defmodule HalC2.Streams.Server do
   defp name(id, _client), do: id
 
   # What a new subscriber is sent from now on, and what sends it the state it
-  # starts from, for the stream or the subscriber's relay to run. Only the log is
-  # read here, so that it ends where the stream stands; the rest is put together
-  # by whoever runs it, from the stream as it is now.
-  defp initial(%{id: id, stream: stream}, pid, _offset, :watch),
-    do: {:watch, fn -> send(pid, {:hal_c2_stream, id, {:live, stream.seq}}) end}
+  # starts from, for the stream or the subscriber's relay to run with the stream as
+  # it is now. Only the log is read here, so that it ends where the stream stands;
+  # the rest is put together by whoever runs it.
+  defp initial(%{id: id}, pid, _offset, :watch),
+    do: {:watch, fn stream -> send(pid, {:hal_c2_stream, id, {:live, stream.seq}}) end}
 
-  defp initial(%{id: id, stream: stream} = state, pid, offset, :plain) do
+  defp initial(%{id: id} = state, pid, offset, :plain) do
     replay = replay(state, offset)
 
     {:plain,
-     fn ->
+     fn stream ->
        case replay do
          events when is_list(events) ->
            events = Enum.reject(events, &StreamState.void?/1)
@@ -681,7 +708,7 @@ defmodule HalC2.Streams.Server do
     replay = resumes? && replay(state, offset)
 
     {view,
-     fn ->
+     fn stream ->
        missed =
          case replay do
            events when is_list(events) ->
@@ -779,6 +806,12 @@ defmodule HalC2.Streams.Server do
       true -> :ok
     end
   end
+
+  # Who waits for the pin of a state handed over while it migrates (`StreamState.pin/1`).
+  defp pinned(state, %{src: {:pin_pending, _, _}}, reader),
+    do: %{state | pins: [reader | state.pins]}
+
+  defp pinned(state, _stream, _reader), do: state
 
   defp schedule_shell(%{shell_scheduled: true} = state), do: state
 

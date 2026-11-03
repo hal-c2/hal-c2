@@ -189,7 +189,6 @@ defmodule HalC2.Mcp.Tools do
   def run("hal_c2_thread_read", args, %{row: me} = caller) do
     with {:ok, row} <- readable_thread(me, args["threadId"]),
          :here <- on_owner(row, "hal_c2_thread_read", args, caller) do
-      state = stream(row["id"])
       view = args["view"] || "messages"
       after_position = args["afterPosition"] || -1
       limit = args["limit"] || 50
@@ -203,33 +202,44 @@ defmodule HalC2.Mcp.Tools do
       # are shown, the page asked for, and the last answer. The answer is picked from the
       # unfiltered turn items: the shown ones may be narrowed to one earlier item by
       # `itemId`.
-      {total, page, last_answer_id} =
-        state
-        |> StreamState.all("turn-item")
-        |> Enum.reduce({0, [], 0, nil}, fn item, {total, page, taken, answer} ->
-          answer = if item["type"] == "assistant_message", do: item["id"], else: answer
+      #
+      # The pass and the messages it shows are read as one (`HalC2.Streams.read/2`).
+      {state, total, page, last_answer_id, messages} =
+        HalC2.Streams.read(row["id"], fn state ->
+          state
+          |> StreamState.all("turn-item")
+          |> Enum.reduce({0, [], 0, nil}, fn item, {total, page, taken, answer} ->
+            answer = if item["type"] == "assistant_message", do: item["id"], else: answer
 
-          cond do
-            not shown?.(item) ->
-              {total, page, taken, answer}
+            cond do
+              not shown?.(item) ->
+                {total, page, taken, answer}
 
-            total > after_position and taken < limit ->
-              {total + 1, [{item, total} | page], taken + 1, answer}
+              total > after_position and taken < limit ->
+                {total + 1, [{item, total} | page], taken + 1, answer}
 
-            true ->
-              {total + 1, page, taken, answer}
-          end
+              true ->
+                {total + 1, page, taken, answer}
+            end
+          end)
+          |> then(fn {total, page, _taken, answer} ->
+            page = Enum.reverse(page)
+
+            messages =
+              for {{"message", id}, message} <-
+                    StreamState.lookup(
+                      state,
+                      for(
+                        {%{"messageId" => id}, _} when is_binary(id) <- page,
+                        do: {"message", id}
+                      )
+                    ),
+                  into: %{},
+                  do: {id, message}
+
+            {state, total, page, answer, messages}
+          end)
         end)
-        |> then(fn {total, page, _taken, answer} -> {total, Enum.reverse(page), answer} end)
-
-      messages =
-        for {{"message", id}, message} <-
-              StreamState.lookup(
-                state,
-                for({%{"messageId" => id}, _} when is_binary(id) <- page, do: {"message", id})
-              ),
-            into: %{},
-            do: {id, message}
 
       read =
         Enum.map(page, fn {item, position} ->
@@ -570,15 +580,16 @@ defmodule HalC2.Mcp.Tools do
   # Only records on messages the user wrote count: an agent cannot widen its own
   # reach by writing a `thread` context record naming a thread elsewhere.
   defp user_attached?(me, thread_id) do
-    me["id"]
-    |> stream()
-    |> StreamState.all("message")
-    |> Enum.any?(fn message ->
-      message["role"] == "user" and message["createdBy"] == "user" and
-        Enum.any?(
-          get_in(message, ["context", "records"]) || [],
-          &(&1["kind"] == "thread" and &1["threadId"] == thread_id)
-        )
+    HalC2.Streams.read(me["id"], fn state ->
+      state
+      |> StreamState.all("message")
+      |> Enum.any?(fn message ->
+        message["role"] == "user" and message["createdBy"] == "user" and
+          Enum.any?(
+            get_in(message, ["context", "records"]) || [],
+            &(&1["kind"] == "thread" and &1["threadId"] == thread_id)
+          )
+      end)
     end)
   end
 

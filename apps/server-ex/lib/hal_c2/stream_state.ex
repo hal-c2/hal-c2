@@ -72,8 +72,18 @@ defmodule HalC2.StreamState do
           floor: integer | nil,
           dirty: %{key => String.t() | nil},
           tally: %{String.t() => %{tag => pos_integer}},
-          src: {path :: String.t(), stream_id :: String.t()} | nil
+          src: src
         }
+
+  # Where cold rows are read from: the store's path; a store whose migration is still
+  # writing them (`load/3`); a read transaction pinned for a reader in another
+  # process (`pin/1`), or one the stream sends that reader once its migration is done.
+  @typep src ::
+           {path :: String.t(), stream_id :: String.t()}
+           | {:migrating, String.t(), String.t(), pid, term}
+           | {:pinned, reference, String.t()}
+           | {:pin_pending, pid, String.t()}
+           | nil
 
   @spec new() :: t
   def new, do: %__MODULE__{}
@@ -407,7 +417,61 @@ defmodule HalC2.StreamState do
     {path, id}
   end
 
+  defp source({:pinned, db, id}), do: {db, id}
+
+  defp source({:pin_pending, _pid, _id}),
+    do: raise(ArgumentError, "a pinned state's cold rows are read inside read/2")
+
   defp source(src), do: src
+
+  @doc """
+  The state for a reader in another process, called by the stream's own process as
+  it hands the state over: its cold rows are read in a read transaction pinned to
+  what the store holds now (`HalC2.Store.pin/1`), which the stream's later snapshots
+  do not change. Otherwise a reader walking them after an entity was brought back to
+  memory and a snapshot written would find it in neither. The reader reads it in
+  `read/2`.
+
+  A migrating stream's cold rows are not all written yet: its reader is sent the pin
+  when they are (`{:hal_c2_pin, stream, pin}`), before the stream writes anything
+  else, and must be added to who the stream sends it to.
+  """
+  @spec pin(t) :: t
+  def pin(%{floor: floor, src: {path, id}} = state) when floor != nil and is_binary(path),
+    do: %{state | src: {:pinned, HalC2.Store.pin(path), id}}
+
+  def pin(%{src: {:migrating, _path, id, pid, _plan}} = state),
+    do: %{state | src: {:pin_pending, pid, id}}
+
+  def pin(state), do: state
+
+  @doc """
+  Runs `fun` with a state `pin/1` handed over, its cold rows read in its pinned
+  transaction, which ends with it: what `fun` returns must not read them lazily any
+  more. Waits for a migrating stream's pin first, and exits if the stream stops
+  before sending it. Any other state is passed as it is.
+  """
+  @spec read(t, (t -> result)) :: result when result: term
+  def read(%{src: {:pin_pending, pid, id}} = state, fun) do
+    ref = Process.monitor(pid)
+
+    receive do
+      {:hal_c2_pin, ^pid, db} ->
+        Process.demonitor(ref, [:flush])
+        read(%{state | src: {:pinned, db, id}}, fun)
+
+      {:DOWN, ^ref, :process, ^pid, reason} ->
+        exit({:stream_down, reason})
+    end
+  end
+
+  def read(%{src: {:pinned, db, _id}} = state, fun) do
+    fun.(state)
+  after
+    HalC2.Store.unpin(db)
+  end
+
+  def read(state, fun), do: fun.(state)
 
   defp stale?(state, {kind, id, _, _, _, _}),
     do: Map.has_key?(state.dirty, {kind, id}) or Map.has_key?(get(state, kind), id)
@@ -600,7 +664,7 @@ defmodule HalC2.StreamState do
   and the state comes back *migrating* (`migration/1`): its cold rows are not
   written yet, and every read of them waits until they are.
   """
-  @spec load(String.t(), String.t(), keyword) :: t
+  @spec load(String.t() | reference, String.t(), keyword) :: t
   def load(path, stream_id, opts \\ []) do
     store = Keyword.get(opts, :store)
     src = {path, stream_id}
@@ -677,6 +741,23 @@ defmodule HalC2.StreamState do
     do: %{state | src: {path, id}}
 
   def migrated(state), do: state
+
+  @doc """
+  `fun` of the stream `stream_id` as the store at `path` holds it, loaded and read in one
+  read transaction (`HalC2.Store.pin/1`), for a reader with no stream process to ask
+  while one may be running and writing snapshots. Whatever `fun` returns must not read
+  the state's cold rows later.
+  """
+  @spec load_read(String.t(), String.t(), (t -> result)) :: result when result: var
+  def load_read(path, stream_id, fun) do
+    db = Store.pin(path)
+
+    try do
+      fun.(load(db, stream_id))
+    after
+      Store.unpin(db)
+    end
+  end
 
   @doc "Bytes of an older MC's snapshot `load/3` reads whole; a longer one migrates in the background."
   @spec max_legacy() :: non_neg_integer

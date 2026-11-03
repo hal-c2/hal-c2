@@ -598,8 +598,37 @@ defmodule HalC2.Store do
     end)
   end
 
-  @doc "The cold rows of `keys` (`{kind, id}`) that a stream holds, in no order."
-  @spec cold_rows(String.t(), String.t(), [{String.t(), String.t()}]) :: [cold_row]
+  @doc """
+  Opens a read transaction on the store at `path` and takes its snapshot now: reads
+  through it (`cold_rows/3`, `cold_page/6`) see the store as it is at this call,
+  whatever is written after. A stream pins one where it hands its state to a reader
+  in another process. `unpin/1` ends it; until then the WAL cannot be checkpointed
+  past it.
+  """
+  @spec pin(String.t()) :: reference
+  def pin(path) do
+    {:ok, db} = Sqlite3.open(path, mode: :readonly)
+    :ok = Sqlite3.execute(db, "BEGIN")
+    # A read transaction takes its snapshot at its first read, not at BEGIN.
+    {:ok, stmt} = Sqlite3.prepare(db, "SELECT 1 FROM cold LIMIT 1")
+    {_, _} = Sqlite3.multi_step(db, stmt, 1)
+    :ok = Sqlite3.release(db, stmt)
+    db
+  end
+
+  @doc "Ends a read `pin/1` began."
+  @spec unpin(reference) :: :ok
+  def unpin(db) do
+    Sqlite3.execute(db, "ROLLBACK")
+    Sqlite3.close(db)
+  end
+
+  @doc """
+  The cold rows of `keys` (`{kind, id}`) that a stream holds, in no order. `source`
+  is the store's path, or a read `pin/1` began.
+  """
+  @spec cold_rows(String.t() | reference, String.t(), [{String.t(), String.t()}]) ::
+          [cold_row]
   def cold_rows(_path, _stream_id, []), do: []
 
   def cold_rows(path, stream_id, keys) do
@@ -621,9 +650,16 @@ defmodule HalC2.Store do
   Up to `limit` of a stream's cold rows, ordered by `order` (`:created` or
   `:changed`) from after `after`. `:kinds` and `:runs` narrow them to those kinds
   and run ids. A page at a time, so a caller can walk a long thread's rows in
-  bounded memory.
+  bounded memory. `source` is as for `cold_rows/3`.
   """
-  @spec cold_page(String.t(), String.t(), :created | :changed, integer, pos_integer, keyword) ::
+  @spec cold_page(
+          String.t() | reference,
+          String.t(),
+          :created | :changed,
+          integer,
+          pos_integer,
+          keyword
+        ) ::
           [cold_row]
   def cold_page(path, stream_id, order, after_seq, limit, opts \\ [])
       when order in [:created, :changed] do
@@ -1170,6 +1206,9 @@ defmodule HalC2.Store do
   # before it returns: `Sqlite3.close/1` cannot close a connection with a live
   # statement, which keeps its file handles and page cache until the caller's next
   # garbage collection, and a busy caller piled up hundreds of them.
+  # A read pinned already (`pin/1`) goes through its transaction.
+  defp with_reader(db, fun) when is_reference(db), do: fun.(db)
+
   defp with_reader(path, fun) do
     {:ok, db} = Sqlite3.open(path, mode: :readonly)
 

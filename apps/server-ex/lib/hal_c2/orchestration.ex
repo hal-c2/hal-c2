@@ -1755,14 +1755,14 @@ defmodule HalC2.Orchestration do
       })
 
   defp regenerate_title(thread_id) do
-    state = HalC2.Streams.state(thread_id)
-    previous = (StreamState.get(state, "thread")[thread_id] || %{})["title"] || ""
-
     # The first message counts, so older runs' are read too.
-    messages =
-      state
-      |> StreamState.all("message")
-      |> Enum.filter(&(&1["role"] in ["user", "assistant"] and &1["streaming"] != true))
+    {previous, messages} =
+      HalC2.Streams.read(thread_id, fn state ->
+        {(StreamState.get(state, "thread")[thread_id] || %{})["title"] || "",
+         state
+         |> StreamState.all("message")
+         |> Enum.filter(&(&1["role"] in ["user", "assistant"] and &1["streaming"] != true))}
+      end)
 
     case HalC2.TextGeneration.Prompts.thread_context(messages) do
       {"", []} -> title_settled(thread_id)

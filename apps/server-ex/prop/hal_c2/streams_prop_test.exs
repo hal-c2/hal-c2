@@ -19,7 +19,9 @@ defmodule HalC2.StreamsPropTest do
 
   Memory holds a single run's turn items, so settled runs go cold and are read back
   from disk (`HalC2.StreamState`, "Hot and cold"): nothing a subscriber is sent, and
-  nothing a read of the stream returns, may tell. A stream can also be stopped and left
+  nothing a read of the stream returns, may tell. A read (`HalC2.Streams.read/2`) may
+  walk the cold rows long after it took the state, while commits bring cold entities
+  back to memory and write snapshots: it still sees the stream as it took it. A stream can also be stopped and left
   as an older MC left it, one whole snapshot as of some recent event, which the next
   start migrates in the background while it serves: nobody may tell that either.
 
@@ -35,12 +37,13 @@ defmodule HalC2.StreamsPropTest do
 
   alias HalC2.Prop.StreamsCollector, as: Collector
   alias HalC2.{Store, Streams, StreamState}
-  alias HalC2.Streams.{Server, View}
+  alias HalC2.Streams.View
 
   @moduletag timeout: :infinity
 
   @streams ["s-a", "s-b"]
   @names ["p1", "p2", "p3"]
+  @readers ["q1", "q2"]
   @runs ["r1", "r2", "r3"]
   @items ["i1", "i2", "i3", "i4"]
   @messages ["m1", "m2", "m3"]
@@ -58,17 +61,37 @@ defmodule HalC2.StreamsPropTest do
   @max_replay 2_000
 
   property "subscribers see exactly the acknowledged changes and converge",
-    numtests: HalC2.Prop.numtests(100),
+    # A read taken over cold rows that a later commit brings back takes a few hundred
+    # cases to come up.
+    numtests: HalC2.Prop.numtests(300),
     max_size: 40 do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
-        {history, state, result} = run_case(cmds, &run_commands(__MODULE__, &1))
+        {history, state, result} = run_case(cmds, &run_and_finish_reads/1)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
         |> aggregate(command_names(cmds))
       end
     end
+  end
+
+  # The commands, then every read they left open walked once the streams stopped,
+  # idle, writing the snapshots of whatever they brought back to memory since: one
+  # taken early has seen the most change under it.
+  defp run_and_finish_reads(cmds) do
+    {history, state, result} = run_commands(__MODULE__, cmds)
+    if state.reads != %{}, do: for(id <- @streams, do: :ok = idle_stop(id))
+
+    unfinished =
+      for {reader, _} = read <- state.reads,
+          result == :ok,
+          walked = finish_read(reader),
+          not postcondition(state, {:call, __MODULE__, :finish_read, [reader]}, walked),
+          do: {read, walked}
+
+    result = if unfinished == [], do: result, else: {:unfinished_read, unfinished}
+    {history, state, result}
   end
 
   defp run_case(cmds, run) do
@@ -94,6 +117,11 @@ defmodule HalC2.StreamsPropTest do
       run.(cmds)
     after
       for name <- @names, do: Process.exit(collector(name), :kill)
+
+      for reader <- @readers,
+          pid = Process.delete({:reader, reader}),
+          do: Process.exit(pid, :kill)
+
       HalC2.Prop.stop_services()
 
       if hot,
@@ -114,7 +142,8 @@ defmodule HalC2.StreamsPropTest do
   #   tag: nil | n, retired: the tags it had before, told: the retired tags it replaced while
   #   they were followed, oldest first}
   # tags: the last tag minted. A tag only goes up, so none is ever used twice.
-  def initial_state, do: %{seq: 0, streams: %{}, subs: %{}, tags: 0}
+  # reads: reader => %{id: stream, fold: the stream as the reader took it}
+  def initial_state, do: %{seq: 0, streams: %{}, subs: %{}, tags: 0, reads: %{}}
 
   def command(state) do
     base = [
@@ -142,8 +171,16 @@ defmodule HalC2.StreamsPropTest do
       {3, {:call, __MODULE__, :to_legacy, [stream(), integer(0, 3)]}},
       {1, {:call, __MODULE__, :restart_streams, []}},
       {1, {:call, __MODULE__, :restart_store, []}},
-      {2, {:call, __MODULE__, :bulk, [stream(), oneof([600, @max_replay + 1])]}}
+      {2, {:call, __MODULE__, :bulk, [stream(), oneof([600, @max_replay + 1])]}},
+      {6, {:call, __MODULE__, :open_read, [oneof(@readers), stream()]}}
     ]
+
+    reads = Map.keys(state.reads)
+
+    with_reads =
+      if reads == [],
+        do: [],
+        else: [{2, {:call, __MODULE__, :finish_read, [oneof(reads)]}}]
 
     subs = Map.keys(state.subs)
 
@@ -180,7 +217,7 @@ defmodule HalC2.StreamsPropTest do
            end}
         ]
 
-    frequency(base ++ with_subs)
+    frequency(base ++ with_subs ++ with_reads)
   end
 
   defp stream, do: oneof(@streams)
@@ -401,6 +438,12 @@ defmodule HalC2.StreamsPropTest do
 
   def precondition(state, {:call, _, :check, [key]}), do: Map.has_key?(state.subs, key)
 
+  def precondition(state, {:call, _, :open_read, [reader, _]}),
+    do: not Map.has_key?(state.reads, reader)
+
+  def precondition(state, {:call, _, :finish_read, [reader]}),
+    do: Map.has_key?(state.reads, reader)
+
   def precondition(_state, _call), do: true
 
   defp new_tag?(state, tag), do: tag == nil or tag > state.tags
@@ -480,6 +523,12 @@ defmodule HalC2.StreamsPropTest do
         sub
     end)
   end
+
+  def next_state(state, _result, {:call, _, :open_read, [reader, id]}),
+    do: put_in(state.reads[reader], %{id: id, fold: fold(state, id)})
+
+  def next_state(state, _result, {:call, _, :finish_read, [reader]}),
+    do: %{state | reads: Map.delete(state.reads, reader)}
 
   def next_state(state, _result, _call), do: state
 
@@ -567,6 +616,13 @@ defmodule HalC2.StreamsPropTest do
 
   def postcondition(state, {:call, _, :state, [id]}, result),
     do: result == comparable(fold(state, id))
+
+  def postcondition(state, {:call, _, :open_read, [_, id]}, result),
+    do: result == {:ok, fold(state, id).seq}
+
+  # However the stream moved on, the read walks it as it took it.
+  def postcondition(state, {:call, _, :finish_read, [reader]}, result),
+    do: result == comparable(state.reads[reader].fold)
 
   def postcondition(state, {:call, _, :subscribers, [id]}, result) do
     expected =
@@ -860,7 +916,47 @@ defmodule HalC2.StreamsPropTest do
 
   def check({name, id}), do: Collector.get(collector(name), id)
 
-  def state(id), do: comparable(Server.state(Streams.ensure(id)))
+  def state(id), do: Streams.read(id, &comparable/1)
+
+  # A reader takes the stream's state, and walks it only when `finish_read/1` says.
+  def open_read(reader, id) do
+    parent = self()
+
+    pid =
+      spawn(fn ->
+        Streams.read(id, fn st ->
+          send(parent, {:opened, self(), st.seq})
+          receive do: (:walk -> send(parent, {:walked, self(), comparable(st)}))
+        end)
+      end)
+
+    Process.put({:reader, reader}, pid)
+    ref = Process.monitor(pid)
+
+    receive do
+      {:opened, ^pid, seq} ->
+        Process.demonitor(ref, [:flush])
+        {:ok, seq}
+
+      {:DOWN, ^ref, :process, ^pid, reason} ->
+        {:down, reason}
+    end
+  end
+
+  def finish_read(reader) do
+    pid = Process.delete({:reader, reader})
+    ref = Process.monitor(pid)
+    send(pid, :walk)
+
+    receive do
+      {:walked, ^pid, walked} ->
+        Process.demonitor(ref, [:flush])
+        walked
+
+      {:DOWN, ^ref, :process, ^pid, reason} ->
+        {:down, reason}
+    end
+  end
 
   def subscribers(id) do
     case Registry.lookup(HalC2.Streams.Registry, id) do

@@ -406,7 +406,7 @@ defmodule HalC2.Orchestration.Handoff do
       runs = StreamState.get(fork, "run")
       to = get_in(runs, [transfer["sourcePoint"]["runId"], "ordinal"]) || 0
       from = get_in(runs, [get_in(transfer, ["basePoint", "runId"]), "ordinal"]) || 0
-      text = transcript(fork, to + 1, from)
+      text = HalC2.Streams.read(fork_id, &transcript(&1, to + 1, from))
       title = get_in(StreamState.get(fork, "thread"), [fork_id, "title"]) || fork_id
       handoff_id = "context-handoff:#{transfer["id"]}"
 

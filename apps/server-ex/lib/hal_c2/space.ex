@@ -595,10 +595,11 @@ defmodule HalC2.Space do
     with {"thread", row} <- HalC2.Shell.row(node(), thread_id),
          root when is_binary(root) <- row["worktreePath"] || project_root(row["projectId"]) do
       messages =
-        thread_id
-        |> Streams.state()
-        |> StreamState.all("message")
-        |> Enum.filter(&(&1["role"] in ["user", "assistant"] and &1["streaming"] != true))
+        Streams.read(thread_id, fn state ->
+          state
+          |> StreamState.all("message")
+          |> Enum.filter(&(&1["role"] in ["user", "assistant"] and &1["streaming"] != true))
+        end)
 
       case HalC2.TextGeneration.Prompts.thread_context(messages) do
         {"", _} -> {:error, :invalid, "The thread has nothing to summarise yet."}

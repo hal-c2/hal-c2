@@ -163,7 +163,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
     driver = Entities.driver(ids)
     native = get_in(entity, ["nativeTaskRef", "nativeId"])
     at = Entities.now()
-    said = stream(child) |> StreamState.all("message") |> Enum.count()
+    said = HalC2.Streams.read(child, &(&1 |> StreamState.all("message") |> Enum.count()))
 
     sub = %{
       id: id,

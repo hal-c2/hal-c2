@@ -46,18 +46,18 @@ defmodule HalC2.Rpc do
   # One thread's entities at once, for a client that needs its projection without
   # subscribing (a socket holds one subscription per stream).
   def handle("hal-c2.threadRows", %{"threadId" => thread_id}) do
-    state = HalC2.Streams.state(thread_id)
-
-    {:ok,
-     %{
-       "rows" =>
-         for(
-           {kind, id, entity} <- HalC2.StreamState.rows(state),
-           do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]
-         ),
-       "offset" => state.seq,
-       "at" => state.updated_at
-     }}
+    HalC2.Streams.read(thread_id, fn state ->
+      {:ok,
+       %{
+         "rows" =>
+           for(
+             {kind, id, entity} <- HalC2.StreamState.rows(state),
+             do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]
+           ),
+         "offset" => state.seq,
+         "at" => state.updated_at
+       }}
+    end)
   end
 
   # Moving a thread to another machine of the cluster (`HalC2.ThreadMove`), and finding

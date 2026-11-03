@@ -36,7 +36,7 @@ defmodule HalC2.Search do
 
     if not read?() do
       for %{id: id, kind: "thread"} <- Store.list_streams(path),
-          do: index_thread(id, StreamState.load(path, id))
+          do: StreamState.load_read(path, id, &index_thread(id, &1))
 
       :ok = Store.forget_untyped_messages()
       Store.put_meta(@read, "1")
