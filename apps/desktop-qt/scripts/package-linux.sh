@@ -23,7 +23,7 @@ fetch "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-
 # program header by writing it over .gnu.hash, and the image segfaults in the dynamic
 # loader at start (Arch's libleancrypto, for one). It takes the system's through PATCHELF.
 patchelf="${PATCHELF:-$(command -v patchelf || true)}"
-patchelf_version="$("${patchelf:-false}" --version 2>/dev/null | awk '{print $2}')"
+patchelf_version="$("${patchelf:-false}" --version 2>/dev/null | awk '{print $2}' || true)"
 if [ -z "${patchelf_version}" ] ||
   [ "$(printf '0.18\n%s\n' "${patchelf_version}" | sort -V | head -1)" != "0.18" ]; then
   echo "error: packaging needs patchelf 0.18 or later on the PATH (or in PATCHELF); found '${patchelf_version:-none}'" >&2
