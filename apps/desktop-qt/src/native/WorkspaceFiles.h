@@ -91,6 +91,9 @@ private:
   int m_columnLimit = 2000;
   // What reading the text made; null while it is plain.
   std::shared_ptr<const codereader::Runs> m_runs;
+  // The rows m_runs colours: all of them, or those before a change while the
+  // changed text is read.
+  int m_freshRows = 0;
   bool m_reading = false;
   // Lets a finished read find this model only while it is for the text shown.
   std::shared_ptr<int> m_alive = std::make_shared<int>(0);
