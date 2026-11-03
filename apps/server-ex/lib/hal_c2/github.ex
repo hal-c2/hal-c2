@@ -296,11 +296,10 @@ defmodule HalC2.GitHub do
     error -> {:error, {:failed, Exception.message(error)}}
   end
 
-  # Auth trouble is matched in both streams, but a rate limit or a missing object only on
+  # gh's own messages, auth trouble, a rate limit or a missing object, are matched only on
   # stderr: a GraphQL answer with `errors` still prints its body, user-written titles
   # and comments included, on stdout.
   defp failure(err, out) do
-    said = String.downcase(err <> "\n" <> out)
     told = String.downcase(err)
 
     detail =
@@ -308,7 +307,7 @@ defmodule HalC2.GitHub do
       |> String.replace_prefix("gh: ", "")
 
     cond do
-      String.contains?(said, [
+      String.contains?(told, [
         "gh auth login",
         "not logged in",
         "authentication failed",

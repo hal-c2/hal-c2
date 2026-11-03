@@ -144,5 +144,17 @@ defmodule HalC2.GitHubTest do
       assert Limits.check(GitHub.account("ghe.test"), "graphql", now) == :ok
       assert Limits.check(GitHub.account("ghe.test"), "core", now) == :ok
     end
+
+    test "a failed read whose answer quotes a sign-in message is not signed out",
+         %{tmp_dir: dir} do
+      File.write!(Path.join(dir, "gh"), """
+      #!/bin/sh
+      echo '{"data":{"title":"Document gh auth login and bad credentials"},"errors":[{"type":"NOT_FOUND"}]}'
+      echo 'GraphQL: Could not resolve to a User.' >&2
+      exit 1
+      """)
+
+      assert {:error, {:failed, _}} = GitHub.gh(dir, ~w(api graphql --hostname ghe.test))
+    end
   end
 end
