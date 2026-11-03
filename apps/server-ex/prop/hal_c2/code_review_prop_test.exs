@@ -158,6 +158,27 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
+  # From hal-c2/hal-c2#990: two reviews start with the gate closed.
+  test "two reviews started with the gate closed both get a checkout and a thread" do
+    Process.flag(:trap_exit, true)
+
+    cmds = [
+      {:set, {:var, 1}, {:call, __MODULE__, :save, [{"activation", "automatic"}]}},
+      {:set, {:var, 2}, {:call, __MODULE__, :push, ["acme/api#1"]}},
+      {:set, {:var, 3}, {:call, __MODULE__, :publish, ["acme/web#1"]}},
+      {:set, {:var, 4}, {:call, __MODULE__, :publish, ["acme/api#1"]}},
+      {:set, {:var, 5}, {:call, __MODULE__, :gate, [:closed]}},
+      {:set, {:var, 6}, {:call, __MODULE__, :refresh, []}},
+      {:set, {:var, 7}, {:call, __MODULE__, :report, [{"acme/api#2", 1}, :findings]}}
+    ]
+
+    begin_case()
+    {history, state, result} = run_commands(__MODULE__, cmds)
+    end_case()
+
+    assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
+  end
+
   # The counterexample of hal-c2/hal-c2#446, replayed every run: a review stopped by the
   # usage limit pauses the queue, the plugin is turned off and on again.
   test "a paused plugin turned off reports nothing, and the pause again once it is on" do
@@ -1478,9 +1499,17 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # Whether a process failed to get a post's lock and is backing off to try again. Steps
-  # settle in turn, so with the gate closed the lock's holder is a post GitHub holds.
+  # settle in turn, so with the gate closed the lock's holder is a post GitHub holds. A
+  # run backing off from its repository's clone lock or its claim is not held: the run
+  # it waits for finishes without GitHub.
   defp behind_a_post?(pid) do
-    Process.info(pid, :current_function) == {:current_function, {:global, :random_sleep, 1}}
+    case Process.info(pid, :current_stacktrace) do
+      {:current_stacktrace, [{:global, :random_sleep, 1, _} | frames]} ->
+        not Enum.any?(frames, &match?({@server, :run, 2, _}, &1))
+
+      _ ->
+        false
+    end
   end
 
   # The git pid of each fetch the hold keeps waiting.
