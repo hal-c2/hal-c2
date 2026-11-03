@@ -525,35 +525,23 @@ defmodule HalC2Plugins.Maintenance do
 
   # The body goes on stdin, so no file of it is left behind.
   defp open_pull_request(path, run) do
-    gh = System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) || "gh"
+    fields = %{
+      "repository" => run["repository"],
+      "base" => run["base"],
+      "head" => run["branch"],
+      "title" => "chore: repository maintenance #{run["date"]}",
+      "body" => run["body"] || ""
+    }
 
-    args = [
-      "pr",
-      "create",
-      "--repo",
-      run["repository"],
-      "--base",
-      run["base"],
-      "--head",
-      run["branch"],
-      "--title",
-      "chore: repository maintenance #{run["date"]}",
-      "--body-file",
-      "-"
-    ]
+    case Host.open_pull_request(@id, path, fields) do
+      {:ok, out} ->
+        case Regex.run(~r{https://\S+/pull/\d+}, out) do
+          [url] -> {:ok, url}
+          _ -> {:error, "gh opened no pull request: " <> said(out)}
+        end
 
-    {out, code} =
-      Exile.stream([gh | args], cd: path, input: [run["body"] || ""], stderr: :consume)
-      |> Enum.reduce({"", nil}, fn
-        {:exit, {:status, code}}, {out, _} -> {out, code}
-        {_stream, data}, {out, code} -> {out <> IO.iodata_to_binary(data), code}
-        _other, acc -> acc
-      end)
-
-    case {code, Regex.run(~r{https://\S+/pull/\d+}, out)} do
-      {0, [url]} -> {:ok, url}
-      {0, _} -> {:error, "gh opened no pull request: " <> said(out)}
-      _ -> {:error, "gh pr create failed: " <> said(out)}
+      {:error, detail} ->
+        {:error, "gh pr create failed: " <> said(detail)}
     end
   end
 

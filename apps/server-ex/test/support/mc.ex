@@ -1419,6 +1419,7 @@ defmodule HalC2.Test.Mc.World do
 
     Mc.ensure(HalC2.PullRequests.Refreshes)
     Mc.ensure(HalC2.PullRequests.Held)
+    Mc.ensure(HalC2.GitHub.Limits)
     HalC2.PullRequests.invalidate(%{})
     %{bin: bin, rules: rules, log: log}
   end

@@ -5,12 +5,11 @@ defmodule HalC2.PullRequests.GitHub do
 
   Calls take a context `%{cwd:, host:, repository:, number:}`: `owner/name` on
   `host`, read through the checkout at `cwd`. Failures are `{:error, {reason,
-  detail}}` with `reason` one of `:missing`, `:unauthenticated`, `:not_found` or
-  `:failed`. Words a reader wrote travel over stdin rather than argv, which process
+  detail}}` with `reason` one of `:missing`, `:unauthenticated`, `:rate_limited`,
+  `:not_found` or `:failed` (`HalC2.GitHub`). Words a reader wrote travel over stdin rather than argv, which process
   listings show. The executable is `Application.get_env(:hal_c2, :gh_command, "gh")`.
   """
 
-  @timeout 30_000
   @page 100
   @thread_pages 10
   @files_viewed_pages 5
@@ -347,84 +346,8 @@ defmodule HalC2.PullRequests.GitHub do
 
   # --- gh --------------------------------------------------------------------------
 
-  @doc "Runs `gh args` in `cwd`: `{:ok, stdout}` when it exits 0."
-  def gh(cwd, args, opts \\ []) do
-    case System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) do
-      nil -> {:error, {:missing, "gh is not installed."}}
-      path -> run(path, cwd, args, opts)
-    end
-  end
-
-  defp run(path, cwd, args, opts) do
-    exile =
-      [stderr: :consume, ignore_epipe: true, env: [{"GH_PROMPT_DISABLED", "1"}]] ++
-        if(cwd && File.dir?(cwd), do: [cd: cwd], else: []) ++
-        if(opts[:input], do: [input: [opts[:input]]], else: [])
-
-    max = opts[:max_bytes] || :infinity
-
-    # Output past `:max_bytes` is dropped rather than held, and the answer refused.
-    task =
-      Task.async(fn ->
-        [path | args]
-        |> Exile.stream(exile)
-        |> Enum.reduce({[], [], 0, nil}, fn
-          {:stdout, data}, {out, err, size, status} when size < max ->
-            {[out, data], err, size + byte_size(data), status}
-
-          {:stdout, data}, {out, err, size, status} ->
-            {out, err, size + byte_size(data), status}
-
-          {:stderr, data}, {out, err, size, status} ->
-            {out, [err, data], size, status}
-
-          {:exit, status}, {out, err, size, _} ->
-            {out, err, size, status}
-        end)
-      end)
-
-    case Task.yield(task, opts[:timeout] || @timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {_, _, size, {:status, 0}}} when size > max ->
-        {:error, {:too_large, "gh answered with more than #{max} bytes."}}
-
-      {:ok, {out, _, _, {:status, 0}}} ->
-        {:ok, IO.iodata_to_binary(out)}
-
-      {:ok, {out, err, _, _}} ->
-        {:error, failure(IO.iodata_to_binary(err), IO.iodata_to_binary(out))}
-
-      nil ->
-        {:error, {:failed, "gh did not answer in time."}}
-    end
-  rescue
-    error -> {:error, {:failed, Exception.message(error)}}
-  end
-
-  defp failure(err, out) do
-    said = String.downcase(err <> "\n" <> out)
-
-    detail =
-      (api_error(err) || first_line(err) || first_line(out) || "gh failed.")
-      |> String.replace_prefix("gh: ", "")
-
-    cond do
-      String.contains?(said, [
-        "gh auth login",
-        "not logged in",
-        "authentication failed",
-        "no oauth token",
-        "bad credentials",
-        "http 401"
-      ]) ->
-        {:unauthenticated, detail}
-
-      String.contains?(said, ["http 404", "could not resolve to a pullrequest", "not found"]) ->
-        {:not_found, detail}
-
-      true ->
-        {:failed, detail}
-    end
-  end
+  @doc "Runs `gh args` in `cwd` through the rate limit gate (`HalC2.GitHub.gh/3`)."
+  defdelegate gh(cwd, args, opts \\ []), to: HalC2.GitHub
 
   defp gh_json(cwd, args, opts \\ []) do
     with {:ok, out} <- gh(cwd, args, opts) do
@@ -2503,19 +2426,4 @@ defmodule HalC2.PullRequests.GitHub do
 
   defp up(value) when is_binary(value), do: value |> String.trim() |> String.upcase()
   defp up(_), do: nil
-
-  # `gh api` puts GitHub's message and each of its `errors` on a line of their own,
-  # the last ending in `(HTTP 422)`; the reason is usually in the later lines.
-  defp api_error(err) do
-    lines = err |> String.split(~r/\r?\n/) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
-
-    case Enum.split_while(lines, &(not (&1 =~ ~r/\(HTTP \d{3}\)$/))) do
-      {["gh: " <> _ | _] = before, [last | _]} -> Enum.join(before ++ [last], ": ")
-      _ -> nil
-    end
-  end
-
-  defp first_line(text) do
-    text |> String.split(~r/\r?\n/) |> Enum.map(&String.trim/1) |> Enum.find(&(&1 != ""))
-  end
 end

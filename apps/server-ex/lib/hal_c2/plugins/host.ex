@@ -116,6 +116,24 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
+  Opens a pull request of `cwd`'s checkout with `gh pr create` from `fields`:
+  `repository`, `base`, `head`, `title` and `body`. Needs `pullRequests:write`. It is
+  something asked for, so it goes through a rate limit pause (`HalC2.GitHub.asked/1`). `{:ok, stdout}`, which names the new pull request,
+  or `{:error, detail}`.
+  """
+  def open_pull_request(id, cwd, fields) do
+    args =
+      ["pr", "create", "--repo", fields["repository"], "--base", fields["base"]] ++
+        ["--head", fields["head"], "--title", fields["title"], "--body-file", "-"]
+
+    opened = fn -> HalC2.GitHub.gh(cwd, args, input: fields["body"] || "", timeout: 120_000) end
+
+    with :ok <- permit(id, "pullRequests:write"),
+         {:error, {_, detail}} <- HalC2.GitHub.asked(opened),
+         do: {:error, detail}
+  end
+
+  @doc """
   A repository's issues, milestones, sub-issues and dependencies, and the boards
   they sit on (`HalC2.Issues.handle/2`). Changes need `issues:write`, and answer
   with the whole issue or milestone only when `issues:read` is granted too.

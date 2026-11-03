@@ -84,6 +84,7 @@ defmodule HalC2.Application do
       HalC2.Devices,
       HalC2.Diagnostics,
       HalC2.PullRequests.Refreshes,
+      HalC2.GitHub.Limits,
       HalC2.PullRequests.Held,
       HalC2.PullRequests.Discovery,
       HalC2.PullRequests.Sync,
