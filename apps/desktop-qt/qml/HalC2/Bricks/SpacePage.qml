@@ -214,20 +214,22 @@ Rectangle {
         anchors.topMargin: 24
         spacing: 8
 
-        // Where the page sits: its Space, and the pages above it.
+        // Where the page sits: its Space, and the pages above it. A file's page sits in its
+        // project, whichever Space the sidebar shows.
         Flow {
             objectName: "spaceTrail"
             Layout.fillWidth: true
             spacing: 4
 
             Text {
-                text: Spaces.spaceName
+                objectName: "spaceTrailSpace"
+                text: page.fileBacked ? page.file.projectTitle ?? "" : Spaces.spaceName
                 color: page.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
             Repeater {
-                model: page.current.id ? page.trail() : []
+                model: page.current.id && !page.fileBacked ? page.trail() : []
 
                 delegate: Text {
                     id: crumb

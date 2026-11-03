@@ -883,6 +883,7 @@ Item {
             const view = root.research({ page: filed({}) });
             verify(findChild(view, "spacePageFile").visible);
             compare(findChild(view, "spacePageFilePath").text, "The file docs/roadmap.md of Shop");
+            compare(findChild(view, "spaceTrailSpace").text, "Shop");
             verify(!findChild(view, "spacePageFileGone").visible);
             verify(!findChild(view, "spacePageFileConflict").visible);
             mouseClick(findChild(view, "spacePageFileShow"));
@@ -912,9 +913,11 @@ Item {
             const view = sections(false);
             const list = findChild(view, "spaceProjects");
             verify(list.visible);
+            tryVerify(() => findChild(view, "spaceProject:shop") !== null);
+            // The layout gives the list its height a polish after the header exists.
+            tryVerify(() => list.height >= findChild(view, "spaceProject:shop").height);
             const tree = findChild(view, "spacePageTree");
             verify(list.mapToItem(view, 0, 0).y >= tree.mapToItem(view, 0, 0).y + tree.height);
-            tryVerify(() => findChild(view, "spaceProject:shop") !== null);
             verify(findChild(view, "spaceProjectFile:shop:README.md") === null);
             mouseClick(findChild(view, "spaceProject:shop"));
             compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: true }]);
