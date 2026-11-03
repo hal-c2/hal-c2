@@ -9,7 +9,7 @@ export interface MarkdownTable {
   readonly body: ReadonlyArray<ReadonlyArray<string>>;
 }
 
-const DIVIDER = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+const DIVIDER = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 
 /** A row's cells: split on pipes that are not escaped, `\|` read as a pipe. */
 function rowCells(row: string): string[] {

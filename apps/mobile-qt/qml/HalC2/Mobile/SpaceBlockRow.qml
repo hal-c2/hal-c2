@@ -15,7 +15,8 @@ import HalC2.Bricks
 // have them. A chart is not written in: it is drawn, and asked for again from the menu.
 // A raw block is Markdown the page keeps as written: shown and edited as its source,
 // in a fixed-width face, line for line, scrolled sideways rather than wrapped. A table
-// and a code block show so too until they are drawn as such (#854), a list item is
+// and a code block are drawn as the chat draws them and edited as such a source
+// (#854), a list item is
 // drawn with its marker (#869), and a block the page does not draw yet shows what
 // the MC writes around its text (a list item's indent, an alert's kind, a divider, a footnote's label, a section's tags, math's
 // fences and an image's address, #869 and #877). A "mermaid" code
@@ -49,7 +50,10 @@ Rectangle {
     readonly property int level: model.level ?? 2
     // A code block's language ("" for none).
     readonly property string language: model.language ?? ""
-    readonly property bool raw: kind === "raw" || kind === "table" || kind === "code"
+    // Edited as lines of source: Markdown kept as written, a table and code.
+    readonly property bool sourceKind: kind === "raw" || kind === "table" || kind === "code"
+    // Shown as its source now: a raw block always, a table or code while edited.
+    readonly property bool raw: sourceKind && editor !== null
     // The Markdown the MC writes above, before, after and below the text (SpaceController).
     readonly property string markdownAbove: model.markdownAbove ?? ""
     readonly property string markdownLead: model.markdownLead ?? ""
@@ -74,9 +78,10 @@ Rectangle {
     // a section's end and a drawn diagram show something else.
     readonly property bool textShown: !diagramShown && ["subpage_link", "chart", "generated", "divider", "details_end"].indexOf(kind) < 0
     // Text drawn as Markdown while it is not edited (as the desktop's SpaceBlock
-    // draws it): raw, table and code blocks are their source, and an image's
-    // caption and a section's summary sit between Markdown the MC writes on their line.
-    readonly property bool drawn: textShown && !raw && kind !== "details" && kind !== "image"
+    // draws it): a raw block is its source, a diagram's or math's code is drawn
+    // otherwise (or is its source), and an image's caption and a section's
+    // summary sit between Markdown the MC writes on their line.
+    readonly property bool drawn: textShown && kind !== "raw" && !(kind === "code" && (diagramCode.length > 0 || language === "math")) && kind !== "details" && kind !== "image"
     // The user is writing in a drawn block: its source shows.
     property bool sourceShown: false
     // A drawn bullet or numbered item has its marker drawn with its text, as
@@ -85,7 +90,9 @@ Rectangle {
     readonly property string marker: drawn && editor === null && (kind === "bullet" || kind === "numbered") && !leavesItem(markdownLead.replace(/^ +/, ""), text) ? markdownLead.replace(/^ +/, "") : ""
     // What the brick draws: an item's further lines are indented under its
     // marker, so a second paragraph stays in the item.
-    readonly property string drawnSource: marker === "" ? text : marker + text.replace(/\n/g, "\n" + " ".repeat(marker.length))
+    // Code is drawn inside a fence longer than any it holds.
+    readonly property string drawnSource: kind === "code" ? fenced(text, language)
+                                        : marker === "" ? text : marker + text.replace(/\n/g, "\n" + " ".repeat(marker.length))
 
     signal menuRequested
     signal linkOpened
@@ -96,6 +103,19 @@ Rectangle {
     function mermaidOf(text) {
         const fence = /^ {0,3}(`{3,}|~{3,})[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)\r?\n {0,3}\1[`~]*[ \t]*(?:\r?\n)?$/i.exec(text);
         return fence ? fence[2] : "";
+    }
+
+    // `code` in a backtick fence naming `language`, longer than any fence in it
+    // (as the desktop's SpaceBlock writes it).
+    function fenced(code, language) {
+        let ticks = 3;
+        for (const line of code.split("\n")) {
+            const fence = /^ {0,3}(`{3,})/.exec(line);
+            if (fence)
+                ticks = Math.max(ticks, fence[1].length + 1);
+        }
+        const fence = "`".repeat(ticks);
+        return fence + language + "\n" + code + "\n" + fence;
     }
 
     function commit() {
@@ -282,6 +302,9 @@ Rectangle {
 
                             TapHandler {
                                 onTapped: eventPoint => {
+                                    // The brick's own controls (a code block's copy, a table's) answer their tap.
+                                    if (drawnText.controlAt(eventPoint.position.x, eventPoint.position.y))
+                                        return;
                                     const link = row.openable(drawnText.linkAt(eventPoint.position.x, eventPoint.position.y));
                                     if (link.length > 0)
                                         Shell.openExternal(link);
@@ -307,16 +330,16 @@ Rectangle {
                             id: sourceEditor
 
                             objectName: "spaceBlockEditor:" + row.text
-                            width: row.raw ? Math.max(scroller.width, implicitWidth) : scroller.width
+                            width: row.sourceKind ? Math.max(scroller.width, implicitWidth) : scroller.width
                             readOnly: row.readOnly
                             textFormat: TextEdit.PlainText
-                            wrapMode: row.raw ? TextEdit.NoWrap : TextEdit.Wrap
+                            wrapMode: row.sourceKind ? TextEdit.NoWrap : TextEdit.Wrap
                             color: Theme.palette.color("text", "#e4e4e7")
                             selectionColor: Theme.palette.color("accent", "#2563eb")
                             opacity: row.kind === "checklist" && row.checked ? 0.6 : 1
-                            font.family: row.raw ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Application.font.family
+                            font.family: row.sourceKind ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Application.font.family
                             // A second-level heading is the usual one; a first is larger and the rest step down.
-                            font.pixelSize: Math.round((row.kind === "heading" ? [24, 20, 18, 17, 16, 15][Math.min(Math.max(row.level, 1), 6) - 1] : row.raw ? 13 : 15) * Theme.fontScale)
+                            font.pixelSize: Math.round((row.kind === "heading" ? [24, 20, 18, 17, 16, 15][Math.min(Math.max(row.level, 1), 6) - 1] : row.sourceKind ? 13 : 15) * Theme.fontScale)
                             font.weight: row.kind === "heading" ? Font.DemiBold : Font.Normal
                             font.strikeout: row.kind === "checklist" && row.checked
                             Accessible.name: qsTr("Block text")
@@ -331,7 +354,7 @@ Rectangle {
                             }
                             // Typing in raw Markdown past the edge brings the cursor back into view.
                             onCursorRectangleChanged: {
-                                if (!row.raw || !activeFocus)
+                                if (!row.sourceKind || !activeFocus)
                                     return;
                                 if (cursorRectangle.x < scroller.contentX)
                                     scroller.contentX = cursorRectangle.x;

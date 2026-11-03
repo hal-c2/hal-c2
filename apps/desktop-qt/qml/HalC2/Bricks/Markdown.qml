@@ -188,6 +188,23 @@ Item {
         return "";
     }
 
+    // Whether (x, y) in the brick is on one of its own controls (a code
+    // block's copy or wrap, a table's expand or copy), for an owner that
+    // takes every other press itself, as a page's block does to edit it.
+    function controlAt(x: real, y: real): bool {
+        let item = root;
+        let at = Qt.point(x, y);
+        for (;;) {
+            const child = item.childAt(at.x, at.y);
+            if (child === null)
+                return false;
+            if (child instanceof ShellButton)
+                return child.enabled;
+            at = child.mapFromItem(item, at.x, at.y);
+            item = child;
+        }
+    }
+
     // Puts plain text on the clipboard, through a TextEdit made on the first
     // copy: most bricks never copy.
     property TextEdit clipboard: null
