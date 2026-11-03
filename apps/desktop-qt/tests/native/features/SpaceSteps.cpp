@@ -5,12 +5,15 @@
 
 #include <QAbstractItemModel>
 #include <QBuffer>
+#include <QDir>
 #include <QFile>
 #include <QFont>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMap>
+#include <QQuickItem>
+#include <QQuickWindow>
 #include <QRegularExpression>
 #include <QSet>
 #include <QTest>
@@ -32,6 +35,7 @@
 #include "Mermaid.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
+#include "ShellWindows.h"
 #include "Space.h"
 #include "SpaceController.h"
 #include "Stream.h"
@@ -3810,6 +3814,51 @@ bool hasEffort(const QJsonObject& selection, const QString& level) {
   });
 }
 
+// The desktop's own window, drawn by `shell`: "default" (DefaultShell) or an
+// example shell a user may copy (apps/desktop-qt/examples/<shell>), which lays
+// out its own Composer.
+QQuickWindow* shellWindow(World& world, const QString& shell = {}) {
+  const QDir dir(QDir(world.homeDir()).filePath(QStringLiteral("windows")));
+  if (!shell.isEmpty()) {
+    expect(!dir.exists(QStringLiteral("shell.qml")), QStringLiteral("the window is already drawn"));
+    QDir().mkpath(dir.path());
+    const QString path = dir.filePath(QStringLiteral("shell.qml"));
+    if (shell == QLatin1String("default")) {
+      QFile file(path);
+      expect(file.open(QIODevice::WriteOnly) && file.write("import HalC2.Bricks\nDefaultShell { width: 1200; height: 800 }\n") > 0, path);
+    } else {
+      const QString example = QStringLiteral(HAL_C2_QML_DIR "/../examples/%1/shell.qml").arg(shell);
+      expect(QFile::copy(example, path), QStringLiteral("no example shell at %1").arg(example));
+    }
+    // The bricks, from the source tree.
+    QFile::link(QStringLiteral(HAL_C2_QML_DIR), dir.filePath(QStringLiteral("qml")));
+  }
+  if (world.shellSubscriptions() == 0) world.connect();
+  // The controllers' singletons (Terminals, Settings…), as main.cpp registers them.
+  Brick::registerSingletons();
+  world.native().registerQmlSingletons();
+  ShellRuntime* runtime = world.showWindows().runtime(world.native().main());
+  expect(runtime && runtime->window() && runtime->usingUserShell() && runtime->lastError().isEmpty(),
+         QStringLiteral("the shell did not load: %1").arg(runtime ? runtime->lastError() : QString()));
+  return runtime->window();
+}
+
+// The prompts the window shows: each Composer's editor that is on screen.
+QList<QQuickItem*> promptsShown(QQuickItem* item) {
+  QList<QQuickItem*> shown;
+  if (!item->isVisible()) return shown;
+  if (item->property("composerInput").toBool()) shown.append(item);
+  for (QQuickItem* child : item->childItems()) shown.append(promptsShown(child));
+  return shown;
+}
+
+bool onPage(QQuickItem* editor) {
+  for (QQuickItem* item = editor; item; item = item->parentItem()) {
+    if (item->objectName() == QLatin1String("spaceComposer")) return true;
+  }
+  return false;
+}
+
 const Steps promptSteps([] {
   const QString q = kQuoted;
 
@@ -3996,6 +4045,51 @@ const Steps promptSteps([] {
     const QString key = world.mc.environmentId + QLatin1Char(':') + threadNamed(world, c[0]);
     world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
     world.waitFor([&] { return prompt(world).value(QStringLiteral("target")) == key; }, QStringLiteral("the prompt to be the thread's"));
+  });
+  step(QStringLiteral("the window is drawn by (?:the (default) shell|the (\\w+) example shell)"), [](World& world, const Captures& c, const Table&) {
+    shellWindow(world, c[0].isEmpty() ? c[1] : c[0]);
+  });
+  step(QStringLiteral("the user opens %1 in the window").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = idOfPage(world, c[0]);
+    lookAtPage(world, id);
+    world.waitFor([&] { return prompt(world).value(QStringLiteral("target")) == QStringLiteral("page#") + id; },
+                  [&] { return QStringLiteral("the prompt to be the page's; it is %1").arg(show(prompt(world))); });
+  });
+  step(QStringLiteral("the user asks an agent about %1 from the command palette in the window").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickWindow* window = shellWindow(world);
+    window->requestActivate();
+    expect(QTest::qWaitForWindowActive(window), QStringLiteral("the window did not come up"));
+    expect(viewOf(world)->pageId() == idOfPage(world, c[0]), QStringLiteral("the window does not show %1").arg(c[0]));
+    world.native().controller<KeybindingController>()->commands()->run(SpaceController::kAskAgent);
+    world.sync();
+  });
+  step(QStringLiteral("the keyboard is in the prompt the window shows"), [](World& world, const Captures&, const Table&) {
+    QQuickWindow* window = shellWindow(world);
+    world.waitFor([&] {
+      const QList<QQuickItem*> shown = promptsShown(window->contentItem());
+      return shown.size() == 1 && shown.first()->hasActiveFocus();
+    }, [&] {
+      QQuickItem* focused = window->activeFocusItem();
+      return QStringLiteral("the keyboard to be in the prompt on screen; it is in %1 (%2)")
+          .arg(focused ? QString::fromLatin1(focused->metaObject()->className()) : QStringLiteral("nothing"),
+               focused && focused->property("composerInput").toBool() ? (onPage(focused) ? QStringLiteral("the page's prompt") : QStringLiteral("the shell's prompt")) : QString());
+    });
+  });
+  // One editor on screen, the page's own on a page and the shell's on a thread.
+  step(QStringLiteral("the window shows one prompt, aimed at (the page|the thread) %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickWindow* window = shellWindow(world);
+    const bool page = c[0] == QLatin1String("the page");
+    const QString target = page ? QStringLiteral("page#") + idOfPage(world, c[1]) : world.mc.environmentId + QLatin1Char(':') + threadNamed(world, c[1]);
+    QList<QQuickItem*> shown;
+    world.waitFor([&] {
+      shown = promptsShown(window->contentItem());
+      return prompt(world).value(QStringLiteral("target")) == target && shown.size() == 1 && onPage(shown.first()) == page;
+    }, [&] {
+      QStringList where;
+      for (QQuickItem* editor : shown) where.append(onPage(editor) ? QStringLiteral("the page's") : QStringLiteral("the shell's"));
+      return QStringLiteral("one prompt on %1; the window shows %2 (%3), aimed at %4")
+          .arg(c[1]).arg(shown.size()).arg(where.join(QStringLiteral(", ")), prompt(world).value(QStringLiteral("target")).toString());
+    });
   });
   step(QStringLiteral("the prompt of %1 (reads|does not read) %1(?: with the image %1)?").arg(q), [](World& world, const Captures& c, const Table&) {
     if (findPage(world, c[0]).isEmpty()) {

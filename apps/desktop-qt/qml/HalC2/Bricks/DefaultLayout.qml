@@ -298,8 +298,7 @@ Item {
 
                     takesDrops: false
                     Layout.fillWidth: true
-                    // A Space page has the prompt on the page (SpacePage).
-                    visible: ready && model.routeKind !== "page" && !layout.window.settingsActive
+                    visible: ready && !layout.window.settingsActive
                     conversationScrolled: centreHost.conversationScrolled
                 }
 

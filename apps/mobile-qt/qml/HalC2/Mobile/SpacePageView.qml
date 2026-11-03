@@ -404,7 +404,8 @@ ColumnLayout {
 
         objectName: "spaceComposer"
         Layout.fillWidth: true
-        visible: !view.trashed && ready && model.routeKind === "page"
+        pageHost: true
+        visible: !view.trashed && ready
         editorActions: [
             ShellButton {
                 objectName: "spaceNewKind"

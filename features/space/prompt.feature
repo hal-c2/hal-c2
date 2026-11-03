@@ -5,8 +5,9 @@
 #     drafting-and-sending.feature and editors-and-keys.feature (what the timeline's prompt does)
 #   packages/contracts/src/space.ts (space.page.askAgent, space.page.agentTarget)
 #   apps/server-ex/lib/hal_c2/space/page_agent.ex
-#   apps/desktop-qt/qml/HalC2/Bricks/SpacePage.qml and Composer.qml,
+#   apps/desktop-qt/qml/HalC2/Bricks/SpacePage.qml and Composer.qml (pageHost),
 #     apps/desktop-qt/src/native/ComposerController.h (drafts, stash and their targets)
+#   apps/desktop-qt/examples/*/shell.qml (shells that show their Composer when it is ready)
 #   apps/mobile-qt/qml/HalC2/Mobile/SpacePageView.qml and SpaceScreen.qml (the phone's page and its menu)
 #   apps/tui/src/host/spaceState.ts (space.askAgent), apps/tui/src/host/composerState.ts
 
@@ -208,3 +209,24 @@ Feature: A page's prompt is the timeline's prompt
       And the user attached the image "sketch.png" in the prompt of "Roadmap"
       When the user sends "@agent tidy this" from the prompt of "Roadmap"
       Then the prompt of "Roadmap" reads "@agent tidy this" with the image "sketch.png"
+
+  # A user's shell lays out its own window and its own prompt (apps/desktop-qt/examples),
+  # and must not need editing for a page to show one prompt. The phone draws its own
+  # window, and the TUI's page writes from its shell's one prompt.
+  @desktop
+  Rule: One prompt on screen
+
+    Scenario Outline: A Space page shows one prompt, whatever shell draws the window
+      Given the window is drawn by <shell>
+      When the user opens "Roadmap" in the window
+      Then the window shows one prompt, aimed at the page "Roadmap"
+      When the user asks an agent about "Roadmap" from the command palette in the window
+      Then the keyboard is in the prompt the window shows
+      When the user opens the thread "Work"
+      Then the window shows one prompt, aimed at the thread "Work"
+
+      Examples:
+        | shell                      |
+        | the default shell          |
+        | the minimal example shell  |
+        | the terminal example shell |
