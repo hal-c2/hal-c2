@@ -82,6 +82,9 @@ the page and the file both change.
 
 ## Keyboard
 
+`mod+Alt+P` opens Spaces on the desktop, outside a terminal; change it under **Space: Open** in
+**Settings → Keybindings**. In the terminal client, press `Ctrl+X` and then `p`.
+
 An ask about the open page can start from the page's menu, the command palette, or a key. It
 keeps whatever you had written in the prompt, with `@agent` in front of it.
 
