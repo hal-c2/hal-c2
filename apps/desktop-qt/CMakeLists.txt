@@ -81,13 +81,10 @@ if(UNIX AND NOT APPLE)
   target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_HAS_DBUS)
 endif()
 
-# The in-app browser (BrowserPanel). Optional: without QtWebEngine the desktop
-# opens pages in the system browser, as it did before.
-find_package(Qt6 6.9 QUIET COMPONENTS WebEngineQuick)
-if(TARGET Qt6::WebEngineQuick)
-  target_link_libraries(hal-c2-qt PRIVATE Qt6::WebEngineQuick)
-  target_compile_definitions(hal-c2-qt PRIVATE HAL_C2_HAS_WEBENGINE)
-endif()
+# The in-app browser (BrowserPanel) is QtWebEngine. QtQuick3D (DeviceBody3D) is
+# a QML import, not linked: it is found at run time and packaged with the app.
+find_package(Qt6 6.9 REQUIRED COMPONENTS WebEngineQuick Quick3D)
+target_link_libraries(hal-c2-qt PRIVATE Qt6::WebEngineQuick)
 
 include(cmake/NativeShell.cmake)
 hal_c2_add_native_library()

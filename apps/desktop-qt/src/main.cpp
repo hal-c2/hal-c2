@@ -11,10 +11,8 @@
 #include <QWindow>
 #include <QtLogging>
 
-#ifdef HAL_C2_HAS_WEBENGINE
 #include <QtWebEngineQuick/QQuickWebEngineProfile>
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
-#endif
 
 #include "PlatformWindow.h"
 #include "LayoutController.h"
@@ -131,10 +129,8 @@ int main(int argc, char* argv[]) {
   // a development shell is hal-c2-dev (below).
   QGuiApplication::setDesktopFileName(QStringLiteral("hal-c2"));
 
-#ifdef HAL_C2_HAS_WEBENGINE
   // The in-app browser's engine shares the app's GL context: before the app.
   QtWebEngineQuick::initialize();
-#endif
   QGuiApplication app(argc, argv);
   // Closing a window closes only it; the last one quits (NativeShell::lastWindowClosed).
   QGuiApplication::setQuitOnLastWindowClosed(false);
@@ -218,7 +214,6 @@ int main(int argc, char* argv[]) {
   }
   if (!launchFolders.isEmpty() && SingleInstance::forward(storage.state, launchFolders)) return 0;
 
-#ifdef HAL_C2_HAS_WEBENGINE
   // The in-app browser's pages keep their cookies and storage with the home's
   // data, apart from any other browser on the machine.
   auto* browserProfile = new QQuickWebEngineProfile(QStringLiteral("hal-c2"), &app);
@@ -226,7 +221,6 @@ int main(int argc, char* argv[]) {
   browserProfile->setCachePath(QDir(storage.cache).filePath(QStringLiteral("browser")));
   Browser::setProfile(browserProfile);
   Browser::setSupported(true);
-#endif
 
   ShellBridge bridge;
   bridge.setLocalFolderImportEnabled(!parser.isSet(urlOption) || parser.isSet(localFolderImportOption));

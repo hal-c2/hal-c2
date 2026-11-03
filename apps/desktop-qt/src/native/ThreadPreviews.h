@@ -32,7 +32,7 @@ class McClient;
 // thread's MC forwards only a port one of its tabs names, so an address no tab
 // names (a link in a reply) opens a tab for it first.
 //
-// Embedded (setEmbedded, a build with the in-app browser): each tab is a
+// Embedded (setEmbedded, the desktop with its in-app browser): each tab is a
 // page in the panel (BrowserPage) rather than the user's browser. The tabs
 // are followed while a thread shows at all, so one an agent or another
 // window opens appears; the MC's machine's servers only while `suggesting`.

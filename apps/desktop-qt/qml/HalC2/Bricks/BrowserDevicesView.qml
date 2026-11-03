@@ -9,8 +9,7 @@ import "js/browser.js" as BrowserJs
 // and scaled to the preset's CSS viewport (BrowserJs.layoutDevices). Frames
 // follow `pageUrl`; they are views only and never report to the MC
 // themselves (BrowserPanel's own page does that). `show3d` puts phone and
-// tablet frames on their 3D bodies (DeviceBody3D), skipped when QtQuick3D is
-// not built in.
+// tablet frames on their 3D bodies (DeviceBody3D).
 Item {
     id: root
 
@@ -46,7 +45,7 @@ Item {
             width: modelData.frameWidth
             height: modelData.frameHeight
 
-            readonly property bool body3d: root.show3d && modelData.kind !== "desktop" && bodyLoader.status !== Loader.Error
+            readonly property bool body3d: root.show3d && modelData.kind !== "desktop"
 
             Text {
                 objectName: "browserDevicesLabel-" + frameItem.modelData.id

@@ -75,12 +75,9 @@ target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Qu
 hal_c2_target_platform_window(tst_Features)
 # The terminal bricks draw with qml-ghostty's Terminal.
 target_link_libraries(tst_Features PRIVATE qmlghosttyplugin)
-# The in-app browser's pages (BrowserPanel), when this Qt has QtWebEngine.
-find_package(Qt6 6.9 QUIET COMPONENTS WebEngineQuick)
-if(TARGET Qt6::WebEngineQuick)
-  target_link_libraries(tst_Features PRIVATE Qt6::WebEngineQuick)
-  target_compile_definitions(tst_Features PRIVATE HAL_C2_HAS_WEBENGINE)
-endif()
+# The in-app browser's pages (BrowserPanel).
+find_package(Qt6 6.9 REQUIRED COMPONENTS WebEngineQuick)
+target_link_libraries(tst_Features PRIVATE Qt6::WebEngineQuick)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 add_executable(tst_LocalTranscriber tst_LocalTranscriber.cpp ../../src/LocalTranscriber.cpp)
@@ -142,13 +139,9 @@ hal_c2_add_glob_tests(PATTERN "tst_*Regression.cpp" LABEL regression
   INCLUDES ../../src ../../src/native features
   LIBRARIES hal_c2_native
 )
-# An agent driving a real page (PreviewAutomationHost on QtWebEngine), where
-# this Qt has the web engine.
-find_package(Qt6 6.9 QUIET COMPONENTS WebEngineQuick)
-if(TARGET Qt6::WebEngineQuick)
-  add_executable(tst_PreviewAutomationWeb tst_PreviewAutomationWeb.cpp features/FakeMc.cpp)
-  target_include_directories(tst_PreviewAutomationWeb PRIVATE . features)
-  target_link_libraries(tst_PreviewAutomationWeb PRIVATE hal_c2_native Qt6::Quick Qt6::WebEngineQuick Qt6::Test)
-  add_test(NAME PreviewAutomationWeb COMMAND tst_PreviewAutomationWeb)
-  set_tests_properties(PreviewAutomationWeb PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
-endif()
+# An agent driving a real page (PreviewAutomationHost on QtWebEngine).
+add_executable(tst_PreviewAutomationWeb tst_PreviewAutomationWeb.cpp features/FakeMc.cpp)
+target_include_directories(tst_PreviewAutomationWeb PRIVATE . features)
+target_link_libraries(tst_PreviewAutomationWeb PRIVATE hal_c2_native Qt6::Quick Qt6::WebEngineQuick Qt6::Test)
+add_test(NAME PreviewAutomationWeb COMMAND tst_PreviewAutomationWeb)
+set_tests_properties(PreviewAutomationWeb PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")

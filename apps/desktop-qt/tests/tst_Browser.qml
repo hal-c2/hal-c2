@@ -145,13 +145,4 @@ TestCase {
         compare(frames[0].scale, 400 / 1440);
         compare(frames[0].frameHeight, 900 * (400 / 1440));
     }
-
-    // The Devices view's 3D toggle (BrowserDevicesView.qml) falls back to
-    // flat frames when DeviceBody3D.qml's "import QtQuick3D" cannot resolve;
-    // this build has no QtQuick3D, so that is exactly what happens here.
-    function test_deviceBody3dFailsToLoadWithoutQtQuick3D() {
-        const component = Qt.createComponent("../qml/HalC2/Bricks/DeviceBody3D.qml");
-        tryVerify(() => component.status !== Component.Loading);
-        compare(component.status, Component.Error);
-    }
 }

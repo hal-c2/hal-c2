@@ -14,9 +14,7 @@
 
 class BrowserPage;
 
-// The in-app browser, as the `Browser` QML singleton: whether this build has
-// it (QtWebEngine, found at build time like the terminal's module; main.cpp
-// says so), the profile its pages share (persistent under the desktop's data
+// The in-app browser, as the `Browser` QML singleton: the profile its pages share (persistent under the desktop's data
 // directory; none in tests, whose pages use the engine's off-the-record
 // default), and how DevTools dock and the Devices view look (remembered on
 // this device).
@@ -26,7 +24,6 @@ class BrowserPage;
 // automation host): Browser::page(tabId).
 class Browser : public QObject {
   Q_OBJECT
-  Q_PROPERTY(bool supported READ supported CONSTANT)
   Q_PROPERTY(QObject* profile READ profile CONSTANT)
   // "bottom" or "right", and the share of the page DevTools take (0.2-0.8).
   Q_PROPERTY(QString devToolsDock READ devToolsDock WRITE setDevToolsDock NOTIFY devToolsChanged)
@@ -41,6 +38,9 @@ class Browser : public QObject {
 public:
   static Browser* instance();
 
+  // Whether this client has the in-app browser: the desktop does (main.cpp
+  // says so); the phone client links no QtWebEngine and opens pages in the
+  // system browser. Not in QML: the desktop's QML always has it.
   static void setSupported(bool supported);
   static bool supported();
   // The profile pages use (a QQuickWebEngineProfile); made by main.cpp.

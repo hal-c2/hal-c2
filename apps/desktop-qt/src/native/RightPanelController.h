@@ -30,8 +30,8 @@ class ShellStore;
 // and a tab per device streamed (`device:<host>:<device>`, ThreadDevices; an
 // agent's device opens its tab unless the user closed it), and a terminal tab per
 // terminal group TerminalController keeps for the panel (`terminal:<group>`;
-// closing the tab closes its terminals). A build with the in-app browser
-// (Browser::supported) has a tab per MC browser tab of the thread
+// closing the tab closes its terminals). The desktop, which has the
+// in-app browser (the phone does not: Browser::supported), has a tab per MC browser tab of the thread
 // (`browser:<tabId>`, ThreadPreviews embedded): the MC's list decides which
 // there are, closing one closes it on the MC, and one opened by the user,
 // a dev server link, an agent or another window shows.

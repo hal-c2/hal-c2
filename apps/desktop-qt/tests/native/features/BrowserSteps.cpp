@@ -1,8 +1,7 @@
 // The in-app browser (BrowserPanel on QtWebEngine): a thread's browser tab
 // drawn beside it, against a dev server this file serves on the loopback.
 // features/preview/surfaces.feature's "The desktop shows the page beside the
-// thread". A build without QtWebEngine has no page to show: its scenarios
-// fail, as the app opens pages in the user's browser there.
+// thread".
 //
 // HAL_C2_BROWSER_GRABS=<dir> keeps a picture of the panel from the scenarios
 // that draw something worth looking at.
@@ -170,8 +169,7 @@ DevServer& devServer(World& world) {
   return *state.server;
 }
 
-// The thread's previews show pages here, as a build with QtWebEngine does
-// (main.cpp), and DevTools' layout is kept in this device's settings.
+// The thread's previews show pages here, as the desktop does (main.cpp), and DevTools' layout is kept in this device's settings.
 void embed(World& world) {
   model(world).setEmbedded(true);
   Browser* browser = Browser::instance();
