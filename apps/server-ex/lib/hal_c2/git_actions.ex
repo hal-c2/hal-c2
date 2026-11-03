@@ -61,6 +61,8 @@ defmodule HalC2.GitActions do
 
         {:error, message}
     after
+      # A pull request it opened or pushed to is asked about again, not held.
+      HalC2.PullRequests.Branches.forget(cwd)
       Vcs.Watch.refresh(cwd)
     end
   end
