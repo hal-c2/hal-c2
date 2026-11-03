@@ -273,6 +273,25 @@ Item {
             compare(body.item, item, "and gives it back");
         }
 
+        // A tab that drags still clicks: in the side panel's strip and the stage's.
+        function test_aClickedTabShows() {
+            show({ staged: ["diff"], activeId: "files" });
+            const pair = createTemporaryObject(pairComponent, root);
+            show({ staged: [], activeId: "diff" });
+            const panelTab = findChild(pair.panel, "panelTab-files");
+            tryVerify(() => panelTab.width > 0, 1000, "the side panel's tabs are laid out");
+            mouseClick(panelTab);
+            compare(lastAction().action, "rightPanel.activate");
+            compare(lastAction().payload.id, "files");
+
+            show({ staged: ["diff", "files"], panes: ["diff"], open: false });
+            const stageTab = findChild(pair.stage, "stageTab-files");
+            tryVerify(() => stageTab.width > 0, 1000, "the stage's tabs are laid out");
+            mouseClick(stageTab);
+            compare(lastAction().action, "stage.show");
+            compare(lastAction().payload.id, "files");
+        }
+
         // Scenario: Tabs drag between the side panel and the stage.
         function test_aTabDragsBetweenThePanelAndTheStage() {
             show({ staged: ["diff"], activeId: "files" });
