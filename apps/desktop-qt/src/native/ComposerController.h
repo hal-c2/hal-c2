@@ -594,6 +594,9 @@ private:
     QString saved;
     int savedCursor = 0;
     QList<Attachment> savedAttachments;
+    // Added images the MC has stored for the message, by draft id: a save
+    // the MC refused reuses them rather than storing them again.
+    QHash<QString, QJsonObject> stored;
     bool saving = false;
   };
   std::optional<QueuedEdit> m_queuedEdit;

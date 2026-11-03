@@ -2262,6 +2262,11 @@ bool ComposerController::editQueued(const QString& target, QString runId) {
     edit.savedAttachments = std::exchange(m_drafts[target].attachments, {});
     m_queuedEdit = edit;
     save();
+  } else if (m_queuedEdit->runId != runId) {
+    // What was added for the message left goes aside with the draft.
+    m_queuedEdit->savedAttachments += std::exchange(m_drafts[target].attachments, {});
+    m_queuedEdit->stored.clear();
+    save();
   }
   m_queuedEdit->runId = runId;
   m_queuedEdit->messageId = messageId;
@@ -2309,11 +2314,12 @@ bool ComposerController::saveQueuedEdit(const QString& target, const QString& te
     publish();
     return true;
   }
-  QJsonArray attachments = m_queuedEdit->sent;
-  for (const QJsonValue& file : fileRecords(added)) attachments.append(file);
+  // New images are stored for the message first, as a send's are; one a
+  // refused save already stored is not stored again.
   QJsonArray images;
+  QStringList imageIds;
   for (const Attachment& attachment : added) {
-    if (attachment.file) continue;
+    if (attachment.file || m_queuedEdit->stored.contains(attachment.id)) continue;
     QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
                       {QStringLiteral("name"), attachment.name},
                       {QStringLiteral("mimeType"), attachment.mimeType},
@@ -2321,19 +2327,31 @@ bool ComposerController::saveQueuedEdit(const QString& target, const QString& te
                       {QStringLiteral("dataUrl"), attachment.dataUrl}};
     if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
     images.append(image);
+    imageIds.append(attachment.id);
   }
-  if (images.isEmpty()) {
+  // The message keeps its attachments, then the added ones in the order added.
+  const auto withAttachments = [this, added](QJsonObject command) {
+    QJsonArray attachments = m_queuedEdit->sent;
+    for (const Attachment& attachment : added) {
+      if (attachment.file) {
+        for (const QJsonValue& file : fileRecords({attachment})) attachments.append(file);
+      } else if (const auto stored = m_queuedEdit->stored.constFind(attachment.id); stored != m_queuedEdit->stored.cend()) {
+        attachments.append(*stored);
+      }
+    }
     command.insert(QStringLiteral("attachments"), attachments);
-    dispatch(command);
+    return command;
+  };
+  if (images.isEmpty()) {
+    dispatch(withAttachments(command));
     publish();
     return true;
   }
-  // New images are stored for the message first, as a send's are.
   m_client->call(this, thread->environmentId, QStringLiteral("assets.persistChatAttachments"),
                  QJsonObject{{QStringLiteral("threadId"), thread->id},
                              {QStringLiteral("messageId"), m_queuedEdit->messageId},
                              {QStringLiteral("attachments"), images}},
-                 [this, runId, command, attachments, dispatch](const QJsonValue& result, const std::optional<QString>& error) mutable {
+                 [this, runId, command, imageIds, withAttachments, dispatch](const QJsonValue& result, const std::optional<QString>& error) {
                    if (!m_queuedEdit || m_queuedEdit->runId != runId) return;
                    if (error) {
                      m_queuedEdit->saving = false;
@@ -2341,9 +2359,9 @@ bool ComposerController::saveQueuedEdit(const QString& target, const QString& te
                      publish();
                      return;
                    }
-                   for (const QJsonValue& image : result.toObject().value(QLatin1String("attachments")).toArray()) attachments.append(image);
-                   command.insert(QStringLiteral("attachments"), attachments);
-                   dispatch(command);
+                   const QJsonArray stored = result.toObject().value(QLatin1String("attachments")).toArray();
+                   for (qsizetype i = 0; i < stored.size() && i < imageIds.size(); ++i) m_queuedEdit->stored.insert(imageIds.at(i), stored.at(i).toObject());
+                   dispatch(withAttachments(command));
                  });
   publish();
   return true;

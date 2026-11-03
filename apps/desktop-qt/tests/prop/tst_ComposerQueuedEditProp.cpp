@@ -276,6 +276,10 @@ struct Edit : Command {
     if (!m.editing) {
       m.setAside = m.draftImages;
       m.draftImages = 0;
+    } else if (*m.editing != m.queue.at(at).runId) {
+      // What was added for the message left goes aside with the draft.
+      m.setAside += m.added;
+      m.added = 0;
     }
     m.editing = m.queue.at(at).runId;
     m.sent = m.queue.at(at).attachments;
