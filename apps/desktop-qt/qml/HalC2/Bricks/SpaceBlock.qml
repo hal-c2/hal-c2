@@ -85,8 +85,12 @@ Item {
     // The user is writing in a drawn block: its source shows.
     property bool sourceShown: false
     // A drawn bullet or numbered item has its marker drawn with its text, as
-    // the chat draws a list; the lead keeps the indent that nests it.
-    readonly property string marker: drawn && editor === null && (kind === "bullet" || kind === "numbered") ? markdownLead.replace(/^ +/, "") : ""
+    // the chat draws a list; the lead keeps the indent that nests it. A text
+    // the brick would read out of the item keeps its marker in the lead.
+    readonly property string marker: drawn && editor === null && (kind === "bullet" || kind === "numbered") && !leavesItem(markdownLead.replace(/^ +/, ""), text) ? markdownLead.replace(/^ +/, "") : ""
+    // What the brick draws: an item's further lines are indented under its
+    // marker, so a second paragraph stays in the item.
+    readonly property string drawnSource: marker === "" ? text : marker + text.replace(/\n/g, "\n" + " ".repeat(marker.length))
 
     signal commentRequested(string blockId)
     signal addBelowRequested(string blockId)
@@ -111,6 +115,13 @@ Item {
     // Shell.openExternal opens. A path or an in-page anchor is text to edit.
     function openable(link) {
         return /^(https?|mailto|hal-c2):/i.test(link) ? link : "";
+    }
+
+    // Whether an item's text, after its marker, is Markdown that is no list
+    // item: a rule of the bullet's own character (`- ---`), a quote or a fence.
+    function leavesItem(marker, text) {
+        const line = text.split("\n")[0];
+        return /^ {0,3}(>|```|~~~)/.test(line) || /^(-{3,}|\*{3,}|_{3,})$/.test((marker + line).replace(/[ \t]/g, ""));
     }
 
     // Shows a drawn block's source to edit, the caret near (x, y) in the drawn
@@ -357,7 +368,7 @@ Item {
                                 objectName: "spaceBlockText:" + block.text
                                 width: parent.width
                                 selectable: false
-                                text: block.marker + block.text
+                                text: block.drawnSource
                                 bulletDepth: block.listBullets
                                 numberDepth: block.listNumbers
                                 textColor: block.foreground
