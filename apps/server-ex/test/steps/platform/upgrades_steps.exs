@@ -854,7 +854,9 @@ defmodule HalC2.Steps.Platform.Upgrades do
     assert JSON.decode!(IO.iodata_to_binary(pong)) == %{"t" => "pong"}
 
     assert %{
-             v: 10,
+             v: 11,
+             following: %{},
+             trace: nil,
              scopes: :all,
              monitors: %{},
              shell: %{},

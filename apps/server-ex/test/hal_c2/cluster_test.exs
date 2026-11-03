@@ -254,22 +254,23 @@ defmodule HalC2.ClusterTest do
     1 = :erpc.call(c, :erlang, :trace, [stream, true, [:receive, {:tracer, tracer}]])
     :ok = :erpc.call(c, :sys, :suspend, [stream])
     shape = %{"type" => "stream", "mc" => Atom.to_string(c), "stream" => "split-th"}
+    # The follow runs in a process the socket spawns, which sends it the answer.
+    :erlang.trace(socket, true, [:send, :set_on_spawn])
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
 
-    assert_receive {:trace, ^stream, :receive,
-                    {:"$gen_call", {worker, _}, {:subscribe, ^socket, _, _}}},
+    assert_receive {:trace, ^stream, :receive, {:"$gen_call", _, {:subscribe, ^socket, _, _}}},
                    5_000
 
     # The answer lands, and the MCs part and meet again, before the socket reads it.
-    :erlang.trace(socket, true, [:receive])
+    # A suspended process traces no receive until it runs, so the send is watched.
     true = :erlang.suspend_process(socket)
     :ok = :erpc.call(c, :sys, :resume, [stream])
-    assert_receive {:trace, ^socket, :receive, {:DOWN, _, :process, ^worker, _}}, 5_000
+    assert_receive {:trace, _, :send, {:hal_c2_followed, _, _}, ^socket}, 5_000
+    :erlang.trace(socket, false, [:send, :set_on_spawn])
     true = Node.disconnect(c)
     true = Node.connect(c)
     assert :erpc.call(c, :sys, :get_state, [stream]).subscribers == %{}
     true = :erlang.resume_process(socket)
-    :erlang.trace(socket, false, [:receive])
 
     {error, _, client} = WsClient.recv_until(client, &(&1["id"] == 2), 30_000)
     assert %{"t" => "error", "id" => 2} = error

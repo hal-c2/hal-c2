@@ -12,6 +12,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "ThreadStore.h"
+#include "TimelineModel.h"
 
 class SyncThreadRegression : public QObject {
   Q_OBJECT
@@ -62,6 +63,79 @@ private slots:
 
     QTRY_VERIFY(loaded);
     QTRY_COMPARE(threads->openThreads(), QStringList());
+  }
+
+  // A thread paged back through and left held every turn it was sent while it
+  // was kept warm. Left, it keeps about what it opens with, and follows again
+  // from the floor that raises, once, on one subscription.
+  void aThreadLeftLetsGoOfItsEarlierTurns() {
+    QTemporaryDir home;
+    FakeMc mc;
+    mc.projects.insert(QStringLiteral("p1"), {{QStringLiteral("id"), QStringLiteral("p1")}, {QStringLiteral("title"), QStringLiteral("P")}});
+    for (const QString& id : {QStringLiteral("t1"), QStringLiteral("t2")}) {
+      mc.threads.insert(id, {{QStringLiteral("id"), id}, {QStringLiteral("title"), id}, {QStringLiteral("projectId"), QStringLiteral("p1")}});
+    }
+    // t1 has ten runs of 50 turn items; the MC sends a new follower the
+    // whole thread, and one that resumes only that it is live.
+    // (The handler sees the shape; where the follower resumes is in its `sub` frame.)
+    mc.onShape(QStringLiteral("stream"), [&mc](int id, const QJsonObject& shape) {
+      const QJsonObject live{{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), 1}, {QStringLiteral("handle"), QStringLiteral("log-1")}};
+      if (mc.subscriptions.last().value(QLatin1String("offset")).isDouble()) return mc.send(live);
+      QJsonArray rows;
+      if (shape.value(QLatin1String("stream")).toString() == QLatin1String("t1")) {
+        for (int run = 1; run <= 10; ++run) {
+          const QString runId = QStringLiteral("run-%1").arg(run);
+          rows.append(QJsonArray{QStringLiteral("run"), runId,
+                                 QJsonObject{{QStringLiteral("id"), runId}, {QStringLiteral("ordinal"), run}, {QStringLiteral("status"), QStringLiteral("completed")}}});
+          for (int i = 0; i < 50; ++i) {
+            const QString item = QStringLiteral("item-%1-%2").arg(run).arg(i);
+            rows.append(QJsonArray{QStringLiteral("turn-item"), item,
+                                   QJsonObject{{QStringLiteral("id"), item},
+                                               {QStringLiteral("type"), i == 0 ? QStringLiteral("user_message") : QStringLiteral("assistant_message")},
+                                               {QStringLiteral("runId"), runId},
+                                               {QStringLiteral("ordinal"), run * 100 + i},
+                                               {QStringLiteral("status"), QStringLiteral("completed")},
+                                               {QStringLiteral("text"), item}}});
+          }
+        }
+      }
+      mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("part"), 0},
+               {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("offset"), 1},
+               {QStringLiteral("floor"), QJsonValue::Null}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
+      mc.send(live);
+    });
+    ShellBridge bridge;
+    NativeShell native(&bridge);
+    native.setStoreDirs(home.filePath(QStringLiteral("state")), home.filePath(QStringLiteral("data")), home.filePath(QStringLiteral("cache")));
+    native.controller<SettingsController>()->setDevicePath(home.filePath(QStringLiteral("config/preferences.json")));
+    native.controller<PluginController>()->setConfigDir(home.filePath(QStringLiteral("config")));
+    native.open(mc.origin(), QStringLiteral("token"));
+    QTRY_VERIFY(native.client()->isReady() && native.store()->synchronized() && native.store()->thread(QStringLiteral("env-a:t1")));
+    ThreadStore* threads = native.controller<ThreadStore>();
+    threads->open(QStringLiteral("env-a:t1"));
+    TimelineModel* t1 = threads->timeline(QStringLiteral("env-a:t1"));
+    QTRY_COMPARE(t1->status(), QStringLiteral("live"));
+    QCOMPARE(t1->entities(QStringLiteral("turn-item")).size(), 500);
+
+    threads->open(QStringLiteral("env-a:t2"));
+    // The run read (the last) and the four above it that hold windowItems.
+    QCOMPARE(t1->entities(QStringLiteral("turn-item")).size(), 250);
+    // One subscription follows t1, the one made from the raised floor.
+    const auto following = [&mc] {
+      QList<QJsonObject> subs;
+      for (const QJsonObject& sub : std::as_const(mc.subscriptions)) {
+        if (mc.subscribers(QStringLiteral("stream")).contains(sub.value(QLatin1String("id")).toInt()) &&
+            sub.value(QLatin1String("shape")).toObject().value(QLatin1String("stream")).toString() == QLatin1String("t1")) {
+          subs.append(sub);
+        }
+      }
+      return subs;
+    };
+    QTRY_VERIFY(!following().isEmpty() && following().first().value(QLatin1String("offset")).isDouble());
+    QCOMPARE(following().size(), 1);
+    QCOMPARE(following().first().value(QLatin1String("window")).toObject().value(QLatin1String("floor")).toInt(), 6);
+    QTRY_COMPARE(t1->status(), QStringLiteral("live"));
+    QCOMPARE(t1->entities(QStringLiteral("turn-item")).size(), 250);
   }
 };
 
