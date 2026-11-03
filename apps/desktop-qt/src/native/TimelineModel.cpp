@@ -353,6 +353,47 @@ TimelineModel::TimelineModel(const QString& threadKey, QObject* parent)
   m_flushTimer.setSingleShot(true);
   m_flushTimer.setInterval(flushDelayMs);
   connect(&m_flushTimer, &QTimer::timeout, this, &TimelineModel::flush);
+  connect(this, &QAbstractItemModel::rowsInserted, this, &TimelineModel::refreshLatest);
+  connect(this, &QAbstractItemModel::rowsRemoved, this, &TimelineModel::refreshLatest);
+  connect(this, &QAbstractItemModel::modelReset, this, &TimelineModel::refreshLatest);
+  connect(this, &QAbstractItemModel::dataChanged, this, [this](const QModelIndex&, const QModelIndex& last) {
+    // Only the newest rows can change the line.
+    if (last.row() >= rowCount() - 4) refreshLatest();
+  });
+}
+
+void TimelineModel::refreshLatest() {
+  // The first line with words in it, as plain text.
+  const auto lineOf = [](const QString& text) {
+    static const QRegularExpression lead(QStringLiteral(R"(^[#>\s]+)"));
+    for (const QString& line : text.split(QLatin1Char('\n'))) {
+      if (line.trimmed().startsWith(QLatin1String("```"))) continue;
+      const QString plain = timeline::plainDetail(line).remove(lead);
+      if (!plain.isEmpty()) return plain.left(240);
+    }
+    return QString();
+  };
+  QString latest;
+  for (int at = rowCount() - 1; at >= 0 && latest.isEmpty(); --at) {
+    const QModelIndex row = index(at);
+    const QString kind = data(row, KindRole).toString();
+    if (kind == QLatin1String("fold")) continue;
+    if (kind == QLatin1String("work")) {
+      latest = lineOf(data(row, SummaryRole).toString());
+      const QVariantList entries = data(row, EntriesRole).toList();
+      if (latest.isEmpty() && !entries.isEmpty()) {
+        const QVariantMap entry = entries.last().toMap();
+        latest = lineOf(QStringList{entry.value(QStringLiteral("label")).toString(), entry.value(QStringLiteral("detail")).toString()}.join(QLatin1Char(' ')));
+      }
+      continue;
+    }
+    latest = lineOf(data(row, TextRole).toString());
+    if (latest.isEmpty()) latest = lineOf(data(row, TitleRole).toString());
+    if (!latest.isEmpty() && kind == QLatin1String("message") && data(row, AuthorRole).toString() == QLatin1String("user")) latest = QStringLiteral("You: ") + latest;
+  }
+  if (latest == m_latest) return;
+  m_latest = latest;
+  emit latestChanged();
 }
 
 void TimelineModel::setStatus(const QString& status, const QString& problem) {

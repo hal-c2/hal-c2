@@ -99,13 +99,17 @@ Rectangle {
 
         Text {
             anchors.left: parent.left
+            anchors.right: holder.left
+            anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
             text: row.label
             color: root.muted
             font.pixelSize: Math.round(12 * Theme.fontScale)
+            elide: Text.ElideRight
         }
         Item {
             id: holder
+            clip: true
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width * 0.55
@@ -182,7 +186,10 @@ Rectangle {
         }
     }
 
-    component SubmitRow: ToolRow {
+    // A field on its own full-width line, its action button on the line
+    // below: a row this holder's 55% control column would otherwise
+    // squeeze (hal-c2#923), since this row has no label of its own.
+    component SubmitRow: Column {
         id: submitRow
 
         property string field: ""
@@ -190,31 +197,33 @@ Rectangle {
         property string action: ""
         property bool canSubmit: true
 
-        height: 32
+        width: parent ? parent.width - 24 : 0
+        spacing: 6
 
         ShellTextField {
             id: fieldItem
 
             objectName: "toolsField-" + submitRow.field
-            anchors.left: parent.left
-            anchors.right: submitButton.left
-            anchors.rightMargin: 6
-            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width
             placeholderText: submitRow.placeholder
             enabled: !root.disabled && submitRow.canSubmit
             onAccepted: submitButton.clicked()
         }
-        ShellButton {
-            id: submitButton
+        Item {
+            width: parent.width
+            height: submitButton.implicitHeight
 
-            objectName: "toolsSubmit-" + submitRow.field
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            text: submitRow.action
-            enabled: !root.disabled && submitRow.canSubmit && fieldItem.text.trim().length > 0
-            onClicked: {
-                root.tools.submit(submitRow.field, fieldItem.text);
-                fieldItem.text = "";
+            ShellButton {
+                id: submitButton
+
+                objectName: "toolsSubmit-" + submitRow.field
+                anchors.right: parent.right
+                text: submitRow.action
+                enabled: !root.disabled && submitRow.canSubmit && fieldItem.text.trim().length > 0
+                onClicked: {
+                    root.tools.submit(submitRow.field, fieldItem.text);
+                    fieldItem.text = "";
+                }
             }
         }
     }
@@ -512,8 +521,9 @@ Rectangle {
                     ShellComboBox {
                         objectName: "toolsLocationPreset"
                         anchors.left: parent.left
+                        anchors.right: locationSet.left
+                        anchors.rightMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 132
                         outline: true
                         model: root.presets
                         currentIndex: -1
@@ -523,15 +533,19 @@ Rectangle {
                         onActivated: index => root.tools.applyPreset(root.presets[index])
                     }
                     ShellButton {
+                        id: locationSet
+
                         objectName: "toolsLocationSet"
-                        anchors.left: parent.left
-                        anchors.leftMargin: 138
+                        anchors.right: root.ios ? locationClear.left : parent.right
+                        anchors.rightMargin: root.ios ? 6 : 0
                         anchors.verticalCenter: parent.verticalCenter
                         text: qsTr("Set")
                         enabled: !root.disabled && parent.locationValid
                         onClicked: root.tools.applyLocation()
                     }
                     ShellButton {
+                        id: locationClear
+
                         objectName: "toolsLocationClear"
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
@@ -566,14 +580,17 @@ Rectangle {
 
                         objectName: "toolsPermission"
                         anchors.left: parent.left
+                        anchors.right: permissionButtons.left
+                        anchors.rightMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 132
                         outline: true
                         model: root.ios ? root.iosPermissions : root.androidPermissions
                         enabled: !root.disabled
                         Accessible.name: qsTr("Permission")
                     }
                     Row {
+                        id: permissionButtons
+
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 4

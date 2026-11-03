@@ -5,7 +5,8 @@ import HalC2.Shell
 import "../qml/HalC2/Bricks"
 
 // The right panel's bodies: each tab draws its brick and keeps it while
-// another tab shows. Its edge resizes it and its header button maximizes it.
+// another tab shows. Its edge resizes it and its header button opens the
+// active tab in the thread's centre.
 // The Files viewer's wrap, the Diff tab's revert confirmation, and the Pull
 // request review tab's conversation, offline and online.
 Item {
@@ -286,7 +287,6 @@ Item {
             isOpen: true,
             activeId: activeId,
             width: 540,
-            maximized: false,
             canAdd: { diff: true, files: true, agents: true, terminal: true },
             tabs: [
                 { id: "diff", kind: "diff", title: "Diff" },
@@ -360,20 +360,34 @@ Item {
             verify(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].payload.width === undefined, "Enter resets it");
         }
 
-        function test_maximizeIsOfferedOnlyWhereTheLayoutHidesTheThread() {
+        // Scenario: The panel's tab opens in the thread's centre
+        // (features/desktop/stage.feature).
+        function test_openInCentreMovesTheActiveTabToTheStage() {
             Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
             const panel = createTemporaryObject(panelComponent, root);
             const button = findChild(panel, "panelMaximize");
-            verify(!button.visible);
-            panel.canMaximize = true;
             verify(button.visible);
+            compare(button.Accessible.name, "Open in centre");
             mouseClick(button);
-            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].action, "rightPanel.toggleMaximized");
-            const maximized = panelState("diff");
-            maximized.maximized = true;
-            Shell.state = Object.assign({}, Shell.state, { panel: maximized });
-            verify(panel.maximized);
-            verify(!findChild(panel, "panelEdge").visible, "a maximized panel has no edge to drag");
+            const last = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(last.action, "rightPanel.dock");
+            compare(last.payload.id, "diff");
+            compare(last.payload.dock, "stage");
+            compare(last.payload.focus, true);
+            const closed = panelState("diff");
+            closed.isOpen = false;
+            Shell.state = Object.assign({}, Shell.state, { panel: closed });
+            verify(!button.visible, "a closed panel offers nothing to move");
+        }
+
+        // Tabs on the stage leave the panel's strip.
+        function test_stagedTabsLeaveTheStrip() {
+            const state = panelState("files");
+            state.tabs = [{ id: "diff", kind: "diff", title: "Diff", dock: "stage" }, { id: "files", kind: "files", title: "Files" }];
+            Shell.state = Object.assign({}, Shell.state, { panel: state });
+            const panel = createTemporaryObject(panelComponent, root);
+            compare(panel.docked.length, 1);
+            compare(panel.docked[0].id, "files");
         }
 
         // Scenario: Right panel contents survive a visit to settings
@@ -458,7 +472,7 @@ Item {
             verify(list.iconName !== review.iconName, "the two kinds have their own icons");
         }
 
-        function test_panelHasALeadingBorderUnlessMaximized() {
+        function test_panelHasALeadingBorder() {
             Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
             const panel = createTemporaryObject(panelComponent, root);
             const border = findChild(panel, "panelBorder");
@@ -466,10 +480,6 @@ Item {
             compare(border.x, 0);
             compare(border.width, 1);
             compare(border.color, Theme.palette.color("border", "#27272a"));
-            const maximized = panelState("diff");
-            maximized.maximized = true;
-            Shell.state = Object.assign({}, Shell.state, { panel: maximized });
-            tryVerify(() => !border.visible);
         }
 
         function test_tabsThatDoNotFitScrollAndKeepTheActiveOneInView() {

@@ -19,6 +19,9 @@ Item {
     id: root
 
     property var stream: null
+    // An item to show on the screen instead of the stream (a Devices view
+    // frame's page); when set, the body's own screen rendering is skipped.
+    property Item screenItem: null
     // The shown device's name and platform, for its family and model.
     property string deviceName: ""
     property string platform: ""
@@ -33,7 +36,7 @@ Item {
     readonly property string modelSource: modelOverride.length > 0 ? modelOverride : bundledModel
     // No model, or its load failed: the plain family body shows.
     readonly property bool plain: modelSource.length === 0 || modelLoader.status !== RuntimeLoader.Success
-    readonly property real aspect: stream ? stream.aspect : 9 / 19.5
+    readonly property real aspect: screenItem ? screenItem.width / Math.max(screenItem.height, 1) : stream ? stream.aspect : 9 / 19.5
     readonly property bool landscape: aspect > 1
     // The screen as shown: its long side is the models' 2.2 units.
     readonly property real screenWidth: landscape ? 2.2 : 2.2 * aspect
@@ -45,13 +48,15 @@ Item {
 
     objectName: "deviceBody3d"
 
-    // The live screen, rendered into the body's screen texture below.
+    // The live screen, rendered into the body's screen texture below; unused
+    // when screenItem drives the screen instead.
     Item {
         id: textureScreen
 
+        visible: root.screenItem === null
         width: root.landscape ? 256 * root.aspect : 256
         height: root.landscape ? 256 : 256 / Math.max(root.aspect, 0.01)
-        layer.enabled: true
+        layer.enabled: root.screenItem === null
         // Behind the 3D view, which covers it; the layer is what is read.
         z: -1
 
@@ -148,7 +153,7 @@ Item {
                 materials: PrincipledMaterial {
                     lighting: PrincipledMaterial.NoLighting
                     baseColorMap: Texture {
-                        sourceItem: textureScreen
+                        sourceItem: root.screenItem ?? textureScreen
                     }
                 }
             }
