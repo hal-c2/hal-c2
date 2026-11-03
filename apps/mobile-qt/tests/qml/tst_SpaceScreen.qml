@@ -866,6 +866,45 @@ Item {
             verify(!html.includes("**") && !html.includes("~~"), html);
         }
 
+        // features/space/markdown.feature, Tables and Code (#854): drawn as the
+        // chat draws them until tapped, then edited as their source.
+        function test_aTableIsDrawnAsAGridAndEditedAsItsSource() {
+            const table = "| Step | Owner | Done |\n| :--- | :---: | ---: |\n| **MC** | a \\| b | 3 |";
+            const screen = openWith([root.block("b1", table, { kind: "table" })]);
+            tryVerify(() => findChild(screen, "spaceBlockText:" + table) !== null);
+            const shown = findChild(screen, "spaceBlock:" + table);
+            compare(shown.editor, null, "a drawn table holds no editor");
+            const grid = findChild(findChild(shown, "spaceBlockText:" + table), "markdownTable");
+            verify(grid !== null);
+            compare(grid.spec.align, ["left", "center", "right"]);
+            compare(grid.spec.rows[0][1], "a | b");
+            mouseClick(grid, 20, 10);
+            verify(shown.editor !== null && shown.editor.activeFocus);
+            compare(shown.editor.text, table);
+            compare(shown.editor.wrapMode, TextEdit.NoWrap);
+            shown.editor.focus = false;
+            compare(shown.editor, null);
+        }
+
+        function test_aCodeBlockIsDrawnAsCodeAndItsCopyEditsNothing() {
+            const code = "echo hi\n  done";
+            const screen = openWith([root.block("b1", code, { kind: "code", language: "sh" })]);
+            tryVerify(() => findChild(screen, "spaceBlockText:" + code) !== null);
+            const shown = findChild(screen, "spaceBlock:" + code);
+            const drawn = findChild(shown, "spaceBlockText:" + code);
+            const box = findChild(drawn, "markdownCode");
+            verify(box !== null);
+            compare(box.code, code);
+            compare(findChild(box, "codeLabel").text, "sh");
+            tryVerify(() => box.height > 30 && drawn.height >= box.height, 1000, "the code is laid out");
+            mouseClick(findChild(box, "copyCode"));
+            compare(shown.editor, null, "copying does not edit");
+            mouseClick(findChild(box, "codeText"), 4, 4);
+            verify(shown.editor !== null && shown.editor.activeFocus);
+            compare(shown.editor.text, code);
+            compare(shown.editor.font.family, Theme.fontMono.length > 0 ? Theme.fontMono : "monospace");
+        }
+
         // A tap on a link opens it; a tap anywhere else edits the source.
         function test_aTapOpensALinkAndElsewhereEditsTheSource() {
             const source = "[docs](https://example.com) and more words after it";
@@ -1498,7 +1537,7 @@ Item {
         }
 
         // Code in another language, a fence among other text, and a table are
-        // shown as written.
+        // no diagram.
         function test_onlyAMermaidCodeBlockOrFenceIsADiagram() {
             Diagrams.reset();
             const blocks = [root.block("b1", "flowchart LR\n  A --> B", { kind: "code", language: "js" }),
@@ -1509,7 +1548,7 @@ Item {
             const screen = makeScreen({ blocks: blocks });
             screen.openSpace("s1");
             screen.openPage("p1");
-            tryVerify(() => findChild(screen, "spaceBlockEditor:" + blocks[4].text) !== null);
+            tryVerify(() => findChild(screen, "spaceBlockText:" + blocks[4].text) !== null);
             compare(Object.keys(Diagrams.asked).length, 0);
         }
 
