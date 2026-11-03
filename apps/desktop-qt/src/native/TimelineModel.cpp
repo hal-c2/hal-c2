@@ -1680,3 +1680,24 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       return {};
   }
 }
+
+QString TimelineModel::workspaceMutation() const {
+  QString item;
+  int ordinal = -1;
+  const QHash<QString, QJsonObject> items = entities(QStringLiteral("turn-item"));
+  for (auto it = items.cbegin(); it != items.cend(); ++it) {
+    const QString type = it->value(QLatin1String("type")).toString();
+    if (type != QLatin1String("command_execution") && type != QLatin1String("file_change")) continue;
+    const QString status = it->value(QLatin1String("status")).toString();
+    if (status == QLatin1String("pending") || status == QLatin1String("running") || status == QLatin1String("waiting")) continue;
+    if (const int at = it->value(QLatin1String("ordinal")).toInt(); at > ordinal) {
+      ordinal = at;
+      item = it.key();
+    }
+  }
+  QStringList checkpoints;
+  const QHash<QString, QJsonObject> kept = entities(QStringLiteral("checkpoint"));
+  for (auto it = kept.cbegin(); it != kept.cend(); ++it) checkpoints.append(it.key() + QLatin1Char('=') + it->value(QLatin1String("status")).toString());
+  checkpoints.sort();
+  return item + QLatin1Char('\n') + checkpoints.join(QLatin1Char(','));
+}

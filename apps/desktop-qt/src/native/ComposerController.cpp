@@ -1950,6 +1950,17 @@ static QString reviewLabel(const QString& filePath, int first, int last) {
   return first == last ? QStringLiteral("%1 L%2").arg(filePath).arg(first) : QStringLiteral("%1 L%2-%3").arg(filePath).arg(first).arg(last);
 }
 
+// The quoted lines' language, by the file's extension ("src/cart.ts" -> "ts"),
+// as reviewCommentContext's inferReviewCommentFenceLanguage has it.
+static QString fenceLanguage(const QString& filePath) {
+  const QString path = QString(filePath).replace(QLatin1Char('\\'), QLatin1Char('/'));
+  const QString name = path.mid(path.lastIndexOf(QLatin1Char('/')) + 1).toLower();
+  const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
+  if (dot > 0 && dot < name.size() - 1) return name.mid(dot + 1);
+  if (name.startsWith(QLatin1Char('.')) && name.size() > 1) return name.mid(1);
+  return QStringLiteral("text");
+}
+
 bool ComposerController::addReviewComment(const QVariantMap& comment) {
   const QString target = this->target();
   if (target.isEmpty()) return true;
@@ -1966,7 +1977,8 @@ bool ComposerController::addReviewComment(const QVariantMap& comment) {
                                {QStringLiteral("startIndex"), comment.value(QStringLiteral("startIndex")).toInt()},
                                {QStringLiteral("endIndex"), comment.value(QStringLiteral("endIndex")).toInt()},
                                {QStringLiteral("rangeLabel"), comment.value(QStringLiteral("rangeLabel")).toString()},
-                               {QStringLiteral("diff"), comment.value(QStringLiteral("diff")).toString().left(32000)}};
+                               {QStringLiteral("diff"), comment.value(QStringLiteral("diff")).toString().left(32000)},
+                               {QStringLiteral("fenceLanguage"), comment.value(QStringLiteral("fenceLanguage"), fenceLanguage(filePath)).toString()}};
   m_drafts[target].excerpts.append(context);
   publish();
   NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("success"), QStringLiteral("Comment added to the prompt"),

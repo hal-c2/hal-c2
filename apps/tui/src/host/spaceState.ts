@@ -55,11 +55,13 @@ import {
 } from "@hal-c2/client-runtime/state/stream-entities";
 
 import type { TuiClient } from "../connection.ts";
+import { buildFileTree, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
 import type { StatusKind } from "../store.ts";
 import { type Palette, THEME } from "../theme.ts";
 import type { AskSpec } from "./askState.ts";
 import type { ComposerPage, PagePrompt, PickRequest } from "./composerState.ts";
+import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import { scheduleLabel } from "./sections/scheduledTasks.ts";
 import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
@@ -85,6 +87,7 @@ export interface TuiSpaceRow {
   /**
    * `space:<id>`, `page:<id>`, `trash:<id>`, `deck:<id>`, `decktrash:<id>`, `block:<id>`,
    * `comment:<id>`, `slide:<id>`, `image:<id>`, `imageTrash:<id>`, `version:<n>`,
+   * `project:<projectId>`, `file:<projectId>|<path>`, `folder:<projectId>|<path>`,
    * `more:more`; a wrapped block or a slide's body repeats its key.
    */
   readonly key: string;
@@ -99,6 +102,8 @@ export interface TuiSpaceRow {
     | "image"
     | "trashedImage"
     | "version"
+    | "project"
+    | "file"
     | "more"
     | "label";
   /** The row as drawn, plain (steps read it). */
@@ -169,6 +174,8 @@ export interface SpaceControllerOptions {
   readonly openThread: (threadId: string) => void;
   /** This MC's projects, whose files can be opened as pages. */
   readonly projects?: () => ReadonlyArray<{ readonly id: string; readonly title: string }>;
+  /** Where this device keeps the projects whose sections the user expanded (default: this run only). */
+  readonly projectSections?: MutedThreadsStore;
   /** Leave the pane for a project's file in the file viewer: a page's file. */
   readonly showFile?: (projectId: string, path: string) => void;
   /** The entries `commands` offers changed without the pane moving. */
@@ -226,8 +233,8 @@ const CLOSED: TuiSpaceState = {
 const HINTS: Record<TuiSpaceView, string> = {
   spaces: "  ⏎ open · n new · e rename · d delete · esc close",
   pages:
-    "  ⏎ open · n new · s new deck · S deck from page · a subpage · e rename · m move · d trash · r restore · D delete · p present a deck, publish a page · i import · f from a project's files · t from thread · h history · v images · esc back",
-  page: "  ^P write · ⏎ edit · n add · g chart · c comment · x tick/resolve · m move · d delete · l link · u update · y copy · S deck · p publish · h history · v images · A ask an agent · f its file · F unlink · esc back",
+    "  ⏎ open, expand a project · n new · s new deck · S deck from page · a subpage · e rename · m move · d trash · r restore · D delete · p present a deck, publish a page · i import · t from thread · h history · v images · esc back",
+  page: "  ^P write · ⏎ edit · n add · g chart · c comment · x tick/resolve · m move · d delete · l link · u update · y copy · S deck · p publish · h history · v images · A ask an agent · f its file · esc back",
   deck: "  ⏎ edit · n add · m move · d delete · p present · r restore · v images · esc back",
   present: "  → next · ← back · pgup/pgdn scroll · esc leave",
   images: "  n generate · i add a file · d trash · r restore · D delete · esc back",
@@ -458,6 +465,15 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   let agentTarget: string | null = null;
   let promptSignature = "";
   let pagePrompt: ComposerPage | null = null;
+  // Which files of each project the MC counts as Space content, as it last said; null while
+  // first asked. A Space's pages end with a section for each project that has any.
+  const spaceFiles = new Map<string, ReadonlySet<string> | null>();
+  const sectionStore = options.projectSections ?? memoryMutedThreads();
+  // The projects whose sections the user expanded; the rest are collapsed.
+  const expandedSections = new Set(sectionStore.load());
+  // The user's Space the pages go back to from a project file's page, which is served
+  // from the project's own Space: that one is in no list.
+  let homeSpaceId: string | null = null;
 
   const track = <T>(promise: Promise<T>): Promise<T> => {
     pending.add(promise);
@@ -1047,6 +1063,38 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     ];
   };
 
+  /**
+   * A section for each of this MC's projects with Space files, after the Space's own
+   * entries; an expanded one lists its files by folder.
+   */
+  const projectSectionRows = (): TuiSpaceRow[] =>
+    (options.projects?.() ?? []).flatMap((project) => {
+      const paths = spaceFiles.get(project.id);
+      if (!paths || paths.size === 0) return [];
+      const expanded = expandedSections.has(project.id);
+      const head = `${expanded ? "▾" : "▸"} ${project.title}`;
+      const rows = [entryRow(`project:${project.id}`, "project", head, {}, palette.accent)];
+      if (!expanded) return rows;
+      const tree = buildFileTree([...paths].map((path) => ({ path, additions: 0, deletions: 0 })));
+      for (const node of flattenFileTree(tree, new Set())) {
+        const indent = "  ".repeat(node.depth + 1);
+        if (node.kind === "file") {
+          rows.push(entryRow(`file:${project.id}|${node.path}`, "file", `${indent}${node.name}`));
+        } else {
+          const text = clip(`  ${indent}${node.name}/`, width());
+          rows.push({
+            key: `folder:${project.id}|${node.path}`,
+            kind: "label",
+            text,
+            line: styled(chunk(text, { fg: palette.dim })),
+            selected: false,
+            first: true,
+          });
+        }
+      }
+      return rows;
+    });
+
   /** Every row of the open level, before the selection is applied. */
   const allRows = (): TuiSpaceRow[] => {
     if (view === "spaces") {
@@ -1061,6 +1109,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         rows.push(label("Decks"));
         for (const deck of liveDecks) rows.push(entryRow(`deck:${deck.id}`, "deck", deck.title));
       }
+      rows.push(...projectSectionRows());
       const bin = trashed();
       const deckBin = decks().filter((deck) => deck.trashedAt !== null);
       if (bin.length > 0 || deckBin.length > 0) {
@@ -1387,6 +1436,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (onPage && space.ready && !pageById(pageId)) {
       closeHistory();
       pageId = null;
+      // A project's own Space has no pages to show but its files'.
+      if (!spaceList().some((entry) => entry.id === spaceId)) {
+        goHome(null);
+        return;
+      }
       generation += 1;
       view = "pages";
       top = 0;
@@ -1423,8 +1477,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   // --- navigation ---
 
-  const openSpace = (id: string, then: TuiSpaceView = "pages") => {
+  /** Opens a Space at `then`, its pages' selection on `select` when given. */
+  const openSpace = (id: string, then: TuiSpaceView = "pages", select: string | null = null) => {
     generation += 1;
+    if (spaceList().some((entry) => entry.id === id)) homeSpaceId = id;
     if (spaceId !== id) {
       spaceId = id;
       selected.pages = null;
@@ -1433,6 +1489,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       selectedIndex.images = 0;
       followSpace(id);
     }
+    if (select !== null) selected.pages = select;
     view = then;
     top = 0;
     publish();
@@ -1531,6 +1588,16 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     publish();
   };
 
+  /** To the user's Space the pages were last on (else their first), on `select` there. */
+  const goHome = (select: string | null) => {
+    const home = spaceList().find((entry) => entry.id === homeSpaceId) ?? spaceList()[0];
+    if (home) openSpace(home.id, "pages", select);
+    else {
+      leaveSpace();
+      publish();
+    }
+  };
+
   const leaveSpace = () => {
     generation += 1;
     closeHistory();
@@ -1547,6 +1614,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (!open) {
       open = true;
       options.setOpen(true);
+      // The projects' sections: what each has may have changed while the pane was shut.
+      for (const project of options.projects?.() ?? []) refreshSpaceFiles(project.id);
     }
     followSpaces();
     // Listing makes the Personal Space on the first look; the stream shows it.
@@ -1590,6 +1659,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       view = "page";
       top = 0;
       publish();
+    } else if (view === "page" && pageById(pageId)?.file) {
+      // A project file's page: back to the user's Space, on the file in its section.
+      const file = pageById(pageId)!.file!;
+      goHome(`file:${file.projectId}|${file.path}`);
     } else if (view === "page" || view === "deck") {
       generation += 1;
       view = "pages";
@@ -1802,7 +1875,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (!entry) return;
     if (entry.kind === "space") openSpace(entry.id);
     else if (entry.kind === "page") openPage(entry.id);
-    else if (entry.kind === "deck") openDeck(entry.id);
+    else if (entry.kind === "project") toggleSection(entry.id);
+    else if (entry.kind === "file") {
+      const at = entry.id.indexOf("|");
+      openProjectFile(entry.id.slice(0, at), entry.id.slice(at + 1));
+    } else if (entry.kind === "deck") openDeck(entry.id);
     else if (entry.kind === "decktrash") {
       openDeck(entry.id, `decktrash:${entry.id}`);
       options.status("This deck is in the trash: r restores it.", "info");
@@ -2856,16 +2933,15 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   // --- project files ---
 
-  // Which files of each project the MC counts as Space content, as it last said; null while asked.
-  const spaceFiles = new Map<string, ReadonlySet<string> | null>();
-
   const knowSpaceFiles = (projectId: string, result: SpaceFilesListResult) => {
     spaceFiles.set(projectId, new Set(result.files.map((file) => file.relativePath)));
     options.commandsChanged?.();
+    if (open) publish();
   };
 
+  /** Asks the MC for the project's Space files; what it last said stands meanwhile. */
   const refreshSpaceFiles = (projectId: string) => {
-    spaceFiles.set(projectId, null);
+    if (!spaceFiles.has(projectId)) spaceFiles.set(projectId, null);
     call<SpaceFilesListResult>(WS_METHODS.spaceFilesList, { projectId }).then(
       (result) => knowSpaceFiles(projectId, result),
       // Not known, so the next look asks again.
@@ -2901,6 +2977,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         }
         closeHistory();
         show();
+        // Back from the page lands on the file, in its project's section.
+        if (!expandedSections.has(projectId)) toggleSection(projectId);
         openSpace(result.spaceId);
         openPage(result.page.id);
         options.status(
@@ -2911,6 +2989,15 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         );
       })(),
     );
+  };
+
+  /** Expands or collapses a project's section, and remembers which (of projects still here). */
+  const toggleSection = (projectId: string) => {
+    if (!expandedSections.delete(projectId)) expandedSections.add(projectId);
+    const known = new Set((options.projects?.() ?? []).map((project) => project.id));
+    for (const id of expandedSections) if (!known.has(id)) expandedSections.delete(id);
+    sectionStore.save([...expandedSections]);
+    publish();
   };
 
   /** Picks one of this MC's projects; one alone is picked without asking. */
@@ -2955,7 +3042,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         openProjectFile(projectId, files[0]!.relativePath);
       } else {
         options.menu({
-          title: `Open a file of ${name} as a page`,
+          title: `Edit a file of ${name} as a page`,
           searchable: true,
           options: files.map((file) => ({
             label: file.relativePath,
@@ -2982,21 +3069,16 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       if (typeof path === "string") openProjectFile(id, path);
       else pickFile(id, only);
     };
-    if (typeof projectId !== "string") pickProject("Open a file of which project?", then);
+    if (typeof projectId !== "string") pickProject("Edit a file of which project as a page?", then);
     else if ((options.projects?.() ?? []).some((project) => project.id === projectId)) {
       then(projectId);
     } else {
-      // Its files open in its own machine's Spaces, which this pane does not follow (#860).
+      // Its files are pages on its own machine, which this pane does not follow (#860).
       options.status(
-        "That project is on another machine: its files open in that machine's Spaces.",
+        "That project is on another machine: its files are edited as pages there.",
         "info",
       );
     }
-  };
-
-  /** From the pages: one of a project's files, edited as a page of the project's Space. */
-  const fromFiles = () => {
-    pickProject("Edit a file of which project as a page?", (projectId) => pickFile(projectId));
   };
 
   /** From a page to its file, in the file viewer. */
@@ -3260,7 +3342,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.present": onPages(present),
     "space.presentOrPublish": onPages(presentOrPublish),
     "space.images": onPages(showImages),
-    "space.files": onPages(() => (view === "page" ? showPageFile() : fromFiles())),
+    "space.files": onPages(() => {
+      if (view === "page") showPageFile();
+    }),
     // From anywhere: the palette, the file browser and viewer, a message's links.
     "space.openProjectFile": (payload) => {
       openFileFrom(payload);
@@ -3310,7 +3394,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       ];
       if ((options.projects?.() ?? []).length > 0) {
         entries.push(
-          { title: "Open a project file in a Space…", action: "space.openProjectFile" },
+          { title: "Edit a project file as a page…", action: "space.openProjectFile" },
           { title: "Scan a project for Space files…", action: "space.scanFiles" },
         );
       }
@@ -3332,7 +3416,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Restore page from the trash", action: "space.restore" },
           { title: "Import a Markdown file as a page", action: "space.import" },
           { title: "Write a page from a thread", action: "space.fromThread" },
-          { title: "Add a page from a project's files", action: "space.files" },
           { title: "Copy page as Markdown", action: "space.export" },
           { title: "Page history", action: "space.history" },
           { title: "New deck", action: "space.newDeck" },

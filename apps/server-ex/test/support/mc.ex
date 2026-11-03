@@ -45,6 +45,7 @@ defmodule HalC2.Test.Mc do
     start_supervised!(HalC2.Subprocess.Orphans)
     web = start_supervised!(Supervisor.child_spec(HalC2.Web, id: HalC2.Web))
     start_supervised!(HalC2.RuntimeRecord)
+    start_supervised!(HalC2.Orchestration.Wake)
 
     {:ok, {_ip, port}} = ThousandIsland.listener_info(web)
     # The port it got, as a configured MC knows its own (`mix hal_c2.pair` reads it).
@@ -76,6 +77,9 @@ defmodule HalC2.Test.Mc do
         do: ExUnit.Callbacks.stop_supervised(Supervisor.child_spec(child, []).id)
 
     for child <- [
+          # Settles what the runtimes left, as a clean stop does, where a step started it.
+          HalC2.Orchestration.Recovery.Shutdown,
+          HalC2.Orchestration.Wake,
           HalC2.RuntimeRecord,
           HalC2.Web,
           HalC2.Subprocess.Orphans,
@@ -2463,6 +2467,9 @@ defmodule HalC2.Test.Mc.World do
       full = "FAKE_CODEX_LOG=" <> Path.join(context.mc.home, "codex-requests.log")
       # Steers wait while this file exists.
       hold = "FAKE_CODEX_HOLD_STEER=" <> Path.join(context.mc.home, "hold-steer")
+      # Stops are acknowledged and ignored while this file exists.
+      ignore =
+        "FAKE_CODEX_IGNORE_INTERRUPT_FILE=" <> Path.join(context.mc.home, "ignore-interrupt")
 
       Application.put_env(:hal_c2, :codex_command, [
         "env",
@@ -2471,6 +2478,7 @@ defmodule HalC2.Test.Mc.World do
         sessions,
         full,
         hold,
+        ignore,
         "python3",
         "-u",
         @fake_codex

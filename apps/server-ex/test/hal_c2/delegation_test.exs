@@ -664,6 +664,62 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a task that ends after two wakes for its caller's turn ended (hal-c2/hal-c2#892)" do
+    setup do
+      delegate("completed")
+
+      wake = fn id, ordinal, status ->
+        [
+          run(id, ordinal, status, %{"userMessageId" => "message:#{id}"}),
+          {"message", "message:#{id}",
+           %{
+             "s" => %{
+               "id" => "message:#{id}",
+               "runId" => id,
+               "role" => "user",
+               "delegatedCompletion" => %{"parentRunId" => "pr", "taskIds" => ["t-#{id}"]}
+             }
+           }}
+        ]
+      end
+
+      {:ok, _} =
+        HalC2.Streams.commit(
+          "p",
+          :thread,
+          [run("pr", 1, "completed")] ++
+            wake.("w1", 2, "completed") ++ wake.("w2", 3, "completed")
+        )
+
+      %{wake: wake}
+    end
+
+    test "wakes the caller a third time" do
+      # The caller works on a turn of the user's, so the wake waits behind it.
+      {:ok, _} = HalC2.Streams.commit("p", :thread, [run("u", 4, "running")])
+
+      Delegation.finished("c", "cr", "completed")
+
+      assert task()["completionDelivery"]["state"] == "delivered"
+      assert woken?()
+    end
+
+    test "waits for a third wake still running, then wakes the caller once more", %{wake: wake} do
+      {:ok, _} = HalC2.Streams.commit("p", :thread, wake.("w3", 4, "running"))
+
+      Delegation.finished("c", "cr", "completed")
+      assert task()["completionDelivery"]["state"] == "pending"
+      refute woken?()
+
+      {:ok, _} = HalC2.Streams.commit("p", :thread, [run("w3", 4, "completed")])
+      {:ok, _} = HalC2.Streams.commit("p", :thread, [run("u", 5, "running")])
+      Delegation.finished("p", "w3", "completed")
+
+      assert task()["completionDelivery"]["state"] == "delivered"
+      assert woken?()
+    end
+  end
+
   describe "a task whose result is delivered with a title that would break the envelope" do
     test "escapes the attributes and names the worker on the notification" do
       delegate("completed", %{"title" => ~s(Say "hi"\nnow)})

@@ -37,21 +37,37 @@ defmodule HalC2.SubprocessOrphansPropTest do
 
   # An echo with a command in the background that holds stdout too, so end of file
   # says both are gone. A closed stdin ends both; the line `leave` ends only the
-  # program, which answers with its background command's pid.
-  @program [
-    "sh",
-    "-c",
-    ~s(sleep 60 & while read l; do [ "$l" = leave ] && { echo $!; exit 0; }; echo "$l"; done; kill $!)
-  ]
+  # program, which answers with its background command's pid. With `setsid` the
+  # command runs in a session of its own, outside the program's group, as a shell on a
+  # pty does: only the mark it inherits tells the boot it is the program's
+  # (hal-c2/hal-c2#387).
+  defp program do
+    background =
+      if :persistent_term.get({__MODULE__, :own_session}, false),
+        do: "setsid sleep 60",
+        else: "sleep 60"
+
+    [
+      "sh",
+      "-c",
+      ~s(#{background} & while read l; do [ "$l" = leave ] && { echo $!; exit 0; }; echo "$l"; done; kill $!)
+    ]
+  end
 
   @tag skip: @chmod_skip
   property "a boot kills what a dead MC left running and nothing else",
     numtests: HalC2.Prop.numtests(40),
     max_size: 20 do
-    forall {cmds, helper?} <- {commands(__MODULE__), boolean()} do
+    forall {cmds, helper?, own_session?} <- {commands(__MODULE__), boolean(), boolean()} do
       trap_exit do
         HalC2.Prop.scratch_home("orphans")
         Application.put_env(:hal_c2, :pid_kill_helper, helper? && nil)
+        # macOS has no `/proc` to read the mark from, so there it stays in the group.
+        :persistent_term.put(
+          {__MODULE__, :own_session},
+          own_session? and match?({:unix, :linux}, :os.type())
+        )
+
         {history, state, result} = run_commands(__MODULE__, cmds)
         cleanup()
 
@@ -367,7 +383,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
   def start(id) do
     healing? = match?({:unavailable, _}, :persistent_term.get(Orphans, nil))
 
-    case Subprocess.start(@program) do
+    case Subprocess.start(program()) do
       {:ok, sub} ->
         Process.put({:sub, id}, sub)
         Process.put({:pid, id}, Subprocess.os_pid(sub))
@@ -412,7 +428,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
   # again. Returns the records.
   def start_during_restart(id) do
     kill_service()
-    {:ok, sub} = Subprocess.start(@program)
+    {:ok, sub} = Subprocess.start(program())
     Process.put({:sub, id}, sub)
     Process.put({:pid, id}, Subprocess.os_pid(sub))
     start_service()
