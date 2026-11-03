@@ -176,10 +176,11 @@ defmodule HalC2.Space.Schedule do
     |> Enum.take(@recent_threads)
     |> Enum.map_join("\n\n", fn {id, row} ->
       messages =
-        id
-        |> Streams.state()
-        |> StreamState.list("message")
-        |> Enum.filter(&(&1["role"] in ["user", "assistant"] and &1["streaming"] != true))
+        Streams.read(id, fn state ->
+          state
+          |> StreamState.all("message")
+          |> Enum.filter(&(&1["role"] in ["user", "assistant"] and &1["streaming"] != true))
+        end)
 
       {text, _attachments} = Prompts.thread_context(messages)
 

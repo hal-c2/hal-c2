@@ -56,7 +56,7 @@ import {
 } from "@hal-c2/client-runtime/state/stream-entities";
 
 import type { TuiClient } from "../connection.ts";
-import { buildFileTree, flattenFileTree } from "../fileTree.ts";
+import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
 import { linkifyTimelineUrls } from "../timelineLinks.ts";
 import type { StatusKind } from "../store.ts";
@@ -116,6 +116,7 @@ export interface TuiSpaceRow {
     | "trashedImage"
     | "version"
     | "project"
+    | "folder"
     | "file"
     | "more"
     | "label";
@@ -497,7 +498,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   // first asked. A Space's pages end with a section for each project that has any.
   const spaceFiles = new Map<string, ReadonlySet<string> | null>();
   const sectionStore = options.projectSections ?? memoryMutedThreads();
-  // The projects whose sections the user expanded; the rest are collapsed.
+  // The projects whose sections the user expanded, and their folders as `<projectId>|<path>`;
+  // the rest are collapsed.
   const expandedSections = new Set(sectionStore.load());
   // The user's Space the pages go back to from a project file's page, which is served
   // from the project's own Space: that one is in no list.
@@ -1153,7 +1155,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   /**
    * A section for each of this MC's projects with Space files, after the Space's own
-   * entries; an expanded one lists its files by folder.
+   * entries; an expanded one lists its files by folder, an expanded folder its own.
    */
   const projectSectionRows = (): TuiSpaceRow[] =>
     (options.projects?.() ?? []).flatMap((project) => {
@@ -1164,20 +1166,22 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       const rows = [entryRow(`project:${project.id}`, "project", head, {}, palette.accent)];
       if (!expanded) return rows;
       const tree = buildFileTree([...paths].map((path) => ({ path, additions: 0, deletions: 0 })));
-      for (const node of flattenFileTree(tree, new Set())) {
-        const indent = "  ".repeat(node.depth + 1);
+      const collapsed = new Set(
+        collectDirPaths(tree).filter((path) => !expandedSections.has(`${project.id}|${path}`)),
+      );
+      for (const node of flattenFileTree(tree, collapsed)) {
         if (node.kind === "file") {
-          rows.push(entryRow(`file:${project.id}|${node.path}`, "file", `${indent}${node.name}`));
+          rows.push(
+            entryRow(
+              `file:${project.id}|${node.path}`,
+              "file",
+              `${"  ".repeat(node.depth + 1)}${node.name}`,
+            ),
+          );
         } else {
-          const text = clip(`  ${indent}${node.name}/`, width());
-          rows.push({
-            key: `folder:${project.id}|${node.path}`,
-            kind: "label",
-            text,
-            line: styled(chunk(text, { fg: palette.dim })),
-            selected: false,
-            first: true,
-          });
+          // The arrow in the indent, so a folder's name lines up with its siblings' files.
+          const head = `${"  ".repeat(node.depth)}${node.collapsed ? "▸" : "▾"} ${node.name}/`;
+          rows.push(entryRow(`folder:${project.id}|${node.path}`, "folder", head, {}, palette.dim));
         }
       }
       return rows;
@@ -1963,7 +1967,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (!entry) return;
     if (entry.kind === "space") openSpace(entry.id);
     else if (entry.kind === "page") openPage(entry.id);
-    else if (entry.kind === "project") toggleSection(entry.id);
+    else if (entry.kind === "project" || entry.kind === "folder") toggleSection(entry.id);
     else if (entry.kind === "file") {
       const at = entry.id.indexOf("|");
       openProjectFile(entry.id.slice(0, at), entry.id.slice(at + 1));
@@ -3065,8 +3069,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         }
         closeHistory();
         show();
-        // Back from the page lands on the file, in its project's section.
-        if (!expandedSections.has(projectId)) toggleSection(projectId);
+        // Back from the page lands on the file, in its folders in its project's section.
+        revealFile(projectId, path);
         openSpace(result.spaceId);
         openPage(result.page.id);
         options.status(
@@ -3079,13 +3083,33 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     );
   };
 
-  /** Expands or collapses a project's section, and remembers which (of projects still here). */
-  const toggleSection = (projectId: string) => {
-    if (!expandedSections.delete(projectId)) expandedSections.add(projectId);
+  /** Remembers the expanded sections and folders, of projects still here. */
+  const rememberSections = () => {
     const known = new Set((options.projects?.() ?? []).map((project) => project.id));
-    for (const id of expandedSections) if (!known.has(id)) expandedSections.delete(id);
+    for (const id of expandedSections) {
+      const at = id.indexOf("|");
+      if (!known.has(at < 0 ? id : id.slice(0, at))) expandedSections.delete(id);
+    }
     sectionStore.save([...expandedSections]);
     publish();
+  };
+
+  /** Expands or collapses a project's section, or a folder in it (`<projectId>|<path>`). */
+  const toggleSection = (id: string) => {
+    if (!expandedSections.delete(id)) expandedSections.add(id);
+    rememberSections();
+  };
+
+  /** Expands a file's section and the folders it is in, so its row shows. */
+  const revealFile = (projectId: string, path: string) => {
+    const parts = path.replace(/^\.\//, "").split("/").filter(Boolean);
+    const ids = [
+      projectId,
+      ...parts.slice(0, -1).map((_, at) => `${projectId}|${parts.slice(0, at + 1).join("/")}`),
+    ];
+    if (ids.every((id) => expandedSections.has(id))) return;
+    for (const id of ids) expandedSections.add(id);
+    rememberSections();
   };
 
   /** Picks one of this MC's projects; one alone is picked without asking. */

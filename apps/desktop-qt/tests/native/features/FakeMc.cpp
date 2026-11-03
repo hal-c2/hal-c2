@@ -4,6 +4,7 @@
 #include <QTcpSocket>
 #include <QtLogging>
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
@@ -272,6 +273,12 @@ void FakeMc::sendRows(const QString& mc, const QJsonArray& rows) {
   send(frame);
 }
 
+int FakeMc::openSockets() const {
+  return int(std::count_if(m_accepted.cbegin(), m_accepted.cend(), [](const QPointer<QWebSocket>& socket) {
+    return socket && socket->state() == QAbstractSocket::ConnectedState;
+  }));
+}
+
 void FakeMc::drop() {
   if (!m_socket) return;
   QWebSocket* socket = m_socket;
@@ -348,12 +355,15 @@ void FakeMc::accept() {
   while (QWebSocket* socket = m_server.nextPendingConnection()) {
     socket->setParent(this);
     connections.append(socket->requestUrl());
+    m_accepted.removeAll(nullptr);
+    m_accepted.append(socket);
     m_socket = socket;
     m_shellSubscription = -1;
     m_live.clear();
     QObject::connect(socket, &QWebSocket::textMessageReceived, this,
                      [this, socket](const QString& text) { onMessage(socket, text); });
     QObject::connect(socket, &QWebSocket::disconnected, socket, &QObject::deleteLater);
+    if (!sayHello) continue;
     send({{QStringLiteral("t"), QStringLiteral("hello")},
           {QStringLiteral("protocol"), 3},
           {QStringLiteral("mc"), name},

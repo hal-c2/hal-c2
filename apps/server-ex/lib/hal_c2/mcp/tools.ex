@@ -189,26 +189,57 @@ defmodule HalC2.Mcp.Tools do
   def run("hal_c2_thread_read", args, %{row: me} = caller) do
     with {:ok, row} <- readable_thread(me, args["threadId"]),
          :here <- on_owner(row, "hal_c2_thread_read", args, caller) do
-      state = stream(row["id"])
       view = args["view"] || "messages"
       after_position = args["afterPosition"] || -1
       limit = args["limit"] || 50
       max_chars = args["maxCharsPerItem"] || 20_000
-      messages = StreamState.get(state, "message")
 
-      items =
-        state
-        |> StreamState.list("turn-item")
-        |> Enum.filter(
-          &(view == "activity" or &1["type"] in ["user_message", "assistant_message"])
-        )
-        |> Enum.filter(&(args["itemId"] == nil or &1["id"] == args["itemId"]))
-        |> Enum.with_index()
+      shown? =
+        &((view == "activity" or &1["type"] in ["user_message", "assistant_message"]) and
+            (args["itemId"] == nil or &1["id"] == args["itemId"]))
 
-      page =
-        items
-        |> Enum.filter(fn {_, position} -> position > after_position end)
-        |> Enum.take(limit)
+      # One pass over every item, older runs' read from disk a page at a time: how many
+      # are shown, the page asked for, and the last answer. The answer is picked from the
+      # unfiltered turn items: the shown ones may be narrowed to one earlier item by
+      # `itemId`.
+      #
+      # The pass and the messages it shows are read as one (`HalC2.Streams.read/2`).
+      {state, total, page, last_answer_id, messages} =
+        HalC2.Streams.read(row["id"], fn state ->
+          state
+          |> StreamState.all("turn-item")
+          |> Enum.reduce({0, [], 0, nil}, fn item, {total, page, taken, answer} ->
+            answer = if item["type"] == "assistant_message", do: item["id"], else: answer
+
+            cond do
+              not shown?.(item) ->
+                {total, page, taken, answer}
+
+              total > after_position and taken < limit ->
+                {total + 1, [{item, total} | page], taken + 1, answer}
+
+              true ->
+                {total + 1, page, taken, answer}
+            end
+          end)
+          |> then(fn {total, page, _taken, answer} ->
+            page = Enum.reverse(page)
+
+            messages =
+              for {{"message", id}, message} <-
+                    StreamState.lookup(
+                      state,
+                      for(
+                        {%{"messageId" => id}, _} when is_binary(id) <- page,
+                        do: {"message", id}
+                      )
+                    ),
+                  into: %{},
+                  do: {id, message}
+
+            {state, total, page, answer, messages}
+          end)
+        end)
 
       read =
         Enum.map(page, fn {item, position} ->
@@ -219,14 +250,7 @@ defmodule HalC2.Mcp.Tools do
       # its result: its automatic delivery is acknowledged, so no wake follows.
       # The answer is the child's last assistant message, so only a page that
       # contains it untruncated counts, not an early progress message or the
-      # first page of a long child. It is picked from the unfiltered turn items:
-      # `items` may already be narrowed to one earlier item by `itemId`.
-      last_answer_id =
-        state
-        |> StreamState.list("turn-item")
-        |> Enum.filter(&(&1["type"] == "assistant_message"))
-        |> List.last(%{})
-        |> Map.get("id")
+      # first page of a long child.
 
       answer_read? =
         Enum.any?(page, fn {item, position} ->
@@ -252,7 +276,7 @@ defmodule HalC2.Mcp.Tools do
 
       {:ok,
        %{
-         "thread" => Map.put(list_item(row), "totalItems", length(items)),
+         "thread" => Map.put(list_item(row), "totalItems", total),
          "recentRuns" =>
            state
            |> StreamState.list("run")
@@ -265,7 +289,7 @@ defmodule HalC2.Mcp.Tools do
              {_, position} -> position
              nil -> nil
            end,
-         "hasMore" => length(items) > after_position + 1 + length(page)
+         "hasMore" => total > after_position + 1 + length(page)
        }}
     end
   end
@@ -556,15 +580,16 @@ defmodule HalC2.Mcp.Tools do
   # Only records on messages the user wrote count: an agent cannot widen its own
   # reach by writing a `thread` context record naming a thread elsewhere.
   defp user_attached?(me, thread_id) do
-    me["id"]
-    |> stream()
-    |> StreamState.list("message")
-    |> Enum.any?(fn message ->
-      message["role"] == "user" and message["createdBy"] == "user" and
-        Enum.any?(
-          get_in(message, ["context", "records"]) || [],
-          &(&1["kind"] == "thread" and &1["threadId"] == thread_id)
-        )
+    HalC2.Streams.read(me["id"], fn state ->
+      state
+      |> StreamState.all("message")
+      |> Enum.any?(fn message ->
+        message["role"] == "user" and message["createdBy"] == "user" and
+          Enum.any?(
+            get_in(message, ["context", "records"]) || [],
+            &(&1["kind"] == "thread" and &1["threadId"] == thread_id)
+          )
+      end)
     end)
   end
 
@@ -983,7 +1008,7 @@ defmodule HalC2.Mcp.Tools do
   def message_run(thread_id, message_id) do
     state = stream(thread_id)
 
-    with %{"runId" => run_id} <- StreamState.get(state, "message")[message_id],
+    with %{"runId" => run_id} <- StreamState.fetch(state, "message", message_id),
          do: StreamState.get(state, "run")[run_id],
          else: (_ -> nil)
   end

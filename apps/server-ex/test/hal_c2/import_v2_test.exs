@@ -305,7 +305,10 @@ defmodule HalC2.Import.V2Test do
     Sqlite3.close(db)
   end
 
+  # In one transaction: thousands of separate commits take minutes on a slow disk.
   defp insert_events(db, events) do
+    :ok = Sqlite3.execute(db, "BEGIN")
+
     {:ok, stmt} =
       Sqlite3.prepare(
         db,
@@ -326,6 +329,7 @@ defmodule HalC2.Import.V2Test do
       :done = Sqlite3.step(db, stmt)
     end
 
-    :ok
+    :ok = Sqlite3.release(db, stmt)
+    Sqlite3.execute(db, "COMMIT")
   end
 end

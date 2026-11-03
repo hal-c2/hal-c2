@@ -43,6 +43,8 @@ defmodule HalC2.Application do
       {HalC2.Store, path: HalC2.Store.home_path()},
       HalC2.Auth,
       HalC2.Settings,
+      # Turns for the streams migrating an older MC's long snapshot, one at a time.
+      HalC2.Streams.Migrations,
       HalC2.Streams,
       HalC2.Shell,
       # The other members' files, as folders on this machine.
@@ -127,6 +129,10 @@ defmodule HalC2.Application do
       HalC2.Web,
       # server-runtime.json, once the listener is bound; removed first on the way down.
       HalC2.RuntimeRecord,
+      # Threads an older MC left a long snapshot of are migrated, once clients can connect.
+      Supervisor.child_spec({Task, &HalC2.Streams.Migrations.migrate_all/0},
+        id: :stream_migrations
+      ),
       # Turns the restart cut off go on, where the user asked for that.
       Supervisor.child_spec({Task, &HalC2.Orchestration.Recovery.continue/0}, id: :continue),
       # Projects that ask for it are brought up to date.

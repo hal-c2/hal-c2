@@ -117,6 +117,8 @@ public:
   // land inside the window. The item is waited for until it can be tapped.
   void tap(QQuickItem* item);
   void tap(const QString& objectName);
+  // The connection notice's panel, opened from its icon if it is not.
+  void openConnectionNotice();
   // A finger held on the item's middle until `until` holds (a long press's
   // menu is up), then lifted.
   void hold(QQuickItem* item, const std::function<bool()>& until, const QString& what);
