@@ -64,91 +64,121 @@ pub(in crate::layout) fn evict_non_member_nodes_from_subgraphs(
 
     // Materialize subgraph rects exactly the way rendering will (including
     // nested-child expansion), so eviction sees the true boxes.
-    let compute_rects = |nodes: &BTreeMap<String, NodeLayout>| -> Vec<[f32; 4]> {
+    let compute_rects = |nodes: &BTreeMap<String, NodeLayout>| -> Vec<([f32; 4], HashSet<String>)> {
         build_subgraph_layouts(graph, nodes, theme, config)
             .into_iter()
             .filter(|sub| sub.width > 0.0 && sub.height > 0.0)
-            .map(|sub| [sub.x, sub.y, sub.x + sub.width, sub.y + sub.height])
+            .map(|sub| {
+                (
+                    [sub.x, sub.y, sub.x + sub.width, sub.y + sub.height],
+                    sub.nodes.into_iter().collect(),
+                )
+            })
             .collect()
     };
 
-    // Only move nodes that are members of no subgraph: nodes in *other*
-    // subgraphs are handled by the sibling-separation pass, and moving them
-    // here would tear their own box apart.
-    let mut all_members: HashSet<&str> = HashSet::new();
-    for sub in &graph.subgraphs {
-        for node_id in &sub.nodes {
-            all_members.insert(node_id.as_str());
-        }
-    }
-    let free_ids: Vec<String> = nodes
+    // A node leaves a box it is not a member of when it belongs to no
+    // subgraph, or when the box is nested inside one of its own subgraphs
+    // (a parent member that landed among a child group's members). Nodes in
+    // *sibling* subgraphs are handled by the sibling-separation pass, and
+    // moving them here would tear their own box apart.
+    let member_sets: Vec<HashSet<&str>> = graph
+        .subgraphs
+        .iter()
+        .map(|sub| sub.nodes.iter().map(String::as_str).collect())
+        .collect();
+    let must_leave = |id: &str, box_members: &HashSet<String>| -> bool {
+        !box_members.contains(id)
+            && member_sets.iter().all(|own| {
+                !own.contains(id) || box_members.iter().all(|m| own.contains(m.as_str()))
+            })
+    };
+    let movable_ids: Vec<String> = nodes
         .values()
         .filter(|node| !node.hidden && node.anchor_subgraph.is_none())
-        .filter(|node| !all_members.contains(node.id.as_str()))
         .map(|node| node.id.clone())
         .collect();
-    if free_ids.is_empty() {
+    if movable_ids.is_empty() {
         return;
     }
+
+    let overlaps = |a: [f32; 4], b: [f32; 4], pad: f32| -> bool {
+        a[2].min(b[2] + pad) - a[0].max(b[0] - pad) > 0.0
+            && a[3].min(b[3] + pad) - a[1].max(b[1] - pad) > 0.0
+    };
 
     for _ in 0..4 {
         let rects = compute_rects(nodes);
         let mut moved = false;
-        for id in &free_ids {
+        for id in &movable_ids {
             let Some(node) = nodes.get(id) else {
                 continue;
             };
-            let nx1 = node.x;
-            let ny1 = node.y;
-            let nx2 = node.x + node.width;
-            let ny2 = node.y + node.height;
-            let overlaps_any = |x1: f32, y1: f32, x2: f32, y2: f32| -> usize {
-                rects
-                    .iter()
-                    .filter(|[rx1, ry1, rx2, ry2]| {
-                        x2.min(*rx2) - x1.max(*rx1) > 0.0 && y2.min(*ry2) - y1.max(*ry1) > 0.0
-                    })
-                    .count()
-            };
-            if overlaps_any(nx1, ny1, nx2, ny2) == 0 {
+            let start = [node.x, node.y, node.x + node.width, node.y + node.height];
+            if !rects
+                .iter()
+                .any(|(rect, members)| must_leave(id, members) && overlaps(start, *rect, 0.0))
+            {
                 continue;
             }
-            // Candidate pushes: escape each overlapped rect on all four
-            // sides, then pick the candidate that clears the most boxes with
-            // the least displacement (cross-axis moves preferred slightly).
-            let mut best: Option<(usize, f32, f32, f32)> = None;
-            for [rx1, ry1, rx2, ry2] in &rects {
-                let overlap_x = nx2.min(*rx2) - nx1.max(*rx1);
-                let overlap_y = ny2.min(*ry2) - ny1.max(*ry1);
-                if overlap_x <= 0.0 || overlap_y <= 0.0 {
+            // Obstacles for the move: every box the node is not a member of,
+            // and every other visible node, so the node does not land on a
+            // neighbour on its way out.
+            let mut obstacles: Vec<([f32; 4], f32)> = rects
+                .iter()
+                .filter(|(_, members)| !members.contains(id.as_str()))
+                .map(|(rect, _)| (*rect, 0.0))
+                .collect();
+            obstacles.extend(
+                nodes
+                    .values()
+                    .filter(|other| !other.hidden && other.id != *id)
+                    .map(|o| ([o.x, o.y, o.x + o.width, o.y + o.height], clearance - 0.5)),
+            );
+            // Slide out in each of the four directions until clear, then take
+            // the shortest slide (cross-axis moves preferred slightly, since
+            // they keep rank ordering intact).
+            let mut best: Option<(f32, f32, f32)> = None;
+            for (ux, uy) in [(-1.0f32, 0.0f32), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
+                let mut r = start;
+                let mut clear = false;
+                for _ in 0..64 {
+                    let blockers: Vec<[f32; 4]> = obstacles
+                        .iter()
+                        .filter(|(o, pad)| overlaps(r, *o, *pad))
+                        .map(|(o, _)| *o)
+                        .collect();
+                    if blockers.is_empty() {
+                        clear = true;
+                        break;
+                    }
+                    let step = blockers
+                        .iter()
+                        .map(|o| match (ux as i32, uy as i32) {
+                            (-1, _) => r[2] - (o[0] - clearance),
+                            (1, _) => o[2] + clearance - r[0],
+                            (_, -1) => r[3] - (o[1] - clearance),
+                            _ => o[3] + clearance - r[1],
+                        })
+                        .fold(0.0f32, f32::max);
+                    r = [
+                        r[0] + ux * step,
+                        r[1] + uy * step,
+                        r[2] + ux * step,
+                        r[3] + uy * step,
+                    ];
+                }
+                if !clear {
                     continue;
                 }
-                let candidates = [
-                    (-(nx2 - rx1 + clearance), 0.0),
-                    (rx2 - nx1 + clearance, 0.0),
-                    (0.0, -(ny2 - ry1 + clearance)),
-                    (0.0, ry2 - ny1 + clearance),
-                ];
-                for (dx, dy) in candidates {
-                    let remaining = overlaps_any(nx1 + dx, ny1 + dy, nx2 + dx, ny2 + dy);
-                    let displacement = dx.abs() + dy.abs();
-                    // Cross-axis moves keep rank ordering intact; give
-                    // main-axis moves a mild penalty rather than a veto.
-                    let main_axis_move = if horizontal { dx != 0.0 } else { dy != 0.0 };
-                    let score = displacement * if main_axis_move { 1.25 } else { 1.0 };
-                    let better = match &best {
-                        None => true,
-                        Some((best_remaining, best_score, _, _)) => {
-                            remaining < *best_remaining
-                                || (remaining == *best_remaining && score < *best_score)
-                        }
-                    };
-                    if better {
-                        best = Some((remaining, score, dx, dy));
-                    }
+                let (dx, dy) = (r[0] - start[0], r[1] - start[1]);
+                let main_axis_move = if horizontal { dx != 0.0 } else { dy != 0.0 };
+                let score = (dx.abs() + dy.abs()) * if main_axis_move { 1.25 } else { 1.0 };
+                if best.is_none_or(|(best_score, _, _)| score < best_score) {
+                    best = Some((score, dx, dy));
                 }
             }
-            if let Some((_, _, dx, dy)) = best
+            if let Some((_, dx, dy)) = best
                 && let Some(node) = nodes.get_mut(id)
             {
                 node.x += dx;
