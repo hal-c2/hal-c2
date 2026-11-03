@@ -1095,7 +1095,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
-  step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out) and the MC is hot-updated$/,
+  step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out) and the MC upgrades in place$/,
        %{args: [change]} = context do
     sign_in_or_out(context, change)
 

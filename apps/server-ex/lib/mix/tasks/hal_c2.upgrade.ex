@@ -119,7 +119,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
           lingering(mc, Enum.map(report[:lingering] || [], &inspect/1))
 
         {:error, reason} ->
-          Mix.shell().error("#{mc}: #{HalC2.Hot.describe_error(reason)}")
+          Mix.shell().error("#{mc}: #{HalC2.Upgrade.Release.describe(reason)}")
       end
     end
   end
@@ -321,17 +321,18 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   end
 
   defp loaded(mc, changed, restart) do
-    Mix.shell().info("#{mc}: loaded #{length(changed)} modules")
+    Mix.shell().info("#{mc}: upgraded #{length(changed)} modules in place")
     if restart != [], do: Mix.shell().info("#{mc}: restart for #{Enum.join(restart, ", ")}")
   end
 
-  # A lingering module's next reload is refused until its old code is free (`HalC2.Hot`).
+  # Old code a process still runs is purged once it leaves it; an upgrade that would
+  # load the module again first is refused (`HalC2.Upgrade.Release`).
   defp lingering(_mc, []), do: :ok
 
   defp lingering(mc, modules) do
-    Mix.shell().error(
+    Mix.shell().info(
       "#{mc}: old code of #{Enum.join(modules, ", ")} is still running; " <>
-        "the next reload of it fails unless those processes call into the new code first"
+        "it goes once those processes leave it, and the next upgrade of them waits for that"
     )
   end
 

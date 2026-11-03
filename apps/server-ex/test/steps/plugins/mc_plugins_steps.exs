@@ -1,20 +1,12 @@
 defmodule HalC2.Steps.Plugins.Release do
   @moduledoc """
-  An MC running from a release, for upgrade scenarios: a temporary `RELEASE_ROOT`
-  with the running version's `upgrade.json`, and bundles of the next version in the
-  MC's upgrade cache (`HalC2.Upgrade.Source.put/3`). A bundle carries one fixture
-  module whose running version is loaded now; changing a plain module loads in
-  place, changing a supervisor needs a restart.
+  An MC running from a real release, for upgrade scenarios (`HalC2.Test.Mc.release/2`),
+  and bundles of the next version in the MC's upgrade cache (`HalC2.Upgrade.Source.put/3`).
+  A bundle carries a fixture module whose running version is loaded now; the release
+  handler installs it in place, and a bundle that also loads a NIF needs a restart.
   """
 
   alias HalC2.Test.Mc
-
-  @manifest %{
-    "otpRelease" => "29",
-    "erts" => "17.0.5",
-    "code" => ["hal_c2_fixture"],
-    "config" => "c"
-  }
 
   @doc "Makes the MC run from a release; returns the context with `:release`."
   def ensure(%{release: %{}} = context), do: context
@@ -22,74 +14,24 @@ defmodule HalC2.Steps.Plugins.Release do
   def ensure(context) do
     Mc.ensure(HalC2.Settings)
     Mc.ensure(HalC2.Upgrade)
-    root = Mc.tmp_dir(context.mc, "release")
-    current = HalC2.Upgrade.version()
-    write_manifest(root, current)
-    File.write!(Path.join([root, "releases", "start_erl.data"]), "17.0.5 #{current}\n")
-    File.mkdir_p!(Path.join(root, "lib"))
-
-    path = :code.get_path()
-    env = for key <- ~w(RELEASE_ROOT HAL_C2_SERVICE), into: %{}, do: {key, System.get_env(key)}
-    System.put_env("RELEASE_ROOT", root)
+    root = Mc.release(context.mc, service: false)
     # The bundles load several versions of the fixture modules.
     Code.put_compiler_option(:ignore_module_conflict, true)
-
-    ExUnit.Callbacks.on_exit(fn ->
-      # Loading in place moves code paths to the installed release.
-      :code.set_path(path)
-
-      for {key, value} <- env,
-          do: if(value, do: System.put_env(key, value), else: System.delete_env(key))
-
-      Code.put_compiler_option(:ignore_module_conflict, false)
-      Application.delete_env(:hal_c2, :restart_exit)
-      :persistent_term.erase({HalC2.Upgrade, :version})
-      :persistent_term.erase({HalC2.Upgrade, :outcome})
-    end)
-
-    Map.put(context, :release, %{root: root, from: current})
+    ExUnit.Callbacks.on_exit(fn -> Code.put_compiler_option(:ignore_module_conflict, false) end)
+    Map.put(context, :release, %{root: root, from: HalC2.Upgrade.version()})
   end
 
   @doc """
   Puts a bundle of `target` in the upgrade cache holding `source` (the new version
-  of a fixture module) after loading `running` (the version the MC runs now).
+  of a fixture module) after loading `running` (the version the MC runs now), and
+  `extra` modules (`{module, beam}`).
   """
-  def put_bundle(context, target, source, running) do
-    bundle = Mc.tmp_dir(context.mc, "bundle")
-    ebin = Path.join([bundle, "lib", "hal_c2_fixture-#{target}", "ebin"])
-    File.mkdir_p!(ebin)
-    write_manifest(bundle, target)
-
-    for {mod, bin} <- Code.compile_string(source),
-        do: File.write!(Path.join(ebin, "#{mod}.beam"), bin)
-
-    Code.compile_string(running)
-
-    archive = Path.join(Mc.tmp_dir(context.mc, "archive"), "bundle.tar.gz")
-
-    files =
-      for file <- Path.wildcard(Path.join(bundle, "**/*")),
-          File.regular?(file),
-          do: {to_charlist(Path.relative_to(file, bundle)), to_charlist(file)}
-
-    :ok = :erl_tar.create(to_charlist(archive), files, [:compressed])
+  def put_bundle(context, target, source, running, extra \\ []) do
+    [{mod, new}] = Code.compile_string(source)
+    [{^mod, current}] = Code.compile_string(running)
+    archive = Mc.bundle(context.mc, target, %{}, [{mod, new, current} | extra])
     :ok = HalC2.Upgrade.Source.put(target, HalC2.Upgrade.platform(), archive)
     context
-  end
-
-  defp write_manifest(root, version) do
-    dir = Path.join([root, "releases", version])
-    File.mkdir_p!(dir)
-
-    File.write!(
-      Path.join(dir, "upgrade.json"),
-      JSON.encode!(
-        Map.merge(@manifest, %{
-          "version" => version,
-          "applications" => %{"hal_c2_fixture" => version}
-        })
-      )
-    )
   end
 end
 
@@ -130,7 +72,6 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
   alias HalC2.Test.Mc.World
 
   @plain "HalC2.Steps.Plugins.NodePlugins.Plain"
-  @tree "HalC2.Steps.Plugins.NodePlugins.Tree"
 
   step "an MC with a plugins directory", context do
     File.mkdir_p!(Path.join(context.mc.home, "plugins"))
@@ -184,18 +125,22 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
     context
   end
 
-  step "the MC installs a version that changes a supervisor", context do
+  step "the MC installs a version that loads a NIF", context do
+    context = Release.ensure(context)
     test = self()
     Application.put_env(:hal_c2, :restart_exit, &send(test, {:restart_exit, &1}))
     System.put_env("HAL_C2_SERVICE", "1")
-    context = Release.ensure(context)
-    target = context.release.from <> "-tree"
+    target = context.release.from <> "-nif"
 
-    tree = fn children ->
-      "defmodule #{@tree} do use Supervisor; def init(_), do: Supervisor.init(#{children}, strategy: :one_for_one) end"
-    end
+    context =
+      Release.put_bundle(
+        context,
+        target,
+        "defmodule #{@plain} do def v, do: 2 end",
+        "defmodule #{@plain} do def v, do: 1 end",
+        [Mc.nif_module(context.mc)]
+      )
 
-    context = Release.put_bundle(context, target, tree.("[{Task, fn -> :ok end}]"), tree.("[]"))
     {reply, context} = World.call(context, "server.updateServer", %{"targetVersion" => target})
     assert {:ok, %{"targetVersion" => ^target}} = reply
     Map.put(context, :target, target)
@@ -302,7 +247,7 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
     context
   end
 
-  step "a developer hot-updates the MC", context do
+  step "a developer reloads the MC from its checkout", context do
     assert {:ok, _report} = HalC2.Upgrade.reload_checkout()
     context
   end

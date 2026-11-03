@@ -20,6 +20,8 @@ defmodule HalC2.MixProject do
       releases: [
         hal_c2: [
           include_executables_for: [:unix],
+          # The release handler (`HalC2.Upgrade.Release`), started at the first update.
+          applications: [sasl: :load],
           strip_beams: true,
           steps: [
             :assemble,
@@ -203,9 +205,10 @@ defmodule HalC2.MixProject do
     Path.expand("VERSION", __DIR__) |> File.read!() |> String.trim()
   end
 
-  # What a running MC compares with a new release to decide whether it can load
-  # the new code in place (`HalC2.Upgrade`): which applications are HAL-C2's own code,
-  # and what that code runs on, each part of which only a restart can change.
+  # What a running MC compares with a new release to decide whether a release
+  # upgrade can take it there in place (`HalC2.Upgrade`): which applications are
+  # HAL-C2's own code, and what that code runs on, each part of which only a restart
+  # can change.
   defp write_upgrade_manifest(release) do
     rel = Path.join([release.path, "releases", release.version])
     own = Path.join([release.path, "lib", "hal_c2-#{release.version}"])
@@ -265,7 +268,11 @@ defmodule HalC2.MixProject do
           for f <- ~w(sys.config runtime.exs vm.args),
               File.exists?(Path.join(rel, f)),
               do: Path.join(rel, f)
-        )
+        ),
+      # The emulator's flags, which only a restart changes.
+      "vmArgs" => digest.(Enum.filter([Path.join(rel, "vm.args")], &File.exists?/1)),
+      # The release carries SASL, so `release_handler` can install the next one in place.
+      "releaseUpgrades" => true
     }
 
     File.write!(Path.join(rel, "upgrade.json"), JSON.encode!(manifest))

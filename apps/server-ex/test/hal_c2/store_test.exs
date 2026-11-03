@@ -129,7 +129,7 @@ defmodule HalC2.StoreTest do
 
     assert {:trap_exit, false} = Process.info(store, :trap_exit)
 
-    # What `HalC2.Hot` does for a process whose module changed.
+    # What a release upgrade (`{update, M, {advanced, []}}`) does for a process whose module changed.
     :ok = :sys.suspend(store)
     :ok = :sys.change_code(store, Store, nil, :hot)
     :ok = :sys.resume(store)

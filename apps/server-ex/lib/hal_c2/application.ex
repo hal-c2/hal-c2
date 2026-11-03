@@ -26,8 +26,10 @@ defmodule HalC2.Application do
   end
 
   @doc """
-  The MC's services in start order. A hot update starts the ones the running MC
-  does not have yet (`HalC2.Upgrade`).
+  The MC's services in start order. A release upgrade brings the running tree in
+  line with them (`HalC2.Upgrade.Tree`): a service new here starts, one gone stops,
+  and one whose spec changed restarts, so a spec must compare equal across versions
+  when nothing changed (name functions, `&Mod.fun/0`, never closures).
   """
   def children do
     [

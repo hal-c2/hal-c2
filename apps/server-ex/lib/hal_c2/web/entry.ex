@@ -5,7 +5,7 @@ defmodule HalC2.Web.Entry do
   A request runs in its connection's process, so a response that streams for as long
   as a client watches a device keeps the frames of every plug it passed through. Inside
   the router that would pin the router's code, the module edited most, and its second
-  hot reload would be refused (`HalC2.Hot`). The device hub's relay
+  release upgrade would be refused (`HalC2.Upgrade.Release`). The device hub's relay
   (`HalC2.Devices.Proxy`) is therefore reached from here; everything else goes on to the
   router by a tail call, which leaves no frame of this module behind.
   """
