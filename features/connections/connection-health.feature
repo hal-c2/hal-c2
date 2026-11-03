@@ -193,6 +193,8 @@ Feature: Connection health
     And the status says the environment did not respond to a connection health check
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (CONNECTION_ESTABLISHMENT_TIMEOUT)
+  # The client both surfaces share does this, proved by tst_SyncClientRegression
+  # (aSocketWithoutHelloIsGivenUpOn) and tst_SyncClientProp; no step drives it yet.
   @backlog @desktop @mobile
   Scenario: A connection that is not set up within 15 seconds counts as failed
     Given the environment accepts the connection but never finishes introducing itself
@@ -201,6 +203,9 @@ Feature: Connection health
     And the client retries after the usual delay
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (BACKOFF_RESET_AFTER_MS)
+  # The client both surfaces share does this, proved by tst_SyncClientRegression
+  # (aConnectionThatDropsAtOnceIsRetriedMoreSlowly, aConnectionThatHeldStartsTheDelaysOver);
+  # no step drives it yet.
   @backlog @desktop @mobile
   Scenario Outline: The retry delays start over only after a connection has held for 30 seconds
     Given the client has already failed to connect several times
