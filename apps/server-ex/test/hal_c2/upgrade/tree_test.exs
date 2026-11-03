@@ -43,6 +43,47 @@ defmodule HalC2.Upgrade.TreeTest do
     assert Agent.get(pid(sup, :changed), & &1) == 2
   end
 
+  test "a child new in the middle of the specs starts last, and says so" do
+    old = [agent(:first, 1), agent(:last, 1)]
+
+    sup =
+      start_supervised!(%{
+        id: :tree,
+        start: {Supervisor, :start_link, [old, [strategy: :rest_for_one]]}
+      })
+
+    {changes, log} =
+      ExUnit.CaptureLog.with_log(fn ->
+        Tree.sync(sup, old, [agent(:first, 1), agent(:middle, 2), agent(:last, 1)])
+      end)
+
+    assert changes == [{:started, :middle}]
+
+    assert sup |> Supervisor.which_children() |> Enum.map(&elem(&1, 0)) == [
+             :middle,
+             :last,
+             :first
+           ]
+
+    assert log =~ "another order than its specs"
+
+    # Appended where the specs end, it is where a fresh start puts it.
+    stop_supervised!(:tree)
+
+    sup =
+      start_supervised!(%{
+        id: :tree,
+        start: {Supervisor, :start_link, [old, [strategy: :rest_for_one]]}
+      })
+
+    {_, log} =
+      ExUnit.CaptureLog.with_log(fn ->
+        Tree.sync(sup, old, old ++ [agent(:after, 3)])
+      end)
+
+    refute log =~ "another order"
+  end
+
   test "a child that does not start is reported, not raised" do
     sup =
       start_supervised!(%{

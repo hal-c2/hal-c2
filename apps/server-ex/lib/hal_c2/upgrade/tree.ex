@@ -12,6 +12,14 @@ defmodule HalC2.Upgrade.Tree do
   one stops, and one whose spec changed restarts on its new spec. A child that is
   `:temporary` and gone, a boot task that ran and ended, does not run again.
 
+  A supervisor can only add a child at the end of its list, so a child started or
+  restarted here comes after the others, wherever the new specs put it. Until the
+  MC next boots, the tree stops in that order, and a `rest_for_one` supervisor
+  (`HalC2.Streams`) restarts after a crash what follows a child in that order rather
+  than the specs'. Putting a child back in place would mean restarting every child
+  after it, `HalC2.Web` with its sockets among them, which an upgrade in place is
+  there to avoid; `sync/0` logs where the order differs instead.
+
   The snapshot goes from the old version to the new one through
   `:persistent_term` (`{HalC2.Upgrade.Tree, :before}`), a list of
   `{supervisor_pid, [child_spec]}`; both its key and that shape are a contract
@@ -90,7 +98,25 @@ defmodule HalC2.Upgrade.Tree do
         end
       end
 
-    Enum.filter(removed ++ started, & &1)
+    changes = Enum.filter(removed ++ started, & &1)
+    warn_order(sup, new, changes)
+    changes
+  end
+
+  # `which_children/1` lists the most recently started first.
+  defp warn_order(_sup, _new, []), do: :ok
+
+  defp warn_order(sup, new, _changes) do
+    live = sup |> Supervisor.which_children() |> Enum.map(&elem(&1, 0)) |> Enum.reverse()
+    specs = for %{id: id} <- new, id in live, do: id
+
+    if Enum.filter(live, &(&1 in specs)) != specs,
+      do:
+        Logger.warning(
+          "#{inspect(sup)} runs its children in another order than its specs until the MC restarts: #{inspect(live)}"
+        )
+
+    :ok
   end
 
   defp start(sup, %{id: id} = spec, change) do
