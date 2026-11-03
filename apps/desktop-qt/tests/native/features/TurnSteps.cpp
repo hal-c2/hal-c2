@@ -707,7 +707,38 @@ const Steps steps([] {
     expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0] && command.value(QLatin1String("text")) == c[1],
            QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
   });
-  step(QStringLiteral("the queued message still reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the MC is asked to change the queued run of %1 to %1 without attachments").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject command = lastCommand(world, QStringLiteral("queued-run.edit"));
+    expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0] && command.value(QLatin1String("text")) == c[1] &&
+               command.contains(QLatin1String("attachments")) && command.value(QLatin1String("attachments")).toArray().isEmpty(),
+           QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
+  });
+
+  // A queued message's attachments, on its row in the queue card.
+  step(QStringLiteral("%1 is queued with the file %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    queueMessage(world, c[0]);
+    set(world, QStringLiteral("message"), QStringLiteral("message-") + c[0],
+        {{QStringLiteral("attachments"), QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("file")},
+                                                                {QStringLiteral("id"), QStringLiteral("file-") + c[1]},
+                                                                {QStringLiteral("name"), c[1]},
+                                                                {QStringLiteral("mimeType"), QStringLiteral("text/markdown")},
+                                                                {QStringLiteral("sizeBytes"), 12}}}}});
+  });
+  step(QStringLiteral("the queue shows %1 on %1").arg(q), [requestsBrick](World& world, const Captures& c, const Table&) {
+    Brick& brick = requestsBrick(world);
+    world.waitFor([&] { return brick.shows(c[0]) && brick.shows(c[1]); },
+                  [&] { return QStringLiteral("\"%1\" on \"%2\"; the turn is %3").arg(c[0], c[1], show(turn(world))); });
+    expect(brick.item(QStringLiteral("queueAttachment-file-") + c[0])->isVisible(), QStringLiteral("the attachment is hidden"));
+  });
+  step(QStringLiteral("the user opens %1 from the queue").arg(q), [requestsBrick](World& world, const Captures& c, const Table&) {
+    requestsBrick(world).click(QStringLiteral("queueAttachment-file-") + c[0]);
+    world.sync();
+  });
+  step(QStringLiteral("the attachment viewer shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return world.state(QStringLiteral("attachmentViewer")).toMap().value(QStringLiteral("name")) == c[0]; },
+                  [&] { return QStringLiteral("the viewer shows %1").arg(show(world.state(QStringLiteral("attachmentViewer")))); });
+  });
+  step(QStringLiteral("the queued message still reads %1").arg(q),[](World& world, const Captures& c, const Table&) {
     QStringList texts;
     for (const QVariant& queued : listed(world, QStringLiteral("queue"))) texts.append(queued.toMap().value(QStringLiteral("text")).toString());
     expect(texts.contains(c[0]) && commandsOf(world, QStringLiteral("queued-run.edit")).isEmpty(),

@@ -746,7 +746,12 @@ Rectangle {
                             onRetryRequested: Shell.dispatch("composer.attachment.retry", {
                                 id: modelData.id
                             })
-                            onOpenRequested: Shell.dispatch("attachment.view", {
+                            // An edited queued message's own is the MC's; a draft's is here.
+                            onOpenRequested: modelData.sent === true ? Shell.dispatch("attachment.sent.view", {
+                                id: modelData.id,
+                                name: modelData.name,
+                                mimeType: modelData.mimeType ?? ""
+                            }) : Shell.dispatch("attachment.view", {
                                 id: modelData.id
                             })
                         }

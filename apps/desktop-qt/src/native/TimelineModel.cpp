@@ -1546,6 +1546,11 @@ void TimelineModel::loadAttachment(const QString& id) {
   emit attachmentWanted(id);
 }
 
+QUrl TimelineModel::attachmentAddress(const QString& id) const {
+  const AttachmentUrl known = m_attachmentUrls.value(id);
+  return known.expiresAt > m_now() ? known.url : QUrl();
+}
+
 void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const QDateTime& expiresAt) {
   emit attachmentSigned(id, url);
   if (url.isEmpty()) {

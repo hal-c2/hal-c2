@@ -408,6 +408,18 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
   }
   if (action == QLatin1String("composer.attachment.remove") || action == QLatin1String("composer.question.attachment.remove")) {
     const QString id = map.value(QStringLiteral("id")).toString();
+    // One of the edited queued message's own: off the edit, the MC keeps it until saved.
+    if (m_queuedEdit) {
+      const qsizetype before = m_queuedEdit->sent.size();
+      for (qsizetype i = m_queuedEdit->sent.size() - 1; i >= 0; --i) {
+        if (m_queuedEdit->sent.at(i).toObject().value(QLatin1String("id")).toString() == id) m_queuedEdit->sent.removeAt(i);
+      }
+      if (m_queuedEdit->sent.size() != before) {
+        m_queuedEdit->sentChanged = true;
+        publish();
+        return true;
+      }
+    }
     const Attachment* found = findAttachment(id);
     if (!found) return true;
     // An upload no message took is the MC's to drop.
@@ -2240,36 +2252,99 @@ bool ComposerController::editQueued(const QString& target, QString runId) {
   });
   if (entry == queue.cend()) return true;
   const QString text = entry->toMap().value(QStringLiteral("text")).toString();
+  const QString messageId = entry->toMap().value(QStringLiteral("messageId")).toString();
   // Moving to another queued message keeps the draft set aside for the first.
   if (!m_queuedEdit || m_queuedEdit->thread != target) {
-    m_queuedEdit = QueuedEdit{target, {}, {}, draft(target), m_drafts.value(target).cursor};
+    QueuedEdit edit;
+    edit.thread = target;
+    edit.saved = draft(target);
+    edit.savedCursor = m_drafts.value(target).cursor;
+    edit.savedAttachments = std::exchange(m_drafts[target].attachments, {});
+    m_queuedEdit = edit;
+    save();
   }
   m_queuedEdit->runId = runId;
+  m_queuedEdit->messageId = messageId;
   m_queuedEdit->original = text;
+  m_queuedEdit->sent = m_timeline ? m_timeline->entities(QStringLiteral("message")).value(messageId).value(QLatin1String("attachments")).toArray()
+                                  : QJsonArray();
+  m_queuedEdit->sentChanged = false;
   setText(target, text, int(text.size()));
   return true;
 }
 
 bool ComposerController::saveQueuedEdit(const QString& target, const QString& text) {
   const auto thread = m_store->thread(target);
-  if (!thread || m_queuedEdit->saving || text.trimmed().isEmpty()) return true;
+  if (!thread || m_queuedEdit->saving) return true;
+  const QList<Attachment> added = m_drafts.value(target).attachments;
+  // The MC refuses a message left with nothing in it.
+  if (text.trimmed().isEmpty() && m_queuedEdit->sent.isEmpty() && added.isEmpty()) return true;
+  if (filesBlock(added, QStringLiteral("saving"))) return true;
   m_queuedEdit->saving = true;
   const QString runId = m_queuedEdit->runId;
-  const QJsonObject command{{QStringLiteral("type"), QStringLiteral("queued-run.edit")},
-                            {QStringLiteral("threadId"), thread->id},
-                            {QStringLiteral("runId"), runId},
-                            {QStringLiteral("text"), text.trimmed()}};
-  m_client->dispatchCommand(this, thread->environmentId, command,
-                            [this, runId](const QJsonValue&, const std::optional<QString>& error) {
-                              if (!m_queuedEdit || m_queuedEdit->runId != runId) return;
-                              m_queuedEdit->saving = false;
-                              if (error) {
-                                toast(QStringLiteral("Could not save the edited queued message."), *error);
-                                publish();
-                                return;
-                              }
-                              endQueuedEdit();
-                            });
+  QJsonObject command{{QStringLiteral("type"), QStringLiteral("queued-run.edit")},
+                      {QStringLiteral("threadId"), thread->id},
+                      {QStringLiteral("runId"), runId},
+                      {QStringLiteral("text"), text.trimmed()}};
+  QStringList addedIds;
+  for (const Attachment& attachment : added) addedIds.append(attachment.id);
+  const auto dispatch = [this, target, runId, addedIds, environmentId = thread->environmentId](const QJsonObject& command) {
+    m_client->dispatchCommand(this, environmentId, command,
+                              [this, target, runId, addedIds](const QJsonValue&, const std::optional<QString>& error) {
+                                if (!m_queuedEdit || m_queuedEdit->runId != runId) return;
+                                m_queuedEdit->saving = false;
+                                if (error) {
+                                  toast(QStringLiteral("Could not save the edited queued message."), *error);
+                                  publish();
+                                  return;
+                                }
+                                // What went with the message is the message's now.
+                                m_drafts[target].attachments.removeIf([&](const Attachment& a) { return addedIds.contains(a.id); });
+                                endQueuedEdit();
+                              });
+  };
+  // Text alone keeps the attachments the message has.
+  if (!m_queuedEdit->sentChanged && added.isEmpty()) {
+    dispatch(command);
+    publish();
+    return true;
+  }
+  QJsonArray attachments = m_queuedEdit->sent;
+  for (const QJsonValue& file : fileRecords(added)) attachments.append(file);
+  QJsonArray images;
+  for (const Attachment& attachment : added) {
+    if (attachment.file) continue;
+    QJsonObject image{{QStringLiteral("type"), QStringLiteral("image")},
+                      {QStringLiteral("name"), attachment.name},
+                      {QStringLiteral("mimeType"), attachment.mimeType},
+                      {QStringLiteral("sizeBytes"), attachment.sizeBytes},
+                      {QStringLiteral("dataUrl"), attachment.dataUrl}};
+    if (!attachment.source.isEmpty()) image.insert(QStringLiteral("source"), attachment.source);
+    images.append(image);
+  }
+  if (images.isEmpty()) {
+    command.insert(QStringLiteral("attachments"), attachments);
+    dispatch(command);
+    publish();
+    return true;
+  }
+  // New images are stored for the message first, as a send's are.
+  m_client->call(this, thread->environmentId, QStringLiteral("assets.persistChatAttachments"),
+                 QJsonObject{{QStringLiteral("threadId"), thread->id},
+                             {QStringLiteral("messageId"), m_queuedEdit->messageId},
+                             {QStringLiteral("attachments"), images}},
+                 [this, runId, command, attachments, dispatch](const QJsonValue& result, const std::optional<QString>& error) mutable {
+                   if (!m_queuedEdit || m_queuedEdit->runId != runId) return;
+                   if (error) {
+                     m_queuedEdit->saving = false;
+                     toast(QStringLiteral("Could not save the edited queued message."), *error);
+                     publish();
+                     return;
+                   }
+                   for (const QJsonValue& image : result.toObject().value(QLatin1String("attachments")).toArray()) attachments.append(image);
+                   command.insert(QStringLiteral("attachments"), attachments);
+                   dispatch(command);
+                 });
   publish();
   return true;
 }
@@ -2277,6 +2352,10 @@ bool ComposerController::saveQueuedEdit(const QString& target, const QString& te
 void ComposerController::endQueuedEdit(bool keepEdit) {
   if (!m_queuedEdit) return;
   const QueuedEdit edit = *std::exchange(m_queuedEdit, std::nullopt);
+  // The set-aside attachments come back ahead of any added since.
+  Draft& kept = m_drafts[edit.thread];
+  kept.attachments = edit.savedAttachments + kept.attachments;
+  save();
   if (keepEdit) {
     save();
     publish();
@@ -2292,7 +2371,8 @@ void ComposerController::recoverQueuedEdit(const QVariantMap& turn) {
     return item.toMap().value(QStringLiteral("runId")) == m_queuedEdit->runId;
   });
   if (queued) return;
-  const bool dirty = draft(m_queuedEdit->thread) != m_queuedEdit->original;
+  const bool dirty = draft(m_queuedEdit->thread) != m_queuedEdit->original || m_queuedEdit->sentChanged ||
+                     !m_drafts.value(m_queuedEdit->thread).attachments.isEmpty();
   const bool keep = dirty && m_queuedEdit->saved.trimmed().isEmpty();
   endQueuedEdit(keep);
   if (!dirty) return;
@@ -2513,8 +2593,16 @@ void ComposerController::follow() {
   if (timeline != m_timeline) {
     disconnect(m_timelineConnection);
     disconnect(m_timelineStatus);
+    disconnect(m_timelineSigned);
     m_timeline = timeline;
+    m_sentAsked.clear();
     if (timeline) {
+      // A queued message's image the queue or an edit shows has its address.
+      m_timelineSigned = connect(timeline, &TimelineModel::attachmentSigned, this, [this](const QString& id, const QUrl& url) {
+        if (!m_sentAsked.contains(id)) return;
+        if (!url.isEmpty()) m_sentAsked.remove(id);
+        publish();
+      });
       m_timelineConnection = connect(timeline, &TimelineModel::turnChanged, this, &ComposerController::publish);
       // A thread's messages are known once its stream is live.
       m_timelineStatus = connect(timeline, &TimelineModel::statusChanged, this, &ComposerController::reconcileUnsent);
@@ -2692,7 +2780,20 @@ QVariantMap ComposerController::turnState() const {
   }
 
   const composer::Queued queued = composer::queued(runs.values(), m_timeline->entities(QStringLiteral("message")));
-  state.insert(QStringLiteral("queue"), queued.queue);
+  QVariantList queue;
+  for (const QVariant& value : queued.queue) {
+    QVariantMap entry = value.toMap();
+    QVariantList attachments;
+    for (const QVariant& attachment : entry.value(QStringLiteral("attachments")).toList()) {
+      QVariantMap shown = attachment.toMap();
+      if (shown.value(QStringLiteral("kind")) == QLatin1String("image"))
+        shown.insert(QStringLiteral("url"), sentAddress(shown.value(QStringLiteral("id")).toString()));
+      attachments.append(shown);
+    }
+    entry.insert(QStringLiteral("attachments"), attachments);
+    queue.append(entry);
+  }
+  state.insert(QStringLiteral("queue"), queue);
   state.insert(QStringLiteral("waiting"), queued.waiting);
   // Held with nothing listed shows no card, so it offers no resume either. A queued run
   // comes with its message in the one transaction that queues it (the MC's `queue_run`),
@@ -2700,6 +2801,39 @@ QVariantMap ComposerController::turnState() const {
   // are read, not a state that lasts; an empty card in that moment would only flash.
   state.insert(QStringLiteral("queueHeld"), queued.shownHeld());
   return state;
+}
+
+QString ComposerController::sentAddress(const QString& id) const {
+  if (!m_timeline || id.isEmpty()) return {};
+  if (const QUrl url = m_timeline->attachmentAddress(id); !url.isEmpty()) return url.toString();
+  if (!m_sentAsked.contains(id)) {
+    m_sentAsked.insert(id);
+    // Not from inside building the state: the answer publishes again.
+    QMetaObject::invokeMethod(
+        m_timeline, [timeline = m_timeline, id] { if (timeline) timeline->loadAttachment(id); }, Qt::QueuedConnection);
+  }
+  return {};
+}
+
+QVariantList ComposerController::shownSent() const {
+  QVariantList shown;
+  if (!m_queuedEdit || m_queuedEdit->thread != target()) return shown;
+  for (const QJsonValue& value : m_queuedEdit->sent) {
+    const QJsonObject attachment = value.toObject();
+    const bool image = str(attachment, QLatin1String("type")) == QLatin1String("image");
+    const QString id = str(attachment, QLatin1String("id"));
+    QVariantMap entry{{QStringLiteral("id"), id},
+                      {QStringLiteral("name"), str(attachment, QLatin1String("name"))},
+                      {QStringLiteral("mimeType"), str(attachment, QLatin1String("mimeType"))},
+                      {QStringLiteral("kind"), image ? QStringLiteral("image") : QStringLiteral("file")},
+                      {QStringLiteral("status"), QString()},
+                      {QStringLiteral("error"), QString()},
+                      {QStringLiteral("source"), QVariant::fromValue(nullptr)},
+                      {QStringLiteral("sent"), true}};
+    if (image) entry.insert(QStringLiteral("preview"), sentAddress(id));
+    shown.append(entry);
+  }
+  return shown;
 }
 
 // --- The draft and what the composer shows -------------------------------------
@@ -3203,7 +3337,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
     }
   }
 
-  const QVariantList attachments = shownAttachments(kept.attachments, true);
+  const QVariantList attachments = shownSent() + shownAttachments(kept.attachments, true);
   QVariantList terminalContexts;
   QVariantList reviewComments;
   QVariantList citations;
@@ -3252,7 +3386,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   const bool noProvider = !page && std::none_of(m_catalogue.cbegin(), m_catalogue.cend(),
                                                 [](const composer::Instance& entry) { return entry.ready(); });
   const bool busy = (isDraft || page) && m_launching.contains(target);
-  const bool hasContent = !text.trimmed().isEmpty() || !kept.attachments.isEmpty() || !kept.excerpts.isEmpty();
+  const bool hasContent = !text.trimmed().isEmpty() || !attachments.isEmpty() || !kept.excerpts.isEmpty();
   const bool isRunning = page ? m_pageRunning : thread && thread->activeRunId.has_value();
 
   QString placeholder = QStringLiteral("Ask anything, @tag files/folders, $use skills, or / for commands");

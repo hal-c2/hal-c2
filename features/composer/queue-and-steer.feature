@@ -6,6 +6,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (stop while running, steer or queue, mod+Enter)
 #   apps/desktop-qt/tests/tst_Composer.qml
 #   apps/desktop-qt/src/native/ComposerController.cpp (the queue in the turn, cancel, steer and edit)
+#   apps/desktop-qt/qml/HalC2/Bricks/TurnRequests.qml (the queue card, a queued message's attachments)
 #   apps/web/src/session-logic.ts (getUserQueuedThreadRuns: the agent's own queued runs are not the user's)
 #   apps/tui/src/components/ChatView.tsx (Esc interrupts)
 #   apps/tui/qml/HalC2/Tui/ShellKeymap.qml (a held Esc does not repeat)
@@ -235,6 +236,22 @@ Feature: Follow-ups while the agent is working
     And the composer holds "unrelated draft" again
 
   @desktop
+  Scenario: A queued message's attachments are listed and open full size
+    Given "fix typo" is queued with the file "notes.md"
+    Then the queue shows "notes.md" on "fix typo"
+    When the user opens "notes.md" from the queue
+    Then the attachment viewer shows "notes.md"
+
+  @desktop
+  Scenario: Editing a queued message can drop its attachments
+    Given "fix typo" is queued with the file "notes.md"
+    When the user starts editing the last queued message from the start of the composer
+    Then the composer lists the attachment "notes.md"
+    When the user removes the attachment "notes.md"
+    And the user sends "fix typo" from the composer
+    Then the MC is asked to change the queued run of "fix typo" to "fix typo" without attachments
+
+  @desktop
   Scenario: Leaving the thread ends the edit
     Given "fix typo" is queued
     And the user has typed "unrelated draft"
@@ -322,7 +339,6 @@ Feature: Follow-ups while the agent is working
     Given "fix typo" is queued with an image
     When the user starts editing it in the composer
     Then the queue marks "fix typo" as being edited and offers to cancel the edit
-    And the composer shows the message's image, which the user can remove
 
   @desktop
   Scenario: A held queue says its messages are safe
