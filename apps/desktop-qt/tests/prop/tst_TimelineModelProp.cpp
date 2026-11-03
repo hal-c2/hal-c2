@@ -1453,17 +1453,25 @@ struct Toggle : Command {
 };
 
 // The environment signs the app's icon's address (again, or for the first
-// time): the calls of the app on screen show it, and nothing else redraws.
+// time), or an image in the workspace no call here looked at: the calls of the
+// app on screen show the icon, and nothing else redraws.
 struct SignIcon : Command {
-  void apply(Model& model) const override { model.appSigned = true; }
+  bool image = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override {
+    if (!image) model.appSigned = true;
+  }
   void run(const Model& model, Sut& sut) const override {
     Model next = model;
     apply(next);
     sut.begin();
-    sut.model->setAttachmentUrl(kAppIcon, kAppIconUrl, clock().addSecs(3600));
+    if (image) {
+      sut.model->setAttachmentUrl(QStringLiteral("workspace-file:shot.png"), QUrl(QStringLiteral("http://mc.test/api/assets/shot")), clock().addSecs(3600));
+    } else {
+      sut.model->setAttachmentUrl(kAppIcon, kAppIconUrl, clock().addSecs(3600));
+    }
     sut.check(next);
   }
-  void show(std::ostream& os) const override { os << "SignIcon"; }
+  void show(std::ostream& os) const override { os << (image ? "SignImage" : "SignIcon"); }
 };
 
 // The window crosses the phone layout's width, and the timeline reads as the

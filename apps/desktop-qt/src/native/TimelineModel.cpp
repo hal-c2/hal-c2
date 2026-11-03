@@ -1554,23 +1554,18 @@ void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const Q
   }
   const AttachmentUrl was = m_attachmentUrls.value(id);
   m_attachmentUrls.insert(id, {url, expiresAt});
-  if (id.startsWith(QLatin1String("native-app-icon:"))) {
-    // An app's icon: the work groups with a call on screen that shows it, unless
-    // its address is the one they already show.
+  const bool icon = id.startsWith(QLatin1String("native-app-icon:"));
+  if (icon || id.startsWith(QLatin1String("workspace-file:"))) {
+    // An app's icon or an image a call viewed: the work groups with a call on
+    // screen that shows it, unless its address is the one they already show.
     if (was.url == url && was.expiresAt > m_now()) return;
+    const QString key = icon ? QStringLiteral("iconId") : QStringLiteral("imageId");
     for (int row = 0; row < m_rows.size(); ++row) {
       if (m_rows.at(row).kind != QLatin1String("work")) continue;
       const QVariantList entries = data(index(row), EntriesRole).toList();
-      if (std::any_of(entries.cbegin(), entries.cend(), [&](const QVariant& entry) { return entry.toMap().value(QStringLiteral("iconId")) == id; })) {
+      if (std::any_of(entries.cbegin(), entries.cend(), [&](const QVariant& entry) { return entry.toMap().value(key) == id; })) {
         emit dataChanged(index(row), index(row), {EntriesRole});
       }
-    }
-    return;
-  }
-  if (id.startsWith(QLatin1String("workspace-file:"))) {
-    // An image a call viewed: the work groups that show it.
-    for (int row = 0; row < m_rows.size(); ++row) {
-      if (m_rows.at(row).kind == QLatin1String("work")) emit dataChanged(index(row), index(row), {EntriesRole});
     }
     return;
   }
