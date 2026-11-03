@@ -905,13 +905,13 @@ Item {
         }
 
         // An item's further lines stay in it, and a text the brick would read
-        // as no item (a rule of the bullet's dashes, a quote) keeps its marker
-        // in the lead.
+        // as no item (a rule of the bullet's dashes, a quote, a table) keeps its
+        // marker in the lead.
         function test_anItemKeepsTextThatReadsAsNoItem() {
             const item = { kind: "bullet", markdownLead: "- " };
-            const screen = openWith([root.block("b1", "--", item), root.block("b2", "> quoted", item), root.block("b3", "First\n\nSecond", item)]);
+            const screen = openWith([root.block("b1", "--", item), root.block("b2", "> quoted", item), root.block("b4", "\t> tabbed", item), root.block("b5", "| a | b |\n|---|---|", item), root.block("b3", "First\n\nSecond", item)]);
             tryVerify(() => findChild(screen, "spaceBlock:First\n\nSecond") !== null);
-            for (const text of ["--", "> quoted"]) {
+            for (const text of ["--", "> quoted", "\t> tabbed", "| a | b |\n|---|---|"]) {
                 const shown = findChild(screen, "spaceBlock:" + text);
                 compare(shown.marker, "", text);
                 compare(findChild(shown, "spaceBlockText:" + text).text, text);

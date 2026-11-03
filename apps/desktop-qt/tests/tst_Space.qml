@@ -868,12 +868,12 @@ Item {
 
         // features/space/markdown.feature, Lists: an item's further lines stay
         // in it, and a text the brick would read as no item (a rule of the
-        // bullet's dashes, a quote) is drawn after its marker in the lead.
+        // bullet's dashes, a quote, a table) is drawn after its marker in the lead.
         function test_an_item_keeps_text_that_reads_as_no_item() {
             const item = { kind: "bullet", markdownLead: "- " };
-            const view = root.research({ blocks: [root.block("b1", "--", item), root.block("b2", "> quoted", item), root.block("b3", "First\n\nSecond", item)] });
+            const view = root.research({ blocks: [root.block("b1", "--", item), root.block("b2", "> quoted", item), root.block("b4", "\t> tabbed", item), root.block("b5", "| a | b |\n|---|---|", item), root.block("b3", "First\n\nSecond", item)] });
             tryVerify(() => findChild(view, "spaceBlock:First\n\nSecond") !== null);
-            for (const text of ["--", "> quoted"]) {
+            for (const text of ["--", "> quoted", "\t> tabbed", "| a | b |\n|---|---|"]) {
                 const shown = findChild(view, "spaceBlock:" + text);
                 compare(shown.marker, "", text);
                 compare(findChild(shown, "spaceBlockText:" + text).text, text);
