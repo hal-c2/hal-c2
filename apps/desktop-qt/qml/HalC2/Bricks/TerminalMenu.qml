@@ -110,7 +110,10 @@ ShellMenu {
         text: menu.link?.kind === "path" ? qsTr("Copy path") : qsTr("Copy link")
         visible: menu.link !== null
         height: visible ? implicitHeight : 0
-        onTriggered: Shell.setClipboardText(menu.link.text)
+        onTriggered: {
+            if (!Shell.setClipboardText(menu.link.text))
+                menu.terminal.session.report(menu.link.kind === "path" ? qsTr("Unable to copy path") : qsTr("Unable to copy link"));
+        }
     }
     ShellMenuItem {
         objectName: "terminalAddToChat"

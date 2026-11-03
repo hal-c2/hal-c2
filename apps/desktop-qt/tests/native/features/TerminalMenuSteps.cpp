@@ -366,7 +366,7 @@ const Steps steps([] {
     drawnTerminal(world);
   });
   step(QStringLiteral("neither the in-app browser nor the system browser can open an address"), [](World& world, const Captures&, const Table&) {
-    world.urlsRefused = true;
+    world.browserFails = true;
   });
   step(QStringLiteral("the user follows a web address in the terminal"), [follow](World& world, const Captures&, const Table&) {
     const QString address = QStringLiteral("http://localhost:5173");
@@ -636,6 +636,17 @@ const Steps steps([] {
     QObject::disconnect(taken);
     world.sync();
     expect(terminal->property("hasSelection").toBool(), QStringLiteral("a failed copy cleared the selection"));
+  });
+  step(QStringLiteral("copying a link from the terminal's menu fails with %1").arg(q), [pointOn](World& world, const Captures&, const Table&) {
+    const QString address = QStringLiteral("http://localhost:5173");
+    QQuickItem* terminal = drawnTerminal(world);
+    print(world.mc, shownThread(world), QStringLiteral("term-1"), QStringLiteral("Server ready at %1\r\n").arg(address));
+    world.waitFor([&] { return call(terminal, "text").contains(address); }, QStringLiteral("the terminal to draw the address"));
+    QTest::mouseClick(&world.brick->window(), Qt::RightButton, Qt::NoModifier, pointOn(world, terminal, address));
+    world.waitFor([&] { return world.brick->item(QStringLiteral("terminalCopyLink"))->isVisible(); }, QStringLiteral("the menu to offer the link"));
+    world.clipboardFails = true;
+    world.brick->click(QStringLiteral("terminalCopyLink"));
+    world.sync();
   });
   step(QStringLiteral("the user types again while the MC is still unreachable"), [](World& world, const Captures&, const Table&) {
     terminalSession(world, QStringLiteral("term-1"))->write(QStringLiteral("l"));
