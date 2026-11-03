@@ -170,7 +170,7 @@ does not show its diff, so marks are made and read on desktop.
   or rate limits.
 - **A repository on the pull requests page says when it is read again:** GitHub did not answer in
   time for it, so HAL-C2 waits before asking again, longer each time it fails, and reads it in
-  smaller pages. Refresh the page to try at once.
+  smaller pages for a while. Refresh the page to try at once.
 
 ## Linked pull requests
 

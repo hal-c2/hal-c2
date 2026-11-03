@@ -408,6 +408,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   end
 
   step "GitHub gives up on reading more than {int} of them at once", %{args: [most]} = context do
+    context = clock(context)
     {repository, _prs} = context.many
 
     gave_up =
@@ -555,6 +556,17 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     |> World.cli_rules(bad_gateway(context.failing))
     |> Map.put(:until, now(context))
     |> gives_up_again(30_000)
+  end
+
+  step "15 minutes after the page shrank, a listing tries the usual size again", context do
+    {repository, _} = context.many
+    move_clock(context, now(context) + 900_000)
+    before = length(listings_of(context, repository))
+    context = list(context)
+    [tried | _] = context |> listings_of(repository) |> Enum.drop(before)
+    assert tried["variables"]["first"] == 50
+    assert {:ok, %{"errors" => []}} = context.reply
+    context
   end
 
   step "the second listing asks for no page larger than the one that worked", context do

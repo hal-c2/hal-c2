@@ -183,13 +183,14 @@ Feature: Browsing pull requests
     And the first read that succeeds ends the hold and the doubling
 
   @mc
-  Scenario: A repository read in smaller pages is read at that size next time
+  Scenario: A repository read in smaller pages is read at that size for a while
     Given "acme/shop" has 60 open pull requests
     And GitHub gives up on reading more than 20 of them at once
     When the user lists pull requests
     And the pull requests are listed again without the user asking
     Then the second listing asks for no page larger than the one that worked
     And all 60 open pull requests of "acme/shop" are listed
+    And 15 minutes after the page shrank, a listing tries the usual size again
 
   @desktop @backlog-desktop
   Scenario: A project the host could not read is named once with a retry

@@ -25,7 +25,8 @@ defmodule HalC2.GitHubLimitsPropTest do
   - a failure holds it back for 30 seconds, doubling with each failure in a row up to
     15 minutes, and a failure while it is held back changes nothing;
   - a release lets the next read through and keeps the doubling; a read that got
-    through ends it and leaves the page size it read with as the one to start at.
+    through ends it and leaves the page size it read with as the one to start at,
+    for 15 minutes from when that size was first kept.
   """
 
   use ExUnit.Case, async: false
@@ -59,7 +60,7 @@ defmodule HalC2.GitHubLimitsPropTest do
   # --- model ----------------------------------------------------------------------
 
   # pauses: `%{{lowercase host, bucket | :all} => {attempt, until}}`; repos:
-  # `%{{lowercase host, lowercase repository} => %{attempt, until, page, detail}}`.
+  # `%{{lowercase host, lowercase repository} => %{attempt, until, page, page_at, detail}}`.
   def initial_state, do: %{now: 0, pauses: %{}, repos: %{}}
 
   def command(state) do
@@ -74,7 +75,8 @@ defmodule HalC2.GitHubLimitsPropTest do
            {:call, __MODULE__, :repository_failed,
             [host(), repository(), state.now, oneof(["HTTP 502", "HTTP 504"])]}},
           {2,
-           {:call, __MODULE__, :repository_read, [host(), repository(), oneof([nil, 10, 25])]}},
+           {:call, __MODULE__, :repository_read,
+            [host(), repository(), oneof([nil, 10, 25]), state.now]}},
           {1,
            {:call, __MODULE__, :release, [oneof([nil | @hosts]), oneof([nil | @repositories])]}},
           {2, {:call, __MODULE__, :pass, [oneof([1_000, 29_000, 30_000, 60_000, 900_000])]}}
@@ -149,7 +151,7 @@ defmodule HalC2.GitHubLimitsPropTest do
 
   def next_state(state, _result, {:call, _, :repository_failed, [host, repository, now, detail]}) do
     key = repo_key(host, repository)
-    entry = state.repos[key] || %{attempt: 0, until: 0, page: nil, detail: nil}
+    entry = state.repos[key] || %{attempt: 0, until: 0, page: nil, page_at: 0, detail: nil}
 
     entry =
       if entry.until > now,
@@ -172,12 +174,21 @@ defmodule HalC2.GitHubLimitsPropTest do
         {:call, m, :repository_failed, [host, repository, at, "HTTP 504"]}
       )
 
-  def next_state(state, _result, {:call, _, :repository_read, [host, repository, page]}) do
+  def next_state(state, _result, {:call, _, :repository_read, [host, repository, page, now]}) do
     key = repo_key(host, repository)
+    kept = state.repos[key]
+    page_at = if kept && kept.page == page, do: kept.page_at, else: now
 
     repos =
       if page,
-        do: Map.put(state.repos, key, %{attempt: 0, until: 0, page: page, detail: nil}),
+        do:
+          Map.put(state.repos, key, %{
+            attempt: 0,
+            until: 0,
+            page: page,
+            page_at: page_at,
+            detail: nil
+          }),
         else: Map.delete(state.repos, key)
 
     %{state | repos: repos}
@@ -226,8 +237,8 @@ defmodule HalC2.GitHubLimitsPropTest do
 
   def postcondition(state, {:call, _, :repository, [host, repository, now]}, result) do
     case state.repos[repo_key(host, repository)] do
-      %{until: until} = e when until > now -> result == {:held, until, e.page, e.detail}
-      %{page: page} -> result == {:ok, page}
+      %{until: until} = e when until > now -> result == {:held, until, kept(e, now), e.detail}
+      %{} = e -> result == {:ok, kept(e, now)}
       nil -> result == {:ok, nil}
     end
   end
@@ -267,9 +278,15 @@ defmodule HalC2.GitHubLimitsPropTest do
   def repository_failed_after(host, repository, at),
     do: Limits.repository_failed(host, repository, at, "HTTP 504")
 
-  def repository_read(host, repository, page), do: Limits.repository_read(host, repository, page)
+  def repository_read(host, repository, page, now),
+    do: Limits.repository_read(host, repository, page, now)
+
   def release(host, repository), do: Limits.release(host, repository)
   def pass(_ms), do: :ok
+
+  # The page size a read starts at: the kept one, for 15 minutes after it was kept.
+  defp kept(%{page: page, page_at: at}, now) when page != nil and now < at + 900_000, do: page
+  defp kept(_entry, _now), do: nil
 
   defp repo_key(host, repository), do: {String.downcase(host), String.downcase(repository)}
 end

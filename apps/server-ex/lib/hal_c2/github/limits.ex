@@ -19,13 +19,15 @@ defmodule HalC2.GitHub.Limits do
   seconds after its first failure, doubling up to 15 minutes, a failure while it is
   held back changing nothing. `release/2` lets the next read through without ending
   the doubling (a hand refresh); the first read that succeeds ends it. Each repository
-  also keeps the page size its last read got through with, so the next read starts
-  there rather than at a size GitHub already gave up on.
+  also keeps the page size its last read shrank to, so the reads that follow start
+  there rather than at a size GitHub already gave up on; 15 minutes after it shrank,
+  a read tries the usual size again.
   """
 
   use GenServer
 
   @cooldown 30_000
+  @page_memory 900_000
   @max_cooldown 900_000
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -60,9 +62,12 @@ defmodule HalC2.GitHub.Limits do
   def repository_failed(host, repository, now, detail),
     do: call({:repository_failed, lower(host), lower(repository), now, detail}, nil)
 
-  @doc "Records that `repository` was read with pages of `page` (nil: the usual size)."
-  def repository_read(host, repository, page),
-    do: call({:repository_read, lower(host), lower(repository), page}, :ok)
+  @doc """
+  Records that `repository` was read at `now` with pages of `page` (nil: the usual
+  size). A page that differs from the one kept restarts its 15 minutes.
+  """
+  def repository_read(host, repository, page, now),
+    do: call({:repository_read, lower(host), lower(repository), page, now}, :ok)
 
   @doc """
   Lets the next read of `repository` of `host` through its hold; nil for every
@@ -115,9 +120,14 @@ defmodule HalC2.GitHub.Limits do
   def handle_call({:repository, host, repository, now}, _from, pauses) do
     reply =
       case pauses[{host, {:repository, repository}}] do
-        %{until: until} = entry when until > now -> {:held, until, entry.page, entry.detail}
-        %{page: page} -> {:ok, page}
-        nil -> {:ok, nil}
+        %{until: until} = entry when until > now ->
+          {:held, until, page(entry, now), entry.detail}
+
+        %{} = entry ->
+          {:ok, page(entry, now)}
+
+        nil ->
+          {:ok, nil}
       end
 
     {:reply, reply, pauses}
@@ -125,7 +135,7 @@ defmodule HalC2.GitHub.Limits do
 
   def handle_call({:repository_failed, host, repository, now, detail}, _from, pauses) do
     key = {host, {:repository, repository}}
-    entry = pauses[key] || %{attempt: 0, until: 0, page: nil, detail: nil}
+    entry = pauses[key] || %{attempt: 0, until: 0, page: nil, page_at: 0, detail: nil}
 
     {entry, new?} =
       if entry.until > now,
@@ -141,12 +151,19 @@ defmodule HalC2.GitHub.Limits do
     {:reply, {entry.until, new?}, Map.put(pauses, key, entry)}
   end
 
-  def handle_call({:repository_read, host, repository, page}, _from, pauses) do
+  def handle_call({:repository_read, host, repository, page, now}, _from, pauses) do
     key = {host, {:repository, repository}}
+
+    page_at =
+      case pauses[key] do
+        %{page: ^page, page_at: at} -> at
+        _ -> now
+      end
 
     pauses =
       if page,
-        do: Map.put(pauses, key, %{attempt: 0, until: 0, page: page, detail: nil}),
+        do:
+          Map.put(pauses, key, %{attempt: 0, until: 0, page: page, page_at: page_at, detail: nil}),
         else: Map.delete(pauses, key)
 
     {:reply, :ok, pauses}
@@ -163,6 +180,11 @@ defmodule HalC2.GitHub.Limits do
          other
      end)}
   end
+
+  defp page(%{page: page, page_at: at}, now) when page != nil and at + @page_memory > now,
+    do: page
+
+  defp page(_entry, _now), do: nil
 
   defp backoff(attempt), do: min(@cooldown * 2 ** attempt, @max_cooldown)
 

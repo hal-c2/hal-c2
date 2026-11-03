@@ -111,7 +111,7 @@ defmodule HalC2.PullRequests do
 
   A repository GitHub gave up on (a 502 or 504, an answer cut off, no answer in time)
   is held back from the listings that follow, which say when it is read again
-  (`HalC2.GitHub.Limits`), and read at the page size that last got through. A hand
+  (`HalC2.GitHub.Limits`), and read for a while at the page size that got through. A hand
   refresh (`invalidate/1`) and a read under `HalC2.GitHub.asked/1` go through the hold.
   """
   def list(input) do
@@ -255,7 +255,9 @@ defmodule HalC2.PullRequests do
     }
 
     # A repository GitHub keeps giving up on is held back from background reads
-    # (`HalC2.GitHub.Limits`); what the user asked for goes through.
+    # (`HalC2.GitHub.Limits`). A listing is a view's read, so today a hand refresh
+    # passes the hold through `invalidate/1`; a caller that lists under
+    # `HalC2.GitHub.asked/1` goes through it here.
     case Limits.repository(project.host, project.repository, github_now()) do
       {:held, until, page, detail} ->
         if HalC2.GitHub.asked?(),
@@ -270,7 +272,7 @@ defmodule HalC2.PullRequests do
   defp read_list(project, viewer, input, cursor, opts) do
     case GitHub.list(ctx(project, nil), opts) do
       {:ok, page} ->
-        Limits.repository_read(project.host, project.repository, page.page)
+        Limits.repository_read(project.host, project.repository, page.page, github_now())
         at = System.system_time(:millisecond)
 
         # The boundary instant is asked for inclusively, so the rows already sent at
