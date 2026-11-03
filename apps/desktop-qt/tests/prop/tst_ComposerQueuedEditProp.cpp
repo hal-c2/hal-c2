@@ -4,9 +4,14 @@
 // edit ends (saved, cancelled, or its run leaving the queue). A save names the
 // attachments only when they changed, and then names what the composer showed:
 // the ones kept and the ones added. The queue card lists what each queued
-// message carries, as the MC holds it.
+// message carries, as the MC holds it. A save the MC refused leaves the edit
+// open, and saving again stores none of its images a second time.
+
+#include <algorithm>
 
 #include <QBuffer>
+#include <QFile>
+#include <QFileInfo>
 #include <QImage>
 
 #include "ComposerController.h"
@@ -48,23 +53,35 @@ struct Queued {
 
 struct Model {
   QList<Queued> queue;
-  int draftImages = 0;  // the thread's own draft
+  int draftImages = 0;  // the thread's own draft attachments
   // The edit, when one is open.
   std::optional<QString> editing;
   QStringList sent;  // the edited message's attachments still on the edit
   bool sentChanged = false;
-  int added = 0;      // images added in the composer during the edit
-  int setAside = 0;   // the draft's images set aside for it
-  int edits = 0;      // queued-run.edit commands the MC got
+  // What was added in the composer during the edit, in order: a file's id
+  // (file-<n>), an image's id once the MC stored it, kUnstored until then.
+  QStringList added;
+  int setAside = 0;  // the draft's attachments set aside for it
+  int edits = 0;     // queued-run.edit commands the MC got
   int counter = 0;
-  int stored = 0;      // images the MC has stored (stored-<n>)
+  int stored = 0;  // images the MC has stored (stored-<n>)
+  int files = 0;   // files the MC took (file-<n>)
+
+  static inline const QString kUnstored = QStringLiteral("?");
+
+  // The MC stores the added images not stored yet.
+  void storeAdded() {
+    for (QString& id : added) {
+      if (id == kUnstored) id = QStringLiteral("stored-%1").arg(++stored);
+    }
+  }
 
   void end() {
-    draftImages = setAside + added;
+    draftImages = setAside + int(added.size());
     editing.reset();
     sent.clear();
     sentChanged = false;
-    added = 0;
+    added.clear();
     setAside = 0;
   }
 };
@@ -78,6 +95,7 @@ struct Sut {
   QHash<QString, QJsonObject> messages;
   int seq = 0;
   int stored = 0;
+  int files = 0;
 
   Sut() {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{{QStringLiteral("id"), QStringLiteral("p1")},
@@ -111,6 +129,14 @@ struct Sut {
         images.append(image);
       }
       mc.reply(rpc, QJsonObject{{QStringLiteral("attachments"), images}});
+    });
+    // A file goes up as the MC's upload takes it.
+    mc.onRpc(QStringLiteral("attachments.createUploadUrl"), [this](const FakeMc::Rpc& rpc) {
+      const QString id = QStringLiteral("file-%1").arg(++files);
+      const QString url = QStringLiteral("/api/attachments/upload/%1").arg(id);
+      mc.onHttp(url, [](const QJsonObject&, std::function<void(int, const QJsonObject&)> respond) { respond(204, {}); });
+      mc.reply(rpc, QJsonObject{{QStringLiteral("attachmentId"), id}, {QStringLiteral("relativeUrl"), url},
+                                {QStringLiteral("expiresAt"), 4102444800000.0}});
     });
     // No image is signed here: a thumbnail stays its icon.
     mc.onRpc(QStringLiteral("assets.createUrl"), [this](const FakeMc::Rpc& rpc) { mc.reply(rpc, QJsonObject()); });
@@ -220,7 +246,7 @@ void verify(const Model& m, Sut& sut) {
         ++own;
       }
     }
-    if (sent != m.sent || own != (m.editing ? m.added : m.draftImages)) return false;
+    if (sent != m.sent || own != (m.editing ? int(m.added.size()) : m.draftImages)) return false;
     // The queue card lists what each message carries.
     const QVariantList queue = sut.queue();
     if (queue.size() != m.queue.size()) return false;
@@ -233,6 +259,8 @@ void verify(const Model& m, Sut& sut) {
     return true;
   }));
   RC_ASSERT(sut.edits().size() == m.edits);
+  // No image is stored twice.
+  RC_ASSERT(sut.stored == m.stored);
 }
 
 using Command = rc::state::Command<Model, Sut>;
@@ -257,8 +285,14 @@ struct Enqueue : Command {
 };
 
 struct Attach : Command {
-  void checkPreconditions(const Model& m) const override { RC_PRE((m.editing ? m.added : m.draftImages) < 2); }
-  void apply(Model& m) const override { ++(m.editing ? m.added : m.draftImages); }
+  void checkPreconditions(const Model& m) const override { RC_PRE((m.editing ? int(m.added.size()) : m.draftImages) < 2); }
+  void apply(Model& m) const override {
+    if (m.editing) {
+      m.added.append(Model::kUnstored);
+    } else {
+      ++m.draftImages;
+    }
+  }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.attach"),
                          QVariantMap{{QStringLiteral("files"), QVariantList{QVariantMap{{QStringLiteral("name"), QStringLiteral("shot.png")},
@@ -267,6 +301,30 @@ struct Attach : Command {
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "Attach"; }
+};
+
+// A file added to the edit, uploaded before anything else happens.
+struct AttachFile : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.editing && m.added.size() < 3); }
+  void apply(Model& m) const override { m.added.append(QStringLiteral("file-%1").arg(++m.files)); }
+  void run(const Model& m0, Sut& sut) const override {
+    const QString path = sut.home.filePath(QStringLiteral("notes-%1.md").arg(m0.files + 1));
+    QFile file(path);
+    RC_ASSERT(file.open(QIODevice::WriteOnly));
+    file.write("# notes\n");
+    file.close();
+    sut.bridge->dispatch(QStringLiteral("composer.attach"),
+                         QVariantMap{{QStringLiteral("files"), QVariantList{QVariantMap{{QStringLiteral("name"), QFileInfo(path).fileName()},
+                                                                                        {QStringLiteral("mimeType"), QStringLiteral("text/markdown")},
+                                                                                        {QStringLiteral("path"), path}}}}});
+    RC_ASSERT(prop::until([&] {
+      const QVariantList shown = sut.composer().value(QStringLiteral("attachments")).toList();
+      return std::none_of(shown.cbegin(), shown.cend(),
+                          [](const QVariant& a) { return a.toMap().value(QStringLiteral("status")) == QLatin1String("uploading"); });
+    }));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "AttachFile"; }
 };
 
 struct Edit : Command {
@@ -278,8 +336,8 @@ struct Edit : Command {
       m.draftImages = 0;
     } else if (*m.editing != m.queue.at(at).runId) {
       // What was added for the message left goes aside with the draft.
-      m.setAside += m.added;
-      m.added = 0;
+      m.setAside += int(m.added.size());
+      m.added.clear();
     }
     m.editing = m.queue.at(at).runId;
     m.sent = m.queue.at(at).attachments;
@@ -322,12 +380,12 @@ struct Save : Command {
   void apply(Model& m) const override {
     ++m.edits;
     for (Queued& queued : m.queue) {
-      if (queued.runId != *m.editing || (!m.sentChanged && m.added == 0)) continue;
-      queued.attachments = m.sent;
-      // The added images, as the MC stored them, follow the kept ones.
-      for (int i = 0; i < m.added; ++i) queued.attachments.append(QStringLiteral("stored-%1").arg(++m.stored));
+      if (queued.runId != *m.editing || (!m.sentChanged && m.added.isEmpty())) continue;
+      m.storeAdded();
+      // The added ones, in the order added, follow the kept ones.
+      queued.attachments = m.sent + m.added;
     }
-    m.added = 0;  // they went with the message
+    m.added.clear();  // they went with the message
     m.end();
   }
   void run(const Model& m0, Sut& sut) const override {
@@ -336,9 +394,29 @@ struct Save : Command {
     const QJsonObject edit = sut.edits().constLast();
     RC_ASSERT(edit.value(QLatin1String("runId")).toString() == *m0.editing);
     // Named only when they changed.
-    RC_ASSERT(edit.contains(QLatin1String("attachments")) == (m0.sentChanged || m0.added > 0));
+    RC_ASSERT(edit.contains(QLatin1String("attachments")) == (m0.sentChanged || !m0.added.isEmpty()));
   }
   void show(std::ostream& os) const override { os << "Save"; }
+};
+
+// The MC refuses the save: the edit stays open with what it had, and the
+// images stored for it are kept for the next save.
+struct SaveRefused : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.editing.has_value()); }
+  void apply(Model& m) const override {
+    ++m.edits;
+    if (m.sentChanged || !m.added.isEmpty()) m.storeAdded();
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.mc.refusals.insert(QStringLiteral("queued-run.edit"), QStringLiteral("The queue changed."));
+    sut.bridge->dispatch(QStringLiteral("composer.submit"), QVariantMap());
+    // The refusal is sent as the command arrives; the barrier after it reads it.
+    RC_ASSERT(prop::until([&] { return sut.edits().size() == m0.edits + 1; }));
+    sut.barrier();
+    sut.mc.refusals.remove(QStringLiteral("queued-run.edit"));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "SaveRefused"; }
 };
 
 // The first queued run starts: an edit of it ends, and the composer keeps what was added.
@@ -367,7 +445,7 @@ private slots:
       Model model;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
-          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Enqueue, Enqueue, Attach, Edit, Edit, RemoveSent, Cancel, Save, Leave>()));
+          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Enqueue, Enqueue, Attach, AttachFile, Edit, Edit, RemoveSent, Cancel, Save, SaveRefused, Leave>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
