@@ -102,6 +102,7 @@ set(hal_c2_bricks_qml_files
     js/settingsPages.js
     js/settingsRows.js
     CentreHost.qml
+    RouteView.qml
     ThreadView.qml
     js/centreViews.js
     js/changedFilesTree.js

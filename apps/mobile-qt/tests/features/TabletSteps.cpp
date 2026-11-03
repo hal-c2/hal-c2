@@ -54,7 +54,7 @@ QStringList listedThreads(World& world) {
 // The thread list is on screen with the conversation of `title` to its right.
 bool sideBySide(World& world, const QString& title) {
   QQuickItem* list = world.find(QStringLiteral("threadSidebar"));
-  QQuickItem* thread = world.find(QStringLiteral("centreHost"));
+  QQuickItem* thread = world.find(QStringLiteral("routeView"));
   if (!list || !thread || shownThread(world) != title || !listedThreads(world).contains(title)) return false;
   return list->mapToScene(QPointF(list->width(), 0)).x() <= thread->mapToScene(QPointF(0, 0)).x() && thread->width() > 0;
 }

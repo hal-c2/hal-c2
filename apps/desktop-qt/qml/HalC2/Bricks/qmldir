@@ -79,6 +79,7 @@ LimitRecoveryBanner 1.0 LimitRecoveryBanner.qml
 ProviderUpdateNotice 1.0 ProviderUpdateNotice.qml
 ThreadLineage 1.0 ThreadLineage.qml
 CentreHost 1.0 CentreHost.qml
+RouteView 1.0 RouteView.qml
 ThreadView 1.0 ThreadView.qml
 DiffPanel 1.0 DiffPanel.qml
 FilesPanel 1.0 FilesPanel.qml

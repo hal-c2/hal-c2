@@ -22,9 +22,9 @@ Rectangle {
     readonly property var activeTab: open ? (model.tabs.find(tab => tab.id === activeId) ?? null) : null
     // The tabs docked here; the rest are on the stage.
     readonly property var docked: open ? model.tabs.filter(tab => tab.dock !== "stage") : []
-    // The bodies to show tabs with: the layout's, shared with its stage, or
-    // the panel's own.
-    property PanelBodies bodies: null
+    // The bodies to show tabs with, shared with the stage: the window's
+    // (ShellWindow.panelBodies) by default, else the panel's own.
+    property PanelBodies bodies: (Window.window as ShellWindow)?.panelBodies ?? null
     readonly property PanelBodies pool: bodies ?? (ownBodies.item as PanelBodies)
     // The width the controller keeps, or the one being dragged to.
     property int dragWidth: -1
