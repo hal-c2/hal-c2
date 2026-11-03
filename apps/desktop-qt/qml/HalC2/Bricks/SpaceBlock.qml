@@ -101,6 +101,12 @@ Item {
             Shell.dispatch("space.block.update", { blockId: block.blockId, text: typed });
     }
 
+    // The link a drawn block opens: the web, mail and the app's own, which
+    // Shell.openExternal opens. A path or an in-page anchor is text to edit.
+    function openable(link) {
+        return /^(https?|mailto|hal-c2):/i.test(link) ? link : "";
+    }
+
     // Shows a drawn block's source to edit, the caret near (x, y) in the drawn
     // text, or at its end with no point.
     function edit(x, y) {
@@ -356,15 +362,17 @@ Item {
                             MouseArea {
                                 id: drawnMouse
 
+                                objectName: "spaceBlockPointer"
+
                                 property string link: ""
 
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: drawnMouse.link.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
-                                onPositionChanged: mouse => drawnMouse.link = drawnText.linkAt(mouse.x, mouse.y)
+                                onPositionChanged: mouse => drawnMouse.link = block.openable(drawnText.linkAt(mouse.x, mouse.y))
                                 onExited: drawnMouse.link = ""
                                 onClicked: mouse => {
-                                    const target = drawnText.linkAt(mouse.x, mouse.y);
+                                    const target = block.openable(drawnText.linkAt(mouse.x, mouse.y));
                                     if (target.length > 0)
                                         Shell.openExternal(target);
                                     else

@@ -892,6 +892,24 @@ Item {
             verify(findChild(shown, "spaceBlockText:" + source).visible);
         }
 
+        // A link to a path or an anchor, which nothing opens, edits like any
+        // text, and shows no hand.
+        function test_a_link_nothing_opens_edits_the_source() {
+            const source = "[spec](./spec.md) and more words after it";
+            const view = root.research({ blocks: [root.block("b1", source)] });
+            const shown = findChild(view, "spaceBlock:" + source);
+            const drawn = findChild(shown, "spaceBlockText:" + source);
+            const prose = findChild(drawn, "markdownProse");
+            const link = drawn.mapFromItem(prose, 4, prose.height / 2);
+            compare(drawn.linkAt(link.x, link.y), "./spec.md");
+            mouseMove(drawn, link.x, link.y);
+            compare(findChild(shown, "spaceBlockPointer").cursorShape, Qt.IBeamCursor);
+            mouseClick(drawn, link.x, link.y);
+            compare(Shell.openedExternally, []);
+            verify(shown.editor !== null && shown.editor.activeFocus);
+            compare(shown.editor.text, source);
+        }
+
         // Where plain words are drawn as written, the caret lands on the word clicked.
         function test_the_caret_lands_where_the_drawn_text_was_clicked() {
             const source = "Plain words in a row";
