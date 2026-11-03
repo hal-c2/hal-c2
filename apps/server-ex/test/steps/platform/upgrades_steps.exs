@@ -856,7 +856,6 @@ defmodule HalC2.Steps.Platform.Upgrades do
     assert %{
              v: 11,
              following: %{},
-             trace: nil,
              scopes: :all,
              monitors: %{},
              shell: %{},
