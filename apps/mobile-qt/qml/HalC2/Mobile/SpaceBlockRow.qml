@@ -6,8 +6,10 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// One block of the open page in the phone layout. Its text is edited where it
-// is and goes to the MC when the editor loses focus; a checklist item is ticked
+// One block of the open page in the phone layout. Its text is drawn as Markdown
+// (the chat's Markdown brick, untrusted); a tap on a link opens it, and a tap
+// anywhere else edits its source where it is, which goes to the MC when the
+// editor loses focus and is drawn again. A checklist item is ticked
 // by its box, a link opens its page and an image shows above its caption. Moving,
 // deleting and commenting are in the menu at its end, where a desktop's hover would
 // have them. A chart is not written in: it is drawn, and asked for again from the menu.
@@ -54,7 +56,10 @@ Rectangle {
     readonly property string markdownTail: model.markdownTail ?? ""
     readonly property string markdownBelow: model.markdownBelow ?? ""
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-    readonly property bool editing: editor.activeFocus
+    // The source editor: made while the user edits a drawn block, and always
+    // for a block that is shown as its source.
+    readonly property TextEdit editor: editorLoader.item as TextEdit
+    readonly property bool editing: editor !== null && editor.activeFocus
     // The Mermaid source a "mermaid" code block holds, or a raw block's fence, or "":
     // drawn in place of the text until the user switches to the source, and what
     // they write there once it is saved.
@@ -62,6 +67,15 @@ Rectangle {
                                         : kind === "raw" ? mermaidOf(text) : ""
     property bool diagramSource: false
     readonly property bool diagramShown: diagramCode.length > 0 && diagram.drawn && !diagramSource
+    // The block shows text: a link, a chart, what an update wrote, a divider,
+    // a section's end and a drawn diagram show something else.
+    readonly property bool textShown: !diagramShown && ["subpage_link", "chart", "generated", "divider", "details_end"].indexOf(kind) < 0
+    // Text drawn as Markdown while it is not edited (as the desktop's SpaceBlock
+    // draws it): raw, table and code blocks are their source, and an image's
+    // caption and a section's summary sit between Markdown the MC writes on their line.
+    readonly property bool drawn: textShown && !raw && kind !== "details" && kind !== "image"
+    // The user is writing in a drawn block: its source shows.
+    property bool sourceShown: false
 
     signal menuRequested
     signal linkOpened
@@ -75,16 +89,38 @@ Rectangle {
     }
 
     function commit() {
-        if (kind !== "subpage_link" && kind !== "chart" && kind !== "generated" && editor.text !== text)
+        if (editor !== null && kind !== "subpage_link" && kind !== "chart" && kind !== "generated" && editor.text !== text)
             Shell.dispatch("space.block.update", { blockId: blockId, text: editor.text });
+    }
+
+    // The link a drawn block opens: the web, mail and the app's own, which
+    // Shell.openExternal opens. A path or an in-page anchor is text to edit.
+    function openable(link) {
+        return /^(https?|mailto|hal-c2):/i.test(link) ? link : "";
+    }
+
+    // Shows a drawn block's source to edit, the caret near (x, y) in the drawn
+    // text, or at its end with no point.
+    function edit(x, y) {
+        sourceShown = true;
+        editor.forceActiveFocus();
+        if (x === undefined) {
+            editor.cursorPosition = editor.length;
+        } else {
+            const at = editor.mapFromItem(drawnLoader, x, y);
+            editor.cursorPosition = editor.positionAt(at.x, at.y);
+        }
     }
 
     // What the MC wrote shows, and a diagram is drawn again, unless the user is
     // writing here.
     onTextChanged: {
-        if (editor.activeFocus)
+        // The editor's focus, not `editing`: a write it makes as it loses
+        // the keyboard lands before that follows.
+        if (editor !== null && editor.activeFocus)
             return;
-        editor.text = text;
+        if (editor !== null)
+            editor.text = text;
         diagramSource = false;
     }
     // Scrolled away or the screen left mid-edit: what was written still counts.
@@ -176,56 +212,116 @@ Rectangle {
 
                     Layout.fillWidth: true
                     // A divider and a section's end have no text: their Markdown is all they show.
-                    visible: row.kind !== "divider" && row.kind !== "details_end"
+                    visible: row.textShown
                     // Up to its text's width when something follows it on its line.
-                    Layout.maximumWidth: row.markdownTail.length > 0 ? Math.max(40, editor.implicitWidth + 2) : Number.POSITIVE_INFINITY
-                    Layout.preferredHeight: editor.height
-                    contentWidth: editor.width
-                    contentHeight: editor.height
+                    Layout.maximumWidth: row.markdownTail.length > 0 ? Math.max(40, (row.editor?.implicitWidth ?? 0) + 2) : Number.POSITIVE_INFINITY
+                    Layout.preferredHeight: contentHeight
+                    contentWidth: row.editor !== null ? editorLoader.width : width
+                    contentHeight: row.editor !== null ? editorLoader.height : drawnLoader.height
                     flickableDirection: Flickable.HorizontalFlick
                     boundsBehavior: Flickable.StopAtBounds
                     interactive: contentWidth > width
                     clip: row.raw
 
-                    TextEdit {
-                        id: editor
+                    // The text drawn, at its size and with its tick's strikeout: a tap
+                    // on a link opens it, anywhere else edits the source, as a
+                    // keyboard's focus does.
+                    Loader {
+                        id: drawnLoader
 
-                        objectName: "spaceBlockEditor:" + row.text
-                        width: row.raw ? Math.max(scroller.width, implicitWidth) : scroller.width
-                        readOnly: row.readOnly
-                        textFormat: TextEdit.PlainText
-                        wrapMode: row.raw ? TextEdit.NoWrap : TextEdit.Wrap
-                        color: Theme.palette.color("text", "#e4e4e7")
-                        selectionColor: Theme.palette.color("accent", "#2563eb")
-                        opacity: row.kind === "checklist" && row.checked ? 0.6 : 1
-                        font.family: row.raw ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Application.font.family
-                        // A second-level heading is the usual one; a first is larger and the rest step down.
-                        font.pixelSize: Math.round((row.kind === "heading" ? [24, 20, 18, 17, 16, 15][Math.min(Math.max(row.level, 1), 6) - 1] : row.raw ? 13 : 15) * Theme.fontScale)
-                        font.weight: row.kind === "heading" ? Font.DemiBold : Font.Normal
-                        font.strikeout: row.kind === "checklist" && row.checked
-                        Accessible.name: qsTr("Block text")
-                        Component.onCompleted: text = row.text
-                        onActiveFocusChanged: {
-                            if (activeFocus)
-                                return;
-                            row.commit();
-                            text = row.text;
+                        active: row.drawn
+                        visible: row.editor === null
+                        width: scroller.width
+
+                        sourceComponent: FocusScope {
+                            height: Math.max(drawnText.implicitHeight, 24)
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.EditableText
+                            Accessible.name: qsTr("Block text")
+                            onActiveFocusChanged: {
+                                if (activeFocus)
+                                    row.edit();
+                            }
+
+                            Markdown {
+                                id: drawnText
+
+                                objectName: "spaceBlockText:" + row.text
+                                width: parent.width
+                                selectable: false
+                                text: row.text
+                                textColor: Theme.palette.color("text", "#e4e4e7")
+                                fontSize: Math.round((row.kind === "heading" ? [24, 20, 18, 17, 16, 15][Math.min(Math.max(row.level, 1), 6) - 1] : 15) * Theme.fontScale)
+                                fontWeight: row.kind === "heading" ? Font.DemiBold : Font.Normal
+                                struck: row.kind === "checklist" && row.checked
+                                opacity: row.kind === "checklist" && row.checked ? 0.6 : 1
+                            }
+
+                            TapHandler {
+                                onTapped: eventPoint => {
+                                    const link = row.openable(drawnText.linkAt(eventPoint.position.x, eventPoint.position.y));
+                                    if (link.length > 0)
+                                        Shell.openExternal(link);
+                                    else
+                                        row.edit(eventPoint.position.x, eventPoint.position.y);
+                                }
+                            }
                         }
-                        // Typing in raw Markdown past the edge brings the cursor back into view.
-                        onCursorRectangleChanged: {
-                            if (!row.raw || !activeFocus)
-                                return;
-                            if (cursorRectangle.x < scroller.contentX)
-                                scroller.contentX = cursorRectangle.x;
-                            else if (cursorRectangle.x + cursorRectangle.width > scroller.contentX + scroller.width)
-                                scroller.contentX = cursorRectangle.x + cursorRectangle.width - scroller.width;
-                        }
-                        // A heading or a checklist item is one line.
-                        Keys.onReturnPressed: event => {
-                            if (row.kind === "heading" || row.kind === "checklist")
-                                editor.focus = false;
-                            else
-                                event.accepted = false;
+                    }
+
+                    Loader {
+                        id: editorLoader
+
+                        // A diagram keeps its source while it is drawn, a tap away.
+                        active: (row.textShown || row.diagramCode.length > 0) && (!row.drawn || row.sourceShown)
+                        sourceComponent: editorComponent
+                    }
+
+                    Component {
+                        id: editorComponent
+
+                        TextEdit {
+                            id: sourceEditor
+
+                            objectName: "spaceBlockEditor:" + row.text
+                            width: row.raw ? Math.max(scroller.width, implicitWidth) : scroller.width
+                            readOnly: row.readOnly
+                            textFormat: TextEdit.PlainText
+                            wrapMode: row.raw ? TextEdit.NoWrap : TextEdit.Wrap
+                            color: Theme.palette.color("text", "#e4e4e7")
+                            selectionColor: Theme.palette.color("accent", "#2563eb")
+                            opacity: row.kind === "checklist" && row.checked ? 0.6 : 1
+                            font.family: row.raw ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Application.font.family
+                            // A second-level heading is the usual one; a first is larger and the rest step down.
+                            font.pixelSize: Math.round((row.kind === "heading" ? [24, 20, 18, 17, 16, 15][Math.min(Math.max(row.level, 1), 6) - 1] : row.raw ? 13 : 15) * Theme.fontScale)
+                            font.weight: row.kind === "heading" ? Font.DemiBold : Font.Normal
+                            font.strikeout: row.kind === "checklist" && row.checked
+                            Accessible.name: qsTr("Block text")
+                            Component.onCompleted: text = row.text
+                            // Leaving it writes it, and a drawn block is drawn again.
+                            onActiveFocusChanged: {
+                                if (activeFocus)
+                                    return;
+                                row.commit();
+                                text = row.text;
+                                row.sourceShown = false;
+                            }
+                            // Typing in raw Markdown past the edge brings the cursor back into view.
+                            onCursorRectangleChanged: {
+                                if (!row.raw || !activeFocus)
+                                    return;
+                                if (cursorRectangle.x < scroller.contentX)
+                                    scroller.contentX = cursorRectangle.x;
+                                else if (cursorRectangle.x + cursorRectangle.width > scroller.contentX + scroller.width)
+                                    scroller.contentX = cursorRectangle.x + cursorRectangle.width - scroller.width;
+                            }
+                            // A heading or a checklist item is one line.
+                            Keys.onReturnPressed: event => {
+                                if (row.kind === "heading" || row.kind === "checklist")
+                                    sourceEditor.focus = false;
+                                else
+                                    event.accepted = false;
+                            }
                         }
                     }
                 }

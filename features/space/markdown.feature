@@ -1189,7 +1189,7 @@ Feature: GitHub Markdown in a page
         """
 
     # https://github.com/hal-c2/hal-c2/issues/877
-    @shared @backlog
+    @shared @backlog-tui
     Scenario Outline: Text is shown with its inline formatting
       Given a page with a paragraph holding <formatting>
       When the user opens the page
@@ -1204,7 +1204,7 @@ Feature: GitHub Markdown in a page
         | an autolinked address and a bare www link |
 
     # https://github.com/hal-c2/hal-c2/issues/877
-    @shared @backlog
+    @shared @backlog-tui
     Scenario: A link in a page never loads anything by itself
       Given a page with a paragraph linking to a web address
       When the user opens the page
