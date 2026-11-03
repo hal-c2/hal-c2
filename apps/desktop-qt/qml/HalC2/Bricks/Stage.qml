@@ -269,6 +269,8 @@ Rectangle {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // Clear of rounded bottom corners: clip cuts square.
+            Layout.bottomMargin: Math.max(stage.bottomLeftRadius, stage.bottomRightRadius)
 
             // By count, so a pane (and the body it shows) stays as the stage changes.
             Repeater {

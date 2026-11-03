@@ -20,7 +20,8 @@ Item {
     required property PanelBodies bodies
     // Whether the conversation has its composer under the timeline.
     property bool composerShown: true
-    // The route view's corner radius, for layouts that round the centre.
+    // The corner radius of layouts that round the centre: the route view's
+    // corners, and the stage's outer ones.
     property real radius: 0
     // Whether the route's view is a conversation scrolled away from its latest output.
     readonly property bool conversationScrolled: centreHost.conversationScrolled
@@ -209,6 +210,11 @@ Item {
         readonly property int minimumWidth: 360
 
         bodies: threadArea.bodies
+        // Its corners on the centre's edge: the right ones beside the
+        // conversation, the top ones over it.
+        topLeftRadius: threadArea.focusMode ? threadArea.radius : 0
+        topRightRadius: threadArea.radius
+        bottomRightRadius: threadArea.focusMode ? 0 : threadArea.radius
         visible: threadArea.staged && (threadArea.focusMode || threadArea.besideShown)
         x: threadArea.focusMode ? 0 : threadArea.chatWidth + 1
         width: threadArea.focusMode ? threadArea.width : threadArea.width - x

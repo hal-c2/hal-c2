@@ -375,6 +375,34 @@ Item {
             verify(findChild(area, "stageSplitter").visible);
         }
 
+        // A layout that rounds the centre rounds the stage's corners on its
+        // edge, and the panes stay clear of them.
+        function test_aRoundedCentreRoundsTheStagesOuterCorners() {
+            Threads.timeline = createTemporaryObject(fakeTimeline, root);
+            Shell.state = Object.assign({}, Shell.state, {
+                panel: panelState({ staged: ["diff"], open: false })
+            });
+            const holder = createTemporaryObject(areaComponent, root);
+            const area = holder.area;
+            area.radius = 12;
+            const stage = findChild(area, "stage");
+            verify(stage.visible);
+            compare(stage.topLeftRadius, 0, "beside the conversation, its left edge is inside");
+            compare(stage.topRightRadius, 12);
+            compare(stage.bottomRightRadius, 12);
+            const pane = findChild(stage, "stagePane-0");
+            tryVerify(() => pane.height > 0, 1000, "the panes are laid out");
+            const paneBottom = pane.mapToItem(stage, 0, pane.height).y;
+            verify(paneBottom <= stage.height - 12, "the pane ends above the rounded corner");
+
+            Shell.state = Object.assign({}, Shell.state, {
+                panel: panelState({ staged: ["diff"], focus: true, open: false })
+            });
+            compare(stage.topLeftRadius, 12, "over the conversation, its top edge is the centre's");
+            compare(stage.topRightRadius, 12);
+            compare(stage.bottomRightRadius, 0);
+        }
+
         // Scenario: A narrow window shows the conversation or the stage, one at a time.
         function test_aNarrowWindowShowsOneAtATime() {
             Threads.timeline = createTemporaryObject(fakeTimeline, root);
