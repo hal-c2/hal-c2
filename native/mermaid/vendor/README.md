@@ -18,7 +18,8 @@ Our changes on top of 0.3.1, each meant for upstream:
   into it.
 - `src/layout/flowchart/subgraph_spacing.rs`: a node that belongs to a subgraph but not to
   a subgraph nested inside it is moved out of the nested box (before, only nodes in no
-  subgraph were), and the move steps past other nodes instead of landing on them.
+  subgraph were). The move steps past other nodes instead of landing on them, and goes
+  to the side the node's edges run to.
 
 `git log -p -- native/mermaid/vendor` shows the diff. Drop the vendored copy and the patch
 once a release carries these fixes.

@@ -137,7 +137,26 @@ pub(in crate::layout) fn evict_non_member_nodes_from_subgraphs(
             );
             // Slide out in each of the four directions until clear, then take
             // the shortest slide (cross-axis moves preferred slightly, since
-            // they keep rank ordering intact).
+            // they keep rank ordering intact), counting how much nearer or
+            // further it brings the node to the nodes it has edges with, so
+            // the node leaves on the side its edges run to.
+            let neighbours: Vec<(f32, f32)> = graph
+                .edges
+                .iter()
+                .filter_map(|edge| match (edge.from == *id, edge.to == *id) {
+                    (true, false) => nodes.get(&edge.to),
+                    (false, true) => nodes.get(&edge.from),
+                    _ => None,
+                })
+                .map(|o| (o.x + o.width / 2.0, o.y + o.height / 2.0))
+                .collect();
+            let pull = |r: [f32; 4]| -> f32 {
+                let (cx, cy) = ((r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0);
+                neighbours
+                    .iter()
+                    .map(|(x, y)| (x - cx).abs() + (y - cy).abs())
+                    .sum()
+            };
             let mut best: Option<(f32, f32, f32)> = None;
             for (ux, uy) in [(-1.0f32, 0.0f32), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
                 let mut r = start;
@@ -173,7 +192,9 @@ pub(in crate::layout) fn evict_non_member_nodes_from_subgraphs(
                 }
                 let (dx, dy) = (r[0] - start[0], r[1] - start[1]);
                 let main_axis_move = if horizontal { dx != 0.0 } else { dy != 0.0 };
-                let score = (dx.abs() + dy.abs()) * if main_axis_move { 1.25 } else { 1.0 };
+                let score = (dx.abs() + dy.abs()) * if main_axis_move { 1.25 } else { 1.0 }
+                    + pull(r)
+                    - pull(start);
                 if best.is_none_or(|(best_score, _, _)| score < best_score) {
                     best = Some((score, dx, dy));
                 }
