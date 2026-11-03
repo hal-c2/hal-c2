@@ -27,6 +27,7 @@ import {
 import { createAttachmentPreviews } from "./attachmentPreviews.ts";
 import { buildImageViewerState, type TuiImageViewerState } from "./imageViewer.ts";
 import type { TuiMode, TuiSize } from "./layoutState.ts";
+import { createCodeColours, type CodeColours } from "./codeColours.ts";
 import { createMermaidDiagrams, type MermaidDiagrams } from "./mermaidDiagrams.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import type { PaletteCommand } from "./paletteState.ts";
@@ -86,6 +87,8 @@ export interface ThreadViewOptions {
   readonly copyToClipboard?: ((text: string) => boolean) | undefined;
   /** The Mermaid diagrams the MC drew, shared with the other panes (default: its own). */
   readonly diagrams?: MermaidDiagrams | undefined;
+  /** Code coloured by its language, shared with the other panes (default: its own). */
+  readonly codeColours?: CodeColours | undefined;
 }
 
 export interface ThreadView {
@@ -224,6 +227,8 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
   });
   const diagrams = options.diagrams ?? createMermaidDiagrams(client);
   const stopDiagrams = diagrams.listen(() => publishTimeline());
+  const codeColours = options.codeColours ?? createCodeColours();
+  const stopCodeColours = codeColours.listen(() => publishTimeline());
 
   const activeQuestion = (): PendingUserInput | null => questions[0] ?? null;
   const questionOpen = () => activeQuestion() !== null && !question.deferred;
@@ -272,6 +277,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       attachments: attachments.get,
       cellPixels: cellPixels(),
       diagrams: diagrams.get,
+      codeColours: codeColours.lines,
       workspaceRoot:
         detail?.worktreePath ??
         store.getState().shell?.projects.find((project) => project.id === detail?.projectId)
@@ -1228,10 +1234,12 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     dispose: () => {
       if (copiedTimer) clearTimeout(copiedTimer);
       stopDiagrams();
+      stopCodeColours();
     },
     settled: async () => {
       await attachments.settled();
       await diagrams.settled();
+      await codeColours.settled();
     },
     question: () => {
       const current = activeQuestion()?.questions[question.questionIndex];

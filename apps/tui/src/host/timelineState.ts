@@ -45,6 +45,7 @@ import { threadKey } from "./sidebarState.ts";
 import {
   chunk,
   markdownBlockLines,
+  type CodeColouring,
   markdownLines,
   plainText,
   styled,
@@ -214,6 +215,8 @@ export interface TimelineInput {
   readonly cellPixels?: CellPixels | null;
   /** What the MC drew of a reply's Mermaid diagram (`mermaidDiagrams.ts`); without it they are code. */
   readonly diagrams?: (source: string) => MermaidRenderResult | undefined;
+  /** Colours a reply's code by its language (`codeColours.ts`); without it code is one colour. */
+  readonly codeColours?: CodeColouring;
   /** Where the thread works; a file change in it is named relative to it. */
   readonly workspaceRoot?: string | null;
   /** How this device writes times (default: the locale's). */
@@ -291,6 +294,7 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     attachments: input.attachments ?? (() => UNAVAILABLE_ATTACHMENT),
     cellPixels: input.cellPixels ?? FALLBACK_CELL_PIXELS,
     diagrams: input.diagrams ?? null,
+    codeColours: input.codeColours,
     workspaceRoot: input.workspaceRoot ?? null,
     nowMs: input.nowMs,
     timestampFormat: input.timestampFormat ?? "locale",
@@ -500,6 +504,7 @@ interface RowContext {
   readonly attachments: (attachmentId: string) => AttachmentPreview;
   readonly cellPixels: CellPixels;
   readonly diagrams: ((source: string) => MermaidRenderResult | undefined) | null;
+  readonly codeColours: CodeColouring | undefined;
   readonly workspaceRoot: string | null;
   readonly nowMs: number;
   readonly timestampFormat: TimestampFormat;
@@ -863,6 +868,7 @@ function replyLines(
           showSource: (index) => ctx.view.diagramSources.has(diagramKey(index)),
         }
       : undefined,
+    ctx.codeColours,
   );
   const lines: TimelineLine[] = [];
   blocks.forEach((block, position) => {
