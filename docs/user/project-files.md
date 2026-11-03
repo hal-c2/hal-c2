@@ -1,9 +1,9 @@
 # Project files in the Space view
 
-The Space view shows your projects' Markdown files beside the Space's own pages, one section per
-project, as a tree by folder. Clicking a file edits it in the page editor. The page is the file: an
-edit is written to the file, and a change to the file, by an agent, git or the file viewer, shows
-on the page. Agents and git keep working on one copy, the file.
+The [Space](spaces.md) view shows your projects' Markdown files beside the Space's own pages, one
+section per project, as a tree by folder. Clicking a file edits it in the page editor. The page is
+the file: an edit is written to the file, and a change to the file, by an agent, git or the file
+viewer, shows on the page. Agents and git keep working on one copy, the file.
 
 ## Edit a file
 

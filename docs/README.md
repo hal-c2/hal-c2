@@ -13,6 +13,7 @@
 - [Tabs in the centre](./user/stage.md)
 - [The browser](./user/browser.md)
 - [Keyboard shortcuts](./user/keybindings.md)
+- [Spaces](./user/spaces.md)
 - [Charts on a page](./user/charts.md)
 - [Publishing a page as a site](./user/sites.md)
 - [SnapShots](./user/snap-shot.md)
