@@ -500,6 +500,14 @@ defmodule HalC2.Orchestration.Recovery do
         do: run_id
   end
 
+  # A kind's entities to settle. Messages of older runs too, read from disk a page
+  # at a time: an MC from before recovery settled runs could leave one streaming, or
+  # a steer on it, whose run has gone cold since.
+  defp entities(state, "message"),
+    do: state |> StreamState.rows(kinds: ["message"]) |> Stream.map(fn {_, id, m} -> {id, m} end)
+
+  defp entities(state, kind), do: StreamState.get(state, kind)
+
   defp changes(state, at, trigger, capturing) do
     done = %{"status" => "interrupted", "completedAt" => at}
 
@@ -584,7 +592,7 @@ defmodule HalC2.Orchestration.Recovery do
              do: Map.merge(&1, %{"status" => "idle", "updatedAt" => at})
            )}
         ],
-        {id, entity} <- StreamState.get(state, kind),
+        {id, entity} <- entities(state, kind),
         id not in left and entity["runId"] not in capturing,
         next = fun.(entity),
         next != nil,

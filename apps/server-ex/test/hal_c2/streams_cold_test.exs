@@ -318,6 +318,30 @@ defmodule HalC2.StreamsColdTest do
   # --- helpers ----------------------------------------------------------------
 
   # One settled run of `n` turn items with its user message, `ordinal` `i`.
+  test "cold rows that share a seq are each read once across pages", %{path: path} do
+    # An older snapshot's entities carry no creation seq of their own (0), and its
+    # migration marks every one changed at the snapshot's seq: more than a page of
+    # cold rows can share one seq.
+    for i <- 1..8, do: run("th", i, 3)
+    stop("th")
+    keys = for i <- 1..1_200, do: {"turn-item", "old-#{String.pad_leading("#{i}", 4, "0")}"}
+
+    :ok =
+      Store.put_cold(
+        "th",
+        for({kind, id} <- keys, do: {kind, id, "r1", 0, 7, %{"runId" => "r1"}}),
+        false
+      )
+
+    state = StreamState.load(path, "th")
+    old = MapSet.new(keys)
+    read = for {kind, id, _} <- StreamState.rows(state), {kind, id} in old, do: {kind, id}
+    assert read == keys
+
+    {changed, _} = StreamState.changed_since(state, state.since)
+    assert Enum.count(changed, fn {_, kind, id, _} -> {kind, id} in old end) == 1_200
+  end
+
   defp run(stream, i, n) do
     run = "r#{i}"
 

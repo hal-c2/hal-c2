@@ -119,6 +119,13 @@ Feature: The MC's event store and projections
     Then the client receives every entity of a fold of the log
     And the thread's older runs are read from disk after a restart
 
+  # hal-c2.threadRows answers a page at a time, so a long thread's never builds whole.
+  @mc
+  Scenario: A client reads a long thread's entities a page at a time
+    Given a thread has finished 8 runs of 3 items while memory holds 2
+    When a client reads the thread's entities 5 at a time
+    Then it took more than one page, each entity once in the order they were created
+
   @mc
   Scenario: History survives a restart
     When the MC restarts

@@ -59,6 +59,8 @@ defmodule HalC2.StreamState do
 
   @type key :: {kind :: String.t(), id :: String.t()}
   @type row :: {String.t(), String.t(), Patch.entity()}
+  @typedoc "Where a page of rows ends: the seq it is ordered by, kind and id."
+  @type cursor :: {integer, String.t(), String.t()}
   @type tag :: :item | :queued_user | :interrupt_request | {:interrupt_result, String.t()}
   @type t :: %__MODULE__{
           v: pos_integer,
@@ -192,7 +194,7 @@ defmodule HalC2.StreamState do
       end)
 
     deletes = for {{kind, id}, seq} <- state.deleted, seq > offset, do: {seq, kind, id}
-    {merge(Enum.sort(hot), cold, &elem(&1, 0)), Enum.sort(deletes)}
+    {merge(Enum.sort(hot), cold, &key/1), Enum.sort(deletes)}
   end
 
   @doc "The ids of `kind` (a small kind, always in memory) changed after `offset`."
@@ -210,15 +212,38 @@ defmodule HalC2.StreamState do
   """
   @spec rows(t, keyword) :: Enumerable.t(row)
   def rows(state, opts \\ []) do
+    state
+    |> created_rows(opts)
+    |> Stream.map(fn {_created, kind, id, entity} -> {kind, id, entity} end)
+  end
+
+  @doc """
+  Up to `limit` of the rows `rows/2` reads, from after `cursor` (nil for the first),
+  and the cursor the next page starts after: `{rows, next}`, `next` nil after the
+  last page.
+  """
+  @spec rows_page(t, cursor | nil, pos_integer) :: {[row], cursor | nil}
+  def rows_page(state, cursor, limit) do
+    {page, more} =
+      state |> created_rows(after: cursor) |> Enum.take(limit + 1) |> Enum.split(limit)
+
+    next = if more != [], do: page |> List.last() |> key()
+    {for({_created, kind, id, entity} <- page, do: {kind, id, entity}), next}
+  end
+
+  defp created_rows(state, opts) do
     kinds = Keyword.get(opts, :kinds)
     cold_kinds = if kinds, do: Enum.filter(kinds, &(&1 in @windowed)), else: nil
     cold_runs = Keyword.get(opts, :cold_runs, :all)
+    cursor = Keyword.get(opts, :after)
 
     hot =
       for {kind, by_id} <- state.entities,
           kinds == nil or kind in kinds,
           {id, entity} <- by_id,
-          do: {Map.get(state.created, {kind, id}, 0), kind, id, entity}
+          created = Map.get(state.created, {kind, id}, 0),
+          cursor == nil or {created, kind, id} > cursor,
+          do: {created, kind, id, entity}
 
     cold =
       cond do
@@ -229,11 +254,11 @@ defmodule HalC2.StreamState do
           runs = if cold_runs == :all, do: nil, else: cold_runs
 
           state
-          |> cold_pages(:created, 0, kinds: cold_kinds, runs: runs)
+          |> cold_pages(:created, cursor || -1, kinds: cold_kinds, runs: runs)
           |> Stream.map(&created_rows/1)
       end
 
-    sorted_rows(hot, cold)
+    sorted(hot, cold)
   end
 
   @doc """
@@ -259,9 +284,11 @@ defmodule HalC2.StreamState do
     cold =
       if cold_runs == [],
         do: [],
-        else: cold_pages(state, :created, 0, runs: cold_runs) |> Stream.map(&created_rows/1)
+        else: cold_pages(state, :created, -1, runs: cold_runs) |> Stream.map(&created_rows/1)
 
-    sorted_rows(hot, cold)
+    hot
+    |> sorted(cold)
+    |> Stream.map(fn {_created, kind, id, entity} -> {kind, id, entity} end)
   end
 
   defp below?(_run, nil), do: false
@@ -274,12 +301,10 @@ defmodule HalC2.StreamState do
   defp created_rows(page),
     do: for({kind, id, _run, created, _changed, entity} <- page, do: {created, kind, id, entity})
 
-  defp sorted_rows(hot, cold) do
-    hot
-    |> Enum.sort_by(&elem(&1, 0))
-    |> merge(cold, &elem(&1, 0))
-    |> Stream.map(fn {_created, kind, id, entity} -> {kind, id, entity} end)
-  end
+  defp sorted(hot, cold), do: hot |> Enum.sort_by(&key/1) |> merge(cold, &key/1)
+
+  # Rows are ordered by their seq, then kind and id: rows can share a seq.
+  defp key({seq, kind, id, _entity}), do: {seq, kind, id}
 
   @doc "A kind's entities in memory, in the order they were created."
   @spec list(t, String.t()) :: [Patch.entity()]
@@ -362,6 +387,20 @@ defmodule HalC2.StreamState do
 
   defp count(tally, _kind, _run, _entity, _by), do: tally
 
+  @doc """
+  A page of the current cold entities' keys in creation order, from after `cursor`
+  (nil for the first): `{keys, next}`, where `next` is where the page after starts,
+  or `{[], cursor}` once there are none. For walking the cold part a page per
+  commit.
+  """
+  @spec cold_keys(t, cursor | nil) :: {[key], cursor | nil}
+  def cold_keys(state, cursor) do
+    case state |> cold_pages(:created, cursor || -1, []) |> Enum.take(1) do
+      [page] -> {for({kind, id, _, _, _, _} <- page, do: {kind, id}), cursor(List.last(page), 3)}
+      [] -> {[], cursor}
+    end
+  end
+
   @doc false
   # One more cold turn item of `run` in a tally (`tally/1`).
   def count_tag(tally, run, item), do: count(tally, "turn-item", run, item, 1)
@@ -401,7 +440,7 @@ defmodule HalC2.StreamState do
             nil
 
           page ->
-            next = if length(page) < @page, do: :done, else: page |> List.last() |> elem(at)
+            next = if length(page) < @page, do: :done, else: cursor(List.last(page), at)
             {Enum.reject(page, &stale?(state, &1)), next}
         end
     end)
@@ -409,6 +448,9 @@ defmodule HalC2.StreamState do
   end
 
   defp cold_pages(_state, _order, _after, _opts), do: []
+
+  # Where the page after a cold row starts, ordered by the seq at `at`.
+  defp cursor({kind, id, _, _, _, _} = row, at), do: {elem(row, at), kind, id}
 
   # Where the cold rows are read from. Those of a migrating stream are there once
   # its migration wrote them.

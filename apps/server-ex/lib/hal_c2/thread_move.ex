@@ -487,7 +487,7 @@ defmodule HalC2.ThreadMove do
     do: "#{title} moved to #{label}. The agent continues its own session there."
 
   defp moved_message(title, label, false, archive) do
-    if Enum.any?(archive["entities"], &(hd(&1) == "provider-thread")),
+    if "provider-thread" in ThreadArchive.kinds(archive),
       do: "#{title} moved to #{label}. The agent there will get a summary of the conversation.",
       else: "#{title} moved to #{label}."
   end
@@ -520,6 +520,8 @@ defmodule HalC2.ThreadMove do
       "at" => at
     }
 
+    drop_cold(id, move)
+
     forwarded =
       Streams.transact(id, :thread, fn state ->
         if StreamState.get(state, "thread")[id]["moving"]["id"] == move,
@@ -538,6 +540,24 @@ defmodule HalC2.ThreadMove do
   end
 
   defp letting_go_lock(id), do: {{__MODULE__, :letting_go, id}, self()}
+
+  # The older runs' entities are deleted before the forwarding record, a page per
+  # commit, so no one commit brings the whole cold part of a long thread back to
+  # memory. Only while the thread is still in the move: a let-go cut short leaves the
+  # rest to the next (`settle/1`), and one that came back here meanwhile keeps all.
+  defp drop_cold(id, move, cursor \\ nil) do
+    next =
+      Streams.transact(id, :thread, fn state ->
+        with true <- StreamState.get(state, "thread")[id]["moving"]["id"] == move,
+             {[_ | _] = keys, next} <- StreamState.cold_keys(state, cursor) do
+          {for({kind, eid} <- keys, do: {kind, eid, Patch.delete()}), next}
+        else
+          _ -> {[], :done}
+        end
+      end)
+
+    if next != :done, do: drop_cold(id, move, next)
+  end
 
   defp forward(state, id, moved) do
     at = moved["at"]

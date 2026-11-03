@@ -10,8 +10,8 @@ defmodule HalC2.StreamStatePropTest do
   One law needs a store: a stream that holds only its latest runs in memory
   (`HalC2.StreamState`, "Hot and cold"), folded commit by commit as its process folds
   it, demoting, snapshotting and reloading along the way, reads the same as a whole
-  fold of its log: its rows, `changed_since/2` from every offset, each entity, each
-  run's rows, its item counts and its transcript.
+  fold of its log: its rows (whole and a page at a time), `changed_since/2` from every
+  offset, each entity, each run's rows, its item counts and its transcript.
   """
 
   use ExUnit.Case, async: false
@@ -334,9 +334,18 @@ defmodule HalC2.StreamStatePropTest do
           StreamState.lookup(whole, Map.keys(@windowed))
       ) and
       law(:run_rows, run_rows?) and
+      law(:rows_page, Enum.all?([1, 2], &(pages(state, &1) == rows.(whole)))) and
       law(:item_counts, StreamState.item_counts(state) == StreamState.item_counts(whole)) and
       law(:transcript, Timeline.local_items(state) == Timeline.local_items(whole)) and
       law(:count, Timeline.local_count(state) == length(Timeline.local_items(whole)))
+  end
+
+  # Every row, read `limit` at a time from the cursor each page returns.
+  defp pages(state, limit, cursor \\ nil) do
+    case StreamState.rows_page(state, cursor, limit) do
+      {rows, nil} -> rows
+      {rows, next} -> rows ++ pages(state, limit, next)
+    end
   end
 
   defp changed(state, offset) do

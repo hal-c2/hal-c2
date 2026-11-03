@@ -543,6 +543,15 @@ defmodule HalC2.Store do
     end)
   end
 
+  @doc "Whether a stream has a hot snapshot (`put_snapshot/5`), without reading it."
+  @spec hot_snapshot?(String.t() | reference, String.t()) :: boolean
+  def hot_snapshot?(path, stream_id) do
+    sql =
+      "SELECT 1 FROM hot_snapshots n JOIN streams s ON s.key = n.stream WHERE s.id = ?1"
+
+    with_query(path, sql, [stream_id], fn db, stmt -> Sqlite3.step(db, stmt) != :done end)
+  end
+
   @doc """
   The whole-stream snapshot an older MC wrote, if any: `{seq, state}`, or
   `{:too_big, seq}` when it takes more than `max_bytes` stored, so whoever reads it
@@ -648,15 +657,17 @@ defmodule HalC2.Store do
 
   @doc """
   Up to `limit` of a stream's cold rows, ordered by `order` (`:created` or
-  `:changed`) from after `after`. `:kinds` and `:runs` narrow them to those kinds
-  and run ids. A page at a time, so a caller can walk a long thread's rows in
-  bounded memory. `source` is as for `cold_rows/3`.
+  `:changed`), then kind and id, from after `after`: a seq (the rows after it) or
+  the `{seq, kind, id}` of the last row of the page before, since rows can share a
+  seq (an entity from an old snapshot has none of its own). `:kinds` and `:runs`
+  narrow them to those kinds and run ids. A page at a time, so a caller can walk a
+  long thread's rows in bounded memory. `source` is as for `cold_rows/3`.
   """
   @spec cold_page(
           String.t() | reference,
           String.t(),
           :created | :changed,
-          integer,
+          integer | {integer, String.t(), String.t()},
           pos_integer,
           keyword
         ) ::
@@ -672,11 +683,16 @@ defmodule HalC2.Store do
     run_filter =
       if runs, do: "AND c.run IN (SELECT value FROM json_each(?5))", else: "AND ?5 IS NULL"
 
+    {after_seq, after_kind, after_id} =
+      with seq when is_integer(seq) <- after_seq, do: {seq, nil, nil}
+
     sql = """
     SELECT c.kind, c.id, c.run, c.created, c.changed, c.entity
     FROM cold c JOIN streams s ON s.key = c.stream
-    WHERE s.id = ?1 AND c.#{order} > ?2 #{kind_filter} #{run_filter}
-    ORDER BY c.#{order} LIMIT ?3
+    WHERE s.id = ?1
+      AND (c.#{order} > ?2 OR (c.#{order} = ?2 AND ?6 IS NOT NULL AND (c.kind, c.id) > (?6, ?7)))
+      #{kind_filter} #{run_filter}
+    ORDER BY c.#{order}, c.kind, c.id LIMIT ?3
     """
 
     args = [
@@ -684,7 +700,9 @@ defmodule HalC2.Store do
       after_seq,
       limit,
       kinds && JSON.encode!(kinds),
-      runs && JSON.encode!(Enum.to_list(runs))
+      runs && JSON.encode!(Enum.to_list(runs)),
+      after_kind,
+      after_id
     ]
 
     with_query(path, sql, args, fn db, stmt ->

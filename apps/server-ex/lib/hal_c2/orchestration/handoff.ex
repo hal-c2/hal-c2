@@ -475,29 +475,18 @@ defmodule HalC2.Orchestration.Handoff do
       )
       |> Enum.sort_by(& &1["ordinal"])
 
-    # Older runs' entities are read from disk.
-    rows = state |> StreamState.run_rows(Enum.map(runs, & &1["id"])) |> Enum.to_list()
-
-    messages =
-      for {"message", _, message} <- rows,
-          text = String.trim(message["text"] || ""),
-          text != "" do
-        role = if message["role"] == "user", do: :user, else: :assistant
-        label = if role == :user, do: "User", else: "Assistant"
-        {message["runId"], message["createdAt"] || "", role, "#{label}: #{text}"}
-      end
-
-    commands =
-      for {"turn-item", _, %{"type" => "command_execution", "input" => input} = item} <- rows,
-          is_binary(input) and item["status"] in ~w(completed failed interrupted),
-          do: {item["runId"], item["startedAt"] || "", :command, command(item)}
+    # Older runs' entities are read from disk a page at a time, keeping only entries.
+    entries =
+      state
+      |> StreamState.run_rows(Enum.map(runs, & &1["id"]))
+      |> Enum.flat_map(&entry/1)
 
     # A run's user message comes before what the agent did, whatever the timestamps,
     # and a command before the answer that reports it.
     order = %{user: 0, command: 1, assistant: 2}
 
     entries =
-      (messages ++ commands)
+      entries
       |> Enum.sort_by(fn {_run, at, role, _text} -> {at, order[role]} end)
       |> Enum.group_by(&elem(&1, 0), fn {_run, _at, role, text} -> {role, text} end)
 
@@ -506,6 +495,28 @@ defmodule HalC2.Orchestration.Handoff do
       entries -> fit(entries)
     end
   end
+
+  # A row's transcript entry as `{run, at, role, text}`, if it has one.
+  defp entry({"message", _, message}) do
+    case String.trim(message["text"] || "") do
+      "" ->
+        []
+
+      text ->
+        role = if message["role"] == "user", do: :user, else: :assistant
+        label = if role == :user, do: "User", else: "Assistant"
+        [{message["runId"], message["createdAt"] || "", role, "#{label}: #{text}"}]
+    end
+  end
+
+  defp entry({"turn-item", _, %{"type" => "command_execution", "input" => input} = item})
+       when is_binary(input) do
+    if item["status"] in ~w(completed failed interrupted),
+      do: [{item["runId"], item["startedAt"] || "", :command, command(item)}],
+      else: []
+  end
+
+  defp entry(_row), do: []
 
   defp command(item) do
     output = String.trim(item["output"] || "")

@@ -36,7 +36,7 @@ defmodule HalC2.Search do
 
     if not read?() do
       for %{id: id, kind: "thread"} <- Store.list_streams(path),
-          do: StreamState.load_read(path, id, &index_thread(id, &1))
+          do: read(path, id, &index_thread(id, &1))
 
       :ok = Store.forget_untyped_messages()
       Store.put_meta(@read, "1")
@@ -59,7 +59,7 @@ defmodule HalC2.Search do
     :ok = read_again()
 
     gone =
-      for message <- StreamState.all(StreamState.load(Store.path(), id), "message"),
+      for message <- StreamState.all(load(id), "message"),
           do: {message["id"], :deleted}
 
     if gone != [], do: Store.index_messages(id, gone)
@@ -67,9 +67,27 @@ defmodule HalC2.Search do
     try do
       write.()
     after
-      :ok = index_thread(id, StreamState.load(Store.path(), id))
+      :ok = index_thread(id, load(id))
       if read?, do: Store.put_meta(@read, "1")
     end
+  end
+
+  # `fun` of a thread's state. A thread with no snapshot of its hot part yet (an older
+  # MC's whole one, or none) is read through its stream, which writes one as it loads,
+  # a long log a page at a time; one read here would hold the whole thread.
+  defp read(path, id, fun) do
+    if Store.hot_snapshot?(path, id) or Process.whereis(HalC2.Streams) == nil,
+      do: StreamState.load_read(path, id, fun),
+      else: HalC2.Streams.read(id, fun)
+  end
+
+  # The thread as `storing_thread/2` finds it. With no streams running nothing else
+  # writes it, so it is loaded as its stream would load it, the older runs written to
+  # disk, instead of folding a long log whole.
+  defp load(id) do
+    if Process.whereis(HalC2.Streams),
+      do: StreamState.load(Store.path(), id),
+      else: StreamState.load(Store.path(), id, store: Store, max_legacy: :infinity)
   end
 
   @doc "Indexes all of a thread's messages from its loaded `state`, as an import needs."

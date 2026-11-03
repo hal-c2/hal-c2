@@ -10,6 +10,9 @@ defmodule HalC2.Rpc do
     hal-c2.unregisterPush
   )
 
+  # How many rows a page of `hal-c2.threadRows` holds.
+  @thread_rows 1_000
+
   @doc "Methods the socket runs with its session, through `handle/3`."
   def session_methods, do: @session_methods
 
@@ -43,17 +46,34 @@ defmodule HalC2.Rpc do
     end
   end
 
-  # One thread's entities at once, for a client that needs its projection without
-  # subscribing (a socket holds one subscription per stream).
-  def handle("hal-c2.threadRows", %{"threadId" => thread_id}) do
+  # One thread's entities, for a client that needs its projection without subscribing
+  # (a socket holds one subscription per stream): a page of at most `limit` at a time,
+  # each as of its `offset`. `next` is the `after` to ask for the next page, nil after
+  # the last.
+  def handle("hal-c2.threadRows", %{"threadId" => thread_id} = input) do
+    limit =
+      case input["limit"] do
+        limit when is_integer(limit) and limit > 0 -> min(limit, @thread_rows)
+        _ -> @thread_rows
+      end
+
+    cursor =
+      case input["after"] do
+        [seq, kind, id] when is_integer(seq) and is_binary(kind) and is_binary(id) ->
+          {seq, kind, id}
+
+        _ ->
+          nil
+      end
+
     HalC2.Streams.read(thread_id, fn state ->
+      {rows, next} = HalC2.StreamState.rows_page(state, cursor, limit)
+
       {:ok,
        %{
          "rows" =>
-           for(
-             {kind, id, entity} <- HalC2.StreamState.rows(state),
-             do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]
-           ),
+           for({kind, id, entity} <- rows, do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]),
+         "next" => next && Tuple.to_list(next),
          "offset" => state.seq,
          "at" => state.updated_at
        }}

@@ -66,8 +66,7 @@ defmodule HalC2.ThreadArchive do
          "exportedAt" => now(),
          "thread" => meta,
          "updatedAt" => state.updated_at,
-         "entities" =>
-           for({kind, eid, entity} <- StreamState.rows(state), do: [kind, eid, entity]),
+         "entities" => entities_file(state),
          "attachments" => attachments(state),
          "terminalLogs" =>
            for({terminal, data} <- Terminal.saved_scrollback(id), do: file(terminal, data)),
@@ -124,7 +123,36 @@ defmodule HalC2.ThreadArchive do
   @doc "Removes the files `build/2` made for an archive."
   def discard(archive) do
     for %{"temporary" => true, "path" => path} <- files(archive), do: File.rm(path)
+    with {:entities, path, _kinds} <- archive["entities"], do: File.rm(path)
     :ok
+  end
+
+  @doc "The kinds of entity an archive holds."
+  def kinds(%{"entities" => {:entities, _path, kinds}}), do: kinds
+  def kinds(%{"entities" => entities}), do: MapSet.new(entities, &hd/1)
+
+  # A built archive's entities: a JSON array in a file made for it, written a row at
+  # a time as the thread's older runs are read from disk, so a long thread is never
+  # held whole. `encode/1` and `write_file/2` put it in the archive's JSON.
+  defp entities_file(state) do
+    path = scratch()
+
+    kinds =
+      File.open!(path, [:write, :raw, :binary, :delayed_write], fn out ->
+        {_, kinds} =
+          state
+          |> StreamState.rows()
+          |> Enum.reduce({"[", MapSet.new()}, fn {kind, eid, entity}, {comma, kinds} ->
+            :ok = :file.write(out, [comma, JSON.encode_to_iodata!([kind, eid, entity])])
+            {",", MapSet.put(kinds, kind)}
+          end)
+
+        :ok = :file.write(out, "]")
+        kinds
+      end)
+
+    File.chmod(path, 0o600)
+    {:entities, path, kinds}
   end
 
   @doc "Every file an archive carries."
@@ -175,7 +203,20 @@ defmodule HalC2.ThreadArchive do
     |> Kernel.<>("]" <> rest)
   end
 
+  def encode(%{"entities" => {:entities, path, _kinds}} = archive) do
+    {marker, archive} = entities_marker(archive)
+    [before, rest] = archive |> JSON.encode!() |> String.split(marker)
+    before <> File.read!(path) <> rest
+  end
+
   def encode(archive), do: JSON.encode!(archive)
+
+  # The archive with a marker standing in for its entities file, and the marker as it
+  # is in the JSON.
+  defp entities_marker(archive) do
+    marker = "hal-c2-entities-#{Base.encode16(:crypto.strong_rand_bytes(12))}"
+    {JSON.encode!(marker), %{archive | "entities" => marker}}
+  end
 
   # The archive's JSON with the files on disk in it as base64, written a piece at a
   # time: each stands in the JSON as a marker and its sha256, which is cut there for
@@ -185,6 +226,16 @@ defmodule HalC2.ThreadArchive do
 
     on_disk =
       for %{"path" => source, "sha256" => sha} <- files(archive), into: %{}, do: {sha, source}
+
+    {entities, archive} =
+      case archive["entities"] do
+        {:entities, source, _kinds} ->
+          {marker, archive} = entities_marker(archive)
+          {{marker, source}, archive}
+
+        _ ->
+          {nil, archive}
+      end
 
     [first | pieces] =
       archive
@@ -199,16 +250,31 @@ defmodule HalC2.ThreadArchive do
       |> String.split(marker)
 
     File.open!(path, [:write, :raw, :binary], fn out ->
-      :ok = :file.write(out, first)
+      write_json(out, first, entities)
 
       for <<sha::binary-size(64), rest::binary>> <- pieces do
         on_disk[sha]
         |> File.stream!(@piece)
         |> Enum.each(&(:ok = :file.write(out, Base.encode64(&1))))
 
-        :ok = :file.write(out, rest)
+        write_json(out, rest, entities)
       end
     end)
+  end
+
+  # A piece of the archive's JSON, with the entities file copied in where its marker is.
+  defp write_json(out, json, nil), do: :ok = :file.write(out, json)
+
+  defp write_json(out, json, {marker, source}) do
+    case String.split(json, marker, parts: 2) do
+      [json] ->
+        :ok = :file.write(out, json)
+
+      [before, rest] ->
+        :ok = :file.write(out, before)
+        source |> File.stream!(@piece) |> Enum.each(&(:ok = :file.write(out, &1)))
+        :ok = :file.write(out, rest)
+    end
   end
 
   # --- import --------------------------------------------------------------------
@@ -669,7 +735,8 @@ defmodule HalC2.ThreadArchive do
           is_map(pt["nativeThreadRef"]),
           do: {"provider-thread", pt["id"], %{"s" => %{"nativeThreadRef" => nil}}}
 
-    if native != [], do: {:ok, _} = Store.append([{:thread, id, native}])
+    # Through the thread's stream when it runs: rebuilding its row above started it.
+    :ok = commit(id, native)
 
     if Process.whereis(HalC2.Shell) do
       case HalC2.Projection.rebuild(id) do

@@ -491,6 +491,35 @@ defmodule HalC2.Steps.Platform.EventStore do
     context
   end
 
+  step "a client reads the thread's entities {int} at a time", %{args: [limit]} = context do
+    id = World.thread_id(context, "main")
+
+    {rows, pages, context} = read_rows(context, id, limit, nil, [], 0)
+    Map.merge(context, %{rows: rows, pages: pages, limit: limit})
+  end
+
+  step "it took more than one page, each entity once in the order they were created",
+       context do
+    assert context.pages > 1
+
+    whole =
+      Store.reduce_stream(
+        context.mc.store,
+        World.thread_id(context, "main"),
+        0,
+        StreamState.new(),
+        &StreamState.apply_event(&2, &1)
+      )
+
+    assert context.rows ==
+             for(
+               {kind, id, entity} <- StreamState.rows(whole),
+               do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]
+             )
+
+    context
+  end
+
   step "the thread's older runs are read from disk after a restart", context do
     id = World.thread_id(context, "main")
     idle_stop(id)
@@ -757,6 +786,23 @@ defmodule HalC2.Steps.Platform.EventStore do
 
   defp thread_state(context),
     do: Streams.Server.state(Streams.ensure(World.thread_id(context, "main")))
+
+  # Reads a thread's rows a page at a time, as a client walks `next`.
+  defp read_rows(context, id, limit, cursor, rows, pages) do
+    {reply, context} =
+      World.call!(context, "hal-c2.threadRows", %{
+        "threadId" => id,
+        "after" => cursor,
+        "limit" => limit
+      })
+
+    assert length(reply["rows"]) <= limit
+    rows = rows ++ reply["rows"]
+
+    if reply["next"],
+      do: read_rows(context, id, limit, reply["next"], rows, pages + 1),
+      else: {rows, pages + 1, context}
+  end
 
   defp log(context, id, after_seq \\ 0),
     do: Store.reduce_stream(context.mc.store, id, after_seq, [], &[&1 | &2]) |> Enum.reverse()
