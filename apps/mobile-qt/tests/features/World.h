@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QPoint>
 #include <QSize>
 #include <QString>
@@ -85,6 +86,9 @@ public:
   // The window becomes `width` by `height`, now and each time the app opens:
   // a tablet's or a laptop's window, a rotation, a fold.
   void resize(int width, int height);
+  // The time the app's thread and composer read from now on, as a clock on
+  // the wall would show it; the system's until a step sets it.
+  void setTime(const QDateTime& time);
 
   // What is on screen. An item counts when it is visible, so an objectName
   // two screens share is the one of the screen showing.

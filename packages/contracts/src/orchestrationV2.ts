@@ -1078,6 +1078,8 @@ const OrchestrationV2TurnItemBaseFields = {
   parentItemId: Schema.NullOr(TurnItemId),
   ordinal: NonNegativeInt,
   status: OrchestrationV2TurnItemStatus,
+  /** Why the item ended as it did, when something other than its provider ended it. */
+  statusDetail: Schema.optional(Schema.String),
   title: Schema.NullOr(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),

@@ -47,6 +47,8 @@ Item {
     ListModel {
         id: actionRows
         property var copiedRows: []
+        // Why the clipboard refuses a copy; empty while it takes one.
+        property string copyFailure: ""
         function checkpointOf(rowId) {
             return rowId === "reply" ? {
                 checkpointId: "checkpoint:1",
@@ -55,8 +57,10 @@ Item {
             } : {};
         }
         function copy(rowId) {
+            if (copyFailure.length > 0)
+                return copyFailure;
             copiedRows = copiedRows.concat([rowId]);
-            return true;
+            return "";
         }
         function timeTitle(rowId, entryId) {
             return "9:42 AM, 23rd September 2026";
@@ -822,7 +826,34 @@ Item {
             compare(actionRows.copiedRows, ["reply"]);
             compare(spy.signalArguments[0][0], "reply");
             compare(copy.icon, "check", "Copy shows a check once copied");
+            compare(findNamed(copy, "copyNoticeTitle").text, "Copied!");
+            verify(findNamed(copy, "copyNotice").visible, "and says so beside itself");
             tryCompare(copy, "icon", "copy", 3000, "and goes back to Copy");
+            verify(!findNamed(copy, "copyNotice").visible);
+        }
+
+        // A copy the clipboard refuses says why beside the button, and is not "copied".
+        function test_aFailedCopySaysWhy() {
+            conversation();
+            actionRows.copyFailure = "The clipboard could not be written.";
+            const timeline = createTemporaryObject(actionTimelineComponent, root, {
+                alwaysShowMeta: true
+            });
+            const spy = createTemporaryObject(signalSpyComponent, root, {
+                target: timeline,
+                signalName: "copied"
+            });
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(1) !== null);
+            const copy = findNamed(list.itemAtIndex(1), "copyMessage");
+            mouseClick(copy);
+            actionRows.copyFailure = "";
+            compare(spy.count, 0);
+            compare(copy.icon, "copy");
+            verify(findNamed(copy, "copyNotice").visible);
+            compare(findNamed(copy, "copyNoticeTitle").text, "Failed to copy");
+            compare(findNamed(copy, "copyNoticeReason").text, "The clipboard could not be written.");
+            tryVerify(() => !findNamed(copy, "copyNotice").visible, 3000, "and goes away");
         }
 
         // Scenario: A tool call's icon says what kind of work it was

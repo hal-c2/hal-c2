@@ -186,6 +186,9 @@ private:
   // no editor to open it in.
   void openFileInEditor(const QString& path);
   void runScript(const QString& scriptId);
+  // A shell command from a reply, in the thread's terminal as a script runs;
+  // the project's last run script stays as it was.
+  void runCommand(const QString& command);
   void setEnvMode(const QString& mode);
   void setEnvironment(const QString& key);
   void selectBranch(const QString& name);

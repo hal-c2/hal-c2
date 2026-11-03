@@ -4,9 +4,11 @@ import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-enti
 
 import type { AskSpec } from "./askState.ts";
 import type { PickRequest } from "./composerState.ts";
+import { memoryMutedThreads } from "./mutedThreads.ts";
 import {
   createSpaceController,
   imageTypeOf,
+  type SpaceControllerOptions,
   refusalText,
   type TuiSpaceRow,
   type TuiSpaceState,
@@ -67,7 +69,7 @@ const events = (
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 /** A controller on a client whose streams and replies the test drives by hand. */
-function setup(origin?: string) {
+function setup(origin?: string, extra: Partial<SpaceControllerOptions> = {}) {
   const streams = new Map<string, Array<(frame: EntityStreamFrame) => void>>();
   const replies = new Map<string, Array<(value: unknown) => void>>();
   const refusals = new Map<string, Array<(error: unknown) => void>>();
@@ -80,6 +82,8 @@ function setup(origin?: string) {
   const asks: AskSpec[] = [];
   const uploads = { fails: false, sent: 0 };
   const lists = { fails: false };
+  // What `space.files.list` answers for every project, unless a test answers it by hand.
+  const projectFiles = { byHand: false, paths: [] as string[] };
   let state: TuiSpaceState | null = null;
   const controller = createSpaceController({
     client: {
@@ -90,6 +94,14 @@ function setup(origin?: string) {
           return Promise.resolve({ spaces: [] } as T);
         }
         if (method === "space.page.agentTarget") return Promise.resolve({ projectId: "p1" } as T);
+        if (method === "space.files.list" && !projectFiles.byHand) {
+          const files = projectFiles.paths.map((relativePath) => ({
+            relativePath,
+            kind: "page",
+            page: null,
+          }));
+          return Promise.resolve({ config: "default", files, spaceId: null } as T);
+        }
         return new Promise<T>((resolve, reject) => {
           const waiting = replies.get(method) ?? [];
           waiting.push(resolve as (value: unknown) => void);
@@ -131,6 +143,7 @@ function setup(origin?: string) {
     projects: () => [{ id: "p1", title: "shop" }],
     openThread: (threadId) => opened.push(threadId),
     ...(origin ? { origin } : {}),
+    ...extra,
   });
   /** Send a frame on `stream`; `subscription` picks an older follow of the same stream. */
   const send = (stream: string, frame: EntityStreamFrame, subscription = -1) =>
@@ -163,6 +176,7 @@ function setup(origin?: string) {
     asks,
     uploads,
     lists,
+    projectFiles,
     streams,
     opened,
     onPage,
@@ -174,8 +188,9 @@ function setup(origin?: string) {
 function inResearch(
   rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
   origin?: string,
+  extra: Partial<SpaceControllerOptions> = {},
 ) {
-  const t = setup(origin);
+  const t = setup(origin, extra);
   t.controller.dispatch("space.open", {});
   t.send("spaces", snapshot(1, [space("s1", "Research")]));
   t.select("space:s1");
@@ -1139,6 +1154,7 @@ describe("project files", () => {
 
   test("a list the MC failed to give is asked for again", async () => {
     const t = setup();
+    t.projectFiles.byHand = true;
     expect(t.controller.isSpaceFile("p1", "docs/guide.md")).toBe(false);
     t.refuse("space.files.list", new Error("lost the connection"));
     await t.controller.settled();
@@ -1150,5 +1166,101 @@ describe("project files", () => {
     await t.controller.settled();
     expect(t.controller.isSpaceFile("p1", "docs/guide.md")).toBe(true);
     expect(t.calls.filter((call) => call.method === "space.files.list")).toHaveLength(2);
+  });
+});
+
+describe("projects in the Space's pages", () => {
+  const guide = page("g1", "Guide", {
+    spaceId: "ps1",
+    file: { projectId: "p1", path: "docs/guide.md", missing: false, conflictAt: null },
+  });
+  const shop = { id: "ps1", projectId: "p1", name: "shop", createdAt: at, updatedAt: at };
+
+  /** In Research, with shop's Space files listed. */
+  async function withShop(paths: string[], sections = memoryMutedThreads()) {
+    const t = inResearch([page("p1", "Plan")], undefined, { projectSections: sections });
+    t.projectFiles.paths = paths;
+    t.controller.dispatch("space.close", {});
+    t.controller.dispatch("space.open", {});
+    await t.controller.settled();
+    t.send("spaces", snapshot(2, [space("s1", "Research"), ["projectSpace", "ps1", shop]]));
+    t.select("space:s1");
+    t.controller.dispatch("space.activate", {});
+    t.send("space:s1", snapshot(10, [page("p1", "Plan")]), -1);
+    return t;
+  }
+
+  test("a project shows after the Space's pages, collapsed, and expands to its files by folder", async () => {
+    const t = await withShop(["docs/guide.md", "README.md"]);
+    expect(t.view().rows.map((row) => row.key)).toEqual(["page:p1", "project:p1"]);
+    expect(t.texts("project")).toEqual(["▸ shop"]);
+    t.select("project:p1");
+    t.controller.dispatch("space.activate", {});
+    expect(
+      t
+        .view()
+        .rows.slice(1)
+        .map((row) => row.text.trim()),
+    ).toEqual(["▸ ▾ shop", "docs/", "guide.md", "README.md"]);
+    t.controller.dispatch("space.activate", {});
+    expect(t.texts("file")).toEqual([]);
+  });
+
+  test("a project with no Space files has no section", async () => {
+    const t = await withShop([]);
+    expect(t.texts("project")).toEqual([]);
+  });
+
+  test("the expanded sections are remembered for the next start", async () => {
+    const sections = memoryMutedThreads();
+    // A project removed since is forgotten with the next change.
+    sections.save(["gone"]);
+    const t = await withShop(["docs/guide.md"], sections);
+    t.select("project:p1");
+    t.controller.dispatch("space.activate", {});
+    expect(sections.load()).toEqual(["p1"]);
+    const again = await withShop(["docs/guide.md"], sections);
+    expect(again.texts("project")).toEqual(["▾ shop"]);
+    expect(again.texts("file")).toEqual(["guide.md"]);
+  });
+
+  test("a file picked in its section opens from the project's Space, and back is the Space it was picked in", async () => {
+    const t = await withShop(["docs/guide.md"]);
+    t.select("project:p1");
+    t.controller.dispatch("space.activate", {});
+    t.select("file:p1|docs/guide.md");
+    t.controller.dispatch("space.activate", {});
+    t.reply("space.page.openFile", { spaceId: "ps1", page: guide[2], created: false });
+    await t.controller.settled();
+    t.send("space:ps1", snapshot(10, [guide]));
+    expect(t.view().title).toBe("page · Guide");
+    t.controller.dispatch("space.back", {});
+    expect(t.view().title).toBe("space · Research");
+    expect(t.view().rows.find((row) => row.selected)?.key).toBe("file:p1|docs/guide.md");
+  });
+
+  test("a file opened from elsewhere expands its section, and its page goes back to a Space of the user's", async () => {
+    const sections = memoryMutedThreads();
+    const t = setup(undefined, { projectSections: sections });
+    t.projectFiles.paths = ["docs/guide.md"];
+    t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", { spaceId: "ps1", page: guide[2], created: true });
+    await t.controller.settled();
+    t.send("spaces", snapshot(1, [space("s1", "Research"), ["projectSpace", "ps1", shop]]));
+    t.send("space:ps1", snapshot(10, [guide]));
+    expect(sections.load()).toEqual(["p1"]);
+    t.controller.dispatch("space.back", {});
+    expect(t.view().title).toBe("space · Research");
+    expect(t.view().rows.find((row) => row.selected)?.key).toBe("file:p1|docs/guide.md");
+  });
+
+  test("a file's page deleted for good goes back to the user's Space, not the project's", async () => {
+    const t = await withShop(["docs/guide.md"]);
+    t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", { spaceId: "ps1", page: guide[2], created: false });
+    await t.controller.settled();
+    t.send("space:ps1", snapshot(10, [guide]));
+    t.send("space:ps1", snapshot(11, []));
+    expect(t.view().title).toBe("space · Research");
   });
 });

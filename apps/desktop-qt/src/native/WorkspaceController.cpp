@@ -862,6 +862,8 @@ bool WorkspaceController::handle(const QString& action, const QVariant& payload)
     openFileInEditor(args.value(QStringLiteral("path")).toString());
   } else if (action == QLatin1String("workspace.runScript")) {
     runScript(args.value(QStringLiteral("scriptId")).toString());
+  } else if (action == QLatin1String("workspace.runCommand")) {
+    runCommand(args.value(QStringLiteral("command")).toString());
   } else if (action == QLatin1String("workspace.branch.search")) {
     m_query = args.value(QStringLiteral("query")).toString();
     loadRefs();
@@ -1036,6 +1038,12 @@ void WorkspaceController::runScript(const QString& scriptId) {
     settings->writeDevice(kLastScripts, last);
   }
   publish();
+}
+
+void WorkspaceController::runCommand(const QString& command) {
+  if (auto* terminals = NativeShell::of(this)->controller<TerminalController>()) {
+    terminals->runCommand(QStringLiteral("Chat code block"), command.trimmed());
+  }
 }
 
 void WorkspaceController::setEnvMode(const QString& mode) {

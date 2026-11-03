@@ -7,6 +7,7 @@
 
 #include "AgentsModel.h"
 #include "NativeController.h"
+#include "PanelStage.h"
 #include "PullRequestLinkPreviews.h"
 #include "PullRequestReview.h"
 #include "PullRequestThreadLinks.h"
@@ -29,17 +30,30 @@ class ShellStore;
 // and a tab per device streamed (`device:<host>:<device>`, ThreadDevices; an
 // agent's device opens its tab unless the user closed it), and a terminal tab per
 // terminal group TerminalController keeps for the panel (`terminal:<group>`;
-// closing the tab closes its terminals).
+// closing the tab closes its terminals). The desktop, which has the
+// in-app browser (the phone does not: Browser::supported), has a tab per MC browser tab of the thread
+// (`browser:<tabId>`, ThreadPreviews embedded): the MC's list decides which
+// there are, closing one closes it on the MC, and one opened by the user,
+// a dev server link, an agent or another window shows.
 //
 // Each thread's panel (open, tabs, active tab, thread details shown) and the
 // panel's width outlive a restart in the store file (setStorePath); terminal
-// tabs do not, their terminals end with the app. Filling the window
-// (maximized) lasts until the panel closes or the app quits.
+// tabs do not, their terminals end with the app.
 //
-// Publishes `panel` for the RightPanel brick, null away from a thread:
+// Any tab can be docked on the thread's *stage* (PanelStage) instead: the
+// centre, beside the conversation (the Stage brick). The panel shows the tabs
+// docked on it; the stage its own, in its panes. Each body's controller works
+// only while one of its tabs shows somewhere (`shownTabs`, the stage's focused
+// pane first, then its other panes, then the panel's active tab): one body of
+// a kind follows the first of its tabs there.
+//
+// Publishes `panel` for the RightPanel and Stage bricks, null away from a thread:
 //   {threadKey, spaceProjectId (whose Space files it offers; this MC's only),
-//    onWorktree, isOpen, activeId, tabs: [{id, kind, title}], width,
-//    maximized, detailsOpen, details,
+//    onWorktree, isOpen, activeId (a panel tab), tabs: [{id, kind, title,
+//    dock: "panel"|"stage"}], width, detailsOpen, details,
+//    stage: {tabs: [{id, kind, title, dock}], panes: [tab id or ""], layout,
+//            focusedPane, focus, chatWidth},
+//    shownTabs: [tab id],
 //    canAdd: {diff, files, agents, terminal, pullRequests, pullRequest,
 //             previews, device},
 //    addReasons: {files, pullRequests, pullRequest} (why a kind cannot be
@@ -54,7 +68,11 @@ class ShellStore;
 // Actions: `rightPanel.toggle`, `rightPanel.activate {id}`,
 // `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.rename
 // {id, title}`, `rightPanel.unfloat`, `rightPanel.resize
-// {width?}` (no width: the default), `rightPanel.toggleMaximized`,
+// {width?}` (no width: the default), `rightPanel.toggleMaximized` (Open in
+// centre), `rightPanel.dock {id, dock: "stage"|"panel", pane?, zone?, focus?}`,
+// `stage.show {id}`, `stage.layout {layout}`, `stage.focusPane {pane}`,
+// `stage.toggleFocus`, `stage.resize {width?}`, `stage.dismiss` (every stage
+// tab back to the panel), `stage.sideBySide {id, with}` (both, in columns),
 // `threadPanel.toggle`, `rightPanel.reviewProject {key}` (a pull request of
 // the thread's project, from the Pull requests tab), `rightPanel.linkPullRequest {url}` (a message's
 // mention), `rightPanel.openThread {threadKey}` (an Agents row's;
@@ -64,8 +82,10 @@ class ShellStore;
 // diff on a turn (its number, or the run it finished) scrolled to `path` (or
 // showing `path` alone, with `only`), or `path` in the file viewer at `line`. Keybinding commands: rightPanel.toggle,
 // rightPanel.close (the active tab), rightPanel.toggleMaximized,
-// threadPanel.toggle, diff.toggle, preview.toggle and pullRequest.copyNumber
-// (the reviewed pull request's); palette commands:
+// threadPanel.toggle, diff.toggle, preview.toggle, pullRequest.copyNumber
+// (the reviewed pull request's), stage.moveTab (the panel's tab to the
+// centre, or the stage's focused tab back), stage.toggleFocus, stage.nextPane,
+// stage.layout.{single,columns,rows,grid} and stage.dismiss; palette commands:
 // thread.showPullRequests and thread.linkPullRequest (the Pull requests tab
 // with its link field open).
 class RightPanelController : public QObject, public NativeController {
@@ -118,8 +138,12 @@ public:
   // Every tab of the shown thread, in the order they were added.
   QStringList tabIds() const;
   int width() const { return m_width; }
-  bool isMaximized() const;
   bool detailsOpen() const;
+  // The shown thread's stage.
+  PanelStage stage() const { return current().stage; }
+  // Every tab showing, in the panel or on the stage (the stage's focused pane
+  // first): only their bodies work.
+  QStringList shownTabs() const;
 
   // Opens or closes the panel (the header button, mod+alt+b). Opening a
   // panel with no tabs opens the Diff tab.
@@ -140,8 +164,26 @@ public:
   // the brick keeps the thread its room), and back to the default.
   Q_INVOKABLE void setWidth(int width);
   Q_INVOKABLE void resetWidth();
-  // The open panel fills the window, or goes back beside the thread.
+  // Open in centre: the panel's tab goes to the stage with the timeline
+  // hidden; again (while the timeline is hidden), the stage's focused tab
+  // comes back to the panel.
   Q_INVOKABLE void toggleMaximized();
+  // Docks a tab on the stage (in `pane`, at `zone`: PanelStage::place) or
+  // back on the panel, where it shows.
+  Q_INVOKABLE void moveToStage(const QString& id, int pane = -1, const QString& zone = QStringLiteral("center"));
+  Q_INVOKABLE void moveToPanel(const QString& id);
+  // Both tabs on the stage, side by side (columns): `id` left, `other` right.
+  Q_INVOKABLE void sideBySide(const QString& id, const QString& other);
+  // The stage's focused tab back while the timeline is hidden, else the
+  // panel's active tab to the stage, else the stage's focused tab back.
+  Q_INVOKABLE void moveTab();
+  Q_INVOKABLE void setStageLayout(const QString& layout);
+  Q_INVOKABLE void focusPane(int pane);
+  Q_INVOKABLE void toggleFocus();
+  // The conversation's width beside the stage (0: the default).
+  Q_INVOKABLE void setChatWidth(int width);
+  // Every stage tab back to the panel.
+  Q_INVOKABLE void dismissStage();
   // Shows or hides the thread details column (mod+alt+t).
   Q_INVOKABLE void toggleDetails();
   // Shows the Diff tab, or closes the panel when it is showing (mod+d).
@@ -161,8 +203,8 @@ private:
     bool open = false;
     // In the order they were added.
     QStringList tabs;
+    // A panel tab (not on the stage), or "".
     QString active;
-    bool maximized = false;
     bool details = false;
     // Device tabs the user closed: an agent opening the device again does not
     // bring them back.
@@ -171,6 +213,8 @@ private:
     QHash<QString, QString> titles;
     // The device tab floating over the chat, while the panel is closed.
     QString floating;
+    // The tabs docked in the centre.
+    PanelStage stage;
   };
 
   Panel& panel() { return m_panels[m_thread]; }
@@ -196,10 +240,19 @@ private:
   // Gives a tab the user's own name (`rightPanel.rename`); empty clears it.
   void renameTab(const QString& id, const QString& title);
   static bool removeTab(Panel& state, const QString& id);
+  // The tabs docked on the panel, in their order.
+  static QStringList panelTabs(const Panel& state);
+  // After the panel's active tab left it (closed, or moved to the stage):
+  // the panel tab now at its place in `before`, else a closed panel.
+  static void nextActive(Panel& state, const QStringList& before);
   // Closes `id` in `threadKey`'s panel, shown or not (ThreadDevices::closed).
   void closeTabIn(const QString& threadKey, const QString& id);
   // A web address from the conversation, opened in the browser.
   void openAddress(const QString& url);
+  // With the in-app browser: the thread's MC browser tabs as tabs here
+  // (`browser:<tabId>`), and what each is called.
+  void followBrowserTabs();
+  QString browserTitle(const QString& id) const;
 
   ShellBridge* m_bridge;
   McClient* m_client;

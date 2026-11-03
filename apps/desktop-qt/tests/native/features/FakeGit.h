@@ -9,3 +9,5 @@ class World;
 // The folder `cwd` on the MC is a git checkout with these branches (most
 // recently committed first), on `current`; its status goes to whoever follows it.
 void fakeGitRepo(World& world, const QString& cwd, const QStringList& branches, const QString& current, const QString& defaultBranch);
+// Adds local branches and remote ones ("origin/release") to the checkout at `cwd`.
+void fakeGitBranches(World& world, const QString& cwd, const QStringList& branches, const QStringList& remotes);

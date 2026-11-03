@@ -956,9 +956,13 @@ private slots:
       "isOpen": false, "activeId": "diff", "tabs": [{"id": "diff", "kind": "diff", "title": "Diff"}],
       "canAdd": {"diff": true, "files": true, "terminal": true}, "detailsOpen": false, "details": null
     })").toVariant().toMap();
-    const auto show = [&](bool open, bool details, bool maximized) {
+    // `staged`: the Diff tab fills the thread's centre (the stage, timeline hidden).
+    const auto show = [&](bool open, bool details, bool staged) {
       panel["isOpen"] = open;
-      panel["maximized"] = maximized;
+      panel["tabs"] = QVariantList{QVariantMap{{"id", "diff"}, {"kind", "diff"}, {"title", "Diff"}, {"dock", staged ? "stage" : "panel"}}};
+      panel["stage"] = staged ? QVariantMap{{"tabs", panel["tabs"]}, {"panes", QStringList{"diff"}}, {"layout", "single"}, {"focusedPane", 0}, {"focus", true}, {"chatWidth", 0}}
+                              : QVariantMap{{"tabs", QVariantList{}}, {"panes", QStringList{""}}, {"layout", "single"}, {"focusedPane", 0}, {"focus", false}, {"chatWidth", 0}};
+      panel["shownTabs"] = staged || open ? QStringList{"diff"} : QStringList{};
       panel["detailsOpen"] = details;
       panel["details"] = details ? QVariant(QVariantMap{{"environment", "Local"}, {"online", true}, {"checkout", "Local"}, {"folder", "/work"}, {"relations", QVariantList{}}}) : QVariant();
       bridge.publish("panel", panel);
@@ -983,11 +987,12 @@ private slots:
     QTRY_VERIFY(rightOf("threadDetailsClose") < 0);
     QTRY_VERIFY(rightOf("panelAdd") <= corner);
     QCOMPARE(left(), corner);
-    // A panel filling the window still has them.
-    show(true, false, true);
-    QTRY_VERIFY(!workspace->isVisible());
+    // A tab in the thread's centre: the stage sits under the header.
+    show(false, false, true);
+    QTRY_VERIFY(rightOf("stageDismiss") > 0);
+    QVERIFY(workspace->isVisible());
     QVERIFY(buttons->isVisible());
-    QTRY_VERIFY(rightOf("panelAdd") <= corner);
+    QTRY_VERIFY(rightOf("threadDetailsToggle") <= corner);
     QCOMPARE(left(), corner);
     // The tabs of a plugin's page.
     show(false, false, false);

@@ -105,6 +105,8 @@ public:
 
   McClient* client() { return &m_client; }
   ShellStore* store() { return &m_store; }
+  // Where this install keeps its windows' state (setStoreDirs' `state`).
+  QString stateDir() const { return m_stateDir; }
   // What the client keeps of the MC between runs (setStoreDirs' `cache`).
   LocalCache* cache() { return &m_cache; }
   // The main window's.

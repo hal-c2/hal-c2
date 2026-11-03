@@ -8,11 +8,13 @@ import HalC2.Bricks
 // centre (the timeline, or the draft's opening line that picks its project),
 // and the composer, which carries the thread's approvals and questions. The
 // tabs the desktop draws beside the thread that a phone shows (its Files, its
-// linked pull requests and a pull request's review) take the screen under the
-// same bar; the way back closes them (MobileShell.stepBack). The pull requests
-// are the phone's git overview: where they are linked, refreshed and opened,
-// and where a thread is started on one. Files dropped anywhere on the centre
-// or the composer join the draft.
+// Diff, its linked pull requests and a pull request's review) take the screen
+// under the same bar; the way back closes them (MobileShell.stepBack). A line
+// of the diff is tapped to comment on it, and the comment waits on the
+// composer for the next message. The pull requests are the phone's git
+// overview: where they are linked, refreshed and opened, and where a thread is
+// started on one. Files dropped anywhere on the centre or the composer join
+// the draft.
 Item {
     id: screen
 
@@ -25,7 +27,7 @@ Item {
         if (panel === null || !panel.isOpen)
             return "";
         const kind = (panel.activeId ?? "").split(":")[0];
-        return kind === "files" || kind === "pull-requests" || kind === "pull-request" ? kind : "";
+        return kind === "files" || kind === "diff" || kind === "pull-requests" || kind === "pull-request" ? kind : "";
     }
     readonly property bool panelShown: panelKind.length > 0
     readonly property bool muted: notifications !== null && (notifications.muted ?? []).indexOf(threadKey) >= 0
@@ -74,6 +76,14 @@ Item {
             }
 
             MobileIconButton {
+                objectName: "openDiff"
+                visible: !screen.panelShown && screen.threadKey.length > 0
+                iconName: "file-diff"
+                label: qsTr("Diff")
+                onClicked: Shell.dispatch("rightPanel.add", { kind: "diff" })
+            }
+
+            MobileIconButton {
                 objectName: "openPullRequests"
                 visible: !screen.panelShown && screen.threadKey.length > 0
                 iconName: "git-pull-request"
@@ -119,13 +129,24 @@ Item {
                 value: true
             }
         }
+        // A thread with no conversation yet suggests what to ask, as the web phone did.
+        Binding {
+            target: centre.item as ThreadView
+            property: "emptyText"
+            value: qsTr("No conversation yet")
+        }
+        Binding {
+            target: centre.item as ThreadView
+            property: "emptyHint"
+            value: qsTr("Ask the agent to inspect the repo, run a command, or continue the active thread.")
+        }
 
         Loader {
             Layout.fillWidth: true
             Layout.fillHeight: true
             active: screen.panelShown
             visible: active
-            sourceComponent: screen.panelKind === "files" ? files : screen.panelKind === "pull-requests" ? pullRequests : review
+            sourceComponent: ({ files: files, diff: diff, "pull-requests": pullRequests })[screen.panelKind] ?? review
         }
 
         Composer {
@@ -153,6 +174,15 @@ Item {
         FilesPanel {
             objectName: "filesPanel"
             source: Panel.files
+        }
+    }
+
+    Component {
+        id: diff
+
+        DiffPanel {
+            source: Panel.diff
+            touchLines: true
         }
     }
 

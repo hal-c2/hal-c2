@@ -182,6 +182,46 @@ Item {
             verify(!screen.stepBack());
         }
 
+        function sectionRow(kind, path, expanded) {
+            const name = kind === "project" ? "shop" : path.split("/").pop();
+            return { id: kind + ":shop:" + path, kind: kind, projectId: "shop", path: path, name: name, depth: path === "" ? 0 : path.split("/").length, expanded: expanded ?? false, pageId: "" };
+        }
+
+        // The project sections follow the Space's pages; the import from the pages' bar is gone.
+        function test_aTapOnAProjectsSectionExpandsOrCollapsesIt() {
+            const screen = makeScreen({ projects: [sectionRow("project", "")] });
+            screen.openSpace("s1");
+            // The sections' list builds its rows when it is drawn.
+            waitForRendering(screen);
+            verify(findChild(screen, "spaceFromProjectFiles") === null);
+            const section = findChild(screen, "spaceProject:shop");
+            verify(section !== null && section.visible);
+            compare(section.Accessible.name, "Expand shop");
+            mouseClick(section);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: true }]);
+
+            Spaces.fill(Spaces.projects, [sectionRow("project", "", true), sectionRow("folder", "docs"), sectionRow("file", "docs/guide.md")]);
+            waitForRendering(screen);
+            const expanded = findChild(screen, "spaceProject:shop");
+            compare(expanded.Accessible.name, "Collapse shop");
+            mouseClick(expanded);
+            compare(dispatched("space.project.setExpanded")[1], { projectId: "shop", expanded: false });
+        }
+
+        function test_aFileInASectionIsEditedAsAPage() {
+            const screen = makeScreen({ projects: [sectionRow("project", "", true), sectionRow("folder", "docs"), sectionRow("file", "docs/guide.md")] });
+            screen.openSpace("s1");
+            waitForRendering(screen);
+            const folder = findChild(screen, "spaceProjectFolder:shop:docs");
+            const file = findChild(screen, "spaceProjectFile:shop:docs/guide.md");
+            verify(folder.visible && file.visible);
+            compare(file.depth, folder.depth + 1);
+            // A folder only holds its files.
+            verify(!folder.enabled);
+            mouseClick(file);
+            compare(dispatched("space.openFile"), [{ projectId: "shop", relativePath: "docs/guide.md" }]);
+        }
+
         function test_theImagesAreOneStepFromThePagesAndSignedOnlyWhileOpen() {
             const screen = makeScreen();
             screen.openSpace("s1");
@@ -514,7 +554,6 @@ Item {
             const screen = openFilePage(undefined);
             verify(!findChild(screen, "spacePageFile").visible);
             verify(!sheetIdsOf(screen, "p1").includes("showFile"));
-            verify(!sheetIdsOf(screen, "p1").includes("unlinkFile"));
         }
 
         function test_aGoneFileIsNotOfferedToShow() {
@@ -523,7 +562,6 @@ Item {
             verify(!findChild(screen, "spacePageFileShow").visible);
             const ids = sheetIdsOf(screen, "p1");
             verify(!ids.includes("showFile"));
-            verify(ids.includes("unlinkFile"));
         }
 
         function test_aFileThatWonLeadsToTheHistory() {
@@ -540,16 +578,17 @@ Item {
             return ids;
         }
 
-        function test_theOpenFilePagesMenuShowsOrStopsFollowingItsFile() {
+        // A page of a project's Space is always its file: nothing stops it following it.
+        function test_theOpenFilePagesMenuShowsItsFile() {
             const screen = openFilePage(fileOf());
             const ids = sheetIdsOf(screen, "p1");
             verify(ids.includes("showFile"));
-            verify(ids.includes("unlinkFile"));
+            verify(!ids.includes("unlinkFile"));
             // Of a page only listed, its file is not known.
-            verify(!sheetIdsOf(screen, "p2").includes("unlinkFile"));
+            verify(!sheetIdsOf(screen, "p2").includes("showFile"));
             screen.pageMenu("p1", "p1", "", {});
-            sheetOf(screen).choose("unlinkFile");
-            compare(dispatched("space.page.unlinkFile")[0].pageId, "p1");
+            sheetOf(screen).choose("showFile");
+            compare(dispatched("space.page.showFile")[0].pageId, "p1");
         }
 
         function test_aVersionTheFileWroteSaysSo() {

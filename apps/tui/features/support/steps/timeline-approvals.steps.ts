@@ -17,6 +17,7 @@ import {
   updateThread,
   type ThreadWorld,
 } from "../threadWorld.ts";
+import { chooseCommand } from "../threadUi.ts";
 import { addItem, settleRun, startRun, turns, type TurnWorld } from "../turnWorld.ts";
 
 // --- answering an approval -------------------------------------------------------------
@@ -58,7 +59,7 @@ async function expectAnswered(ctx: ThreadWorld, choice: string) {
 
 const expectStillWorking = async (ctx: ThreadWorld) => {
   expect(hostState(ctx, "timeline").working).not.toBeNull();
-  expect(await snapshot(ctx)).toContain("● Working…");
+  expect(await snapshot(ctx)).toContain("● Working");
 };
 
 step("the command runs and the agent continues", async (ctx: ThreadWorld) => {
@@ -233,7 +234,14 @@ async function moveTo(ctx: ThreadWorld, label: string) {
   throw new Error(`the arrow keys never reached "${label}"`);
 }
 
+// With no question offering it, `label` is a command.
 step("the user picks {string}", async (ctx: ThreadWorld, label: string) => {
+  const options: ReadonlyArray<{ label: string }> = hostState(ctx, "userInput")?.options ?? [];
+  if (!options.some((option) => option.label === label)) {
+    await chooseCommand(ctx, label);
+    await settle();
+    return;
+  }
   await moveTo(ctx, label);
   await pressKey(ctx, "Enter");
   await settle();

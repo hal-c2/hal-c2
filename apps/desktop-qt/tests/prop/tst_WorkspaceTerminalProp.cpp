@@ -26,8 +26,9 @@
 // worth, and if more was held back it catches up from a new snapshot.
 //
 // Not covered: the right panel's terminal tabs (addPanelGroup), project
-// scripts (runScript), the store across restarts, links, writes and resizes,
-// and more than maxParkedThreads threads.
+// scripts and a reply's shell commands (runScript, runCommand), the store
+// across restarts, links, writes and resizes, and more than maxParkedThreads
+// threads.
 
 #include "Prop.h"
 #include "WorkspaceModels.h"

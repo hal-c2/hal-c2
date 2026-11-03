@@ -161,16 +161,16 @@ workspace was chosen by hand.
 `threadView.ts` publishes the open thread's keys and handles their actions
 (the timeline wraps at `layout.contentWidth`):
 
-| Key                          | Actions                                                                                                                                                                                                                                                                                                                 |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `timeline`, `timelineScroll` | `timeline.showOlder`, `timeline.showNewer`, `timeline.scroll {by}`, `timeline.workGroup.toggle`, `timeline.fold.toggle`, `timeline.message.toggle`, `timeline.files.toggleDir`, `timeline.files.toggleAll`, `timeline.copy {key, text, label}`, `timeline.table.toggle {key}`, `timeline.reply.copy`, `link.open {url}` |
-| `imageViewer`                | `image.open {id}`, `image.close` (`mode: "imagePreview"`)                                                                                                                                                                                                                                                               |
-| `approvals`                  | `approval.approve`, `approval.approveSession`, `approval.decline`, `approval.cancel`, `approval.next`, `approval.previous`                                                                                                                                                                                              |
-| `userInput`                  | `userInput.move`, `userInput.toggle`, `userInput.answer.set`, `userInput.submit`, `userInput.defer`, `userInput.reopen`                                                                                                                                                                                                 |
-| `threadHints`                | `plan.implement`                                                                                                                                                                                                                                                                                                        |
-| `revert`                     | `checkpoint.revert.open`, `checkpoint.revert.move`, `checkpoint.revert.confirm`, `checkpoint.revert.cancel`                                                                                                                                                                                                             |
-| `diff`                       | `diff.open`, `diff.all`, `diff.toggleView`, `diff.next`, `diff.previous`, `diff.close`                                                                                                                                                                                                                                  |
-| `notifications`              | `notification.dismiss`, `notification.action`, `thread.alerts.toggleMute` (thread alerts from `notificationsState.ts`)                                                                                                                                                                                                  |
+| Key                          | Actions                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `timeline`, `timelineScroll` | `timeline.showOlder`, `timeline.showNewer`, `timeline.scroll {by}`, `timeline.workGroup.toggle`, `timeline.fold.toggle`, `timeline.message.toggle`, `timeline.files.toggleDir`, `timeline.files.toggleAll`, `timeline.copy {key, text, label}`, `timeline.code.run {command}`, `timeline.tick`, `timeline.stamp {full}`, `timeline.table.toggle {key}`, `timeline.reply.copy`, `link.open {url}` |
+| `imageViewer`                | `image.open {id}`, `image.close` (`mode: "imagePreview"`)                                                                                                                                                                                                                                                                                                                                        |
+| `approvals`                  | `approval.approve`, `approval.approveSession`, `approval.decline`, `approval.cancel`, `approval.next`, `approval.previous`                                                                                                                                                                                                                                                                       |
+| `userInput`                  | `userInput.move`, `userInput.toggle`, `userInput.answer.set`, `userInput.submit`, `userInput.defer`, `userInput.reopen`                                                                                                                                                                                                                                                                          |
+| `threadHints`                | `plan.implement`                                                                                                                                                                                                                                                                                                                                                                                 |
+| `revert`                     | `checkpoint.revert.open`, `checkpoint.revert.move`, `checkpoint.revert.confirm`, `checkpoint.revert.cancel`                                                                                                                                                                                                                                                                                      |
+| `diff`                       | `diff.open`, `diff.all`, `diff.toggleView`, `diff.next`, `diff.previous`, `diff.close`                                                                                                                                                                                                                                                                                                           |
+| `notifications`              | `notification.dismiss`, `notification.action`, `thread.alerts.toggleMute` (thread alerts from `notificationsState.ts`)                                                                                                                                                                                                                                                                           |
 
 A timeline line with `image` is an attachment preview (`columns` × `rows`
 cells, encoded `source`); its link line reads the URL, "resolving link…" or
@@ -287,12 +287,12 @@ a higher `priority` wins a chord the shell binds.
 ## Plugins, problems and connection
 
 - `plugins` lists what the QML engine registered (`items: [{ id, kind:
-  "qml" | "script", file, order }]`), the plugins the user turned off
+"qml" | "script", file, order }]`), the plugins the user turned off
   (`disabled`) and the URL a downloaded one came from (`sources`, by id). The
   entry attaches the engine with `attachPlugins(enginePluginPort(engine))`;
   `pluginCatalog.ts` handles `plugins.refresh`, `plugin.remove { id }`,
   `plugin.load { file }`, `plugin.disable/enable { id }`, `plugin.install
-  { url }` and `plugin.reload { file }` through that port. A disabled plugin's
+{ url }` and `plugin.reload { file }` through that port. A disabled plugin's
   file stays where it is; `HostOptions.pluginStore` remembers it, and it is
   dropped again right after the engine starts, so a file that only fails once
   turned off is never a reason to lose it. A plugin is reloaded by reading its
@@ -304,7 +304,7 @@ a higher `priority` wins a chord the shell binds.
   directories), capped at 50. The runtime never throws for a plugin, so this is
   the only place a failure shows.
 - `connection` is `{ state: "connecting" | "connected" | "reconnecting",
-  environments, pairingHint }`, from the client's connection phase
+environments, pairingHint }`, from the client's connection phase
   (`TuiClient.subscribeConnection`, `connectionPhases()` in `connection.ts`).
   The TUI knows one environment, the server that launched it; pairing lives in
   the other clients, so `pairingHint` is null.

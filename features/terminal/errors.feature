@@ -172,14 +172,15 @@ Feature: Terminal failures
       And the terminal keeps working
 
       Examples:
-        | action                                | reason               | message                      |
-        | sending what the user typed           | MC is unreachable    | MC is unreachable            |
-        | sending what the user typed           |                      | Terminal write failed        |
-        | moving the cursor by word or line     |                      | Failed to move cursor        |
-        | deleting to the start of the line     |                      | Failed to delete terminal input |
-        | clearing from the keyboard            |                      | Failed to clear terminal     |
-        | opening a file path from the output   |                      | Unable to open path          |
-        | copying the selection                 |                      | Unable to copy terminal selection |
+        | action                                  | reason            | message                           |
+        | sending what the user typed             | MC is unreachable | MC is unreachable                 |
+        | sending what the user typed             |                   | Terminal write failed             |
+        | moving the cursor by word or line       |                   | Failed to move cursor             |
+        | deleting to the start of the line       |                   | Failed to delete terminal input   |
+        | clearing from the keyboard              |                   | Failed to clear terminal          |
+        | opening a file path from the output     |                   | Unable to open path               |
+        | copying the selection                   |                   | Unable to copy terminal selection |
+        | copying a link from the terminal's menu |                   | Unable to copy link               |
 
       # QClipboard cannot report a failed read: one that failed looks the same as an empty
       # clipboard, and pasting nothing is what the user then sees.

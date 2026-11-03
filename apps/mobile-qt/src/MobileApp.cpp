@@ -23,6 +23,7 @@
 #include "ShellRuntime.h"
 #include "SpaceController.h"
 #include "TerminalController.h"
+#include "ThreadStore.h"
 #include "ThemeStore.h"
 
 void MobileApp::prepare() {
@@ -66,19 +67,23 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   // drawer, the phone's one at a time on a screen of its own. And only the
   // phone's Space screen has steps, so in the desktop layout the selected page
   // is on show.
+  // The phone's timeline folds a settled turn its own way (TimelineModel::Folds).
   m_native->controller<DraftController>()->setLandsOnDraft(false);
   m_native->controller<TerminalController>()->setSingleScreen(true);
   m_native->controller<SpaceController>()->setPageShownBySteps(true);
+  m_native->controller<ThreadStore>()->setFolds(TimelineModel::Folds::Phone);
   m_bridge->addInterceptor([drafts = QPointer<DraftController>(m_native->controller<DraftController>()),
                             terminals = QPointer<TerminalController>(m_native->controller<TerminalController>()),
-                            spaces = QPointer<SpaceController>(m_native->controller<SpaceController>())](const QString& action, const QVariant& payload) {
+                            spaces = QPointer<SpaceController>(m_native->controller<SpaceController>()),
+                            threads = QPointer<ThreadStore>(m_native->controller<ThreadStore>())](const QString& action, const QVariant& payload) {
     if (action != QLatin1String("layout.desktop")) return false;
-    if (!drafts || !terminals || !spaces) return true;
+    if (!drafts || !terminals || !spaces || !threads) return true;
     const bool desktop = payload.toMap().value(QStringLiteral("shown")).toBool();
     drafts->setLandsOnDraft(desktop);
     if (desktop) drafts->land();
     terminals->setSingleScreen(!desktop);
     spaces->setPageShownBySteps(!desktop);
+    threads->setFolds(desktop ? TimelineModel::Folds::Desktop : TimelineModel::Folds::Phone);
     return true;
   });
   m_theme = std::make_unique<ThemeStore>(configDir);

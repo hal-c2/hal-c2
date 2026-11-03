@@ -94,7 +94,7 @@ ShellWindow {
     // One step back: out of the scanner, from pairing with another
     // environment to the one the device has, out of an open popup, in the
     // phone layout from a settings section to the sections, from a thread's
-    // terminal to what it covers, from its files or pull requests to the
+    // terminal to what it covers, from its files, diff or pull requests to the
     // thread and from a step of
     // the Spaces to the one before it, and from anything
     // else to where the user was before (NavigationController's back stack,

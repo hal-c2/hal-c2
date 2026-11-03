@@ -18,11 +18,11 @@ defmodule HalC2.Subprocess.Orphans do
   SIGKILL rather than a polite signal: once `kill` returns the program runs no more
   code, so nothing the boot resumes races it.
 
-  The group is as far as the kill reaches. A descendant that started a session or
-  group of its own (`setsid`, `setpgid`: a shell on a pty, a `node` child spawned
-  `detached`) is not in it and keeps running, a dev server holding its port with it.
-  The agent that would resume is dead either way. Reaching those would take a cgroup,
-  or the ancestry recorded at spawn (hal-c2/hal-c2#387).
+  A descendant that started a session or group of its own (`setsid`, `setpgid`: a
+  shell on a pty, a `node` child spawned `detached`) is not in that group. It still
+  carries the program's mark (below), so once the program is gone the boot kills every
+  process with the mark, whatever its group (hal-c2/hal-c2#387). One that stripped the
+  mark from its environment, or any of them on macOS, keeps running.
 
   A program that had already exited by the boot (a CLI that stopped on its closed
   stdin) may have left background commands in its group. A leader that exited but is
@@ -31,7 +31,7 @@ defmodule HalC2.Subprocess.Orphans do
   id alone cannot be told from a later group's: a daemon that reused the pid and
   called `setsid` has the same one. So each program runs with a random mark in its
   environment (`HAL_C2_PROGRAM_ID`), which its record names and its descendants
-  inherit, and the boot kills, one pid at a time, the processes in that group whose
+  inherit, and the boot kills, one pid at a time, the processes whose
   `/proc/<pid>/environ` holds the mark. A command started with the mark stripped from
   its environment is not told from a stranger and keeps running. macOS offers no
   `/proc`, so there such a record is dropped with its commands left running
@@ -669,7 +669,7 @@ defmodule HalC2.Subprocess.Orphans do
       # It exited since the last read, and nothing was signalled, so what it left in
       # its group is still there.
       {_, @not_that_process} ->
-        sweep(path, pid, mark)
+        sweep(path, :any, mark, started)
 
       {_, 0} ->
         # Exit 0 proves the signal was delivered, not that the program died:
@@ -679,8 +679,8 @@ defmodule HalC2.Subprocess.Orphans do
         # group may have survived); nothing signals an outside process's
         # death, so that is awaited bounded rather than read once.
         if await_left(pid, started) do
-          File.rm(path)
-          :killed
+          # What it ran in a session of its own is outside the group just killed.
+          with :gone <- sweep(path, :any, mark, started), do: :killed
         else
           Logger.warning(
             "kill of #{pid}, which an earlier MC left running, was delivered but it is still there"
@@ -714,8 +714,7 @@ defmodule HalC2.Subprocess.Orphans do
             :kept
 
           _gone_or_reused ->
-            File.rm(path)
-            :killed
+            with :gone <- sweep(path, :any, mark, started), do: :killed
         end
     end
   end
@@ -791,7 +790,7 @@ defmodule HalC2.Subprocess.Orphans do
             :kept
 
           _gone_or_reused ->
-            sweep(path, pid, record["mark"])
+            sweep(path, :any, record["mark"], started)
         end
     end
   end
@@ -801,7 +800,8 @@ defmodule HalC2.Subprocess.Orphans do
     :gone
   end
 
-  # The program is gone: kills what it left in its group, until none is left. With no
+  # The program is gone: kills what it left in its group (`:any` for every group, as
+  # the mark alone names the program's descendants), until none is left. With no
   # `/proc` to read marks from, or no mark (a record from before marks), nothing can
   # be told from a stranger, so nothing is signalled.
   @doc """
@@ -811,76 +811,114 @@ defmodule HalC2.Subprocess.Orphans do
   """
   def sweep_group(path, group, mark), do: sweep(path, group, mark)
 
-  defp sweep(path, group, mark) when is_binary(mark) and mark != "" do
+  # `since`, the program's start time: nothing it started can be older, so a sweep of
+  # `:any` reads no environ of a process that is.
+  defp sweep(path, group, mark, since \\ nil)
+
+  defp sweep(path, group, mark, since) when is_binary(mark) and mark != "" do
     if File.dir?("/proc/self") do
-      sweep(path, group, "#{@mark_var}=#{mark}", 50, :gone)
+      sweep(path, group, {"#{@mark_var}=#{mark}", since}, 50, :gone, MapSet.new())
     else
       File.rm(path)
       :gone
     end
   end
 
-  defp sweep(path, _group, _mark) do
+  defp sweep(path, _group, _mark, _since) do
     File.rm(path)
     :gone
   end
 
   # Marks are read afresh each round, so a command that forked meanwhile is caught and
-  # each pid is signalled right after its mark is read. Nothing signals an outside
-  # process's death, so the result is awaited, bounded, as in `await_left/3`; what stays
-  # keeps the record for the next boot.
-  defp sweep(path, group, entry, tries, outcome) do
-    case members(group, entry) do
-      {[], false} ->
+  # each pid is signalled right after its mark is read. A sweep of `:any` does not read
+  # a process found without the mark again (`strangers`): what it inherited at its
+  # start does not change.
+  # Nothing signals an outside process's death, so the result is awaited, bounded, as in
+  # `await_left/3`; what stays keeps the record for the next boot.
+  defp sweep(path, group, entry, tries, outcome, strangers) do
+    case members(group, entry, strangers) do
+      {[], false, _strangers} ->
         File.rm(path)
         outcome
 
       _left when tries == 0 ->
         Logger.warning(
-          "commands of group #{group}, which an earlier MC left, are still there or unreadable"
+          "commands of #{if group == :any, do: "a program", else: "group #{group}"}, which an earlier MC left, are still there or unreadable"
         )
 
         :kept
 
-      {[], true} ->
+      {[], true, strangers} ->
         Process.sleep(10)
-        sweep(path, group, entry, tries - 1, outcome)
+        sweep(path, group, entry, tries - 1, outcome, strangers)
 
-      {pids, _unreadable?} ->
+      {pids, _unreadable?, strangers} ->
         for {pid, started} <- pids, do: send_kill(pid, started, false)
 
         Process.sleep(10)
-        sweep(path, group, entry, tries - 1, :killed)
+        sweep(path, group, entry, tries - 1, :killed, strangers)
     end
   end
 
   # `{{pid, start time} of the running processes in group that carry entry, never this
   # MC itself; whether a marked process could not be placed}`. No listing of `/proc` proves nothing, so it counts
   # as unreadable.
-  defp members(group, entry) do
+  defp members(group, {entry, since}, strangers) do
     case File.ls("/proc") do
       {:ok, names} ->
         me = System.pid()
 
-        for name <- names, name != me, name =~ ~r/^\d+$/, reduce: {[], false} do
-          {pids, unreadable?} ->
+        for name <- names, name != me, name =~ ~r/^\d+$/, reduce: {[], false, strangers} do
+          {pids, unreadable?, strangers} ->
             process = process_result(name)
 
-            case member(process, group, fn -> marked?(name, entry) end) do
-              :member ->
-                {:ok, {_state, started, _group}} = process
-                {[{String.to_integer(name), started} | pids], unreadable?}
+            seen? =
+              case process do
+                {:ok, {_state, started, _group}} when group == :any ->
+                  MapSet.member?(strangers, {name, started}) or older?(started, since)
 
-              :unreadable ->
-                {pids, true}
+                _ ->
+                  false
+              end
 
-              :stranger ->
-                {pids, unreadable?}
+            outcome =
+              if seen?,
+                do: :stranger,
+                else: member(process, group, fn -> marked?(name, entry) end)
+
+            case {outcome, process} do
+              {:member, {:ok, {_state, started, _group}}} ->
+                {[{String.to_integer(name), started} | pids], unreadable?, strangers}
+
+              {:unreadable, _} ->
+                {pids, true, strangers}
+
+              {:stranger, {:ok, {_state, started, _group}}} when group == :any ->
+                {pids, unreadable?, MapSet.put(strangers, {name, started})}
+
+              {:stranger, _} ->
+                {pids, unreadable?, strangers}
             end
         end
 
       {:error, _} ->
-        {[], true}
+        {[], true, strangers}
+    end
+  end
+
+  @doc false
+  # Whether start time `started` is before `since`, both `<boot>:<ticks>`. Never across
+  # boots, whose ticks do not compare.
+  def older?(_started, nil), do: false
+
+  def older?(started, since) do
+    with [boot, ticks] <- String.split(started, ":"),
+         [^boot, since_ticks] <- String.split(since, ":"),
+         {ticks, ""} <- Integer.parse(ticks),
+         {since_ticks, ""} <- Integer.parse(since_ticks) do
+      ticks < since_ticks
+    else
+      _ -> false
     end
   end
 
@@ -890,6 +928,9 @@ defmodule HalC2.Subprocess.Orphans do
   # `hidepid`, which stays that way) must not keep the record at every boot. `marked?`
   # is a function so most processes, in other groups, have no environ read.
   def member({:ok, {state, _started, group}}, group, marked?) when state not in ["Z", "X"],
+    do: if(marked?.(), do: :member, else: :stranger)
+
+  def member({:ok, {state, _started, _group}}, :any, marked?) when state not in ["Z", "X"],
     do: if(marked?.(), do: :member, else: :stranger)
 
   def member(:unknown, _group, marked?), do: if(marked?.(), do: :unreadable, else: :stranger)

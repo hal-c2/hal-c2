@@ -27,12 +27,12 @@ bool g_systemReducedMotion = false;
 
 }  // namespace
 
-void LayoutController::setSystemReducedMotion(bool reduced) {
-  g_systemReducedMotion = reduced;
-}
-
 bool LayoutController::systemReducedMotion() {
   return g_systemReducedMotion;
+}
+
+void LayoutController::setSystemReducedMotion(bool reduced) {
+  g_systemReducedMotion = reduced;
 }
 
 int LayoutController::panelAnimationMs() const {
