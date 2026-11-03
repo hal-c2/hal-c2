@@ -7,7 +7,7 @@
 
 #include <memory>
 
-struct HalC2Syntax;
+#include "CodeReader.h"
 
 // Code coloured by its language (native/syntax), on a TextEdit's document:
 // a reply's or a page's code block, a file. QML:
@@ -34,19 +34,10 @@ class CodeHighlighter : public QSyntaxHighlighter {
   Q_PROPERTY(bool reading READ reading NOTIFY readingChanged)
 
 public:
-  static constexpr qsizetype kMaxChars = 512 * 1024;
+  static constexpr qsizetype kMaxChars = codereader::kMaxChars;
 
-  // A run of colour, as native/syntax hands it over.
-  struct Run {
-    quint32 start;
-    quint32 length;
-    quint32 color;
-    quint8 flags;
-  };
-  // What reading some code made: its runs, light and dark.
-  struct Runs {
-    QList<Run> themes[2];
-  };
+  using Run = codereader::Run;
+  using Runs = codereader::Runs;
 
   explicit CodeHighlighter(QObject* parent = nullptr);
   ~CodeHighlighter() override;
@@ -84,11 +75,8 @@ protected:
   void highlightBlock(const QString& text) override;
 
 private:
-  struct SyntaxDeleter {
-    void operator()(HalC2Syntax* syntax) const;
-  };
-  using Syntax = std::unique_ptr<HalC2Syntax, SyntaxDeleter>;
-  struct Job;
+  using Syntax = codereader::Syntax;
+  using Job = codereader::Job;
 
   void setRunning(bool running);
   void textChanged();
