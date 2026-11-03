@@ -24,6 +24,59 @@ defmodule HalC2.GitHubTest do
     assert GitHub.host(~w(api user)) == "github.com"
   end
 
+  describe "the account a call is made as" do
+    @describetag :tmp_dir
+
+    setup %{tmp_dir: dir} do
+      for name <-
+            ~w(GH_CONFIG_DIR GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN) do
+        previous = System.get_env(name)
+        System.delete_env(name)
+
+        on_exit(fn ->
+          if previous, do: System.put_env(name, previous), else: System.delete_env(name)
+        end)
+      end
+
+      System.put_env("GH_CONFIG_DIR", dir)
+
+      File.write!(Path.join(dir, "hosts.yml"), """
+      github.com:
+          git_protocol: ssh
+          users:
+              user: {}
+              monalisa:
+                  git_protocol: ssh
+              hubot: {}
+          user: hubot
+      GHE.test:
+          user: "octocat"
+      """)
+
+      :ok
+    end
+
+    test "is the user gh has active on the host, read from its hosts file" do
+      assert GitHub.account("github.com") == {"github.com", "user:hubot"}
+      assert GitHub.account("ghe.test") == {"ghe.test", "user:octocat"}
+      assert GitHub.account("other.test") == {"other.test", ""}
+    end
+
+    test "is the token the environment gives gh for the host, which gh prefers" do
+      System.put_env("GITHUB_TOKEN", "gho_one")
+      {_, one} = GitHub.account("github.com")
+      assert "token:" <> _ = one
+      refute one =~ "gho_one"
+      System.put_env("GH_TOKEN", "gho_two")
+      assert {_, two} = GitHub.account("github.com")
+      assert two not in [one, "user:hubot"]
+      # Enterprise hosts read their own variables.
+      assert GitHub.account("ghe.test") == {"ghe.test", "user:octocat"}
+      System.put_env("GH_ENTERPRISE_TOKEN", "gho_one")
+      assert GitHub.account("ghe.test") == {"ghe.test", one}
+    end
+  end
+
   describe "a paused host" do
     @describetag :tmp_dir
 
@@ -41,7 +94,10 @@ defmodule HalC2.GitHubTest do
       end)
 
       start_supervised!(Limits)
-      until = Limits.limited("github.com", "graphql", System.system_time(:millisecond))
+
+      until =
+        Limits.limited(GitHub.account("github.com"), "graphql", System.system_time(:millisecond))
+
       %{calls: Path.join(dir, "calls"), until: until}
     end
 
@@ -59,7 +115,7 @@ defmodule HalC2.GitHubTest do
                end)
 
       assert File.read!(calls) == "asked\n"
-      assert {:paused, ^until} = Limits.check("github.com", "graphql", until - 1)
+      assert {:paused, ^until} = Limits.check(GitHub.account("github.com"), "graphql", until - 1)
       assert {:error, {:rate_limited, _}} = GitHub.gh(dir, ~w(pr view 1))
     end
   end

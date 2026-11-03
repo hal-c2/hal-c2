@@ -1,18 +1,18 @@
 defmodule HalC2.GitHubLimitsPropTest do
   @moduledoc """
-  A state machine over `HalC2.GitHub.Limits`: two hosts (one named in mixed case),
-  their buckets limited with and without a reset GitHub gave, secondary limits on the
-  whole host, answers, and time passing, with checks between any of them. The model
+  A state machine over `HalC2.GitHub.Limits`: two accounts on each of two hosts (one
+  named in mixed case, and on the same host as the other spelling), their buckets limited with and without a reset GitHub gave, secondary limits on the
+  whole account, answers, and time passing, with checks between any of them. The model
   checks what `HalC2.GitHub.gh/3` is promised:
 
-  - a check is paused exactly while its bucket's pause or its host's secondary pause
-    holds, until the later of the two, and a pause on one host or bucket holds back no
-    other;
+  - a check is paused exactly while its bucket's pause or its account's secondary pause
+    holds, until the later of the two, and a pause on one account or bucket holds back
+    no other, another account on the same host included;
   - a limit with a reset still ahead pauses until that reset, and never shortens a
     longer pause;
   - a limit with no reset pauses for 30 seconds, doubling with each limit in a row up
     to 15 minutes, and one reported while its pause holds changes nothing;
-  - an answer ends the backoff of its bucket and of its host's secondary pause once
+  - an answer ends the backoff of its bucket and of its account's secondary pause once
     they are over, and ends no pause that still holds.
   """
 
@@ -24,7 +24,8 @@ defmodule HalC2.GitHubLimitsPropTest do
 
   @moduletag timeout: :infinity
 
-  @hosts ["github.com", "GHE.test"]
+  @hosts ["github.com", "GitHub.com", "ghe.test"]
+  @who ["user:monalisa", "user:hubot"]
   @buckets ["core", "graphql", "search"]
 
   property "GitHub is left alone while its budget is spent",
@@ -45,22 +46,22 @@ defmodule HalC2.GitHubLimitsPropTest do
 
   # --- model ----------------------------------------------------------------------
 
-  # pauses: `%{{lowercase host, bucket | :all} => {attempt, until}}`.
+  # pauses: `%{{{lowercase host, who}, bucket | :all} => {attempt, until}}`.
   def initial_state, do: %{now: 0, pauses: %{}}
 
   def command(state) do
     frequency(
       again(state) ++
         [
-          {4, {:call, __MODULE__, :check, [host(), bucket(), state.now]}},
-          {3, {:call, __MODULE__, :limited, [host(), scope(), state.now, reset(state.now)]}},
-          {2, {:call, __MODULE__, :answered, [host(), bucket(), state.now]}},
+          {4, {:call, __MODULE__, :check, [account(), bucket(), state.now]}},
+          {3, {:call, __MODULE__, :limited, [account(), scope(), state.now, reset(state.now)]}},
+          {2, {:call, __MODULE__, :answered, [account(), bucket(), state.now]}},
           {2, {:call, __MODULE__, :pass, [oneof([1_000, 29_000, 30_000, 60_000, 900_000])]}}
         ]
     )
   end
 
-  defp host, do: oneof(@hosts)
+  defp account, do: {oneof(@hosts), oneof(@who)}
   defp bucket, do: oneof(@buckets)
   defp scope, do: oneof([:all | @buckets])
   # A limit met again as soon as a pause ends, so limits in a row reach the cap.
@@ -69,8 +70,8 @@ defmodule HalC2.GitHubLimitsPropTest do
   defp again(state) do
     [
       {4,
-       let {{host, scope}, {_, until}} <- oneof(Map.to_list(state.pauses)) do
-         {:call, __MODULE__, :limited_after, [host, scope, max(until, state.now)]}
+       let {{account, scope}, {_, until}} <- oneof(Map.to_list(state.pauses)) do
+         {:call, __MODULE__, :limited_after, [account, scope, max(until, state.now)]}
        end}
     ]
   end
@@ -79,8 +80,8 @@ defmodule HalC2.GitHubLimitsPropTest do
 
   def precondition(_state, _call), do: true
 
-  def next_state(state, _result, {:call, _, :limited, [host, scope, now, reset]}) do
-    key = {String.downcase(host), scope}
+  def next_state(state, _result, {:call, _, :limited, [account, scope, now, reset]}) do
+    key = {lower(account), scope}
     {attempt, until} = state.pauses[key] || {0, 0}
 
     entry =
@@ -93,15 +94,15 @@ defmodule HalC2.GitHubLimitsPropTest do
     put_in(state.pauses[key], entry)
   end
 
-  def next_state(state, result, {:call, m, :limited_after, [host, scope, at]}),
-    do: next_state(%{state | now: at}, result, {:call, m, :limited, [host, scope, at, nil]})
+  def next_state(state, result, {:call, m, :limited_after, [account, scope, at]}),
+    do: next_state(%{state | now: at}, result, {:call, m, :limited, [account, scope, at, nil]})
 
-  def next_state(state, _result, {:call, _, :answered, [host, bucket, now]}) do
-    host = String.downcase(host)
+  def next_state(state, _result, {:call, _, :answered, [account, bucket, now]}) do
+    account = lower(account)
 
     pauses =
-      Map.reject(state.pauses, fn {{h, scope}, {_, until}} ->
-        h == host and scope in [bucket, :all] and until <= now
+      Map.reject(state.pauses, fn {{a, scope}, {_, until}} ->
+        a == account and scope in [bucket, :all] and until <= now
       end)
 
     %{state | pauses: pauses}
@@ -110,12 +111,12 @@ defmodule HalC2.GitHubLimitsPropTest do
   def next_state(state, _result, {:call, _, :pass, [ms]}), do: %{state | now: state.now + ms}
   def next_state(state, _result, _call), do: state
 
-  def postcondition(state, {:call, _, :check, [host, bucket, now]}, result) do
-    host = String.downcase(host)
+  def postcondition(state, {:call, _, :check, [account, bucket, now]}, result) do
+    account = lower(account)
 
     holding =
       for scope <- [bucket, :all],
-          {_, until} <- [state.pauses[{host, scope}]],
+          {_, until} <- [state.pauses[{account, scope}]],
           until > now,
           do: until
 
@@ -125,23 +126,25 @@ defmodule HalC2.GitHubLimitsPropTest do
     end
   end
 
-  def postcondition(state, {:call, _, :limited, [host, scope, now, _]} = call, until) do
-    {_, before} = state.pauses[{String.downcase(host), scope}] || {0, 0}
-    {_, expected} = next_state(state, nil, call).pauses[{String.downcase(host), scope}]
+  def postcondition(state, {:call, _, :limited, [account, scope, now, _]} = call, until) do
+    {_, before} = state.pauses[{lower(account), scope}] || {0, 0}
+    {_, expected} = next_state(state, nil, call).pauses[{lower(account), scope}]
     until == expected and until > now and until >= before
   end
 
-  def postcondition(state, {:call, m, :limited_after, [host, scope, at]}, until),
-    do: postcondition(%{state | now: at}, {:call, m, :limited, [host, scope, at, nil]}, until)
+  def postcondition(state, {:call, m, :limited_after, [account, scope, at]}, until),
+    do: postcondition(%{state | now: at}, {:call, m, :limited, [account, scope, at, nil]}, until)
 
   def postcondition(_state, {:call, _, :answered, _}, result), do: result == :ok
   def postcondition(_state, _call, _result), do: true
 
+  defp lower({host, who}), do: {String.downcase(host), who}
+
   # --- commands -------------------------------------------------------------------
 
-  def check(host, bucket, now), do: Limits.check(host, bucket, now)
-  def limited(host, scope, now, reset), do: Limits.limited(host, scope, now, reset)
-  def limited_after(host, scope, at), do: Limits.limited(host, scope, at)
-  def answered(host, bucket, now), do: Limits.answered(host, bucket, now)
+  def check(account, bucket, now), do: Limits.check(account, bucket, now)
+  def limited(account, scope, now, reset), do: Limits.limited(account, scope, now, reset)
+  def limited_after(account, scope, at), do: Limits.limited(account, scope, at)
+  def answered(account, bucket, now), do: Limits.answered(account, bucket, now)
   def pass(_ms), do: :ok
 end

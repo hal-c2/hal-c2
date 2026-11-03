@@ -206,13 +206,16 @@ Feature: Browsing pull requests
       | in 120 seconds                       |
       | at a date and time given in full     |
 
+  # GitHub budgets each account apart. The MC tells accounts apart without asking gh:
+  # by the token its environment gives gh for the host, else by the account gh has
+  # active there (`gh auth switch` changes it).
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (normalizedKey, CredentialScope)
-  @mc @backlog
+  @mc
   Scenario: A pause belongs to one host and one signed-in account
     Given GitHub rate limits the account signed in for "acme/shop"
     When the user lists pull requests
-    Then projects on a self-hosted GitHub or on another host are read as usual
-    And projects read with another signed-in account on the same host are read as usual
+    Then reads from a self-hosted GitHub are sent as usual
+    And once another account is signed in on the same host, its reads are sent as usual
 
   # Legacy: apps/server/src/pullRequest/PullRequestService.ts (withRateLimitBackoff, interactive)
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (check allowPaused)
@@ -233,11 +236,11 @@ Feature: Browsing pull requests
 
   # Legacy: apps/server/src/sourceControl/githubGraphQlBudget.ts (quota snapshots per credential)
   # Legacy: apps/server/src/sourceControl/GitHubCli.test.ts (keeps quota snapshots separate for verified credentials)
-  @mc @backlog
+  @mc
   Scenario: An account that has used up its quota does not hold back another on the same host
     Given GitHub reported that the quota of one signed-in account is used up
     And another account is signed in on the same host with quota left
-    When a background refresh reads pull requests with the second account
+    When pull requests are read again with the second account
     Then the read is sent
 
   # Legacy: apps/server/src/sourceControl/GitHubCli.ts (executeRaw, acceptNotModified)
