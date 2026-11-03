@@ -2997,7 +2997,7 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "{string} has all {int} of its messages", %{args: [title, n]} = context do
-    assert length(HalC2.StreamState.list(World.stream(context, title), "message")) == n
+    assert Enum.count(HalC2.StreamState.all(World.stream(context, title), "message")) == n
     context
   end
 
