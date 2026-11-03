@@ -650,7 +650,12 @@ for line in sys.stdin:
         stays = [{"processId": "4275"}] if os.path.exists("terminal-stays") else []
         send({"id": mid, "result": {"data": stays, "nextCursor": None}})
     elif method == "turn/interrupt":
-        if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
+        # FAKE_CODEX_IGNORE_INTERRUPT, or the file FAKE_CODEX_IGNORE_INTERRUPT_FILE names
+        # existing, acknowledges the stop and never ends the turn.
+        ignore = os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT") or os.path.exists(
+            os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT_FILE", "/nonexistent")
+        )
+        if not ignore:
             interrupted_turns.add(params["turnId"])
         # While the file FAKE_CODEX_HOLD_INTERRUPT names exists, a stop waits, bounded as a
         # held steer is.
@@ -660,8 +665,7 @@ for line in sys.stdin:
                 sys.exit("fake Codex: interrupt held past 120s (stuck hold-interrupt gate)")
             time.sleep(0.01)
         send({"id": mid, "result": {}})
-        # FAKE_CODEX_IGNORE_INTERRUPT acknowledges the stop and never ends the turn.
-        if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
+        if not ignore:
             send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})
     else:
         send({"id": mid, "error": {"code": -32601, "message": method}})
