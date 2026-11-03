@@ -154,7 +154,7 @@ Feature: Browsing pull requests
     Given "acme/api" cannot be read
     When the user lists pull requests
     Then the pull requests of "acme/shop" are listed
-    And "acme/api" reports its own error with the host's reason, phrased for the user
+    And "acme/api" reports its own error with the host's reason, phrased for the user, and when it is read again
 
   # GitHub answers 502 or 504 to a query it cannot finish in about ten seconds; a
   # busy repository's pull requests with their checks can take that long.
@@ -165,6 +165,32 @@ Feature: Browsing pull requests
     When the user lists pull requests
     Then all 60 open pull requests of "acme/shop" are listed
     And no project reports an error
+
+  # Each failure still spends GitHub's budget, and every view and background reader
+  # polls; a repository GitHub gives up on is held back like a rate limit, apart from
+  # the others.
+  @mc
+  Scenario: A repository GitHub keeps giving up on is left alone for a while
+    Given "acme/api" cannot be read
+    When the user lists pull requests
+    And the pull requests are listed again without the user asking
+    Then "acme/api" is not asked of GitHub again
+    But the pull requests of "acme/shop" are still read
+    And "acme/api" reports when it is read again, 30 seconds on, keeping what GitHub said
+    And GitHub giving up is logged once, not on every listing
+    And the hold doubles each time GitHub gives up again and never passes 15 minutes
+    And a hand refresh reads "acme/api" at once
+    And the first read that succeeds ends the hold and the doubling
+
+  @mc
+  Scenario: A repository read in smaller pages is read at that size for a while
+    Given "acme/shop" has 60 open pull requests
+    And GitHub gives up on reading more than 20 of them at once
+    When the user lists pull requests
+    And the pull requests are listed again without the user asking
+    Then the second listing asks for no page larger than the one that worked
+    And all 60 open pull requests of "acme/shop" are listed
+    And 15 minutes after the page shrank, a listing tries the usual size again
 
   @desktop @backlog-desktop
   Scenario: A project the host could not read is named once with a retry
@@ -206,13 +232,16 @@ Feature: Browsing pull requests
       | in 120 seconds                       |
       | at a date and time given in full     |
 
+  # GitHub budgets each account apart. The MC tells accounts apart without asking gh:
+  # by the token its environment gives gh for the host, else by the account gh has
+  # active there (`gh auth switch` changes it).
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (normalizedKey, CredentialScope)
-  @mc @backlog
+  @mc
   Scenario: A pause belongs to one host and one signed-in account
     Given GitHub rate limits the account signed in for "acme/shop"
     When the user lists pull requests
-    Then projects on a self-hosted GitHub or on another host are read as usual
-    And projects read with another signed-in account on the same host are read as usual
+    Then reads from a self-hosted GitHub are sent as usual
+    And once another account is signed in on the same host, its reads are sent as usual
 
   # Legacy: apps/server/src/pullRequest/PullRequestService.ts (withRateLimitBackoff, interactive)
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (check allowPaused)
@@ -233,11 +262,11 @@ Feature: Browsing pull requests
 
   # Legacy: apps/server/src/sourceControl/githubGraphQlBudget.ts (quota snapshots per credential)
   # Legacy: apps/server/src/sourceControl/GitHubCli.test.ts (keeps quota snapshots separate for verified credentials)
-  @mc @backlog
+  @mc
   Scenario: An account that has used up its quota does not hold back another on the same host
     Given GitHub reported that the quota of one signed-in account is used up
     And another account is signed in on the same host with quota left
-    When a background refresh reads pull requests with the second account
+    When pull requests are read again with the second account
     Then the read is sent
 
   # Legacy: apps/server/src/sourceControl/GitHubCli.ts (executeRaw, acceptNotModified)

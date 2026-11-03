@@ -194,6 +194,41 @@ defmodule HalC2.StreamsColdTest do
     assert rows(Streams.state("th")) == whole(path, "th")
   end
 
+  # Boot read every thread with no hot snapshot through its stream, opening idle ones.
+  test "the search backfill opens only a thread too long to read at once", %{path: path} do
+    previous = Application.get_env(:hal_c2, :stream_max_legacy_bytes)
+    Application.put_env(:hal_c2, :stream_max_legacy_bytes, 1)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :stream_max_legacy_bytes, previous),
+        else: Application.delete_env(:hal_c2, :stream_max_legacy_bytes)
+    end)
+
+    for i <- 1..8, do: run("th", i, 3)
+    stop("th")
+    legacy = legacy(path, "th", nil)
+
+    {:ok, _} =
+      Streams.commit("short", :thread, [
+        {"thread", "short", %{"s" => %{"id" => "short", "title" => "Idle"}}},
+        {"message", "m1", %{"s" => %{"id" => "m1", "role" => "user", "text" => "quiet one"}}}
+      ])
+
+    stop("short")
+    sql!(path, "DELETE FROM hot_snapshots")
+    sql!(path, "DELETE FROM cold")
+    put_legacy(path, "th", legacy.seq, legacy)
+    :ok = HalC2.Search.read_again()
+
+    :ok = HalC2.Search.backfill()
+
+    assert Registry.lookup(HalC2.Streams.Registry, "short") == []
+    assert [{"short", "user", "quiet one", _}] = Store.search_messages(path, "%quiet%", 10)
+    # The long one is read through its stream, which migrates it a page at a time.
+    assert [_] = Registry.lookup(HalC2.Streams.Registry, "th")
+  end
+
   # A read that walked the cold rows after a commit brought one back to memory and a
   # snapshot wrote the table again saw it changed, or not at all (#964).
   test "a read walks the cold rows as they were when it took the state", %{path: path} do

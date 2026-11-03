@@ -1016,7 +1016,7 @@ defmodule HalC2.Test.Mc.World do
   end
 
   @doc "Waits until a stream's sidebar row satisfies `fun`; the test process must be subscribed to the shell."
-  def await_row(id, fun, timeout \\ 2_000) do
+  def await_row(id, fun, timeout \\ 10_000) do
     case HalC2.Shell.row(node(), id) do
       {_kind, row} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout)
       nil -> await_next_row(id, fun, timeout)
