@@ -2991,9 +2991,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     );
   };
 
-  /** Expands or collapses a project's section, and remembers which. */
+  /** Expands or collapses a project's section, and remembers which (of projects still here). */
   const toggleSection = (projectId: string) => {
     if (!expandedSections.delete(projectId)) expandedSections.add(projectId);
+    const known = new Set((options.projects?.() ?? []).map((project) => project.id));
+    for (const id of expandedSections) if (!known.has(id)) expandedSections.delete(id);
     sectionStore.save([...expandedSections]);
     publish();
   };

@@ -1213,6 +1213,8 @@ describe("projects in the Space's pages", () => {
 
   test("the expanded sections are remembered for the next start", async () => {
     const sections = memoryMutedThreads();
+    // A project removed since is forgotten with the next change.
+    sections.save(["gone"]);
     const t = await withShop(["docs/guide.md"], sections);
     t.select("project:p1");
     t.controller.dispatch("space.activate", {});
