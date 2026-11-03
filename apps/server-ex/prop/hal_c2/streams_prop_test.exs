@@ -17,6 +17,10 @@ defmodule HalC2.StreamsPropTest do
   patch, so a client that folds the appends must hold the cut text a snapshot shows,
   for each of the wire's cut keys and for an item growing both in one commit.
 
+  Memory holds a single run's turn items, so settled runs go cold and are read back
+  from disk (`HalC2.StreamState`, "Hot and cold"): nothing a subscriber is sent, and
+  nothing a read of the stream returns, may tell.
+
   A client's subscription may carry a tag, a new one each time it follows, as a
   socket mints them. Its messages come under that tag, and the subscription it
   replaced is told so once under the old one, and is sent nothing else. Its own tag
@@ -67,6 +71,10 @@ defmodule HalC2.StreamsPropTest do
 
   defp run_case(cmds, run) do
     HalC2.Prop.scratch_home("streams")
+    # So few turn items stay in memory that settled runs go cold (`HalC2.StreamState`,
+    # "Hot and cold"), which no subscriber may notice.
+    hot = Application.get_env(:hal_c2, :stream_hot_items)
+    Application.put_env(:hal_c2, :stream_hot_items, 1)
 
     HalC2.Prop.start_services([
       {Store, path: Store.home_path()},
@@ -80,6 +88,10 @@ defmodule HalC2.StreamsPropTest do
     after
       for name <- @names, do: Process.exit(collector(name), :kill)
       HalC2.Prop.stop_services()
+
+      if hot,
+        do: Application.put_env(:hal_c2, :stream_hot_items, hot),
+        else: Application.delete_env(:hal_c2, :stream_hot_items)
     end
   end
 
@@ -183,18 +195,22 @@ defmodule HalC2.StreamsPropTest do
   defp intent do
     text = oneof(["", "a", "bc", "héllo"])
 
-    oneof([
-      {:run, oneof(@runs), oneof(["queued", "running", "done", "rolled_back"])},
-      {:item, oneof(@items), text},
-      {:append, oneof(@items), oneof(["a", "bc", "é"])},
-      {:subagent, oneof(@items), cut_key(), progress()},
-      {:grow, oneof(@items), cut_key(), progress()},
-      {:reset, oneof(@items), cut_key(), progress(), oneof([:unset, :delete])},
-      {:message, oneof(@messages)},
-      {:delete, oneof(Enum.map(@items, &{"turn-item", &1}) ++ Enum.map(@notes, &{"note", &1}))},
-      {:delete, oneof(Enum.map(@messages, &{"message", &1}))},
-      {:note, oneof(@notes), oneof([nil, true, 1, "x"]), boolean()},
-      {:void, oneof(@items)}
+    # Runs often, and often settled with their items, so they go cold.
+    frequency([
+      {3, {:run, oneof(@runs), oneof(["queued", "running", "completed"])}},
+      {3, {:finished, oneof(@runs)}},
+      {1, {:run, oneof(@runs), "rolled_back"}},
+      {2, {:item, oneof(@items), text}},
+      {1, {:append, oneof(@items), oneof(["a", "bc", "é"])}},
+      {1, {:subagent, oneof(@items), cut_key(), progress()}},
+      {1, {:grow, oneof(@items), cut_key(), progress()}},
+      {1, {:reset, oneof(@items), cut_key(), progress(), oneof([:unset, :delete])}},
+      {1, {:message, oneof(@messages)}},
+      {1,
+       {:delete, oneof(Enum.map(@items, &{"turn-item", &1}) ++ Enum.map(@notes, &{"note", &1}))}},
+      {1, {:delete, oneof(Enum.map(@messages, &{"message", &1}))}},
+      {1, {:note, oneof(@notes), oneof([nil, true, 1, "x"]), boolean()}},
+      {1, {:void, oneof(@items)}}
     ])
   end
 
@@ -219,18 +235,30 @@ defmodule HalC2.StreamsPropTest do
   @doc false
   def resolve(intents, st) do
     {changes, _} =
-      Enum.flat_map_reduce(intents, st, fn intent, st ->
-        case change(intent, st) do
-          nil ->
-            {[], st}
+      Enum.flat_map_reduce(intents, st, fn
+        {:finished, run}, st ->
+          # The run, each of its items, then the run completed: one change at a time.
+          [{:run, run, "running"}]
+          |> Kernel.++(for {item, ^run} <- @run_of, item in @items, do: {:item, item, "t"})
+          |> Kernel.++([{:run, run, "completed"}])
+          |> Enum.flat_map_reduce(st, &step/2)
 
-          {kind, id, patch} = change ->
-            event = %{seq: st.seq, kind: kind, entity: id, patch: patch, at: 0}
-            {[change], StreamState.apply_event(st, event)}
-        end
+        intent, st ->
+          step(intent, st)
       end)
 
     changes
+  end
+
+  defp step(intent, st) do
+    case change(intent, st) do
+      nil ->
+        {[], st}
+
+      {kind, id, patch} = change ->
+        event = %{seq: st.seq, kind: kind, entity: id, patch: patch, at: 0}
+        {[change], StreamState.apply_event(st, event)}
+    end
   end
 
   defp change({:run, id, status}, st) do
@@ -584,7 +612,12 @@ defmodule HalC2.StreamsPropTest do
         do:
           match?([{:events, _}], initial) and
             strip(elem(hd(initial), 1)) == strip(Enum.reject(missed, &StreamState.void?/1)),
-        else: snapshot_ok?(initial, sub.live, StreamState.rows(fold_until(state, id, sub.live)))
+        else:
+          snapshot_ok?(
+            initial,
+            sub.live,
+            Enum.to_list(StreamState.rows(fold_until(state, id, sub.live)))
+          )
 
     tail = Enum.filter(events, &(&1.seq > sub.live and &1.seq <= upto))
 
@@ -667,7 +700,23 @@ defmodule HalC2.StreamsPropTest do
   defp entities(st),
     do: for({kind, id, e} <- StreamState.rows(st), into: %{}, do: {{kind, id}, e})
 
-  defp comparable(st), do: %{st | updated_at: nil}
+  # What anyone reading the stream sees, whichever of its runs memory holds: hot
+  # and cold are the stream's business, so they must not show.
+  defp comparable(st) do
+    changed =
+      case StreamState.changed_since(st, 0) do
+        :unknown -> :unknown
+        {upserts, deletes} -> {Enum.to_list(upserts), deletes}
+      end
+
+    %{
+      seq: st.seq,
+      since: st.since,
+      rows: Enum.to_list(StreamState.rows(st)),
+      changed: changed,
+      counts: StreamState.item_counts(st)
+    }
+  end
 
   # --- system under test --------------------------------------------------------
 

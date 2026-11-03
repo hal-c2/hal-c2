@@ -6,15 +6,41 @@ defmodule HalC2.StreamStatePropTest do
   can replay `changed_since/2` to the current state, and voids move only the seq. The
   histories come from raw events over the small pools, made valid by
   `HalC2.Prop.PatchGenerators.events/1`. These are plain `forall`s: a fold is pure.
+
+  One law needs a store: a stream that holds only its latest runs in memory
+  (`HalC2.StreamState`, "Hot and cold"), folded commit by commit as its process folds
+  it, demoting, snapshotting and reloading along the way, reads the same as a whole
+  fold of its log: its rows, `changed_since/2` from every offset, each entity, each
+  run's rows, its item counts and its transcript.
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   use PropCheck
 
   import HalC2.Prop.PatchGenerators, only: [event_raw: 0, events: 1]
 
-  alias HalC2.Patch
+  alias HalC2.{Patch, Store}
+  alias HalC2.Projection.Timeline
   alias HalC2.StreamState
+
+  @runs ~w(r1 r2 r3 r4)
+  # Each windowed entity's run and what it is, for good, as a thread's are.
+  @windowed %{
+    {"turn-item", "t1"} => %{"runId" => "r1", "type" => "assistant_message"},
+    {"turn-item", "t2"} => %{"runId" => "r1", "type" => "run_interrupt_request"},
+    {"turn-item", "t3"} => %{"runId" => "r2", "type" => "run_interrupt_result", "nodeId" => "n1"},
+    {"turn-item", "t4"} => %{
+      "runId" => "r3",
+      "type" => "user_message",
+      "inputIntent" => "queued_turn"
+    },
+    {"turn-item", "t5"} => %{"runId" => "r4", "type" => "assistant_message"},
+    {"turn-item", "t6"} => %{"runId" => "r2", "type" => "run_interrupt_result", "nodeId" => "x"},
+    {"turn-item", "t7"} => %{"type" => "assistant_message"},
+    {"message", "m1"} => %{"runId" => "r1", "role" => "user"},
+    {"message", "m2"} => %{"runId" => "r3", "role" => "assistant"},
+    {"node", "n1"} => %{"runId" => "r2"}
+  }
 
   property "one pass equals folding in any split into chunks",
     numtests: HalC2.Prop.numtests(100),
@@ -129,6 +155,202 @@ defmodule HalC2.StreamStatePropTest do
       :erlang.binary_to_term(:erlang.term_to_binary(state)) == state and
         StreamState.migrate(state) == state
     end
+  end
+
+  @tag timeout: :infinity
+  property "a stream holding only its latest runs reads as a whole fold of its log",
+    numtests: HalC2.Prop.numtests(100),
+    max_size: 30 do
+    forall {hot, steps} <- {range(1, 2), list(step())} do
+      cold_case(hot, fn ->
+        {_state, ok} =
+          Enum.reduce(steps, {StreamState.load(Store.home_path(), "th", store: Store), true}, fn
+            step, {state, ok} ->
+              state = run_step(step, state)
+              {state, ok and same?(state)}
+          end)
+
+        ok
+      end)
+    end
+  end
+
+  # --- hot and cold ----------------------------------------------------------
+
+  defp step do
+    frequency([
+      {6, {:commit, non_empty(list(change()))}},
+      {1, :snapshot},
+      {1, :restart}
+    ])
+  end
+
+  defp change do
+    frequency([
+      {3, {:run, oneof(@runs), oneof(~w(running completed failed cancelled rolled_back))}},
+      {4, {:put, oneof(Map.keys(@windowed)), oneof(["", "a", "bc"])}},
+      {2, {:append, oneof(Map.keys(@windowed))}},
+      {1, {:delete, oneof(Map.keys(@windowed))}},
+      {1, {:attempt, oneof(~w(running superseded))}},
+      {1, {:thread, integer(0, 3)}}
+    ])
+  end
+
+  defp cold_case(hot, fun) do
+    HalC2.Prop.scratch_home("stream-state")
+    previous = Application.get_env(:hal_c2, :stream_hot_items)
+    Application.put_env(:hal_c2, :stream_hot_items, hot)
+    HalC2.Prop.start_services([{Store, path: Store.home_path()}])
+
+    try do
+      fun.()
+    after
+      HalC2.Prop.stop_services()
+
+      if previous,
+        do: Application.put_env(:hal_c2, :stream_hot_items, previous),
+        else: Application.delete_env(:hal_c2, :stream_hot_items)
+    end
+  end
+
+  # As the stream's process does: a commit's events applied once the cold entities
+  # they touch are back in memory, then whatever went cold demoted.
+  defp run_step({:commit, intents}, state) do
+    changes = resolve(intents, whole())
+
+    case changes do
+      [] ->
+        state
+
+      _ ->
+        {:ok, _} = Store.append(Store, [{:thread, "th", changes}], 1)
+        events = log(state.seq)
+
+        state
+        |> StreamState.promote(for {kind, id, _} <- changes, do: {kind, id})
+        |> then(&Enum.reduce(events, &1, fn event, st -> StreamState.apply_event(st, event) end))
+        |> StreamState.compact(Store)
+    end
+  end
+
+  defp run_step(:snapshot, %{seq: 0} = state), do: state
+
+  defp run_step(:snapshot, state) do
+    {snapshot, cold} = StreamState.snapshot(state)
+    :ok = Store.put_snapshot(Store, "th", state.seq, snapshot, cold)
+    StreamState.written(state)
+  end
+
+  defp run_step(:restart, _state), do: StreamState.load(Store.home_path(), "th", store: Store)
+
+  defp resolve(intents, whole) do
+    {changes, _} =
+      Enum.flat_map_reduce(intents, whole, fn intent, st ->
+        case intent_change(intent, st) do
+          nil ->
+            {[], st}
+
+          {kind, id, patch} = change ->
+            {[change],
+             StreamState.apply_event(st, %{
+               seq: st.seq,
+               kind: kind,
+               entity: id,
+               patch: patch,
+               at: 1
+             })}
+        end
+      end)
+
+    changes
+  end
+
+  defp intent_change({:run, id, status}, st) do
+    runs = StreamState.get(st, "run")
+
+    case runs[id] do
+      nil ->
+        ordinal = runs |> Map.values() |> Enum.map(& &1["ordinal"]) |> Enum.max(fn -> 0 end)
+        {"run", id, %{"s" => %{"id" => id, "ordinal" => ordinal + 1, "status" => status}}}
+
+      _ ->
+        {"run", id, %{"s" => %{"status" => status}}}
+    end
+  end
+
+  defp intent_change({:put, {kind, id} = key, text}, _st) do
+    entity = Map.merge(@windowed[key], %{"id" => id, "threadId" => "th", "text" => text})
+    {kind, id, %{"s" => entity}}
+  end
+
+  defp intent_change({:append, {kind, id}}, st) do
+    case StreamState.get(st, kind)[id] do
+      %{"text" => text} when is_binary(text) -> {kind, id, %{"a" => %{"text" => "+"}}}
+      _ -> nil
+    end
+  end
+
+  defp intent_change({:delete, {kind, id}}, _st), do: {kind, id, Patch.delete()}
+
+  defp intent_change({:attempt, status}, _st),
+    do:
+      {"run-attempt", "a1",
+       %{"s" => %{"runId" => "r2", "rootNodeId" => "n1", "status" => status}}}
+
+  defp intent_change({:thread, n}, _st), do: {"thread", "th", %{"s" => %{"id" => "th", "n" => n}}}
+
+  defp log(after_seq),
+    do:
+      Store.home_path() |> Store.reduce_stream("th", after_seq, [], &[&1 | &2]) |> Enum.reverse()
+
+  defp whole, do: fold(log(0))
+
+  defp same?(state) do
+    whole = whole()
+    rows = &Enum.to_list(StreamState.rows(&1))
+
+    replayed? =
+      Enum.all?(0..whole.seq//1, fn offset ->
+        changed(state, offset) == changed(whole, offset)
+      end)
+
+    fetched? =
+      Enum.all?(Map.keys(@windowed), fn {kind, id} ->
+        StreamState.fetch(state, kind, id) == StreamState.get(whole, kind)[id]
+      end)
+
+    run_rows? =
+      Enum.all?([[], ["r1"], ["r2", "r4"], @runs], fn runs ->
+        Enum.to_list(StreamState.run_rows(state, runs)) ==
+          Enum.to_list(StreamState.run_rows(whole, runs))
+      end)
+
+    law(:rows, rows.(state) == rows.(whole)) and
+      law(:changed_since, replayed?) and
+      law(:fetch, fetched?) and
+      law(
+        :lookup,
+        StreamState.lookup(state, Map.keys(@windowed)) ==
+          StreamState.lookup(whole, Map.keys(@windowed))
+      ) and
+      law(:run_rows, run_rows?) and
+      law(:item_counts, StreamState.item_counts(state) == StreamState.item_counts(whole)) and
+      law(:transcript, Timeline.local_items(state) == Timeline.local_items(whole)) and
+      law(:count, Timeline.local_count(state) == length(Timeline.local_items(whole)))
+  end
+
+  defp changed(state, offset) do
+    case StreamState.changed_since(state, offset) do
+      :unknown -> :unknown
+      {upserts, deletes} -> {Enum.to_list(upserts), deletes}
+    end
+  end
+
+  defp law(_law, true), do: true
+
+  defp law(law, false) do
+    IO.puts("law broken: #{law}")
+    false
   end
 
   # --- helpers ----------------------------------------------------------------
