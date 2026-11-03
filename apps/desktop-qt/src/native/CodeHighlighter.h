@@ -68,6 +68,8 @@ public:
 
   // Drops what was kept of code already read (the native tests' fresh start).
   static void clearCache();
+  // How many reads have started, ever (the native tests').
+  static int readsStarted();
 
 signals:
   void documentChanged();

@@ -9,6 +9,7 @@
 #include <QThreadPool>
 
 #include <algorithm>
+#include <atomic>
 
 #include "hal_c2_syntax.h"
 
@@ -34,6 +35,15 @@ struct Cached {
 QCache<QString, Cached>& cache() {
   static QCache<QString, Cached> cache(32 * 1024 * 1024);
   return cache;
+}
+
+std::atomic<int> started{0};
+
+// Keeps what a whole read of `key`'s text made.
+void remember(const QString& key, const std::shared_ptr<const CodeHighlighter::Runs>& runs) {
+  qsizetype cost = key.size() * qsizetype(sizeof(QChar));
+  for (const auto& theme : runs->themes) cost += theme.size() * qsizetype(sizeof(CodeHighlighter::Run));
+  cache().insert(key, new Cached{runs}, cost);
 }
 
 void collect(void* context, const HalC2SyntaxSpan* span) {
@@ -62,6 +72,8 @@ struct CodeHighlighter::Job {
   QString delta;
   std::shared_ptr<const Runs> runs;
   bool known = true;
+  // Where a whole read of code not being written is kept, else empty.
+  QString key;
 
   void run() {
     if (!syntax) {
@@ -89,6 +101,10 @@ CodeHighlighter::~CodeHighlighter() {
 
 void CodeHighlighter::clearCache() {
   cache().clear();
+}
+
+int CodeHighlighter::readsStarted() {
+  return started;
 }
 
 void CodeHighlighter::setQuickDocument(QQuickTextDocument* document) {
@@ -218,15 +234,22 @@ void CodeHighlighter::schedule() {
   } else {
     m_syntax.reset();
     job->delta = text;
+    if (!m_streaming) job->key = cacheKey(text);
   }
 
   setRunning(true);
   QThreadPool* pool = readers();
   std::weak_ptr<int> alive = m_alive;
   pool->start([job, alive, pool, self = this] {
+    // Its block went while it waited, as one scrolled past does: the blocks
+    // still shown are read first.
+    if (alive.expired()) return;
+    ++started;
     job->run();
     QMetaObject::invokeMethod(pool, [job, alive, self] {
       if (alive.lock()) self->finished(job);
+      // Gone while it was read: what it read is kept for when it is back.
+      else if (job->known && !job->key.isEmpty()) remember(job->key, job->runs);
     }, Qt::QueuedConnection);
   });
 }
@@ -247,12 +270,7 @@ void CodeHighlighter::finished(const std::shared_ptr<Job>& job) {
   m_read = job->base + job->delta;
   m_runs = job->runs;
   m_current = m_text.startsWith(m_read);
-  if (!m_streaming && m_current) {
-    const QString key = cacheKey(m_read);
-    qsizetype cost = key.size() * qsizetype(sizeof(QChar));
-    for (const auto& runs : m_runs->themes) cost += runs.size() * qsizetype(sizeof(Run));
-    cache().insert(key, new Cached{m_runs}, cost);
-  }
+  if (!m_streaming && m_current) remember(cacheKey(m_read), m_runs);
   apply();
   // Straight on to what was written meanwhile, reading all along.
   m_running = false;
