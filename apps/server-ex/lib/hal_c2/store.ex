@@ -83,6 +83,33 @@ defmodule HalC2.Store do
       state BLOB NOT NULL
     )
     """,
+    # A stream's state as of `seq`, less what `cold` holds. `snapshots` holds the
+    # whole-stream state an older MC wrote, read only to migrate it.
+    """
+    CREATE TABLE IF NOT EXISTS hot_snapshots (
+      stream INTEGER PRIMARY KEY REFERENCES streams(key),
+      seq INTEGER NOT NULL,
+      state BLOB NOT NULL
+    )
+    """,
+    # The turn items, messages and nodes of a stream's older runs, which its hot
+    # snapshot leaves out (`HalC2.StreamState`): one row per entity as of the hot
+    # snapshot, written in the same transaction.
+    """
+    CREATE TABLE IF NOT EXISTS cold (
+      stream INTEGER NOT NULL REFERENCES streams(key),
+      kind TEXT NOT NULL,
+      id TEXT NOT NULL,
+      run TEXT,
+      created INTEGER NOT NULL,
+      changed INTEGER NOT NULL,
+      entity BLOB NOT NULL,
+      PRIMARY KEY (stream, kind, id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS cold_created ON cold(stream, created)",
+    "CREATE INDEX IF NOT EXISTS cold_changed ON cold(stream, changed)",
+    "CREATE INDEX IF NOT EXISTS cold_run ON cold(stream, run)",
     # Finished user and assistant messages, for thread search and counting turns.
     # Derived from events. `typed` is NULL on a row an older MC wrote (`Search.backfill/0`).
     """
@@ -151,6 +178,10 @@ defmodule HalC2.Store do
   def append(store, batches, at) when is_list(batches) and is_integer(at),
     do: write(store, {:append, batches, at})
 
+  @typedoc "A cold entity: `{kind, id, run id, created seq, changed seq, entity}`."
+  @type cold_row ::
+          {String.t(), String.t(), String.t() | nil, non_neg_integer, non_neg_integer, map}
+
   @doc """
   Caches a stream's folded state as of `seq`. The stream must already have events:
   nothing here knows its kind, so it cannot create one.
@@ -158,7 +189,35 @@ defmodule HalC2.Store do
   @spec put_snapshot(GenServer.server(), String.t(), non_neg_integer, term) ::
           :ok | {:error, :unknown_stream}
   def put_snapshot(store \\ __MODULE__, stream_id, seq, state),
-    do: write(store, {:put_snapshot, stream_id, seq, state})
+    do: put_snapshot(store, stream_id, seq, state, [])
+
+  @doc """
+  Caches a stream's hot state as of `seq` and brings its cold rows to the same seq,
+  in one transaction: with `reset: true` every cold row of the stream goes first,
+  then the `delete:` keys' rows, then the `put:` rows are written. The whole-stream
+  snapshot an older MC wrote goes too: it is stale from here on.
+
+  Everything is encoded by the caller, so a large write costs the writer only SQL.
+  """
+  @spec put_snapshot(GenServer.server(), String.t(), non_neg_integer, term, keyword) ::
+          :ok | {:error, :unknown_stream}
+  def put_snapshot(store, stream_id, seq, state, cold) do
+    rows =
+      for {kind, id, run, created, changed, entity} <- Keyword.get(cold, :put, []),
+          do: [kind, id, run, created, changed, {:blob, encode_term(entity)}]
+
+    write(
+      store,
+      {:put_snapshot, stream_id, seq, {:blob, encode_term(state)},
+       %{
+         reset: Keyword.get(cold, :reset, false),
+         delete: for({kind, id} <- Keyword.get(cold, :delete, []), do: [kind, id]),
+         put: rows
+       }}
+    )
+  end
+
+  defp encode_term(term), do: :erlang.term_to_binary(term, [:compressed])
 
   @doc """
   Stores a stream's sidebar row (see `HalC2.Projection.row/3`) as of `seq`. The stream
@@ -452,11 +511,11 @@ defmodule HalC2.Store do
     end)
   end
 
-  @doc "Latest snapshot of a stream, if any."
+  @doc "Latest hot snapshot of a stream (`put_snapshot/5`), if any."
   @spec get_snapshot(String.t(), String.t()) :: {non_neg_integer, term} | nil
   def get_snapshot(path, stream_id) do
     sql =
-      "SELECT n.seq, n.state FROM snapshots n JOIN streams s ON s.key = n.stream WHERE s.id = ?1"
+      "SELECT n.seq, n.state FROM hot_snapshots n JOIN streams s ON s.key = n.stream WHERE s.id = ?1"
 
     with_query(path, sql, [stream_id], fn db, stmt ->
       case Sqlite3.step(db, stmt) do
@@ -465,6 +524,102 @@ defmodule HalC2.Store do
       end
     end)
   end
+
+  @doc """
+  The whole-stream snapshot an older MC wrote, if any: `{seq, state}`, or
+  `{:too_big, seq}` when it takes more than `max_bytes` stored, so whoever reads it
+  need not hold the whole of a long thread to find that out.
+  """
+  @spec legacy_snapshot(String.t(), String.t(), pos_integer) ::
+          {non_neg_integer, term} | {:too_big, non_neg_integer} | nil
+  def legacy_snapshot(path, stream_id, max_bytes) do
+    sql = """
+    SELECT n.seq, CASE WHEN length(n.state) <= ?2 THEN n.state END
+    FROM snapshots n JOIN streams s ON s.key = n.stream WHERE s.id = ?1
+    """
+
+    with_query(path, sql, [stream_id, max_bytes], fn db, stmt ->
+      case Sqlite3.step(db, stmt) do
+        {:row, [seq, nil]} -> {:too_big, seq}
+        {:row, [seq, state]} -> {seq, :erlang.binary_to_term(state)}
+        :done -> nil
+      end
+    end)
+  end
+
+  @doc "The cold rows of `keys` (`{kind, id}`) that a stream holds, in no order."
+  @spec cold_rows(String.t(), String.t(), [{String.t(), String.t()}]) :: [cold_row]
+  def cold_rows(_path, _stream_id, []), do: []
+
+  def cold_rows(path, stream_id, keys) do
+    sql = """
+    SELECT c.kind, c.id, c.run, c.created, c.changed, c.entity
+    FROM cold c JOIN streams s ON s.key = c.stream
+    WHERE s.id = ?1 AND (c.kind, c.id) IN
+      (SELECT value ->> 0, value ->> 1 FROM json_each(?2))
+    """
+
+    keys = JSON.encode!(for {kind, id} <- keys, do: [kind, id])
+
+    with_query(path, sql, [stream_id, keys], fn db, stmt ->
+      step_reduce(db, stmt, [], &[cold_row(&1) | &2])
+    end)
+  end
+
+  @doc """
+  Up to `limit` of a stream's cold rows, ordered by `order` (`:created` or
+  `:changed`) from after `after`. `:kinds` and `:runs` narrow them to those kinds
+  and run ids. A page at a time, so a caller can walk a long thread's rows in
+  bounded memory.
+  """
+  @spec cold_page(String.t(), String.t(), :created | :changed, integer, pos_integer, keyword) ::
+          [cold_row]
+  def cold_page(path, stream_id, order, after_seq, limit, opts \\ [])
+      when order in [:created, :changed] do
+    kinds = Keyword.get(opts, :kinds)
+    runs = Keyword.get(opts, :runs)
+
+    kind_filter =
+      if kinds, do: "AND c.kind IN (SELECT value FROM json_each(?4))", else: "AND ?4 IS NULL"
+
+    run_filter =
+      if runs, do: "AND c.run IN (SELECT value FROM json_each(?5))", else: "AND ?5 IS NULL"
+
+    sql = """
+    SELECT c.kind, c.id, c.run, c.created, c.changed, c.entity
+    FROM cold c JOIN streams s ON s.key = c.stream
+    WHERE s.id = ?1 AND c.#{order} > ?2 #{kind_filter} #{run_filter}
+    ORDER BY c.#{order} LIMIT ?3
+    """
+
+    args = [
+      stream_id,
+      after_seq,
+      limit,
+      kinds && JSON.encode!(kinds),
+      runs && JSON.encode!(Enum.to_list(runs))
+    ]
+
+    with_query(path, sql, args, fn db, stmt ->
+      db |> step_reduce(stmt, [], &[cold_row(&1) | &2]) |> Enum.reverse()
+    end)
+  end
+
+  @doc "How many cold rows of `kind` a stream holds per run id."
+  @spec cold_counts(String.t(), String.t(), String.t()) :: %{(String.t() | nil) => pos_integer}
+  def cold_counts(path, stream_id, kind) do
+    sql = """
+    SELECT c.run, count(*) FROM cold c JOIN streams s ON s.key = c.stream
+    WHERE s.id = ?1 AND c.kind = ?2 GROUP BY c.run
+    """
+
+    with_query(path, sql, [stream_id, kind], fn db, stmt ->
+      step_reduce(db, stmt, %{}, fn [run, count], acc -> Map.put(acc, run, count) end)
+    end)
+  end
+
+  defp cold_row([kind, id, run, created, changed, entity]),
+    do: {kind, id, run, created, changed, :erlang.binary_to_term(entity)}
 
   @doc "All streams with their latest seq, for building indexes."
   @spec list_streams(String.t()) :: [%{id: String.t(), kind: String.t(), seq: non_neg_integer}]
@@ -704,16 +859,41 @@ defmodule HalC2.Store do
     end
   end
 
-  def handle_call({:put_snapshot, stream_id, seq, snapshot}, _from, state) do
+  def handle_call({:put_snapshot, stream_id, seq, blob, cold}, _from, state) do
     with_existing_stream(state, stream_id, fn key ->
-      blob = :erlang.term_to_binary(snapshot, [:compressed])
+      :ok = Sqlite3.execute(state.db, "BEGIN IMMEDIATE")
 
-      :ok =
-        exec(
+      try do
+        if cold.reset, do: :ok = exec(state.db, "DELETE FROM cold WHERE stream = ?1", [key])
+
+        each(
           state.db,
-          "INSERT INTO snapshots (stream, seq, state) VALUES (?1, ?2, ?3) ON CONFLICT(stream) DO UPDATE SET seq = excluded.seq, state = excluded.state",
-          [key, seq, {:blob, blob}]
+          "DELETE FROM cold WHERE stream = ?1 AND kind = ?2 AND id = ?3",
+          [key],
+          cold.delete
         )
+
+        each(
+          state.db,
+          "INSERT INTO cold (stream, kind, id, run, created, changed, entity) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(stream, kind, id) DO UPDATE SET run = excluded.run, created = excluded.created, changed = excluded.changed, entity = excluded.entity",
+          [key],
+          cold.put
+        )
+
+        :ok =
+          exec(
+            state.db,
+            "INSERT INTO hot_snapshots (stream, seq, state) VALUES (?1, ?2, ?3) ON CONFLICT(stream) DO UPDATE SET seq = excluded.seq, state = excluded.state",
+            [key, seq, blob]
+          )
+
+        :ok = exec(state.db, "DELETE FROM snapshots WHERE stream = ?1", [key])
+        :ok = Sqlite3.execute(state.db, "COMMIT")
+      rescue
+        error ->
+          Sqlite3.execute(state.db, "ROLLBACK")
+          {:error, error}
+      end
     end)
   end
 
@@ -888,6 +1068,23 @@ defmodule HalC2.Store do
     :ok = Sqlite3.bind(stmt, args)
     {:ok, rows} = Sqlite3.fetch_all(db, stmt)
     rows
+  end
+
+  # One statement run for each of `rows`, its arguments `prefix ++ row`.
+  defp each(_db, _sql, _prefix, []), do: :ok
+
+  defp each(db, sql, prefix, rows) do
+    {:ok, stmt} = Sqlite3.prepare(db, sql)
+
+    try do
+      Enum.each(rows, fn row ->
+        :ok = Sqlite3.bind(stmt, prefix ++ row)
+        :done = Sqlite3.step(db, stmt)
+        :ok = Sqlite3.reset(stmt)
+      end)
+    after
+      Sqlite3.release(db, stmt)
+    end
   end
 
   defp exec(db, sql, args) do

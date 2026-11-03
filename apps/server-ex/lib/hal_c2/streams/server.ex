@@ -233,7 +233,7 @@ defmodule HalC2.Streams.Server do
     # what boot recovery reads to find the turns it cut off.
     Process.flag(:trap_exit, true)
     path = Store.path()
-    state = StreamState.load(path, stream_id)
+    state = StreamState.load(path, stream_id, store: Store)
 
     {:ok,
      %{
@@ -242,6 +242,8 @@ defmodule HalC2.Streams.Server do
        path: path,
        stream: state,
        snapshot_seq: state.seq,
+       # Memory holds this many turn items before the stream tries to demote some.
+       demote_at: 2 * StreamState.hot_items(),
        shell_scheduled: false,
        # pid => %{ref: monitor, view: View.t() | :plain | :watch}
        subscribers: %{},
@@ -320,7 +322,7 @@ defmodule HalC2.Streams.Server do
     do: {:reply, state.stream.seq, state, timeout(state)}
 
   def handle_call({:get, kind, id}, _from, state),
-    do: {:reply, StreamState.get(state.stream, kind)[id], state, timeout(state)}
+    do: {:reply, StreamState.fetch(state.stream, kind, id), state, timeout(state)}
 
   def handle_call(:flush_shell, _from, state) do
     {:noreply, state, _} =
@@ -348,11 +350,36 @@ defmodule HalC2.Streams.Server do
         %{seq: seq, kind: kind, entity: entity, patch: patch, at: change_at}
       end)
 
-    stream = Enum.reduce(events, state.stream, &StreamState.apply_event(&2, &1))
+    # The cold entities the commit touches come back to memory first, so every
+    # event applies to what its entity is, and `before` says what each was.
+    before = StreamState.promote(state.stream, for(e <- events, do: {e.kind, e.entity}))
+    stream = Enum.reduce(events, before, &StreamState.apply_event(&2, &1))
     HalC2.Search.index(state.id, events, stream)
-    broadcast(state, stream, events)
-    state = schedule_shell(%{state | stream: stream})
+    broadcast(%{state | stream: before}, stream, events)
+    state = schedule_shell(compact(%{state | stream: stream}))
     {:reply, {:ok, last}, state, timeout(state)}
+  end
+
+  # Memory keeps the hot part of the stream: past `demote_at` turn items, the older
+  # runs' go to the cold table with a snapshot. A run too long to leave anything
+  # behind is tried again only once memory holds twice as much.
+  defp compact(%{stream: stream} = state) do
+    held = map_size(StreamState.get(stream, "turn-item"))
+
+    if held > state.demote_at do
+      compacted = StreamState.compact(stream, Store)
+      now = map_size(StreamState.get(compacted, "turn-item"))
+      demote_at = max(2 * StreamState.hot_items(), if(now == held, do: 2 * held, else: 0))
+
+      snapshot_seq =
+        if compacted.floor != stream.floor or now != held,
+          do: compacted.seq,
+          else: state.snapshot_seq
+
+      %{state | stream: compacted, demote_at: demote_at, snapshot_seq: snapshot_seq}
+    else
+      state
+    end
   end
 
   @impl true
@@ -382,6 +409,7 @@ defmodule HalC2.Streams.Server do
       case state.subscribers do
         %{^pid => %{view: %{window: %{floor: floor}} = view} = sub} when floor != nil ->
           {runs, floor} = View.take_runs(state.stream, floor, items)
+
           # By the way its events go, so it arrives after the ones it follows.
           to = Map.get(state.relays, pid, pid)
 
@@ -446,8 +474,10 @@ defmodule HalC2.Streams.Server do
 
     if state.shell_scheduled, do: handle_info(:shell, state)
 
-    if state.stream.seq - state.snapshot_seq >= @snapshot_every,
-      do: Store.put_snapshot(state.id, state.stream.seq, state.stream)
+    if state.stream.seq - state.snapshot_seq >= @snapshot_every or state.stream.dirty != %{} do
+      {snapshot, cold} = StreamState.snapshot(state.stream)
+      Store.put_snapshot(Store, state.id, state.stream.seq, snapshot, cold)
+    end
   end
 
   @impl true
@@ -468,9 +498,10 @@ defmodule HalC2.Streams.Server do
     {:ok,
      state
      |> Map.put_new_lazy(:relays, fn -> relays(subscribers) end)
+     |> Map.put_new(:demote_at, 2 * StreamState.hot_items())
      |> Map.merge(%{
        v: @state_version,
-       stream: StreamState.migrate(state.stream),
+       stream: %{StreamState.migrate(state.stream) | src: {state.path, state.id}},
        subscribers: subscribers
      })}
   end
@@ -594,7 +625,7 @@ defmodule HalC2.Streams.Server do
              # Sent in parts it could be cut off part-way, and a client that had
              # applied the first of them would be sent them again. A patch applied
              # twice appends its text twice; a whole entity is the same either way.
-             if length(chunk(merged, [], 0, [])) > 1,
+             if :erlang.external_size(merged) > @chunk_bytes,
                do: View.changed_since(view, stream, offset),
                else: merged
 
@@ -606,17 +637,6 @@ defmodule HalC2.Streams.Server do
          end
 
        case missed do
-         [] ->
-           :ok
-
-         events when is_list(events) ->
-           # A client cut off part-way resumes from where it was, so only the last
-           # chunk moves its offset.
-           send_chunks(events, fn chunk, more ->
-             seq = if more == :done, do: List.last(chunk).seq, else: offset
-             send(pid, {:hal_c2_stream, id, {:events, chunk, seq}})
-           end)
-
          :unknown ->
            meta = if window, do: %{handle: handle, floor: window.floor}, else: %{handle: handle}
 
@@ -626,6 +646,18 @@ defmodule HalC2.Streams.Server do
                {:hal_c2_stream, id, {:snapshot, stream.seq, stream.updated_at, rows, more, meta}}
              )
            end)
+
+         events ->
+           # A client cut off part-way resumes from where it was, so only the last
+           # chunk moves its offset. Nothing missed is nothing to send.
+           send_chunks(
+             events,
+             fn chunk, more ->
+               seq = if more == :done, do: List.last(chunk).seq, else: offset
+               send(pid, {:hal_c2_stream, id, {:events, chunk, seq}})
+             end,
+             false
+           )
        end
 
        send(pid, {:hal_c2_stream, id, {:live, stream.seq, handle}})
@@ -645,24 +677,37 @@ defmodule HalC2.Streams.Server do
 
   defp replay(_state, _offset), do: :too_many
 
-  # Calls `fun.(chunk, :more | :done)` for `list` in chunks of about `@chunk_bytes`:
-  # once with nothing when `list` is empty, so whoever waits for `:done` gets it.
-  defp send_chunks(list, fun) do
-    chunks = chunk(list, [], 0, [])
-    last = length(chunks) - 1
+  # Calls `fun.(chunk, :more | :done)` for `items` in chunks of about `@chunk_bytes`,
+  # walking them lazily: a whole thread read from the cold table is never all in
+  # memory. Called once with nothing when there are none and `empty?` is true, so
+  # whoever waits for `:done` gets it.
+  defp send_chunks(items, fun, empty? \\ true) do
+    last =
+      items
+      |> Stream.chunk_while(
+        {[], 0},
+        fn item, {current, size} ->
+          item_size = :erlang.external_size(item)
 
-    for {chunk, i} <- Enum.with_index(chunks),
-        do: fun.(chunk, if(i == last, do: :done, else: :more))
-  end
+          if current != [] and size + item_size > @chunk_bytes,
+            do: {:cont, Enum.reverse(current), {[item], item_size}},
+            else: {:cont, {[item | current], size + item_size}}
+        end,
+        fn
+          {[], _} -> {:cont, {[], 0}}
+          {current, _} -> {:cont, Enum.reverse(current), {[], 0}}
+        end
+      )
+      |> Enum.reduce(nil, fn chunk, previous ->
+        if previous, do: fun.(previous, :more)
+        chunk
+      end)
 
-  defp chunk([], current, _size, acc), do: Enum.reverse([Enum.reverse(current) | acc])
-
-  defp chunk([item | rest], current, size, acc) do
-    item_size = :erlang.external_size(item)
-
-    if current != [] and size + item_size > @chunk_bytes,
-      do: chunk(rest, [item], item_size, [Enum.reverse(current) | acc]),
-      else: chunk(rest, [item | current], size + item_size, acc)
+    cond do
+      last -> fun.(last, :done)
+      empty? -> fun.([], :done)
+      true -> :ok
+    end
   end
 
   defp schedule_shell(%{shell_scheduled: true} = state), do: state

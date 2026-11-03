@@ -1,0 +1,222 @@
+defmodule HalC2.StreamsColdTest do
+  # A stream keeps the turn items, messages and nodes of its older runs on disk
+  # (`HalC2.StreamState`, "Hot and cold"). What anyone reads of it, and what clients
+  # are sent, is what a whole fold of the log holds.
+  use ExUnit.Case, async: false
+
+  alias HalC2.{Store, StreamState, Streams}
+  alias HalC2.Streams.Server
+
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: dir} do
+    previous = Application.get_env(:hal_c2, :stream_hot_items)
+    Application.put_env(:hal_c2, :stream_hot_items, 2)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :stream_hot_items, previous),
+        else: Application.delete_env(:hal_c2, :stream_hot_items)
+    end)
+
+    path = Path.join(dir, "hal-c2.sqlite")
+    start_supervised!({Store, path: path})
+    start_supervised!(Streams)
+    %{path: path}
+  end
+
+  test "older runs go cold and every read still sees the whole thread", %{path: path} do
+    for i <- 1..8, do: run("th", i, 3)
+    state = Streams.state("th")
+
+    assert state.floor != nil
+    assert map_size(StreamState.get(state, "turn-item")) < 24
+    assert rows(state) == whole(path, "th")
+    assert StreamState.fetch(state, "turn-item", "r1-i1")["text"] == "1.1"
+
+    assert Server.get(Streams.ensure("th"), "message", "r1-m") == %{
+             "runId" => "r1",
+             "text" => "q1"
+           }
+
+    counts = StreamState.item_counts(state)
+    assert Enum.all?(1..8, &(counts["r#{&1}"] == 3))
+  end
+
+  test "a whole client and a windowed one that pages back hold what a fold holds", %{path: path} do
+    for i <- 1..8, do: run("th", i, 3)
+
+    :ok = Streams.subscribe("th", self(), nil, %{kinds: nil})
+    assert snapshot() == wire(whole(path, "th"))
+
+    :ok = Streams.subscribe("th", self(), nil, %{kinds: nil, window: {:items, 2}, tag: :w})
+    first = snapshot(:w)
+    paged = page_all("th", :w)
+
+    expected = for {k, _, _} = row <- wire(whole(path, "th")), k in ~w(turn-item message), do: row
+    held = for {k, _, _} = row <- first ++ paged, k in ~w(turn-item message), do: row
+    assert Enum.sort(held) == Enum.sort(expected)
+  end
+
+  test "a change to a cold entity reaches clients and outlives a restart", %{path: path} do
+    for i <- 1..8, do: run("th", i, 3)
+    :ok = Streams.subscribe("th", self(), nil, %{kinds: nil})
+    _ = snapshot()
+
+    {:ok, seq} =
+      Streams.commit("th", :thread, [
+        {"turn-item", "r1-i1", %{"a" => %{"text" => "!"}}},
+        {"turn-item", "r1-i2", HalC2.Patch.delete()}
+      ])
+
+    assert_receive {:hal_c2_stream, "th", {:events, events, ^seq}}
+    assert [%{entity: "r1-i1", patch: %{"a" => %{"text" => "!"}}}, %{entity: "r1-i2"}] = events
+
+    state = Streams.state("th")
+    assert StreamState.fetch(state, "turn-item", "r1-i1")["text"] == "1.1!"
+    assert StreamState.fetch(state, "turn-item", "r1-i2") == nil
+    assert rows(state) == whole(path, "th")
+
+    stop("th")
+    restarted = Streams.state("th")
+    assert restarted.seq == seq
+    assert rows(restarted) == whole(path, "th")
+    assert StreamState.fetch(restarted, "turn-item", "r1-i2") == nil
+  end
+
+  test "changed_since replays a client from any offset to the whole thread", %{path: path} do
+    for i <- 1..6, do: run("th", i, 3)
+    {:ok, _} = Streams.commit("th", :thread, [{"turn-item", "r1-i3", HalC2.Patch.delete()}])
+    state = Streams.state("th")
+    log = Store.reduce_stream(path, "th", 0, [], &[&1 | &2]) |> Enum.reverse()
+
+    for offset <- [0, 5, div(state.seq, 2), state.seq - 1, state.seq] do
+      client = log |> Enum.take_while(&(&1.seq <= offset)) |> fold()
+      {upserts, deletes} = StreamState.changed_since(state, offset)
+
+      copy =
+        Enum.reduce(upserts, entities(client), fn {_, kind, id, entity}, acc ->
+          Map.put(acc, {kind, id}, entity)
+        end)
+
+      copy = Enum.reduce(deletes, copy, fn {_, kind, id}, acc -> Map.delete(acc, {kind, id}) end)
+      assert copy == entities(fold(log))
+    end
+  end
+
+  test "an older MC's snapshot migrates, read whole or folded from the log", %{path: path} do
+    for i <- 1..8, do: run("th", i, 3)
+    stop("th")
+    whole = whole(path, "th")
+
+    legacy =
+      path |> Store.reduce_stream("th", 0, StreamState.new(), &StreamState.apply_event(&2, &1))
+
+    legacy = %{Map.from_struct(legacy) | v: 3} |> Map.drop([:floor, :dirty, :src])
+    legacy = Map.put(legacy, :__struct__, StreamState)
+
+    for max <- [1, 100_000_000] do
+      sql!(path, "DELETE FROM hot_snapshots")
+      sql!(path, "DELETE FROM cold")
+      put_legacy(path, "th", legacy.seq, legacy)
+
+      state = StreamState.load(path, "th", store: Store, max_legacy: max)
+      assert state.floor != nil
+      assert rows(state) == whole
+      # Migrated once: the older snapshot is gone and a hot one stands in its place.
+      assert {_, %StreamState{v: 4}} = Store.get_snapshot(path, "th")
+      assert Store.legacy_snapshot(path, "th", 100_000_000) == nil
+      assert rows(StreamState.load(path, "th")) == whole
+    end
+  end
+
+  # --- helpers ----------------------------------------------------------------
+
+  # One settled run of `n` turn items with its user message, `ordinal` `i`.
+  defp run(stream, i, n) do
+    run = "r#{i}"
+
+    {:ok, _} =
+      Streams.commit(stream, :thread, [
+        {"run", run, %{"s" => %{"id" => run, "ordinal" => i, "status" => "running"}}},
+        {"message", "#{run}-m", %{"s" => %{"runId" => run, "text" => "q#{i}"}}}
+        | for(
+            j <- 1..n,
+            do: {"turn-item", "#{run}-i#{j}", %{"s" => %{"runId" => run, "text" => "#{i}.#{j}"}}}
+          )
+      ])
+
+    {:ok, _} =
+      Streams.commit(stream, :thread, [{"run", run, %{"s" => %{"status" => "completed"}}}])
+  end
+
+  defp fold(events), do: Enum.reduce(events, StreamState.new(), &StreamState.apply_event(&2, &1))
+
+  defp whole(path, id),
+    do:
+      path
+      |> Store.reduce_stream(id, 0, StreamState.new(), &StreamState.apply_event(&2, &1))
+      |> rows()
+
+  defp rows(state), do: state |> StreamState.rows() |> Enum.to_list()
+
+  defp entities(state),
+    do: for({kind, id, entity} <- StreamState.rows(state), into: %{}, do: {{kind, id}, entity})
+
+  defp wire(rows), do: for({k, id, e} <- rows, do: {k, id, HalC2.Web.Wire.entity(k, e)})
+
+  defp snapshot(tag \\ nil, acc \\ []) do
+    name = if tag, do: {"th", tag}, else: "th"
+
+    receive do
+      {:hal_c2_stream, ^name, {:snapshot, _, _, rows, :more, _}} -> snapshot(tag, acc ++ rows)
+      {:hal_c2_stream, ^name, {:snapshot, _, _, rows, :done, _}} -> acc ++ rows
+    after
+      1_000 -> flunk("no snapshot")
+    end
+  end
+
+  defp page_all(id, tag, acc \\ []) do
+    :ok = Server.more(id, self(), 2, tag)
+    {rows, floor} = page(tag, [])
+    if floor == nil, do: acc ++ rows, else: page_all(id, tag, acc ++ rows)
+  end
+
+  defp page(tag, acc) do
+    receive do
+      {:hal_c2_stream, {"th", ^tag}, {:page, _, rows, _floor, :more}} -> page(tag, acc ++ rows)
+      {:hal_c2_stream, {"th", ^tag}, {:page, _, rows, floor, :done}} -> {acc ++ rows, floor}
+    after
+      1_000 -> flunk("no page")
+    end
+  end
+
+  defp stop(id) do
+    pid = Streams.ensure(id)
+    ref = Process.monitor(pid)
+    GenServer.stop(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}
+  end
+
+  defp put_legacy(path, id, seq, state) do
+    {:ok, db} = Exqlite.Sqlite3.open(path)
+    blob = :erlang.term_to_binary(state, [:compressed])
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(
+        db,
+        "INSERT INTO snapshots (stream, seq, state) SELECT key, ?2, ?3 FROM streams WHERE id = ?1 ON CONFLICT(stream) DO UPDATE SET seq = excluded.seq, state = excluded.state"
+      )
+
+    :ok = Exqlite.Sqlite3.bind(stmt, [id, seq, {:blob, blob}])
+    :done = Exqlite.Sqlite3.step(db, stmt)
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    Exqlite.Sqlite3.close(db)
+  end
+
+  defp sql!(path, sql) do
+    {:ok, db} = Exqlite.Sqlite3.open(path)
+    :ok = Exqlite.Sqlite3.execute(db, sql)
+    Exqlite.Sqlite3.close(db)
+  end
+end
