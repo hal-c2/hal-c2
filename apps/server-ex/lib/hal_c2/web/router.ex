@@ -415,7 +415,11 @@ defmodule HalC2.Web.Router do
     with :ok <- compatible_protocol(conn.query_params["protocol"]),
          {:ok, session} <- socket_session(conn.query_params) do
       conn
-      |> WebSockAdapter.upgrade(HalC2.Web.Socket, %{session: session}, timeout: 60_000)
+      |> WebSockAdapter.upgrade(
+        HalC2.Web.Socket,
+        %{session: session, trace: socket_trace(conn)},
+        timeout: 60_000
+      )
       |> halt()
     else
       {:incompatible, side} ->
@@ -429,6 +433,14 @@ defmodule HalC2.Web.Router do
 
       :error ->
         send_resp(conn, 401, "unauthorized")
+    end
+  end
+
+  # The trace id of the client's attempt, from its W3C `traceparent`.
+  defp socket_trace(conn) do
+    case get_req_header(conn, "traceparent") do
+      [<<_version::binary-size(2), "-", trace::binary-size(32), "-", _rest::binary>> | _] -> trace
+      _ -> nil
     end
   end
 
