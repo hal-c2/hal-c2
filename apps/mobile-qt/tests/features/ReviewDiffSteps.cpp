@@ -206,7 +206,7 @@ const Steps steps([] {
            S("the composer carries %1").arg(show(chip)));
     // Back on the thread, the comment waits on the composer.
     world.back();
-    world.item(S("centreHost"));
+    world.item(S("routeView"));
     expect(!world.find(S("diffPanel")), S("the diff is still on screen"));
     world.item(S("reviewComment-") + chip.value(S("id")).toString());
     // Sent, the message names the chip and carries the note, the file and the lines.
