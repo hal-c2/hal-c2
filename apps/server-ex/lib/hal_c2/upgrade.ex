@@ -587,7 +587,9 @@ defmodule HalC2.Upgrade do
 
   defp libs(root, vsn) do
     {:ok, [{:release, _name, _erts, apps}]} =
-      :file.consult(String.to_charlist(Path.join([root, "releases", vsn, "start.rel"])))
+      :file.consult(
+        String.to_charlist(HalC2.Upgrade.Release.rel_file(Path.join(root, "releases"), vsn))
+      )
 
     for app <- apps do
       {name, app_vsn} = {elem(app, 0), to_string(elem(app, 1))}

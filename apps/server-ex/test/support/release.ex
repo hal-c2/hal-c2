@@ -22,7 +22,7 @@ defmodule HalC2.Test.Release do
   @doc """
   Writes release `vsn` under `dir`: `lib/hal_c2_bundle-<vsn>` with the beams already
   there and `modules` (`{module, beam}`) over them, and `releases/<vsn>` with its
-  `start.rel`, `start.boot`, `sys` as `sys.config` and `manifest` as `upgrade.json`.
+  `hal_c2.rel` (as a mix release names it), `start.boot`, `sys` as `sys.config` and `manifest` as `upgrade.json`.
   """
   def write(dir, vsn, modules, manifest, sys \\ []) do
     ebin = ebin(dir, vsn)
@@ -49,7 +49,7 @@ defmodule HalC2.Test.Release do
     otp = for {app, app_vsn, _dir} <- otp(), do: {app, String.to_charlist(app_vsn)}
 
     Appup.write_term!(
-      Path.join(rel, "start.rel"),
+      Path.join(rel, "hal_c2.rel"),
       {:release, {~c"hal_c2", String.to_charlist(vsn)}, {:erts, String.to_charlist(erts())},
        otp ++ [{@app, String.to_charlist(vsn)}]}
     )
@@ -59,7 +59,7 @@ defmodule HalC2.Test.Release do
 
     path = [String.to_charlist(ebin) | for({_, _, lib} <- otp(), do: ~c"#{lib}/ebin")]
 
-    case :systools.make_script(String.to_charlist(Path.join(rel, "start")), [
+    case :systools.make_script(String.to_charlist(Path.join(rel, "hal_c2")), [
            :silent,
            :no_warn_sasl,
            :no_module_tests,
@@ -70,6 +70,10 @@ defmodule HalC2.Test.Release do
       :ok -> :ok
       error -> raise "no boot script for #{vsn}: #{inspect(error)}"
     end
+
+    # The release handler boots `start.boot`, which a mix release copies from its own.
+    File.rename!(Path.join(rel, "hal_c2.boot"), Path.join(rel, "start.boot"))
+    File.rename!(Path.join(rel, "hal_c2.script"), Path.join(rel, "start.script"))
   end
 
   @doc "Makes `root` a release root running `vsn` (`write/4`, with OTP linked in)."

@@ -41,7 +41,7 @@ defmodule HalC2.Upgrade.Release do
 
   @typedoc """
   The two releases. `rel_dir` holds `RELEASES` and a directory per version with its
-  `start.rel`, `start.boot` and `sys.config`. The release handler resolves
+  release file (`rel_file/2`), `start.boot` and `sys.config`. The release handler resolves
   applications against the VM's root (`code:root_dir/0`, the release root of an
   installed MC); ones elsewhere are found by their directory in `from_libs` and
   `to_libs`. `consolidated` are the directories of each release's protocol
@@ -213,7 +213,7 @@ defmodule HalC2.Upgrade.Release do
           :release_handler.create_RELEASES(
             String.to_charlist(root()),
             rel_dir,
-            String.to_charlist(rel_file(spec, spec.from)),
+            String.to_charlist(rel_file(spec.rel_dir, spec.from)),
             lib_dirs(spec, spec.from_libs)
           )
 
@@ -255,7 +255,7 @@ defmodule HalC2.Upgrade.Release do
     to = String.to_charlist(spec.to)
 
     case :release_handler.set_unpacked(
-           String.to_charlist(rel_file(spec, spec.to)),
+           String.to_charlist(rel_file(spec.rel_dir, spec.to)),
            lib_dirs(spec, spec.to_libs)
          ) do
       {:ok, ^to} ->
@@ -273,7 +273,16 @@ defmodule HalC2.Upgrade.Release do
 
   defp root, do: to_string(:code.root_dir())
 
-  defp rel_file(spec, vsn), do: Path.join([spec.rel_dir, vsn, "start.rel"])
+  @doc """
+  The release file of release `vsn` under `rel_dir`: a mix release names it after the
+  release (`hal_c2.rel`), the dev MC's releases `start.rel`.
+  """
+  def rel_file(rel_dir, vsn) do
+    case Path.wildcard(Path.join([rel_dir, vsn, "*.rel"])) do
+      [file] -> file
+      _ -> Path.join([rel_dir, vsn, "start.rel"])
+    end
+  end
 
   # Applications whose directory is not `<root>/lib/<app>-<vsn>`, by the directory
   # their `<app>-<vsn>` is in.
@@ -307,8 +316,8 @@ defmodule HalC2.Upgrade.Release do
 
     relup =
       :systools.make_relup(
-        String.to_charlist(Path.rootname(rel_file(spec, spec.to))),
-        [String.to_charlist(Path.rootname(rel_file(spec, spec.from)))],
+        String.to_charlist(Path.rootname(rel_file(spec.rel_dir, spec.to))),
+        [String.to_charlist(Path.rootname(rel_file(spec.rel_dir, spec.from)))],
         [],
         [:silent, :no_warn_sasl, path: paths, outdir: String.to_charlist(to_dir)]
       )
