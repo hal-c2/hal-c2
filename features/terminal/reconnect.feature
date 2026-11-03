@@ -248,7 +248,7 @@ Feature: Reattaching to terminals
       Given a terminal that has printed more than 512 KiB since the client attached
       Then the client keeps the newest 512 KiB
 
-    @backlog @mobile
+    @mobile
     Scenario: The phone reattaches to a terminal after losing its connection
       Given the phone shows a running terminal
       When the phone loses its connection and reconnects

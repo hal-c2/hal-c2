@@ -26,6 +26,8 @@ set(hal_c2_mobile_qml_files
     SpaceSlideRow.qml
     SpaceTextDialog.qml
     SpaceVersionScreen.qml
+    TerminalContextSheet.qml
+    TerminalScreen.qml
     ThreadScreen.qml
 )
 include("${HAL_C2_DESKTOP_DIR}/cmake/QmldirCheck.cmake")

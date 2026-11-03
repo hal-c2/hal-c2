@@ -320,7 +320,7 @@ Feature: Terminal sessions
       When the user opens another terminal next to it
       Then the new terminal starts in the same folder and worktree as the script
 
-    @backlog @mobile
+    @mobile
     Scenario: The user opens a thread's terminal on the phone
       Given a thread with a running terminal on a paired environment
       When the user opens the thread's terminal on the phone

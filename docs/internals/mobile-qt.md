@@ -166,12 +166,15 @@ an iOS build gets the iOS style from the same files.
   commands are not registered, `DefaultLayout` does not load the drawer, and the two places that
   would open a sign-in terminal say that this build has none. A brick that would reach a
   terminal asks that one property and nothing else.
-- **The terminal under a finger.** qml-ghostty's item does not raise the on-screen keyboard when
-  tapped, takes a finger's drag for a selection rather than a scroll, and ignores the input
-  method's composing text. It is for a device with a keyboard, which is why only the desktop's
-  layout draws it, and why in the phone layout a thread has no place for one
-  (`TerminalController::setDrawn`): the terminal's key would otherwise open a shell on the MC
-  that nothing shows.
+- **The terminal under a finger.** The phone layout shows a thread's terminals one at a time on a
+  screen of their own (`TerminalController::setSingleScreen`, `TerminalScreen.qml`), not the
+  desktop's drawer. A finger is the screen's to read: the engine's item takes a drag for a
+  selection, so the screen turns a drag into wheel events and a long press into the mouse events
+  of a word selection (`TerminalEvents`). Typed keys pass through `MobileTerminal`, which applies
+  the key row's held modifier. A rotation must not rebuild this screen: a turned phone hears its
+  width before its height, so the root's `roomy` is a delayed binding, or the layout flips for the
+  moment the window is square and the terminal is destroyed. A foldable that really crosses into
+  the desktop layout does rebuild it, in the drawer.
 - **FFmpeg.** A Device tab's screen is decoded with FFmpeg loaded at run time, which Android does
   not have (`HAL_C2_HAS_FFMPEG`).
 - **A user's own shell on iOS.** `ShellRuntime` loads `<config>/shell/shell.qml` when there is one,

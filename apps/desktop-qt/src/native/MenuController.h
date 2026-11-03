@@ -38,6 +38,8 @@ public:
     bool destructive = false;
     bool separatorBefore = false;
     QList<Item> children;
+    // A second line, for a sheet of rows a finger wide (the phone's).
+    QString subtitle;
   };
   using Chosen = std::function<void(const QString& id)>;
 

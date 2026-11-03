@@ -24,6 +24,13 @@ FocusScope {
     property color background: Theme.palette.color("canvas", "#09090b")
     property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color border: Theme.palette.color("border", "#27272a")
+    // What the terminal says goes through this, `(terminal, data) => ...`, for
+    // a layout that changes it first; else straight to its session.
+    property var inputHandler: null
+    // A text size in points over the theme's terminal size, when above zero.
+    property real fontPointSize: 0
+    // Moves as terminals come and go, for a binding on terminalOf.
+    property int cellRevision: 0
     // What covers the top of the scrollbars, such as the drawer's buttons over a
     // single terminal's corner.
     property real scrollbarTopInset: 0
@@ -83,6 +90,8 @@ FocusScope {
         id: cells
 
         model: Terminals.tabs
+        onItemAdded: splits.cellRevision++
+        onItemRemoved: splits.cellRevision++
 
         delegate: TerminalCell {
             id: cell
@@ -152,7 +161,7 @@ FocusScope {
                 padding: 6
                 // A whole font: the Terminal's default carries a point size,
                 // which a pixel size set over it warns about.
-                font: Terminals.terminalFont(Theme.fontTerminal, Theme.fontSizeTerminal)
+                font: Terminals.terminalFont(Theme.fontTerminal, Theme.fontSizeTerminal, splits.fontPointSize)
                 backgroundColor: splits.background
                 foregroundColor: splits.foreground
                 cursorColor: splits.foreground
@@ -175,7 +184,12 @@ FocusScope {
                 }
                 onScrollOffsetChanged: if (terminal.hoveredLink !== null)
                     terminal.hoverLink()
-                onInput: data => terminal.session.write(data)
+                onInput: data => {
+                    if (splits.inputHandler !== null)
+                        splits.inputHandler(terminal, data);
+                    else
+                        terminal.session.write(data);
+                }
                 // Only a laid-out Terminal knows its grid; the first pass is 1x1.
                 onResized: (columns, rows) => {
                     if (terminal.width > 0 && terminal.height > 0)

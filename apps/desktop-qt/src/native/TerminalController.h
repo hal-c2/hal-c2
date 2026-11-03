@@ -241,10 +241,15 @@ public:
   // linked in). The app says so once, before any window; the desktop always can.
   static void setSupported(bool supported);
   static bool supported();
-  // Whether the window's layout has anywhere to draw a terminal. A layout
-  // without a drawer or a panel (a phone's) says no, and the thread then has
-  // no place for one, so no command opens a shell nobody can see.
-  void setDrawn(bool drawn);
+  // Whether the window's layout shows one terminal at a time on a screen of its
+  // own (a phone's) rather than a drawer. Opening picks a running terminal, or
+  // starts the shell of an ended one anew; a shell that ends stays listed by the
+  // MC, and the screen moves to the nearest running terminal, else closes. An
+  // ended terminal is not attached, and only the one shown says what it has read.
+  void setSingleScreen(bool singleScreen);
+  // Another screen is over the single screen: a shell ending there moves nothing
+  // until the user is back, when it may have started again.
+  void setCovered(bool covered);
 
   void activate() override;
   bool isActive() const { return m_active; }
@@ -263,16 +268,24 @@ public:
   QVariantMap groupSizes() const;
   int drawerCount() const;
   TerminalTabs* tabs() { return &m_tabs; }
+  // The thread's terminals in order, while the layout is single-screen:
+  // [{terminalId, label, status, busy, cwd}], `status` as the MC's summary has it
+  // ("starting" until it lists one opened here), `cwd` empty until it does.
+  QVariantList listing() const;
+  // The session of the terminal shown, if it has one.
+  TerminalSession* activeSession() const { return session(activeTerminalId()); }
+  const std::optional<TerminalPlace>& place() const { return m_place; }
   // The thread whose terminals these are ("<environment>:<thread id>").
   QString threadKey() const { return m_threadKey; }
 
   // A terminal took the keyboard: it becomes its group's active one, and the
   // one split and keybindings act on.
   Q_INVOKABLE void focusTerminal(const QString& terminalId);
-  // A terminal's font: `family` at `pixelSize`, then the bundled prompt symbols
-  // (TerminalSplits' FontLoader), which Qt falls back to glyph by glyph. QML's
-  // font type cannot hold a list of families.
-  Q_INVOKABLE QFont terminalFont(const QString& family, int pixelSize) const;
+  // A terminal's font: `family` at `pixelSize`, or at `pointSize` when above
+  // zero, then the bundled prompt symbols (TerminalSplits' FontLoader), which
+  // Qt falls back to glyph by glyph. QML's font type cannot hold a list of
+  // families.
+  Q_INVOKABLE QFont terminalFont(const QString& family, int pixelSize, qreal pointSize = 0) const;
   // Opens a terminal in a new group of the right panel's; returns the group,
   // or nothing when the thread has no place for terminals or no room.
   QString addPanelGroup();
@@ -302,6 +315,10 @@ private:
   struct Summary {
     QString label;
     bool busy = false;
+    QString status;
+    QString cwd;
+    // What the MC keeps listing after its shell is gone.
+    bool ended() const { return status == QLatin1String("exited") || status == QLatin1String("error"); }
   };
   // A split group, or a right panel tab's.
   struct Group {
@@ -357,6 +374,13 @@ private:
   bool setOpen(bool open);
   void openTerminal(const QString& terminalId);
   void closeTerminal(const QString& terminalId);
+  // The shell of an ended terminal the MC still lists starts anew.
+  void restartTerminal(const QString& terminalId);
+  // `ids` without the terminals whose shells ended.
+  QStringList liveOf(const QStringList& ids) const;
+  // Single-screen: which of the drawer's terminals is active, and whether the
+  // screen still has one to show.
+  void settleSingleScreen(ThreadUi& ui, const QStringList& drawer) const;
   // A terminal new here: its id, and what undoes it if the MC refuses it.
   static Starting& startTerminal(ThreadUi& ui, const QString& terminalId);
   // The MC refused a terminal still starting: as if it had never been asked
@@ -377,6 +401,7 @@ private:
     QString activeGroup;
     QVariantMap groupSizes;
     int drawerCount = 0;
+    QVariantList listing;
     bool operator==(const Facts&) const = default;
   };
   Facts facts() const;
@@ -386,7 +411,8 @@ private:
   ShellBridge* m_bridge;
   McClient* m_client;
   bool m_active = false;
-  bool m_drawn = true;
+  bool m_singleScreen = false;
+  bool m_covered = false;
   QString m_threadKey;
   std::optional<TerminalPlace> m_place;
   // Whether the thread on screen has its terminals attached.
