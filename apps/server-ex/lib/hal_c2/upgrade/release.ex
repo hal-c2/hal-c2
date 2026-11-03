@@ -113,6 +113,8 @@ defmodule HalC2.Upgrade.Release do
       still on `spec.from`.
     * `{:error, {:crashed, why}}`: the script failed past the point of no return, and
       the release handler is restarting the node on the permanent release.
+    * `{:error, {:not_permanent, why}}`: `spec.to` runs, but the next boot starts
+      the permanent release, still `spec.from`.
 
   The report
   names the modules that `changed`, those whose old code a process still runs
@@ -159,8 +161,15 @@ defmodule HalC2.Upgrade.Release do
         {:ok, _from, _descr} ->
           restore(kept)
 
-          :ok = :release_handler.make_permanent(String.to_charlist(spec.to))
-          {:ok, report(plan)}
+          case :release_handler.make_permanent(String.to_charlist(spec.to)) do
+            :ok ->
+              {:ok, report(plan)}
+
+            {:error, reason} ->
+              {:error,
+               {:not_permanent,
+                "#{spec.to} installed but could not be made permanent: #{describe(reason)}"}}
+          end
 
         # The release handler replies so for a script that failed past the point of no
         # return, and then restarts the node on the permanent release itself.
@@ -527,7 +536,7 @@ defmodule HalC2.Upgrade.Release do
   def describe({:code_change_failed, pid, mod, _vsn, reason}),
     do: "#{inspect(mod)} could not migrate #{inspect(pid)}: #{inspect(reason)}"
 
-  def describe({tag, why}) when tag == :crashed and is_binary(why), do: why
+  def describe({tag, why}) when tag in [:crashed, :not_permanent] and is_binary(why), do: why
   def describe(reason) when is_binary(reason), do: reason
   def describe(reason), do: inspect(reason)
 end

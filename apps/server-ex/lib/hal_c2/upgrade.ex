@@ -466,6 +466,13 @@ defmodule HalC2.Upgrade do
             record(Map.merge(outcome, %{"status" => "rolled-back", "reason" => why}))
             failure("Installing #{target} failed, and the MC restarts on #{from}: #{why}")
 
+          # `target` runs until the MC restarts, which starts `from`.
+          {:error, {:not_permanent, why}} ->
+            why = "#{why}; the MC runs it until it restarts, which starts #{from}"
+            Logger.error(why)
+            moved(target, outcome, %{"status" => "failed", "reason" => why})
+            failure(why)
+
           {:error, reason} ->
             why = "installing in place failed: #{HalC2.Upgrade.Release.describe(reason)}"
 

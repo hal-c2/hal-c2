@@ -1,7 +1,8 @@
 defmodule HalC2.Upgrade.InstallFailureTest do
   @moduledoc """
-  An install in place that fails after the release handler started it, past the
-  point of no return (a `code_change/3` that raises). It may not leave `start_erl.data` naming a
+  An install in place that fails after the release handler started it: past the
+  point of no return (a `code_change/3` that raises), or once installed, when the
+  release cannot be made permanent. Neither may leave `start_erl.data` naming a
   release the MC does not run or the outcome saying otherwise.
 
   A script that fails past the point of no return has the release handler restart
@@ -20,6 +21,7 @@ defmodule HalC2.Upgrade.InstallFailureTest do
   alias HalC2.Upgrade.Tree
 
   @moduletag :tmp_dir
+  @compile {:no_warn_undefined, :release_handler}
 
   # The next version of `Shaped`, whose migration raises.
   @raising """
@@ -101,6 +103,32 @@ defmodule HalC2.Upgrade.InstallFailureTest do
     assert %{"status" => "rolled-back", "reason" => partway} = Upgrade.outcome()
     assert partway =~ "failed partway"
     assert start_version(root) == from
+  end
+
+  test "a release installed but not made permanent runs, and says the next boot is the old one",
+       %{dir: dir, root: root, from: from, target: target} do
+    # `make_permanent` checks the release's boot script is there, before it changes
+    # anything.
+    Application.put_env(:hal_c2, :install_release, fn vsn, opts ->
+      result = :release_handler.install_release(vsn, opts)
+      boot = Path.join([root, "releases", to_string(vsn), "start.boot"])
+      File.rename!(boot, boot <> ".gone")
+      result
+    end)
+
+    beam = HalC2.Test.Compile.beam(Shaped, Shaped.next())
+    bundle(dir, target, [{Tree, tree()}, {Shaped, beam}])
+
+    assert {:error, %{"reason" => reason}} = Upgrade.update(%{"targetVersion" => target})
+    assert reason =~ "#{target} installed but could not be made permanent"
+    assert reason =~ "which starts #{from}"
+    refute_receive {:hal_c2_restart, _}, 700
+
+    # The new code runs, so the MC says it runs `target`, until it restarts on `from`.
+    assert Upgrade.version() == target
+    assert Shaped.state() == {:v2, 1, [:migrated]}
+    assert start_version(root) == from
+    assert %{"status" => "failed", "reason" => ^reason} = Upgrade.outcome()
   end
 
   test "a boot after a rollback the service did not make puts the previous release back",

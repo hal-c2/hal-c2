@@ -83,6 +83,10 @@ defmodule HalC2.Upgrade.Dev do
       prune(rel_dir, to, to_libs)
       {:ok, report}
     else
+      # The new code runs, from these files, until the MC restarts.
+      {:not_permanent, why} ->
+        {:error, why}
+
       error ->
         for dir <- copied, do: File.rm_rf(dir)
         File.rm_rf(Path.join(rel_dir, to))
@@ -100,6 +104,7 @@ defmodule HalC2.Upgrade.Dev do
   defp install(spec, plan) do
     case Release.install(spec, plan, Release.config(Release.running_env(), [])) do
       {:ok, report} -> {:ok, report}
+      {:error, {:not_permanent, why}} -> {:not_permanent, why}
       {:error, reason} -> {:error, Release.describe(reason)}
     end
   end
