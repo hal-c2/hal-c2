@@ -293,4 +293,20 @@ defmodule HalC2.SubprocessDurableTest do
     refute Durable.attachable?(sub.durable.dir)
     assert HalC2.Subprocess.Orphans.gone?(pid)
   end
+
+  test "a durable program's exit carries the end of its stderr, when kept" do
+    dies = ["sh", "-c", ~S(read l; echo 'config is not trusted' >&2; exit 3)]
+
+    conn =
+      start_supervised!(
+        {HalC2.JsonRpc.Connection,
+         cmd: dies, handler: self(), program: "Peer", stderr_tail: true, durable: "thread-tail"},
+        restart: :temporary
+      )
+
+    assert {:error, %{"message" => "Peer process exited with code 3", "stderr" => said}} =
+             HalC2.JsonRpc.Connection.call(conn, "start", %{})
+
+    assert said == "config is not trusted"
+  end
 end

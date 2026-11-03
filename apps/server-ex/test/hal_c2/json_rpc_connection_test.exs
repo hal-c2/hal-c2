@@ -52,4 +52,36 @@ defmodule HalC2.JsonRpc.ConnectionTest do
     assert_receive {:json_rpc, ^conn, {:invalid, "Open: https://two"}}, 2_000
     refute_received {:json_rpc, ^conn, {:invalid, _}}
   end
+
+  # Reads the call, says why on stderr (in colour, as Rust's tracing does), and dies.
+  @dies [
+    "sh",
+    "-c",
+    ~S(read l; printf 'noise\n\n\033[31mERROR\033[0m config is not trusted\n' >&2; exit 1)
+  ]
+
+  test "a program's exit carries the end of its stderr, when kept" do
+    conn =
+      start_supervised!(
+        {Connection, cmd: @dies, handler: self(), program: "Peer", stderr_tail: true},
+        id: :tail,
+        restart: :temporary
+      )
+
+    assert {:error, %{"message" => "Peer process exited with code 1", "stderr" => said}} =
+             Connection.call(conn, "start", %{})
+
+    assert said == "noise\nERROR config is not trusted"
+  end
+
+  test "a program's exit carries no stderr unless asked" do
+    conn =
+      start_supervised!({Connection, cmd: @dies, handler: self(), program: "Peer"},
+        id: :no_tail,
+        restart: :temporary
+      )
+
+    assert {:error, error} = Connection.call(conn, "start", %{})
+    assert error == %{"message" => "Peer process exited with code 1"}
+  end
 end

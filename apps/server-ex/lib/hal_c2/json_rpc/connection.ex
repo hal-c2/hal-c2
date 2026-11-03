@@ -10,7 +10,9 @@ defmodule HalC2.JsonRpc.Connection do
   program's own client used (`"Codex App Server process exited with code 1"`). With `:log` (a thread id), every
   line the subprocess sends also goes to `HalC2.ProviderLog`. With `:stderr_prefix`,
   stderr lines starting with it reach the handler as `{:invalid, line}`, like a
-  non-JSON stdout line, and are not logged; the rest of stderr is discarded.
+  non-JSON stdout line, and are not logged; the rest of stderr is discarded. With
+  `:stderr_tail` and `:program`, an exit also carries the last lines of stderr, as
+  `"stderr"` beside the message: why a program that died on start died.
 
   With `:durable` (a thread id) the subprocess outlives the MC. After each batch of
   output the handler then gets `{:json_rpc, conn, {:checkpoint, checkpoint}}` to save
@@ -36,6 +38,7 @@ defmodule HalC2.JsonRpc.Connection do
           | {:env, [{String.t(), String.t()}]}
           | {:log, String.t() | nil}
           | {:stderr_prefix, String.t() | nil}
+          | {:stderr_tail, boolean}
           | {:program, String.t() | nil}
           | {:durable, String.t() | nil}
           | {:adopt, %{dir: String.t(), offset: non_neg_integer, channel: map}}
@@ -91,7 +94,9 @@ defmodule HalC2.JsonRpc.Connection do
            earlier: if(adopt, do: adopt.channel.methods, else: %{}),
            log: Keyword.get(opts, :log),
            program: Keyword.get(opts, :program),
-           exit_status: nil
+           stderr_tail: Keyword.get(opts, :stderr_tail, false),
+           exit_status: nil,
+           stderr: ""
          }}
 
       {:error, reason} ->
@@ -106,7 +111,11 @@ defmodule HalC2.JsonRpc.Connection do
 
       nil ->
         cmd = Keyword.fetch!(opts, :cmd)
-        Subprocess.start(cmd, Keyword.take(opts, [:cd, :env, :stderr_prefix, :durable]))
+
+        Subprocess.start(
+          cmd,
+          Keyword.take(opts, [:cd, :env, :stderr_prefix, :stderr_tail, :durable])
+        )
     end
   end
 
@@ -162,13 +171,16 @@ defmodule HalC2.JsonRpc.Connection do
     # call left open fails with the exit rather than a bare close.
     state =
       if state.program && state.exit_status == nil do
+        # Before the stop, which removes a durable program's dir and its stderr with it.
+        stderr = if state.stderr_tail, do: Subprocess.stderr_tail(state.sub), else: ""
+
         status =
           case Subprocess.stop(state.sub, 1_000) do
             {:ok, status} -> status
             _ -> nil
           end
 
-        %{state | exit_status: status}
+        %{state | exit_status: status, stderr: stderr}
       else
         state
       end
@@ -187,6 +199,7 @@ defmodule HalC2.JsonRpc.Connection do
       case {state.program, state.exit_status} do
         {program, status} when is_binary(program) and is_integer(status) ->
           %{"message" => "#{program} process exited with code #{status}"}
+          |> then(&if state.stderr != "", do: Map.put(&1, "stderr", state.stderr), else: &1)
 
         _ ->
           :closed
@@ -210,6 +223,8 @@ defmodule HalC2.JsonRpc.Connection do
       state
       |> Map.put_new(:program, nil)
       |> Map.put_new(:exit_status, nil)
+      |> Map.put_new(:stderr_tail, false)
+      |> Map.put_new(:stderr, "")
       |> Map.put_new(:methods, %{})
       |> Map.put_new(:earlier, %{})
       |> Map.put_new(:offset, 0)

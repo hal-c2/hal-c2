@@ -12,7 +12,9 @@ defmodule HalC2.Subprocess do
   Stderr is discarded unless `:stderr_prefix` is given: then another reader drains
   it and sends the owner only the lines that start with the prefix, as
   `{:subprocess_stderr, reader, lines}`. The rest never leaves the reader, since an
-  agent's stderr can carry credentials.
+  agent's stderr can carry credentials. With `:stderr_tail`, the reader also keeps the
+  last few KB of it, which `stderr_tail/1` hands over once the program has ended: what a
+  program that died on start said is the only account of why.
 
   Exile stops the program when its owner exits, but not when the VM dies;
   `HalC2.Subprocess.Orphans` records each program so the next boot kills those.
@@ -32,13 +34,16 @@ defmodule HalC2.Subprocess do
   require Logger
 
   @enforce_keys [:proc, :reader]
-  defstruct [:proc, :reader, :durable]
+  defstruct [:proc, :reader, :durable, :errors]
 
-  @type t :: %__MODULE__{proc: Proc.t(), reader: pid, durable: map | nil}
+  @type t :: %__MODULE__{proc: Proc.t(), reader: pid, durable: map | nil, errors: pid | nil}
 
   @read_size 65_535
   # A stderr line longer than this is dropped unread; prefixed lines are short.
   @max_stderr_line 65_536
+  # How much of the end of stderr `:stderr_tail` keeps, and how many lines it hands over.
+  @tail_bytes 4_096
+  @tail_lines 8
 
   @spec start([String.t()], keyword) :: {:ok, t} | {:error, term}
   def start(cmd, opts \\ []) do
@@ -99,7 +104,8 @@ defmodule HalC2.Subprocess do
   defp start_owned(cmd, opts) do
     cmd = spawn_command(cmd)
     {prefix, opts} = Keyword.pop(opts, :stderr_prefix)
-    stderr = if prefix, do: :consume, else: :disable
+    {tail?, opts} = Keyword.pop(opts, :stderr_tail, false)
+    stderr = if prefix || tail?, do: :consume, else: :disable
     {mark, entry} = HalC2.Subprocess.Orphans.new_mark()
     opts = Keyword.update(opts, :env, [entry], &(Enum.to_list(&1 || []) ++ [entry]))
 
@@ -111,15 +117,18 @@ defmodule HalC2.Subprocess do
       :ok = Proc.change_pipe_owner(proc, :stdout, reader)
       send(reader, :owned)
 
-      if prefix do
-        # Unlinked: stderr closing on its own must not stop the owner. The reader
-        # dies with the program, when its read fails.
-        errors = spawn(fn -> stderr_init(proc, owner, prefix) end)
-        :ok = Proc.change_pipe_owner(proc, :stderr, errors)
-        send(errors, :owned)
-      end
+      errors =
+        if prefix || tail? do
+          # Unlinked: stderr closing on its own must not stop the owner. The reader
+          # dies with the program, when its read fails.
+          tail = if tail?, do: ""
+          errors = spawn(fn -> stderr_init(proc, owner, prefix, tail) end)
+          :ok = Proc.change_pipe_owner(proc, :stderr, errors)
+          send(errors, :owned)
+          errors
+        end
 
-      {:ok, %__MODULE__{proc: proc, reader: reader}}
+      {:ok, %__MODULE__{proc: proc, reader: reader, errors: errors}}
     end
   end
 
@@ -414,25 +423,98 @@ defmodule HalC2.Subprocess do
   end
 
   @doc false
-  def stderr_init(proc, owner, prefix) do
+  def stderr_init(proc, owner, prefix, tail \\ nil) do
     receive do: (:owned -> :ok)
-    __MODULE__.stderr_loop(proc, owner, prefix, "")
+    __MODULE__.stderr_loop(proc, owner, prefix, "", tail)
   end
 
+  # The loop a reader started before `:stderr_tail` existed runs on here.
   @doc false
-  def stderr_loop(proc, owner, prefix, partial) do
+  def stderr_loop(proc, owner, prefix, partial),
+    do: __MODULE__.stderr_loop(proc, owner, prefix, partial, nil)
+
+  # `tail` is nil when it is not kept, else the end of stderr so far.
+  @doc false
+  def stderr_loop(proc, owner, prefix, partial, tail) do
     case Proc.read_stderr(proc, @read_size) do
       {:ok, data} ->
-        {lines, rest} = prefixed_lines(partial, IO.iodata_to_binary(data), prefix)
+        data = IO.iodata_to_binary(data)
+        {lines, rest} = if prefix, do: prefixed_lines(partial, data, prefix), else: {[], ""}
         if lines != [], do: send(owner, {:subprocess_stderr, self(), lines})
-        __MODULE__.stderr_loop(proc, owner, prefix, rest)
+        __MODULE__.stderr_loop(proc, owner, prefix, rest, keep_tail(tail, data))
 
       _eof_or_error ->
-        {lines, _} = prefixed_lines(partial, "\n", prefix)
+        {lines, _} = if prefix, do: prefixed_lines(partial, "\n", prefix), else: {[], ""}
         if lines != [], do: send(owner, {:subprocess_stderr, self(), lines})
+        if tail, do: hand_over_tail(tail)
     end
   catch
     :exit, _ -> :ok
+  end
+
+  defp keep_tail(nil, _data), do: nil
+
+  defp keep_tail(tail, data) do
+    kept = tail <> data
+    size = byte_size(kept)
+
+    if size > @tail_bytes,
+      do: :binary.copy(binary_part(kept, size - @tail_bytes, @tail_bytes)),
+      else: kept
+  end
+
+  # The reader outlives the program's stderr until the owner asks for its end, or a
+  # while has gone by and nobody will.
+  defp hand_over_tail(tail) do
+    receive do
+      {:stderr_tail, from, ref} -> send(from, {ref, tail})
+    after
+      10_000 -> :ok
+    end
+  end
+
+  @doc """
+  The last lines a program started with `:stderr_tail` wrote to stderr, without colour
+  codes or blank lines: "" when there are none or it was not kept. Asked once the
+  program has ended (its output has); a program still running is waited on for at most
+  `timeout`.
+  """
+  @spec stderr_tail(t, timeout) :: String.t()
+  def stderr_tail(sub, timeout \\ 1_000)
+
+  def stderr_tail(%__MODULE__{durable: %{dir: dir}}, _timeout),
+    do: dir |> Durable.stderr_tail(@tail_bytes) |> last_lines()
+
+  def stderr_tail(%__MODULE__{errors: errors}, timeout) when is_pid(errors) do
+    ref = Process.monitor(errors)
+    send(errors, {:stderr_tail, self(), ref})
+
+    receive do
+      {^ref, tail} ->
+        Process.demonitor(ref, [:flush])
+        last_lines(tail)
+
+      {:DOWN, ^ref, :process, _, _} ->
+        ""
+    after
+      timeout ->
+        Process.demonitor(ref, [:flush])
+        ""
+    end
+  end
+
+  def stderr_tail(_sub, _timeout), do: ""
+
+  @doc false
+  def last_lines(text) do
+    text
+    |> String.replace(~r/\e\[[0-9;?]*[A-Za-z]/, "")
+    |> String.replace_invalid()
+    |> String.split(~r/\r?\n/)
+    |> Enum.map(&String.trim_trailing/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.take(-@tail_lines)
+    |> Enum.join("\n")
   end
 
   @doc """

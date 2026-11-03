@@ -282,7 +282,8 @@ defmodule HalC2.Codex.ThreadRuntime do
              adopt: %{dir: dir, offset: snapshot.offset, channel: snapshot.channel},
              handler: self(),
              log: snapshot.state.thread_id,
-             program: "Codex App Server"
+             program: "Codex App Server",
+             stderr_tail: true
            ),
          {:ok, restored} <- code_change(nil, snapshot.state, nil) do
       # A stop that was out when the MC went keeps its deadline.
@@ -339,9 +340,9 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:ok, state} ->
         {:reply, :ok, state}
 
-      {:error, %{"message" => "Codex App Server process exited" <> _}, state} ->
-        Logger.warning("codex turn failed to start: the app-server exited")
-        finish(state, "failed", "The provider stopped while starting the turn.")
+      {:error, %{"message" => "Codex App Server process exited" <> _} = exit, state} ->
+        Logger.warning("codex turn failed to start: the app-server exited\n#{exit["stderr"]}")
+        finish(state, "failed", stopped_while_starting(exit))
         {:reply, :ok, %{state | turn: nil}}
 
       # The app-server exited before the turn began.
@@ -1017,6 +1018,13 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # The end of a turn let go of before it started (`begin_turn/2`).
 
+  # What Codex said on its way out is the only account of why it died: a wrapper
+  # script that failed, a config it could not read.
+  defp stopped_while_starting(%{"stderr" => said}) when said != "",
+    do: "The provider stopped while starting the turn. It said:\n#{said}"
+
+  defp stopped_while_starting(_exit), do: "The provider stopped while starting the turn."
+
   defp rpc_message(%{"message" => message}) when is_binary(message), do: message
   defp rpc_message(reason), do: inspect(reason)
 
@@ -1045,7 +1053,8 @@ defmodule HalC2.Codex.ThreadRuntime do
              env: env,
              log: turn.ids.thread,
              durable: turn.ids.thread,
-             program: "Codex App Server"
+             program: "Codex App Server",
+             stderr_tail: true
            ),
          {:ok, _} <-
            Connection.call(conn, "initialize", %{
