@@ -80,6 +80,14 @@ bool oneCharacter(const QString& data) {
   return data.size() == 1 || (data.size() == 2 && data.at(0).isHighSurrogate());
 }
 
+// An arrow key as a terminal sends it, ESC [ A..D or, in application cursor
+// mode, ESC O A..D: its letter, else a null QChar.
+QChar arrowOf(const QString& data) {
+  if (data.size() != 3 || data.at(0) != QChar(0x1b) || (data.at(1) != QLatin1Char('[') && data.at(1) != QLatin1Char('O'))) return {};
+  const QChar letter = data.at(2);
+  return letter >= QLatin1Char('A') && letter <= QLatin1Char('D') ? letter : QChar();
+}
+
 }  // namespace
 
 MobileTerminal::MobileTerminal(ShellBridge* bridge, NativeShell* native, const QString& storePath)
@@ -131,18 +139,24 @@ void MobileTerminal::input(const QString& data) {
   TerminalSession* session = terminals->activeSession();
   // An ended shell has no session: what is typed goes nowhere.
   if (!session) return;
-  if (m_held.isEmpty() || !oneCharacter(data)) {
+  const QChar arrow = arrowOf(data);
+  if (m_held.isEmpty() || (!oneCharacter(data) && arrow.isNull())) {
     session->write(data);
     return;
   }
   const QString held = std::exchange(m_held, QString());
   publish();
   const QString pasteWith = hostSystem() == QLatin1String("darwin") ? QStringLiteral("cmd") : QStringLiteral("ctrl");
-  if (held == pasteWith && data.compare(QLatin1String("v"), Qt::CaseInsensitive) == 0) {
+  if (!arrow.isNull()) {
+    // An arrow with Control (5) or Meta (3), as xterm sends it.
+    session->write(QStringLiteral("\x1b[1;%1%2").arg(held == QLatin1String("ctrl") ? 5 : 3).arg(arrow));
+  } else if (held == pasteWith && data.compare(QLatin1String("v"), Qt::CaseInsensitive) == 0) {
     paste();
   } else if (held == QLatin1String("ctrl")) {
     session->write(withControl(data));
   } else {
+    // Alt, and cmd on a Mac (whose row has no Option key), are Meta: the
+    // phone app T3 Code shipped did the same.
     session->write(QChar(0x1b) + data);
   }
 }

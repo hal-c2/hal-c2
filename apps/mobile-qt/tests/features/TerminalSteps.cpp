@@ -126,11 +126,20 @@ const FakeMc::Extension extension([](FakeMc& mc) {
       fake.terminals[key].history.clear();
       toTerminal(mc, key, {{QStringLiteral("type"), QStringLiteral("cleared")}});
     } else if (rpc.method == QLatin1String("terminal.close")) {
-      fake.terminals.remove(key);
-      toTerminal(mc, key, {{QStringLiteral("type"), QStringLiteral("closed")}});
-      toList(mc, {{QStringLiteral("type"), QStringLiteral("remove")},
-                  {QStringLiteral("threadId"), rpc.payload.value(QLatin1String("threadId"))},
-                  {QStringLiteral("terminalId"), rpc.payload.value(QLatin1String("terminalId"))}});
+      auto close = [&mc, rpc, key] {
+        mc.part<FakeTerminals>().terminals.remove(key);
+        toTerminal(mc, key, {{QStringLiteral("type"), QStringLiteral("closed")}});
+        toList(mc, {{QStringLiteral("type"), QStringLiteral("remove")},
+                    {QStringLiteral("threadId"), rpc.payload.value(QLatin1String("threadId"))},
+                    {QStringLiteral("terminalId"), rpc.payload.value(QLatin1String("terminalId"))}});
+        mc.reply(rpc, QJsonValue::Null);
+      };
+      if (fake.holdCloses) {
+        fake.heldCloses.append(close);
+      } else {
+        close();
+      }
+      return;
     }
     mc.reply(rpc, QJsonValue::Null);
   });
@@ -474,6 +483,7 @@ const QHash<QString, QString> kEncoded{
     {S("Escape"), S("\x1b")},        {S("Tab"), S("\t")},          {S("back-tab"), S("\x1b[Z")},     {S("the Up arrow"), S("\x1b[A")},
     {S("the Left arrow"), S("\x1b[D")}, {S("a tilde"), S("~")},    {S("a pipe"), S("|")},            {S("Control-C"), S("\x03")},
     {S("a Control-C"), S("\x03")},   {S("Control-Z"), S("\x1a")},  {S("the delete key"), S("\x7f")}, {S("Return"), S("\r")},
+    {S("the Up arrow with Control"), S("\x1b[1;5A")}, {S("the Left arrow with Meta"), S("\x1b[1;3D")}, {S("the Up arrow with Meta"), S("\x1b[1;3A")},
 };
 
 const Steps steps([] {
@@ -769,8 +779,12 @@ const Steps steps([] {
     pressRowKey(world, c[0]);
   });
 
-  step(S("the terminal receives (Escape|Tab|back-tab|the Up arrow|the Left arrow|a tilde|a pipe|Control-C|a Control-C|Control-Z|the delete key|Return)"), [](World& world, const Captures& c, const Table&) {
+  step(S("the terminal receives (Escape|Tab|back-tab|the Up arrow( with Control| with Meta)?|the Left arrow( with Meta)?|a tilde|a pipe|Control-C|a Control-C|Control-Z|the delete key|Return)"), [](World& world, const Captures& c, const Table&) {
     waitWritten(world, kEncoded.value(c[0]));
+  });
+
+  step(S("the terminal receives %1 with Meta").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    waitWritten(world, QChar(0x1b) + c[0]);
   });
 
   step(S("the terminal receives a Control chord"), [](World& world, const Captures&, const Table&) {
@@ -1190,6 +1204,33 @@ const Steps steps([] {
   });
 
   step(S("the thread has no shell running"), [](World&, const Captures&, const Table&) {});
+
+  step(S("the MC is slow to close a terminal"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<FakeTerminals>().holdCloses = true;
+  });
+
+  step(S("the user closes the terminal from the terminal menu"), [](World& world, const Captures&, const Table&) {
+    openMenu(world);
+    choose(world, S("close"));
+    world.awaitPopup(S("confirmDialog"));
+    world.tap(S("confirmAccept"));
+    world.waitFor([&] { return !callsNamed(world, S("terminal.close")).isEmpty(); }, [&] { return S("terminal.close: %1").arg(describeCalls(world)); });
+  });
+
+  step(S("the MC closes %1").arg(kQuoted), [](World& world, const Captures&, const Table&) {
+    FakeTerminals& fake = world.mc.part<FakeTerminals>();
+    fake.holdCloses = false;
+    for (const auto& close : std::exchange(fake.heldCloses, {})) close();
+    world.sync();
+  });
+
+  step(S("%1 is still open").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    // Output sent after the MC's `remove` and answer: once it shows, both came.
+    print(world, c[0], S("still here"));
+    waitForOutput(world, S("still here"));
+    expect(terminals(world)->tabs()->indexOf(c[0]) >= 0, S("%1 is gone; the user is in %2").arg(c[0], activeId(world)));
+    expect(activeId(world) == c[0], S("the user is in %1").arg(activeId(world)));
+  });
 
   step(S("the thread has %1 running").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     have(world, {c[0]});

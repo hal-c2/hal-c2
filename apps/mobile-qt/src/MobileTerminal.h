@@ -44,7 +44,7 @@ constexpr qsizetype kMaxContextChars = 64000;
 //    context:   {lines, start, end, tooLarge} while choosing lines, or null}
 //
 // Actions: `mobileTerminal.input {data}` (what the terminal says: the keyboard
-// and the row's keys; a held modifier applies to one character),
+// and the row's keys; a held modifier applies to one character or arrow),
 // `mobileTerminal.modifier {key}` (holds it, or lets go), `mobileTerminal.paste`,
 // `mobileTerminal.clear`, `mobileTerminal.textSize {points}`,
 // `mobileTerminal.covered {covered}` (another screen is over the thread's),

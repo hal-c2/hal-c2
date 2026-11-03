@@ -1267,13 +1267,16 @@ bool TerminalController::runScript(const QString& scriptId) {
   QString terminalId = !active.isEmpty() ? active : !ids.isEmpty() ? ids.constFirst() : nextTerminalId();
   if (m_singleScreen) {
     // On a single screen a script never lands in a shell the user is at: the
-    // first terminal when nothing runs, else a new one.
+    // first terminal when nothing runs, else a new one. A first terminal still
+    // closing is not taken: its `remove` would take the script's with it.
     const QStringList live = liveOf(ids);
     if (live.size() >= maxTerminals) {
       toast(QStringLiteral("At most %1 terminals per thread.").arg(maxTerminals), QString());
       return true;
     }
-    terminalId = live.isEmpty() ? QStringLiteral("term-1") : nextTerminalId();
+    const QString first = QStringLiteral("term-1");
+    const QString next = nextTerminalId();
+    terminalId = live.isEmpty() && (ids.contains(first) || next == first) ? first : next;
     // The terminal.open below starts its shell.
     if (ids.contains(terminalId)) m_known[m_threadKey][terminalId].status = QStringLiteral("starting");
   } else if (m_known.value(m_threadKey).value(terminalId).busy) {

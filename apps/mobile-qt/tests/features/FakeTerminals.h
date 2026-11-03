@@ -4,6 +4,7 @@
 
 #include <QJsonObject>
 #include <QList>
+#include <functional>
 #include <QMap>
 #include <QString>
 #include <QStringList>
@@ -23,6 +24,9 @@ struct FakeTerminals {
   QMap<QString, Terminal> terminals;
   // Every terminal.* call, as {method, payload}.
   QList<QJsonObject> calls;
+  // While set, a terminal.close waits in `heldCloses` until a step runs it.
+  bool holdCloses = false;
+  QList<std::function<void()>> heldCloses;
 };
 
 // A terminal the MC already has, in `status`.

@@ -220,6 +220,29 @@ Feature: Using a terminal on a phone
     And "ctrl" is no longer waiting for a key
 
   @mobile
+  Scenario Outline: A modifier key applies to the arrow keys too
+    Given the thread's environment runs on <system>
+    And the user has pressed "<modifier>" on the accessory row
+    When the user presses "<arrow>" on the accessory row
+    Then the terminal receives <input>
+    And "<modifier>" is no longer waiting for a key
+
+    Examples:
+      | system | modifier | arrow | input                       |
+      | Linux  | ctrl     | up    | the Up arrow with Control   |
+      | Linux  | alt      | left  | the Left arrow with Meta    |
+      | macOS  | cmd      | up    | the Up arrow with Meta      |
+
+  # The row has no Option key on a Mac; T3 Code's phone app did the same.
+  @mobile
+  Scenario: On a Mac, cmd with a key other than v sends the key with Meta
+    Given the thread's environment runs on macOS
+    And the user has pressed "cmd" on the accessory row
+    When the user types "b"
+    Then the terminal receives "b" with Meta
+    And "cmd" is no longer waiting for a key
+
+  @mobile
   Scenario: Pressing a modifier key again lets it go
     Given the user has pressed "ctrl" on the accessory row
     When the user presses "ctrl" again
@@ -375,6 +398,17 @@ Feature: Using a terminal on a phone
     Given the thread has no shell running
     When the user runs "test" from the terminal menu
     Then "test" runs in "term-1"
+
+  @mobile
+  Scenario: A script run while the only terminal is closing gets a terminal of its own
+    Given the thread has "term-1" running
+    And the user is in "term-1"
+    And the MC is slow to close a terminal
+    When the user closes the terminal from the terminal menu
+    And the user runs "test" from the terminal menu
+    And the MC closes "term-1"
+    Then "test" runs in "term-2"
+    And "term-2" is still open
 
   @mobile
   Scenario: A script runs in a new terminal when a shell is already running
