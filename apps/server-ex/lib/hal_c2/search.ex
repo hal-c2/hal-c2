@@ -38,10 +38,11 @@ defmodule HalC2.Search do
       # A thread an import has not finished is left to it: the import indexes it when
       # it lands, and a stream opened on it now would miss the rest it then writes.
       unfinished = HalC2.Import.PreviousInstall.unfinished(path)
+      long = MapSet.new(Store.legacy_streams(path, StreamState.max_legacy()))
 
       for %{id: id, kind: "thread"} <- Store.list_streams(path),
           id not in unfinished,
-          do: read(path, id, &index_thread(id, &1))
+          do: read(path, id, id in long, &index_thread(id, &1))
 
       :ok = Store.forget_untyped_messages()
       Store.put_meta(@read, "1")
@@ -77,13 +78,14 @@ defmodule HalC2.Search do
     end
   end
 
-  # `fun` of a thread's state. A thread with no snapshot of its hot part yet (an older
-  # MC's whole one, or none) is read through its stream, which writes one as it loads,
-  # a long log a page at a time; one read here would hold the whole thread.
-  defp read(path, id, fun) do
-    if Store.hot_snapshot?(path, id) or Process.whereis(HalC2.Streams) == nil,
-      do: StreamState.load_read(path, id, fun),
-      else: HalC2.Streams.read(id, fun)
+  # `fun` of a thread's state, read from disk without opening its stream: opening
+  # every thread at boot is what this read must not do. Only a `long` one, whose older
+  # MC's whole snapshot is too big to read at once, is read through its stream, which
+  # migrates it a page at a time (and `HalC2.Streams.Migrations` opens at boot anyway).
+  defp read(path, id, long?, fun) do
+    if long? and Process.whereis(HalC2.Streams) != nil,
+      do: HalC2.Streams.read(id, fun),
+      else: StreamState.load_read(path, id, fun)
   end
 
   # The thread as `storing_thread/2` finds it. With no streams running nothing else
