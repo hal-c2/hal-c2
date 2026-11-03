@@ -254,6 +254,12 @@ export interface Palette {
   readonly success: RGBA;
   readonly warning: RGBA;
   readonly selectedBg: RGBA;
+  /** Code's colours (`host/codeColours.ts`); comments are `faint`. */
+  readonly keyword: RGBA;
+  readonly string: RGBA;
+  readonly number: RGBA;
+  readonly function: RGBA;
+  readonly type: RGBA;
 }
 
 /** The terminal's own colours: its default foreground and background and its ANSI slots. */
@@ -267,6 +273,11 @@ const terminalPalette = (): Palette => ({
   success: indexedColor(2),
   warning: indexedColor(3),
   selectedBg: indexedColor(8),
+  keyword: indexedColor(5),
+  string: indexedColor(2),
+  number: indexedColor(3),
+  function: indexedColor(4),
+  type: indexedColor(6),
 });
 
 /** NO_COLOR: nothing but the terminal's default foreground and background. */
@@ -280,6 +291,11 @@ const plainPalette = (): Palette => ({
   success: defaultFg(),
   warning: defaultFg(),
   selectedBg: defaultBg(),
+  keyword: defaultFg(),
+  string: defaultFg(),
+  number: defaultFg(),
+  function: defaultFg(),
+  type: defaultFg(),
 });
 
 const rgb = (hex: string) => RGBA.fromHex(hex);
@@ -303,6 +319,11 @@ const COLOUR_THEMES = {
       success: rgb("#859900"),
       warning: rgb("#b58900"),
       selectedBg: rgb("#073642"),
+      keyword: rgb("#859900"),
+      string: rgb("#2aa198"),
+      number: rgb("#d33682"),
+      function: rgb("#268bd2"),
+      type: rgb("#b58900"),
     }),
   },
   gruvbox: {
@@ -317,6 +338,11 @@ const COLOUR_THEMES = {
       success: rgb("#b8bb26"),
       warning: rgb("#fabd2f"),
       selectedBg: rgb("#3c3836"),
+      keyword: rgb("#fb4934"),
+      string: rgb("#b8bb26"),
+      number: rgb("#d3869b"),
+      function: rgb("#8ec07c"),
+      type: rgb("#fabd2f"),
     }),
   },
   none: { label: "No colour", palette: plainPalette },

@@ -57,6 +57,7 @@ package. Then:
 uvx --from aqtinstall aqt install-qt all_os android 6.11.1 android_arm64_v8a -m qtwebsockets qtmultimedia qtpdf -O ~/Qt
 sdkmanager --install "ndk;27.2.12479018" "platforms;android-36" "system-images;android-34;default;arm64-v8a"
 avdmanager create avd -n hal-c2-phone -k "system-images;android-34;default;arm64-v8a" -d pixel_7
+rustup target add aarch64-linux-android
 ```
 
 `sdkmanager` and `avdmanager` come with Android Studio's command-line tools, and its bundled JDK

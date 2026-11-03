@@ -14,6 +14,7 @@ import { fileGlyph, fileTypeColor } from "../icons.ts";
 import { ansi, type Palette, THEME } from "../theme.ts";
 import type { StatusKind } from "../store.ts";
 import { FILES_ELSEWHERE, type LocalPath } from "../thisMachine.ts";
+import { createCodeColours, type CodeColours } from "./codeColours.ts";
 import { createMermaidDiagrams, type MermaidDiagrams } from "./mermaidDiagrams.ts";
 import { chunk, markdownLines, plainText, styled, type StyledText } from "./styledText.ts";
 
@@ -94,6 +95,8 @@ export interface FilesControllerOptions {
   readonly copy?: (text: string) => boolean;
   /** The Mermaid diagrams the MC drew, shared with the other panes (default: its own). */
   readonly diagrams?: MermaidDiagrams;
+  /** Code coloured by its language, shared with the other panes (default: its own). */
+  readonly codeColours?: CodeColours;
 }
 
 export interface FilesController {
@@ -191,6 +194,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
   const palette = options.palette ?? THEME;
   const diagrams =
     options.diagrams ?? (client.mcCall ? createMermaidDiagrams({ mcCall: client.mcCall }) : null);
+  const codeColours = options.codeColours ?? createCodeColours();
   let open = false;
   let attach = false;
   let cwd = "";
@@ -243,6 +247,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
         palette,
         width,
         diagrams ? { get: diagrams.get } : undefined,
+        codeColours.lines,
       );
       viewer.renderedWidth = width;
     }
@@ -645,11 +650,13 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
   options.publish(CLOSED);
 
   // A diagram the MC answered for is drawn in the open rendering.
-  diagrams?.listen(() => {
+  const redraw = () => {
     if (!viewer?.rendered) return;
     viewer.rendered = undefined;
     publish();
-  });
+  };
+  diagrams?.listen(redraw);
+  codeColours.listen(redraw);
 
   return {
     dispatch: (action, payload) => {
@@ -786,6 +793,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     settled: async () => {
       while (inFlight.size > 0) await Promise.all([...inFlight]);
       await diagrams?.settled();
+      await codeColours.settled();
     },
   };
 }

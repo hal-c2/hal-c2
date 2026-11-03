@@ -500,6 +500,8 @@ const Steps steps([] {
         {QStringLiteral("receipt.png"), {QStringLiteral("image/png"), picture()}},
         {QStringLiteral("notes.md"), {QStringLiteral("text/markdown"), "# Notes\n"}},
         {QStringLiteral("build.log"), {QStringLiteral("text/plain"), "built\n"}},
+        {QStringLiteral("cart.ts"), {QStringLiteral("text/plain"), "export const total = (items: number[]) => items.length;\nexport const tax = 0.2;\n"}},
+        {QStringLiteral("notes.txt"), {QStringLiteral("text/plain"), "buy milk & eggs\n"}},
         {QStringLiteral("page.html"), {QStringLiteral("text/html"), kPage}},
         {QStringLiteral("invoice.pdf"), {QStringLiteral("application/pdf"), mediaFixture(QStringLiteral("invoice.pdf"))}},
     };
