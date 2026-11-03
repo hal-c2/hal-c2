@@ -214,11 +214,12 @@ public:
   QStringList expandedProjects() const;
   // Project id to its expanded folders' paths, sorted; a collapsed section keeps its own.
   QVariantMap expandedFolders() const;
-  // What was remembered; says nothing back.
+  // What was remembered; says it back only when it forgot folders the listing lacks.
   void restoreExpanded(const QStringList& projectIds, const QVariantMap& folders);
 
 signals:
-  // The user expanded or collapsed a section.
+  // What to remember changed: the user expanded or collapsed a section or folder, or a
+  // listing or restore forgot folders gone from it.
   void expandedChanged();
 
 private:

@@ -421,10 +421,8 @@ struct OtherWindow : Command {
     prop::until([&] { return shell.sections() == expected.sections(); });
     RC_ASSERT(shell.sections() == expected.sections());
     RC_ASSERT(here() == expected.remembered());
-    // Restoring writes nothing back, but a listing that arrives after it forgets the
-    // folders no file is in, and saves that.
-    const FolderMemory stored = folderMemory(shell.settings()->deviceValue(kExpandedFoldersKey), kEnvironment);
-    RC_ASSERT(stored == folderMemory(folders, kEnvironment) || stored == expected.rememberedFolders());
+    // Restoring forgets the folders no listed file is in, and saves that.
+    RC_ASSERT(folderMemory(shell.settings()->deviceValue(kExpandedFoldersKey), kEnvironment) == expected.rememberedFolders());
     RC_ASSERT(shell.settings()->deviceValue(kExpandedKey).toStringList().contains(QStringLiteral("env-b:alpha")));
     // What follows holds the device to this MC's entries alone.
     shell.settings()->writeDevice(kExpandedKey, expected.remembered().isEmpty() ? QVariant() : QVariant(expected.remembered()));

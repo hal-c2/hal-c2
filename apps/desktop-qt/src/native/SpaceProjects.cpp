@@ -141,10 +141,14 @@ void SpaceProjects::restoreExpanded(const QStringList& projectIds, const QVarian
   }
   const QStringList listed = paths.keys();
   std::swap(m_folders, paths);
-  for (const QString& projectId : listed) forgetGoneFolders(projectId);
-  if (expanded == m_expanded && paths == m_folders) return;
-  m_expanded = expanded;
-  build();
+  bool forgot = false;
+  for (const QString& projectId : listed) forgot |= forgetGoneFolders(projectId);
+  if (expanded != m_expanded || paths != m_folders) {
+    m_expanded = expanded;
+    build();
+  }
+  // What was forgotten is saved, so the stored set does not keep it until the next toggle.
+  if (forgot) emit expandedChanged();
 }
 
 void SpaceProjects::build() {
