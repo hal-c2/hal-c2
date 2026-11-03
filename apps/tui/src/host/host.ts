@@ -171,6 +171,8 @@ export interface HostOptions {
   readonly mutedThreads?: MutedThreadsStore;
   /** Where this device keeps how it writes times (default: this run only). */
   readonly timestampFormat?: TimestampFormatStore;
+  /** Where this device keeps the Space pane's expanded project sections (default: this run only). */
+  readonly projectSections?: MutedThreadsStore;
   /**
    * The HAL-C2 version this client shipped as. A server on an older one is
    * offered its update; without it no server is known to be behind.
@@ -832,6 +834,7 @@ export function createHost(options: HostOptions): Host {
       dispatch("thread.open", { key: threadKey(threadId) });
     },
     projects: () => homeProjects().map((project) => ({ id: project.id, title: project.title })),
+    ...(options.projectSections ? { projectSections: options.projectSections } : {}),
     showFile: (projectId, path) => {
       const project = homeProjects().find((entry) => entry.id === projectId);
       if (!project) {
@@ -974,7 +977,7 @@ export function createHost(options: HostOptions): Host {
     const worktree = browsing !== null && browsing !== project.workspaceRoot;
     return [
       {
-        title: worktree ? "Open the project's copy in a Space" : "Open this file in a Space",
+        title: worktree ? "Edit the project's copy as a page" : "Edit as a page",
         action: "space.openProjectFile",
         payload: { projectId, path },
       },

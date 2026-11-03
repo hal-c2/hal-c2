@@ -15,7 +15,7 @@ describe("filePaths", () => {
   });
 });
 
-describe("opening a file the conversation names in a Space", () => {
+describe("editing a file the conversation names as a page", () => {
   const offered = (workspace: FeatureWorkspace) => {
     const dispatched: Array<{ action: string; payload: unknown }> = [];
     const kit = {

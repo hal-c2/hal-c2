@@ -241,6 +241,8 @@ async function main(): Promise<void> {
     // Muted threads are this device's: they live beside the user's shell config.
     mutedThreads: fileMutedThreads(NodePath.join(configDir, MUTED_THREADS_FILE)),
     timestampFormat: fileTimestampFormat(NodePath.join(configDir, TIMESTAMP_FORMAT_FILE)),
+    // So are the Space pane's project sections the user expanded.
+    projectSections: fileMutedThreads(NodePath.join(configDir, "space-sections.json")),
     // ^G: hand the terminal to the editor, then take the screen back.
     runEditor: async ({ cmd, args }, file) => {
       renderer.suspend();

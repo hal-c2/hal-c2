@@ -52,13 +52,15 @@ Feature: Reviewing working tree and branch changes
     Then "src/cart.ts" is still the only staged file afterwards
 
   # The review must not trust a copied index's timestamps to tell an unchanged file from a new one.
-  @backlog @mc
-  Scenario: An untracked file edited again within the same second shows its newest content
-    Given the user has an untracked file "src/tax.ts" of 40 bytes
-    And the user reviews the working tree once
-    When the user rewrites "src/tax.ts" within the same second, to 40 bytes with different content
-    And the user reviews the working tree again
-    Then the review shows the newest content of "src/tax.ts"
+  # Untracked files are what make the review copy the index.
+  @mc
+  Scenario: A file edited again within the same second shows its newest content
+    Given "src/cart.ts" was committed within the second the index was last written
+    And the user created the untracked "src/tax.ts"
+    When the user rewrites "src/cart.ts" within that same second, to the same size with different content
+    And the user reviews the working tree
+    Then the review shows the newest content of "src/cart.ts"
+    And the user's index is as it was
 
   @mc
   Scenario: Reviewing the branch against its base
@@ -73,15 +75,15 @@ Feature: Reviewing working tree and branch changes
     Then "src/cart.ts" shows no changed lines
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (getReviewDiffPreview: PATCH_RENDER_PREFIX_ARGS)
-  @mc @backlog
+  @mc
   Scenario: A repository set to show diffs without path prefixes still reviews correctly
-    Given the repository of "shop" is configured to show diffs without path prefixes
+    Given the user set git to show diffs without path prefixes in "shop"
     And "src/cart.ts" has an uncommitted change
     When the user reviews the working tree
     Then "src/cart.ts" is shown as one file with its change
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (getReviewDiffPreview: unborn HEAD)
-  @mc @backlog
+  @mc
   Scenario: A repository with no commits reviews everything as added
     Given the project "notes" is a git repository with no commits
     And "notes" holds a staged "a.txt" and an untracked "b.txt"
@@ -144,12 +146,12 @@ Feature: Reviewing working tree and branch changes
     When the user switches to the stacked view
     Then the old and new lines are shown one above the other
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Switching between stacked and split views on the desktop and phone
     When the user switches the diff to the split view
     Then the old and new lines are shown side by side
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui
   Scenario: Choosing what to compare against
     When the user compares the branch against "origin/main" instead of "main"
     Then the diff shows the changes against "origin/main"
@@ -170,7 +172,7 @@ Feature: Reviewing working tree and branch changes
     When the user turns on line wrapping in the diff
     Then long lines wrap instead of scrolling sideways
 
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui
   Scenario: Commenting on lines adds review context to the composer
     When the user comments "Use the tax table" on lines 10 to 12 of "src/cart.ts"
     Then the composer carries that comment with the file and line range
@@ -191,14 +193,14 @@ Feature: Reviewing working tree and branch changes
     When the user refreshes the diff
     Then the diff shows the checkout as it is now
 
-  @backlog @desktop
+  @desktop
   Scenario: The open diff follows the checkout without being refreshed
     Given the user is reviewing the working tree
     When the agent changes "src/cart.ts"
     Then the diff shows the new changes without the user refreshing
     And coming back to the window after working elsewhere shows the checkout as it is now
 
-  @backlog @desktop
+  @desktop
   Scenario: The branch diff compares against the branch's own base unless another is chosen
     Given the branch "feature/tax" was started from "main"
     When the user reviews the branch changes
@@ -208,7 +210,7 @@ Feature: Reviewing working tree and branch changes
     When the user picks "Automatic" again
     Then the diff compares against "main"
 
-  @backlog @desktop
+  @desktop
   Scenario: A base that exists only on the remote is offered and marked
     Given "origin/release" exists on the remote and has no local branch
     When the user searches the bases to compare against for "release"
@@ -216,7 +218,7 @@ Feature: Reviewing working tree and branch changes
     And a search that matches nothing says no refs match
 
   # Legacy: apps/web/src/lib/baseRefChoices.ts (buildBaseRefChoices, filterBaseRefChoices)
-  @backlog @desktop
+  @desktop
   Scenario: A branch that exists locally and on the remote is offered once
     Given "release" exists locally and as "origin/release"
     When the user opens the bases to compare against
@@ -225,13 +227,13 @@ Feature: Reviewing working tree and branch changes
     And choosing it compares against the local "release"
 
   # Legacy: apps/web/src/components/DiffPanel.tsx (baseRefChoices excludes the head ref)
-  @backlog @desktop
+  @desktop
   Scenario: The branch under review is not offered as its own base
     Given the user is reviewing the changes of "feature/tax"
     When the user opens the bases to compare against
-    Then "feature/tax" is not among them
+    Then "feature/tax" is not among the bases
 
-  @backlog @desktop
+  @desktop
   Scenario: A diff too large to load whole loads each file's changes when it is opened
     Given the changes are too large for the diff to carry every file's patch
     When the user reviews the changes
@@ -239,14 +241,14 @@ Feature: Reviewing working tree and branch changes
     And a file's changes are loaded when the user opens that file
     And a file whose changes cannot be loaded says no patch is available for it
 
-  @backlog @desktop
+  @desktop
   Scenario: A file too large to show in full is marked as a partial preview
     Given "src/cart.ts" has changes too large to show in full
     When the user opens "src/cart.ts" in the diff
     Then the file is marked as a partial preview
     And the mark explains that the file is too large to show in full and that the counts include all changes
 
-  @backlog @desktop
+  @desktop
   Scenario: A file whose changes failed to load can be loaded again
     Given loading the changes of "src/cart.ts" failed
     When the user opens "src/cart.ts" in the diff
@@ -254,7 +256,7 @@ Feature: Reviewing working tree and branch changes
     When the user retries and the environment answers
     Then the changes of "src/cart.ts" are shown
 
-  @backlog @desktop
+  @desktop
   Scenario: A file's changes that the checkout no longer has say the diff is gone
     Given the user opened a diff and the checkout was changed so that this diff no longer exists
     When the user opens "src/cart.ts" in the diff
@@ -262,7 +264,7 @@ Feature: Reviewing working tree and branch changes
     When the user refreshes the diff
     Then the files that still differ are listed again
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A diff with nothing to show says why
     When the user reviews <selection>
     Then the diff says "<message>"
@@ -272,20 +274,20 @@ Feature: Reviewing working tree and branch changes
       | a selection that changed nothing       | No net changes in this selection.     |
       | a selection the MC has no patch for    | No patch available for this selection. |
 
-  @backlog @desktop
+  @desktop
   Scenario: Each thread keeps its own choice of what to review
     Given the user reviews "Turn 2" in the thread "Tax" and the branch against "origin/main" in the thread "Fees"
     When the user switches between "Tax" and "Fees"
     Then each thread shows its own selection with its own base
     And a thread that was never reviewed opens on the working tree without needing git status
 
-  @backlog @desktop
+  @desktop
   Scenario: A turn that no longer exists falls back to the latest turn
     Given the user is reviewing "Turn 3" of the thread
     When the thread is rolled back to turn 2
     Then the diff shows the latest turn
 
-  @backlog @desktop
+  @desktop
   Scenario: Choosing a collapsed file in the tree opens it and scrolls to it, again each time
     Given "src/cart.ts" is collapsed in the diff
     When the user chooses "src/cart.ts" in the file tree
@@ -293,32 +295,32 @@ Feature: Reviewing working tree and branch changes
     When the user scrolls away and chooses "src/cart.ts" again
     Then "src/cart.ts" is scrolled to again
 
-  @backlog @desktop
+  @desktop
   Scenario: A refreshed diff keeps the folders of the tree the user opened and closed
     Given the user closed the folder "src/lib" in the diff's file tree
     When a refresh brings a new changed file in "src/lib"
     Then "src/lib" stays closed
     And the new file is listed in it
 
-  @backlog @desktop
+  @desktop
   Scenario: The changed files are listed in the order the diff shows them
     Given the diff changes "src/b.ts" before "docs/a.md" before "src/a.ts"
     When the user shows the file tree of the diff
     Then each folder sits where its first changed file is
 
-  @backlog @desktop
+  @desktop
   Scenario: A file replaced by a link of the same name is listed once as modified
     Given "src/cart.ts" was a regular file and is now a symbolic link
     When the user shows the file tree of the diff
     Then "src/cart.ts" is listed once as modified
 
-  @backlog @desktop
+  @desktop
   Scenario: A file's path can be copied from the diff
     When the user copies the path of "src/cart.ts" from its heading in the diff
     Then "src/cart.ts" is on the clipboard
-    And the user is told it was copied
+    And the user is told the path was copied
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A diff file offers the file actions the environment has
     Given the environment <capabilities>
     When the user opens the menu of "src/cart.ts" in the diff
@@ -330,58 +332,67 @@ Feature: Reviewing working tree and branch changes
       | has no file manager                                  | only opening with the editors is offered                  |
       | has nothing that can open files                      | no menu is shown                                          |
 
-  @backlog @desktop
+  @desktop
   Scenario: A changed file outside the thread's folder has no file actions
     Given the thread works in "packages/web" of the repository
     When the user opens "packages/api/server.ts" from the diff
     Then nothing is opened because the file is not in the thread's folder
     And "packages/web/src/app.ts" opens as "src/app.ts"
 
+  # Legacy: apps/web/src/components/diffs/StyledDiffCodeView.tsx
   @backlog @desktop
+  Scenario: Each file of the diff on the desktop is coloured by its language
+    Given the diff changes "src/cart.ts" and "README.md"
+    When the user reviews the working tree
+    Then each file is shown with the highlighting of its language
+
+  # Waits for "Each file of the diff on the desktop is coloured by its language" (hal-c2/hal-c2#916): the
+  # desktop's diff has no highlighter to fail yet.
+  @backlog @blocked @desktop
   Scenario: A diff is still shown when syntax highlighting cannot start
     Given the highlighter cannot be started
     When the user reviews the working tree
     Then the changes are shown without syntax colours
 
-  @backlog @desktop
+  @desktop
   Scenario: A review comment is sent with a pasted code fence intact
     Given the user comments with a code block fenced by three backticks on lines 10 to 12 of "src/cart.ts"
-    When the message is sent
+    When the message with that comment is sent
     Then the provider receives the comment and the quoted lines with the code kept in one piece
     And the quoted lines carry the language of "src/cart.ts"
 
-  @backlog @desktop
+  @desktop
   Scenario: A line comment is added from the keyboard
     Given the user is writing the comment "Use the tax table" on "src/cart.ts" lines 10 to 12
     When the user presses mod+enter
     Then the comment is added to the composer
 
-  @backlog @desktop
+  @desktop
   Scenario: An empty line comment is not added from the keyboard
     Given the user is writing an empty comment on "src/cart.ts" lines 10 to 12
     When the user presses mod+enter
     Then nothing is added to the composer
 
-  @backlog @mc
+  @mc
   Scenario: A folder under no version control reviews as nothing to compare
     Given the thread's folder is not under version control
     When the user reviews the working tree
     Then the review lists no sources to compare
     And no error is shown
 
-  @backlog @mc
+  @mc
   Scenario: A folder under a version control the MC cannot preview says so
     Given the thread's folder is managed by a version control other than git that cannot preview changes
     When the user reviews the working tree
     Then the user is told "The <kind> VCS driver does not support review diff previews." with the version control's own name
 
-  @backlog @mc
+  @mc
   Scenario: Expanding unchanged lines needs a git repository
     Given the thread's folder is not a git repository
     When the user expands the unchanged lines of "src/cart.ts"
     Then the user is told "Unchanged diff expansion currently requires a Git repository."
 
-  @backlog @mc
+  @mc
   Scenario Outline: A thread's own worktree can be reviewed and nothing outside the projects can
     When a client asks <request> for a folder <place>
     Then <outcome>

@@ -107,7 +107,7 @@ private slots:
   void aLateFileSummarySaysTurnsChanged() {
     Held held;
     QVERIFY(held.ready());
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QString());
     held.stream({{QStringLiteral("cp-1"), 1, QStringLiteral("ready")}});
     QCOMPARE(held.diff.latestTurn(), 1);
     QSignalSpy turns(&held.diff, &ThreadDiff::turnsChanged);
@@ -131,7 +131,7 @@ private slots:
   void aTurnIsDiffedAgainWhenTheTurnBeforeItIsReady() {
     Held held;
     QVERIFY(held.ready());
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QString());
     held.diff.setActive(true);
     held.stream({{QStringLiteral("cp-1"), 1, QStringLiteral("pending")}, {QStringLiteral("cp-2"), 2, QStringLiteral("ready")}});
     QVERIFY(held.asked(1));
@@ -145,7 +145,7 @@ private slots:
   void aRewoundTurnsDiffIsNotShownForTheTurnThatTookItsNumber() {
     Held held;
     QVERIFY(held.ready());
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QString());
     held.diff.setActive(true);
     held.stream({{QStringLiteral("cp-1"), 1, QStringLiteral("ready")}});
     QVERIFY(held.asked(1));
@@ -163,7 +163,7 @@ private slots:
   void allChangesIsNotSelectedWithoutATurn() {
     Held held;
     QVERIFY(held.ready());
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QString());
     held.diff.select(0);
     QCOMPARE(held.diff.selection(), -1);
     held.stream({{QStringLiteral("cp-1"), 1, QStringLiteral("ready")}});
@@ -178,7 +178,7 @@ private slots:
   void theBranchIsNotSelectedWithoutACheckout() {
     Held held;
     QVERIFY(held.ready());
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QString());
     held.diff.setCheckout(QStringLiteral("/c"));
     held.diff.select(ThreadDiff::Branch);
     held.diff.setCheckout(QString());
@@ -191,15 +191,15 @@ private slots:
   void aTimelineThatComesBackLoadsAgain() {
     Held held;
     QVERIFY(held.ready());
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QString());
     held.diff.setCheckout(QStringLiteral("/c"));
     held.diff.setActive(true);
     QVERIFY(held.asked(1));
     QVERIFY(held.answerReview(0, QStringLiteral("main")));
     QCOMPARE(held.diff.status(), QStringLiteral("ready"));
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), nullptr);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), nullptr, QStringLiteral("/c"));
     QCOMPARE(held.diff.status(), QStringLiteral("loading"));
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QStringLiteral("/c"));
     QVERIFY(held.asked(2));
     QVERIFY(held.answerReview(1, QStringLiteral("main")));
     QCOMPARE(held.diff.status(), QStringLiteral("ready"));
@@ -209,14 +209,14 @@ private slots:
   void anotherThreadForgetsTheComparedRefs() {
     Held held;
     QVERIFY(held.ready());
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QString());
     held.diff.setCheckout(QStringLiteral("/c"));
     held.diff.setActive(true);
     QVERIFY(held.asked(1));
     QVERIFY(held.answerReview(0, QStringLiteral("main")));
     QCOMPARE(held.diff.comparedBase(), QStringLiteral("main"));
     QSignalSpy review(&held.diff, &ThreadDiff::reviewChanged);
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t2"), nullptr);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t2"), nullptr, QStringLiteral("/c"));
     QCOMPARE(held.diff.comparedBase(), QString());
     QCOMPARE(held.diff.comparedHead(), QString());
     QCOMPARE(review.count(), 1);
@@ -227,7 +227,7 @@ private slots:
   void pickingTheSameDiffShowsAllItsFiles() {
     Held held;
     QVERIFY(held.ready());
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QString());
     held.diff.setActive(true);
     held.stream({{QStringLiteral("cp-1"), 1, QStringLiteral("ready")}});
     QVERIFY(held.asked(1));
@@ -247,17 +247,31 @@ private slots:
     Held held;
     QVERIFY(held.ready());
     TimelineModel other(QStringLiteral("env-a:t2"));
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QString());
     held.diff.setActive(true);
     QCOMPARE(held.diff.status(), QStringLiteral("empty"));
     QSignalSpy status(&held.diff, &ThreadDiff::statusChanged);
     QSignalSpy focus(&held.diff, &ThreadDiff::focusChanged);
     QSignalSpy selection(&held.diff, &ThreadDiff::selectionChanged);
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t2"), &other);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t2"), &other, QString());
     QCOMPARE(status.count(), 0);
     QCOMPARE(focus.count(), 0);
     QCOMPARE(selection.count(), 0);
-    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t2"), nullptr);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t2"), nullptr, QString());
+  }
+
+  // Opening a thread checked its saved choice against the last thread's
+  // checkout: coming back from a thread with none lost the branch.
+  void aThreadKeepsItsBranchAfterOneWithoutACheckout() {
+    Held held;
+    QVERIFY(held.ready());
+    TimelineModel other(QStringLiteral("env-a:t2"));
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QStringLiteral("/c"));
+    held.diff.select(ThreadDiff::Branch);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t2"), &other, QString());
+    QCOMPARE(held.diff.selection(), -1);
+    held.diff.setThread(QStringLiteral("env-a"), QStringLiteral("t1"), &held.timeline, QStringLiteral("/c"));
+    QCOMPARE(held.diff.selection(), int(ThreadDiff::Branch));
   }
 };
 
