@@ -193,8 +193,11 @@ Feature: Browsing pull requests
     And the projects on GitHub report they are paused until the time GitHub gave
     But a read from another of GitHub's budgets is still sent
 
+  # GitHub's numbers come in its response headers, which `gh api --include` shows; the
+  # MC's own reads go through `gh api`. `gh pr`, `gh issue` and the other commands show
+  # no headers, so a limit they meet is paused as its text and `gh api rate_limit` say.
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (retryAtFromHeader)
-  @mc @backlog
+  @mc
   Scenario Outline: A host's own retry time sets the length of the pause
     Given the host rate limits a read and says to retry <retry>
     When the user lists pull requests before then
@@ -227,7 +230,7 @@ Feature: Browsing pull requests
     And the pause is neither ended nor shortened by that request's answer
 
   # Legacy: apps/server/src/sourceControl/githubGraphQlBudget.ts (query, observe)
-  @mc @backlog
+  @mc
   Scenario: Background reads leave a tenth of GitHub's quota for what the user asks for
     Given GitHub reported that fewer than a tenth of its read quota is left until it resets
     When a background refresh needs to read pull requests
@@ -243,9 +246,10 @@ Feature: Browsing pull requests
     When pull requests are read again with the second account
     Then the read is sent
 
+  # The MC sends no conditional reads, so a 304 reaches it only as a failure.
   # Legacy: apps/server/src/sourceControl/GitHubCli.ts (executeRaw, acceptNotModified)
   # Legacy: apps/server/src/sourceControl/GitHubCli.test.ts (accepts conditional 304 responses and preserves HTTP errors and retry delays)
-  @mc @backlog
+  @mc
   Scenario Outline: A refused re-read of unchanged data is told apart from a rate limit
     Given GitHub refuses a re-read of data that may be unchanged with <answer>
     When the user lists pull requests
@@ -257,6 +261,7 @@ Feature: Browsing pull requests
       | "too many requests" and a time to retry in 120 seconds     | the host is paused for 120 seconds                            |
       | "forbidden", no quota left and a reset time 60 seconds on  | the host is paused until the reset time                       |
       | "forbidden" with text saying the rate limit was exceeded   | the host is paused with the usual back-off                    |
+      | "not modified"                                             | the read fails without pausing the host                       |
       | "unauthorized"                                             | the user is told to sign in to GitHub again                   |
       | a server error                                             | the read fails with GitHub's status and without pausing it    |
 

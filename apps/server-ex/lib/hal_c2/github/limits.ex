@@ -1,9 +1,9 @@
 defmodule HalC2.GitHub.Limits do
   @moduledoc """
   When each GitHub account's API budget may be spent again. `HalC2.GitHub.gh/3`
-  checks here before every call that reaches the API and reports what the host
-  answered, so the first caller to meet a rate limit pauses every other caller of the
-  same budget instead of each finding out for itself.
+  checks here before every background call that reaches the API and reports what the
+  host answered, so the first caller to meet a rate limit pauses every other caller
+  of the same budget instead of each finding out for itself.
 
   An account is `{host, who}` (`HalC2.GitHub.account/1`): GitHub budgets each signed-in
   account apart, so a pause on one holds back no other, on the same host or another.
@@ -14,6 +14,11 @@ defmodule HalC2.GitHub.Limits do
   limit in a row up to 15 minutes. A limit reported while its pause still holds (a
   call that was already in flight) does not lengthen it, and a reset never shortens
   it. An answer once a pause is over ends its backoff, and the account's secondary one.
+
+  An answer can carry the bucket's quota, what GitHub said is left of it: while fewer
+  than a tenth of it is left, background calls wait for its reset, leaving the rest
+  to what the user asks for (which never checks here). Of answers that arrive out of
+  order, the one with the later reset, or the least left, is believed.
   Hosts are compared in lowercase; times are milliseconds from the caller's clock.
   """
 
@@ -29,13 +34,17 @@ defmodule HalC2.GitHub.Limits do
 
   @doc """
   Records that `scope` of `account` (a bucket, or `:all`) was rate limited at `now`.
-  `reset` is when GitHub says the bucket resets, or nil. Returns when calls may resume.
+  `reset` is when GitHub says calls may resume, or nil. Returns when calls may resume.
   """
   def limited(account, scope, now, reset \\ nil),
     do: call({:limited, key(account), scope, now, reset}, now + @cooldown)
 
-  @doc "Records that `bucket` of `account` answered at `now`."
-  def answered(account, bucket, now), do: call({:answered, key(account), bucket, now}, :ok)
+  @doc """
+  Records that `bucket` of `account` answered at `now`, with its `quota` when GitHub
+  gave it: `%{remaining: n, limit: n, reset: ms}`.
+  """
+  def answered(account, bucket, now, quota \\ nil),
+    do: call({:answered, key(account), bucket, now, quota}, :ok)
 
   # The gate is only a saving: with it down, every call asks the host.
   defp call(message, down) do
@@ -45,21 +54,28 @@ defmodule HalC2.GitHub.Limits do
   end
 
   @impl true
-  def init(nil), do: {:ok, %{}}
+  def init(nil), do: {:ok, %{pauses: %{}, quotas: %{}}}
 
   @impl true
-  def handle_call({:check, account, bucket, now}, _from, pauses) do
+  def handle_call({:check, account, bucket, now}, _from, state) do
+    reserve =
+      case state.quotas[{account, bucket}] do
+        %{reset: reset} = quota when reset > now and quota.remaining * 10 < quota.limit -> reset
+        _ -> nil
+      end
+
     until =
-      [pauses[{account, bucket}], pauses[{account, :all}]]
+      [state.pauses[{account, bucket}], state.pauses[{account, :all}]]
       |> Enum.filter(&(&1 && &1.until > now))
       |> Enum.map(& &1.until)
+      |> Enum.concat(List.wrap(reserve))
       |> Enum.max(fn -> nil end)
 
-    {:reply, if(until, do: {:paused, until}, else: :ok), pauses}
+    {:reply, if(until, do: {:paused, until}, else: :ok), state}
   end
 
-  def handle_call({:limited, account, scope, now, reset}, _from, pauses) do
-    entry = pauses[{account, scope}] || %{attempt: 0, until: 0}
+  def handle_call({:limited, account, scope, now, reset}, _from, state) do
+    entry = state.pauses[{account, scope}] || %{attempt: 0, until: 0}
 
     entry =
       cond do
@@ -68,15 +84,25 @@ defmodule HalC2.GitHub.Limits do
         true -> %{attempt: entry.attempt + 1, until: now + backoff(entry.attempt)}
       end
 
-    {:reply, entry.until, Map.put(pauses, {account, scope}, entry)}
+    {:reply, entry.until, put_in(state.pauses[{account, scope}], entry)}
   end
 
-  def handle_call({:answered, account, bucket, now}, _from, pauses) do
-    {:reply, :ok,
-     Map.reject(pauses, fn {{a, scope}, entry} ->
-       a == account and scope in [bucket, :all] and entry.until <= now
-     end)}
+  def handle_call({:answered, account, bucket, now, quota}, _from, state) do
+    pauses =
+      Map.reject(state.pauses, fn {{a, scope}, entry} ->
+        a == account and scope in [bucket, :all] and entry.until <= now
+      end)
+
+    quotas =
+      if quota && quota.limit > 0 && believed?(quota, state.quotas[{account, bucket}]),
+        do: Map.put(state.quotas, {account, bucket}, Map.take(quota, ~w(remaining limit reset)a)),
+        else: state.quotas
+
+    {:reply, :ok, %{state | pauses: pauses, quotas: quotas}}
   end
+
+  defp believed?(_new, nil), do: true
+  defp believed?(new, old), do: {new.reset, -new.remaining} >= {old.reset, -old.remaining}
 
   defp backoff(attempt), do: min(@cooldown * 2 ** attempt, @max_cooldown)
 

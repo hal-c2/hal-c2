@@ -1,9 +1,10 @@
 defmodule HalC2.GitHubLimitsPropTest do
   @moduledoc """
   A state machine over `HalC2.GitHub.Limits`: two accounts on each of two hosts (one
-  named in mixed case, and on the same host as the other spelling), their buckets limited with and without a reset GitHub gave, secondary limits on the
-  whole account, answers, and time passing, with checks between any of them. The model
-  checks what `HalC2.GitHub.gh/3` is promised:
+  host spelled two ways), their buckets limited with and without a reset GitHub gave,
+  secondary limits on the whole account, answers with and without the quota GitHub
+  says is left, and time passing, with checks between any of them. The model checks
+  what `HalC2.GitHub.gh/3` is promised:
 
   - a check is paused exactly while its bucket's pause or its account's secondary pause
     holds, until the later of the two, and a pause on one account or bucket holds back
@@ -13,7 +14,10 @@ defmodule HalC2.GitHubLimitsPropTest do
   - a limit with no reset pauses for 30 seconds, doubling with each limit in a row up
     to 15 minutes, and one reported while its pause holds changes nothing;
   - an answer ends the backoff of its bucket and of its account's secondary pause once
-    they are over, and ends no pause that still holds.
+    they are over, and ends no pause that still holds;
+  - while the last quota believed for a bucket has fewer than a tenth left, before its
+    reset, the bucket is paused until that reset; of quotas that arrive out of order,
+    the one with the later reset, then the least left, is believed.
   """
 
   use ExUnit.Case, async: false
@@ -46,8 +50,9 @@ defmodule HalC2.GitHubLimitsPropTest do
 
   # --- model ----------------------------------------------------------------------
 
-  # pauses: `%{{{lowercase host, who}, bucket | :all} => {attempt, until}}`.
-  def initial_state, do: %{now: 0, pauses: %{}}
+  # pauses: `%{{{lowercase host, who}, bucket | :all} => {attempt, until}}`;
+  # quotas: `%{{{lowercase host, who}, bucket} => %{remaining, limit, reset}}`.
+  def initial_state, do: %{now: 0, pauses: %{}, quotas: %{}}
 
   def command(state) do
     frequency(
@@ -55,7 +60,7 @@ defmodule HalC2.GitHubLimitsPropTest do
         [
           {4, {:call, __MODULE__, :check, [account(), bucket(), state.now]}},
           {3, {:call, __MODULE__, :limited, [account(), scope(), state.now, reset(state.now)]}},
-          {2, {:call, __MODULE__, :answered, [account(), bucket(), state.now]}},
+          {2, {:call, __MODULE__, :answered, [account(), bucket(), state.now, quota(state.now)]}},
           {2, {:call, __MODULE__, :pass, [oneof([1_000, 29_000, 30_000, 60_000, 900_000])]}}
         ]
     )
@@ -64,6 +69,19 @@ defmodule HalC2.GitHubLimitsPropTest do
   defp account, do: {oneof(@hosts), oneof(@who)}
   defp bucket, do: oneof(@buckets)
   defp scope, do: oneof([:all | @buckets])
+
+  defp quota(now) do
+    oneof([
+      nil,
+      let [remaining, reset] <- [
+            oneof([0, 499, 500, 4_000]),
+            oneof([now - 1_000, now + 10_000, now + 600_000])
+          ] do
+        %{remaining: remaining, limit: 5_000, reset: reset}
+      end
+    ])
+  end
+
   # A limit met again as soon as a pause ends, so limits in a row reach the cap.
   defp again(%{pauses: pauses}) when pauses == %{}, do: []
 
@@ -97,8 +115,14 @@ defmodule HalC2.GitHubLimitsPropTest do
   def next_state(state, result, {:call, m, :limited_after, [account, scope, at]}),
     do: next_state(%{state | now: at}, result, {:call, m, :limited, [account, scope, at, nil]})
 
-  def next_state(state, _result, {:call, _, :answered, [account, bucket, now]}) do
+  def next_state(state, _result, {:call, _, :answered, [account, bucket, now, quota]}) do
     account = lower(account)
+    old = state.quotas[{account, bucket}]
+
+    state =
+      if quota && (old == nil or {quota.reset, -quota.remaining} >= {old.reset, -old.remaining}),
+        do: put_in(state.quotas[{account, bucket}], quota),
+        else: state
 
     pauses =
       Map.reject(state.pauses, fn {{a, scope}, {_, until}} ->
@@ -119,6 +143,15 @@ defmodule HalC2.GitHubLimitsPropTest do
           {_, until} <- [state.pauses[{account, scope}]],
           until > now,
           do: until
+
+    holding =
+      case state.quotas[{account, bucket}] do
+        %{remaining: left, limit: limit, reset: reset} when reset > now and left * 10 < limit ->
+          [reset | holding]
+
+        _ ->
+          holding
+      end
 
     case holding do
       [] -> result == :ok
@@ -145,6 +178,6 @@ defmodule HalC2.GitHubLimitsPropTest do
   def check(account, bucket, now), do: Limits.check(account, bucket, now)
   def limited(account, scope, now, reset), do: Limits.limited(account, scope, now, reset)
   def limited_after(account, scope, at), do: Limits.limited(account, scope, at)
-  def answered(account, bucket, now), do: Limits.answered(account, bucket, now)
+  def answered(account, bucket, now, quota), do: Limits.answered(account, bucket, now, quota)
   def pass(_ms), do: :ok
 end
