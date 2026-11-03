@@ -131,6 +131,7 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
 
   # A client lease on the checkout's status, as `server.reportClientActivity` takes it.
   defp show(context, in_front?) do
+    Mc.ensure(HalC2.BackgroundPolicy)
     context = World.watch_vcs(context, context.cwd)
 
     HalC2.BackgroundPolicy.report_client_activity("session", self(), %{
@@ -184,7 +185,8 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
 
   step "a client in front is showing a thread in {string}", %{args: [title]} = context do
     assert World.project(context, title).root == context.cwd
-    context |> show(true) |> upstream_moves()
+    context = context |> shared_answers() |> show(true) |> upstream_moves()
+    Map.put(context, :reply, {:ok, Map.merge(context.vcs.local, context.vcs.remote)})
   end
 
   step "{int} seconds pass", %{args: [seconds]} = context do
@@ -289,6 +291,174 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
 
   step "the status carries no pull request", context do
     assert status(context)["pr"] == nil
+    context
+  end
+
+  # --- one answer per branch (`HalC2.PullRequests.Branches`) ----------------------------
+
+  # The branch answers are shared, on a clock the scenario moves.
+  defp shared_answers(context) do
+    if context[:clock] do
+      context
+    else
+      Mc.ensure(HalC2.PullRequests.Branches)
+      ref = :atomics.new(1, signed: true)
+      :atomics.put(ref, 1, DateTime.to_unix(~U[2026-11-03 10:00:00Z], :millisecond))
+      Application.put_env(:hal_c2, :github_clock, fn -> :atomics.get(ref, 1) end)
+      ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :github_clock) end)
+      Map.put(context, :clock, ref)
+    end
+  end
+
+  defp pass(context, ms), do: :atomics.add(context.clock, 1, ms)
+
+  defp asked(context, branch), do: length(World.cli_calls(context, "--head #{branch}"))
+
+  # The watcher's automatic fetch runs now; the pull request it holds afterwards.
+  defp fetch_now(context) do
+    {message, _} = elapse(context)
+    assert message == :fetch
+    :sys.get_state(watcher(context)).remote["pr"]
+  end
+
+  step "the host refuses the pull request lookup for {string} every time",
+       %{args: [branch]} = context do
+    context
+    |> shared_answers()
+    |> World.cli_rules(%{
+      "args" => ["pr list", "--head #{branch}"],
+      "stderr" => "error connecting to api.github.com\n",
+      "exit" => 1
+    })
+    |> Map.put(:pr_branch, branch)
+  end
+
+  step ~r/^the host's last answer for "(?<branch>[^"]+)" was (?<answer>an open pull request|a merged pull request|no pull request at all)$/,
+       %{args: [branch, answer]} = context do
+    answer =
+      case answer do
+        "an open pull request" -> [pr(42, branch, "OPEN", false)]
+        "a merged pull request" -> [pr(42, branch, "MERGED", false)]
+        "no pull request at all" -> []
+      end
+
+    context
+    |> shared_answers()
+    |> World.cli_rules(%{"args" => ["pr list", "--head #{branch}"], "stdout" => answer})
+    |> Map.put(:pr_branch, branch)
+  end
+
+  step "a client in front is showing a thread in {string} on {string}",
+       %{args: [title, branch]} = context do
+    assert World.project(context, title).root == context.cwd
+    git(context, ["checkout", "-q", "-b", branch])
+    context = context |> fetch_interval(30) |> show(true)
+    Map.put(context, :asked_at, asked(context, branch))
+  end
+
+  step "the status's automatic fetch runs again and again", context do
+    fetch_now(context)
+    # The watcher asked when it started, and the failure is still waited out.
+    assert asked(context, context.pr_branch) == 1
+    context
+  end
+
+  step "the lookup is retried after 20 seconds, then 40 seconds, doubling up to 15 minutes",
+       context do
+    for wait <- [20, 40, 80, 160, 320, 640, 900, 900], reduce: 1 do
+      asks ->
+        pass(context, wait * 1_000 - 1)
+        fetch_now(context)
+        assert asked(context, context.pr_branch) == asks, "asked before #{wait} s"
+        pass(context, 1)
+        fetch_now(context)
+        assert asked(context, context.pr_branch) == asks + 1, "not asked after #{wait} s"
+        asks + 1
+    end
+
+    context
+  end
+
+  step "the first answer that succeeds brings back the normal rhythm", context do
+    branch = context.pr_branch
+
+    context =
+      World.cli_rules(context, %{
+        "args" => ["pr list", "--head #{branch}"],
+        "stdout" => [pr(42, branch, "OPEN", false)]
+      })
+
+    asks = asked(context, branch)
+    pass(context, 900_000)
+    assert %{"number" => 42, "state" => "open"} = fetch_now(context)
+    assert asked(context, branch) == asks + 1
+    # An open pull request is believed for a minute.
+    pass(context, 59_999)
+    fetch_now(context)
+    assert asked(context, branch) == asks + 1
+    pass(context, 1)
+    fetch_now(context)
+    assert asked(context, branch) == asks + 2
+    context
+  end
+
+  step "the status's automatic fetch runs over the next minutes", context do
+    fetch_now(context)
+    assert asked(context, context.pr_branch) == 1
+    context
+  end
+
+  step ~r/^the host is asked again after about (?<count>\d+) minutes?$/,
+       %{args: [count]} = context do
+    wait = String.to_integer(count) * 60_000
+    pass(context, wait - 1)
+    fetch_now(context)
+    assert asked(context, context.pr_branch) == 1
+    pass(context, 1)
+    fetch_now(context)
+    assert asked(context, context.pr_branch) == 2
+    context
+  end
+
+  step "the MC has found the pull request of the thread {string} on {string}",
+       %{args: [thread, branch]} = context do
+    context = shared_answers(context)
+    Mc.ensure({HalC2.PullRequests.Discovery, interval: nil})
+
+    context =
+      World.command(context, %{
+        "type" => "thread.metadata.update",
+        "threadId" => World.thread_id(context, thread),
+        "branch" => branch
+      })
+
+    assert {:ok, _} = context.reply
+    # The sidebar row Discovery reads is written behind the command.
+    HalC2.Streams.flush_shell(World.thread_id(context, thread))
+    :ok = HalC2.PullRequests.Discovery.sweep()
+    assert %{"number" => 42} = World.thread(context, thread)["branchPullRequest"]
+    Map.put(context, :asked_before, asked(context, branch))
+  end
+
+  step "the status did not ask the host about {string}", %{args: [branch]} = context do
+    assert asked(context, branch) == context.asked_before
+    context
+  end
+
+  step "the status asked the host about {string} again", %{args: [branch]} = context do
+    assert asked(context, branch) == context.asked_before + 1
+    context
+  end
+
+  step "the user refreshes the pull requests", context do
+    context = Map.put(context, :asked_before, asked(context, "feature/tax"))
+    {reply, context} = World.call(context, "pullRequests.invalidate", %{})
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "the status's automatic fetch runs", context do
+    fetch_now(context)
     context
   end
 

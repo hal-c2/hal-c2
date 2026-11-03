@@ -338,7 +338,7 @@ defmodule HalC2.WorktreeSetup do
     {:noreply, %{state | watchers: watchers}}
   end
 
-  # A server updated in place (`HalC2.Hot`) from before subscriptions had refs kept each
+  # A server updated in place by a release upgrade from before subscriptions had refs kept each
   # thread's watchers as a set of pids, watched without one.
   @impl true
   def code_change(_old, state, _extra) do

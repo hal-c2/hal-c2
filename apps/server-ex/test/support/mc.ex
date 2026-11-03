@@ -642,25 +642,17 @@ defmodule HalC2.Test.Mc do
   end
 
   @doc """
-  Makes the MC run from a release at `<home>/release` (`RELEASE_ROOT`), under the
-  service wrapper (`HAL_C2_SERVICE=1`) unless `service: false`. A restart the MC asks
-  for is sent to the test process as `{:hal_c2_restart, status}` instead of stopping the
-  VM. Environment, code paths, loaded versions and modules replaced by `bundle/4`
-  are put back when the scenario ends. Returns the release root.
+  Makes the MC run from a release at `<home>/release` (`RELEASE_ROOT`,
+  `HalC2.Test.Release`), under the service wrapper (`HAL_C2_SERVICE=1`) unless
+  `service: false`. A restart the MC asks for is sent to the test process as
+  `{:hal_c2_restart, status}` instead of stopping the VM. Environment, code paths,
+  loaded versions, the MC's application specification and modules replaced by
+  `bundle/4` are put back when the scenario ends. Returns the release root.
   """
   def release(%{home: home}, opts \\ []) do
     root = Path.join(home, "release")
     version = HalC2.Upgrade.version()
-    File.mkdir_p!(Path.join([root, "releases", version]))
-    File.mkdir_p!(Path.join(root, "bin"))
-    File.mkdir_p!(Path.join(root, "lib"))
-
-    File.write!(
-      Path.join([root, "releases", version, "upgrade.json"]),
-      JSON.encode!(manifest(version))
-    )
-
-    File.write!(Path.join([root, "releases", "start_erl.data"]), "17.0.5 #{version}\n")
+    HalC2.Test.Release.root(root, version, manifest(version))
     System.put_env("RELEASE_ROOT", root)
 
     if Keyword.get(opts, :service, true),
@@ -670,9 +662,21 @@ defmodule HalC2.Test.Mc do
     test = self()
     Application.put_env(:hal_c2, :restart_exit, &send(test, {:hal_c2_restart, &1}))
 
+    put_back_on_exit()
+    root
+  end
+
+  @doc """
+  Puts back, when the scenario ends, what an upgrade in this VM changes: the
+  release environment, the code path, the MC's application specification and the
+  modules `remember_module/1` saw. `release/2` does this; a scenario that reloads
+  from a checkout without it calls it itself.
+  """
+  def put_back_on_exit do
     unless :persistent_term.get({__MODULE__, :release}, false) do
       :persistent_term.put({__MODULE__, :release}, true)
       paths = :code.get_path()
+      {:ok, spec} = :application.get_all_key(:hal_c2)
 
       ExUnit.Callbacks.on_exit(fn ->
         System.delete_env("RELEASE_ROOT")
@@ -683,50 +687,91 @@ defmodule HalC2.Test.Mc do
         :persistent_term.erase({__MODULE__, :release})
         :code.set_path(paths)
         restore_modules()
+        restore_spec(:hal_c2, spec)
       end)
     end
 
-    root
+    :ok
+  end
+
+  # An upgrade from a checkout gives the MC's application the new release's version
+  # and modules; the VM's other tests see the ones it started with.
+  defp restore_spec(app, spec) do
+    {:ok, now} = :application.get_all_key(app)
+
+    if now[:vsn] != spec[:vsn] do
+      keys = [:description, :vsn, :modules, :registered, :applications, :mod, :start_phases]
+      spec = Keyword.take(spec, keys) ++ [env: Application.get_all_env(app)]
+
+      :ok =
+        :application_controller.change_application_data([{:application, app, spec}], [
+          {app, Application.get_all_env(app)}
+        ])
+    end
   end
 
   @doc "The upgrade manifest of `version` as this MC's release would carry it."
   def manifest(version) do
     %{
       "version" => version,
-      "otpRelease" => "29",
-      "erts" => "17.0.5",
+      "otpRelease" => System.otp_release(),
+      "erts" => HalC2.Test.Release.erts(),
       "platform" => HalC2.Upgrade.platform(),
       "applications" => %{"hal_c2_bundle" => version, "exqlite" => "0.41.0"},
       "code" => ["hal_c2_bundle"],
       "dependencies" => %{"exqlite" => "0.41.0"},
       "packages" => "p",
-      "config" => "c"
+      "config" => "c",
+      "releaseUpgrades" => true
     }
   end
 
   @doc """
-  A bundle archive for `version` (with its `.sha256` beside it): the running
-  manifest with `changes`, and `modules` (`{module, beam}`) under `lib/`. Modules
-  it replaces are loaded back when the scenario ends (see `release/2`).
+  A bundle archive for `version` (with its `.sha256` beside it): the release the MC
+  runs (`release/2`) with the running manifest under `changes`, and `modules`
+  (`{module, beam}`, or `{module, beam, running beam}` for one with no beam file) in
+  place of the code it runs. Those modules join the running release at the code
+  that runs, and are loaded back when the scenario ends. `changes["sys.config"]` is
+  the release's configuration rather than a manifest entry.
   """
   def bundle(mc, version, changes \\ %{}, modules \\ []) do
     dir = tmp_dir(mc, "bundle")
-    rel = Path.join([dir, "releases", version])
-    # Not `hal-c2-<version>`: code paths move to that directory, which must not hide the
-    # rest of the application's modules from the test VM.
-    ebin = Path.join([dir, "lib", "hal_c2_bundle-#{version}", "ebin"])
-    File.mkdir_p!(rel)
-    File.mkdir_p!(ebin)
+    {sys, changes} = Map.pop(changes, "sys.config", [])
+    {root, from} = {HalC2.Upgrade.release_root(), HalC2.Upgrade.version()}
 
-    File.write!(
-      Path.join(rel, "upgrade.json"),
-      JSON.encode!(Map.merge(manifest(version), changes))
+    running =
+      if root && File.dir?(Path.join([root, "releases", from])) do
+        # A module the VM has no code of is new in the bundle.
+        running =
+          Enum.flat_map(modules, fn entry ->
+            mod = elem(entry, 0)
+            remember_module(mod)
+
+            case {entry, :code.get_object_code(mod)} do
+              {{^mod, _beam, current}, _} -> [{mod, current}]
+              {{^mod, _beam}, {^mod, bin, _}} -> [{mod, bin}]
+              {{^mod, _beam}, :error} -> []
+            end
+          end)
+
+        manifest =
+          Path.join([root, "releases", from, "upgrade.json"]) |> File.read!() |> JSON.decode!()
+
+        HalC2.Test.Release.write(root, from, running, manifest)
+        HalC2.Test.Release.modules(root, from)
+      else
+        []
+      end
+
+    new = for entry <- modules, do: {elem(entry, 0), elem(entry, 1)}
+
+    HalC2.Test.Release.write(
+      dir,
+      version,
+      running ++ new,
+      Map.merge(manifest(version), changes),
+      sys
     )
-
-    for {mod, beam} <- modules do
-      remember_module(mod)
-      File.write!(Path.join(ebin, "#{mod}.beam"), beam)
-    end
 
     path =
       Path.join(
@@ -749,6 +794,25 @@ defmodule HalC2.Test.Mc do
     path
   end
 
+  @doc """
+  A module that loads a NIF whose library does not exist, as `{module, beam}`: loading
+  it at all fails, so a release upgrade cannot carry it.
+  """
+  def nif_module(mc) do
+    mod = :"hal_c2_steps_nif_#{System.unique_integer([:positive])}"
+    path = Path.join(tmp_dir(mc, "nif"), "#{mod}.erl")
+
+    File.write!(path, """
+    -module(#{mod}).
+    -export([init/0]).
+    -on_load(init/0).
+    init() -> erlang:load_nif("#{Path.rootname(path)}", 0).
+    """)
+
+    {:ok, ^mod, beam} = :compile.file(String.to_charlist(path), [:binary, :return_errors])
+    {mod, beam}
+  end
+
   @doc "Remembers a module's current code, loaded back when the scenario ends (`release/2`)."
   def remember_module(mod) do
     originals = :persistent_term.get({__MODULE__, :originals}, %{})
@@ -765,7 +829,13 @@ defmodule HalC2.Test.Mc do
   def restore_modules do
     originals = :persistent_term.get({__MODULE__, :originals}, %{})
     :persistent_term.erase({__MODULE__, :originals})
-    if originals != %{}, do: HalC2.Hot.reload(Map.to_list(originals))
+
+    for {mod, bin} <- originals do
+      :code.purge(mod)
+      {:module, ^mod} = :code.load_binary(mod, :code.which(mod), bin)
+      :code.soft_purge(mod)
+    end
+
     :ok
   end
 end

@@ -301,7 +301,7 @@ defmodule HalC2.ScheduledTasks do
 
   def handle_info(_other, state), do: {:noreply, state}
 
-  # A scheduler updated in place (`HalC2.Hot`) does not run `init/1` again, and one
+  # A scheduler updated in place by a release upgrade does not run `init/1` again, and one
   # from before runs were linked does not trap exits yet, nor is linked to the runs it
   # started then. A run that ended meanwhile is answered by its DOWN.
   @impl true

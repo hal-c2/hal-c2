@@ -674,8 +674,7 @@ defmodule HalC2.Web.Router do
 
           {:error, reason} ->
             json(conn, 409, %{
-              "reason" =>
-                if(is_binary(reason), do: reason, else: HalC2.Hot.describe_error(reason))
+              "reason" => HalC2.Upgrade.Release.describe(reason)
             })
         end
     end

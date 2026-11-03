@@ -1,7 +1,7 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/upgrade.ex (release check, restart path, outcome, errors)
 #   apps/server-ex/lib/hal_c2/upgrade/source.ex (local cache, cluster peer, release download, checksum)
-#   apps/server-ex/lib/hal_c2/hot.ex (in-place load, code_change, reload_cluster)
+#   apps/server-ex/lib/hal_c2/upgrade/release.ex (release_handler install in place, what needs a restart)
 #   apps/server-ex/lib/hal_c2/recovery.ex (continuing cut-off turns)
 #   apps/server-ex/lib/mix/tasks/hal_c2.upgrade.ex
 #   apps/server-ex/lib/hal_c2/rpc.ex (cluster.update)
@@ -9,22 +9,23 @@
 #   docs/internals/server-updates.md
 
 Feature: Hot code upgrade
-  The MC updates itself. When the new release only changes code, it loads in
-  place and nothing restarts. When it cannot, it installs the release and
-  restarts through its service, then reports how the update ended.
+  The MC updates itself. A release upgrade installs the new release in place, so
+  nothing restarts. When the new release changes what a running VM cannot take, such
+  as native code, it installs the release and restarts through its service, then
+  reports how the update ended.
 
   Background:
     Given an MC running release "1.3.0"
 
   @mc
-  Scenario: A code-only update loads without a restart
+  Scenario: A code-only update installs without a restart
     Given release "1.3.1" changes only code
     When the user updates the MC to "1.3.1"
     Then the MC runs "1.3.1"
     And open connections, terminals and agent sessions stay up
 
   @mc
-  Scenario: An update that changes the runtime restarts the MC
+  Scenario: An update that brings native code restarts the MC
     Given release "1.4.0" changes a native library
     And the MC runs under its service
     When the user updates the MC to "1.4.0"

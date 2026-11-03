@@ -54,7 +54,8 @@ defmodule HalC2.GitHub do
     end
   end
 
-  defp asked?, do: Enum.any?([self() | Process.get(:"$callers", [])], &asked?/1)
+  @doc "Whether the calling process runs under `asked/1`, itself or through a task it started."
+  def asked?, do: Enum.any?([self() | Process.get(:"$callers", [])], &asked?/1)
 
   defp asked?(pid) do
     case Process.info(pid, :dictionary) do

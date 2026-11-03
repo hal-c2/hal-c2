@@ -1458,6 +1458,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
   end
 
   defp discovery(context) do
+    Mc.ensure(HalC2.PullRequests.Branches)
     Mc.ensure({HalC2.PullRequests.Discovery, interval: nil})
     context
   end
