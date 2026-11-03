@@ -182,6 +182,8 @@ export interface HostOptions {
   readonly dismissedUpdates?: MutedThreadsStore;
   /** Sees every action dispatched, from QML, keymaps or the palette (tests, debugging). */
   readonly trace?: (action: string, payload: unknown) => void;
+  /** Run `run` after `ms`, returning its cancel (default: setTimeout); tests fire it by hand. */
+  readonly after?: (ms: number, run: () => void) => () => void;
   /** Warnings from before the host existed (keymap.json conflicts, missing plugin directories). */
   readonly startupWarnings?: ReadonlyArray<string>;
   /** keymap.json's entries, which the QML engine merges over the published layers. */
@@ -1644,16 +1646,35 @@ export function createHost(options: HostOptions): Host {
   }
   // A server restart reads here as the connection dropping and coming back.
   // What the user was doing (the thread, the draft, open panels) is the
-  // host's own state and stays; the status line says what happened.
+  // host's own state and stays; the status line says what happened. A drop
+  // that is over within a second and a half says nothing, as on the desktop.
+  const after =
+    options.after ??
+    ((ms: number, run: () => void) => {
+      const timer = setTimeout(run, ms);
+      return () => clearTimeout(timer);
+    });
+  let cancelDropNotice: (() => void) | null = null;
+  let dropAnnounced = false;
   const unsubscribeConnection = client.subscribeConnection((phase) => {
     const before = connectionPhase;
     connectionPhase = phase;
     state.set("connection", connectionState(phase));
     if (phase === "reconnecting") space.connectionLost();
     if (before === "connected" && phase === "reconnecting") {
-      store.setStatus("The server went away; reconnecting…", "busy");
+      cancelDropNotice?.();
+      cancelDropNotice = after(RECONNECT_GRACE_MS, () => {
+        cancelDropNotice = null;
+        dropAnnounced = true;
+        store.setStatus("The server went away; reconnecting…", "busy");
+      });
     } else if (before === "reconnecting" && phase === "connected") {
-      store.setStatus("The server is back; carrying on where you were.", "success");
+      cancelDropNotice?.();
+      cancelDropNotice = null;
+      if (dropAnnounced) {
+        dropAnnounced = false;
+        store.setStatus("The server is back; carrying on where you were.", "success");
+      }
     }
     // A report belongs to the socket it was sent on: a new connection sends it again.
     if (phase === "connected") {
@@ -1713,6 +1734,7 @@ export function createHost(options: HostOptions): Host {
       disposeStatusRow();
       clientActivity.dispose();
       unsubscribeConnection();
+      cancelDropNotice?.();
       unsubscribeCluster();
       unsubscribe();
       terminal.dispose();
@@ -1723,6 +1745,9 @@ export function createHost(options: HostOptions): Host {
     },
   };
 }
+
+/** How long a dropped connection may take to come back before the status line says so. */
+const RECONNECT_GRACE_MS = 1500;
 
 function connectionState(phase: TuiConnectionPhase): TuiConnectionState {
   return {
