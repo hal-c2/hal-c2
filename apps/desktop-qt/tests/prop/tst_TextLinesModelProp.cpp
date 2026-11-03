@@ -300,6 +300,18 @@ private slots:
     QCOMPARE(draw(lines.styled(1)).text, QStringLiteral("let c = \"3\";"));
   }
 
+  // From review: a file cut back to one of its line breaks kept its colours
+  // on every row and was never read, so it was not cached either.
+  void aFileCutBackToALineIsStillRead() {
+    TextLinesModel lines;
+    lines.setText(QStringLiteral("const a = 1;\nconst b = 2;\n"), QStringLiteral("a.ts"));
+    QTRY_VERIFY(lines.coloured());
+    const quint64 reads = codereader::requested();
+    lines.setText(QStringLiteral("const a = 1;\n"), QStringLiteral("a.ts"));
+    QVERIFY(!lines.styled(0).isEmpty());
+    QCOMPARE(codereader::requested(), reads + 1);
+  }
+
   void markupIsEscaped() {
     TextLinesModel lines;
     lines.setText(QStringLiteral("const a = \"<b>&\";\t// x\n"), QStringLiteral("a.ts"));

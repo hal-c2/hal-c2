@@ -94,6 +94,9 @@ private:
   // The rows m_runs colours: all of them, or those before a change while the
   // changed text is read.
   int m_freshRows = 0;
+  // m_runs are a read of this very text, not kept from an older one: kept ones
+  // are read again even when they colour every row, so the text is cached.
+  bool m_whole = false;
   bool m_reading = false;
   // Lets a finished read find this model only while it is for the text shown.
   std::shared_ptr<int> m_alive = std::make_shared<int>(0);

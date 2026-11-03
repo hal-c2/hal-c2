@@ -77,6 +77,7 @@ void TextLinesModel::setText(const QString& text, const QString& path) {
     auto hit = readable() ? codereader::cached(key()) : nullptr;
     if (!readable()) kept = 0;
     m_freshRows = hit ? int(m_lines.size()) : int(kept);
+    m_whole = bool(hit);
     if (hit || !kept) m_runs = std::move(hit);
   }
   endResetModel();
@@ -98,7 +99,7 @@ void TextLinesModel::read() {
   // A read under way is for what was before: it finishes and is let go.
   m_alive = std::make_shared<int>(0);
   setReading(false);
-  if (!readable() || (m_runs && m_freshRows == int(m_lines.size()))) return;
+  if (!readable() || (m_runs && m_whole)) return;
   const QString key = this->key();
   auto job = std::make_shared<codereader::Job>();
   job->byPath = true;
@@ -119,6 +120,7 @@ void TextLinesModel::setRuns(std::shared_ptr<const codereader::Runs> runs) {
   const bool was = coloured();
   m_runs = std::move(runs);
   m_freshRows = int(m_lines.size());
+  m_whole = true;
   restyle();
   if (coloured() != was) emit colouredChanged();
 }
