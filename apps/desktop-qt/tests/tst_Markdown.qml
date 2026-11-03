@@ -86,6 +86,20 @@ Item {
             verify(md.implicitHeight > 0);
         }
 
+        // A list drawn inside other lists (a Space page's nested item) takes
+        // the marker of its depth, and the same text at another depth is not
+        // served the kept one.
+        function test_aNestedListTakesTheMarkerOfItsDepth() {
+            const html = (text, props) => segmentsOf(make(text, props))[0].html;
+            verify(html("- Kept item").indexOf("list-style-type:disc;") >= 0);
+            verify(html("- Kept item", { bulletDepth: 1 }).indexOf("list-style-type:circle;") >= 0);
+            verify(html("1. Kept item", { numberDepth: 1 }).indexOf("list-style-type:lower-alpha;") >= 0);
+            verify(html("3. Kept item").indexOf("<ol start=\"3\"") >= 0);
+            const md = make("- Kept item");
+            md.bulletDepth = 2;
+            verify(segmentsOf(md)[0].html.indexOf("list-style-type:square;") >= 0);
+        }
+
         // Clicks the middle of `word` in the first segment's prose.
         function clickWord(md, word, link, modifiers) {
             linkSpy.target = md;

@@ -3467,6 +3467,45 @@ const Steps steps([] {
     expect(world.openedUrls == QList<QUrl>{QUrl(S("https://example.com/docs"))}, S("the phone opened %1").arg(world.openedUrls.value(0).toString()));
   });
 
+  // Lists (markdown.feature): each item is a block the brick draws as a list of one, its
+  // marker the one its depth takes, nested by the indent before it.
+  struct Nested {
+    QString kind, text;
+    int depth;
+    QString list;  // what the brick draws it in
+  };
+  static const QList<Nested> nested{
+      {S("bullet"), S("Plan the release"), 0, S("<ul style=\"-qt-list-indent:0;list-style-type:disc;")},
+      {S("numbered"), S("Tag"), 1, S("<ol style=\"-qt-list-indent:0;list-style-type:decimal;")},
+      {S("numbered"), S("Ship"), 1, S("<ol start=\"2\" style=\"-qt-list-indent:0;list-style-type:decimal;")},
+      {S("bullet"), S("Notes"), 2, S("<ul style=\"-qt-list-indent:0;list-style-type:circle;")},
+      {S("bullet"), S("Announce"), 0, S("<ul style=\"-qt-list-indent:0;list-style-type:disc;")}};
+  step(S("the page %1 with a bulleted list holding a numbered list").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const Nested& item : nested)
+      given(world, S("block.insert"), {{S("pageId"), givenPage(world, c[0])}, {S("kind"), item.kind}, {S("text"), item.text}, {S("depth"), item.depth}});
+  });
+  step(S("each item is shown with its bullet or its number, indented under its parent"), [](World& world, const Captures&, const Table&) {
+    QMap<QString, qreal> left;
+    for (const Nested& item : nested) {
+      QQuickItem* drawn = world.item(S("spaceBlockText:") + item.text);
+      QQuickItem* prose = named(drawn, S("markdownProse"));
+      expect(prose != nullptr, S("%1 is not drawn as prose").arg(item.text));
+      const QString html = prose->property("text").toString();
+      expect(html.contains(item.list) && html.contains(S(">%1</").arg(item.text)), S("%1 is drawn as %2").arg(item.text, html));
+      QQuickItem* lead = world.find(S("spaceMarkdownLead:") + item.text);
+      expect(!lead || !lead->isVisible() || lead->property("text").toString().trimmed().isEmpty(),
+             S("%1 shows its marker as text: %2").arg(item.text, lead ? lead->property("text").toString() : QString()));
+      left.insert(item.text, drawn->mapToScene({}).x());
+    }
+    const auto under = [&](const QString& child, const QString& parent) {
+      expect(left.value(child) > left.value(parent), S("%1 (at %2) is not indented under %3 (at %4)").arg(child).arg(left.value(child)).arg(parent).arg(left.value(parent)));
+    };
+    under(S("Tag"), S("Plan the release"));
+    under(S("Notes"), S("Ship"));
+    expect(qFuzzyCompare(left.value(S("Tag")), left.value(S("Ship"))), S("Tag and Ship are not at one depth"));
+    expect(qFuzzyCompare(left.value(S("Announce")), left.value(S("Plan the release"))), S("Announce is not back at the top"));
+  });
+
   // A page from a thread.
   step(S("a connected environment with the thread %1 in the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(world.mc.projects.contains(c[1]), S("the MC has no project %1").arg(c[1]));

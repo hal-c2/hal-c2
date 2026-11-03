@@ -15,9 +15,9 @@ import HalC2.Bricks
 // have them. A chart is not written in: it is drawn, and asked for again from the menu.
 // A raw block is Markdown the page keeps as written: shown and edited as its source,
 // in a fixed-width face, line for line, scrolled sideways rather than wrapped. A table
-// and a code block show so too until they are drawn as such (#854), and a block the
-// page does not draw yet shows what the MC writes around its text (a list item's
-// marker, an alert's kind, a divider, a footnote's label, a section's tags, math's
+// and a code block show so too until they are drawn as such (#854), a list item is
+// drawn with its marker (#869), and a block the page does not draw yet shows what
+// the MC writes around its text (a list item's indent, an alert's kind, a divider, a footnote's label, a section's tags, math's
 // fences and an image's address, #869 and #877). A "mermaid" code
 // block, or a raw block that is one "mermaid" fence, is drawn as its diagram instead,
 // with its source a tap away, and says under the source why when it can't be drawn.
@@ -55,6 +55,9 @@ Rectangle {
     readonly property string markdownLead: model.markdownLead ?? ""
     readonly property string markdownTail: model.markdownTail ?? ""
     readonly property string markdownBelow: model.markdownBelow ?? ""
+    // The bulleted and numbered lists a list item sits inside (SpaceController).
+    readonly property int listBullets: model.listBullets ?? 0
+    readonly property int listNumbers: model.listNumbers ?? 0
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
     // The source editor: made while the user edits a drawn block, and always
     // for a block that is shown as its source.
@@ -76,6 +79,13 @@ Rectangle {
     readonly property bool drawn: textShown && !raw && kind !== "details" && kind !== "image"
     // The user is writing in a drawn block: its source shows.
     property bool sourceShown: false
+    // A drawn bullet or numbered item has its marker drawn with its text, as
+    // the chat draws a list; the lead keeps the indent that nests it. A text
+    // the brick would read out of the item keeps its marker in the lead.
+    readonly property string marker: drawn && editor === null && (kind === "bullet" || kind === "numbered") && !leavesItem(markdownLead.replace(/^ +/, ""), text) ? markdownLead.replace(/^ +/, "") : ""
+    // What the brick draws: an item's further lines are indented under its
+    // marker, so a second paragraph stays in the item.
+    readonly property string drawnSource: marker === "" ? text : marker + text.replace(/\n/g, "\n" + " ".repeat(marker.length))
 
     signal menuRequested
     signal linkOpened
@@ -97,6 +107,17 @@ Rectangle {
     // Shell.openExternal opens. A path or an in-page anchor is text to edit.
     function openable(link) {
         return /^(https?|mailto|hal-c2):/i.test(link) ? link : "";
+    }
+
+    // Whether an item's text, after its marker, is Markdown that is no list
+    // item: a rule of the bullet's own character (`- ---`), a quote, a fence or
+    // a table, read as js/markdown.js reads one: a row with a `|` over a
+    // delimiter row of as many cells.
+    function leavesItem(marker, text) {
+        const lines = text.split("\n");
+        const cells = row => row.trim().replace(/\\\|/g, "").replace(/^\||\|$/g, "").split("|").length;
+        const table = lines.length > 1 && lines[0].includes("|") && /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/.test(lines[1]) && cells(lines[0]) === cells(lines[1]);
+        return table || /^[ \t]{0,3}(>|```|~~~)/.test(lines[0]) || /^(-{3,}|\*{3,}|_{3,})$/.test((marker + lines[0]).replace(/[ \t]/g, ""));
     }
 
     // Shows a drawn block's source to edit, the caret near (x, y) in the drawn
@@ -186,8 +207,8 @@ Rectangle {
                 // Under the line above, as the MC writes it: a section's summary under its tag.
                 Label {
                     objectName: "spaceMarkdownLead:" + row.text
-                    visible: row.markdownLead.length > 0
-                    text: row.markdownLead
+                    visible: text.length > 0
+                    text: row.markdownLead.slice(0, row.markdownLead.length - row.marker.length)
                     color: Theme.palette.color("textMuted", "#a1a1aa")
                     font.family: row.mono
                     font.pixelSize: Math.round(13 * Theme.fontScale)
@@ -249,7 +270,9 @@ Rectangle {
                                 objectName: "spaceBlockText:" + row.text
                                 width: parent.width
                                 selectable: false
-                                text: row.text
+                                text: row.drawnSource
+                                bulletDepth: row.listBullets
+                                numberDepth: row.listNumbers
                                 textColor: Theme.palette.color("text", "#e4e4e7")
                                 fontSize: Math.round((row.kind === "heading" ? [24, 20, 18, 17, 16, 15][Math.min(Math.max(row.level, 1), 6) - 1] : 15) * Theme.fontScale)
                                 fontWeight: row.kind === "heading" ? Font.DemiBold : Font.Normal
