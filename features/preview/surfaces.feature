@@ -555,6 +555,19 @@ Feature: In-app preview browser
       Then every device in the view shows that page
 
     @desktop
+    Scenario: The Devices view draws its pages at the screen's pixels in a zoomed app
+      Given a browser tab showing the Devices view
+      When the user zooms the whole app in
+      Then every device in the view draws its page at the screen's pixels, filling its frame
+
+    @desktop
+    Scenario: A page without a background of its own shows on white, as in a browser
+      Given a browser tab showing the thread's dev server
+      Then the page is drawn on white
+      When the user opens the Devices view
+      Then every device in the view draws the page on white
+
+    @desktop
     Scenario: The user picks which devices appear in the Devices view
       Given a browser tab showing the Devices view
       When the user adds the "Pixel 7" device to the view
@@ -1762,6 +1775,33 @@ Feature: In-app preview browser
       When the user types "file:///etc/passwd" in the address field and presses Enter
       Then the tab stays on the thread's dev server
       And the address field says only web addresses can be opened
+
+    @desktop
+    Scenario: The user views a page's source in its tab
+      Given a browser tab showing the thread's dev server
+      When the user views the page's source
+      Then the tab shows the page's source
+      And the MC's tab stays on the page
+      When the user goes back in the tab
+      Then the tab loads the dev server
+
+    @desktop
+    Scenario: Back from a page's source goes back through the tab's history
+      Given a browser tab showing the thread's dev server
+      When the user opens another page from the address field
+      And the user views the page's source
+      Then the tab shows the other page's source
+      When the user goes back in the tab
+      Then the tab shows the other page
+      When the user goes back in the tab
+      Then the tab loads the dev server
+
+    @desktop
+    Scenario: The user types a page's source address
+      Given a browser tab showing the thread's dev server
+      When the user types the page's address after "view-source:" and presses Enter
+      Then the tab shows the page's source
+      And the MC's tab stays on the page
 
     @desktop
     Scenario: The user inspects a page with DevTools

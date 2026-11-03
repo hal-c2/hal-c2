@@ -6,13 +6,18 @@
 // HAL_C2_BROWSER_GRABS=<dir> keeps a picture of the panel from the scenarios
 // that draw something worth looking at.
 
+#include <QColor>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMetaEnum>
 #include <QPointer>
+#include <QQmlContext>
+#include <QQmlExpression>
 #include <QQuickWindow>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTest>
+#include <QtMath>
 
 #include <memory>
 #include <optional>
@@ -290,6 +295,21 @@ bool drawn(World& world, QQuickItem* item) {
     for (int x = 0; x < image.width(); x += 2)
       if (image.pixel(x, y) != image.pixel(0, 0)) return true;
   return false;
+}
+
+// The colour `item` is drawn in near its bottom right corner, clear of the
+// dev server's heading.
+QRgb cornerColour(World& world, QQuickItem* item) {
+  const QRectF area = item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+  return world.brick->grab().pixel(QPoint(qFloor(area.right()) - 6, qFloor(area.bottom()) - 6));
+}
+
+// The scale the window draws `item`'s parent at: what `item` is drawn in.
+// The tab's own page has the app's zoom undone around it.
+double inheritedScale(QQuickItem* item) {
+  double scale = 1.0;
+  for (QQuickItem* node = item->parentItem(); node; node = node->parentItem()) scale *= node->scale();
+  return scale;
 }
 
 // The panel as drawn, to HAL_C2_BROWSER_GRABS/<name>.png when that is set.
@@ -580,15 +600,40 @@ const Steps steps([] {
     QQuickItem* desktop = devicesFrame(world, QStringLiteral("desktop"));
     waitForEngine(world, [&] { return phone && tablet && desktop && phone->isVisible() && tablet->isVisible() && desktop->isVisible(); },
                   QStringLiteral("a phone, a tablet, and a desktop frame to show"));
-    expect(phone->parentItem()->x() < tablet->parentItem()->x() && tablet->parentItem()->x() < desktop->parentItem()->x(),
-           QStringLiteral("the frames are not left to right: phone %1, tablet %2, desktop %3")
-               .arg(phone->parentItem()->x()).arg(tablet->parentItem()->x()).arg(desktop->parentItem()->x()));
+    const auto left = [](QQuickItem* frame) { return frame->mapToScene(QPointF()).x(); };
+    expect(left(phone) < left(tablet) && left(tablet) < left(desktop),
+           QStringLiteral("the frames are not left to right: phone %1, tablet %2, desktop %3").arg(left(phone)).arg(left(tablet)).arg(left(desktop)));
     waitForEngine(world, [&] { return phone->property("url").toUrl().toString() == viewUrl(world) && tablet->property("url").toUrl().toString() == viewUrl(world) &&
                                desktop->property("url").toUrl().toString() == viewUrl(world); },
                   [&] { return QStringLiteral("every frame to load %1; %2").arg(viewUrl(world), state(world)); });
     waitForEngine(world, [&] { return drawn(world, phone) && drawn(world, tablet) && drawn(world, desktop); },
                   [&] { return QStringLiteral("every frame to draw the page; %1").arg(state(world)); });
     saveGrab(world, QStringLiteral("browser-devices"));
+  });
+  step(QStringLiteral("every device in the view draws its page at the screen's pixels, filling its frame"), [devicesFrame](World& world, const Captures&, const Table&) {
+    for (const QString& presetId : {QStringLiteral("iphone-12-pro"), QStringLiteral("ipad-air"), QStringLiteral("desktop")}) {
+      QQuickItem* frame = devicesFrame(world, presetId);
+      expect(frame != nullptr, QStringLiteral("no %1 frame").arg(presetId));
+      // Under a zoomed parent the page draws past its frame on macOS.
+      expect(qFuzzyCompare(inheritedScale(frame), inheritedScale(view(world))),
+             QStringLiteral("the %1 page is drawn in a parent at %2, the tab's page at %3").arg(presetId).arg(inheritedScale(frame)).arg(inheritedScale(view(world))));
+      QQuickItem* device = frame->parentItem()->parentItem();
+      const QRectF page = frame->mapRectToScene(QRectF(0, 0, frame->width(), frame->height()));
+      const QRectF body = device->mapRectToScene(QRectF(0, 0, device->width(), device->height()));
+      expect(qAbs(page.width() - body.width()) < 1 && qAbs(page.height() - body.height()) < 1,
+             QStringLiteral("the %1 page is %2x%3 in a %4x%5 frame").arg(presetId).arg(page.width()).arg(page.height()).arg(body.width()).arg(body.height()));
+    }
+  });
+  step(QStringLiteral("the page is drawn on white"), [](World& world, const Captures&, const Table&) {
+    waitForEngine(world, [&] { return cornerColour(world, view(world)) == qRgb(255, 255, 255); },
+                  [&] { return QStringLiteral("the page to be drawn on white; it is on %1").arg(QColor(cornerColour(world, view(world))).name()); });
+  });
+  step(QStringLiteral("every device in the view draws the page on white"), [devicesFrame](World& world, const Captures&, const Table&) {
+    for (const QString& presetId : {QStringLiteral("iphone-12-pro"), QStringLiteral("ipad-air"), QStringLiteral("desktop")}) {
+      QQuickItem* frame = devicesFrame(world, presetId);
+      waitForEngine(world, [&] { return frame && drawn(world, frame) && cornerColour(world, frame) == qRgb(255, 255, 255); },
+                    [&] { return QStringLiteral("the %1 page to be drawn on white; it is on %2").arg(presetId, frame ? QColor(cornerColour(world, frame)).name() : QStringLiteral("nothing")); });
+    }
   });
   step(QStringLiteral("the user navigates to another page"), [](World& world, const Captures&, const Table&) {
     devServer(world).page(QStringLiteral("/other"), QStringLiteral("Other"));
@@ -768,6 +813,53 @@ const Steps steps([] {
     world.sync();
     expect(viewUrl(world) == devServer(world).url() && world.mc.part<FakePreviews>().navigations.isEmpty(), state(world));
   });
+  // A page's source.
+  step(QStringLiteral("the user views the page's source"), [](World& world, const Captures&, const Table&) {
+    // What the page's context menu's View page source does.
+    QQuickItem* shown = view(world);
+    const QMetaEnum actions = shown->metaObject()->enumerator(shown->metaObject()->indexOfEnumerator("WebAction"));
+    QQmlExpression trigger(qmlContext(shown), shown, QStringLiteral("triggerWebAction(%1)").arg(actions.keyToValue("ViewSource")));
+    trigger.evaluate();
+    expect(!trigger.hasError(), trigger.error().toString());
+  });
+  step(QStringLiteral("the user types the page's address after %1 and presses Enter").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* field = world.brick->item(QStringLiteral("browserAddress"));
+    field->forceActiveFocus();
+    QMetaObject::invokeMethod(field, "selectAll");
+    typeText(world, c[0] + devServer(world).url().mid(7));
+    world.brick->press(QStringLiteral("enter"));
+  });
+  step(QStringLiteral("the tab shows the (other )?page's source"), [](World& world, const Captures& c, const Table&) {
+    const QString source = QStringLiteral("view-source:") + devServer(world).url(c.value(0).isEmpty() ? QStringLiteral("/") : QStringLiteral("/other"));
+    waitForEngine(world, [&] { return viewUrl(world) == source && !loading(world); }, [&] { return QStringLiteral("the tab to show %1; %2").arg(source, state(world)); });
+    // Over the start page, with the address it has.
+    QQuickItem* start = find(world, QStringLiteral("browserStart"));
+    expect(!start || !start->isVisible(), QStringLiteral("the start page covers the source"));
+    const QString address = world.brick->item(QStringLiteral("browserAddress"))->property("text").toString();
+    expect(address == source, QStringLiteral("the address field says \"%1\"").arg(address));
+  });
+  step(QStringLiteral("the MC's tab stays on the page"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const FakePreviews& fake = world.mc.part<FakePreviews>();
+    const QString reported = fake.tabs.first().value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString();
+    expect(fake.navigations.isEmpty() && reported == devServer(world).url(),
+           QStringLiteral("the MC was asked for %1 pages and told of %2").arg(fake.navigations.size()).arg(reported));
+    const QVariantList shown = world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
+    expect(shown.isEmpty(), QStringLiteral("the toasts are %1").arg(show(world.state(QStringLiteral("toasts")))));
+  });
+  // From the address field: Chromium skips, going back, a page that moved
+  // on by script without the user's gesture.
+  step(QStringLiteral("the user opens another page from the address field"), [](World& world, const Captures&, const Table&) {
+    devServer(world).page(QStringLiteral("/other"), QStringLiteral("Other"));
+    QQuickItem* field = world.brick->item(QStringLiteral("browserAddress"));
+    field->forceActiveFocus();
+    QMetaObject::invokeMethod(field, "selectAll");
+    typeText(world, devServer(world).url(QStringLiteral("/other")).mid(7));
+    world.brick->press(QStringLiteral("enter"));
+    waitForTitle(world, QStringLiteral("Other"));
+  });
+  step(QStringLiteral("the tab shows the other page"), [](World& world, const Captures&, const Table&) { waitForPage(world, devServer(world).url(QStringLiteral("/other"))); });
+  step(QStringLiteral("the user goes back in the tab"), [](World& world, const Captures&, const Table&) { world.brick->click(QStringLiteral("browserBack")); });
   step(QStringLiteral("the address field says only web addresses can be opened"), [](World& world, const Captures&, const Table&) {
     const QString problem = panel(world)->property("addressProblem").toString();
     expect(problem.contains(QLatin1String("http")), QStringLiteral("the field says \"%1\"").arg(problem));

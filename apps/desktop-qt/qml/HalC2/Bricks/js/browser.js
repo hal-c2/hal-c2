@@ -75,6 +75,13 @@ function normalizeAddress(input) {
     return { url: scheme + "://" + match[2] + rest };
 }
 
+// The page's prefers-color-scheme, when the user picked one: matchMedia
+// and the page's own style sheets read the scheme picked as the one the
+// screen has. Runs before the page's scripts in every frame.
+function appearanceScript(scheme) {
+    return "(function () {\n" + "var scheme = '" + scheme + "';\n" + "var query = /\\(\\s*prefers-color-scheme\\s*:\\s*(light|dark)\\s*\\)/gi;\n" + "function rewrite(text) { return String(text).replace(query, function (_, s) { return s.toLowerCase() === scheme ? '(min-width: 0px)' : '(max-width: -1px)'; }); }\n" + "function names(text) { return /prefers-color-scheme/i.test(text); }\n" + "var match = window.matchMedia;\n" + "window.matchMedia = function (text) { return match.call(window, rewrite(text)); };\n" + "function fix(list) { for (var i = 0; i < list.length; ++i) { var rule = list[i];\n" + "  if (rule.media && names(rule.media.mediaText)) rule.media.mediaText = rewrite(rule.media.mediaText);\n" + "  if (rule.cssRules) fix(rule.cssRules); } }\n" + "function sweep() { for (var i = 0; i < document.styleSheets.length; ++i) { var sheet = document.styleSheets[i];\n" + "  try { if (sheet.media && names(sheet.media.mediaText)) sheet.media.mediaText = rewrite(sheet.media.mediaText); fix(sheet.cssRules); } catch (e) {} } }\n" + "document.addEventListener('DOMContentLoaded', function () { sweep(); new MutationObserver(sweep).observe(document.head, { childList: true }); });\n" + "document.addEventListener('load', sweep, true);\n" + "})();";
+}
+
 // The ladder's step nearest `zoom`.
 function nearestZoom(zoom) {
     var best = zoomSteps[0];
