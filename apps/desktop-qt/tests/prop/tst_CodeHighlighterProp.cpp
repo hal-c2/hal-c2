@@ -14,6 +14,7 @@
 #include "CodeHighlighter.h"
 #include "hal_c2_syntax.h"
 
+#include <QCoreApplication>
 #include <QSignalSpy>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -101,6 +102,8 @@ struct Block {
 };
 
 void check(const Model& model, Block& block) {
+  // What a change settles a moment later, as an emptied text's colouring.
+  QCoreApplication::processEvents();
   RC_ASSERT(halc2::prop::until([&] { return !block.highlighter.reading(); }));
   RC_ASSERT(block.document.toPlainText() == model.text);
   const QList<QRgb> shown = shownColours(block.document);
@@ -120,9 +123,16 @@ struct Write : Command {
   void run(const Model& before, Block& block) const override {
     Model after = before;
     apply(after);
+    // What was coloured is still the text's start, so it stays coloured all
+    // the way, though the text comes emptied and then filled.
+    const bool was = block.highlighter.coloured();
+    std::vector<bool> told;
+    const auto spy = QObject::connect(&block.highlighter, &CodeHighlighter::colouredChanged, [&] { told.push_back(block.highlighter.coloured()); });
     // As the TextEdit's text binding does: the whole text again.
     block.document.setPlainText(after.text);
     check(after, block);
+    QObject::disconnect(spy);
+    RC_ASSERT(!was || std::find(told.begin(), told.end(), false) == told.end());
   }
   void show(std::ostream& os) const override { os << "Write(" << piece.toStdString() << ")"; }
 };

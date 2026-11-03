@@ -21,6 +21,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Markdown.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/TextEditMenu.qml (the right-click menu on a reply's text)
 #   apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js (escaping, safe links, streaming segments)
+#   apps/desktop-qt/src/native/CodeHighlighter.cpp, native/syntax (code colours: syntect with bat's syntaxes, the Pierre themes)
 #   apps/desktop-qt/tests/tst_Markdown.qml
 #   apps/desktop-qt/tests/native/features/MarkdownSteps.cpp
 #   https://mermaid.js.org/intro/syntax-reference.html (Mermaid diagrams in a reply)
@@ -467,24 +468,39 @@ Feature: Formatted messages
       | that is wider than the thread           | as wide as the thread, keeping its proportions       |
       | that is taller or wider than 480 points | within 480 points each way, keeping its proportions  |
 
-  @backlog @mobile
+  # Colours come from the fence's language, under its usual names and short forms; a fence that
+  # names none, or one the app does not know, shows the code as it is.
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: A code block is coloured only when its fence names a language
-    Given the agent's reply has a code block whose fence reads <fence>
+    Given the agent's reply has a code block whose fence reads "<fence>"
     When the user reads the reply
     Then the code block is shown <colouring>
 
     Examples:
-      | fence | colouring              |
-      | ts    | coloured as TypeScript |
-      |       | as plain text          |
+      | fence   | colouring              |
+      | ts      | coloured as TypeScript |
+      | py      | coloured as Python     |
+      | exs     | coloured as Elixir     |
+      | qml     | coloured as QML        |
+      |         | as plain text          |
+      | klingon | as plain text          |
 
-  @backlog @mobile
+  @shared @backlog-mobile @backlog-tui
   Scenario: A code block still being written keeps the colours of its finished lines
     Given the agent is writing a code block whose fence reads "ts"
     And its first three lines are coloured
     When the agent adds a fourth line
     Then the first three lines stay coloured while the new line waits to be coloured
     And the block does not flash back to plain text
+
+  @shared @backlog-mobile @backlog-tui
+  Scenario: Code follows the theme without being read again
+    Given the appearance is Light
+    And the agent's reply has a code block whose fence reads "ts"
+    And the code block is shown coloured as TypeScript
+    When the user switches the app from light to dark
+    Then the code block is coloured for the dark theme
+    And its code was not read again
 
   @backlog @mobile
   Scenario: A video embedded in a reply plays on request

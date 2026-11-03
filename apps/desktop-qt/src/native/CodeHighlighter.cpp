@@ -150,9 +150,20 @@ void CodeHighlighter::textChanged() {
   m_text = std::move(text);
   const bool was = m_current;
   m_current = !m_read.isEmpty() && m_text.startsWith(m_read);
+  // A whole new text comes as two changes, emptied and then filled, so an
+  // empty text may be gone again at once: it is settled a moment later,
+  // never plain for the moment in between. Still empty then, what was read
+  // is gone.
+  if (m_text.isEmpty()) {
+    QMetaObject::invokeMethod(this, [this] {
+      if (m_text.isEmpty()) restart();
+      else updateColoured();
+    }, Qt::QueuedConnection);
+    return;
+  }
   // What was read is no longer what is shown: plain until it is read again.
-  // (A whole new text comes as two changes, emptied and then filled, so it
-  // can be the start of it again; its blocks are coloured as they change.)
+  // (The text filled can start with it again; its blocks are coloured as
+  // they change.)
   if (was && !m_current) apply();
   else updateColoured();
   schedule();
