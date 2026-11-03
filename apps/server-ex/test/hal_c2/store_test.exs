@@ -345,6 +345,51 @@ defmodule HalC2.StoreTest do
     assert Store.metas(path, "import.none.") == %{}
   end
 
+  # Each read's connection stayed open, with its file handles and page cache, until the
+  # reader next collected garbage: a dev MC held 300+ handles on its store.
+  @tag skip: not File.dir?("/proc/self/fd")
+  test "a read closes its connection before it returns", %{path: path} do
+    {:ok, _} = Store.append([{:thread, "t1", [change("t1")]}])
+    Store.put_meta("k", "v")
+
+    open = fn ->
+      "/proc/self/fd"
+      |> File.ls!()
+      |> Enum.count(&(File.read_link(Path.join("/proc/self/fd", &1)) == {:ok, path}))
+    end
+
+    reads = fn ->
+      for _ <- 1..20 do
+        Store.meta(path, "k")
+        Store.metas(path, "k")
+        Store.list_shell(path)
+        Store.list_streams(path)
+        Store.get_snapshot(path, "t1")
+        Store.stream_tail(path, "t1")
+        Store.streams_present(path, ["t1"])
+        Store.reduce_stream(path, "t1", 0, 0, fn _, n -> n + 1 end)
+      end
+    end
+
+    # The first read can open one connection for good (the checkpointer's).
+    reads.()
+    before = open.()
+    # A heap that never fills, so nothing these reads leave behind is collected.
+    {pid, ref} =
+      :erlang.spawn_opt(
+        fn ->
+          reads.()
+          exit({:opened, open.() - before})
+        end,
+        [
+          :monitor,
+          min_heap_size: 50_000_000
+        ]
+      )
+
+    assert_receive {:DOWN, ^ref, :process, ^pid, {:opened, 0}}, 5_000
+  end
+
   describe "storing a thread with no stream to index it" do
     defp message(id),
       do:
