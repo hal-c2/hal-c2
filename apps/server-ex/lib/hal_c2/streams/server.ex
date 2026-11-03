@@ -220,8 +220,42 @@ defmodule HalC2.Streams.Server do
     end
   end
 
+  @doc """
+  The stream's state as of now. Its cold rows are read as the store holds them when
+  they are read, which a commit since may have changed: a lookup by key
+  (`HalC2.StreamState.fetch/3`) is fine, but whatever walks them takes `read/1`.
+  """
   @spec state(GenServer.server()) :: StreamState.t()
   def state(server), do: GenServer.call(server, :state, :infinity)
+
+  @doc """
+  The stream's state as of now, its cold rows pinned to it (`HalC2.StreamState.pin/1`),
+  for `HalC2.StreamState.read/2`.
+  """
+  @spec read(GenServer.server()) :: StreamState.t()
+  def read(server), do: GenServer.call(server, :read, :infinity)
+
+  @doc """
+  Returns once the stream's cold rows are all on disk: at once, unless it is still
+  migrating an older MC's snapshot (`HalC2.StreamState.load/3`). Its own process
+  waits for the migration's message; any other asks the stream.
+  """
+  @spec await_cold(pid) :: :ok
+  def await_cold(pid) when pid == self() do
+    migration = Process.get(:hal_c2_migration)
+
+    receive do
+      {:hal_c2_cold_migrated, ^migration} = done ->
+        # Still the stream's to handle, once the caller is done with this message.
+        send(self(), done)
+        :ok
+
+      {:EXIT, ^migration, reason} when reason != :normal ->
+        exit({:migration_failed, reason})
+    end
+  end
+
+  def await_cold(pid), do: GenServer.call(pid, :await_cold, :infinity)
 
   @doc "Puts the stream's sidebar row now instead of after the debounce."
   @spec flush_shell(GenServer.server()) :: :ok
@@ -233,7 +267,14 @@ defmodule HalC2.Streams.Server do
     # what boot recovery reads to find the turns it cut off.
     Process.flag(:trap_exit, true)
     path = Store.path()
-    state = StreamState.load(path, stream_id)
+    state = StreamState.load(path, stream_id, store: Store)
+
+    migration =
+      if plan = StreamState.migration(state) do
+        pid = migrate(path, stream_id, plan)
+        Process.put(:hal_c2_migration, pid)
+        pid
+      end
 
     {:ok,
      %{
@@ -242,6 +283,13 @@ defmodule HalC2.Streams.Server do
        path: path,
        stream: state,
        snapshot_seq: state.seq,
+       # The process writing an older MC's cold rows (`migrate/3`), and who waits on it.
+       migration: migration,
+       cold_waiters: [],
+       # Readers of the migrating state, sent its pin once the migration is done.
+       pins: [],
+       # Memory holds this many turn items before the stream tries to demote some.
+       demote_at: 2 * StreamState.hot_items(),
        shell_scheduled: false,
        # pid => %{ref: monitor, view: View.t() | :plain | :watch}
        subscribers: %{},
@@ -258,16 +306,19 @@ defmodule HalC2.Streams.Server do
     state = drop(state, pid)
     {view, initial} = initial(state, pid, offset, client)
 
-    relays =
+    state =
       if node(pid) == node() do
-        initial.()
-        state.relays
+        initial.(state.stream)
+        state
       else
-        Map.put(state.relays, pid, Relay.start(pid, initial))
+        # Its relay reads the cold rows after the stream moved on: pinned to now.
+        stream = StreamState.pin(state.stream)
+        relay = Relay.start(pid, fn -> StreamState.read(stream, initial) end)
+        %{state | relays: Map.put(state.relays, pid, relay)} |> pinned(stream, relay)
       end
 
     sub = %{ref: Process.monitor(pid), view: view, name: name(state.id, client)}
-    {:reply, :ok, %{state | subscribers: Map.put(state.subscribers, pid, sub), relays: relays}}
+    {:reply, :ok, %{state | subscribers: Map.put(state.subscribers, pid, sub)}}
   end
 
   # Nothing to write is nothing to tell anyone; the stream stays where it is.
@@ -316,11 +367,22 @@ defmodule HalC2.Streams.Server do
 
   def handle_call(:state, _from, state), do: {:reply, state.stream, state, timeout(state)}
 
+  def handle_call(:read, {pid, _}, state) do
+    stream = StreamState.pin(state.stream)
+    state = pinned(state, stream, pid)
+    {:reply, stream, state, timeout(state)}
+  end
+
+  def handle_call(:await_cold, from, %{migration: pid} = state) when is_pid(pid),
+    do: {:noreply, %{state | cold_waiters: [from | state.cold_waiters]}, timeout(state)}
+
+  def handle_call(:await_cold, _from, state), do: {:reply, :ok, state, timeout(state)}
+
   def handle_call(:sequence, _from, state),
     do: {:reply, state.stream.seq, state, timeout(state)}
 
   def handle_call({:get, kind, id}, _from, state),
-    do: {:reply, StreamState.get(state.stream, kind)[id], state, timeout(state)}
+    do: {:reply, StreamState.fetch(state.stream, kind, id), state, timeout(state)}
 
   def handle_call(:flush_shell, _from, state) do
     {:noreply, state, _} =
@@ -348,11 +410,36 @@ defmodule HalC2.Streams.Server do
         %{seq: seq, kind: kind, entity: entity, patch: patch, at: change_at}
       end)
 
-    stream = Enum.reduce(events, state.stream, &StreamState.apply_event(&2, &1))
+    # The cold entities the commit touches come back to memory first, so every
+    # event applies to what its entity is, and `before` says what each was.
+    before = StreamState.promote(state.stream, for(e <- events, do: {e.kind, e.entity}))
+    stream = Enum.reduce(events, before, &StreamState.apply_event(&2, &1))
     HalC2.Search.index(state.id, events, stream)
-    broadcast(state, stream, events)
-    state = schedule_shell(%{state | stream: stream})
+    broadcast(%{state | stream: before}, stream, events)
+    state = schedule_shell(compact(%{state | stream: stream}))
     {:reply, {:ok, last}, state, timeout(state)}
+  end
+
+  # Memory keeps the hot part of the stream: past `demote_at` turn items, the older
+  # runs' go to the cold table with a snapshot. A run too long to leave anything
+  # behind is tried again only once memory holds twice as much.
+  defp compact(%{stream: stream} = state) do
+    held = map_size(StreamState.get(stream, "turn-item"))
+
+    if held > state.demote_at do
+      compacted = StreamState.compact(stream, Store)
+      now = map_size(StreamState.get(compacted, "turn-item"))
+      demote_at = max(2 * StreamState.hot_items(), if(now == held, do: 2 * held, else: 0))
+
+      snapshot_seq =
+        if compacted.floor != stream.floor or now != held,
+          do: compacted.seq,
+          else: state.snapshot_seq
+
+      %{state | stream: compacted, demote_at: demote_at, snapshot_seq: snapshot_seq}
+    else
+      state
+    end
   end
 
   @impl true
@@ -382,6 +469,7 @@ defmodule HalC2.Streams.Server do
       case state.subscribers do
         %{^pid => %{view: %{window: %{floor: floor}} = view} = sub} when floor != nil ->
           {runs, floor} = View.take_runs(state.stream, floor, items)
+
           # By the way its events go, so it arrives after the ones it follows.
           to = Map.get(state.relays, pid, pid)
 
@@ -423,6 +511,32 @@ defmodule HalC2.Streams.Server do
 
   def handle_info(:timeout, state), do: {:stop, :normal, state}
 
+  # The cold rows are on disk: the hot snapshot written with them makes them the
+  # stream's, and the older MC's snapshot goes.
+  def handle_info({:hal_c2_cold_migrated, pid}, %{migration: pid} = state) do
+    # Its readers' pins, before the snapshot changes what they read.
+    for reader <- state.pins, do: send(reader, {:hal_c2_pin, self(), Store.pin(state.path)})
+    stream = StreamState.migrated(state.stream)
+    {snapshot, cold} = StreamState.snapshot(stream, [], false)
+    :ok = Store.put_snapshot(Store, state.id, stream.seq, snapshot, cold)
+    Process.delete(:hal_c2_migration)
+    for from <- state.cold_waiters, do: GenServer.reply(from, :ok)
+
+    state = %{
+      state
+      | stream: StreamState.written(stream),
+        snapshot_seq: stream.seq,
+        migration: nil,
+        cold_waiters: [],
+        pins: []
+    }
+
+    {:noreply, compact(state), timeout(state)}
+  end
+
+  # One the stream's own read already waited for.
+  def handle_info({:hal_c2_cold_migrated, _pid}, state), do: {:noreply, state, timeout(state)}
+
   # Linked processes still take the stream down with them, as before it trapped exits,
   # except a relay: a failed one costs its subscriber alone, as when it was unlinked.
   def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state, timeout(state)}
@@ -446,8 +560,14 @@ defmodule HalC2.Streams.Server do
 
     if state.shell_scheduled, do: handle_info(:shell, state)
 
-    if state.stream.seq - state.snapshot_seq >= @snapshot_every,
-      do: Store.put_snapshot(state.id, state.stream.seq, state.stream)
+    # A migration not finished leaves the older MC's snapshot to the next start.
+    if migration = Map.get(state, :migration), do: Process.exit(migration, :kill)
+
+    if Map.get(state, :migration) == nil and
+         (state.stream.seq - state.snapshot_seq >= @snapshot_every or state.stream.dirty != %{}) do
+      {snapshot, cold} = StreamState.snapshot(state.stream)
+      Store.put_snapshot(Store, state.id, state.stream.seq, snapshot, cold)
+    end
   end
 
   @impl true
@@ -468,9 +588,17 @@ defmodule HalC2.Streams.Server do
     {:ok,
      state
      |> Map.put_new_lazy(:relays, fn -> relays(subscribers) end)
+     |> Map.put_new(:demote_at, 2 * StreamState.hot_items())
+     |> Map.put_new(:migration, nil)
+     |> Map.put_new(:cold_waiters, [])
+     |> Map.put_new(:pins, [])
      |> Map.merge(%{
        v: @state_version,
-       stream: StreamState.migrate(state.stream),
+       stream:
+         if(StreamState.migration(state.stream),
+           do: state.stream,
+           else: %{StreamState.migrate(state.stream) | src: {state.path, state.id}}
+         ),
        subscribers: subscribers
      })}
   end
@@ -534,17 +662,17 @@ defmodule HalC2.Streams.Server do
   defp name(id, _client), do: id
 
   # What a new subscriber is sent from now on, and what sends it the state it
-  # starts from, for the stream or the subscriber's relay to run. Only the log is
-  # read here, so that it ends where the stream stands; the rest is put together
-  # by whoever runs it, from the stream as it is now.
-  defp initial(%{id: id, stream: stream}, pid, _offset, :watch),
-    do: {:watch, fn -> send(pid, {:hal_c2_stream, id, {:live, stream.seq}}) end}
+  # starts from, for the stream or the subscriber's relay to run with the stream as
+  # it is now. Only the log is read here, so that it ends where the stream stands;
+  # the rest is put together by whoever runs it.
+  defp initial(%{id: id}, pid, _offset, :watch),
+    do: {:watch, fn stream -> send(pid, {:hal_c2_stream, id, {:live, stream.seq}}) end}
 
-  defp initial(%{id: id, stream: stream} = state, pid, offset, :plain) do
+  defp initial(%{id: id} = state, pid, offset, :plain) do
     replay = replay(state, offset)
 
     {:plain,
-     fn ->
+     fn stream ->
        case replay do
          events when is_list(events) ->
            events = Enum.reject(events, &StreamState.void?/1)
@@ -580,7 +708,7 @@ defmodule HalC2.Streams.Server do
     replay = resumes? && replay(state, offset)
 
     {view,
-     fn ->
+     fn stream ->
        missed =
          case replay do
            events when is_list(events) ->
@@ -594,7 +722,7 @@ defmodule HalC2.Streams.Server do
              # Sent in parts it could be cut off part-way, and a client that had
              # applied the first of them would be sent them again. A patch applied
              # twice appends its text twice; a whole entity is the same either way.
-             if length(chunk(merged, [], 0, [])) > 1,
+             if :erlang.external_size(merged) > @chunk_bytes,
                do: View.changed_since(view, stream, offset),
                else: merged
 
@@ -606,17 +734,6 @@ defmodule HalC2.Streams.Server do
          end
 
        case missed do
-         [] ->
-           :ok
-
-         events when is_list(events) ->
-           # A client cut off part-way resumes from where it was, so only the last
-           # chunk moves its offset.
-           send_chunks(events, fn chunk, more ->
-             seq = if more == :done, do: List.last(chunk).seq, else: offset
-             send(pid, {:hal_c2_stream, id, {:events, chunk, seq}})
-           end)
-
          :unknown ->
            meta = if window, do: %{handle: handle, floor: window.floor}, else: %{handle: handle}
 
@@ -626,6 +743,18 @@ defmodule HalC2.Streams.Server do
                {:hal_c2_stream, id, {:snapshot, stream.seq, stream.updated_at, rows, more, meta}}
              )
            end)
+
+         events ->
+           # A client cut off part-way resumes from where it was, so only the last
+           # chunk moves its offset. Nothing missed is nothing to send.
+           send_chunks(
+             events,
+             fn chunk, more ->
+               seq = if more == :done, do: List.last(chunk).seq, else: offset
+               send(pid, {:hal_c2_stream, id, {:events, chunk, seq}})
+             end,
+             false
+           )
        end
 
        send(pid, {:hal_c2_stream, id, {:live, stream.seq, handle}})
@@ -645,25 +774,44 @@ defmodule HalC2.Streams.Server do
 
   defp replay(_state, _offset), do: :too_many
 
-  # Calls `fun.(chunk, :more | :done)` for `list` in chunks of about `@chunk_bytes`:
-  # once with nothing when `list` is empty, so whoever waits for `:done` gets it.
-  defp send_chunks(list, fun) do
-    chunks = chunk(list, [], 0, [])
-    last = length(chunks) - 1
+  # Calls `fun.(chunk, :more | :done)` for `items` in chunks of about `@chunk_bytes`,
+  # walking them lazily: a whole thread read from the cold table is never all in
+  # memory. Called once with nothing when there are none and `empty?` is true, so
+  # whoever waits for `:done` gets it.
+  defp send_chunks(items, fun, empty? \\ true) do
+    last =
+      items
+      |> Stream.chunk_while(
+        {[], 0},
+        fn item, {current, size} ->
+          item_size = :erlang.external_size(item)
 
-    for {chunk, i} <- Enum.with_index(chunks),
-        do: fun.(chunk, if(i == last, do: :done, else: :more))
+          if current != [] and size + item_size > @chunk_bytes,
+            do: {:cont, Enum.reverse(current), {[item], item_size}},
+            else: {:cont, {[item | current], size + item_size}}
+        end,
+        fn
+          {[], _} -> {:cont, {[], 0}}
+          {current, _} -> {:cont, Enum.reverse(current), {[], 0}}
+        end
+      )
+      |> Enum.reduce(nil, fn chunk, previous ->
+        if previous, do: fun.(previous, :more)
+        chunk
+      end)
+
+    cond do
+      last -> fun.(last, :done)
+      empty? -> fun.([], :done)
+      true -> :ok
+    end
   end
 
-  defp chunk([], current, _size, acc), do: Enum.reverse([Enum.reverse(current) | acc])
+  # Who waits for the pin of a state handed over while it migrates (`StreamState.pin/1`).
+  defp pinned(state, %{src: {:pin_pending, _, _}}, reader),
+    do: %{state | pins: [reader | state.pins]}
 
-  defp chunk([item | rest], current, size, acc) do
-    item_size = :erlang.external_size(item)
-
-    if current != [] and size + item_size > @chunk_bytes,
-      do: chunk(rest, [item], item_size, [Enum.reverse(current) | acc]),
-      else: chunk(rest, [item | current], size + item_size, acc)
-  end
+  defp pinned(state, _stream, _reader), do: state
 
   defp schedule_shell(%{shell_scheduled: true} = state), do: state
 
@@ -704,8 +852,34 @@ defmodule HalC2.Streams.Server do
     end)
   end
 
+  # A migrating stream stays up until its migration is done.
+  defp timeout(%{migration: pid}) when is_pid(pid), do: :infinity
   defp timeout(%{subscribers: subs}) when map_size(subs) == 0, do: @idle_stop
   defp timeout(_state), do: :infinity
+
+  # Writes the cold rows of an older MC's snapshot that `StreamState.load/3` left to
+  # it, at low priority and one stream at a time (`HalC2.Streams.Migrations`), so
+  # migrations at boot neither hold up the streams serving clients nor pile up in
+  # memory. Linked: a failed one takes the stream down, and the next start tries again.
+  defp migrate(path, stream_id, plan) do
+    stream = self()
+
+    spawn_link(fn ->
+      Process.flag(:priority, :low)
+      :ok = HalC2.Streams.Migrations.turn()
+      {_seq, blob} = Store.legacy_blob(path, stream_id)
+
+      # The first batch clears what an earlier, interrupted migration left.
+      put = fn rows ->
+        reset? = Process.put(:hal_c2_cold_written, true) == nil
+        :ok = Store.put_cold(Store, stream_id, rows, reset?)
+      end
+
+      :ok = HalC2.StreamState.Legacy.cold(blob, plan, 500, put)
+      if Process.get(:hal_c2_cold_written) == nil, do: put.([])
+      send(stream, {:hal_c2_cold_migrated, self()})
+    end)
+  end
 
   defp run(fun, stream) do
     fun.(stream)

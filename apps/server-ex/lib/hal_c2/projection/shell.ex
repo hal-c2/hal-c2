@@ -55,12 +55,12 @@ defmodule HalC2.Projection.Shell do
       |> Enum.filter(&(get(&1, "providerInstanceId") == get(thread, "providerInstanceId")))
       |> latest_by(&epoch_ms(get(&1, "updatedAt")))
 
-    local_items = Timeline.local_items(state)
+    local_count = Timeline.local_count(state)
 
     visible_count =
       if source,
-        do: length(Timeline.visible_items(state, resolver(source))),
-        else: length(local_items)
+        do: Timeline.visible_count(state, resolver(source)),
+        else: local_count
 
     error =
       ThreadError.summary(
@@ -120,7 +120,7 @@ defmodule HalC2.Projection.Shell do
           runs: runs
         ),
       "providerInstanceHistory" => provider_instance_history(get(thread, "id"), provider_threads),
-      "itemCount" => length(local_items),
+      "itemCount" => local_count,
       "visibleItemCount" => visible_count,
       "createdAt" => get(thread, "createdAt"),
       "updatedAt" =>

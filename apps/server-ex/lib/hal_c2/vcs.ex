@@ -220,8 +220,9 @@ defmodule HalC2.Vcs do
         [branch]
 
     # Unauthenticated, offline or rate limited `gh` means no pull request, quietly.
-    # Only a github.com origin gets here, so the gate need not read the remote again.
-    case HalC2.GitHub.gh(cwd, args, timeout: 10_000, host: "github.com") do
+    # gh may ask an `upstream` on another host than origin's, so the gate reads the remotes
+    # the way gh does to charge the host it asks.
+    case HalC2.GitHub.gh(cwd, args, timeout: 10_000) do
       {:ok, out} -> JSON.decode!(out)
       _ -> []
     end

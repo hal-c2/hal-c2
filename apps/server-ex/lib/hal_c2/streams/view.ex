@@ -77,10 +77,9 @@ defmodule HalC2.Streams.View do
   """
   @spec take_runs(StreamState.t(), integer | nil, pos_integer) :: {MapSet.t(), integer | nil}
   def take_runs(stream, before, items) do
-    counts =
-      stream
-      |> StreamState.get("turn-item")
-      |> Enum.frequencies_by(fn {_id, item} -> item["runId"] end)
+    # The cold rows are counted only for a walk that reaches below the hot floor.
+    hot = stream |> StreamState.get("turn-item") |> Enum.frequencies_by(&elem(&1, 1)["runId"])
+    all = fn -> StreamState.item_counts(stream) end
 
     runs =
       for {id, run} <- StreamState.get(stream, "run"),
@@ -90,10 +89,17 @@ defmodule HalC2.Streams.View do
 
     runs = Enum.sort(runs, :desc)
 
-    {taken, rest, _count} =
-      Enum.reduce_while(runs, {[], runs, 0}, fn {_, id} = run, {taken, [_ | rest], count} ->
-        count = count + Map.get(counts, id, 0)
-        acc = {[run | taken], rest, count}
+    {taken, rest, _count, _counts} =
+      Enum.reduce_while(runs, {[], runs, 0, {:hot, hot}}, fn {ordinal, id} = run,
+                                                             {taken, [_ | rest], count, counts} ->
+        counts =
+          case counts do
+            {:hot, _} -> if cold?(stream, ordinal), do: {:all, all.()}, else: counts
+            all -> all
+          end
+
+        count = count + Map.get(elem(counts, 1), id, 0)
+        acc = {[run | taken], rest, count, counts}
         if count >= items, do: {:halt, acc}, else: {:cont, acc}
       end)
 
@@ -109,20 +115,27 @@ defmodule HalC2.Streams.View do
 
   defp ordinal(run), do: run["ordinal"] || 0
 
-  @doc "The view's rows as they go to the client, in creation order."
-  @spec rows(t, StreamState.t()) :: [{String.t(), String.t(), map}]
+  # Whether a run's entities may be in the cold table.
+  defp cold?(%{floor: floor}, ordinal), do: floor != nil and ordinal < floor
+
+  @doc """
+  The view's rows as they go to the client, in creation order, lazily: a window
+  reads the cold table only for its runs below the hot floor.
+  """
+  @spec rows(t, StreamState.t()) :: Enumerable.t({String.t(), String.t(), map})
   def rows(view, stream) do
-    for {kind, id, entity} <- StreamState.rows(stream),
-        holds?(view, stream, kind, entity),
-        do: {kind, id, Wire.entity(kind, entity)}
+    kinds = view.kinds && Map.keys(view.kinds)
+
+    stream
+    |> StreamState.rows(kinds: kinds, cold_runs: cold_runs(view, stream))
+    |> Stream.filter(fn {kind, _id, entity} -> holds?(view, stream, kind, entity) end)
+    |> Stream.map(fn {kind, id, entity} -> {kind, id, Wire.entity(kind, entity)} end)
   end
 
   @doc "The windowed rows of `runs` as they go to the client, in creation order."
-  @spec page(t, StreamState.t(), MapSet.t()) :: [{String.t(), String.t(), map}]
+  @spec page(t, StreamState.t(), MapSet.t()) :: Enumerable.t({String.t(), String.t(), map})
   def page(view, stream, runs) do
-    for {kind, id, entity} <- StreamState.rows(stream),
-        kind in @windowed,
-        MapSet.member?(runs, entity["runId"]),
+    for {kind, id, entity} <- StreamState.run_rows(stream, runs),
         kind?(view.kinds, kind, entity),
         do: {kind, id, Wire.entity(kind, entity)}
   end
@@ -235,9 +248,19 @@ defmodule HalC2.Streams.View do
         not MapSet.member?(settled, {kind, id}),
         kind?(view.kinds, kind, entity),
         move =
-          moving(view.window, before, stream, kind, StreamState.get(before, kind)[id], entity),
+          moving(view.window, before, stream, kind, was(before, stream, kind, id, entity), entity),
         move != :stays,
         do: %{event | kind: kind, entity: id, patch: moved(kind, entity, move == :joins)}
+  end
+
+  # What an entity of a run was before the commit. One the commit touched was
+  # brought to memory before it (`HalC2.StreamState.promote/2`), so one in neither
+  # copy is cold and as it was, and one only in the new copy the commit made.
+  defp was(before, stream, kind, id, entity) do
+    case StreamState.get(before, kind) do
+      %{^id => was} -> was
+      _ -> if Map.has_key?(StreamState.get(stream, kind), id), do: nil, else: entity
+    end
   end
 
   # Whether a commit's change to its run moves an entity into the window or out.
@@ -258,19 +281,16 @@ defmodule HalC2.Streams.View do
   # The windowed entities of each run that `events` touch, by run id, from one pass
   # over the stream: a thread holds far more items than a resume touches runs, and
   # scanning them all per run kept a long thread's stream busy past every timeout.
+  # An older run's are read from the cold table.
   defp of_runs(stream, events) do
     runs = MapSet.new(for %{kind: "run", entity: run} <- events, do: run)
 
     if MapSet.size(runs) == 0 do
       %{}
     else
-      for kind <- @windowed,
-          {id, %{"runId" => run} = entity} <- StreamState.get(stream, kind),
-          MapSet.member?(runs, run),
-          reduce: %{} do
-        items -> Map.update(items, run, [{kind, id, entity}], &[{kind, id, entity} | &1])
-      end
-      |> Map.new(fn {run, of_run} -> {run, Enum.reverse(of_run)} end)
+      stream
+      |> StreamState.run_rows(runs)
+      |> Enum.group_by(fn {_kind, _id, entity} -> entity["runId"] end)
     end
   end
 
@@ -287,9 +307,11 @@ defmodule HalC2.Streams.View do
   @spec replayed(t, StreamState.t(), [HalC2.Store.event()]) :: [HalC2.Store.event()]
   def replayed(view, stream, events) do
     items = if view.window, do: of_runs(stream, events), else: %{}
+    # What a run that settled since left in memory may have gone cold.
+    entities = StreamState.lookup(stream, for(%{kind: k, entity: id} <- events, do: {k, id}))
 
     Enum.flat_map(events, fn %{kind: kind, entity: id, patch: patch} = event ->
-      entity = StreamState.get(stream, kind)[id]
+      entity = entities[{kind, id}]
 
       sent =
         if StreamState.void?(event) or not holds?(view, stream, kind, entity) do
@@ -326,19 +348,28 @@ defmodule HalC2.Streams.View do
   changed since and delete each one gone, or `:unknown` when the stream no longer
   knows (`HalC2.StreamState.changed_since/2`).
   """
-  @spec changed_since(t, StreamState.t(), non_neg_integer) :: [HalC2.Store.event()] | :unknown
+  @spec changed_since(t, StreamState.t(), non_neg_integer) ::
+          Enumerable.t(HalC2.Store.event()) | :unknown
   def changed_since(view, stream, offset) do
-    with {upserts, deletes} <- StreamState.changed_since(stream, offset) do
+    with {upserts, deletes} <-
+           StreamState.changed_since(stream, offset, cold_runs: cold_runs(view, stream)) do
       # When each one changed is not kept; clients only need a time to show.
       at = stream.updated_at || 0
 
       items =
         if view.window,
-          do: of_runs(stream, for({_, "run", id, _} <- upserts, do: %{kind: "run", entity: id})),
+          do:
+            of_runs(
+              stream,
+              for(
+                id <- StreamState.changed_ids(stream, "run", offset),
+                do: %{kind: "run", entity: id}
+              )
+            ),
           else: %{}
 
       upserts =
-        Enum.flat_map(upserts, fn {seq, kind, id, entity} ->
+        Stream.flat_map(upserts, fn {seq, kind, id, entity} ->
           event = %{seq: seq, kind: kind, entity: id, patch: replacement(kind, entity), at: at}
           sent = if holds?(view, stream, kind, entity), do: [event], else: []
           # Whether or not the client holds runs: its items are what it is owed.
@@ -350,7 +381,35 @@ defmodule HalC2.Streams.View do
           %{seq: seq, kind: kind, entity: id, patch: HalC2.Patch.delete(), at: at}
         end
 
-      Enum.sort_by(upserts ++ deletes, & &1.seq)
+      merge_by_seq(upserts, deletes)
     end
+  end
+
+  # The runs whose cold entities a view holds: those of its window below the hot
+  # floor, or all of them without a window.
+  defp cold_runs(%{window: %{floor: floor}}, stream) when floor != nil do
+    for {id, run} <- StreamState.get(stream, "run"),
+        run["status"] == "queued" or ordinal(run) >= floor,
+        cold?(stream, ordinal(run)),
+        do: id
+  end
+
+  defp cold_runs(_view, _stream), do: :all
+
+  # A lazy list of events in seq order and a short one, merged in seq order: the
+  # short one's go before the first of the other that comes later.
+  defp merge_by_seq(events, []), do: events
+
+  defp merge_by_seq(events, short) do
+    Stream.transform(
+      events,
+      fn -> short end,
+      fn event, short ->
+        {before, rest} = Enum.split_while(short, &(&1.seq < event.seq))
+        {before ++ [event], rest}
+      end,
+      fn short -> {short, []} end,
+      fn _ -> :ok end
+    )
   end
 end

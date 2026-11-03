@@ -193,6 +193,7 @@ Feature: Moving a thread and its agent to another machine
         | its runs and their outcomes                     |
         | its attachments                                 |
         | the scrollback of its terminals                 |
+        | its older runs, which it keeps on disk          |
 
     @mc
     Scenario: Attachments are served by the machine the thread now lives on

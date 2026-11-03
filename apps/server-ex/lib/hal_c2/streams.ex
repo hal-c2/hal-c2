@@ -8,6 +8,7 @@ defmodule HalC2.Streams do
 
   use Supervisor
 
+  alias HalC2.StreamState
   alias HalC2.Streams.Server
 
   def start_link(opts), do: Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
@@ -92,8 +93,20 @@ defmodule HalC2.Streams do
   def transact(stream_id, stream_kind, fun),
     do: with_server(stream_id, &Server.transact(&1, stream_kind, fun))
 
-  @doc "The stream's current state, started if needed."
+  @doc """
+  The stream's current state, started if needed. What walks its cold rows (a whole
+  thread's rows, a kind's entities, the changes since an offset) takes `read/2`.
+  """
   def state(stream_id), do: with_server(stream_id, &Server.state/1)
+
+  @doc """
+  Runs `fun` with the stream's current state, started if needed, its cold rows read
+  as they were when the state was taken however the stream moves on
+  (`HalC2.StreamState.read/2`). `fun` returns nothing that still reads them.
+  """
+  @spec read(String.t(), (StreamState.t() -> result)) :: result when result: term
+  def read(stream_id, fun),
+    do: stream_id |> with_server(&Server.read/1) |> StreamState.read(fun)
 
   @doc "See `HalC2.Streams.Server.sequence/1`."
   def sequence(stream_id), do: with_server(stream_id, &Server.sequence/1)

@@ -1295,19 +1295,37 @@ export function makeV3Session(input: {
         ),
       );
 
-    // A thread's projection, from its entities fetched at once: a socket holds one
-    // subscription per stream, and the open thread view usually has it.
+    // A thread's projection, from its entities fetched a page at a time: a socket holds
+    // one subscription per stream, and the open thread view usually has it. Each page is
+    // read as of its own offset, so a thread that changes during the walk folds rows of
+    // different moments: the projection is as of the first page's offset or later, for
+    // a one-shot read, never to resume a subscription from.
     const threadProjection = (request: { readonly threadId: ThreadId }) => {
       const failure = (message: string, cause?: unknown) =>
         new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message, cause });
-      return mcCall("hal-c2.threadRows", { threadId: request.threadId }).pipe(
+      type Page = {
+        readonly rows: ReadonlyArray<ShapeRow>;
+        readonly next: unknown;
+        readonly offset: number;
+        readonly at: number | null;
+      };
+      const pages = (
+        rows: ShapeRow[],
+        after: unknown,
+        first?: Page,
+      ): Effect.Effect<Page, ClusterRpcError> =>
+        mcCall("hal-c2.threadRows", { threadId: request.threadId, after }).pipe(
+          Effect.flatMap((result) => {
+            const page = result as Page;
+            rows.push(...page.rows);
+            return page.next == null
+              ? Effect.succeed({ ...(first ?? page), rows, next: null })
+              : pages(rows, page.next, first ?? page);
+          }),
+        );
+      return Effect.suspend(() => pages([], null)).pipe(
         Effect.mapError((cause) => failure(cause.message, cause)),
-        Effect.flatMap((result) => {
-          const { rows, offset, at } = result as {
-            readonly rows: ReadonlyArray<ShapeRow>;
-            readonly offset: number;
-            readonly at: number | null;
-          };
+        Effect.flatMap(({ rows, offset, at }) => {
           const [item] = new ThreadShapeFold(request.threadId).snapshot({
             rows,
             part: 0,
