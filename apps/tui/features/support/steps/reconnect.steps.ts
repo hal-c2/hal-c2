@@ -7,7 +7,12 @@ import { expect } from "bun:test";
 import { step } from "../../steps.ts";
 import { threadKey } from "../../../src/host/sidebarState.ts";
 import { shell, thread } from "../fakeClient.ts";
-import { startConnection, type ConnectionHarness, type ReconnectWorld } from "../reconnectWorld.ts";
+import {
+  startConnection,
+  useManualTimers,
+  type ConnectionHarness,
+  type ReconnectWorld,
+} from "../reconnectWorld.ts";
 import {
   activity,
   approvalRequest,
@@ -36,6 +41,7 @@ const connectionState = (ctx: World) =>
   (ctx.host!.state.get("connection") as { state: string }).state;
 
 step("the terminal client is connected and showing a thread", async (ctx: World) => {
+  useManualTimers(ctx);
   await openThread(ctx);
   await startConnection(ctx);
   const key = threadKey(ctx.thread!.id);

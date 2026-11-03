@@ -112,8 +112,12 @@ Brick& action(World& world, const QString& name) {
   return *world.brick;
 }
 
+// The window's connection notice, its panel opened as soon as it shows, as a
+// click on its icon would.
 Brick& notice(World& world) {
-  world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nItem { ConnectionNotice {} }\n", QSize(900, 600));
+  world.brick = std::make_unique<Brick>(
+      world, "import QtQuick\nimport HalC2.Bricks\nItem { ConnectionNotice {\n onVisibleChanged: if (visible) open = true\n Component.onCompleted: if (visible) open = true\n }\n}\n",
+      QSize(900, 600));
   return *world.brick;
 }
 
