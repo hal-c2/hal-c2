@@ -443,6 +443,9 @@ fn hsl_hex(args: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+mod layout_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
