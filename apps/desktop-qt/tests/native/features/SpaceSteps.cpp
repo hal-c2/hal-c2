@@ -2689,6 +2689,47 @@ const Steps steps([] {
     expect(world.openedUrls == QList<QUrl>{QUrl(QStringLiteral("https://example.com/docs"))},
            QStringLiteral("the browser opened %1").arg(show(QVariant::fromValue(world.openedUrls))));
   });
+  // Lists (markdown.feature): each item is a block the brick draws as a list of one, its
+  // marker the one its depth takes, nested by the indent before it.
+  struct Nested {
+    QString kind, text;
+    int depth;
+    QString list;  // what the brick draws it in
+  };
+  static const QList<Nested> kNested{
+      {QStringLiteral("bullet"), QStringLiteral("Plan the release"), 0, QStringLiteral("<ul style=\"-qt-list-indent:0;list-style-type:disc;")},
+      {QStringLiteral("numbered"), QStringLiteral("Tag"), 1, QStringLiteral("<ol style=\"-qt-list-indent:0;list-style-type:decimal;")},
+      {QStringLiteral("numbered"), QStringLiteral("Ship"), 1, QStringLiteral("<ol start=\"2\" style=\"-qt-list-indent:0;list-style-type:decimal;")},
+      {QStringLiteral("bullet"), QStringLiteral("Notes"), 2, QStringLiteral("<ul style=\"-qt-list-indent:0;list-style-type:circle;")},
+      {QStringLiteral("bullet"), QStringLiteral("Announce"), 0, QStringLiteral("<ul style=\"-qt-list-indent:0;list-style-type:disc;")}};
+  step(QStringLiteral("the page %1 with a bulleted list holding a numbered list").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const Nested& item : kNested) {
+      given(world, QStringLiteral("block.insert"),
+            {{QStringLiteral("pageId"), givenPage(world, c[0])}, {QStringLiteral("kind"), item.kind}, {QStringLiteral("text"), item.text}, {QStringLiteral("depth"), item.depth}});
+    }
+  });
+  step(QStringLiteral("each item is shown with its bullet or its number, indented under its parent"), [drawPage, shownOf](World& world, const Captures&, const Table&) {
+    world.brick = drawPage(world);
+    QMap<QString, qreal> left;
+    for (const Nested& item : kNested) {
+      QQuickItem* drawn = shownOf(*world.brick, world, QStringLiteral("spaceBlockText:"), item.text);
+      QQuickItem* prose = findEditor(drawn, QStringLiteral("markdownProse"));
+      expect(prose != nullptr, QStringLiteral("%1 is not drawn as prose").arg(item.text));
+      const QString html = prose->property("text").toString();
+      expect(html.contains(item.list) && html.contains(QStringLiteral(">%1</").arg(item.text)), QStringLiteral("%1 is drawn as %2").arg(item.text, html));
+      QQuickItem* lead = findEditor(world.brick->root(), QStringLiteral("spaceMarkdownLead:") + item.text);
+      expect(!lead || !lead->isVisible() || lead->property("text").toString().trimmed().isEmpty(),
+             QStringLiteral("%1 shows its marker as text: %2").arg(item.text, lead ? lead->property("text").toString() : QString()));
+      left.insert(item.text, drawn->mapToScene({}).x());
+    }
+    const auto under = [&](const QString& child, const QString& parent) {
+      expect(left.value(child) > left.value(parent), QStringLiteral("%1 (at %2) is not indented under %3 (at %4)").arg(child).arg(left.value(child)).arg(parent).arg(left.value(parent)));
+    };
+    under(QStringLiteral("Tag"), QStringLiteral("Plan the release"));
+    under(QStringLiteral("Notes"), QStringLiteral("Ship"));
+    expect(qFuzzyCompare(left.value(QStringLiteral("Tag")), left.value(QStringLiteral("Ship"))), QStringLiteral("Tag and Ship are not at one depth"));
+    expect(qFuzzyCompare(left.value(QStringLiteral("Announce")), left.value(QStringLiteral("Plan the release"))), QStringLiteral("Announce is not back at the top"));
+  });
   step(QStringLiteral("the user links %1 from %1").arg(q), [](World& world, const Captures& c, const Table&) {
     actOnPage(world, idOfPage(world, c[1]), QStringLiteral("space.block.insert"),
               {{QStringLiteral("kind"), QStringLiteral("subpage_link")}, {QStringLiteral("text"), c[0]}, {QStringLiteral("linkedPageId"), idOfPage(world, c[0])}});

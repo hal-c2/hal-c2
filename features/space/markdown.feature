@@ -262,7 +262,8 @@ Feature: GitHub Markdown in a page
 
     # Until the clients draw these kinds, each shows what the MC writes around its text, and
     # the text stays editable as before; a checklist item keeps its tick and a callout its
-    # tint, which stand for `- [ ]` and `> `.
+    # tint, which stand for `- [ ]` and `> `. A list item's marker is drawn with its text,
+    # after the indent that nests it, so its line reads as the MC writes it too.
     # https://github.com/hal-c2/hal-c2/issues/869
     # https://github.com/hal-c2/hal-c2/issues/877
     @shared
@@ -1002,7 +1003,7 @@ Feature: GitHub Markdown in a page
       Then the user is told "Only a list item has a depth."
 
     # https://github.com/hal-c2/hal-c2/issues/869
-    @shared @backlog
+    @shared @backlog-tui
     Scenario: A list is shown with its markers and nesting
       Given the page "Plan" with a bulleted list holding a numbered list
       When the user opens "Plan"

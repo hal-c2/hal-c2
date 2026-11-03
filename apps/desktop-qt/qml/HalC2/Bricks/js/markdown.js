@@ -902,8 +902,10 @@ function fold(out, prose, entries, streaming) {
 // What parsing and rendering read: `refs` maps a link definition's label to
 // its address, `used` collects the labels a render looked up and `defined` the
 // ones a parse defined, when someone asks. `tasks` lets task links through.
-function context(lineBreaks, refs, tasks) {
-    return { refs: refs, lineBreaks: lineBreaks, tasks: tasks, olDepth: 0, ulDepth: 0, used: null, defined: null };
+// `outer` counts the lists ({ ul, ol }) the text sits inside, whose nesting
+// its own lists take their markers from.
+function context(lineBreaks, refs, tasks, outer) {
+    return { refs: refs, lineBreaks: lineBreaks, tasks: tasks, olDepth: outer.ol, ulDepth: outer.ul, used: null, defined: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -1017,8 +1019,8 @@ function takeTally() {
 }
 
 // The segments of a whole text, read in one go.
-function read(text, lineBreaks, streaming, tasks) {
-    var ctx = context(lineBreaks, new Map(), tasks);
+function read(text, lineBreaks, streaming, tasks, outer) {
+    var ctx = context(lineBreaks, new Map(), tasks, outer);
     var lines = withCitations(text).replace(/\r\n?/g, "\n").split("\n").map(expandTabs);
     var blocks = parseBlocks(lines, ctx);
     tally.chars += text.length;
@@ -1038,15 +1040,15 @@ function read(text, lineBreaks, streaming, tasks) {
 var cache = new Map();
 var CACHE_LIMIT = 200;
 
-function finished(text, lineBreaks, tasks) {
-    var key = (lineBreaks ? "b" : "-") + (tasks ? "t" : "-") + text;
+function finished(text, lineBreaks, tasks, outer) {
+    var key = (lineBreaks ? "b" : "-") + (tasks ? "t" : "-") + outer.ul + "." + outer.ol + ":" + text;
     var hit = cache.get(key);
     if (hit !== undefined) {
         cache.delete(key);
         cache.set(key, hit);
         return hit;
     }
-    var result = read(text, lineBreaks, false, tasks);
+    var result = read(text, lineBreaks, false, tasks, outer);
     cache.set(key, result);
     if (cache.size > CACHE_LIMIT)
         cache.delete(cache.keys().next().value);
@@ -1063,10 +1065,11 @@ function finished(text, lineBreaks, tasks) {
 // One thing reaches back over settled blocks: a link definition turns every
 // earlier `[label]` into a link. Each block remembers the labels it looked up,
 // and a definition that appears, changes or goes renders those blocks again.
-function following(lineBreaks, tasks) {
+function following(lineBreaks, tasks, outer) {
     return {
         lineBreaks: lineBreaks,
         tasks: tasks,
+        outer: outer,
         length: -1, // of the text as last read
         cut: 0, // where the first unsettled block starts in the text
         refs: new Map(), // every link definition
@@ -1168,7 +1171,7 @@ function readTail(live, text) {
     before.forEach(function (url, label) {
         refs.delete(label);
     });
-    var ctx = context(live.lineBreaks, refs, live.tasks);
+    var ctx = context(live.lineBreaks, refs, live.tasks, live.outer);
     var parsed = [];
     var i = 0;
     while (i < lines.length) {
@@ -1342,19 +1345,20 @@ function segments(text, options, state) {
     var lineBreaks = !!opts.lineBreaks;
     var streaming = !!opts.streaming;
     var tasks = !!opts.tasks;
+    var outer = { ul: opts.ulDepth || 0, ol: opts.olDepth || 0 };
     if (!state)
-        return streaming ? read(text, lineBreaks, true, tasks) : finished(text, lineBreaks, tasks);
+        return streaming ? read(text, lineBreaks, true, tasks, outer) : finished(text, lineBreaks, tasks, outer);
     var before = state.text;
     var grown = before !== null && text.length >= before.length && text.startsWith(before);
     state.text = text;
-    if (state.live !== null && !(grown && state.live.lineBreaks === lineBreaks && state.live.tasks === tasks))
+    if (state.live !== null && !(grown && state.live.lineBreaks === lineBreaks && state.live.tasks === tasks && state.live.outer.ul === outer.ul && state.live.outer.ol === outer.ol))
         state.live = null;
     // A text is followed while it streams, and once it has grown.
     if (state.live === null && (streaming || (grown && before.length > 0 && text.length > before.length)))
-        state.live = following(lineBreaks, tasks);
+        state.live = following(lineBreaks, tasks, outer);
     try {
         if (state.live === null) {
-            var result = finished(text, lineBreaks, tasks);
+            var result = finished(text, lineBreaks, tasks, outer);
             state.stable = result === state.kept ? result.length : 0;
             state.kept = result;
             return result;

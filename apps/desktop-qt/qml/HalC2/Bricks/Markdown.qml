@@ -30,6 +30,10 @@ Item {
     // handling, for a page's hundreds of idle blocks whose owner edits on a
     // click and opens what linkAt finds.
     property bool selectable: true
+    // The bulleted and numbered lists the text sits inside, for a page's list
+    // item drawn on its own: its marker is the one its depth takes.
+    property int bulletDepth: 0
+    property int numberDepth: 0
 
     // An assistant reply offers "Cite" on a selection (AssistantSelectionToolbar).
     property bool citable: false
@@ -214,7 +218,7 @@ Item {
     function sync() {
         if (reading === null)
             reading = Md.state();
-        const next = Md.segments(text, { streaming: streaming, lineBreaks: lineBreaks, tasks: trusted }, reading);
+        const next = Md.segments(text, { streaming: streaming, lineBreaks: lineBreaks, tasks: trusted, ulDepth: bulletDepth, olDepth: numberDepth }, reading);
         const roles = ["html", "code", "language", "title", "open", "indent", "payload", "alert", "gap"];
         for (let i = Math.min(reading.stable, segmentModel.count); i < next.length; ++i) {
             const segment = next[i];
@@ -261,6 +265,8 @@ Item {
     onStreamingChanged: sync()
     onLineBreaksChanged: sync()
     onTrustedChanged: sync()
+    onBulletDepthChanged: sync()
+    onNumberDepthChanged: sync()
     Component.onCompleted: sync()
 
     ListModel {

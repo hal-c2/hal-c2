@@ -680,6 +680,8 @@ Rectangle {
                 chart: model.chart ?? ({})
                 markdownAbove: model.markdownAbove ?? ""
                 markdownLead: model.markdownLead ?? ""
+                listBullets: model.listBullets ?? 0
+                listNumbers: model.listNumbers ?? 0
                 markdownTail: model.markdownTail ?? ""
                 markdownBelow: model.markdownBelow ?? ""
                 readOnly: page.trashed

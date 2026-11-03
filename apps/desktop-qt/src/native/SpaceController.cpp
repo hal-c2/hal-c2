@@ -113,6 +113,9 @@ struct ListItem {
   qint64 number = 0;
   int column = 0;
   QString list;
+  // The bulleted (checklists among them) and numbered lists it sits inside.
+  int bullets = 0;
+  int numbers = 0;
 };
 
 QList<std::optional<ListItem>> listItems(const QList<QJsonObject>& blocks) {
@@ -148,6 +151,8 @@ QList<std::optional<ListItem>> listItems(const QList<QJsonObject>& blocks) {
     const QJsonValue indent = block.value(QLatin1String("indent"));
     if (indent.isDouble() && indent.toInt() >= floor && indent.toInt() <= ceiling) item.indent = indent.toInt();
     item.column = item.indent + int(item.marker.size()) + 1;
+    item.numbers = int(std::count_if(parents.cbegin(), parents.cend(), [](const ListItem& parent) { return parent.list.startsWith(QLatin1String("numbered")); }));
+    item.bullets = int(parents.size()) - item.numbers;
     items.append(item);
     open = QList<ListItem>{item} + parents;
   }
@@ -162,10 +167,12 @@ bool closesFence(const QString& line, const QString& fence) {
 }
 
 // What the MC writes around a block's text (`HalC2.Space.Markdown.render/2`), for the kinds
-// a page does not draw yet (#869, #877): a list item's indent and marker (a checklist item's
-// is its tick), an alert's kind, a divider and a section's end (which have no text), a
-// footnote's label, a section's summary tags, math's fences and an image's address. The
-// text between stays the block's own, edited as any block's is.
+// a page does not draw yet (#877): a list item's indent and marker (a checklist item's is
+// its tick; a page draws a bullet's or a number's with its text, #869), an alert's kind,
+// a divider and a section's end (which have no text), a footnote's label, a section's
+// summary tags, math's fences and an image's address. The text between stays the block's
+// own, edited as any block's is. A list item also says which lists it sits inside, whose
+// nesting its marker's style follows.
 QVariantMap markdownFrame(const QJsonObject& block, const std::optional<ListItem>& item) {
   QString above, lead, tail, below;
   const QString kind = text(block, QLatin1String("kind"));
@@ -212,7 +219,9 @@ QVariantMap markdownFrame(const QJsonObject& block, const std::optional<ListItem
   return {{QStringLiteral("markdownAbove"), above},
           {QStringLiteral("markdownLead"), lead},
           {QStringLiteral("markdownTail"), tail},
-          {QStringLiteral("markdownBelow"), below}};
+          {QStringLiteral("markdownBelow"), below},
+          {QStringLiteral("listBullets"), item ? item->bullets : 0},
+          {QStringLiteral("listNumbers"), item ? item->numbers : 0}};
 }
 
 }  // namespace
@@ -383,7 +392,7 @@ SpaceHistory::SpaceHistory(std::function<QString(const QString&)> titleOf,
       m_versions(new SpaceRows({"id", "version", "at", "byAgent", "byUpdate", "byFile", "threadTitle", "restoredFromAt"}, this)),
       m_blocks(new SpaceRows({"id", "kind", "text", "level", "language", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
                               "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight", "markdownAbove", "markdownLead",
-                              "markdownTail", "markdownBelow"},
+                              "markdownTail", "markdownBelow", "listBullets", "listNumbers"},
                              this)) {}
 
 SpaceHistory::Next SpaceHistory::open(const QString& pageId) {
@@ -562,7 +571,7 @@ SpacePages::SpacePages(QObject* parent)
       m_trash(new SpaceRows({"id", "title", "trashedAt"}, this)),
       m_blocks(new SpaceRows({"id", "kind", "text", "level", "language", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
                               "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight", "markdownAbove", "markdownLead",
-                              "markdownTail", "markdownBelow"},
+                              "markdownTail", "markdownBelow", "listBullets", "listNumbers"},
                              this)),
       m_comments(new SpaceRows({"id", "blockId", "blockText", "blockGone", "body", "resolved", "byAgent", "createdAt"}, this)),
       m_decks(new SpaceRows({"id", "title"}, this)),

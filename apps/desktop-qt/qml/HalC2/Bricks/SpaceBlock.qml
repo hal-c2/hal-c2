@@ -15,8 +15,8 @@ import HalC2.Shell
 // keeps as written (a raw block: its source in a fixed-width face, never
 // wrapped, scrolled sideways, and written with Ctrl+Return or by leaving it;
 // a table and a code block show so too until they are drawn as such, #854),
-// what the MC writes around a block a page does not draw yet (a list item's
-// marker, an alert's kind, a divider, a footnote's label, a section's tags,
+// a list item drawn with its marker (#869), what the MC writes around a block
+// a page does not draw yet (a list item's indent, an alert's kind, a divider, a footnote's label, a section's tags,
 // math's fences and an image's address, #869 and #877), a Mermaid diagram drawn from a "mermaid" code block or a raw block's fence, and
 // the block's own actions (comment, add a block below, ask again for a chart,
 // switch a diagram to its source, move up or down, delete).
@@ -53,6 +53,9 @@ Item {
     property string markdownLead: ""
     property string markdownTail: ""
     property string markdownBelow: ""
+    // The bulleted and numbered lists a list item sits inside (SpaceController).
+    property int listBullets: 0
+    property int listNumbers: 0
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
@@ -81,6 +84,9 @@ Item {
     readonly property bool drawn: textShown && !raw && kind !== "details" && kind !== "image"
     // The user is writing in a drawn block: its source shows.
     property bool sourceShown: false
+    // A drawn bullet or numbered item has its marker drawn with its text, as
+    // the chat draws a list; the lead keeps the indent that nests it.
+    readonly property string marker: drawn && editor === null && (kind === "bullet" || kind === "numbered") ? markdownLead.replace(/^ +/, "") : ""
 
     signal commentRequested(string blockId)
     signal addBelowRequested(string blockId)
@@ -276,8 +282,8 @@ Item {
                 // Under the line above, as the MC writes it: a section's summary under its tag.
                 Text {
                     objectName: "spaceMarkdownLead:" + block.text
-                    visible: block.markdownLead.length > 0
-                    text: block.markdownLead
+                    visible: text.length > 0
+                    text: block.markdownLead.slice(0, block.markdownLead.length - block.marker.length)
                     color: block.muted
                     font.family: block.mono
                     font.pixelSize: Theme.fontSizeCode
@@ -345,7 +351,9 @@ Item {
                                 objectName: "spaceBlockText:" + block.text
                                 width: parent.width
                                 selectable: false
-                                text: block.text
+                                text: block.marker + block.text
+                                bulletDepth: block.listBullets
+                                numberDepth: block.listNumbers
                                 textColor: block.foreground
                                 fontSize: Math.round((block.kind === "heading" ? block.headingSize : 15) * Theme.fontScale)
                                 fontWeight: block.kind === "heading" ? Font.DemiBold : Font.Normal
