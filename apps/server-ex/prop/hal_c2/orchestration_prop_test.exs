@@ -14,7 +14,8 @@ defmodule HalC2.OrchestrationPropTest do
   IdleSessions does; stop a thread as the plugin that started it does, after which no
   message queued at the stop ever starts, on it or on a task delegated from it, and the
   thread goes on as any other once the stop has passed it, also while a task below it
-  is held up; and restart the MC mid-turn (boot recovery). A message can also
+  is held up; and restart the MC mid-turn (boot recovery), also after a turn that had
+  ended and was still capturing its checkpoint, which completes. A message can also
   stop its turn on a usage limit, which holds the queue behind it; the user can then
   choose to resume at the reset, and the limit recovery sweep at the reset resumes the
   held queue, or sends "Continue where you left off." when nothing was held.
@@ -266,7 +267,8 @@ defmodule HalC2.OrchestrationPropTest do
         else: [
           {2, {:call, __MODULE__, :crash, [oneof(running)]}},
           {2, {:call, __MODULE__, :restart, []}},
-          {1, {:call, __MODULE__, :restart_stuck, [oneof(running)]}}
+          {1, {:call, __MODULE__, :restart_stuck, [oneof(running)]}},
+          {1, {:call, __MODULE__, :restart_capturing, [oneof(running)]}}
         ]
 
     # A limit stop is worth choosing to resume, and an armed resume worth reaching.
@@ -294,6 +296,10 @@ defmodule HalC2.OrchestrationPropTest do
 
   def precondition(%{threads: threads}, {:call, _, :restart_stuck, [tid]}),
     do: threads[tid] != nil and running(threads[tid]) != nil
+
+  # A queue behind the turn would wait on the user at boot, as after any restart.
+  def precondition(%{threads: threads}, {:call, _, :restart_capturing, [tid]}),
+    do: threads[tid] != nil and running(threads[tid]) != nil and threads[tid].queue == []
 
   def precondition(%{threads: threads}, {:call, _, :promote, [tid, msg, :archived]}),
     do:
@@ -437,6 +443,12 @@ defmodule HalC2.OrchestrationPropTest do
   # A runtime killed by the stop reads the same as one that stopped.
   def next_state(state, result, {:call, module, :restart_stuck, [_tid]}),
     do: next_state(state, result, {:call, module, :restart, []})
+
+  # The turn had ended; the checkpoint captured at boot completes it.
+  def next_state(state, result, {:call, module, :restart_capturing, [tid]}) do
+    state = update(state, tid, &end_running(&1, :completed))
+    next_state(state, result, {:call, module, :restart, []})
+  end
 
   # The session goes and the next message starts it again; no run changes.
   def next_state(state, _result, {:call, _, :release, [_tid]}), do: state
@@ -1385,6 +1397,46 @@ defmodule HalC2.OrchestrationPropTest do
 
     _ = :sys.get_state(HalC2.Orchestration.TurnWatch)
     restart()
+  end
+
+  # The MC stops after `tid`'s provider turn ended, while its checkpoint was still to
+  # be captured: the effect's record is left running. Boot recovery leaves the run to
+  # the effect sweep, which captures the checkpoint and completes it.
+  def restart_capturing(tid) do
+    [run_id] = active_runs(tid)
+    run = current(tid) |> StreamState.get("run") |> Map.fetch!(run_id)
+    at = HalC2.Orchestration.Entities.now()
+    id = "effect:checkpoint-#{System.unique_integer([:positive])}"
+
+    HalC2.Store.put_meta(
+      "effect:#{tid}:#{id}",
+      JSON.encode!(%{
+        "id" => id,
+        "threadId" => tid,
+        "type" => "checkpoint.capture",
+        "lane" => "checkpoint",
+        "status" => "running",
+        "attempts" => 1,
+        "delays" => [],
+        "error" => nil,
+        "args" => %{
+          "cwd" => Process.get(:work),
+          "scopeId" => tid,
+          "runOrdinal" => run["ordinal"],
+          "runId" => run_id,
+          "rootNodeId" => run["rootNodeId"],
+          "at" => at
+        },
+        "createdAt" => at,
+        "updatedAt" => at
+      })
+    )
+
+    {:ok, _} = restart()
+    # Effects start after recovery, as at boot, and sweep the record.
+    HalC2.Prop.restart_service(HalC2.Orchestration.Effects)
+    :ok = HalC2.Orchestration.Effects.drain(tid)
+    reply({:ok, %{}}, [run_id])
   end
 
   defp thread_command(command), do: reply(Orchestration.dispatch(command), [])

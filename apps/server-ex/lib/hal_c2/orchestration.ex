@@ -2090,10 +2090,16 @@ defmodule HalC2.Orchestration do
       end
 
     results = Enum.map(asked, &interrupt_result(&1, thread_id, run_id))
+    refusal = Enum.find(results, &(match?({:error, _}, &1) and not no_turn?(&1)))
 
     cond do
       :ok in results ->
         :ok
+
+      # Between turns, a runtime whose background work would not stop (a Codex
+      # terminal still listed after it was ended) says why.
+      active == nil and refusal != nil ->
+        refusal
 
       # A runtime that refuses the stop with a reason of its own — not that it
       # has no turn, but that the stop could not be delivered to the one it has
@@ -2345,16 +2351,28 @@ defmodule HalC2.Orchestration do
         end
 
       "checkpoint.capture" ->
-        {:ok,
-         HalC2.Checkpoint.capture_run(
-           args["cwd"],
-           args["scopeId"],
-           args["runOrdinal"],
-           args["runId"],
-           args["rootNodeId"],
-           thread_id,
-           args["at"]
-         )}
+        checkpoint =
+          HalC2.Checkpoint.capture_run(
+            args["cwd"],
+            args["scopeId"],
+            args["runOrdinal"],
+            args["runId"],
+            args["rootNodeId"],
+            thread_id,
+            args["at"]
+          )
+
+        # Replayed after a restart, with no turn waiting on it: it completes the run.
+        if payload != :turn,
+          do:
+            HalC2.Orchestration.TurnWriter.checkpointed(
+              thread_id,
+              args["runId"],
+              args,
+              checkpoint
+            )
+
+        {:ok, checkpoint}
 
       "terminal.cleanup" ->
         if Process.whereis(HalC2.Terminal.Registry),

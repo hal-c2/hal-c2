@@ -627,6 +627,7 @@ defmodule HalC2.Steps.Platform.EventStore do
 
   step "an older MC opens it", context do
     for child <- [
+          HalC2.Orchestration.Wake,
           HalC2.RuntimeRecord,
           HalC2.Web,
           HalC2.Shell,

@@ -68,9 +68,9 @@ Feature: Recovering from restarts and releasing idle sessions
     And a program starts
     Then the provider process and its background command have been killed
 
-  # hal-c2/hal-c2#387: the boot kills the provider's process group, which a command
-  # that started a session or group of its own has left.
-  @backlog @mc
+  # hal-c2/hal-c2#387: a command that started a session or group of its own has left
+  # the provider's process group, so the boot goes by the mark it still carries.
+  @mc
   Scenario: A command a dead MC's provider ran in a session of its own is killed at the next boot
     Given a provider process with a command in a session of its own was running when the MC died
     When the MC restarts
@@ -91,20 +91,20 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the subagent thread is settled or interrupted
     And it is not left running
 
-  @backlog @mc
+  @mc
   Scenario: Work cut off by a restart says the restart ended it
     Given thread "t1" had a running turn with a running command
     When the MC restarts
     Then the command says it was cancelled because the server restarted before the provider work completed
 
-  @backlog @mc
+  @mc
   Scenario: A clean shutdown ends running turns before the MC stops
     Given thread "t1" has a running turn with a running command
     When the MC shuts down cleanly
     Then the run and the command are ended before the MC stops
     And the command says it was cancelled because the server shut down before the provider work completed
 
-  @backlog @mc
+  @mc
   Scenario: A turn that had finished but not yet captured its checkpoint is not cut off
     Given the provider turn of "t1" had ended and its checkpoint was still to be captured when the MC stopped
     When the MC restarts
@@ -156,7 +156,7 @@ Feature: Recovering from restarts and releasing idle sessions
       | the run was waiting on the user rather than running     |
       | the provider conversation has no native thread to resume |
 
-  @backlog @mc
+  @mc
   Scenario: A thread switched to another provider since its cut-off turn is not continued
     Given project "demo" continues threads after a server update
     And thread "t1" was mid-turn on "codex" when the MC stopped
@@ -164,14 +164,14 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC restarts
     Then no continuation message is sent to "t1"
 
-  @backlog @mc
+  @mc
   Scenario: A continuation cut off by a second restart before its agent started is sent on
     Given project "demo" continues threads after a server update
     And the continuation turn of "t1" had not reached its provider when the MC stopped again
     When the MC restarts
     Then "t1" is continued from that turn
 
-  @backlog @mc
+  @mc
   Scenario: A cut-off turn is continued only once
     Given project "demo" continues threads after a server update
     And thread "t1" was mid-turn on a provider conversation that can resume
@@ -358,12 +358,12 @@ Feature: Recovering from restarts and releasing idle sessions
     When Codex reports the command exited with "bye"
     Then "t1" runs a turn telling Codex the background command finished
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario Outline: A Codex background command's wake says how the command ended
     Given thread "t1" left the Codex command "npm run dev" running in the background
     When Codex reports the command ended <ending>
     Then the wake of "t1" is marked <outcome> and reads "<summary>"
-    And Codex is told "<told>"
+    And its turn tells Codex "<told>"
 
     Examples:
       | ending               | outcome   | summary                               | told                                               |
@@ -371,20 +371,20 @@ Feature: Recovering from restarts and releasing idle sessions
       | with exit code 2     | failed    | Background command exited with code 2 | Background command completed (exit 2): npm run dev |
       | without an exit code | unknown   | Background command finished           | Background command completed: npm run dev          |
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: A Codex background command's wake carries the end of its output
     Given thread "t1" left a Codex command running in the background
     When the command ends after writing 5,000 characters of output
     Then Codex is told the command ended, followed by "Output tail:" and the last 1,000 characters
     And a command line longer than 200 characters is cut there and ends with "..."
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: A Codex background command wakes the thread once
     Given thread "t1" left a Codex command running in the background
     When Codex reports the command ended twice
     Then "t1" runs one turn for it
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario Outline: A Codex command that ends without having been left running wakes nothing
     Given thread "t1" has a Codex command <situation>
     When the command ends
@@ -397,27 +397,27 @@ Feature: Recovering from restarts and releasing idle sessions
       | left running by a turn that failed      |
       | left running by a subagent              |
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: A Codex background command that will not end fails the stop
     Given thread "t1" left a Codex command running in the background
     When the user stops "t1" and Codex still lists the command's terminal after being asked to end it
     Then the stop fails saying the background terminal remained active after termination
 
-  @backlog @mc
+  @mc
   Scenario: A wake for finished background work waits behind the running turn
     Given thread "t1" has a running turn and work left running in the background
     When the provider reports the background work finished
     Then "t1" gets one message from the agent reading "Background task completed."
     And it runs after the running turn
 
-  @backlog @mc
+  @mc
   Scenario: A wake that cannot be delivered is tried again
     Given thread "t1" left work running in the background
     When the work finishes and the wake cannot be delivered at first
     Then the MC tries again, waiting 100 milliseconds at first and never more than 5 seconds between tries
     And "t1" is woken once
 
-  @backlog @mc
+  @mc
   Scenario Outline: A wake for a thread the user put away is dropped
     Given thread "t1" left work running in the background and was then <state>
     When the work finishes
@@ -453,21 +453,27 @@ Feature: Recovering from restarts and releasing idle sessions
     When the MC checks for idle sessions
     Then that provider process stops
 
-  @backlog @mc
+  @mc
   Scenario: A provider process that will not close is still released
     Given the provider process of "t1" does not exit when it is asked to
     When the session of "t1" is released
     Then the session is recorded as stopped after at most 30 seconds
     And "t1" can take its next message
 
-  @backlog @mc
+  # Blocked on hal-c2/hal-c2#904: each MC thread has a provider session of its own, and a
+  # provider's native subagents are entities of their parent thread, so no session has
+  # several threads to serve. Carry upstream's attached-threads sessions, or drop these.
+  @backlog @blocked @mc
   Scenario: A session serving several threads stays until the last one leaves
     Given one provider session serves thread "t1" and a subagent thread of "t1"
     When the subagent thread leaves the session while its turn is running
     Then only the subagent thread's turn is interrupted
     And the provider process keeps running for "t1"
 
-  @backlog @mc
+  # Blocked on hal-c2/hal-c2#904: each MC thread has a provider session of its own, and a
+  # provider's native subagents are entities of their parent thread, so no session has
+  # several threads to serve. Carry upstream's attached-threads sessions, or drop these.
+  @backlog @blocked @mc
   Scenario: A provider that serves one thread per session refuses a second thread
     Given a provider whose sessions serve one thread each has a session for "t1"
     When another thread is attached to that session
