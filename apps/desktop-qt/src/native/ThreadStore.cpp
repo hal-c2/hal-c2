@@ -1,6 +1,7 @@
 #include "ThreadStore.h"
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QTimeZone>
 
 #include "LocalCache.h"
@@ -252,14 +253,19 @@ void ThreadStore::reload(const QString& threadKey) {
 // A signed address stops working a little before the MC says, so an image
 // asked for at the last moment still loads.
 // An id "workspace-file:<path>" is an image a tool call viewed in the
-// thread's workspace.
+// thread's workspace; "native-app-icon:<app>" the icon of an app a call drove
+// on the environment's machine, the app as the call names it.
 void ThreadStore::signAttachment(TimelineModel* model, const QString& threadKey, const QString& id) {
   static const QLatin1String kWorkspaceFile("workspace-file:");
+  static const QLatin1String kAppIcon("native-app-icon:");
   const QJsonObject resource =
       id.startsWith(kWorkspaceFile)
           ? QJsonObject{{QStringLiteral("_tag"), QStringLiteral("workspace-file")},
                         {QStringLiteral("threadId"), threadKey.mid(threadKey.indexOf(QLatin1Char(':')) + 1)},
                         {QStringLiteral("path"), id.mid(kWorkspaceFile.size())}}
+      : id.startsWith(kAppIcon)
+          ? QJsonObject{{QStringLiteral("_tag"), QStringLiteral("native-app-icon")},
+                        {QStringLiteral("app"), QJsonDocument::fromJson(id.mid(kAppIcon.size()).toUtf8()).object()}}
           : QJsonObject{{QStringLiteral("_tag"), QStringLiteral("attachment")},
                         {QStringLiteral("attachmentId"), id},
                         {QStringLiteral("disposition"), QStringLiteral("inline")}};

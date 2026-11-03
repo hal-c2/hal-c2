@@ -179,6 +179,35 @@ QString workspaceImage(const QString& path, const QString& root) {
   return clean;
 }
 
+// An icon address a provider supplied: http(s) or a data: image.
+QString explicitIconUrl(const QJsonValue& value) {
+  const QString address = value.toString();
+  if (address.isEmpty() || address.size() > 4096) return {};
+  const QUrl url(address);
+  const QString scheme = url.scheme().toLower();
+  return url.isValid() && (scheme == QLatin1String("http") || scheme == QLatin1String("https") || scheme == QLatin1String("data")) ? url.toString()
+                                                                                                                                     : QString();
+}
+
+// The site's own icon for a page, in one appearance (toolActivityFaviconUrl):
+// what the provider supplied, a site whose usual favicon is illegible in that
+// appearance, then the origin's favicon.ico.
+QString websiteIconUrl(const QJsonObject& icon, bool dark) {
+  static const QHash<QString, QPair<QString, QString>> kThemed{
+      {QStringLiteral("github.com"),
+       {QStringLiteral("https://github.githubassets.com/favicons/favicon.svg"), QStringLiteral("https://github.githubassets.com/favicons/favicon-dark.svg")}}};
+  const QString page = text(icon, QLatin1String("pageUrl"));
+  const QUrl url(page);
+  const bool web = page.size() <= 4096 && url.isValid() && (url.scheme() == QLatin1String("http") || url.scheme() == QLatin1String("https"));
+  const auto themed = kThemed.constFind(url.host().toLower());
+  const QString site = web && themed != kThemed.cend() ? (dark ? themed->second : themed->first) : QString();
+  const QString origin = web ? url.resolved(QUrl(QStringLiteral("/favicon.ico"))).toString() : QString();
+  QString chosen = dark ? explicitIconUrl(icon.value(QLatin1String("faviconUrlDark"))) : explicitIconUrl(icon.value(QLatin1String("faviconUrl")));
+  if (chosen.isEmpty()) chosen = site;
+  if (chosen.isEmpty() && dark) chosen = explicitIconUrl(icon.value(QLatin1String("faviconUrl")));
+  return chosen.isEmpty() ? origin : chosen;
+}
+
 // One answer as its preview reads (getQuestionAnswerText): text, a list's
 // items joined, an object's `answers`.
 QString answerText(const QJsonValue& value) {
@@ -1458,7 +1487,21 @@ void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const Q
     m_attachmentUrls.remove(id);
     return;
   }
+  const AttachmentUrl was = m_attachmentUrls.value(id);
   m_attachmentUrls.insert(id, {url, expiresAt});
+  if (id.startsWith(QLatin1String("native-app-icon:"))) {
+    // An app's icon: the work groups with a call on screen that shows it, unless
+    // its address is the one they already show.
+    if (was.url == url && was.expiresAt > m_now()) return;
+    for (int row = 0; row < m_rows.size(); ++row) {
+      if (m_rows.at(row).kind != QLatin1String("work")) continue;
+      const QVariantList entries = data(index(row), EntriesRole).toList();
+      if (std::any_of(entries.cbegin(), entries.cend(), [&](const QVariant& entry) { return entry.toMap().value(QStringLiteral("iconId")) == id; })) {
+        emit dataChanged(index(row), index(row), {EntriesRole});
+      }
+    }
+    return;
+  }
   if (id.startsWith(QLatin1String("workspace-file:"))) {
     // An image a call viewed: the work groups that show it.
     for (int row = 0; row < m_rows.size(); ++row) {
@@ -1522,6 +1565,29 @@ QVariantMap TimelineModel::entry(const QJsonObject& item, bool live) const {
       {QStringLiteral("icon"), iconOf(item)},
       {QStringLiteral("time"), stamp(itemTime(item))},
   };
+  // A website's, an integration's or an app's own icon, drawn over the kind's
+  // until it loads (ToolActivityIconView): an address for each appearance, or
+  // an app's icon the environment serves, signed like an attachment.
+  QJsonObject toolIcon = item.value(QLatin1String("toolIcon")).toObject();
+  if (toolIcon.isEmpty()) toolIcon = item.value(QLatin1String("toolSource")).toObject().value(QLatin1String("icon")).toObject();
+  const QString iconTag = text(toolIcon, QLatin1String("_tag"));
+  if (iconTag == QLatin1String("website")) {
+    entry.insert(QStringLiteral("iconUrl"), websiteIconUrl(toolIcon, false));
+    entry.insert(QStringLiteral("iconUrlDark"), websiteIconUrl(toolIcon, true));
+  } else if (iconTag == QLatin1String("themed-logo")) {
+    const QString light = explicitIconUrl(toolIcon.value(QLatin1String("logoUrl")));
+    const QString dark = explicitIconUrl(toolIcon.value(QLatin1String("logoUrlDark")));
+    entry.insert(QStringLiteral("iconUrl"), light);
+    entry.insert(QStringLiteral("iconUrlDark"), dark.isEmpty() ? light : dark);
+  } else if (iconTag == QLatin1String("native-app") && toolIcon.value(QLatin1String("app")).isObject()) {
+    const QString id = QStringLiteral("native-app-icon:") +
+                       QString::fromUtf8(QJsonDocument(toolIcon.value(QLatin1String("app")).toObject()).toJson(QJsonDocument::Compact));
+    const AttachmentUrl known = m_attachmentUrls.value(id);
+    const QString signedUrl = known.expiresAt > m_now() ? known.url.toString() : QString();
+    entry.insert(QStringLiteral("iconId"), id);
+    entry.insert(QStringLiteral("iconUrl"), signedUrl);
+    entry.insert(QStringLiteral("iconUrlDark"), signedUrl);
+  }
   QString label;
   QString detail;
   if (type == QLatin1String("reasoning")) {

@@ -380,6 +380,9 @@ Item {
     component WorkLine: Rectangle {
         id: line
         property string iconName
+        // A website's, an integration's or an app's own icon, in place of
+        // `iconName` once it has loaded; the kind's stays where it fails.
+        property string iconSource
         property color iconTint: root.iconColor
         property string label
         property color labelColor: root.labelColor
@@ -403,13 +406,28 @@ Item {
         radius: 6
         color: line.interactive && line.hovered ? Qt.alpha(root.hoverColor, 0.2) : "transparent"
         ShellIcon {
+            objectName: "workLineIcon"
             x: 6
             anchors.verticalCenter: parent.verticalCenter
-            visible: line.iconName.length > 0
+            visible: line.iconName.length > 0 && ownIcon.status !== Image.Ready
             name: line.iconName
             size: 16
             strokeWidth: 1.8
             color: line.iconTint
+        }
+        Image {
+            id: ownIcon
+            objectName: "workLineOwnIcon"
+            x: 6
+            width: 16
+            height: 16
+            anchors.verticalCenter: parent.verticalCenter
+            visible: status === Image.Ready
+            source: line.iconSource
+            sourceSize: Qt.size(32, 32)
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            opacity: 0.7
         }
         Text {
             id: lineLabel
@@ -1353,6 +1371,9 @@ Item {
                             status: entry.status ?? "",
                             statusLabel: entry.statusLabel ?? "",
                             icon: entry.icon ?? "",
+                            iconUrl: String(entry.iconUrl ?? ""),
+                            iconUrlDark: String(entry.iconUrlDark ?? ""),
+                            iconId: entry.iconId ?? "",
                             time: entry.time ?? "",
                             label: entry.label ?? "",
                             detail: entry.detail ?? "",
@@ -1551,6 +1572,12 @@ Item {
                                         objectName: "workCall"
                                         width: parent.width
                                         iconName: call.modelData.icon || "hammer"
+                                        iconSource: Theme.appearance === "light" ? call.modelData.iconUrl : call.modelData.iconUrlDark
+                                        // An app's icon is the environment's to serve.
+                                        readonly property string iconId: call.modelData.iconId
+                                        onIconIdChanged: if (iconId.length > 0 && root.model !== null && typeof root.model.loadAttachment === "function")
+                                            root.model.loadAttachment(iconId)
+                                        Component.onCompleted: iconIdChanged()
                                         iconTint: call.failed ? Qt.alpha(root.toolErrorColor, 0.4) : root.iconColor
                                         label: call.modelData.label ?? ""
                                         preview: call.modelData.preview ?? ""

@@ -350,7 +350,7 @@ Feature: Tool calls and file changes
       | called an MCP tool | wrench         |
       | asked for approval | message-circle |
 
-  @backlog @mobile
+  @mobile
   Scenario Outline: A tool call made through a website, an integration or an app shows that one's own icon
     Given the agent's tool call <call>
     Then the call is shown with <icon>

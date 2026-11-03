@@ -26,6 +26,7 @@
 #include "DiffModel.h"
 #include "Phone.h"
 #include "RightPanelController.h"
+#include "ShellBridge.h"
 #include "ThreadDiff.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
@@ -522,6 +523,37 @@ void expectDiffOf(World& world, const QStringList& paths) {
   for (const S& path : paths) expectDrawn(world, path);
 }
 
+// The icon box of the newest call's line: the kind's icon and the call's own.
+QQuickItem* lineIcon(World& world, const S& name) {
+  QQuickItem* line = callLine(world, lastCall(world).value(S("id")).toString());
+  for (QQuickItem* child : line->childItems()) {
+    if (child->objectName() == name) return child;
+  }
+  fail(S("the call's line has no %1").arg(name));
+}
+
+// Waits for the newest call's line to draw `source` as its icon, and not the kind's.
+void expectOwnIcon(World& world, const QUrl& source) {
+  world.waitFor([&] {
+    QQuickItem* own = lineIcon(world, S("workLineOwnIcon"));
+    return own->property("source").toUrl() == source && own->property("status").toInt() == 1 && own->isVisible() &&
+           !lineIcon(world, S("workLineIcon"))->isVisible();
+  }, [&] {
+    QQuickItem* own = lineIcon(world, S("workLineOwnIcon"));
+    return S("the call to show %1; it shows %2 (status %3)").arg(source.toString(), own->property("source").toString()).arg(own->property("status").toInt());
+  });
+}
+
+// Serves a small picture at `path` of the fake MC, as a site, a logo's host or the environment does.
+void servePicture(World& world, const S& path) {
+  world.mc.onRaw(path, [](QTcpSocket* socket, const QByteArray& head) {
+    socket->read(head.size());
+    const QByteArray body = picture();
+    socket->write("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: image/png\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body);
+    socket->disconnectFromHost();
+  });
+}
+
 }  // namespace
 
 // The image the agent viewed, loaded from the thread's workspace, when a
@@ -895,6 +927,62 @@ const Steps steps([] {
     expectDiffOf(world, {c[0]});
     expect(threadDiff(world).shownTurn() == 2 && threadDiff(world).focusPath() == c[0] && threadDiff(world).fileTotal() == 2,
            S("the diff is of turn %1, on %2 of %3 files").arg(threadDiff(world).shownTurn()).arg(threadDiff(world).focusPath()).arg(threadDiff(world).fileTotal()));
+  });
+
+  // A call's own icon: a website's, an integration's logo, an app's from the environment.
+  step(S("the agent's tool call (used a website|used an integration that has its own logo|drove an app on the environment's machine|used a website whose icon cannot be loaded)"),
+       [](World& world, const Captures& c, const Table&) {
+         const S origin = world.mc.origin().toString();
+         QJsonObject fields{{S("toolName"), S("mcp__chrome__navigate")}, {S("input"), QJsonObject{{S("url"), origin + S("/shop")}}}};
+         if (c[0] == QLatin1String("used a website")) {
+           // A page the provider named no icon for: its site's favicon.ico.
+           servePicture(world, S("/favicon.ico"));
+           fields.insert(S("toolIcon"), QJsonObject{{S("_tag"), S("website")}, {S("pageUrl"), origin + S("/shop")}});
+         } else if (c[0] == QLatin1String("used an integration that has its own logo")) {
+           servePicture(world, S("/logo-light.png"));
+           servePicture(world, S("/logo-dark.png"));
+           fields.insert(S("toolSource"), QJsonObject{{S("key"), S("linear")}, {S("name"), S("Linear")}, {S("kind"), S("integration")},
+                                                       {S("icon"), QJsonObject{{S("_tag"), S("themed-logo")}, {S("logoUrl"), origin + S("/logo-light.png")},
+                                                                               {S("logoUrlDark"), origin + S("/logo-dark.png")}}}});
+         } else if (c[0] == QLatin1String("drove an app on the environment's machine")) {
+           // The environment signs the app's icon (assets.createUrl's native-app-icon) and serves it.
+           world.mc.onRpc(S("assets.createUrl"), [&mc = world.mc](const FakeMc::Rpc& rpc) {
+             const QJsonObject resource = rpc.payload.value(QLatin1String("resource")).toObject();
+             const bool calculator = resource.value(QLatin1String("_tag")) == QLatin1String("native-app-icon") &&
+                                     resource.value(QLatin1String("app")).toObject().value(QLatin1String("displayName")) == QLatin1String("Calculator");
+             if (!calculator) return mc.refuse(rpc, S("no such asset"));
+             mc.reply(rpc, QJsonObject{{S("relativeUrl"), S("/api/assets/app-icon")},
+                                       {S("expiresAt"), double(QDateTime::currentDateTimeUtc().addSecs(3600).toMSecsSinceEpoch())}});
+           });
+           servePicture(world, S("/api/assets/app-icon"));
+           fields = {{S("toolName"), S("mcp__computer-use__click")},
+                     {S("toolIcon"), QJsonObject{{S("_tag"), S("native-app")}, {S("app"), QJsonObject{{S("_tag"), S("display-name")}, {S("displayName"), S("Calculator")}}}}}};
+         } else {
+           // Nothing is served there.
+           fields.insert(S("toolIcon"), QJsonObject{{S("_tag"), S("website")}, {S("pageUrl"), origin + S("/shop")}, {S("faviconUrl"), origin + S("/missing.png")}});
+         }
+         startRun(world);
+         addItem(world, S("dynamic_tool"), fields);
+       });
+  step(S("the call is shown with that website's own icon"), [](World& world, const Captures&, const Table&) {
+    expectOwnIcon(world, QUrl(world.mc.origin().toString() + S("/favicon.ico")));
+  });
+  step(S("the call is shown with the logo made for the phone's light or dark appearance"), [](World& world, const Captures&, const Table&) {
+    const S origin = world.mc.origin().toString();
+    for (const char* mode : {"light", "dark"}) {
+      world.bridge().dispatch(S("theme.mode"), QVariantMap{{S("mode"), QLatin1String(mode)}});
+      expectOwnIcon(world, QUrl(origin + S("/logo-%1.png").arg(QLatin1String(mode))));
+    }
+  });
+  step(S("the call is shown with that app's icon, fetched from the environment"), [](World& world, const Captures&, const Table&) {
+    expectOwnIcon(world, world.mc.origin().resolved(QUrl(S("/api/assets/app-icon"))));
+  });
+  step(S("the call is shown with the generic icon for that kind of work, without a gap"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return lineIcon(world, S("workLineOwnIcon"))->property("status").toInt() == 3; },
+                  [&] { return S("the icon to fail to load; it is %1").arg(lineIcon(world, S("workLineOwnIcon"))->property("status").toInt()); });
+    QQuickItem* kind = lineIcon(world, S("workLineIcon"));
+    expect(kind->isVisible() && kind->property("name") == lastCall(world).value(S("icon")) && !lineIcon(world, S("workLineOwnIcon"))->isVisible(),
+           S("the call shows the \"%1\" icon, visible %2").arg(kind->property("name").toString()).arg(kind->isVisible()));
   });
 
   // The running turn's latest command, named by its program.

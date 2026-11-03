@@ -17,6 +17,7 @@
 #include "Prop.h"
 
 #include <QAbstractItemModelTester>
+#include <QJsonDocument>
 #include <QLoggingCategory>
 
 #include <memory>
@@ -223,6 +224,9 @@ struct Item {
   // notifications: "envelope", a delegated task's result as the agent reads
   // it (its text is the task's title), or "wake", the provider waking itself.
   QString legacy;
+  // A call that drove an app on the environment's machine, shown with the
+  // app's icon once the environment signs its address.
+  bool app = false;
   bool operator==(const Item&) const = default;
 };
 
@@ -265,7 +269,14 @@ struct Model {
   QSet<QString> groupsToggled;
   // The timeline reads as the phone's activity log (TimelineModel::brief).
   bool brief = false;
+  // The client holds a signed address for the app's icon.
+  bool appSigned = false;
 };
+
+// The app the calls drove, its icon's attachment id, and where it is served.
+const QJsonObject kApp{{QStringLiteral("_tag"), QStringLiteral("display-name")}, {QStringLiteral("displayName"), QStringLiteral("Calculator")}};
+const QString kAppIcon = QStringLiteral("native-app-icon:") + QString::fromUtf8(QJsonDocument(kApp).toJson(QJsonDocument::Compact));
+const QUrl kAppIconUrl(QStringLiteral("http://mc.test/api/assets/app-icon"));
 
 bool settled(const Run& run) {
   return kSettled.contains(run.status);
@@ -312,6 +323,7 @@ QJsonObject json(const Item& item) {
     entity.insert(field(item.type), item.text);
   }
   if (!item.agent.isEmpty()) entity.insert(QStringLiteral("subagentId"), item.agent);
+  if (item.app) entity.insert(QStringLiteral("toolIcon"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("native-app")}, {QStringLiteral("app"), kApp}});
   return entity;
 }
 
@@ -364,6 +376,8 @@ struct Row {
   int hidden = 0;
   // A work group's calls on screen.
   QStringList entries;
+  // Each of those calls' own icon, empty for none.
+  QStringList icons;
   bool summarized = false;
   // What a summarized group did, and whether a call of it failed.
   QString summary;
@@ -384,6 +398,9 @@ void showValue(const Row& row, std::ostream& os) {
   if (row.expanded) os << " expanded";
   if (row.hidden) os << " hidden=" << row.hidden;
   if (!row.entries.isEmpty()) os << " entries=" << row.entries.join(QLatin1Char(',')).toStdString();
+  if (std::any_of(row.icons.cbegin(), row.icons.cend(), [](const QString& icon) { return !icon.isEmpty(); })) {
+    os << " icons=" << row.icons.join(QLatin1Char(',')).toStdString();
+  }
   if (row.summarized) os << " summary=" << row.summary.toStdString() << (row.summaryFailed ? " failed" : "");
   if (!row.command.isEmpty()) os << " command=" << row.command.toStdString();
   if (!row.agentModel.isEmpty()) os << " model=" << row.agentModel.toStdString();
@@ -512,6 +529,9 @@ QList<Row> project(const Model& model) {
       const int visible = row.summarized ? 0 : 1;
       row.hidden = int(calls.size()) - visible;
       row.entries = row.expanded ? calls : calls.mid(calls.size() - visible);
+      for (const QString& id : std::as_const(row.entries)) {
+        row.icons.append(thread.items.value(id).app && model.appSigned ? kAppIconUrl.toString() : QString());
+      }
       if (const Item last = thread.items.value(row.entries.value(row.entries.size() - 1)); last.type == QLatin1String("command_execution")) {
         // These commands name no program.
         const bool live = !settled(thread.runs.value(item.run)) && !row.expanded;
@@ -649,7 +669,10 @@ struct Sut {
     row.meta = value(TimelineModel::MetaRole).toBool();
     row.expanded = value(TimelineModel::ExpandedRole).toBool();
     row.hidden = value(TimelineModel::HiddenCountRole).toInt();
-    for (const QVariant& entry : value(TimelineModel::EntriesRole).toList()) row.entries.append(entry.toMap().value(QStringLiteral("id")).toString());
+    for (const QVariant& entry : value(TimelineModel::EntriesRole).toList()) {
+      row.entries.append(entry.toMap().value(QStringLiteral("id")).toString());
+      row.icons.append(entry.toMap().value(QStringLiteral("iconUrl")).toString());
+    }
     if (const QVariantMap last = value(TimelineModel::EntriesRole).toList().value(row.entries.size() - 1).toMap();
         last.value(QStringLiteral("type")) == QLatin1String("command_execution")) {
       row.command = last.value(QStringLiteral("label")).toString();
@@ -983,6 +1006,8 @@ struct AddItem : Change {
   QString agent;
   // An error that is the provider's usage limit.
   bool limit = false;
+  // A command that drove an app.
+  bool app = false;
   explicit AddItem(const Model& model) {
     const QStringList runs = running(model);
     RC_PRE(!runs.isEmpty());
@@ -996,6 +1021,7 @@ struct AddItem : Change {
                                                {1, QStringLiteral("notification")}});
     if (type == QLatin1String("subagent")) agent = pick(kAgents);
     if (type == QLatin1String("error")) limit = *rc::gen::arbitrary<bool>();
+    if (type == QLatin1String("command_execution")) app = *rc::gen::arbitrary<bool>();
   }
   void checkPreconditions(const Model& model) const override {
     RC_PRE(model.mc.items.size() < kMaxItems);
@@ -1007,10 +1033,13 @@ struct AddItem : Change {
     item.streaming = type == QLatin1String("assistant_message");
     item.status = type == QLatin1String("command_execution") ? QStringLiteral("running") : QStringLiteral("completed");
     item.agent = agent;
+    item.app = app;
     model.mc.items.insert(item.id, item);
     commit(model, {event(model, QStringLiteral("turn-item"), item.id, {{QStringLiteral("s"), json(item)}}, run)});
   }
-  void show(std::ostream& os) const override { os << "AddItem(" << type.toStdString() << " in " << run.toStdString() << ")"; }
+  void show(std::ostream& os) const override {
+    os << "AddItem(" << type.toStdString() << (app ? " of the app" : "") << " in " << run.toStdString() << ")";
+  }
 };
 
 QStringList itemsWhere(const Model& model, const std::function<bool(const Item&)>& keep) {
@@ -1372,6 +1401,20 @@ struct Toggle : Command {
   void show(std::ostream& os) const override { os << "Toggle(" << row.toStdString() << ")"; }
 };
 
+// The environment signs the app's icon's address (again, or for the first
+// time): the calls of the app on screen show it, and nothing else redraws.
+struct SignIcon : Command {
+  void apply(Model& model) const override { model.appSigned = true; }
+  void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
+    sut.begin();
+    sut.model->setAttachmentUrl(kAppIcon, kAppIconUrl, clock().addSecs(3600));
+    sut.check(next);
+  }
+  void show(std::ostream& os) const override { os << "SignIcon"; }
+};
+
 // The app restarts (or the thread was evicted and opened again): the thread
 // parks into the cache, and a new model restores it from there.
 struct Restart : Command {
@@ -1380,6 +1423,7 @@ struct Restart : Command {
     model.lastEvents = {};
     model.foldsOpen.clear();
     model.groupsToggled.clear();
+    model.appSigned = false;
     if (model.offset < 0) model.held = {};
   }
   void run(const Model& model, Sut& sut) const override {
@@ -1414,7 +1458,7 @@ private slots:
       rc::state::check(model, sut,
                        rc::state::gen::execOneOfWithArgs<StartRun, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
-                                                         LoadEarlier, Toggle, Restart, AgentModel>());
+                                                         LoadEarlier, Toggle, Restart, AgentModel, SignIcon>());
     }));
   }
 
@@ -1426,7 +1470,7 @@ private slots:
       rc::state::check(model, sut,
                        rc::state::gen::execOneOfWithArgs<StartRun, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
-                                                         LoadEarlier, Toggle, Restart, AgentModel>());
+                                                         LoadEarlier, Toggle, Restart, AgentModel, SignIcon>());
     }));
   }
 
