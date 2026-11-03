@@ -1,7 +1,9 @@
 // The client's view of its MC (McClient, ShellStore, LocalCache) against a fake
 // MC (tests/native/features/FakeMc) whose rows change, which drops and comes
-// back, restarts with a new epoch, answers calls, refuses them or holds them,
-// while the client reconnects, restarts from its cache and subscribes.
+// back, restarts with a new epoch, takes sockets and never says hello, answers
+// calls, refuses them or holds them, while the client reconnects, is opened
+// again (paired anew), restarts from its cache and subscribes. It holds one
+// socket to the MC at most.
 
 #include "Prop.h"
 
@@ -120,6 +122,8 @@ struct Sut {
   void start() {
     client = std::make_unique<McClient>();
     client->setRetryDelays({20});
+    // A hushed MC's socket is given up on well within a step.
+    client->setSetupTimeout(500);
     store = std::make_unique<ShellStore>(client.get());
     store->setCache(&cache);
     store->open(mc.origin());
@@ -160,6 +164,10 @@ void expectSame(const Model& model, Sut& sut) {
   if (model.up) {
     RC_ASSERT(halc2::prop::until([&] { return sut.client->isReady(); }));
     RC_ASSERT(sut.barrierCall());
+    // The sockets it left close; only the one it is on stays.
+    if (!halc2::prop::until([&] { return sut.mc.openSockets() == 1; })) {
+      RC_FAIL("the MC holds " + std::to_string(sut.mc.openSockets()) + " sockets of the client's");
+    }
     RC_ASSERT(sut.store->synchronized());
     RC_ASSERT(sut.client->phase() == McClient::Phase::Ready);
   } else {
@@ -298,6 +306,28 @@ struct DropMc : Step<DropMc> {
   void show(std::ostream& os) const override { os << "DropMc(" << (down ? "down" : "back") << (restart ? ", new epoch" : "") << ")"; }
 };
 
+// The MC drops the client and takes its next sockets without a word, as one
+// stuck before its hello: the client gives up on each and tries again.
+struct Hush : Step<Hush> {
+  explicit Hush(const Model&) {}
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.up); }
+  void apply(Model& model) const override {
+    disconnect(model);
+    model.up = false;
+    settled(model);
+  }
+  void act(const Model&, Sut& sut) const {
+    QSignalSpy ready(sut.client.get(), &McClient::readyChanged);
+    sut.mc.sayHello = false;
+    sut.mc.drop();
+    RC_ASSERT(halc2::prop::until([&] { return !ready.isEmpty(); }));
+    // It reaches the MC again, which says nothing.
+    const qsizetype before = sut.mc.connections.size();
+    RC_ASSERT(halc2::prop::until([&] { return sut.mc.connections.size() > before; }));
+  }
+  void show(std::ostream& os) const override { os << "Hush"; }
+};
+
 struct ComeBack : Step<ComeBack> {
   explicit ComeBack(const Model&) {}
   void checkPreconditions(const Model& model) const override { RC_PRE(!model.up); }
@@ -305,7 +335,10 @@ struct ComeBack : Step<ComeBack> {
     model.up = true;
     settled(model);
   }
-  void act(const Model&, Sut& sut) const { sut.mc.startAccepting(); }
+  void act(const Model&, Sut& sut) const {
+    sut.mc.sayHello = true;
+    sut.mc.startAccepting();
+  }
   void show(std::ostream& os) const override { os << "ComeBack"; }
 };
 
@@ -314,6 +347,14 @@ struct Reconnect : Step<Reconnect> {
   void apply(Model& model) const override { disconnect(model); }
   void act(const Model&, Sut& sut) const { sut.client->reconnect(); }
   void show(std::ostream& os) const override { os << "Reconnect"; }
+};
+
+// Opened again without being closed, as pairing anew does.
+struct Reopen : Step<Reopen> {
+  explicit Reopen(const Model&) {}
+  void apply(Model& model) const override { disconnect(model); }
+  void act(const Model&, Sut& sut) const { sut.client->open(sut.mc.origin(), QStringLiteral("token")); }
+  void show(std::ostream& os) const override { os << "Reopen"; }
 };
 
 // The app quits and starts again: it shows what it kept until its MC answers.
@@ -436,8 +477,8 @@ private slots:
     QVERIFY(rc::check("the client shows and keeps what its MC said, and every call gets the reply it is owed", [] {
       Sut sut;
       rc::state::check(Model{}, sut,
-                       rc::state::gen::execOneOfWithArgs<PutRow, PutRow, RemoveRow, DropMc, ComeBack, ComeBack, Reconnect, RestartClient,
-                                                         Call, Call, AnswerHeld, Subscribe, Unsubscribe>());
+                       rc::state::gen::execOneOfWithArgs<PutRow, PutRow, RemoveRow, DropMc, Hush, ComeBack, ComeBack, Reconnect, Reopen,
+                                                         RestartClient, Call, Call, AnswerHeld, Subscribe, Unsubscribe>());
     }));
   }
 };

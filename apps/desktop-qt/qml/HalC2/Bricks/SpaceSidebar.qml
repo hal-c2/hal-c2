@@ -326,25 +326,47 @@ Rectangle {
                 width: ListView.view.width
                 height: section ? 28 : 26
                 radius: Math.min(Theme.radius, 6)
-                color: selected ? sidebar.selectedFill : entryMouse.containsMouse && kind !== "folder" ? sidebar.hoverFill : "transparent"
+                color: selected ? sidebar.selectedFill : entryMouse.containsMouse ? sidebar.hoverFill : "transparent"
+                border.width: activeFocus ? 1 : 0
+                border.color: Theme.palette.color("focus", "#3b82f6")
+                // Tab reaches each row; Space or Return does what a click does, Left and
+                // Right collapse and expand a section or a folder.
+                activeFocusOnTab: true
 
-                Accessible.role: section ? Accessible.Button : Accessible.ListItem
-                Accessible.name: section ? (expanded ? qsTr("Collapse %1") : qsTr("Expand %1")).arg(name) : name
+                Accessible.role: kind === "file" ? Accessible.ListItem : Accessible.Button
+                Accessible.name: kind === "file" ? name : (expanded ? qsTr("Collapse %1") : qsTr("Expand %1")).arg(name)
+
+                function setExpanded(expanded) {
+                    if (kind === "file" || expanded === entry.expanded)
+                        return;
+                    Shell.dispatch("space.project.setExpanded", section ? { projectId: projectId, expanded: expanded } : { projectId: projectId, path: path, expanded: expanded });
+                }
+
+                function activate() {
+                    if (kind !== "file") {
+                        setExpanded(!expanded);
+                    } else {
+                        Shell.dispatch("space.openFile", { projectId: projectId, relativePath: path });
+                        sidebar.pageChosen();
+                    }
+                }
+
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                        activate();
+                    else if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right) && kind !== "file")
+                        setExpanded(event.key === Qt.Key_Right);
+                    else
+                        return;
+                    event.accepted = true;
+                }
 
                 MouseArea {
                     id: entryMouse
 
                     anchors.fill: parent
                     hoverEnabled: true
-                    enabled: entry.kind !== "folder"
-                    onClicked: {
-                        if (entry.section) {
-                            Shell.dispatch("space.project.setExpanded", { projectId: entry.projectId, expanded: !entry.expanded });
-                        } else {
-                            Shell.dispatch("space.openFile", { projectId: entry.projectId, relativePath: entry.path });
-                            sidebar.pageChosen();
-                        }
-                    }
+                    onClicked: entry.activate()
                 }
 
                 RowLayout {
@@ -354,7 +376,7 @@ Rectangle {
                     spacing: 6
 
                     ShellIcon {
-                        name: entry.section ? (entry.expanded ? "chevron-down" : "chevron-right") : entry.kind === "folder" ? "folder" : "file-text"
+                        name: entry.section ? (entry.expanded ? "chevron-down" : "chevron-right") : entry.kind === "folder" ? (entry.expanded ? "folder-open" : "folder") : "file-text"
                         size: entry.section ? 12 : 14
                         color: sidebar.muted
                     }
