@@ -247,6 +247,16 @@ describe("inlineMarkdown", () => {
       [", snake_case_name", 0, undefined],
     ]);
   });
+
+  it("keeps a balanced paren in a www address and leaves an unbalanced one out", () => {
+    expect(spans("see www.example.com/a_(b) ok (www.example.com/c).")).toEqual([
+      ["see ", 0, undefined],
+      ["www.example.com/a_(b)", TextAttributes.UNDERLINE, "http://www.example.com/a_(b)"],
+      [" ok (", 0, undefined],
+      ["www.example.com/c", TextAttributes.UNDERLINE, "http://www.example.com/c"],
+      [").", 0, undefined],
+    ]);
+  });
 });
 
 describe("wrapChunks", () => {

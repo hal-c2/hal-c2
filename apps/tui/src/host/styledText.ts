@@ -59,7 +59,7 @@ const INLINE = new RegExp(
     /(?<image>!)?\[(?<label>[^\]\n]*)\]\((?<url>(?:[^()\s]|\([^()\s]*\))+)(?:\s+"[^"\n]*")?\)/u
       .source,
     /<(?<auto>https?:\/\/[^>\s]+)>/u.source,
-    /(?<![\p{L}\p{N}_/.])(?<www>www\.[^\s<>]*[^\s<>.,;:!?'")\]*_~])/u.source,
+    /(?<![\p{L}\p{N}_/.])(?<www>www\.[^\s<>]*[^\s<>.,;:!?'"\]*_~])/u.source,
   ].join("|"),
   "gu",
 );
@@ -71,6 +71,18 @@ const INLINE = new RegExp(
 export function isSafeLink(url: string): boolean {
   const scheme = /^\s*([a-z][a-z0-9+.-]*):/i.exec(url)?.[1]?.toLowerCase();
   return scheme === undefined || scheme === "http" || scheme === "https" || scheme === "mailto";
+}
+
+/**
+ * Where a `www.` address ends, as GitHub reads it: trailing punctuation is no
+ * part of it, nor a `)` that closes no `(` inside it.
+ */
+function addressEnd(address: string): string {
+  for (;;) {
+    const end = address.replace(/[.,;:!?'"*_~\]]+$/u, "");
+    if (!end.endsWith(")") || end.split(")").length <= end.split("(").length) return end;
+    address = end.slice(0, -1);
+  }
 }
 
 /**
@@ -105,7 +117,14 @@ export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle 
       else if (isSafeLink(url)) linked(label, url);
       else push(label, {});
     } else if (span.auto !== undefined) linked(span.auto, span.auto);
-    else if (span.www !== undefined) linked(span.www, `http://${span.www}`);
+    else if (span.www !== undefined) {
+      // What is cut off the address is given back as plain text.
+      const address = addressEnd(span.www);
+      if (address.length > "www.".length) {
+        linked(address, `http://${address}`);
+        last = index + address.length;
+      } else push(match[0], {});
+    }
   }
   push(text.slice(last), {});
   return chunks;
