@@ -866,6 +866,24 @@ Item {
             compare(Shell.openedExternally, []);
         }
 
+        // features/space/markdown.feature, Lists: an item's further lines stay
+        // in it, and a text the brick would read as no item (a rule of the
+        // bullet's dashes, a quote) is drawn after its marker in the lead.
+        function test_an_item_keeps_text_that_reads_as_no_item() {
+            const item = { kind: "bullet", markdownLead: "- " };
+            const view = root.research({ blocks: [root.block("b1", "--", item), root.block("b2", "> quoted", item), root.block("b3", "First\n\nSecond", item)] });
+            tryVerify(() => findChild(view, "spaceBlock:First\n\nSecond") !== null);
+            for (const text of ["--", "> quoted"]) {
+                const shown = findChild(view, "spaceBlock:" + text);
+                compare(shown.marker, "", text);
+                compare(findChild(shown, "spaceBlockText:" + text).text, text);
+                compare(findChild(view, "spaceMarkdownLead:" + text).text, "- ", text);
+            }
+            const both = findChild(view, "spaceBlock:First\n\nSecond");
+            compare(both.marker, "- ");
+            compare(findChild(both, "spaceBlockText:First\n\nSecond").text, "- First\n  \n  Second");
+        }
+
         // A click on a link opens it as a link in the chat does; anywhere else
         // in the text edits its source, with the caret where it was clicked.
         function test_a_click_opens_a_link_and_elsewhere_edits_the_source() {
