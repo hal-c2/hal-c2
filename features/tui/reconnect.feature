@@ -4,6 +4,7 @@
 #   apps/tui/src/staleRequest.ts
 #   apps/tui/src/components/ChatView.tsx (stale versus transient request failures)
 #   apps/tui/src/features.backlog.test.ts (environment-connections: disconnect and restart)
+#   apps/tui/src/host/host.ts (the status line holds a drop back for 1.5 seconds)
 #   Shared domain: connections/ owns reconnect semantics for every client.
 
 Feature: Reconnecting and stale requests in the terminal client
@@ -79,5 +80,12 @@ Feature: Reconnecting and stale requests in the terminal client
   @tui
   Scenario: A server restart is reported and the workflow resumes
     When the server restarts
+    And it is away for longer than a second and a half
     Then the status line reports the restart
     And the thread, draft and open panels are the same once it is back
+
+  # connections/connection-health.feature: "A reconnect within a second and a half is not shown".
+  @tui
+  Scenario: A connection that is back within a second and a half is not reported
+    When the connection drops and comes back at once
+    Then the status line says nothing about it

@@ -2391,21 +2391,56 @@ void setSection(World& world, const QString& project, bool open) {
                 [&] { return S("the section of %1 to be %2; %3").arg(project, open ? S("expanded") : S("collapsed"), describeSections(world)); });
 }
 
-// `path` tapped in the expanded section of `project`.
+bool folderOpen(World& world, const QString& project, const QString& path) {
+  const auto row = sectionRow(world, S("folder"), project, path);
+  return row && row->value(S("expanded")).toBool();
+}
+
+// The folder's row on screen, in its expanded section.
+QQuickItem* lookAtFolder(World& world, const QString& project, const QString& path) {
+  lookAtSection(world, project);
+  world.waitFor([&] { return sectionRow(world, S("folder"), project, path).has_value(); },
+                [&] { return S("the section of %1 to show the folder %2; %3").arg(project, path, describeSections(world)); });
+  return sectionItem(world, S("folder"), project, path);
+}
+
+void waitForFolder(World& world, const QString& project, const QString& path, bool open) {
+  world.waitFor([&] { return sectionRow(world, S("folder"), project, path).has_value() && folderOpen(world, project, path) == open; },
+                [&] { return S("the folder %1 of %2 to be %3; %4").arg(path, project, open ? S("expanded") : S("collapsed"), describeSections(world)); });
+}
+
+// A tap on the folder when it is not already `open`, or Right or Left on a hardware keyboard.
+void setFolder(World& world, const QString& project, const QString& path, bool open, bool keyboard = false) {
+  QQuickItem* folder = lookAtFolder(world, project, path);
+  if (keyboard) {
+    folder->forceActiveFocus(Qt::TabFocusReason);
+    expect(folder->hasActiveFocus(), S("the folder %1 of %2 took no keyboard focus").arg(path, project));
+    world.press(open ? S("Right") : S("Left"));
+  } else if (folderOpen(world, project, path) != open) {
+    world.tap(folder);
+  }
+  waitForFolder(world, project, path, open);
+}
+
+// `path` tapped in the expanded section of `project`, through its folders.
 void pickInSection(World& world, const QString& project, const QString& path) {
   setSection(world, project, true);
+  const QStringList parts = path.split(QLatin1Char('/'));
+  for (qsizetype i = 1; i < parts.size(); ++i) setFolder(world, project, parts.mid(0, i).join(QLatin1Char('/')), true);
   world.waitFor([&] { return sectionRow(world, S("file"), project, path).has_value(); },
                 [&] { return S("the section of %1 to show %2; %3").arg(project, path, describeSections(world)); });
   world.tap(sectionItem(world, S("file"), project, path));
 }
 
-// The file's page on show, from its project's Space, with its section expanded.
+// The file's page on show, from its project's Space, its row showing in its section.
 void expectFilePage(World& world, const QString& title, const QString& project) {
   expectOpened(world, title);
   expectShown(world, [&] {
     const QString space = projectSpace(world.mc, project);
-    return !space.isEmpty() && viewOf(world)->fileSpaceId() == space && expanded(world, project) && viewOf(world)->projects()->isExpanded(project);
-  }, S("the page %1 to be shown from the expanded section of %2; %3").arg(title, project, describeSections(world)));
+    const QString path = shownFile(world).value(S("path")).toString();
+    return !space.isEmpty() && viewOf(world)->fileSpaceId() == space && expanded(world, project) && viewOf(world)->projects()->isExpanded(project) &&
+           !path.isEmpty() && sectionRow(world, S("file"), project, path).has_value();
+  }, S("the page %1 to be shown from its row in the section of %2; %3").arg(title, project, describeSections(world)));
 }
 
 // The user picks the page's file in its project's section, the phone's way to
@@ -4290,6 +4325,28 @@ const Steps steps([] {
   });
   step(S("the user collapses the section of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     setSection(world, c[0], false);
+  });
+  step(S("the folder %1 of %1 is collapsed").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtFolder(world, c[1], c[0]);
+    waitForFolder(world, c[1], c[0], false);
+    world.waitFor([&] {
+      const QList<QVariantMap> rows = sectionRows(world);
+      return std::none_of(rows.cbegin(), rows.cend(), [&](const QVariantMap& row) {
+        return row.value(S("projectId")) == c[1] && row.value(S("path")).toString().startsWith(c[0] + QLatin1Char('/'));
+      });
+    }, [&] { return S("nothing in the folder %1 of %2 to show; %3").arg(c[0], c[1], describeSections(world)); });
+  });
+  step(S("the user (?:expands|expanded) the folder %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], true);
+  });
+  step(S("the user collapses the folder %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], false);
+  });
+  step(S("the user expands the folder %1 of %1 from the keyboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], true, true);
+  });
+  step(S("the user collapses the folder %1 of %1 from the keyboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], false, true);
   });
   step(S("the section of %1 shows %1 in the folder %1").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtSection(world, c[0]);

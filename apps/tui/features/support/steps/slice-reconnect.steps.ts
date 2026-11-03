@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 
 import type { TuiComposerState } from "../../../src/host/composerState.ts";
 import { step } from "../../steps.ts";
-import type { ReconnectWorld } from "../reconnectWorld.ts";
+import { elapse, type ReconnectWorld } from "../reconnectWorld.ts";
 import type { ThreadWorld } from "../threadWorld.ts";
 import { pressKey, resize, settle, snapshot, typeText } from "../world.ts";
 
@@ -36,8 +36,29 @@ step("the server restarts", async (ctx: World) => {
   await ctx.connection!.drop();
 });
 
-step("the status line reports the restart", async (ctx: World) => {
+step("it is away for longer than a second and a half", (ctx: World) => {
   expect(ctx.connection!.phases.at(-1)).toBe("reconnecting");
+  expect(status(ctx).text).not.toContain("went away");
+  elapse(ctx, 1500);
+});
+
+step("the connection drops and comes back at once", async (ctx: World) => {
+  ctx.before = { status: status(ctx) };
+  await ctx.connection!.drop();
+  await ctx.connection!.connected(2);
+  await settle(ctx);
+});
+
+step("the status line says nothing about it", async (ctx: World) => {
+  // The notice it held back is cancelled, not just late.
+  elapse(ctx, Number.POSITIVE_INFINITY);
+  expect(status(ctx)).toEqual(ctx.before!.status as ReturnType<typeof status>);
+  const row = ctx.host!.state.get("statusRow") as { label: string };
+  expect(row.label).not.toContain("The server went away");
+  expect(row.label).not.toContain("The server is back");
+});
+
+step("the status line reports the restart", async (ctx: World) => {
   expect(status(ctx)).toEqual({ kind: "busy", text: "The server went away; reconnecting…" });
   const row = ctx.host!.state.get("statusRow") as { label: string };
   expect(await snapshot(ctx)).toContain(row.label);

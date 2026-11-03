@@ -163,7 +163,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
     driver = Entities.driver(ids)
     native = get_in(entity, ["nativeTaskRef", "nativeId"])
     at = Entities.now()
-    said = stream(child) |> StreamState.list("message") |> length()
+    said = HalC2.Streams.read(child, &(&1 |> StreamState.all("message") |> Enum.count()))
 
     sub = %{
       id: id,
@@ -220,7 +220,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
     HalC2.Streams.transact(sub.child, :thread, fn state ->
       changes =
         Enum.map(conversation(state, sub, :assistant, sub.text, at), fn {kind, id, entity} ->
-          if StreamState.get(state, kind)[id],
+          if StreamState.fetch(state, kind, id),
             do:
               Orchestration.upsert(
                 state,
@@ -264,7 +264,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
       changes =
         Enum.map(conversation(state, sub, :user, text, at), fn {kind, id, entity} ->
-          if StreamState.get(state, kind)[id],
+          if StreamState.fetch(state, kind, id),
             do:
               Orchestration.upsert(
                 state,
@@ -353,7 +353,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
           message_id == nil ->
             nil
 
-          StreamState.get(state, "message")[message_id] ->
+          StreamState.fetch(state, "message", message_id) ->
             Orchestration.upsert(
               state,
               "message",
@@ -373,7 +373,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
         end
 
       changes =
-        if StreamState.get(state, "turn-item")[item_id] do
+        if StreamState.fetch(state, "turn-item", item_id) do
           [Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)), message]
         else
           [

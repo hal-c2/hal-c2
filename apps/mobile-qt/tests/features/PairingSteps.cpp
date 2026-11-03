@@ -258,7 +258,7 @@ const Steps steps([] {
   });
 
   step(S("the user is told to use compatible versions of the app and server"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return world.find(S("connectionNoticeTitle")) != nullptr; }, [&] { return S("a notice; the screen says: %1").arg(screenTexts(world)); });
+    world.openConnectionNotice();
     expect(shownText(world, S("connectionNoticeTitle")) == S("This app is too old for %1").arg(world.mc.label) &&
                shownText(world, S("connectionNoticeDetail")) == S("Update HAL-C2 on this device to connect."),
            S("the screen says: %1").arg(screenTexts(world)));
@@ -282,7 +282,7 @@ const Steps steps([] {
 
   // Settings need the connection; beside the notice of a lost one is the other way out.
   step(S("the user removes it from the connection notice and confirms"), [](World& world, const Captures&, const Table&) {
-    world.item(S("connectionNoticeTitle"));
+    world.openConnectionNotice();
     world.tap(S("connectionForget"));
     world.awaitPopup(S("confirmDialog"));
     expect(world.shows(S("Forget %1?").arg(world.mc.label)), S("the question does not name %1; the screen says: %2").arg(world.mc.label, screenTexts(world)));

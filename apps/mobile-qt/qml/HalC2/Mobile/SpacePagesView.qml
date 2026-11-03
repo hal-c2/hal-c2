@@ -204,15 +204,28 @@ ColumnLayout {
             topPadding: topInset
             title: model.name
             depth: model.depth
-            iconName: section ? (model.expanded ? "chevron-down" : "chevron-right") : model.kind === "folder" ? "folder" : "file-text"
-            // A folder only holds its files, which are always shown under it.
-            enabled: model.kind !== "folder"
-            Accessible.name: section ? (model.expanded ? qsTr("Collapse %1") : qsTr("Expand %1")).arg(model.name) : model.name
+            iconName: section ? (model.expanded ? "chevron-down" : "chevron-right") : model.kind === "folder" ? (model.expanded ? "folder-open" : "folder") : "file-text"
+            Accessible.name: model.kind === "file" ? model.name : (model.expanded ? qsTr("Collapse %1") : qsTr("Expand %1")).arg(model.name)
+            function setExpanded(open) {
+                if (model.kind === "file" || open === model.expanded)
+                    return;
+                Shell.dispatch("space.project.setExpanded", section ? { projectId: model.projectId, expanded: open } : { projectId: model.projectId, path: model.path, expanded: open });
+            }
+
             onClicked: {
-                if (section)
-                    Shell.dispatch("space.project.setExpanded", { projectId: model.projectId, expanded: !model.expanded });
-                else
+                if (model.kind === "file")
                     Shell.dispatch("space.openFile", { projectId: model.projectId, relativePath: model.path });
+                else
+                    setExpanded(!model.expanded);
+            }
+            // A hardware keyboard: Space clicks, Left and Right collapse and expand.
+            Keys.onLeftPressed: event => {
+                event.accepted = model.kind !== "file";
+                setExpanded(false);
+            }
+            Keys.onRightPressed: event => {
+                event.accepted = model.kind !== "file";
+                setExpanded(true);
             }
         }
     }

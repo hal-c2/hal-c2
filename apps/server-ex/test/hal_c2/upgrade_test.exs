@@ -772,8 +772,8 @@ defmodule HalC2.UpgradeTest do
     }
 
     # One still on its way from the subscription the upgrade carried over. The
-    # v7 state is first migrated to v11, so the returned state is that migration,
-    # stamped with when it was opened.
+    # v7 state is first migrated to v11, so the returned state is that migration
+    # (less `opened_at`, the clock at migration).
     migrated =
       Map.merge(state, %{
         v: 11,
@@ -784,9 +784,9 @@ defmodule HalC2.UpgradeTest do
         trace: nil
       })
 
-    assert {:ok, resynced} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
-    assert {opened_at, ^migrated} = Map.pop!(resynced, :opened_at)
-    assert is_integer(opened_at)
+    assert {:ok, got} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
+    assert is_integer(got.opened_at)
+    assert Map.delete(got, :opened_at) == migrated
 
     assert {:push, [{:text, frame}], _} =
              HalC2.Web.Socket.handle_info({:hal_c2_stream, {"th", tag}, :resync}, state)

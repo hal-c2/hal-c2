@@ -625,9 +625,11 @@ defmodule HalC2.Mcp.Tools.Threads do
     do: {:error, "invalid_request", "Unknown action #{action}."}
 
   defp first_message(thread_id) do
-    stream(thread_id)
-    |> StreamState.list("message")
-    |> Enum.find_value(&(&1["role"] == "user" and (&1["text"] || "") != "" and &1["text"]))
+    HalC2.Streams.read(thread_id, fn state ->
+      state
+      |> StreamState.all("message")
+      |> Enum.find_value(&(&1["role"] == "user" and (&1["text"] || "") != "" and &1["text"]))
+    end)
   end
 
   defp pending?(%{"id" => "pending-" <> _}), do: true
