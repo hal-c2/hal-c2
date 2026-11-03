@@ -1199,10 +1199,6 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
     const auto answer = [&] { return Answer{{{QStringLiteral("page"), one(mc, stream, QStringLiteral("page"), pageId)}}}; };
     if (method == QLatin1String("page.exportMarkdown")) return {{{QStringLiteral("markdown"), exportMarkdown(mc, space, page)}}};
     if (method == QLatin1String("page.syncFile")) return syncFile(mc, space, page);
-    if (method == QLatin1String("page.unlinkFile")) {
-      set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("file"), QJsonValue::Null}, {QStringLiteral("updatedAt"), stamp(mc)}});
-      return answer();
-    }
     if (method == QLatin1String("page.restore")) {
       if (!trashed(page)) return refused(QStringLiteral("invalid"), QStringLiteral("The page is not in the trash."));
       // Back where it was, unless that page is gone or in the trash itself.
@@ -4095,16 +4091,6 @@ const Steps steps([] {
       const QList<QVariantMap> versions = viewOf(world)->history()->versions()->rows();
       return versions.size() >= 2 && versions.first().value(S("byFile")).toBool() && !versions.at(1).value(S("byFile")).toBool();
     }, S("the history to hold the file's version over the user's edit"));
-  });
-  step(S("the user unlinks the page %1 from its file").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString page = idOfPage(world, c[0]);
-    lookAtPage(world, page);
-    expectShown(world, [&] { return !shownFile(world).isEmpty(); }, S("the page to say it is a file"));
-    openPageMenu(world, page, S("unlinkFile"));
-  });
-  step(S("the page no longer says it is a file"), [](World& world, const Captures&, const Table&) {
-    expectShown(world, [&] { return shownFile(world).isEmpty() && world.find(S("spacePageFile")) == nullptr; }, S("the page to be an ordinary page"));
-    expect(fakeFiles(world.mc).files.contains(S("docs/guide.md")), S("unlinking the page deleted its file"));
   });
   step(S("%1 of %1 was rewritten outside HAL-C2 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     fakeFiles(world.mc).files.insert(c[0], QString(c[2]).replace(S("\\n"), S("\n")));

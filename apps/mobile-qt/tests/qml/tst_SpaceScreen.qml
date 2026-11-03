@@ -514,7 +514,6 @@ Item {
             const screen = openFilePage(undefined);
             verify(!findChild(screen, "spacePageFile").visible);
             verify(!sheetIdsOf(screen, "p1").includes("showFile"));
-            verify(!sheetIdsOf(screen, "p1").includes("unlinkFile"));
         }
 
         function test_aGoneFileIsNotOfferedToShow() {
@@ -523,7 +522,6 @@ Item {
             verify(!findChild(screen, "spacePageFileShow").visible);
             const ids = sheetIdsOf(screen, "p1");
             verify(!ids.includes("showFile"));
-            verify(ids.includes("unlinkFile"));
         }
 
         function test_aFileThatWonLeadsToTheHistory() {
@@ -540,16 +538,17 @@ Item {
             return ids;
         }
 
-        function test_theOpenFilePagesMenuShowsOrStopsFollowingItsFile() {
+        // A page of a project's Space is always its file: nothing stops it following it.
+        function test_theOpenFilePagesMenuShowsItsFile() {
             const screen = openFilePage(fileOf());
             const ids = sheetIdsOf(screen, "p1");
             verify(ids.includes("showFile"));
-            verify(ids.includes("unlinkFile"));
+            verify(!ids.includes("unlinkFile"));
             // Of a page only listed, its file is not known.
-            verify(!sheetIdsOf(screen, "p2").includes("unlinkFile"));
+            verify(!sheetIdsOf(screen, "p2").includes("showFile"));
             screen.pageMenu("p1", "p1", "", {});
-            sheetOf(screen).choose("unlinkFile");
-            compare(dispatched("space.page.unlinkFile")[0].pageId, "p1");
+            sheetOf(screen).choose("showFile");
+            compare(dispatched("space.page.showFile")[0].pageId, "p1");
         }
 
         function test_aVersionTheFileWroteSaysSo() {
