@@ -49,35 +49,42 @@ QQuickItem* search(QQuickItem* item, const std::function<bool(QQuickItem*)>& mat
   return nullptr;
 }
 
-// The object named `objectName` among what `object` owns and, for an item,
-// draws: an item or not. A Popup is a QObject, owned by the window, the item
-// or the content of the popup it was declared in, and a closed popup's
-// content is in no window. A popup's content can lead back to the popup, so
-// `seen` keeps the walk from going round.
-QObject* searchObjects(QObject* object, const QString& objectName, QSet<QObject*>& seen) {
+// The first object for which `matches` holds among what `object` owns and,
+// for an item, draws: an item or not. A Popup is a QObject, owned by the
+// window, the item or the content of the popup it was declared in, and a
+// closed popup's content is in no window. A popup's content can lead back to
+// the popup, so `seen` keeps the walk from going round.
+QObject* searchObjects(QObject* object, const std::function<bool(QObject*)>& matches, QSet<QObject*>& seen) {
   if (seen.contains(object)) return nullptr;
   seen.insert(object);
-  if (object->objectName() == objectName) return object;
+  if (matches(object)) return object;
   const auto* item = qobject_cast<QQuickItem*>(object);
   const QObjectList owned = object->children();
   for (QObject* child : owned) {
     if (qobject_cast<QQuickItem*>(child)) continue;
-    if (QObject* found = searchObjects(child, objectName, seen)) return found;
+    if (QObject* found = searchObjects(child, matches, seen)) return found;
   }
   if (item) {
     const QList<QQuickItem*> children = item->childItems();
     for (QQuickItem* child : children) {
-      if (QObject* found = searchObjects(child, objectName, seen)) return found;
+      if (QObject* found = searchObjects(child, matches, seen)) return found;
     }
   } else if (auto* content = object->property("contentItem").value<QQuickItem*>()) {
-    if (QObject* found = searchObjects(content, objectName, seen)) return found;
+    if (QObject* found = searchObjects(content, matches, seen)) return found;
   }
   return nullptr;
 }
 
-QObject* searchObjects(QObject* object, const QString& objectName) {
+QObject* searchObjects(QObject* object, const std::function<bool(QObject*)>& matches) {
   QSet<QObject*> seen;
-  return searchObjects(object, objectName, seen);
+  return searchObjects(object, matches, seen);
+}
+
+// The popup named `objectName` for which `holds` is true. Bricks share popups'
+// names (a FileEntryMenu is in the Files screen and in the timeline), so one
+// of them may be up while another is not.
+QObject* searchPopup(QObject* window, const QString& objectName, const char* holds) {
+  return searchObjects(window, [&](QObject* candidate) { return candidate->objectName() == objectName && candidate->property(holds).toBool(); });
 }
 
 void collectTexts(QQuickItem* item, QStringList& texts) {
@@ -247,20 +254,19 @@ QQuickItem* World::item(const QString& objectName) {
 }
 
 bool World::popupShowing(const QString& objectName) {
-  const QObject* popup = searchObjects(&window(), objectName);
-  expect(popup != nullptr, QStringLiteral("the window has no %1").arg(objectName));
-  return popup->property("visible").toBool();
+  expect(popup(objectName) != nullptr, QStringLiteral("the window has no %1").arg(objectName));
+  return searchPopup(&window(), objectName, "visible") != nullptr;
 }
 
 QObject* World::popup(const QString& objectName) {
-  return searchObjects(&window(), objectName);
+  if (QObject* shown = searchPopup(&window(), objectName, "visible")) return shown;
+  return searchObjects(&window(), [&](QObject* candidate) { return candidate->objectName() == objectName; });
 }
 
 void World::awaitPopup(const QString& objectName, bool open) {
   waitFor(
       [&] {
-        const QObject* popup = searchObjects(&window(), objectName);
-        return popup && (open ? popup->property("opened").toBool() : !popup->property("visible").toBool());
+        return open ? searchPopup(&window(), objectName, "opened") != nullptr : popup(objectName) != nullptr && searchPopup(&window(), objectName, "visible") == nullptr;
       },
       [&] { return QStringLiteral("%1 to %2; the screen says: %3").arg(objectName, open ? QStringLiteral("open") : QStringLiteral("close"), texts().join(QStringLiteral(" | "))); });
 }
