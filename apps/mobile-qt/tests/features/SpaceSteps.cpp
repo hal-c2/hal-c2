@@ -9,9 +9,11 @@
 
 #include <QAbstractItemModel>
 #include <QBuffer>
+#include <QClipboard>
 #include <QDateTime>
 #include <QFile>
 #include <QFontInfo>
+#include <QGuiApplication>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -3356,21 +3358,89 @@ const Steps steps([] {
     world.waitFor([&] { return !findBlock(world, edited).isEmpty(); }, [&] { return S("the MC to hold the edited table; %1").arg(describe(world)); });
     expect(text(findBlock(world, edited), QLatin1String("kind")) == QLatin1String("raw"), S("the table is no longer kept as written"));
   });
-  // A table and a code block, which the page shows as their source until #854 draws them.
+  // A table and a code block: drawn by the chat's Markdown while read, edited as their
+  // source (#854).
   static const QString modelledTable = S("| Step | Owner |\n| ---- | ----- |\n| MC   | Ada   |");
   static const QString code = S("run()\n    done()");
+  static const QString alignedTable = S("| Step | Owner | Done |\n| :--- | :---: | ---: |\n| **MC** | a \\| b | 3 |");
+  // The grid of a drawn table, or the box of a drawn code block, once it is laid out.
+  const auto drawnPart = [](World& world, const QString& said, const QString& part) {
+    QQuickItem* found = nullptr;
+    world.waitFor([&] {
+      QQuickItem* drawn = world.find(S("spaceBlockText:") + said);
+      found = drawn ? named(drawn, part) : nullptr;
+      return found && found->isVisible() && found->height() > 0 && drawn->height() >= found->height();
+    }, [&] { return S("%1 to draw %2; %3").arg(said, part, describe(world)); });
+    return found;
+  };
   step(S("the page %1 holds a table and a code block").arg(q), [](World& world, const Captures& c, const Table&) {
     givenBlock(world, c[0], S("table"), modelledTable);
     givenBlock(world, c[0], S("code"), code);
   });
-  step(S("the table and the code are each shown line for line in a fixed-width face"), [](World& world, const Captures&, const Table&) {
-    for (const QString& said : {modelledTable, code}) {
+  step(S("the user edits the table and the code each as its source, exactly as written"), [drawnPart](World& world, const Captures&, const Table&) {
+    for (const auto& [said, part] : {std::pair{modelledTable, S("markdownTable")}, std::pair{code, S("codeText")}}) {
+      // A tap on what is drawn, clear of its buttons, edits it.
+      world.tap(drawnPart(world, said, part));
       QQuickItem* editor = world.item(S("spaceBlockEditor:") + said);
-      expect(editor->property("text").toString() == said, S("the block shows as \"%1\"").arg(editor->property("text").toString()));
+      world.waitFor([&] { return editor->hasActiveFocus(); }, S("%1 to take the keyboard").arg(said));
+      expect(editor->property("text").toString() == said, S("the block's source reads \"%1\"").arg(editor->property("text").toString()));
+      // One line on screen for each it was written in, however narrow the phone.
       expect(editor->property("lineCount").toInt() == said.count(QLatin1Char('\n')) + 1,
              S("%1 is shown in %2 lines").arg(said).arg(editor->property("lineCount").toInt()));
       expect(QFontInfo(editor->property("font").value<QFont>()).fixedPitch(), S("%1 is not in a fixed-width face").arg(said));
+      // Done with it unchanged, it is drawn again.
+      world.tap(S("spaceEditDone"));
+      world.waitFor([&] { return world.find(S("spaceBlockEditor:") + said) == nullptr && world.find(S("spaceBlockText:") + said); },
+                    S("%1 to be drawn again").arg(said));
     }
+  });
+  step(S("the page %1 with a table whose columns are aligned left, centre and right").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], S("table"), alignedTable);
+  });
+  // The grid's cells as the Markdown brick holds them: a header, rows, and an alignment a column.
+  const auto gridSpec = [drawnPart](World& world) { return drawnPart(world, alignedTable, S("markdownTable"))->property("spec").toMap(); };
+  step(S("the table is shown as a grid of its cells, its header row apart"), [gridSpec](World& world, const Captures&, const Table&) {
+    const QVariantMap spec = gridSpec(world);
+    const QStringList header = spec.value(S("header")).toStringList();
+    expect(header == QStringList({S("Step"), S("Owner"), S("Done")}), S("the header is %1").arg(header.join(S(", "))));
+    expect(spec.value(S("rows")).toList().size() == 1, S("the table has %1 rows").arg(spec.value(S("rows")).toList().size()));
+  });
+  step(S("each column is aligned as it was written"), [gridSpec](World& world, const Captures&, const Table&) {
+    const QStringList align = gridSpec(world).value(S("align")).toStringList();
+    expect(align == QStringList({S("left"), S("center"), S("right")}), S("the columns are aligned %1").arg(align.join(S(", "))));
+  });
+  step(S("a cell's formatting is shown, a %1 as a pipe").arg(q), [gridSpec](World& world, const Captures&, const Table&) {
+    const QStringList row = gridSpec(world).value(S("rows")).toList().value(0).toStringList();
+    expect(QRegularExpression(S("<(b|strong)>MC</(b|strong)>")).match(row.value(0)).hasMatch(), S("the bold cell is %1").arg(row.value(0)));
+    expect(row.value(1) == QLatin1String("a | b"), S("the escaped pipe's cell is %1").arg(row.value(1)));
+  });
+  // A code block, with its language when it has one.
+  const auto givenCode = [](World& world, const QString& title, const QString& language) {
+    given(world, S("block.insert"), {{S("pageId"), givenPage(world, title)}, {S("kind"), S("code")}, {S("text"), code}, {S("language"), language}});
+  };
+  step(S("the page %1 with a %1 code block").arg(q), [givenCode](World& world, const Captures& c, const Table&) { givenCode(world, c[0], c[1]); });
+  step(S("the page %1 with a code block").arg(q), [givenCode](World& world, const Captures& c, const Table&) { givenCode(world, c[0], QString()); });
+  // Coloured as the brick colours a reply's code, which this does not hold it to.
+  step(S("its text is shown in a fixed-width face, coloured for that language where the surface can"), [drawnPart](World& world, const Captures&, const Table&) {
+    QQuickItem* box = drawnPart(world, code, S("markdownCode"));
+    expect(box->property("code").toString() == code, S("the code reads \"%1\"").arg(box->property("code").toString()));
+    const QFont font = named(box, S("codeText"))->property("font").value<QFont>();
+    expect(QFontInfo(font).fixedPitch(), S("the code is in %1, not a fixed-width face").arg(QFontInfo(font).family()));
+  });
+  step(S("its language is named on it"), [drawnPart](World& world, const Captures&, const Table&) {
+    const QString language = text(findBlock(world, code), QLatin1String("language"));
+    const QString label = named(drawnPart(world, code, S("markdownCode")), S("codeLabel"))->property("text").toString();
+    expect(!language.isEmpty() && label == language, S("the code is named \"%1\", not %2").arg(label, language));
+  });
+  step(S("the user copies the code block on the page"), [drawnPart](World& world, const Captures&, const Table&) {
+    QQuickItem* copy = named(drawnPart(world, code, S("markdownCode")), S("copyCode"));
+    QGuiApplication::clipboard()->clear();
+    world.tap(copy);
+    world.waitFor([&] { return !QGuiApplication::clipboard()->text().isEmpty(); }, S("the code to be copied"));
+    expect(world.find(S("spaceBlockEditor:") + code) == nullptr, S("copying the code edits it"));
+  });
+  step(S("the code is on the clipboard without its fence"), [](World&, const Captures&, const Table&) {
+    expect(QGuiApplication::clipboard()->text() == code, S("the clipboard holds \"%1\"").arg(QGuiApplication::clipboard()->text()));
   });
   // Blocks as the MC keeps them, a field per column; `-` is a field the block does not have.
   step(S("the page %1 holds the blocks:").arg(q), [](World& world, const Captures& c, const Table& table) {

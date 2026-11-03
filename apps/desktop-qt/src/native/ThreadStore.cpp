@@ -170,7 +170,11 @@ void ThreadStore::configure(TimelineModel* model) const {
 
 void ThreadStore::open(const QString& threadKey) {
   if (threadKey == m_active) return;
-  if (!m_active.isEmpty() && m_threads.contains(m_active)) m_leftAt.insert(m_active, now());
+  if (!m_active.isEmpty() && m_threads.contains(m_active)) {
+    m_leftAt.insert(m_active, now());
+    // Kept warm, a thread left holds about what it opens with: it opens at its end.
+    if (TimelineModel* left = m_threads.value(m_active).model) left->keepFrom(left->rowCount() - 1);
+  }
   // One left too long ago is loaded again, the one being opened included.
   m_active.clear();
   evictIdle();
@@ -191,6 +195,14 @@ void ThreadStore::open(const QString& threadKey) {
               [this, threadKey, model = followed.model.data()](const QString& id) { signAttachment(model, threadKey, id); });
       connect(followed.model, &TimelineModel::earlierWanted, this, [this, threadKey](int items) {
         m_client->more(m_threads.value(threadKey).subscription, items);
+      });
+      // The MC holds a window per subscription and only ever lowers its floor
+      // (`more`): a raised one is a new subscription, resumed from the offset held.
+      connect(followed.model, &TimelineModel::windowRaised, this, [this, threadKey] {
+        const auto it = m_threads.find(threadKey);
+        if (it == m_threads.end() || !it->subscription) return;
+        unfollow(*it);
+        follow(threadKey);
       });
       LocalCache* kept = cache();
       followed.model->setCache(kept);
