@@ -1424,6 +1424,39 @@ defmodule HalC2Plugins.Planner.Sync do
       Plan.same_ref?(had(synced, items, id), issue)
   end
 
+  @doc """
+  `items` with each task of `relinked` naming its issue in the milestone GitHub has it
+  in, when only a milestone's `synced` knows that: a link names the issue in no known
+  milestone (`Plan.link/3`), while the push of the milestone the task left it in, refused
+  or still on its way, has GitHub hold it there. Without it a task that leaves the issue
+  again, removed say, leaves it in that milestone with nothing to ask it out (`left/2`).
+  """
+  def linked_at(items, relinked) do
+    Enum.reduce(relinked, items, fn id, items ->
+      with %{"issue" => %{} = issue} when not is_map_key(issue, "milestone") <- items[id],
+           number when is_integer(number) <- held_in(items, issue) do
+        put_in(items[id]["issue"]["milestone"], number)
+      else
+        _ -> items
+      end
+    end)
+  end
+
+  # The number of a milestone whose `synced` has GitHub hold `issue`, or nil.
+  defp held_in(items, issue) do
+    Enum.find_value(items, fn
+      {_, %{"milestone" => %{} = ref, "synced" => %{"after" => held} = synced}} ->
+        refs = synced["refs"] || %{}
+
+        if same?(ref["repository"], issue["repository"]) and
+             Enum.any?(held, &Plan.same_ref?(refs[&1], issue)),
+           do: ref["number"]
+
+      _ ->
+        nil
+    end)
+  end
+
   @doc "`synced` with the marks of `left/2`; nothing else when there are none."
   def left_behind(synced, []), do: synced
 
