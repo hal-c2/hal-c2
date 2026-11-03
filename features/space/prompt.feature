@@ -1,5 +1,6 @@
 # Sources:
 #   the maintainer: "we should reuse the prompt from the timeline in the spaces"
+#   docs/user/spaces.md
 #   features/space/agent-in-page.feature (what an ask is, and how its agent ends)
 #   features/composer/model-and-mode.feature, attachments.feature, context-references.feature,
 #     drafting-and-sending.feature and editors-and-keys.feature (what the timeline's prompt does)
