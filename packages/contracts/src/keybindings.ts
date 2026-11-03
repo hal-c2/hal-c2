@@ -101,6 +101,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "space.agent.focus",
   "stage.moveTab",
   "stage.toggleFocus",
+  "stage.showTimeline",
   "stage.nextPane",
   "stage.dismiss",
   "stage.layout.single",

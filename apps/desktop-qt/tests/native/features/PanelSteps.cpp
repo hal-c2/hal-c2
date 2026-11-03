@@ -994,13 +994,26 @@ const Steps steps([] {
   step(QStringLiteral("the stage is empty"), [](World& world, const Captures&, const Table&) {
     expect(stageTabs(world).isEmpty() && !at(world.state(QStringLiteral("panel")), QStringLiteral("stage.focus")).toBool(), describePanel(world));
   });
+  // Hidden: a tab fills the centre (across it, its Timeline tab not chosen).
   step(QStringLiteral("the timeline is (shown|hidden)"), [](World& world, const Captures& c, const Table&) {
     const bool hidden = c[0] == QLatin1String("hidden");
-    if (!world.checking && panel(world)->stage().focus != hidden) panel(world)->toggleFocus();
-    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("stage.focus")).toBool() == hidden, describePanel(world));
+    if (!world.checking && panel(world)->stage().timelineHidden() != hidden) {
+      if (hidden && panel(world)->stage().focus) panel(world)->showTab(panel(world)->stage().focusedTab());
+      else panel(world)->toggleFocus();
+    }
+    const QVariant stage = at(world.state(QStringLiteral("panel")), QStringLiteral("stage"));
+    const bool shownHidden = at(stage, QStringLiteral("focus")).toBool() && !at(stage, QStringLiteral("timeline")).toBool();
+    expect(shownHidden == hidden, describePanel(world));
   });
-  step(QStringLiteral("the user shows the timeline again"), [](World& world, const Captures&, const Table&) {
-    world.bridge().dispatch(QStringLiteral("stage.toggleFocus"), QVariantMap());
+  step(QStringLiteral("the user (?:shows the timeline again|chooses the Timeline tab)"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("stage.showTimeline"), QVariantMap());
+  });
+  step(QStringLiteral("the timeline shows under the stage's strip"), [](World& world, const Captures&, const Table&) {
+    const QVariant stage = at(world.state(QStringLiteral("panel")), QStringLiteral("stage"));
+    expect(at(stage, QStringLiteral("focus")).toBool() && at(stage, QStringLiteral("timeline")).toBool(), describePanel(world));
+  });
+  step(QStringLiteral("the user chooses the %1 tab on the stage's strip").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("stage.show"), QVariantMap{{QStringLiteral("id"), tabIdTitled(world, c[0])}, {QStringLiteral("focus"), true}});
   });
   step(QStringLiteral("the user drops the %1 tab at the (left|right|top|bottom) edge of the stage's first pane").arg(q), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("rightPanel.dock"), QVariantMap{{QStringLiteral("id"), tabIdTitled(world, c[0])},

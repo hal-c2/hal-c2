@@ -249,6 +249,7 @@ void RightPanelController::activate() {
     // The stage: palette entries, and keys for moving a tab and the timeline.
     add(QStringLiteral("stage.moveTab"), [this] { moveTab(); });
     add(QStringLiteral("stage.toggleFocus"), [this] { toggleFocus(); });
+    add(QStringLiteral("stage.showTimeline"), [this] { showTimeline(); });
     add(QStringLiteral("stage.nextPane"), [this] {
       if (m_onThread && !panel().stage.isEmpty()) focusPane((panel().stage.focused + 1) % panel().stage.panes.size());
     });
@@ -389,7 +390,13 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
   } else if (action == QLatin1String("stage.sideBySide")) {
     sideBySide(map.value(QStringLiteral("id")).toString(), map.value(QStringLiteral("with")).toString());
   } else if (action == QLatin1String("stage.show")) {
-    showTab(map.value(QStringLiteral("id")).toString());
+    const QString id = map.value(QStringLiteral("id")).toString();
+    // `focus`: across the centre, in place of the timeline (the strip's tabs
+    // while one shows at a time).
+    if (m_onThread && map.value(QStringLiteral("focus")).toBool() && panel().stage.contains(id)) panel().stage.focus = true;
+    showTab(id);
+  } else if (action == QLatin1String("stage.showTimeline")) {
+    showTimeline();
   } else if (action == QLatin1String("stage.layout")) {
     setStageLayout(map.value(QStringLiteral("layout")).toString());
   } else if (action == QLatin1String("stage.focusPane")) {
@@ -808,7 +815,7 @@ void RightPanelController::resetWidth() {
 void RightPanelController::toggleMaximized() {
   if (!m_onThread) return;
   Panel& state = panel();
-  if (state.stage.focus && !state.stage.focusedTab().isEmpty()) {
+  if (state.stage.timelineHidden() && !state.stage.focusedTab().isEmpty()) {
     // Back: the tab returns to the panel, and the timeline shows.
     state.stage.focus = false;
     moveToPanel(state.stage.focusedTab());
@@ -862,7 +869,7 @@ void RightPanelController::moveTab() {
   if (!m_onThread) return;
   const Panel& state = panel();
   // With the timeline away the stage is what the user looks at.
-  if (state.stage.focus && !state.stage.focusedTab().isEmpty()) {
+  if (state.stage.timelineHidden() && !state.stage.focusedTab().isEmpty()) {
     moveToPanel(state.stage.focusedTab());
   } else if (isOpen() && !state.active.isEmpty()) {
     moveToStage(state.active);
@@ -886,6 +893,14 @@ void RightPanelController::focusPane(int pane) {
 void RightPanelController::toggleFocus() {
   if (!m_onThread || panel().stage.isEmpty()) return;
   panel().stage.focus = !panel().stage.focus;
+  panel().stage.timeline = false;
+  update();
+}
+
+void RightPanelController::showTimeline() {
+  if (!m_onThread || panel().stage.isEmpty()) return;
+  panel().stage.focus = true;
+  panel().stage.timeline = true;
   update();
 }
 

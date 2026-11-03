@@ -70,8 +70,10 @@ class ShellStore;
 // {id, title}`, `rightPanel.unfloat`, `rightPanel.resize
 // {width?}` (no width: the default), `rightPanel.toggleMaximized` (Open in
 // centre), `rightPanel.dock {id, dock: "stage"|"panel", pane?, zone?, focus?}`,
-// `stage.show {id}`, `stage.layout {layout}`, `stage.focusPane {pane}`,
-// `stage.toggleFocus`, `stage.resize {width?}`, `stage.dismiss` (every stage
+// `stage.show {id, focus?}` (`focus`: across the centre),
+// `stage.showTimeline` (the strip's Timeline tab), `stage.layout {layout}`,
+// `stage.focusPane {pane}`, `stage.toggleFocus` (beside the conversation, or
+// across the centre), `stage.resize {width?}`, `stage.dismiss` (every stage
 // tab back to the panel), `stage.sideBySide {id, with}` (both, in columns),
 // `threadPanel.toggle`, `rightPanel.reviewProject {key}` (a pull request of
 // the thread's project, from the Pull requests tab), `rightPanel.linkPullRequest {url}` (a message's
@@ -84,7 +86,8 @@ class ShellStore;
 // rightPanel.close (the active tab), rightPanel.toggleMaximized,
 // threadPanel.toggle, diff.toggle, preview.toggle, pullRequest.copyNumber
 // (the reviewed pull request's), stage.moveTab (the panel's tab to the
-// centre, or the stage's focused tab back), stage.toggleFocus, stage.nextPane,
+// centre, or the stage's focused tab back), stage.toggleFocus,
+// stage.showTimeline, stage.nextPane,
 // stage.layout.{single,columns,rows,grid} and stage.dismiss; palette commands:
 // thread.showPullRequests and thread.linkPullRequest (the Pull requests tab
 // with its link field open).
@@ -165,8 +168,8 @@ public:
   Q_INVOKABLE void setWidth(int width);
   Q_INVOKABLE void resetWidth();
   // Open in centre: the panel's tab goes to the stage with the timeline
-  // hidden; again (while the timeline is hidden), the stage's focused tab
-  // comes back to the panel.
+  // hidden; again (while the timeline is hidden, PanelStage::timelineHidden),
+  // the stage's focused tab comes back to the panel.
   Q_INVOKABLE void toggleMaximized();
   // Docks a tab on the stage (in `pane`, at `zone`: PanelStage::place) or
   // back on the panel, where it shows.
@@ -179,7 +182,11 @@ public:
   Q_INVOKABLE void moveTab();
   Q_INVOKABLE void setStageLayout(const QString& layout);
   Q_INVOKABLE void focusPane(int pane);
+  // The stage beside the conversation, or across the centre showing its tab.
   Q_INVOKABLE void toggleFocus();
+  // The stage across the centre with its Timeline tab chosen: the timeline
+  // under the strip.
+  Q_INVOKABLE void showTimeline();
   // The conversation's width beside the stage (0: the default).
   Q_INVOKABLE void setChatWidth(int width);
   // Every stage tab back to the panel.

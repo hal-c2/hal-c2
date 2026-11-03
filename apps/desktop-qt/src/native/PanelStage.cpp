@@ -44,6 +44,7 @@ void PanelStage::add(const QString& id, int pane, const QString& zone) {
 
 void PanelStage::place(const QString& id, int pane, const QString& zone) {
   if (!tabs.contains(id)) return;
+  timeline = false;
   if (pane < 0 || pane >= panes.size()) pane = focused;
   const int columns = columnsOf(layout);
   const int rows = rowsOf(layout);
@@ -84,6 +85,7 @@ void PanelStage::place(const QString& id, int pane, const QString& zone) {
 
 void PanelStage::show(const QString& id) {
   if (!tabs.contains(id)) return;
+  timeline = false;
   const qsizetype pane = panes.indexOf(id);
   if (pane >= 0) {
     focused = int(pane);
@@ -121,7 +123,9 @@ void PanelStage::rename(const QString& from, const QString& to) {
 }
 
 void PanelStage::setLayout(const QString& next) {
-  if (!layouts.contains(next) || next == layout || tabs.isEmpty()) return;
+  if (!layouts.contains(next) || tabs.isEmpty()) return;
+  timeline = false;
+  if (next == layout) return;
   QStringList order = shown();
   for (const QString& tab : std::as_const(tabs)) {
     if (!order.contains(tab)) order.append(tab);
@@ -173,6 +177,7 @@ void PanelStage::normalize() {
   }
   focused = std::clamp(focused, 0, count - 1);
   if (seen.isEmpty()) panes[focused] = tabs.first();
+  timeline = timeline && focus;
 }
 
 QJsonObject PanelStage::toJson() const {
@@ -181,6 +186,7 @@ QJsonObject PanelStage::toJson() const {
           {QStringLiteral("layout"), layout},
           {QStringLiteral("focused"), focused},
           {QStringLiteral("focus"), focus},
+          {QStringLiteral("timeline"), timeline},
           {QStringLiteral("chatWidth"), chatWidth}};
 }
 
@@ -194,6 +200,7 @@ PanelStage PanelStage::fromJson(const QJsonObject& json, const std::function<boo
   stage.layout = json.value(QLatin1String("layout")).toString(kSingle);
   stage.focused = json.value(QLatin1String("focused")).toInt();
   stage.focus = json.value(QLatin1String("focus")).toBool();
+  stage.timeline = json.value(QLatin1String("timeline")).toBool();
   stage.chatWidth = std::max(0, json.value(QLatin1String("chatWidth")).toInt());
   stage.normalize();
   return stage;
@@ -205,5 +212,6 @@ QVariantMap PanelStage::toVariant(const QVariantList& published) const {
           {QStringLiteral("layout"), layout},
           {QStringLiteral("focusedPane"), focused},
           {QStringLiteral("focus"), focus},
+          {QStringLiteral("timeline"), timeline},
           {QStringLiteral("chatWidth"), chatWidth}};
 }

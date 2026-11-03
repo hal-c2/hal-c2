@@ -7,9 +7,11 @@ import "js/panelTabs.js" as PanelTabs
 
 // The stage: right-panel tabs brought into the thread's centre
 // (Shell.state.panel.stage, RightPanelController's), in one to four panes
-// laid out single, side by side, stacked or 2×2. Its strip lists its tabs and
-// switches the layout; each pane's header moves its tab back to the side
-// panel or closes it. A tab dragged onto a pane's edge splits the pane there,
+// laid out single, side by side, stacked or 2×2. Its strip starts with the
+// Timeline, then lists its tabs and switches the layout; each pane's header
+// moves its tab back to the side panel or closes it. Across the centre
+// (`oneAtATime`) the strip switches between the timeline (the panes hidden,
+// the timeline under the strip: `timelineChosen`) and its tabs. A tab dragged onto a pane's edge splits the pane there,
 // onto its middle takes its place; one dragged onto the side panel docks
 // there. Bodies are borrowed from `bodies`, which the side panel shares, so a
 // tab keeps what it loaded as it moves.
@@ -23,8 +25,16 @@ Rectangle {
     readonly property var panes: model?.panes ?? []
     readonly property string layout: model?.layout ?? "single"
     readonly property int focusedPane: model?.focusedPane ?? 0
-    // The timeline is put away (`stage.toggleFocus`).
+    // Across the centre rather than beside the conversation (`stage.toggleFocus`).
     readonly property bool focusMode: model?.focus === true
+    // One at a time: a tab shows across the centre. ThreadArea's also counts
+    // a window too narrow for the stage beside the conversation.
+    property bool oneAtATime: focusMode
+    // The strip's Timeline tab is chosen: only the strip shows.
+    property bool timelineChosen: focusMode && model?.timeline === true
+    // Whether the stage fits beside the conversation, for the switch there.
+    property bool besideFits: true
+    readonly property int stripHeight: 36
     readonly property int columns: layout === "columns" || layout === "grid" ? 2 : 1
     readonly property int rows: layout === "rows" || layout === "grid" ? 2 : 1
     // Where the dividers between panes stand, as a share of the stage; a
@@ -51,18 +61,61 @@ Rectangle {
         anchors.fill: parent
         spacing: 0
 
-        // The strip: the stage's tabs, then the layouts and the timeline.
+        // The strip: the Timeline and the stage's tabs, then the layouts.
         Item {
             id: strip
 
             Layout.fillWidth: true
-            Layout.preferredHeight: 36
+            Layout.preferredHeight: stage.stripHeight
+
+            AbstractButton {
+                id: timelineTab
+
+                objectName: "stageTimelineTab"
+                anchors.left: parent.left
+                anchors.leftMargin: 8
+                anchors.top: parent.top
+                width: timelineRow.implicitWidth + 16
+                height: 36
+                hoverEnabled: true
+                Accessible.role: Accessible.PageTab
+                Accessible.name: qsTr("Timeline")
+                Accessible.selected: stage.timelineChosen
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
+                onClicked: Shell.dispatch("stage.showTimeline")
+                background: Rectangle {
+                    color: stage.timelineChosen ? Theme.palette.color("surfaceRaised", "#1f1f24") : timelineTab.hovered || timelineTab.visualFocus ? Theme.palette.color("surface", "#141416") : "transparent"
+                    radius: 6
+                }
+
+                Row {
+                    id: timelineRow
+
+                    anchors.centerIn: parent
+                    spacing: 6
+
+                    ShellIcon {
+                        name: "message-square-text"
+                        size: 13
+                        color: stage.timelineChosen ? stage.foreground : stage.muted
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Text {
+                        text: qsTr("Timeline")
+                        color: stage.timelineChosen ? stage.foreground : stage.muted
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+            }
 
             ListView {
                 id: stripTabs
 
-                anchors.left: parent.left
-                anchors.leftMargin: 8
+                anchors.left: timelineTab.right
+                anchors.leftMargin: 2
                 anchors.right: controls.left
                 anchors.top: parent.top
                 height: 36
@@ -83,8 +136,8 @@ Rectangle {
                     id: tab
 
                     required property var modelData
-                    readonly property bool focused: stage.panes[stage.focusedPane] === modelData.id
-                    readonly property bool inPane: stage.panes.includes(modelData.id)
+                    readonly property bool focused: !stage.timelineChosen && stage.panes[stage.focusedPane] === modelData.id
+                    readonly property bool inPane: !stage.timelineChosen && stage.panes.includes(modelData.id)
                     readonly property string iconName: PanelTabs.tabs[modelData.kind]?.icon ?? ""
 
                     objectName: "stageTab-" + modelData.id
@@ -96,7 +149,8 @@ Rectangle {
                     Keys.onReturnPressed: clicked()
                     Keys.onEnterPressed: clicked()
                     onClicked: Shell.dispatch("stage.show", {
-                        id: tab.modelData.id
+                        id: tab.modelData.id,
+                        focus: stage.oneAtATime
                     })
                     background: Rectangle {
                         color: tab.focused ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered || tab.visualFocus ? Theme.palette.color("surface", "#141416") : "transparent"
@@ -226,15 +280,16 @@ Rectangle {
                 }
 
                 ShellButton {
-                    objectName: "stageToggleTimeline"
+                    objectName: "stageToggleBeside"
+                    visible: stage.besideFits
                     subtle: true
                     width: 28
                     height: 28
                     anchors.verticalCenter: parent.verticalCenter
-                    iconName: "message-square-text"
+                    iconName: stage.focusMode ? "square-split-horizontal" : "maximize-2"
                     iconSize: 14
-                    iconTint: stage.focusMode ? stage.muted : stage.foreground
-                    Accessible.name: stage.focusMode ? qsTr("Show the timeline") : qsTr("Hide the timeline")
+                    iconTint: stage.muted
+                    Accessible.name: stage.focusMode ? qsTr("Show beside the conversation") : qsTr("Fill the centre")
                     onClicked: Shell.dispatch("stage.toggleFocus")
                 }
 
@@ -269,6 +324,7 @@ Rectangle {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
+            visible: !stage.timelineChosen
             // Clear of rounded bottom corners: clip cuts square.
             Layout.bottomMargin: Math.max(stage.bottomLeftRadius, stage.bottomRightRadius)
 
@@ -541,7 +597,7 @@ Rectangle {
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        anchors.topMargin: 36
+        anchors.topMargin: stage.stripHeight
         width: 48
         z: 5
         keys: ["hal-c2/panel-tab"]

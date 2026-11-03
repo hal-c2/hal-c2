@@ -249,6 +249,8 @@ void checkStage(const PanelStage& stage) {
   }
   QStringList tabs = stage.tabs;
   RC_ASSERT(tabs.removeDuplicates() == 0);
+  // The Timeline tab is chosen only across the centre.
+  RC_ASSERT(!stage.timeline || stage.focus);
   if (stage.isEmpty()) {
     RC_ASSERT(stage.layout == QStringLiteral("single"));
     RC_ASSERT(!stage.focus);
@@ -288,6 +290,7 @@ struct Docked {
     stage.layout = staged.value(QStringLiteral("layout")).toString();
     stage.focused = staged.value(QStringLiteral("focusedPane")).toInt();
     stage.focus = staged.value(QStringLiteral("focus")).toBool();
+    stage.timeline = staged.value(QStringLiteral("timeline")).toBool();
     stage.chatWidth = staged.value(QStringLiteral("chatWidth")).toInt();
     shown = published.value(QStringLiteral("shownTabs")).toStringList();
     RC_ASSERT(stage == shell.panel()->stage());
@@ -337,8 +340,8 @@ struct StageShowTab : StageCommand {
                 }
                 RC_ASSERT(after.tabs.contains(id));
                 RC_ASSERT(after.stage.contains(id) == before.stage.contains(id));
-                // It shows where it is docked.
-                if (after.stage.contains(id)) RC_ASSERT(after.stage.focusedTab() == id);
+                // It shows where it is docked, on the stage in place of the timeline.
+                if (after.stage.contains(id)) RC_ASSERT(after.stage.focusedTab() == id && !after.stage.timeline);
                 else RC_ASSERT(after.open && after.active == id);
               });
   }
@@ -408,10 +411,10 @@ struct MoveTab : StageCommand {
                 // With the timeline away the stage's tab goes back; else the
                 // panel's comes over.
                 const QString staged = before.stage.focusedTab();
-                if (before.stage.focus && !staged.isEmpty()) {
+                if (before.stage.timelineHidden() && !staged.isEmpty()) {
                   RC_ASSERT(after.open && after.active == staged);
                 } else if (before.open && !before.active.isEmpty()) {
-                  RC_ASSERT(after.stage.focusedTab() == before.active);
+                  RC_ASSERT(after.stage.focusedTab() == before.active && !after.stage.timeline);
                 } else if (!staged.isEmpty()) {
                   RC_ASSERT(after.open && after.active == staged);
                 }
@@ -429,6 +432,7 @@ struct SetLayout : StageCommand {
                 RC_ASSERT(after.stage.tabs == before.stage.tabs);
                 if (before.stage.isEmpty()) return;
                 RC_ASSERT(after.stage.layout == layout);
+                RC_ASSERT(!after.stage.timeline);
                 // The focused tab stays in view.
                 if (!before.stage.focusedTab().isEmpty()) RC_ASSERT(after.stage.focusedTab() == before.stage.focusedTab());
               });
@@ -454,9 +458,24 @@ struct ToggleFocus : StageCommand {
               [](const Docked& before, const Docked& after) {
                 unchangedTabs(before, after);
                 RC_ASSERT(after.stage.focus == (!before.stage.isEmpty() && !before.stage.focus));
+                // Across the centre it shows its tab.
+                RC_ASSERT(!after.stage.timeline);
               });
   }
   void show(std::ostream& os) const override { os << "ToggleFocus"; }
+};
+
+struct ShowTimeline : StageCommand {
+  void run(const Stage&, Shell& shell) const override {
+    stageStep(shell, [](RightPanelController* panel) { panel->showTimeline(); },
+              [](const Docked& before, const Docked& after) {
+                unchangedTabs(before, after);
+                RC_ASSERT(after.stage.panes == before.stage.panes);
+                RC_ASSERT(after.stage.timeline == !before.stage.isEmpty());
+                RC_ASSERT(!after.stage.timelineHidden());
+              });
+  }
+  void show(std::ostream& os) const override { os << "ShowTimeline"; }
 };
 
 struct OpenInCentre : StageCommand {
@@ -465,10 +484,10 @@ struct OpenInCentre : StageCommand {
               [](const Docked& before, const Docked& after) {
                 unchangedTabs(before, after);
                 const QString staged = before.stage.focusedTab();
-                if (before.stage.focus && !staged.isEmpty()) {
+                if (before.stage.timelineHidden() && !staged.isEmpty()) {
                   RC_ASSERT(after.open && after.active == staged);
                 } else if (before.open && !before.active.isEmpty()) {
-                  RC_ASSERT(after.stage.focus && after.stage.focusedTab() == before.active);
+                  RC_ASSERT(after.stage.timelineHidden() && after.stage.focusedTab() == before.active);
                 }
               });
   }
@@ -535,14 +554,24 @@ struct Restart : StageCommand {
 
 // A PanelStage driven directly, by the stage's own operations.
 void stageOperation(PanelStage& stage) {
-  switch (*rc::gen::inRange(0, 6)) {
-  case 0: stage.add(*oneOf(kTabs), *rc::gen::inRange(-1, 4), *oneOf(kZones)); break;
-  case 1: stage.place(*oneOf(kTabs), *rc::gen::inRange(-1, 4), *oneOf(kZones)); break;
-  case 2: stage.show(*oneOf(kTabs)); break;
-  case 3: stage.remove(*oneOf(kTabs)); break;
+  const QString tab = *oneOf(kTabs);
+  const int operation = *rc::gen::inRange(0, 7);
+  switch (operation) {
+  case 0: stage.add(tab, *rc::gen::inRange(-1, 4), *oneOf(kZones)); break;
+  case 1: stage.place(tab, *rc::gen::inRange(-1, 4), *oneOf(kZones)); break;
+  case 2: stage.show(tab); break;
+  case 3: stage.remove(tab); break;
   case 4: stage.setLayout(*oneOf(PanelStage::layouts)); break;
+  case 5:
+    // Across the centre or beside it, the Timeline tab chosen or not.
+    stage.focus = *rc::gen::arbitrary<bool>();
+    stage.timeline = *rc::gen::arbitrary<bool>();
+    stage.normalize();
+    break;
   default: stage.focusPane(*rc::gen::inRange(-1, 5)); break;
   }
+  // Showing, placing or laying out a stage tab chooses the panes again.
+  if ((operation <= 2 && stage.contains(tab)) || (operation == 4 && !stage.isEmpty())) RC_ASSERT(!stage.timeline);
 }
 
 }  // namespace
@@ -566,7 +595,7 @@ private slots:
       Shell shell(kBrowsers);
       rc::state::check(Stage{}, shell,
                        rc::state::gen::execOneOfWithArgs<StageShowTab, StageShowTab, StageCloseTab, StageSetOpen, MoveToStage, MoveToStage, MoveToPanel, MoveTab,
-                                                         SetLayout, FocusPane, ToggleFocus, OpenInCentre, Dismiss, ChatWidth, Restart>());
+                                                         SetLayout, FocusPane, ToggleFocus, ShowTimeline, OpenInCentre, Dismiss, ChatWidth, Restart>());
     }));
   }
 
@@ -579,6 +608,7 @@ private slots:
         checkStage(stage);
       }
       stage.focus = !stage.isEmpty() && *rc::gen::arbitrary<bool>();
+      stage.timeline = stage.focus && *rc::gen::arbitrary<bool>();
       RC_ASSERT(PanelStage::fromJson(stage.toJson(), [](const QString&) { return true; }) == stage);
       // A tab the shell no longer knows is dropped on the way back.
       const QString gone = *oneOf(kTabs);

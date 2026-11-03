@@ -1,8 +1,10 @@
 # Sources:
 #   apps/desktop-qt/src/native/PanelStage.h (tabs, panes, layouts, focus, the conversation's width)
 #   apps/desktop-qt/src/native/RightPanelController.cpp (rightPanel.dock, stage.*, shownTabs, saved per thread)
-#   apps/desktop-qt/src/native/Keybindings.cpp (stage.moveTab mod+alt+s, stage.toggleFocus mod+alt+f)
-#   apps/desktop-qt/qml/HalC2/Bricks/Stage.qml (tab strip, layout switcher, pane headers, drop zones)
+#   apps/desktop-qt/src/native/Keybindings.cpp (stage.moveTab mod+alt+s, stage.toggleFocus mod+alt+f,
+#     stage.showTimeline in the palette)
+#   apps/desktop-qt/qml/HalC2/Bricks/Stage.qml (tab strip and its Timeline tab, layout switcher, pane
+#     headers, drop zones)
 #   apps/desktop-qt/qml/HalC2/Bricks/PanelBodies.qml, PanelBodySlot.qml (one body per kind, moved, never remade)
 #   apps/desktop-qt/qml/HalC2/Bricks/ThreadArea.qml (beside the conversation, focus mode, narrow windows)
 #   apps/desktop-qt/qml/HalC2/Bricks/CentreHost.qml (the stage in a shell that lays out its own composer)
@@ -14,8 +16,9 @@
 
 Feature: The stage: right panel tabs in the thread's centre
   Any tab of the right panel can be brought into the thread's centre, beside the
-  conversation or in place of its timeline. The composer always stays. The stage shows its
-  tabs in one to four panes, and each thread keeps its own stage.
+  conversation or across the centre, where the stage's strip starts with a Timeline tab
+  that switches between the timeline and the stage's tabs. The composer always stays. The
+  stage shows its tabs in one to four panes, and each thread keeps its own stage.
 
   Background:
     Given the user is looking at a thread
@@ -38,7 +41,7 @@ Feature: The stage: right panel tabs in the thread's centre
       Then the "Diff" tab is on the stage
       And the timeline is hidden
       When the user shows the timeline again
-      Then the timeline is shown
+      Then the timeline shows under the stage's strip
       And the "Diff" tab is on the stage
 
     # A shell lays out its own centre (CentreHost), which draws the stage. glass-macos
@@ -142,26 +145,49 @@ Feature: The stage: right panel tabs in the thread's centre
       When the user moves the tab to the centre and back
       Then the file is still open at the same place
 
-  Rule: Focus mode keeps the composer
+  Rule: Across the centre, the strip switches between the timeline and the tabs
+
+    @desktop
+    Scenario: The Timeline tab switches quickly between the timeline and a tab
+      Given no custom keybindings
+      And the "Diff" tab is on the stage
+      And the timeline is hidden
+      When the user chooses the Timeline tab
+      Then the timeline shows under the stage's strip
+      When the user chooses the "Diff" tab on the stage's strip
+      Then the timeline is hidden
+      And the "Diff" tab is on the stage
+      When the user chooses the Timeline tab
+      And the user presses mod+alt+f
+      Then the timeline is shown
+      And the "Diff" tab is on the stage
+
+    # Proved by tst_Stage.qml (test_theTimelineTabShowsTheTimelineUnderTheStrip), not yet by a step.
+    @desktop @backlog-desktop
+    Scenario: The strip stays over the timeline
+      Given the "Diff" tab fills the thread's centre
+      When the user chooses the Timeline tab
+      Then the timeline fills the centre under the stage's strip
+      And the strip shows the Timeline tab chosen
 
     # Proved by tst_Stage.qml (test_focusModeKeepsTheComposerUnderTheLatestActivity), not yet by a step.
     @desktop @backlog-desktop
-    Scenario: The latest activity shows over the composer while the timeline is away
+    Scenario: The latest activity shows over the composer while a tab fills the centre
       Given a tab fills the thread's centre
       When the agent writes a line
       Then a one-line strip above the composer shows it
       When the user clicks the strip
-      Then the timeline shows again beside the stage
+      Then the timeline shows under the stage's strip
 
     # Proved by tst_Stage.qml (test_aNarrowWindowShowsOneAtATime), not yet by a step.
     @desktop @backlog-desktop
-    Scenario: A narrow window shows the conversation or the stage, one at a time
+    Scenario: A narrow window keeps the stage across the centre
       Given the window leaves the thread less than 721 pixels
       And the "Diff" tab is on the stage
-      Then the timeline shows with a strip offering the stage's tabs
-      When the user shows the tabs
+      Then the stage's strip shows over the timeline with the Timeline tab chosen
+      When the user chooses the "Diff" tab on the stage's strip
       Then the stage shows above the composer
-      And a strip offers the timeline back
+      And a one-line strip above the composer offers the timeline back
 
   Rule: Each thread keeps its stage
 

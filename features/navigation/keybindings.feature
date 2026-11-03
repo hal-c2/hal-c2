@@ -23,7 +23,8 @@
 #   modelPicker.nextProvider, modelPicker.jump.1-9, thread.stop, thread.steerQueuedMessage,
 #   thread.editQueuedMessage, thread.previous, thread.next, thread.copyReference,
 #   thread.settle, thread.pin, thread.undo, thread.jump.1-9, script.<id>.run,
-#   stage.moveTab, stage.toggleFocus, stage.nextPane, stage.dismiss, stage.layout.* (desktop only)
+#   stage.moveTab, stage.toggleFocus, stage.showTimeline, stage.nextPane, stage.dismiss,
+#   stage.layout.* (desktop only)
 #   apps/web/src/routes/_chat.tsx (thread shortcuts wait for the command palette; one project needs no chooser)
 
 Feature: Keybindings

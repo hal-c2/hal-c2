@@ -4,10 +4,11 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The route's centre, and a thread's stage: the conversation (timeline and
-// composer) with the stage beside it, or, with the timeline put away, the
-// stage over the composer and a line of what the agent did last. Where the two
-// do not fit side by side, one shows at a time and that line switches. A
-// layout with a composer of its own uses CentreHost, which has none.
+// composer) with the stage beside it, or the stage across the centre, its
+// strip switching between the timeline and its tabs over the composer (with a
+// line of what the agent did last while a tab shows). Where the two do not fit
+// side by side, the stage is always across the centre. A layout with a
+// composer of its own uses CentreHost, which has none.
 //
 //   ThreadArea { routeKind: window.route?.kind ?? ""; bodies: window.panelBodies }
 Item {
@@ -33,14 +34,17 @@ Item {
     // The conversation's own room, for drops on it: its width beside the
     // stage, and where it starts under a stage over the timeline.
     readonly property real conversationWidth: conversation.width
-    readonly property real conversationTop: stageView.visible && focusMode ? stageRoom.height : 0
+    readonly property real conversationTop: oneAtATime ? stageRoom.height : 0
 
     readonly property var stageModel: Shell.state.panel?.stage ?? null
     readonly property bool staged: bodies !== null && routeKind === "thread" && (stageModel?.tabs ?? []).length > 0
     readonly property bool focusMode: staged && stageModel.focus === true
     readonly property bool narrow: width < threadArea.threadMinimumWidth + stageView.minimumWidth + 1
-    readonly property bool timelineShown: !staged || !focusMode
-    readonly property bool besideShown: staged && !focusMode && !narrow
+    // The stage across the centre, showing the timeline or a tab.
+    readonly property bool oneAtATime: staged && (focusMode || narrow)
+    readonly property bool timelineChosen: oneAtATime && (!focusMode || stageModel.timeline === true)
+    readonly property bool timelineShown: !oneAtATime || timelineChosen
+    readonly property bool besideShown: staged && !oneAtATime
     // The conversation's width beside the stage: the one being
     // dragged to, the controller's, or 40%.
     property int dragWidth: -1
@@ -57,6 +61,17 @@ Item {
         height: threadArea.height
         spacing: 0
 
+        // Where the stage lies across the centre: all of it over the composer,
+        // or its strip over the timeline.
+        Item {
+            id: stageRoom
+
+            Layout.fillWidth: true
+            Layout.fillHeight: !threadArea.timelineChosen
+            Layout.preferredHeight: threadArea.timelineChosen ? stageView.stripHeight : 0
+            visible: threadArea.oneAtATime
+        }
+
         // The route's view: a thread, draft, home, pull requests or usage.
         RouteView {
             id: centreHost
@@ -69,27 +84,17 @@ Item {
             visible: threadArea.timelineShown
         }
 
-        // Where the stage lies while the timeline is put away.
-        Item {
-            id: stageRoom
-
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            visible: !threadArea.timelineShown
-        }
-
-        // What the agent did last while the timeline is put
-        // away, or the stage's tabs while it is out of room;
-        // a click shows the other.
+        // What the agent did last while a tab fills the centre; a click
+        // shows the timeline.
         Rectangle {
             objectName: "stageActivity"
             Layout.fillWidth: true
             Layout.preferredHeight: 30
-            visible: threadArea.staged && (threadArea.focusMode || threadArea.narrow)
+            visible: threadArea.oneAtATime && !threadArea.timelineChosen
             color: activityTap.hovered ? Theme.palette.color("surface", "#141416") : Theme.palette.color("chrome", "#0b0b0d")
             Accessible.role: Accessible.Button
             Accessible.name: activityAction.text
-            Accessible.onPressAction: Shell.dispatch("stage.toggleFocus")
+            Accessible.onPressAction: Shell.dispatch("stage.showTimeline")
 
             Rectangle {
                 anchors.left: parent.left
@@ -109,7 +114,6 @@ Item {
                     Layout.preferredWidth: 6
                     Layout.preferredHeight: 6
                     radius: 3
-                    visible: threadArea.focusMode
                     color: Threads.timeline?.working === true ? Theme.palette.color("accent", "#2563eb") : Theme.palette.color("textMuted", "#8b8b93")
                 }
 
@@ -119,10 +123,6 @@ Item {
                     textFormat: Text.PlainText
                     elide: Text.ElideRight
                     text: {
-                        if (!threadArea.focusMode) {
-                            const count = threadArea.stageModel?.tabs.length ?? 0;
-                            return count === 1 ? qsTr("1 tab in the centre") : qsTr("%1 tabs in the centre").arg(count);
-                        }
                         const latest = String(Threads.timeline?.latest ?? "");
                         return latest.length > 0 ? latest : qsTr("Nothing in this thread yet");
                     }
@@ -132,7 +132,7 @@ Item {
 
                 Text {
                     id: activityAction
-                    text: threadArea.focusMode ? qsTr("Show the timeline") : qsTr("Show the tabs")
+                    text: qsTr("Show the timeline")
                     color: Theme.palette.color("textMuted", "#8b8b93")
                     font.pixelSize: Math.round(12 * Theme.fontScale)
                 }
@@ -144,7 +144,7 @@ Item {
             }
 
             TapHandler {
-                onTapped: Shell.dispatch("stage.toggleFocus")
+                onTapped: Shell.dispatch("stage.showTimeline")
             }
         }
 
@@ -210,28 +210,32 @@ Item {
         readonly property int minimumWidth: 360
 
         bodies: threadArea.bodies
+        oneAtATime: threadArea.oneAtATime
+        timelineChosen: threadArea.timelineChosen
+        besideFits: !threadArea.narrow
         // Its corners on the centre's edge: the right ones beside the
         // conversation, the top ones over it.
-        topLeftRadius: threadArea.focusMode ? threadArea.radius : 0
+        topLeftRadius: threadArea.oneAtATime ? threadArea.radius : 0
         topRightRadius: threadArea.radius
-        bottomRightRadius: threadArea.focusMode ? 0 : threadArea.radius
-        visible: threadArea.staged && (threadArea.focusMode || threadArea.besideShown)
-        x: threadArea.focusMode ? 0 : threadArea.chatWidth + 1
-        width: threadArea.focusMode ? threadArea.width : threadArea.width - x
-        height: threadArea.focusMode ? stageRoom.height : threadArea.height
+        bottomRightRadius: threadArea.oneAtATime ? 0 : threadArea.radius
+        visible: threadArea.staged
+        x: threadArea.oneAtATime ? 0 : threadArea.chatWidth + 1
+        width: threadArea.oneAtATime ? threadArea.width : threadArea.width - x
+        height: threadArea.oneAtATime ? stageRoom.height : threadArea.height
     }
 
-    // While no stage shows, a side panel tab dragged over the
+    // While no pane shows, a side panel tab dragged over the
     // conversation's right half goes to the centre.
     DropArea {
         id: centreDrop
 
         objectName: "centreDrop"
         x: Math.round(threadArea.width / 2)
+        y: threadArea.conversationTop
         width: threadArea.width - x
-        height: threadArea.height - (composerView.visible ? composerView.height : 0)
+        height: threadArea.height - y - (composerView.visible ? composerView.height : 0)
         keys: ["hal-c2/panel-tab"]
-        enabled: threadArea.routeKind === "thread" && !stageView.visible && (threadArea.bodies?.dragging ?? "").length > 0
+        enabled: threadArea.routeKind === "thread" && (!threadArea.staged || threadArea.timelineChosen) && (threadArea.bodies?.dragging ?? "").length > 0
         onDropped: drop => {
             const id = threadArea.bodies.dragging;
             drop.accept();

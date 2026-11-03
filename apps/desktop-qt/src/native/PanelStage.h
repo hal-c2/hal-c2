@@ -12,8 +12,12 @@
 // in 1 to 4 panes, as one of four layouts: `single`, `columns` (side by side),
 // `rows` (stacked) and `grid` (2x2, panes numbered row by row). A pane shows one
 // of the stage's tabs or nothing (""), and a tab shows in one pane at most.
-// `focus` hides the conversation's timeline (the composer stays); `chatWidth` is
-// the conversation's width beside the stage (0: the layout's default).
+// `focus` shows the stage across the thread's centre, over the composer, in
+// place of the conversation beside it; `timeline` (with `focus` only) is the
+// strip's Timeline tab chosen, the timeline under the strip in place of the
+// panes. Showing, placing or laying out a tab chooses the panes again.
+// `chatWidth` is the conversation's width beside the stage (0: the layout's
+// default).
 //
 // A plain value: every change keeps it normal (normalize), so a stage with
 // tabs shows at least one, and one without tabs is closed (single, unfocused).
@@ -23,6 +27,7 @@ struct PanelStage {
   QString layout = QStringLiteral("single");
   int focused = 0;
   bool focus = false;
+  bool timeline = false;
   int chatWidth = 0;
 
   static const QStringList layouts;
@@ -31,6 +36,8 @@ struct PanelStage {
 
   bool isEmpty() const { return tabs.isEmpty(); }
   bool contains(const QString& id) const { return tabs.contains(id); }
+  // The timeline is put away: the panes fill the centre.
+  bool timelineHidden() const { return focus && !timeline; }
   // The tab in the focused pane, or "".
   QString focusedTab() const { return panes.value(focused); }
   // The tabs the panes show, the focused pane's first.
@@ -50,8 +57,8 @@ struct PanelStage {
   bool remove(const QString& id);
   // A tab that changed its id (the device picker becoming a device's tab).
   void rename(const QString& from, const QString& to);
-  // Another layout, keeping the focused tab and as many of the shown ones as
-  // fit; new panes show tabs no pane showed.
+  // Another layout (or the same, shown), keeping the focused tab and as many
+  // of the shown ones as fit; new panes show tabs no pane showed.
   void setLayout(const QString& layout);
   void focusPane(int pane);
   // Back to a closed stage; the conversation's width is kept.

@@ -341,7 +341,7 @@ const QStringList& commands() {
                  QStringLiteral("thread.next"), QStringLiteral("thread.copyReference"), QStringLiteral("thread.settle"),
                  QStringLiteral("thread.pin"), QStringLiteral("thread.undo"), QStringLiteral("space.open"),
                  QStringLiteral("space.agent.focus")});
-    list.append({QStringLiteral("stage.moveTab"), QStringLiteral("stage.toggleFocus"), QStringLiteral("stage.nextPane"),
+    list.append({QStringLiteral("stage.moveTab"), QStringLiteral("stage.toggleFocus"), QStringLiteral("stage.showTimeline"), QStringLiteral("stage.nextPane"),
                  QStringLiteral("stage.dismiss"), QStringLiteral("stage.layout.single"), QStringLiteral("stage.layout.columns"),
                  QStringLiteral("stage.layout.rows"), QStringLiteral("stage.layout.grid")});
     for (int n = 1; n <= 9; ++n) list.append(QStringLiteral("thread.jump.%1").arg(n));
@@ -470,7 +470,8 @@ QString commandLabel(const QString& command) {
       {QStringLiteral("space.open"), QStringLiteral("Space: Open")},
       {QStringLiteral("space.agent.focus"), QStringLiteral("Space: Ask an Agent About the Page")},
       {QStringLiteral("stage.moveTab"), QStringLiteral("Stage: Move Tab to Centre or Side Panel")},
-      {QStringLiteral("stage.toggleFocus"), QStringLiteral("Stage: Hide or Show the Timeline")},
+      {QStringLiteral("stage.toggleFocus"), QStringLiteral("Stage: Beside the Conversation or Filling the Centre")},
+      {QStringLiteral("stage.showTimeline"), QStringLiteral("Stage: Show the Timeline Tab")},
       {QStringLiteral("stage.nextPane"), QStringLiteral("Stage: Focus Next Pane")},
       {QStringLiteral("stage.dismiss"), QStringLiteral("Stage: Move All Tabs to Side Panel")},
       {QStringLiteral("stage.layout.single"), QStringLiteral("Stage: Single Pane")},

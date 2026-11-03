@@ -2,7 +2,7 @@
 
 On desktop, any right panel tab (Diff, Files, Agents, Terminal, Previews, a
 browser page, a device, a pull request review) can move into the thread's
-centre, beside the conversation or in place of its timeline. The composer
+centre, beside the conversation or switching with its timeline. The composer
 always stays, so you can keep talking to the agent while you read a diff or
 watch a device.
 
@@ -26,16 +26,17 @@ a pane to split it. An empty pane offers the tabs no pane shows. Each pane's
 header moves its tab back to the side panel or closes it, and the button above
 the panes moves every tab back.
 
-## Focus on the tabs
+## Switch between the timeline and the tabs
 
-`mod+alt+f` hides the timeline so the tabs take the whole centre. A one-line
-strip above the composer shows what the agent is doing; click it to bring the
-timeline back. Drag the divider between the conversation and the tabs to resize
-it, and double-click it to reset.
+`mod+alt+f` (or the button beside the layouts) lets the tabs take the whole
+centre instead of sitting beside the conversation. The strip above them then
+starts with **Timeline**: click it to read the conversation, and a tab to go
+back to it. While a tab shows, a one-line strip above the composer shows what
+the agent is doing; click it for the timeline. Beside the conversation, drag
+the divider between them to resize it, and double-click it to reset.
 
-In a narrow window the conversation and the tabs take turns: a strip above the
-composer switches between them.
+A window too narrow for both always switches this way.
 
-Each thread keeps its own tabs in the centre, its layout, and whether the
-timeline is hidden, across restarts. All of these are commands in the command
-palette (search "Stage") and can be rebound in **Settings → Keybindings**.
+Each thread keeps its own tabs in the centre, its layout, and what the centre
+shows, across restarts. All of these are commands in the command palette
+(search "Stage") and can be rebound in **Settings → Keybindings**.

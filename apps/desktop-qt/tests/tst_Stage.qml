@@ -151,6 +151,7 @@ Item {
                 layout: options.layout ?? "single",
                 focusedPane: options.focusedPane ?? 0,
                 focus: options.focus ?? false,
+                timeline: options.timeline ?? false,
                 chatWidth: 0
             }
         };
@@ -386,12 +387,54 @@ Item {
             compare(findChild(area, "stageActivityText").text, "Wrote src/cart.ts");
 
             mouseClick(strip);
-            compare(lastAction().action, "stage.toggleFocus");
-            Shell.state = Object.assign({}, Shell.state, { panel: panelState({ staged: ["diff"], open: false }) });
+            compare(lastAction().action, "stage.showTimeline");
+            show({ staged: ["diff"], focus: true, timeline: true, open: false });
             verify(centre.visible, "the timeline shows again");
-            verify(stage.visible, "beside the stage");
+            verify(stage.visible, "under the stage's strip");
             verify(!strip.visible);
-            verify(findChild(area, "stageSplitter").visible);
+            verify(!findChild(area, "stageSplitter").visible);
+        }
+
+        // Scenario: The Timeline tab switches quickly between the timeline
+        // and a tab (and the strip stays over the timeline).
+        function test_theTimelineTabShowsTheTimelineUnderTheStrip() {
+            Threads.timeline = createTemporaryObject(fakeTimeline, root);
+            show({ staged: ["diff", "files"], panes: ["diff"], focus: true, open: false });
+            const holder = createTemporaryObject(areaComponent, root);
+            const area = holder.area;
+            const centre = findChild(area, "routeView");
+            const stage = findChild(area, "stage");
+            const timelineTab = findChild(stage, "stageTimelineTab");
+            const diffTab = findChild(stage, "stageTab-diff");
+            const pane = findChild(stage, "stagePane-0");
+            verify(!centre.visible);
+            verify(!timelineTab.Accessible.selected);
+            tryVerify(() => timelineTab.width > 0 && diffTab.width > 0, 1000, "the strip is laid out");
+            verify(timelineTab.mapToItem(stage, 0, 0).x < diffTab.mapToItem(stage, 0, 0).x, "the strip starts with the Timeline");
+
+            mouseClick(timelineTab);
+            compare(lastAction().action, "stage.showTimeline");
+            show({ staged: ["diff", "files"], panes: ["diff"], focus: true, timeline: true, open: false });
+            verify(timelineTab.Accessible.selected);
+            verify(centre.visible, "the timeline shows");
+            verify(!pane.visible, "in place of the panes");
+            compare(stage.width, area.width);
+            tryCompare(stage, "height", stage.stripHeight);
+            tryVerify(() => centre.mapToItem(area, 0, 0).y >= stage.height, 1000, "under the strip");
+            verify(!findChild(area, "stageActivity").visible, "no line of the latest activity over the timeline");
+
+            mouseClick(diffTab);
+            compare(lastAction().action, "stage.show");
+            compare(lastAction().payload.id, "diff");
+            compare(lastAction().payload.focus, true, "across the centre, in place of the timeline");
+
+            // Beside the conversation, a tab shows in the stage.
+            show({ staged: ["diff", "files"], panes: ["diff"], open: false });
+            verify(centre.visible && stage.visible);
+            verify(!timelineTab.Accessible.selected);
+            mouseClick(findChild(stage, "stageTab-files"));
+            compare(lastAction().payload.id, "files");
+            compare(lastAction().payload.focus, false);
         }
 
         // A layout that rounds the centre rounds the stage's corners on its
@@ -435,16 +478,22 @@ Item {
             const stage = findChild(area, "stage");
             const strip = findChild(area, "stageActivity");
             verify(centre.visible);
-            verify(!stage.visible, "no room for the stage beside the conversation");
-            verify(strip.visible);
-            compare(findChild(area, "stageActivityText").text, "1 tab in the centre");
+            verify(stage.visible, "no room beside the conversation: the strip over it");
+            compare(stage.width, area.width);
+            compare(stage.height, stage.stripHeight);
+            verify(findChild(stage, "stageTimelineTab").Accessible.selected);
+            verify(!findChild(stage, "stageToggleBeside").visible, "nothing offers what does not fit");
+            verify(!strip.visible);
             verify(!findChild(area, "stageSplitter").visible);
 
-            mouseClick(strip);
-            compare(lastAction().action, "stage.toggleFocus");
-            Shell.state = Object.assign({}, Shell.state, { panel: panelState({ staged: ["diff"], focus: true, open: false }) });
+            const diffTab = findChild(stage, "stageTab-diff");
+            tryVerify(() => diffTab.width > 0, 1000, "the strip is laid out");
+            mouseClick(diffTab);
+            compare(lastAction().action, "stage.show");
+            compare(lastAction().payload.focus, true);
+            show({ staged: ["diff"], focus: true, open: false });
             verify(!centre.visible);
-            verify(stage.visible, "the stage shows above the composer");
+            tryVerify(() => stage.height > stage.stripHeight, 1000, "the stage shows above the composer");
             compare(stage.width, area.width);
             verify(strip.visible, "and the line offers the timeline back");
         }
