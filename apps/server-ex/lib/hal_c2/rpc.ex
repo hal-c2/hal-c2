@@ -10,6 +10,9 @@ defmodule HalC2.Rpc do
     hal-c2.unregisterPush
   )
 
+  # How many rows a page of `hal-c2.threadRows` holds at most (`:thread_rows_page`).
+  @thread_rows 1_000
+
   @doc "Methods the socket runs with its session, through `handle/3`."
   def session_methods, do: @session_methods
 
@@ -43,21 +46,46 @@ defmodule HalC2.Rpc do
     end
   end
 
-  # One thread's entities at once, for a client that needs its projection without
-  # subscribing (a socket holds one subscription per stream).
-  def handle("hal-c2.threadRows", %{"threadId" => thread_id}) do
-    state = HalC2.Streams.state(thread_id)
+  # One thread's entities, for a client that needs its projection without subscribing
+  # (a socket holds one subscription per stream): a page of at most `limit` at a time,
+  # each as of its `offset`. `next` is the `after` to ask for the next page, nil after
+  # the last. A client sends `after` (null for the first page) to page; one from before
+  # paging sends none and is answered the whole thread in one reply, as it was, rather
+  # than a first page it would take for all of it.
+  def handle("hal-c2.threadRows", %{"threadId" => thread_id} = input) do
+    page = Application.get_env(:hal_c2, :thread_rows_page, @thread_rows)
 
-    {:ok,
-     %{
-       "rows" =>
-         for(
-           {kind, id, entity} <- HalC2.StreamState.rows(state),
-           do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]
-         ),
-       "offset" => state.seq,
-       "at" => state.updated_at
-     }}
+    limit =
+      case input["limit"] do
+        _ when not is_map_key(input, "after") -> nil
+        limit when is_integer(limit) and limit > 0 -> min(limit, page)
+        _ -> page
+      end
+
+    cursor =
+      case input["after"] do
+        [seq, kind, id] when is_integer(seq) and is_binary(kind) and is_binary(id) ->
+          {seq, kind, id}
+
+        _ ->
+          nil
+      end
+
+    HalC2.Streams.read(thread_id, fn state ->
+      {rows, next} =
+        if limit,
+          do: HalC2.StreamState.rows_page(state, cursor, limit),
+          else: {HalC2.StreamState.rows(state), nil}
+
+      {:ok,
+       %{
+         "rows" =>
+           for({kind, id, entity} <- rows, do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]),
+         "next" => next && Tuple.to_list(next),
+         "offset" => state.seq,
+         "at" => state.updated_at
+       }}
+    end)
   end
 
   # Moving a thread to another machine of the cluster (`HalC2.ThreadMove`), and finding

@@ -50,28 +50,38 @@ defmodule HalC2.ThreadArchive do
   @spec build(String.t(), keyword) :: {:ok, archive} | {:error, String.t()}
   def build(ref, opts \\ []) do
     with {:ok, id} <- find_thread(ref),
-         state = state(id),
-         %{} = thread <- StreamState.get(state, "thread")[id] || {:error, "No thread #{ref}."},
-         {:ok, meta} <- describe(thread) do
-      root = meta["projectRoot"]
+         {:ok, state, thread, archive} <- read(id, &pinned(&1, id, ref)) do
+      root = archive["thread"]["projectRoot"]
       cwd = thread["worktreePath"] || root
       have = Keyword.get(opts, :have, [])
 
+      # The checkpoints, worktree, session and scrollback do git and file work and
+      # read only what memory holds, so they run once the read has let go of the disk.
       {:ok,
+       Map.merge(archive, %{
+         "terminalLogs" =>
+           for({terminal, data} <- Terminal.saved_scrollback(id), do: file(terminal, data)),
+         "checkpoints" => checkpoints(state, root, have),
+         "worktree" => worktree(thread, have),
+         "session" => if(Keyword.get(opts, :session, true), do: session(state, thread, cwd))
+       })}
+    end
+  end
+
+  # The part of an archive that reads the thread's older runs from disk, inside the
+  # read that pins them.
+  defp pinned(state, id, ref) do
+    with %{} = thread <- StreamState.get(state, "thread")[id] || {:error, "No thread #{ref}."},
+         {:ok, meta} <- describe(thread) do
+      {:ok, state, thread,
        %{
          "format" => @format,
          "version" => @version,
          "exportedAt" => now(),
          "thread" => meta,
          "updatedAt" => state.updated_at,
-         "entities" =>
-           for({kind, eid, entity} <- StreamState.rows(state), do: [kind, eid, entity]),
-         "attachments" => attachments(state),
-         "terminalLogs" =>
-           for({terminal, data} <- Terminal.saved_scrollback(id), do: file(terminal, data)),
-         "checkpoints" => checkpoints(state, root, have),
-         "worktree" => worktree(thread, have),
-         "session" => if(Keyword.get(opts, :session, true), do: session(state, thread, cwd))
+         "entities" => entities_file(state),
+         "attachments" => attachments(state)
        }}
     end
   end
@@ -122,7 +132,36 @@ defmodule HalC2.ThreadArchive do
   @doc "Removes the files `build/2` made for an archive."
   def discard(archive) do
     for %{"temporary" => true, "path" => path} <- files(archive), do: File.rm(path)
+    with {:entities, path, _kinds} <- archive["entities"], do: File.rm(path)
     :ok
+  end
+
+  @doc "The kinds of entity an archive holds."
+  def kinds(%{"entities" => {:entities, _path, kinds}}), do: kinds
+  def kinds(%{"entities" => entities}), do: MapSet.new(entities, &hd/1)
+
+  # A built archive's entities: a JSON array in a file made for it, written a row at
+  # a time as the thread's older runs are read from disk, so a long thread is never
+  # held whole. `encode/1` and `write_file/2` put it in the archive's JSON.
+  defp entities_file(state) do
+    path = scratch()
+
+    kinds =
+      File.open!(path, [:write, :raw, :binary, :delayed_write], fn out ->
+        {_, kinds} =
+          state
+          |> StreamState.rows()
+          |> Enum.reduce({"[", MapSet.new()}, fn {kind, eid, entity}, {comma, kinds} ->
+            :ok = :file.write(out, [comma, JSON.encode_to_iodata!([kind, eid, entity])])
+            {",", MapSet.put(kinds, kind)}
+          end)
+
+        :ok = :file.write(out, "]")
+        kinds
+      end)
+
+    File.chmod(path, 0o600)
+    {:entities, path, kinds}
   end
 
   @doc "Every file an archive carries."
@@ -173,7 +212,20 @@ defmodule HalC2.ThreadArchive do
     |> Kernel.<>("]" <> rest)
   end
 
+  def encode(%{"entities" => {:entities, path, _kinds}} = archive) do
+    {marker, archive} = entities_marker(archive)
+    [before, rest] = archive |> JSON.encode!() |> String.split(marker)
+    before <> File.read!(path) <> rest
+  end
+
   def encode(archive), do: JSON.encode!(archive)
+
+  # The archive with a marker standing in for its entities file, and the marker as it
+  # is in the JSON.
+  defp entities_marker(archive) do
+    marker = "hal-c2-entities-#{Base.encode16(:crypto.strong_rand_bytes(12))}"
+    {JSON.encode!(marker), %{archive | "entities" => marker}}
+  end
 
   # The archive's JSON with the files on disk in it as base64, written a piece at a
   # time: each stands in the JSON as a marker and its sha256, which is cut there for
@@ -183,6 +235,16 @@ defmodule HalC2.ThreadArchive do
 
     on_disk =
       for %{"path" => source, "sha256" => sha} <- files(archive), into: %{}, do: {sha, source}
+
+    {entities, archive} =
+      case archive["entities"] do
+        {:entities, source, _kinds} ->
+          {marker, archive} = entities_marker(archive)
+          {{marker, source}, archive}
+
+        _ ->
+          {nil, archive}
+      end
 
     [first | pieces] =
       archive
@@ -197,16 +259,31 @@ defmodule HalC2.ThreadArchive do
       |> String.split(marker)
 
     File.open!(path, [:write, :raw, :binary], fn out ->
-      :ok = :file.write(out, first)
+      write_json(out, first, entities)
 
       for <<sha::binary-size(64), rest::binary>> <- pieces do
         on_disk[sha]
         |> File.stream!(@piece)
         |> Enum.each(&(:ok = :file.write(out, Base.encode64(&1))))
 
-        :ok = :file.write(out, rest)
+        write_json(out, rest, entities)
       end
     end)
+  end
+
+  # A piece of the archive's JSON, with the entities file copied in where its marker is.
+  defp write_json(out, json, nil), do: :ok = :file.write(out, json)
+
+  defp write_json(out, json, {marker, source}) do
+    case String.split(json, marker, parts: 2) do
+      [json] ->
+        :ok = :file.write(out, json)
+
+      [before, rest] ->
+        :ok = :file.write(out, before)
+        source |> File.stream!(@piece) |> Enum.each(&(:ok = :file.write(out, &1)))
+        :ok = :file.write(out, rest)
+    end
   end
 
   # --- import --------------------------------------------------------------------
@@ -612,9 +689,13 @@ defmodule HalC2.ThreadArchive do
   # Every entity as a patch from what this MC has (nothing, or a forwarding record
   # and the copy it left behind), so a thread coming back does not repeat anything.
   defp changes(id, entities, at) do
-    current = state(id)
-    have = for {kind, eid, _} <- StreamState.rows(current), into: MapSet.new(), do: {kind, eid}
     incoming = for {kind, eid, _} <- entities, into: MapSet.new(), do: {kind, eid}
+
+    {have, existing} =
+      read(id, fn current ->
+        {for({kind, eid, _} <- StreamState.rows(current), into: MapSet.new(), do: {kind, eid}),
+         StreamState.lookup(current, incoming)}
+      end)
 
     deletes =
       for {kind, eid} <- have,
@@ -623,7 +704,7 @@ defmodule HalC2.ThreadArchive do
 
     upserts =
       for {kind, eid, entity} <- entities,
-          patch = Patch.diff(StreamState.get(current, kind)[eid], entity),
+          patch = Patch.diff(existing[{kind, eid}], entity),
           patch != :unchanged,
           do: {kind, eid, patch, at}
 
@@ -663,7 +744,8 @@ defmodule HalC2.ThreadArchive do
           is_map(pt["nativeThreadRef"]),
           do: {"provider-thread", pt["id"], %{"s" => %{"nativeThreadRef" => nil}}}
 
-    if native != [], do: {:ok, _} = Store.append([{:thread, id, native}])
+    # Through the thread's stream when it runs: rebuilding its row above started it.
+    :ok = commit(id, native)
 
     if Process.whereis(HalC2.Shell) do
       case HalC2.Projection.rebuild(id) do
@@ -784,7 +866,7 @@ defmodule HalC2.ThreadArchive do
   end
 
   defp attachments(state) do
-    for message <- StreamState.list(state, "message"),
+    for message <- StreamState.all(state, "message"),
         %{"id" => _} = attachment <- List.wrap(message["attachments"]),
         path = Attachments.path(attachment),
         path != nil,
@@ -1119,6 +1201,14 @@ defmodule HalC2.ThreadArchive do
     if Process.whereis(HalC2.Streams),
       do: HalC2.Streams.state(id),
       else: StreamState.load(Store.path(), id)
+  end
+
+  # `fun` of the thread's state, its older runs read from disk as they were when it was
+  # taken (`HalC2.Streams.read/2`).
+  defp read(id, fun) do
+    if Process.whereis(HalC2.Streams),
+      do: HalC2.Streams.read(id, fun),
+      else: fun.(StreamState.load(Store.path(), id))
   end
 
   defp project(nil), do: nil

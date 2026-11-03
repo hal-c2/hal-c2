@@ -2,6 +2,7 @@ import {
   OrchestrationV2AppThread,
   ORCHESTRATION_V2_WS_METHODS,
   type OrchestrationV2ThreadStreamItem,
+  OrchestrationV2TurnItem,
   WS_METHODS,
 } from "@hal-c2/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -69,6 +70,31 @@ function socketAnswering(answer: (method: string, payload: unknown) => Promise<u
   } as unknown as ClusterSocket;
   return { socket, calls };
 }
+
+/** A thread and one of its items, as `hal-c2.threadRows` sends them. */
+const pagedThread = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2AppThread))(
+  v2Projection.thread,
+);
+const pagedItem = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2TurnItem))({
+  id: "item-1",
+  threadId: v2ThreadId,
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 1,
+  status: "completed",
+  title: null,
+  startedAt: v2Projection.updatedAt,
+  completedAt: v2Projection.updatedAt,
+  updatedAt: v2Projection.updatedAt,
+  type: "assistant_message",
+  messageId: "message-1",
+  text: "Hello",
+  streaming: false,
+} as unknown as OrchestrationV2TurnItem);
 
 describe("makeV3Session", () => {
   it.effect("asks its own MC where another machine's file is here", () =>
@@ -255,6 +281,29 @@ describe("makeV3Session", () => {
     }),
   );
 
+  it.effect("reads a thread's projection a page at a time", () =>
+    Effect.gen(function* () {
+      const next = [3, "thread", v2ThreadId];
+      const { socket, calls } = socketAnswering(async (_method, payload) =>
+        (payload as { readonly after: unknown }).after == null
+          ? { rows: [["thread", v2ThreadId, pagedThread]], next, offset: 7, at: 1 }
+          : { rows: [["turn-item", "item-1", pagedItem]], next: null, offset: 8, at: 2 },
+      );
+      const session = yield* makeV3Session({ socket, environmentId: ENVIRONMENT });
+
+      const projection = yield* session.client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
+        threadId: v2ThreadId,
+      } as never);
+
+      expect(calls.map((call) => call.payload)).toEqual([
+        { threadId: v2ThreadId, after: null },
+        { threadId: v2ThreadId, after: next },
+      ]);
+      expect(projection.thread.title).toBe(v2Projection.thread.title);
+      expect(projection.turnItems.map((i) => i.id)).toEqual(["item-1"]);
+    }),
+  );
+
   it.effect("tells why the MC refused a terminal", () =>
     Effect.gen(function* () {
       const { socket } = socketAnswering(() =>
@@ -307,7 +356,7 @@ describe("makeV3Session thread resumes", () => {
         queueMicrotask(() => {
           listener({
             t: "snapshot",
-            rows: [["thread", v2ThreadId, thread]],
+            rows: [["thread", v2ThreadId, pagedThread]],
             part: 0,
             done: true,
             offset: 9,

@@ -862,6 +862,70 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context |> furnish(title) |> Map.put(:kept_kinds, ["message"])
   end
 
+  # A long thread: memory holds the latest runs' items, the older runs are on disk.
+  step "{string} has its older runs, which it keeps on disk", %{args: [title]} = context do
+    previous = Application.get_env(:hal_c2, :stream_hot_items)
+    Application.put_env(:hal_c2, :stream_hot_items, 2)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :stream_hot_items, previous),
+        else: Application.delete_env(:hal_c2, :stream_hot_items)
+    end)
+
+    id = World.thread_id(context, title)
+    # The thread's stream started before memory was made this small.
+    pid = HalC2.Streams.ensure(id)
+    ref = Process.monitor(pid)
+    GenServer.stop(pid)
+    receive do: ({:DOWN, ^ref, :process, ^pid, _} -> :ok)
+
+    for i <- 1..8 do
+      run = "run-old-#{i}"
+
+      items =
+        for j <- 1..3,
+            do:
+              {"turn-item", "#{run}-#{j}",
+               %{
+                 "s" => %{
+                   "id" => "#{run}-#{j}",
+                   "runId" => run,
+                   "threadId" => id,
+                   "text" => "#{i}.#{j}"
+                 }
+               }}
+
+      {:ok, _} =
+        HalC2.Streams.commit(id, :thread, [
+          {"run", run, %{"s" => %{"id" => run, "ordinal" => 100 + i, "status" => "completed"}}},
+          {"message", "#{run}-m",
+           %{"s" => %{"id" => "#{run}-m", "runId" => run, "text" => "q#{i}"}}}
+          | items
+        ])
+    end
+
+    kinds = ~w(run message turn-item)
+
+    whole =
+      HalC2.Streams.read(id, fn state ->
+        assert state.floor != nil
+        Map.new(kinds, &{&1, state |> HalC2.StreamState.all(&1) |> Enum.to_list()})
+      end)
+
+    Map.merge(context, %{kept_kinds: kinds, before_whole: whole})
+  end
+
+  step "{string} on {string} shows its older runs, which it keeps on disk as it was",
+       %{args: [title, machine]} = context do
+    context = still_shows(context, title, machine)
+    # What stays here is the forwarding record, its older runs dropped from disk too.
+    id = World.thread_id(context, title)
+    rows = HalC2.Streams.read(id, &Enum.to_list(HalC2.StreamState.rows(&1)))
+    assert [{"thread", ^id, %{"movedTo" => %{}}}] = rows
+    context
+  end
+
   step "{string} has the scrollback of its terminals", %{args: [title]} = context do
     id = World.thread_id(context, title)
     HalC2.Terminal.put_scrollback(id, "term-1", "$ npm run dev\nready on :3000\n")
@@ -2062,7 +2126,8 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
 
     for kind <- context[:kept_kinds] || [] do
       before =
-        for entity <- HalC2.StreamState.list(context.before_move, kind),
+        for entity <-
+              context[:before_whole][kind] || HalC2.StreamState.list(context.before_move, kind),
             do: entity |> JSON.encode!() |> String.replace(from, to) |> JSON.decode!()
 
       there = Machines.on(context, machine, Machines, :entities, [id, kind])
