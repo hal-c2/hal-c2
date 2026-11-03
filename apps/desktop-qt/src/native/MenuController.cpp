@@ -20,6 +20,7 @@ QVariantList variants(const QList<MenuController::Item>& items) {
         {QStringLiteral("separatorBefore"), item.separatorBefore},
     };
     if (!item.children.isEmpty()) entry.insert(QStringLiteral("children"), variants(item.children));
+    if (!item.subtitle.isEmpty()) entry.insert(QStringLiteral("subtitle"), item.subtitle);
     out.append(entry);
   }
   return out;

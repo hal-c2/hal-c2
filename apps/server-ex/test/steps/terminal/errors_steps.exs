@@ -44,17 +44,6 @@ defmodule HalC2.Steps.Terminal.Errors do
     context
   end
 
-  step "a client opens a terminal for the provider instance {string}",
-       %{args: [id]} = context do
-    {reply, context} =
-      Terminal.open(context, %{
-        "cwd" => Terminal.mkdir(context, "/work/app"),
-        "providerInstanceId" => id
-      })
-
-    Map.put(context, :reply, reply)
-  end
-
   step "the open fails saying the settings cannot be read", context do
     assert {:error, message, %{"_tag" => "TerminalProviderEnvironmentError"}} = context.reply
     assert message =~ "settings.json cannot be read"
@@ -280,5 +269,109 @@ defmodule HalC2.Steps.Terminal.Errors do
       )
 
     context |> World.put_client(name, client) |> Map.put(key, id)
+  end
+
+  # --- provider instances ---------------------------------------------------------------------
+
+  step ~r/^no provider instance "(?<id>[^"]+)" is configured(?: and none is built in under that name)?$/,
+       %{args: [id]} = context do
+    context = Terminal.ensure(context)
+    assert get_in(HalC2.Settings.settings(), ["providerInstances", id]) == nil
+    context
+  end
+
+  # Shared with `sessions.feature`.
+  step "a client opens a terminal for the provider instance {string}",
+       %{args: [id]} = context do
+    {reply, context} = Terminal.open(context, %{"providerInstanceId" => id})
+
+    case reply do
+      {:ok, snapshot} ->
+        Terminal.await_prompt(context.terminal, snapshot["history"])
+        {_, context} = Terminal.attach!(context, "default", session(context))
+        Map.merge(context, %{reply: reply, snapshot: snapshot, first: snapshot})
+
+      _refused ->
+        Map.put(context, :reply, reply)
+    end
+  end
+
+  step "the open fails with {string}", %{args: [message]} = context do
+    assert {:error, ^message, _detail} = context.reply
+    context
+  end
+
+  step "no shell is started", context do
+    %{"threadId" => thread, "terminalId" => terminal} = context.terminal
+    assert Registry.lookup(HalC2.Terminal.Registry, {thread, terminal}) == []
+    refute Enum.any?(HalC2.Terminal.Hub.summaries(), &(&1["threadId"] == thread))
+    context
+  end
+
+  step "a client attaches to {string} in {string} for the provider instance {string}",
+       %{args: [terminal, path, id]} = context do
+    input =
+      Terminal.input(context, %{
+        "terminalId" => terminal,
+        "cwd" => Terminal.mkdir(context, path),
+        "providerInstanceId" => id
+      })
+
+    {frame, context} = Terminal.attach(context, "default", input)
+    context |> Terminal.put_input(input) |> Map.put(:frame, frame)
+  end
+
+  step "the attach fails with {string}", %{args: [message]} = context do
+    assert %{"t" => "error", "reason" => ^message} = context.frame
+    context
+  end
+
+  step "a terminal running for the provider instance {string}", %{args: [id]} = context do
+    World.merge_settings(%{"providerInstances" => %{id => %{"driver" => "codex"}}})
+    {snapshot, context} = Terminal.open!(context, %{"providerInstanceId" => id})
+    Map.merge(context, %{first: snapshot, snapshot: snapshot})
+  end
+
+  step "the provider instance {string} has since been removed", %{args: [id]} = context do
+    {settings, version} = HalC2.Settings.get()
+
+    {:ok, _} =
+      HalC2.Settings.put(update_in(settings["providerInstances"], &Map.delete(&1, id)), version)
+
+    context
+  end
+
+  step "a client attaches to it asking to restart it if it is not running", context do
+    input = Map.put(context.terminal, "restartIfNotRunning", true)
+    {snapshot, context} = Terminal.attach!(context, "later", input)
+    Map.put(context, :snapshot, snapshot)
+  end
+
+  step "the client receives the terminal's snapshot", context do
+    assert context.snapshot["status"] == "running"
+    assert context.snapshot["terminalId"] == context.terminal["terminalId"]
+    context
+  end
+
+  step "the running shell is not restarted", context do
+    assert context.snapshot["pid"] == context.first["pid"]
+    assert File.exists?("/proc/#{context.first["pid"]}")
+    context
+  end
+
+  step ~r/^a thread with saved terminals "term-10", "term-2" and "default"$/, context do
+    context = Terminal.ensure(context)
+
+    for id <- ["term-10", "term-2", "default"], reduce: context do
+      context ->
+        {_, context} = Terminal.open!(context, %{"terminalId" => id})
+        {{:ok, nil}, context} = World.call(context, "terminal.close", session(context))
+        context
+    end
+  end
+
+  step ~r/^it receives them as "default", "term-2" and "term-10"$/, context do
+    assert {:ok, %{"terminalIds" => ["default", "term-2", "term-10"]}} = context.reply
+    context
   end
 end

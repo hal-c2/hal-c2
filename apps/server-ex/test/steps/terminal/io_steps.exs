@@ -3,6 +3,8 @@ defmodule HalC2.Steps.Terminal.Io do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.Terminal.OutputWindow
+  alias HalC2.Test.{Mc, WsClient}
   alias HalC2.Test.Mc.{Terminal, World}
 
   @clients ["default", "second"]
@@ -191,9 +193,10 @@ defmodule HalC2.Steps.Terminal.Io do
   end
 
   step "within a second the terminal is marked as running a command", context do
-    # The MC looks at the shell's children once a second.
-    {event, context} =
-      Terminal.await_event(context, "default", &(&1["type"] == "activity"), 2_500)
+    # The MC looks at the shell's children once a second (`HalC2.Terminal.Hub`), by a `ps`
+    # a loaded machine can keep waiting: the event is the receipt, and the default limit
+    # only says how long a missing one takes to fail.
+    {event, context} = Terminal.await_event(context, "default", &(&1["type"] == "activity"))
 
     assert event["hasRunningSubprocess"] == true
     Map.put(context, :activity, event)
@@ -207,9 +210,7 @@ defmodule HalC2.Steps.Terminal.Io do
   step "a terminal labelled {string} while a dev server runs", %{args: [label]} = context do
     context = running(context, %{"env" => %{"PATH" => fake_bin(context)}})
     context = Terminal.write(context, "default", "npm run dev\n")
-
-    {event, context} =
-      Terminal.await_event(context, "default", &(&1["type"] == "activity"), 2_500)
+    {event, context} = Terminal.await_event(context, "default", &(&1["type"] == "activity"))
 
     assert %{"hasRunningSubprocess" => true, "label" => ^label} = event
     context
@@ -221,8 +222,7 @@ defmodule HalC2.Steps.Terminal.Io do
   end
 
   step "the terminal is no longer marked as running a command", context do
-    {event, context} =
-      Terminal.await_event(context, "default", &(&1["type"] == "activity"), 2_500)
+    {event, context} = Terminal.await_event(context, "default", &(&1["type"] == "activity"))
 
     assert event["hasRunningSubprocess"] == false
     Map.put(context, :activity, event)
@@ -258,11 +258,12 @@ defmodule HalC2.Steps.Terminal.Io do
     end)
   end
 
-  # A PATH whose `npm` is a stand-in dev server: it runs until interrupted.
+  # A PATH whose `npm` is a stand-in dev server: one process, waiting on the terminal until
+  # interrupted, so Ctrl-C has no child starting up to miss.
   defp fake_bin(context) do
     bin = Terminal.mkdir(context, "/fake-bin")
     npm = Path.join(bin, "npm")
-    File.write!(npm, "#!/bin/sh\nsleep 30\n")
+    File.write!(npm, "#!/bin/sh\nread _\n")
     File.chmod!(npm, 0o755)
     bin <> ":" <> System.get_env("PATH", "/usr/bin:/bin")
   end
@@ -276,5 +277,246 @@ defmodule HalC2.Steps.Terminal.Io do
            )
 
     context
+  end
+
+  # --- a client that falls behind -------------------------------------------------------------
+
+  # The "default" client keeps up, and so says how much the shell has printed.
+  step "a running terminal whose shell prints continuously", context do
+    {snapshot, context} = Terminal.open!(context)
+    {_, context} = Terminal.attach!(context, "default", Map.delete(context.terminal, "cwd"))
+    context = Terminal.write(context, "default", "while :; do seq 1 2000; sleep 0.05; done\n")
+    Map.put(context, :snapshot, snapshot)
+  end
+
+  step "a client stops acknowledging the output it has received", context do
+    id = System.unique_integer([:positive])
+
+    shape = %{
+      "type" => "terminal",
+      "mc" => Atom.to_string(node()),
+      "input" => Map.take(context.terminal, ["threadId", "terminalId"])
+    }
+
+    client =
+      WsClient.send_json(World.client(context, "behind"), %{
+        "t" => "sub",
+        "id" => id,
+        "shape" => shape,
+        "acks" => true
+      })
+
+    context |> World.put_client("behind", client) |> Map.put(:behind_sub, id)
+  end
+
+  step "only a small amount of output waits unacknowledged for that client", context do
+    limit = OutputWindow.limit()
+    {_, _, context} = await_printed(context, 3 * limit)
+    {events, context} = behind_events(context)
+
+    sizes = for %{"type" => "output", "data" => data} <- events, do: byte_size(data)
+
+    assert sizes != []
+    # It was let through until the limit, the event that crossed it included.
+    assert Enum.sum(sizes) - List.last(sizes) < limit
+    Map.put(context, :behind_acked, Enum.max(Enum.map(events, &sequence/1)))
+  end
+
+  step "the MC stops sending output to that client until it catches up", context do
+    {_, _, context} = await_printed(context, 2 * OutputWindow.limit())
+    {events, context} = behind_events(context)
+    assert Enum.filter(events, &(&1["type"] == "output")) == []
+
+    id = context.behind_sub
+    send_ack = &WsClient.send_json(&1, %{"t" => "ack", "id" => id, "sequence" => &2})
+    client = send_ack.(World.client(context, "behind"), context.behind_acked)
+    {caught_up, client} = await_behind(client, id)
+    assert %{"type" => "snapshot", "snapshot" => %{"status" => "running"}} = caught_up
+    assert sequence(caught_up) > context.behind_acked
+    World.put_client(context, "behind", catch_up(client, id, caught_up, send_ack))
+  end
+
+  step "the shell itself keeps running", context do
+    assert File.exists?("/proc/#{context.snapshot["pid"]}")
+    %{"threadId" => thread, "terminalId" => terminal} = context.terminal
+
+    assert Enum.any?(
+             HalC2.Terminal.Hub.summaries(),
+             &match?(
+               %{"threadId" => ^thread, "terminalId" => ^terminal, "status" => "running"},
+               &1
+             )
+           )
+
+    context
+  end
+
+  # --- stopping a shell -----------------------------------------------------------------------
+
+  step "a running terminal whose shell ignores the stop request", context do
+    context = context |> Terminal.ensure() |> stubborn_shell()
+    {snapshot, context} = Terminal.open!(context)
+    {_, context} = Terminal.attach!(context, "default", Map.delete(context.terminal, "cwd"))
+    {_, _, context} = await_ready(context, snapshot)
+    Map.put(context, :snapshot, snapshot)
+  end
+
+  step "a client closes it", context do
+    started = System.monotonic_time(:millisecond)
+
+    {{:ok, nil}, context} =
+      World.call(
+        context,
+        "terminal.close",
+        Map.take(context.terminal, ["threadId", "terminalId"]),
+        "ctl"
+      )
+
+    Map.put(context, :stop_took, System.monotonic_time(:millisecond) - started)
+  end
+
+  step "the shell is asked to stop first", context do
+    {_, _, context} = Terminal.await_output(context, "default", "asked-to-stop")
+    context
+  end
+
+  step "the shell is killed if it is still running a second later", context do
+    Terminal.await_exit(context.snapshot["pid"])
+    assert context.stop_took >= 900
+    assert context.stop_took < HalC2.Terminal.call_timeout()
+    context
+  end
+
+  step "running terminals, one of whose shells ignores the stop request", context do
+    {obliging, context} = Terminal.open!(context, %{"terminalId" => "term-1"})
+    context = stubborn_shell(context)
+    {stubborn, context} = Terminal.open!(context, %{"terminalId" => "term-2"})
+    {_, context} = Terminal.attach!(context, "default", Map.delete(context.terminal, "cwd"))
+    {_, _, context} = await_ready(context, stubborn)
+    Map.merge(context, %{obliging: obliging, snapshot: stubborn})
+  end
+
+  step "the MC shuts down with them running", context do
+    started = System.monotonic_time(:millisecond)
+    :ok = DynamicSupervisor.stop(HalC2.Terminal.Supervisor, :shutdown)
+    Map.put(context, :stop_took, System.monotonic_time(:millisecond) - started)
+  end
+
+  step "each shell is asked to stop", context do
+    Terminal.await_exit(context.obliging["pid"])
+    {_, _, context} = Terminal.await_output(context, "default", "asked-to-stop")
+    context
+  end
+
+  step "the shell that ignores it is killed after the grace period", context do
+    Terminal.await_exit(context.snapshot["pid"])
+    assert context.stop_took >= 900
+    context
+  end
+
+  step "the MC does not wait for them longer than that", context do
+    # The supervisor would give up on a terminal at 5 seconds.
+    assert context.stop_took < 4_000
+    context
+  end
+
+  # --- no process list ------------------------------------------------------------------------
+
+  # The hub's poll results are the receipt that it looked and found nothing. `npm` is a
+  # function here, so a real child runs that a working process list would see.
+  step "the MC cannot read the list of processes on its machine", context do
+    Application.put_env(:hal_c2, :terminal_ps, Terminal.folder(context, "/no/ps"))
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :terminal_ps) end)
+    {_, context} = Terminal.run(context, "default", "npm() { sleep 30; }")
+    :erlang.trace(Process.whereis(HalC2.Terminal.Hub), true, [:receive])
+    context
+  end
+
+  step "the terminal keeps accepting input and showing output", context do
+    hub = Process.whereis(HalC2.Terminal.Hub)
+    # The second started after the child did.
+    for _ <- 1..2, do: assert_receive({:trace, ^hub, :receive, {:processes, _}}, 5_000)
+    :erlang.trace(hub, false, [:receive])
+    context = Terminal.write(context, "default", "\x03")
+    {output, context} = Terminal.run(context, "default", "echo still-''working")
+    assert output =~ "still-working"
+    context
+  end
+
+  step "the terminal is not marked as running a command", context do
+    %{"threadId" => thread, "terminalId" => terminal} = context.terminal
+
+    assert %{"hasRunningSubprocess" => false} =
+             Enum.find(
+               HalC2.Terminal.Hub.summaries(),
+               &match?(%{"threadId" => ^thread, "terminalId" => ^terminal}, &1)
+             )
+
+    context
+  end
+
+  defp await_printed(context, bytes),
+    do: Terminal.await_output(context, "default", &(byte_size(&1) >= bytes), 15_000)
+
+  # What the client that fell behind was sent: the pong to a ping comes after all of it.
+  defp behind_events(context) do
+    id = context.behind_sub
+    client = WsClient.send_json(World.client(context, "behind"), %{"t" => "ping"})
+    {_pong, frames, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 5_000)
+    events = for %{"t" => "terminal", "id" => ^id, "event" => event} <- frames, do: event
+    {events, World.put_client(context, "behind", client)}
+  end
+
+  defp await_behind(client, id) do
+    {%{"event" => event}, client} =
+      Mc.await(
+        client,
+        &(&1["t"] == "terminal" and &1["id"] == id and
+            &1["event"]["type"] in ~w(output snapshot)),
+        5_000
+      )
+
+    {event, client}
+  end
+
+  # What a client does: it acknowledges what it handled, a snapshot too, until live
+  # output reaches it again.
+  defp catch_up(client, id, %{"type" => "output"}, _send_ack) when is_integer(id), do: client
+
+  defp catch_up(client, id, event, send_ack) do
+    client = send_ack.(client, sequence(event))
+    {event, client} = await_behind(client, id)
+    catch_up(client, id, event, send_ack)
+  end
+
+  defp sequence(%{"snapshot" => %{"sequence" => sequence}}), do: sequence
+  defp sequence(%{"sequence" => sequence}), do: sequence
+
+  defp stubborn_shell(context) do
+    path = Path.join(context.mc.home, "stubborn-shell")
+
+    File.write!(path, """
+    #!/bin/sh
+    trap 'echo asked-to-stop' TERM
+    echo ready
+    while :; do sleep 0.1; done
+    """)
+
+    File.chmod!(path, 0o755)
+    Terminal.put_env("SHELL", path)
+    context
+  end
+
+  defp await_ready(context, snapshot) do
+    if snapshot["history"] =~ "ready" do
+      {"", [], context}
+    else
+      {again, context} =
+        Terminal.attach!(context, "ready", Map.take(context.terminal, ["threadId", "terminalId"]))
+
+      if again["history"] =~ "ready",
+        do: {"", [], context},
+        else: Terminal.await_output(context, "default", "ready")
+    end
   end
 end

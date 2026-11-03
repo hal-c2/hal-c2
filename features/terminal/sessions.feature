@@ -79,8 +79,7 @@ Feature: Terminal sessions
       Then the shell sees TERM "xterm-256color" and COLORTERM "truecolor"
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (starts zsh with prompt spacer disabled)
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (zsh started with -o nopromptsp)
-    @backlog @mc
+    @mc
     Scenario: A zsh shell does not print a "%" marker after output that lacks a newline
       Given the user's shell is zsh
       When a terminal opens
@@ -102,8 +101,7 @@ Feature: Terminal sessions
         | any variable starting with RELEASE_ |
         | any variable starting with ERL_     |
 
-    # Not yet in apps/server-ex/lib/hal_c2/terminal.ex: its env scrub has no AppImage rule.
-    @backlog @mc
+    @mc
     Scenario: A shell started from an AppImage build does not see the AppImage's mount
       Given the MC was started from an AppImage with APPIMAGE, APPDIR, ARGV0 and OWD set
       And PATH holds "/tmp/.mount_hal-c2/usr/bin" and "/usr/bin"
@@ -111,8 +109,7 @@ Feature: Terminal sessions
       Then the shell sees none of APPIMAGE, APPDIR, ARGV0 or OWD
       And the shell sees PATH as "/usr/bin"
 
-    # Not yet in apps/server-ex/lib/hal_c2/terminal.ex.
-    @backlog @mc
+    @mc
     Scenario Outline: A search path that held only the AppImage's mount is removed from the shell
       Given the MC was started from an AppImage mounted at "/tmp/.mount_hal-c2"
       And <variable> holds only entries under "/tmp/.mount_hal-c2"
@@ -126,7 +123,7 @@ Feature: Terminal sessions
         | XDG_DATA_DIRS        |
         | GSETTINGS_SCHEMA_DIR |
 
-    @backlog @mc
+    @mc
     Scenario: A shell not started from an AppImage keeps its environment as it is
       Given the MC was not started from an AppImage
       And a variable named "OWD" is set
@@ -138,16 +135,14 @@ Feature: Terminal sessions
       When a client opens a terminal with the variable "APP_ENV" set to "preview"
       Then the shell sees "APP_ENV" as "preview"
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (provider_env)
-    @backlog @mc
+    @mc
     Scenario: A terminal opened for a provider instance runs with that instance's variables
       Given the Codex instance "work" sets the variable "OPENAI_BASE_URL" to "https://gw.example"
       When a client opens a terminal for the provider instance "work"
       Then the shell sees "OPENAI_BASE_URL" as "https://gw.example"
       And the terminal's snapshot does not carry the instance's variables
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (provider_env)
-    @backlog @mc
+    @mc
     Scenario Outline: An instance's home folder wins over a home variable in its environment
       Given the <driver> instance "work" has the home folder "~/work-home"
       And the instance also sets <variable> to "~/other"
@@ -159,8 +154,7 @@ Feature: Terminal sessions
         | Codex  | CODEX_HOME        |
         | Claude | CLAUDE_CONFIG_DIR |
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (provider_env)
-    @backlog @mc
+    @mc
     Scenario: The default instance of a provider opens a terminal without being configured
       Given no provider instance named "codex" is configured
       When a client opens a terminal for the provider instance "codex"
@@ -168,8 +162,7 @@ Feature: Terminal sessions
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (restarts a running terminal when the resolved
     #   provider environment changes)
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (provider_env feeds the launch context)
-    @backlog @mc
+    @mc
     Scenario: A running provider terminal restarts when its instance's variables have changed
       Given a terminal running for the provider instance "work" with "PROVIDER_SECRET" set to "first-secret"
       And the instance now sets "PROVIDER_SECRET" to "second-secret"
@@ -197,8 +190,7 @@ Feature: Terminal sessions
         | a different worktree          |
         | different extra variables     |
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (open replaces an exited shell)
-    @backlog @mc
+    @mc
     Scenario: Opening a terminal whose shell has ended starts a fresh shell
       Given the thread's default terminal printed "done" and its shell has exited
       When a client opens it again in the same folder
@@ -208,15 +200,13 @@ Feature: Terminal sessions
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (preserves worktree metadata when reopening an
     #   exited session)
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (launch_context keeps worktree_path)
-    @backlog @mc
+    @mc
     Scenario: Opening a terminal whose shell ended on a worktree keeps it on that worktree
       Given the thread's default terminal runs on the worktree "/work/app-feature" and its shell has exited
       When a client opens it again on that worktree
       Then the new shell's snapshot and its started event name the worktree "/work/app-feature"
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (one process per terminal)
-    @backlog @mc
+    @mc
     Scenario: Two clients opening the same terminal at once get one shell
       Given the thread has no terminal "term-2" yet
       When two clients open "term-2" at the same moment
@@ -235,8 +225,7 @@ Feature: Terminal sessions
         | terminal-7  | Terminal 7  |
         | build-watch | build-watch |
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (label is cut to 128 characters)
-    @backlog @mc
+    @mc
     Scenario: A terminal's label is never longer than 128 characters
       When a client opens a terminal whose id is 200 characters long
       Then the terminal is labelled with the first 128 characters of its id
@@ -275,14 +264,14 @@ Feature: Terminal sessions
         | 400       | 400    |
         | 900       | 750    |
 
-    @backlog @desktop
+    @desktop
     Scenario: Shrinking the window pulls a tall terminal back within its limit
       Given the terminal is showing 700 pixels tall in a window 1000 pixels tall
       When the user shrinks the window to 600 pixels tall
       Then the terminal is 450 pixels tall
       And the terminal's shell is resized to match
 
-    @backlog @desktop
+    @desktop
     Scenario: A hidden terminal stops drawing but keeps reading its shell
       Given the terminal is running a build that prints continuously
       When the user hides the terminal
@@ -291,7 +280,7 @@ Feature: Terminal sessions
       When the user shows the terminal again
       Then the terminal is drawn in full and shows the latest output
 
-    @backlog @desktop
+    @desktop
     Scenario: Hiding the terminal does not shrink the shell
       Given the shell is running at 120 columns and 30 rows
       When the user hides the terminal so that it has no size
@@ -331,7 +320,7 @@ Feature: Terminal sessions
       When the user opens another terminal next to it
       Then the new terminal starts in the same folder and worktree as the script
 
-    @backlog @mobile
+    @mobile
     Scenario: The user opens a thread's terminal on the phone
       Given a thread with a running terminal on a paired environment
       When the user opens the thread's terminal on the phone

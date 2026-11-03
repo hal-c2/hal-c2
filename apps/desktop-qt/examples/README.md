@@ -62,7 +62,8 @@ commands built in), the bricks (`TitleBar`, `Sidebar`, `SettingsNav`,
 everything the shell publishes, `Shell.dispatch(action, payload)` to act,
 `Theme.palette.color(role, fallback)` / `Theme.radius` / `Theme.fontUi` /
 `Theme.fontMono`, and `Runtime.reload()`. The centre of the window is a
-`CentreHost` showing `route.kind` and, while `settingsActive`, a
+`CentreHost` showing `route.kind`, with the tabs moved to the centre beside
+the thread, and, while `settingsActive`, a
 `SettingsHost` showing `settingsSection` in its place with the composer
 hidden, as the examples do. MC plugins can add pages: a `ShellTabs` strip
 lists them after Threads (its `pages` is empty while there are none, so show

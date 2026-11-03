@@ -29,6 +29,13 @@ QString screenTexts(World& world) {
   return world.texts().join(QStringLiteral(" | "));
 }
 
+// The terminal of that id on the phone's screen for one.
+void waitForTerminal(World& world, const QString& terminalId) {
+  auto* terminals = world.native().controller<TerminalController>();
+  world.waitFor([&] { return world.find(QStringLiteral("terminalScreen")) && terminals->isOpen() && terminals->activeTerminalId() == terminalId; },
+                [&] { return QStringLiteral("%1; the active one is %2, and the screen says: %3").arg(terminalId, terminals->activeTerminalId(), screenTexts(world)); });
+}
+
 // The rows of the thread list on screen, top to bottom, by title.
 QStringList listedThreads(World& world) {
   QList<std::pair<qreal, QString>> rows;
@@ -47,7 +54,7 @@ QStringList listedThreads(World& world) {
 // The thread list is on screen with the conversation of `title` to its right.
 bool sideBySide(World& world, const QString& title) {
   QQuickItem* list = world.find(QStringLiteral("threadSidebar"));
-  QQuickItem* thread = world.find(QStringLiteral("centreHost"));
+  QQuickItem* thread = world.find(QStringLiteral("routeView"));
   if (!list || !thread || shownThread(world) != title || !listedThreads(world).contains(title)) return false;
   return list->mapToScene(QPointF(list->width(), 0)).x() <= thread->mapToScene(QPointF(0, 0)).x() && thread->width() > 0;
 }
@@ -159,6 +166,7 @@ const Steps steps([] {
   });
 
   step(S("%1 is still shown").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    if (c[0].startsWith(QLatin1String("term-"))) return waitForTerminal(world, c[0]);
     world.waitFor([&] { return oneAtATime(world, c[0]); }, [&] { return S("%1 alone in the narrow window; the screen says: %2").arg(c[0], screenTexts(world)); });
     const QVariantMap route = world.state(S("route")).toMap();
     expect(route.value(S("kind")) == QLatin1String("thread") && route.value(S("threadKey")).toString().endsWith(QLatin1Char(':') + world.thread),
@@ -170,6 +178,7 @@ const Steps steps([] {
   });
 
   step(S("%1 is shown").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    if (c[0].startsWith(QLatin1String("term-"))) return waitForTerminal(world, c[0]);
     world.waitFor([&] { return shownThread(world) == c[0]; }, [&] { return S("%1; the screen shows %2 and says: %3").arg(c[0], shownThread(world), screenTexts(world)); });
   });
 
@@ -252,6 +261,9 @@ const Steps steps([] {
     const QSize size = c[0] == QLatin1String("tablet") ? kTablet : kPhone;
     world.resize(size.width(), size.height());
     pairWithEnvironment(world);
+    // The root settles its layout a moment after the window's size.
+    const QString layout = c[0] == QLatin1String("tablet") ? S("desktop") : S("phone");
+    world.waitFor([&] { return world.window().property("layout") == layout; }, [&] { return S("the %1 layout").arg(layout); });
   });
 
   // What MobileApp does where HAL_C2_HAS_TERMINAL is not defined.
@@ -273,12 +285,13 @@ const Steps steps([] {
     world.sync();
   });
 
-  step(S("the user is told a screen this small has no terminal for it"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return show(world.state(S("toasts"))).contains(S("No terminal on a screen this small")); },
-                  [&] { return S("the notice; the toasts are %1").arg(show(world.state(S("toasts")))); });
-    for (const FakeMc::Rpc& call : std::as_const(world.mc.calls)) {
-      expect(!call.method.startsWith(QLatin1String("terminal.")), S("the environment was asked for %1").arg(call.method));
-    }
+  step(S("the user presses the terminal's key"), [](World& world, const Captures&, const Table&) {
+    world.press(S("mod+j"));
+    world.sync();
+  });
+
+  step(S("the thread's terminal opens on its own screen"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return world.find(S("terminalScreen")) != nullptr; }, [&] { return S("the terminal's screen; the screen says: %1").arg(screenTexts(world)); });
   });
 
   step(S("the terminal's key does nothing"), [](World& world, const Captures&, const Table&) {

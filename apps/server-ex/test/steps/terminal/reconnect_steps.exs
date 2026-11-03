@@ -3,7 +3,7 @@ defmodule HalC2.Steps.Terminal.Reconnect do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
-  alias HalC2.Test.Mc
+  alias HalC2.Test.{Mc, WsClient}
   alias HalC2.Test.Mc.{Terminal, World}
 
   # --- attaching replays history, then streams --------------------------------------
@@ -63,6 +63,9 @@ defmodule HalC2.Steps.Terminal.Reconnect do
   step "one page leaves", context do
     [first, second] = context.pages
     client = Mc.unsub(World.client(context, "default"), first)
+    # An unsub has no reply; the pong to a ping sent after it says it is done.
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {_pong, client} = Mc.await(client, &(&1["t"] == "pong"), 5_000)
 
     context
     |> World.put_client("default", client)
@@ -639,11 +642,13 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     |> Map.put(:snapshot, snapshot)
   end
 
-  # Prints `text` as a line of output; the typed command does not contain it. Returns
-  # with the shell back at its prompt, so the next command typed starts a line.
+  # Prints `text` as a line of output; the typed command does not contain it. The leading
+  # newline keeps it on a line of its own wherever the shell has drawn its prompt, as a
+  # prompt can land between the echoed command and its output. Returns with the shell back
+  # at its prompt, so the next command typed starts a line.
   defp print(context, name, text) do
     {first, rest} = String.split_at(text, 1)
-    context = Terminal.write(context, name, "echo #{first}''\"#{rest}\"\n")
+    context = Terminal.write(context, name, "printf '\\n%s\\n' #{first}''\"#{rest}\"\n")
     {_, _, context} = Terminal.await_output_idle(context, name, line(text))
     context
   end
@@ -703,5 +708,242 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     after
       5_000 -> flunk("no #{inspect(pattern)} from the peer in #{inspect(acc)}")
     end
+  end
+
+  # --- across a close and reopen --------------------------------------------------------------
+
+  step "the terminal is closed and then opened again", context do
+    {{:ok, nil}, context} =
+      World.call(
+        context,
+        "terminal.close",
+        Map.take(context.terminal, ["threadId", "terminalId"]),
+        "ctl"
+      )
+
+    {snapshot, context} =
+      Terminal.open!(
+        Terminal.put_input(
+          context,
+          Terminal.input(context, %{"cwd" => Terminal.mkdir(context, "/work/app")})
+        ),
+        %{},
+        "ctl"
+      )
+
+    Map.put(context, :reopened, snapshot)
+  end
+
+  step "the client is told the terminal closed", context do
+    {_, context} = Terminal.await_event(context, "default", &(&1["type"] == "closed"))
+    context
+  end
+
+  step "receives a snapshot of the new shell", context do
+    {event, context} = Terminal.await_event(context, "default", &(&1["type"] == "snapshot"))
+    assert event["snapshot"]["pid"] == context.reopened["pid"]
+    context
+  end
+
+  step "does not have to attach again", context do
+    {output, context} = Terminal.run(context, "default", "echo still-''here")
+    assert output =~ "still-here"
+    context
+  end
+
+  # --- output during a snapshot ---------------------------------------------------------------
+
+  step "a running terminal whose shell prints as a client attaches", context do
+    {snapshot, context} = Terminal.open!(context)
+    Map.put(context, :snapshot, snapshot)
+  end
+
+  # The terminal is held until the client's attach is in its mailbox, and the output is
+  # put right behind it, the closest output can come to the snapshot.
+  step "the shell prints {string} before the client has taken its snapshot",
+       %{args: [text]} = context do
+    session = Terminal.session(context.terminal)
+    :sys.suspend(session)
+    :erlang.trace(session, true, [:receive])
+
+    id = System.unique_integer([:positive])
+    input = Map.take(context.terminal, ["threadId", "terminalId"])
+    shape = %{"type" => "terminal", "mc" => Atom.to_string(node()), "input" => input}
+    client = Mc.sub(World.client(context, "default"), id, shape)
+
+    assert_receive {:trace, ^session, :receive, {:"$gen_call", _, {:attach, _, _}}}, 5_000
+    send(session, {:stdout, context.snapshot["pid"], text <> "\r\n"})
+    :erlang.trace(session, false, [:receive])
+    :sys.resume(session)
+
+    context
+    |> World.put_client("default", client)
+    |> Map.update(:terminal_subs, %{"default" => id}, &Map.put(&1, "default", id))
+    |> Map.put(:printed, text)
+  end
+
+  step "the client receives its snapshot first", context do
+    {event, context} = Terminal.await_event(context, "default", fn _ -> true end)
+    assert %{"type" => "snapshot", "snapshot" => %{"history" => history}} = event
+    refute history =~ context.printed
+    context
+  end
+
+  step "then receives {string} exactly once", %{args: [text]} = context do
+    context = Terminal.write(context, "default", "echo after-''snapshot\n")
+    {output, events, context} = Terminal.await_output(context, "default", ~r/after-snapshot\r?\n/)
+    assert length(String.split(output, text)) == 2
+    Map.put(context, :after_snapshot, events)
+  end
+
+  step "receives no second snapshot", context do
+    refute Enum.any?(context.after_snapshot, &(&1["type"] == "snapshot"))
+    context
+  end
+
+  # --- output through an exit -----------------------------------------------------------------
+
+  step "the shell prints {string} and {string} and exits at once",
+       %{args: [first, second]} = context do
+    {_, context} = Terminal.attach!(context, "default", Map.delete(context.terminal, "cwd"))
+    quoted = &(String.split_at(&1, 1) |> then(fn {a, b} -> "#{a}''#{b}" end))
+
+    context =
+      Terminal.write(
+        context,
+        "default",
+        "printf '#{quoted.(first)}\\n'; printf '#{quoted.(second)}\\n'; exit 0\n"
+      )
+
+    {output, context} = until_exit(context, "")
+    Map.put(context, :before_exit, output)
+  end
+
+  step "attached clients receive {string}, then {string}, then the exit",
+       %{args: [first, second]} = context do
+    # `until_exit/2` read up to the exit, so all of this came before it.
+    assert context.before_exit =~ ~r/#{first}\r?\n#{second}/
+    context
+  end
+
+  step "a client attaching afterwards receives a snapshot that already includes the exit",
+       context do
+    {snapshot, context} =
+      Terminal.attach!(context, "later", Map.take(context.terminal, ["threadId", "terminalId"]))
+
+    assert %{"status" => "exited", "exitCode" => 0, "history" => history} = snapshot
+    assert history =~ ~r/first\r?\nsecond/
+    context
+  end
+
+  defp until_exit(context, output) do
+    {event, context} = Terminal.await_event(context, "default", fn _ -> true end)
+
+    case event do
+      %{"type" => "exited"} -> {output, context}
+      %{"type" => "output", "data" => data} -> until_exit(context, output <> data)
+      _ -> until_exit(context, output)
+    end
+  end
+
+  # --- ended terminals in memory --------------------------------------------------------------
+
+  step "the MC holds {int} terminals whose shells have ended", %{args: [count]} = context do
+    {running, context} = Terminal.open!(context, %{"terminalId" => "still-running"})
+    path = Path.join(context.mc.home, "short-shell")
+    File.write!(path, "#!/bin/sh\necho ended-output\n")
+    File.chmod!(path, 0o755)
+    Terminal.put_env("SHELL", path)
+    for n <- 1..count, do: end_shell(context, "ended-#{n}")
+    Map.merge(context, %{running: running, ended_count: count})
+  end
+
+  step "another terminal's shell ends", context do
+    keys = for n <- 1..context.ended_count, do: "ended-#{n}"
+    watched = Map.new(keys, &{Process.monitor(Terminal.session(ended_input(context, &1))), &1})
+    before = HalC2.Terminal.Hub.summaries()
+    end_shell(context, "one-more")
+    assert_receive {:DOWN, ref, :process, _, :normal}, 5_000
+    Map.merge(context, %{evicted: Map.fetch!(watched, ref), before_eviction: before})
+  end
+
+  step "the ended terminal that changed least recently is dropped from the MC's list", context do
+    summaries = HalC2.Terminal.Hub.summaries()
+    refute Enum.any?(summaries, &(&1["terminalId"] == context.evicted))
+    # One went: the limit holds, the newest terminal included.
+    assert Enum.any?(summaries, &(&1["terminalId"] == "one-more"))
+    assert Enum.count(summaries, &(&1["status"] in ~w(exited error))) == context.ended_count
+
+    ended = Enum.filter(context.before_eviction, &(&1["status"] in ~w(exited error)))
+    oldest = ended |> Enum.map(& &1["updatedAt"]) |> Enum.min()
+    assert Enum.find(ended, &(&1["terminalId"] == context.evicted))["updatedAt"] == oldest
+    context
+  end
+
+  step "its saved output stays on disk", context do
+    file = Terminal.history_file(context, ended_input(context, context.evicted))
+    assert File.read!(file) =~ "ended-output"
+    context
+  end
+
+  step "a terminal whose shell is running is never dropped", context do
+    assert File.exists?("/proc/#{context.running["pid"]}")
+    assert Enum.any?(HalC2.Terminal.Hub.summaries(), &(&1["terminalId"] == "still-running"))
+    context
+  end
+
+  defp ended_input(context, terminal), do: Terminal.input(context, %{"terminalId" => terminal})
+
+  # Opens a terminal whose shell ends at once, as a process attached to it hears.
+  defp end_shell(context, terminal) do
+    input = ended_input(context, terminal)
+    {:ok, _} = HalC2.Terminal.open(input)
+    {:ok, snapshot} = HalC2.Terminal.attach(Map.delete(input, "cwd"), self())
+
+    if snapshot["status"] not in ~w(exited error),
+      do:
+        assert_receive(
+          {:hal_c2_terminal, _, %{"type" => type}} when type in ~w(exited error),
+          5_000
+        )
+
+    HalC2.Terminal.detach(input["threadId"], terminal, self())
+  end
+
+  # --- the older log layout -------------------------------------------------------------------
+
+  step "the terminal log folder holds an old per-thread file for {string} with the text {string}",
+       %{args: [thread, text]} = context do
+    context = Terminal.ensure(context)
+    input = Terminal.input(context, %{"threadId" => thread})
+    legacy = Path.join(Path.dirname(Terminal.history_file(context, input)), "#{thread}.log")
+    File.mkdir_p!(Path.dirname(legacy))
+    File.write!(legacy, text <> "\r\n")
+    Map.put(context, :legacy_file, legacy)
+  end
+
+  step "a client opens the default terminal of {string}", %{args: [thread]} = context do
+    {snapshot, context} =
+      Terminal.open!(context, %{"threadId" => thread, "terminalId" => "term-1"})
+
+    Map.put(context, :snapshot, snapshot)
+  end
+
+  step "the history begins with {string}", %{args: [text]} = context do
+    assert String.starts_with?(context.snapshot["history"], text)
+    context
+  end
+
+  step "the old file is replaced by the default terminal's own saved file", context do
+    refute File.exists?(context.legacy_file)
+    assert File.read!(Terminal.history_file(context, context.terminal)) =~ "old build"
+    context
+  end
+
+  step "the terminal {string} of that thread does not receive the old text",
+       %{args: [terminal]} = context do
+    {snapshot, context} = Terminal.open!(context, %{"terminalId" => terminal})
+    refute snapshot["history"] =~ "old build"
+    context
   end
 end

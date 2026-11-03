@@ -207,19 +207,20 @@ Feature: Tablet layout and hardware keyboards
     And the terminal's key does nothing
     And the command palette lists no terminal command
 
-  # The terminal wants a keyboard and room (docs/internals/mobile-qt.md); the phone layout draws none.
   @mobile
-  Scenario: A phone with a keyboard has no terminal to open
+  Scenario: A phone with a keyboard opens the thread's terminal on its own screen
     Given a hardware keyboard is attached to a phone
     And the user is in the thread "Tax line"
-    Then the terminal's key does nothing
+    When the user presses the terminal's key
+    Then the thread's terminal opens on its own screen
 
   @mobile
-  Scenario: A project action on a phone says why it does not run
+  Scenario: A project action on a phone runs in a terminal
     Given a hardware keyboard is attached to a phone
     And the user is in the thread "Tax line"
+    And "shop" has the script "test"
     When the user asks for a project action
-    Then the user is told a screen this small has no terminal for it
+    Then "test" runs in a terminal session
 
   # The Android package lets every device rotate, as Android asks of apps on large screens;
   # nothing holds a phone in portrait.

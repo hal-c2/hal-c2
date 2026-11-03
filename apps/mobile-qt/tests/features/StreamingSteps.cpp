@@ -4,7 +4,8 @@
 // and what the phone's timeline makes of it. The timeline is the desktop's
 // TimelineModel and Timeline brick, so the steps read the model as the
 // desktop harness's TimelineSteps.cpp does, and the screen where the phone
-// draws it differently.
+// draws it differently. A reply's shell command run from its code block goes
+// to the thread's terminal as FakeTerminals fakes it.
 
 #include <QClipboard>
 #include <QGuiApplication>
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "FakeTerminals.h"
 #include "FakeThreads.h"
 #include "Harness.h"
 #include "McClient.h"
@@ -265,22 +267,85 @@ qint64 durationOf(const QString& spoken) {
   return std::llround(ms);
 }
 
+// The thread "Tax line", on the scenarios' clock and in US English, opened
+// from the thread list. Its MC names its log, so a phone that comes back
+// resumes from where it was.
+void lookAtThread(World& world) {
+  world.mc.part<FakeStreams>().handle = S("log-1.1");
+  world.thread = haveThread(world, kTitle);
+  turn(world).thread = world.thread;
+  world.setTime(now());
+  store(world)->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
+  openThread(world, kTitle);
+  world.waitFor([&] { return store(world)->activeTimeline() && timeline(world).status() == QLatin1String("live"); },
+                [&] { return S("the thread to follow its MC; the screen says: %1").arg(world.texts().join(S(" | "))); });
+}
+
+void collect(QQuickItem* item, const QString& name, QList<QQuickItem*>& out) {
+  if (item->objectName() == name && item->isVisible()) out.append(item);
+  for (QQuickItem* child : item->childItems()) collect(child, name, out);
+}
+
+// The items named `name` the phone shows.
+QList<QQuickItem*> visible(World& world, const QString& name) {
+  QList<QQuickItem*> items;
+  collect(world.window().contentItem(), name, items);
+  return items;
+}
+
+const QString kCommand = S("bun test cart");
+
+// A reply of a thread on screen holding `block`, written or still streaming.
+void replyWith(World& world, const QString& block, bool streaming = false) {
+  if (world.thread.isEmpty()) lookAtThread(world);
+  startRun(world, 30);
+  addItem(world, S("assistant_message"), {{S("id"), S("reply")}, {S("text"), S("Run the tests:\n\n") + block}, {S("streaming"), streaming},
+                                          {S("status"), streaming ? S("running") : S("completed")}});
+  if (!streaming) settleRun(world, S("completed"), 30);
+  onScreen(world, S("Run the tests:"), false);
+}
+
+QString preferredScript(World& world) {
+  return world.state(S("workspace")).toMap().value(S("preferredScriptId")).toString();
+}
+
+// The workspace's preferred script before the user ran a reply's command.
+struct Before {
+  QString preferred;
+};
+
+// The thread's project offers "lint" first, as if the user had run it last, so
+// a change to the selected script shows.
+void preferScript(World& world) {
+  const QString project = S("shop");
+  QJsonObject row = world.mc.projects.value(project);
+  QJsonArray scripts = row.value(QLatin1String("scripts")).toArray();
+  scripts.append(QJsonObject{{S("id"), S("lint")}, {S("name"), S("Lint")}, {S("command"), S("bun run lint")},
+                             {S("icon"), S("play")}, {S("runOnWorktreeCreate"), false}});
+  row.insert(S("scripts"), scripts);
+  world.mc.projects.insert(project, row);
+  world.native().controller<SettingsController>()->writeDevice(S("lastProjectScripts"),
+                                                                QVariantMap{{world.mc.environmentId + QLatin1Char(':') + project, S("lint")}});
+  QJsonArray rows;
+  rows.append(QJsonArray{project, S("project"), row});
+  world.mc.sendRows(world.mc.name, rows);
+  world.waitFor([&] { return world.state(S("workspace")).toMap().value(S("preferredScriptId")) == S("lint"); },
+                [&] { return S("the project to offer lint first; the workspace is %1").arg(show(world.state(S("workspace")))); });
+}
+
+QString terminalCalls(World& world) {
+  QStringList lines;
+  for (const QJsonObject& call : std::as_const(world.mc.part<terminalfake::FakeTerminals>().calls)) lines.append(show(call));
+  return lines.isEmpty() ? S("(none)") : lines.join(S("; "));
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
   // The thread "Tax line", on the scenarios' clock and in US English, opened
   // from the thread list. Its MC names its log, so a phone that comes back
   // resumes from where it was.
-  step(S("the user is looking at a thread in %1").arg(q), [](World& world, const Captures&, const Table&) {
-    world.mc.part<FakeStreams>().handle = S("log-1.1");
-    world.thread = haveThread(world, kTitle);
-    turn(world).thread = world.thread;
-    world.setTime(now());
-    store(world)->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
-    openThread(world, kTitle);
-    world.waitFor([&] { return store(world)->activeTimeline() && timeline(world).status() == QLatin1String("live"); },
-                  [&] { return S("the thread to follow its MC; the screen says: %1").arg(world.texts().join(S(" | "))); });
-  });
+  step(S("the user is looking at a thread in %1").arg(q), [](World& world, const Captures&, const Table&) { lookAtThread(world); });
 
   // Reasoning.
   step(S("the agent is reasoning before it answers"), [](World& world, const Captures&, const Table&) {
@@ -792,6 +857,53 @@ const Steps steps([] {
     change(world, S("turn-item"), S("reply"), {{S("a"), QJsonObject{{S("text"), S(" now shows tax.")}}}, {S("s"), QJsonObject{{S("streaming"), false}}}});
   });
   step(S("the turn's work folds behind how long it took"), [](World& world, const Captures&, const Table&) { expectFolded(world, S("Worked for 30s")); });
+
+  // A reply's shell command, run from its code block.
+  step(S("the agent's reply has a single-line shell command in a code block"), [](World& world, const Captures&, const Table&) {
+    replyWith(world, S("```bash\n") + kCommand + S("\n```"));
+    preferScript(world);
+  });
+  step(S("the user runs the command from its code block"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<Before>().preferred = preferredScript(world);
+    expect(world.mc.part<Before>().preferred == QLatin1String("lint"), S("the project offers %1 first, not lint").arg(world.mc.part<Before>().preferred));
+    world.waitFor([&] { return visible(world, S("runCode")).size() == 1; },
+                  [&] { return S("the code block to offer Run; %1 offered").arg(visible(world, S("runCode")).size()); });
+    tapStill(world, visible(world, S("runCode")).constFirst());
+    world.sync();
+  });
+  step(S("the command runs in the thread's terminal in the thread's folder"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap workspace = world.state(S("workspace")).toMap();
+    const QString worktree = workspace.value(S("worktreePath")).toString();
+    const QString folder = worktree.isEmpty() ? workspace.value(S("projectRoot")).toString() : worktree;
+    world.waitFor([&] {
+      const auto& calls = world.mc.part<terminalfake::FakeTerminals>().calls;
+      const bool opened = std::any_of(calls.begin(), calls.end(), [&](const QJsonObject& call) {
+        const QJsonObject payload = call.value(QLatin1String("payload")).toObject();
+        return call.value(QLatin1String("method")) == QLatin1String("terminal.open") && payload.value(QLatin1String("threadId")) == world.thread &&
+               payload.value(QLatin1String("terminalId")) == QLatin1String("term-1") && payload.value(QLatin1String("cwd")) == folder;
+      });
+      return opened && !folder.isEmpty() && terminalfake::writes(world, S("term-1")) == QStringList{kCommand + QLatin1Char('\r')};
+    }, [&] { return S("%1 in %2; the MC got %3").arg(kCommand, folder, terminalCalls(world)); });
+  });
+  step(S("the project's selected script is not changed"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(preferredScript(world) == world.mc.part<Before>().preferred,
+           S("the project's script went from %1 to %2").arg(world.mc.part<Before>().preferred, preferredScript(world)));
+  });
+  step(S("the agent's reply has (a shell command still streaming|a shell command that spans several lines|an empty shell block|"
+         "a shell command ending in a backslash|a Python snippet) in a code block"),
+       [](World& world, const Captures& c, const Table&) {
+         if (c[0] == QLatin1String("a shell command still streaming")) replyWith(world, S("```bash\n") + kCommand + S("\n```"), true);
+         else if (c[0] == QLatin1String("a shell command that spans several lines")) replyWith(world, S("```bash\nbun install\nbun test cart\n```"));
+         else if (c[0] == QLatin1String("an empty shell block")) replyWith(world, S("```bash\n\n```"));
+         else if (c[0] == QLatin1String("a shell command ending in a backslash")) replyWith(world, S("```bash\nbun test cart \\\n```"));
+         else replyWith(world, S("```python\nprint(\"cart\")\n```"));
+       });
+  step(S("the code block offers no run action"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !visible(world, S("copyCode")).isEmpty(); }, S("the code block to be drawn"));
+    const qsizetype offered = visible(world, S("runCode")).size();
+    expect(offered == 0, S("the code block offers Run %1 times").arg(offered));
+  });
 });
 
 }  // namespace

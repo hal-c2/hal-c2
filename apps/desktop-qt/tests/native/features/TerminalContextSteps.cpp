@@ -173,14 +173,17 @@ const Steps steps([] {
     expect(text == g_textBefore, QStringLiteral("the draft's text went from %1 to %2").arg(show(g_textBefore), show(text)));
   });
 
-  // An excerpt the store kept without its text.
-  step(QStringLiteral("a restored draft holds a terminal excerpt with no text left"), [](World& world, const Captures&, const Table&) {
-    const QJsonObject excerpt{{QStringLiteral("id"), QStringLiteral("c1")}, {QStringLiteral("terminalId"), QStringLiteral("term-1")},
-                              {QStringLiteral("terminalLabel"), QStringLiteral("Terminal 1")}, {QStringLiteral("lineStart"), 3},
-                              {QStringLiteral("lineEnd"), 5}, {QStringLiteral("text"), QString()}};
+  // Excerpts the store kept without their text.
+  const auto restoredDraft = [](World& world, const QString& text, int count) {
+    QJsonArray excerpts;
+    for (int n = 1; n <= count; ++n) {
+      excerpts.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("c%1").arg(n)}, {QStringLiteral("terminalId"), QStringLiteral("term-1")},
+                                  {QStringLiteral("terminalLabel"), QStringLiteral("Terminal 1")}, {QStringLiteral("lineStart"), 3 + n},
+                                  {QStringLiteral("lineEnd"), 5 + n}, {QStringLiteral("text"), QString()}});
+    }
     const QJsonObject stashed{{QStringLiteral("id"), QStringLiteral("s1")}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00.000Z")},
-                              {QStringLiteral("text"), QStringLiteral("why does this fail?")}, {QStringLiteral("attachments"), QJsonArray()},
-                              {QStringLiteral("terminalContexts"), QJsonArray{excerpt}}};
+                              {QStringLiteral("text"), text}, {QStringLiteral("attachments"), QJsonArray()},
+                              {QStringLiteral("terminalContexts"), excerpts}};
     QDir().mkpath(QDir(world.homeDir()).filePath(QStringLiteral("data")));
     QFile file(QDir(world.homeDir()).filePath(QStringLiteral("data/shell-composer.json")));
     expect(file.open(QIODevice::WriteOnly), QStringLiteral("cannot write %1").arg(file.fileName()));
@@ -189,9 +192,29 @@ const Steps steps([] {
     world.restart();
     openTurnThread(world);
     world.bridge().dispatch(QStringLiteral("composer.stash.restore"), QVariantMap{{QStringLiteral("id"), QStringLiteral("s1")}});
-    world.waitFor([&] { return chips(world).size() == 1 && at(world.state(QStringLiteral("composer")), QStringLiteral("text")) == QLatin1String("why does this fail?"); },
+    world.waitFor([&] { return chips(world).size() == count && at(world.state(QStringLiteral("composer")), QStringLiteral("text")) == text; },
                   [&] { return QStringLiteral("the restored draft; the composer shows %1").arg(show(world.state(QStringLiteral("composer")))); });
     expect(chips(world).first().toMap().value(QStringLiteral("text")).toString().isEmpty(), show(chips(world)));
+  };
+  step(QStringLiteral("a restored draft holds a terminal excerpt with no text left"), [restoredDraft](World& world, const Captures&, const Table&) {
+    restoredDraft(world, QStringLiteral("why does this fail?"), 1);
+  });
+  step(QStringLiteral("the draft reads %1 and holds (one terminal excerpt|two terminal excerpts) whose text is gone").arg(kQuoted), [restoredDraft](World& world, const Captures& c, const Table&) {
+    restoredDraft(world, c[0], c[1].startsWith(QLatin1String("one")) ? 1 : 2);
+  });
+  step(QStringLiteral("the draft holds nothing but a terminal excerpt whose text is gone"), [restoredDraft](World& world, const Captures&, const Table&) {
+    restoredDraft(world, QString(), 1);
+  });
+  step(QStringLiteral("the message is sent without them"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !lastMessage(world).isEmpty(); },
+                  [&] { return QStringLiteral("a message; the MC has %1").arg(world.describeCommands()); });
+    const QString sent = QString::fromUtf8(QJsonDocument(lastMessage(world)).toJson());
+    expect(sent.contains(QLatin1String("Why did this fail?")) && !sent.contains(QLatin1String("Terminal 1")), sent);
+  });
+  step(QStringLiteral("nothing is sent and the draft is kept"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expect(lastMessage(world).isEmpty(), QStringLiteral("the MC has %1").arg(world.describeCommands()));
+    expect(chips(world).size() == 1, show(chips(world)));
   });
   step(QStringLiteral("the user sends the message"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("composer.submit"),

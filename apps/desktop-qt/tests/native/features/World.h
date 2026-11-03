@@ -57,7 +57,8 @@ public:
   // instead of touching the desktop's.
   QString clipboard;
   bool clipboardFails = false;
-  // The system browser refuses what openExternal hands it.
+  // Nothing on this machine can open an address: the system browser refuses
+  // what openExternal hands it.
   bool browserFails = false;
   QList<QUrl> openedUrls;
   // A brick the scenario keeps on screen (DeviceSteps' DevicePanel): it goes

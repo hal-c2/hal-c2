@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// Drags a right-panel tab between the side panel and the stage: laid over
-// the tab, it leaves clicks to the tab and, once the pointer moves, carries a
+// Drags a right-panel tab between the side panel and the stage: put in the
+// tab, it leaves clicks to the tab and, once the pointer moves, carries a
 // chip of the tab over the window to a DropArea taking `PanelTabDrag.key`
 // (the stage's panes, the side panel), which reads the tab from
 // `bodies.dragging`.
@@ -21,6 +21,9 @@ Item {
     DragHandler {
         id: handler
 
+        // On the tab itself: a drag handler on an item laid over a button
+        // takes the button's presses, so it never clicks.
+        parent: dragger.parent
         target: null
         onActiveChanged: {
             if (active) {

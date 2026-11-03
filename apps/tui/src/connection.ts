@@ -93,6 +93,7 @@ import {
   RpcSessionFactory,
   runStream,
   subscribe,
+  subscribeDynamicWithSession,
 } from "@hal-c2/client-runtime/rpc";
 import { ShellSnapshotLoader } from "@hal-c2/client-runtime/state/shell";
 import type { RpcSession } from "@hal-c2/client-runtime/rpc";
@@ -562,7 +563,11 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly loadOlderThreadTurns: (threadId: ThreadId) => boolean;
   /** Last-seen detail for a thread (from the warm cache), or null. Synchronous. */
   readonly peekThread: (threadId: ThreadId) => OrchestrationThread | null;
-  /** Attach to a thread terminal; raw PTY bytes are delivered via onEvent. */
+  /**
+   * Attach to a thread terminal; raw PTY bytes are delivered via onEvent. `ack` tells the
+   * MC everything up to a sequence has been handled: past 64 KiB waiting it stops sending
+   * output, and sends one snapshot when told all of it was (`HalC2.Terminal.OutputWindow`).
+   */
   readonly subscribeTerminal: (
     input: {
       readonly threadId: ThreadId;
@@ -574,7 +579,7 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
       /** What a shell started by this attach finds in its environment. */
       readonly env?: Readonly<Record<string, string>>;
     },
-    onEvent: (event: TerminalAttachStreamEvent) => void,
+    onEvent: (event: TerminalAttachStreamEvent, ack?: (sequence: number) => void) => void,
   ) => () => void;
   /** Start the terminal's shell (again, when it has ended) so a command can be written to it. */
   readonly terminalOpen: (input: {
@@ -999,16 +1004,28 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
     peekThread: (threadId) => latestThreads.get(threadId as string) ?? null,
 
     subscribeTerminal: (input, onEvent) => {
-      const stream = subscribe(WS_METHODS.terminalAttach, {
-        threadId: input.threadId,
-        terminalId: input.terminalId,
-        cwd: input.cwd,
-        worktreePath: input.worktreePath,
-        cols: input.cols,
-        rows: input.rows,
-        ...(input.env ? { env: input.env } : {}),
-        restartIfNotRunning: true,
-      }).pipe(Stream.tap((event) => Effect.sync(() => onEvent(event))));
+      const stream = subscribeDynamicWithSession(WS_METHODS.terminalAttach, () =>
+        Effect.succeed({
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+          cwd: input.cwd,
+          worktreePath: input.worktreePath,
+          cols: input.cols,
+          rows: input.rows,
+          ...(input.env ? { env: input.env } : {}),
+          restartIfNotRunning: true,
+          acks: true,
+        }),
+      ).pipe(
+        Stream.tap(([session, event]) =>
+          Effect.sync(() =>
+            // Tied to the session the event came from: an ack outliving it goes nowhere.
+            onEvent(event, (sequence) =>
+              session.ackTerminal?.(input.threadId, input.terminalId, sequence),
+            ),
+          ),
+        ),
+      );
       return drainStreamUntilUnsubscribe(stream);
     },
 

@@ -5,6 +5,7 @@
 // is Stream.h's; the rows are read from the Timeline brick drawing it, wired
 // as ThreadView wires it.
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
 #include <QRegularExpression>
@@ -15,6 +16,7 @@
 #include "Brick.h"
 #include "FakeTerminals.h"
 #include "Harness.h"
+#include "SettingsController.h"
 #include "Stream.h"
 #include "World.h"
 
@@ -85,13 +87,32 @@ void replyWith(World& world, const QString& block, bool streaming = false) {
 }
 
 QString preferredScript(World& world) {
-  return show(world.state(QStringLiteral("workspace")).toMap().value(QStringLiteral("preferredScriptId")));
+  return world.state(QStringLiteral("workspace")).toMap().value(QStringLiteral("preferredScriptId")).toString();
 }
 
 // The workspace's preferred script before the user ran a reply's command.
 struct Before {
   QString preferred;
 };
+
+// The thread's project offers "lint" first, as if the user had run it last, so
+// a change to the selected script shows.
+void preferScript(World& world) {
+  const QString project = world.mc.threads.value(kThread).value(QLatin1String("projectId")).toString();
+  QJsonObject row = world.mc.projects.value(project);
+  QJsonArray scripts = row.value(QLatin1String("scripts")).toArray();
+  scripts.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("lint")}, {QStringLiteral("name"), QStringLiteral("Lint")}, {QStringLiteral("command"), QStringLiteral("bun run lint")},
+                             {QStringLiteral("icon"), QStringLiteral("play")}, {QStringLiteral("runOnWorktreeCreate"), false}});
+  row.insert(QStringLiteral("scripts"), scripts);
+  world.mc.projects.insert(project, row);
+  world.native().controller<SettingsController>()->writeDevice(QStringLiteral("lastProjectScripts"),
+                                                                QVariantMap{{world.mc.environmentId + QLatin1Char(':') + project, QStringLiteral("lint")}});
+  QJsonArray rows;
+  rows.append(QJsonArray{project, QStringLiteral("project"), row});
+  world.mc.sendRows(world.mc.name, rows);
+  world.waitFor([&] { return world.state(QStringLiteral("workspace")).toMap().value(QStringLiteral("preferredScriptId")) == QStringLiteral("lint"); },
+                [&] { return QStringLiteral("the project to offer lint first; the workspace is %1").arg(show(world.state(QStringLiteral("workspace")))); });
+}
 
 const Steps steps([] {
   const QString q = kQuoted;
@@ -158,9 +179,11 @@ const Steps steps([] {
   // A reply's shell command, run from its code block.
   step(QStringLiteral("the agent's reply has a single-line shell command in a code block"), [](World& world, const Captures&, const Table&) {
     replyWith(world, QStringLiteral("```bash\n") + kCommand + QStringLiteral("\n```"));
+    preferScript(world);
   });
   step(QStringLiteral("the user runs the command from its code block"), [](World& world, const Captures&, const Table&) {
     world.mc.part<Before>().preferred = preferredScript(world);
+    expect(world.mc.part<Before>().preferred == QLatin1String("lint"), QStringLiteral("the project offers %1 first, not lint").arg(world.mc.part<Before>().preferred));
     drawnReply(world);
     world.waitFor([&] { return visible(world, QStringLiteral("runCode")).size() == 1; },
                   [&] { return QStringLiteral("the code block to offer Run; %1 offered").arg(visible(world, QStringLiteral("runCode")).size()); });
