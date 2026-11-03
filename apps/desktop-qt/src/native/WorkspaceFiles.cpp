@@ -145,34 +145,12 @@ void WorkspaceFiles::setTimeline(TimelineModel* timeline) {
   if (m_timeline) disconnect(m_timeline, nullptr, this, nullptr);
   m_timeline = timeline;
   m_stale = false;
-  m_mutation = mutation();
+  m_mutation = m_timeline ? m_timeline->workspaceMutation() : QString();
   if (m_timeline) connect(m_timeline, &TimelineModel::workspaceChanged, this, &WorkspaceFiles::followMutation);
 }
 
-QString WorkspaceFiles::mutation() const {
-  if (!m_timeline) return {};
-  QString item;
-  int ordinal = -1;
-  const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));
-  for (auto it = items.cbegin(); it != items.cend(); ++it) {
-    const QString type = it->value(QLatin1String("type")).toString();
-    if (type != QLatin1String("command_execution") && type != QLatin1String("file_change")) continue;
-    const QString status = it->value(QLatin1String("status")).toString();
-    if (status == QLatin1String("pending") || status == QLatin1String("running") || status == QLatin1String("waiting")) continue;
-    if (const int at = it->value(QLatin1String("ordinal")).toInt(); at > ordinal) {
-      ordinal = at;
-      item = it.key();
-    }
-  }
-  QStringList checkpoints;
-  const QHash<QString, QJsonObject> kept = m_timeline->entities(QStringLiteral("checkpoint"));
-  for (auto it = kept.cbegin(); it != kept.cend(); ++it) checkpoints.append(it.key() + QLatin1Char('=') + it->value(QLatin1String("status")).toString());
-  checkpoints.sort();
-  return item + QLatin1Char('\n') + checkpoints.join(QLatin1Char(','));
-}
-
 void WorkspaceFiles::followMutation() {
-  const QString now = mutation();
+  const QString now = m_timeline ? m_timeline->workspaceMutation() : QString();
   if (now == m_mutation) return;
   m_mutation = now;
   // Only a change that names a media file reads it again: its preview is not

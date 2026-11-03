@@ -110,6 +110,9 @@ whole turn. Comment on a line to add a note to your prompt: the composer carries
 and the lines, and removing its chip takes it back out. A changed file opens in your preferred
 editor from the diff or from the commit review.
 
+On the phone, the **Diff** button in a thread's bar opens the same review on its own screen; tap a
+line to comment on it, and go back to the thread to send the comment with your message.
+
 To work on an existing pull request, run **Start a thread on a pull request…** from the command
 palette, paste its link or number, and choose the local checkout or a new worktree once its title
 and branches are shown.
