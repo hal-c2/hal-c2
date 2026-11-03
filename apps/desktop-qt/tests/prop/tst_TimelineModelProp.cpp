@@ -438,8 +438,8 @@ QString kindOf(const Item& item) {
 // several calls summarizes; a group shows its latest call until opened.
 // The phone's also keeps a turn's first reply in view, and leaves a failed
 // turn open with a row per call; a settled turn leaves out the calls that
-// never ended, and a running latest turn ends in "Thinking" unless its last
-// call is running or went well, or its reply is streaming.
+// never ended, and a starting or running latest turn ends in "Thinking"
+// unless its last call is running or went well, or its reply is streaming.
 QList<Row> project(const Model& model) {
   const Thread& thread = model.held;
   QList<Item> shown;
@@ -578,7 +578,8 @@ QList<Row> project(const Model& model) {
     rows.append(row);
     ++i;
   }
-  if (model.phone && thread.runs.value(latest).status == QLatin1String("running")) {
+  const QString latestStatus = thread.runs.value(latest).status;
+  if (model.phone && (latestStatus == QLatin1String("running") || latestStatus == QLatin1String("starting"))) {
     // The last item on screen, of the last row: a group's latest call.
     Item last;
     for (qsizetype i = shown.size() - 1; i >= 0 && last.id.isEmpty(); --i) {
