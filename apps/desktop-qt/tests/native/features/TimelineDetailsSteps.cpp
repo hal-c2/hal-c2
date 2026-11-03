@@ -264,7 +264,7 @@ const Steps steps([] {
   step(QStringLiteral("the result is (a link titled with the page's title|its title as plain text with no link)"), [](World& world, const Captures& c, const Table&) {
     QQuickItem* result = drawn(world, QStringLiteral("webResult"));
     expect(result->property("text") == QLatin1String("VAT rates"), QStringLiteral("the result reads %1").arg(result->property("text").toString()));
-    QSignalSpy opened(world.brick->root(), SIGNAL(linkActivated(QString)));
+    QSignalSpy opened(world.brick->root(), SIGNAL(linkActivated(QString, bool)));
     click(world, result);
     world.sync();
     if (c[0].startsWith(QLatin1String("a link"))) {

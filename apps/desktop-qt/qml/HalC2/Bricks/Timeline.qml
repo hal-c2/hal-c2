@@ -1829,7 +1829,7 @@ Item {
                                                         }
                                                         TapHandler {
                                                             enabled: webResult.link.length > 0
-                                                            onTapped: root.linkActivated(webResult.link)
+                                                            onTapped: root.linkActivated(webResult.link, false)
                                                         }
                                                     }
                                                 }
