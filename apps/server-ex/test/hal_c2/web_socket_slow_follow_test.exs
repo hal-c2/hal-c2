@@ -73,8 +73,10 @@ defmodule HalC2.Web.SocketSlowFollowTest do
     {_pong, [], client} = ping(client)
 
     :sys.resume(server)
-    # The stream takes the follow, then the socket's unsubscribe for it.
-    assert_receive {:trace, ^server, :receive, {:"$gen_cast", {:unsubscribe, _, _}}}, 1_000
+    # The stream takes the follow, then an unsubscribe for it: the socket's own may
+    # reach the stream first, and does nothing there, so wait for one after the follow.
+    await_trace(server, &match?({:"$gen_call", _, {:subscribe, _, _, _}}, &1))
+    await_trace(server, &match?({:"$gen_cast", {:unsubscribe, _, _}}, &1))
     :erlang.trace(server, false, [:receive])
     assert :sys.get_state(server).subscribers == %{}
 
@@ -102,5 +104,15 @@ defmodule HalC2.Web.SocketSlowFollowTest do
       WsClient.recv_until(client, &(&1["t"] == "events"), 5_000)
 
     assert offset == next
+  end
+
+  # The next message `server` takes that `match?` holds for, in the order it took them.
+  defp await_trace(server, match?) do
+    receive do
+      {:trace, ^server, :receive, message} ->
+        if match?.(message), do: :ok, else: await_trace(server, match?)
+    after
+      1_000 -> flunk("#{inspect(server)} took no such message")
+    end
   end
 end

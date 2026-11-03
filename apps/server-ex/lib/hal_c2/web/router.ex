@@ -439,8 +439,13 @@ defmodule HalC2.Web.Router do
   # The trace id of the client's attempt, from its W3C `traceparent`.
   defp socket_trace(conn) do
     case get_req_header(conn, "traceparent") do
-      [<<_version::binary-size(2), "-", trace::binary-size(32), "-", _rest::binary>> | _] -> trace
-      _ -> nil
+      [<<_version::binary-size(2), "-", trace::binary-size(32), "-", _rest::binary>> | _] ->
+        # Lowercase hex and not all zeros (W3C), as it goes into log lines.
+        if trace =~ ~r/\A[0-9a-f]{32}\z/ and trace != String.duplicate("0", 32),
+          do: trace
+
+      _ ->
+        nil
     end
   end
 

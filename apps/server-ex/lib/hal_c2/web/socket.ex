@@ -1690,6 +1690,7 @@ defmodule HalC2.Web.Socket do
           # The follow may yet be taken: told here, and again by `followed/3` if it is.
           {tag, follow} ->
             :erpc.cast(follow.mc, HalC2.Streams, :unsubscribe, [follow.stream_id, self(), tag])
+            unwatch_node(follow.mc)
             %{state | following: Map.delete(state.following, tag)}
 
           nil ->
