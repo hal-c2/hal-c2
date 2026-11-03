@@ -105,30 +105,93 @@ defmodule HalC2.StreamsColdTest do
     end
   end
 
-  test "an older MC's snapshot migrates, read whole or folded from the log", %{path: path} do
+  test "an older MC's snapshot that fits migrates as it loads", %{path: path} do
     for i <- 1..8, do: run("th", i, 3)
     stop("th")
     whole = whole(path, "th")
+    legacy = legacy(path, "th", nil)
 
-    legacy =
-      path |> Store.reduce_stream("th", 0, StreamState.new(), &StreamState.apply_event(&2, &1))
+    sql!(path, "DELETE FROM hot_snapshots")
+    sql!(path, "DELETE FROM cold")
+    put_legacy(path, "th", legacy.seq, legacy)
 
-    legacy = %{Map.from_struct(legacy) | v: 3} |> Map.drop([:floor, :dirty, :src])
-    legacy = Map.put(legacy, :__struct__, StreamState)
+    state = StreamState.load(path, "th", store: Store, max_legacy: 100_000_000)
+    assert state.floor != nil
+    assert rows(state) == whole
+    # Migrated once: the older snapshot is gone and a hot one stands in its place.
+    assert {_, %StreamState{v: 4}} = Store.get_snapshot(path, "th")
+    assert Store.legacy_snapshot(path, "th", 100_000_000) == nil
+    assert rows(StreamState.load(path, "th")) == whole
+  end
 
-    for max <- [1, 100_000_000] do
-      sql!(path, "DELETE FROM hot_snapshots")
-      sql!(path, "DELETE FROM cold")
-      put_legacy(path, "th", legacy.seq, legacy)
+  test "a long one's hot part is read one entity at a time, as demote leaves it", %{path: path} do
+    for i <- 1..8, do: run("th", i, 3)
+    legacy = legacy(path, "th", nil)
+    blob = :erlang.term_to_binary(legacy, [:compressed])
 
-      state = StreamState.load(path, "th", store: Store, max_legacy: max)
-      assert state.floor != nil
-      assert rows(state) == whole
-      # Migrated once: the older snapshot is gone and a hot one stands in its place.
-      assert {_, %StreamState{v: 4}} = Store.get_snapshot(path, "th")
-      assert Store.legacy_snapshot(path, "th", 100_000_000) == nil
-      assert rows(StreamState.load(path, "th")) == whole
+    {hot, plan} = StreamState.Legacy.hot(blob, StreamState.hot_items(), MapSet.new())
+    {demoted, rows} = StreamState.demote(StreamState.migrate(legacy), StreamState.hot_items())
+
+    assert hot.entities == demoted.entities
+
+    assert {hot.floor, hot.tally, hot.created, hot.changed} ==
+             {demoted.floor, demoted.tally, demoted.created, demoted.changed}
+
+    cold = fn blob ->
+      self = self()
+      :ok = StreamState.Legacy.cold(blob, plan, 5, &send(self, {:rows, &1}))
+
+      Stream.repeatedly(fn -> receive(do: ({:rows, r} -> r), after: (0 -> nil)) end)
+      |> Enum.take_while(& &1)
+      |> Enum.concat()
     end
+
+    assert Enum.sort(cold.(blob)) == Enum.sort(rows)
+    # An uncompressed one too.
+    assert Enum.sort(cold.(:erlang.term_to_binary(legacy))) == Enum.sort(rows)
+  end
+
+  test "a long one serves at once and writes its cold part in the background", %{path: path} do
+    previous = Application.get_env(:hal_c2, :stream_max_legacy_bytes)
+    Application.put_env(:hal_c2, :stream_max_legacy_bytes, 1)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :stream_max_legacy_bytes, previous),
+        else: Application.delete_env(:hal_c2, :stream_max_legacy_bytes)
+    end)
+
+    for i <- 1..8, do: run("th", i, 3)
+    # Changed after the older MC's snapshot: it stays in memory for the log to apply to.
+    {:ok, last} =
+      Streams.commit("th", :thread, [{"turn-item", "r1-i1", %{"a" => %{"text" => "!"}}}])
+
+    stop("th")
+    legacy = legacy(path, "th", last - 1)
+
+    sql!(path, "DELETE FROM hot_snapshots")
+    sql!(path, "DELETE FROM cold")
+    put_legacy(path, "th", legacy.seq, legacy)
+
+    pid = Streams.ensure("th")
+    state = Streams.state("th")
+    assert StreamState.fetch(state, "turn-item", "r1-i1")["text"] == "1.1!"
+    # Read by another process, the cold part is there once it is written.
+    assert rows(state) == whole(path, "th")
+
+    # A change to an entity the migration is writing waits for it.
+    {:ok, _} = Streams.commit("th", :thread, [{"turn-item", "r2-i1", %{"a" => %{"text" => "?"}}}])
+    :ok = Server.await_cold(pid)
+
+    state = Streams.state("th")
+    assert StreamState.fetch(state, "turn-item", "r2-i1")["text"] == "2.1?"
+    assert rows(state) == whole(path, "th")
+    assert StreamState.migration(state) == nil
+    assert Store.legacy_snapshot(path, "th", 100_000_000) == nil
+    assert {_, %StreamState{v: 4}} = Store.get_snapshot(path, "th")
+
+    stop("th")
+    assert rows(Streams.state("th")) == whole(path, "th")
   end
 
   test "the transcript counts what a whole fold shows, cold items included", %{path: path} do
@@ -256,6 +319,18 @@ defmodule HalC2.StreamsColdTest do
     ref = Process.monitor(pid)
     GenServer.stop(pid)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}
+  end
+
+  # What an older MC kept of a stream as of `seq` (all of it with `nil`): every entity.
+  defp legacy(path, id, seq) do
+    legacy =
+      path
+      |> Store.reduce_stream(id, 0, StreamState.new(), fn event, state ->
+        if seq == nil or event.seq <= seq, do: StreamState.apply_event(state, event), else: state
+      end)
+
+    legacy = %{Map.from_struct(legacy) | v: 3} |> Map.drop([:floor, :dirty, :src])
+    Map.put(legacy, :__struct__, StreamState)
   end
 
   defp put_legacy(path, id, seq, state) do

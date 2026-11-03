@@ -352,21 +352,30 @@ defmodule HalC2.StreamState do
 
   defp count(tally, _kind, _run, _entity, _by), do: tally
 
+  @doc false
+  # One more cold turn item of `run` in a tally (`tally/1`).
+  def count_tag(tally, run, item), do: count(tally, "turn-item", run, item, 1)
+
   # The cold rows of `keys` still current: neither in memory nor stale.
-  defp cold(%{floor: floor, src: {path, id}} = state, keys) when floor != nil do
+  defp cold(%{floor: floor, src: src} = state, keys) when floor != nil and src != nil do
     keys =
       Enum.reject(keys, fn {kind, eid} = key ->
         Map.has_key?(state.dirty, key) or Map.has_key?(get(state, kind), eid)
       end)
 
-    Store.cold_rows(path, id, keys)
+    if keys == [] do
+      []
+    else
+      {path, id} = source(src)
+      Store.cold_rows(path, id, keys)
+    end
   end
 
   defp cold(_state, _keys), do: []
 
   # The current cold rows a page at a time, in `order` from after `after_seq`.
-  defp cold_pages(%{floor: floor, src: {path, id}} = state, order, after_seq, opts)
-       when floor != nil do
+  defp cold_pages(%{floor: floor, src: src} = state, order, after_seq, opts)
+       when floor != nil and src != nil do
     at = if order == :created, do: 3, else: 4
 
     after_seq
@@ -375,6 +384,8 @@ defmodule HalC2.StreamState do
         nil
 
       after_seq ->
+        {path, id} = source(src)
+
         case Store.cold_page(path, id, order, after_seq, @page, opts) do
           [] ->
             nil
@@ -388,6 +399,15 @@ defmodule HalC2.StreamState do
   end
 
   defp cold_pages(_state, _order, _after, _opts), do: []
+
+  # Where the cold rows are read from. Those of a migrating stream are there once
+  # its migration wrote them.
+  defp source({:migrating, path, id, pid, _plan}) do
+    :ok = HalC2.Streams.Server.await_cold(pid)
+    {path, id}
+  end
+
+  defp source(src), do: src
 
   defp stale?(state, {kind, id, _, _, _, _}),
     do: Map.has_key?(state.dirty, {kind, id}) or Map.has_key?(get(state, kind), id)
@@ -522,11 +542,20 @@ defmodule HalC2.StreamState do
 
   defp cold?(_run, _floor), do: false
 
-  # The ordinal of the oldest of the newest runs that hold `items` turn items in
-  # memory together; `nil` when all of them hold fewer.
+  # The floor for what memory holds now.
   defp tail(state, runs, items) do
     counts = state |> get("turn-item") |> Enum.frequencies_by(fn {_, item} -> item["runId"] end)
+    floor_for(runs, counts, items)
+  end
 
+  @doc """
+  The ordinal of the oldest of the newest `runs` (by id) that hold `items` turn
+  items together, given how many each holds (`counts`, by run id); `nil` when all of
+  them hold fewer. That is the floor `demote/2` moves below.
+  """
+  @spec floor_for(%{String.t() => map}, %{String.t() => non_neg_integer}, pos_integer) ::
+          integer | nil
+  def floor_for(runs, counts, items) do
     runs
     |> Enum.map(fn {id, run} -> {ordinal(run), Map.get(counts, id, 0)} end)
     |> Enum.sort(:desc)
@@ -538,6 +567,10 @@ defmodule HalC2.StreamState do
       _ -> nil
     end
   end
+
+  @doc "Whether a run's entities go cold below `floor`: it settled, and is below it."
+  @spec cold_run?(map | nil, integer | nil) :: boolean
+  def cold_run?(run, floor), do: cold?(run, floor)
 
   defp ordinal(run), do: run["ordinal"] || 0
 
@@ -562,15 +595,17 @@ defmodule HalC2.StreamState do
   With `store:` (a `HalC2.Store`), the stream's own process loads it: a stream
   without a hot snapshot migrates, and memory is kept to the hot part as it
   folds, the cold rows and a hot snapshot written to that store along the way. An
-  older MC's snapshot is read whole only below `:max_legacy` bytes; a longer
-  thread is folded from its log instead, never all in memory at once.
+  older MC's snapshot is read whole only below `:max_legacy` bytes. A longer one is
+  read one entity at a time for its hot part (`HalC2.StreamState.Legacy.hot/3`),
+  and the state comes back *migrating* (`migration/1`): its cold rows are not
+  written yet, and every read of them waits until they are.
   """
   @spec load(String.t(), String.t(), keyword) :: t
   def load(path, stream_id, opts \\ []) do
     store = Keyword.get(opts, :store)
     src = {path, stream_id}
 
-    {after_seq, state, hot?} =
+    loaded =
       case Store.get_snapshot(path, stream_id) do
         {seq, %{} = snapshot} ->
           {seq, %{migrate(snapshot) | src: src}, true}
@@ -580,27 +615,72 @@ defmodule HalC2.StreamState do
 
           case Store.legacy_snapshot(path, stream_id, max_bytes(max)) do
             {seq, %{} = snapshot} -> {seq, %{migrate(snapshot) | src: src}, false}
+            {:too_big, _seq} -> load_legacy(path, stream_id)
             _ -> {0, %{new() | src: src}, false}
           end
       end
 
-    folded =
-      path
-      |> Store.reduce_stream(stream_id, after_seq, {state, []}, fn event, {state, batch} ->
-        if length(batch) >= @page,
-          do: {fold(state, Enum.reverse([event | batch]), store), []},
-          else: {state, [event | batch]}
-      end)
-      |> then(fn {state, batch} -> fold(state, Enum.reverse(batch), store) end)
+    case loaded do
+      {:migrating, state} ->
+        state
 
-    folded = if store, do: compact(folded, store), else: folded
+      {after_seq, state, hot?} ->
+        folded =
+          path
+          |> Store.reduce_stream(stream_id, after_seq, {state, []}, fn event, {state, batch} ->
+            if length(batch) >= @page,
+              do: {fold(state, Enum.reverse([event | batch]), store), []},
+              else: {state, [event | batch]}
+          end)
+          |> then(fn {state, batch} -> fold(state, Enum.reverse(batch), store) end)
 
-    if store && not hot? && folded.seq > 0,
-      do: write(folded, store, [], folded.floor == nil),
-      else: folded
+        folded = if store, do: compact(folded, store), else: folded
+
+        if store && not hot? && folded.seq > 0,
+          do: write(folded, store, [], folded.floor == nil),
+          else: folded
+    end
   end
 
-  defp max_legacy, do: Application.get_env(:hal_c2, :stream_max_legacy_bytes, 16 * 1024 * 1024)
+  # The hot part of a long legacy snapshot, and the events after it. What they touch
+  # is kept in memory, so none of them needs a cold row that is not written yet.
+  defp load_legacy(path, stream_id) do
+    {seq, blob} = Store.legacy_blob(path, stream_id)
+
+    keep =
+      Store.reduce_stream(path, stream_id, seq, MapSet.new(), fn %{kind: kind, entity: id},
+                                                                 keys ->
+        MapSet.put(keys, {kind, id})
+      end)
+
+    {state, plan} = HalC2.StreamState.Legacy.hot(blob, hot_items(), keep)
+    state = Store.reduce_stream(path, stream_id, seq, state, &apply_event(&2, &1))
+
+    case plan do
+      # Nothing went cold: the hot snapshot is the whole one, written as for a short thread.
+      nil -> {state.seq, %{state | src: {path, stream_id}}, false}
+      plan -> {:migrating, %{state | src: {:migrating, path, stream_id, self(), plan}}}
+    end
+  end
+
+  @doc """
+  What a state `load/3` left migrating still needs written: the plan for
+  `HalC2.StreamState.Legacy.cold/4`, or `nil`.
+  """
+  @spec migration(t) :: map | nil
+  def migration(%{src: {:migrating, _path, _id, _pid, plan}}), do: plan
+  def migration(_state), do: nil
+
+  @doc "The state once its migration's cold rows are written: it reads them as any other's."
+  @spec migrated(t) :: t
+  def migrated(%{src: {:migrating, path, id, _pid, _plan}} = state),
+    do: %{state | src: {path, id}}
+
+  def migrated(state), do: state
+
+  @doc "Bytes of an older MC's snapshot `load/3` reads whole; a longer one migrates in the background."
+  @spec max_legacy() :: non_neg_integer
+  def max_legacy, do: Application.get_env(:hal_c2, :stream_max_legacy_bytes, 16 * 1024 * 1024)
 
   defp max_bytes(:infinity), do: 9_223_372_036_854_775_807
   defp max_bytes(n), do: n
@@ -619,6 +699,9 @@ defmodule HalC2.StreamState do
   and a hot snapshot to `store`: they must be on disk before memory lets them go.
   """
   @spec compact(t, GenServer.server()) :: t
+  # A migrating stream's cold rows are being written: nothing moves until they are.
+  def compact(%{src: {:migrating, _path, _id, _pid, _plan}} = state, _store), do: state
+
   def compact(state, store) do
     with true <- demote?(state, hot_items()),
          {demoted, rows} <- demote(state, hot_items()) do

@@ -217,7 +217,25 @@ defmodule HalC2.Store do
     )
   end
 
+  @doc """
+  Writes cold rows for a stream without a snapshot, the way a migration from an
+  older MC's snapshot writes them a batch at a time (`HalC2.StreamState.Legacy`):
+  with `reset?` every cold row of the stream goes first. They mean nothing until a
+  hot snapshot is written with them in mind.
+  """
+  @spec put_cold(GenServer.server(), String.t(), [cold_row], boolean) ::
+          :ok | {:error, :unknown_stream}
+  def put_cold(store \\ __MODULE__, stream_id, rows, reset?) do
+    rows =
+      for {kind, id, run, created, changed, entity} <- rows,
+          do: [kind, id, run, created, changed, {:blob, encode_term(entity)}]
+
+    write(store, {:put_cold, stream_id, rows, reset?})
+  end
+
   defp encode_term(term), do: :erlang.term_to_binary(term, [:compressed])
+
+  @put_cold "INSERT INTO cold (stream, kind, id, run, created, changed, entity) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(stream, kind, id) DO UPDATE SET run = excluded.run, created = excluded.created, changed = excluded.changed, entity = excluded.entity"
 
   @doc """
   Stores a stream's sidebar row (see `HalC2.Projection.row/3`) as of `seq`. The stream
@@ -547,6 +565,39 @@ defmodule HalC2.Store do
     end)
   end
 
+  @doc "The whole-stream snapshot an older MC wrote, still encoded: `{seq, blob}`, or `nil`."
+  @spec legacy_blob(String.t(), String.t()) :: {non_neg_integer, binary} | nil
+  def legacy_blob(path, stream_id) do
+    sql =
+      "SELECT n.seq, n.state FROM snapshots n JOIN streams s ON s.key = n.stream WHERE s.id = ?1"
+
+    with_query(path, sql, [stream_id], fn db, stmt ->
+      case Sqlite3.step(db, stmt) do
+        {:row, [seq, state]} -> {seq, state}
+        :done -> nil
+      end
+    end)
+  end
+
+  @doc """
+  The streams with no hot snapshot whose older MC's snapshot takes more than
+  `min_bytes` stored, the most recently changed first: those whose first load
+  migrates a long thread.
+  """
+  @spec legacy_streams(String.t(), non_neg_integer) :: [String.t()]
+  def legacy_streams(path, min_bytes) do
+    sql = """
+    SELECT s.id FROM snapshots n JOIN streams s ON s.key = n.stream
+    WHERE length(n.state) > ?1
+      AND NOT EXISTS (SELECT 1 FROM hot_snapshots h WHERE h.stream = n.stream)
+    ORDER BY n.seq DESC
+    """
+
+    with_query(path, sql, [min_bytes], fn db, stmt ->
+      db |> step_reduce(stmt, [], fn [id], acc -> [id | acc] end) |> Enum.reverse()
+    end)
+  end
+
   @doc "The cold rows of `keys` (`{kind, id}`) that a stream holds, in no order."
   @spec cold_rows(String.t(), String.t(), [{String.t(), String.t()}]) :: [cold_row]
   def cold_rows(_path, _stream_id, []), do: []
@@ -846,6 +897,22 @@ defmodule HalC2.Store do
     end
   end
 
+  def handle_call({:put_cold, stream_id, rows, reset?}, _from, state) do
+    with_existing_stream(state, stream_id, fn key ->
+      :ok = Sqlite3.execute(state.db, "BEGIN IMMEDIATE")
+
+      try do
+        if reset?, do: :ok = exec(state.db, "DELETE FROM cold WHERE stream = ?1", [key])
+        each(state.db, @put_cold, [key], rows)
+        :ok = Sqlite3.execute(state.db, "COMMIT")
+      rescue
+        error ->
+          Sqlite3.execute(state.db, "ROLLBACK")
+          {:error, error}
+      end
+    end)
+  end
+
   def handle_call({:put_snapshot, stream_id, seq, blob, cold}, _from, state) do
     with_existing_stream(state, stream_id, fn key ->
       :ok = Sqlite3.execute(state.db, "BEGIN IMMEDIATE")
@@ -860,12 +927,7 @@ defmodule HalC2.Store do
           cold.delete
         )
 
-        each(
-          state.db,
-          "INSERT INTO cold (stream, kind, id, run, created, changed, entity) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(stream, kind, id) DO UPDATE SET run = excluded.run, created = excluded.created, changed = excluded.changed, entity = excluded.entity",
-          [key],
-          cold.put
-        )
+        each(state.db, @put_cold, [key], cold.put)
 
         :ok =
           exec(

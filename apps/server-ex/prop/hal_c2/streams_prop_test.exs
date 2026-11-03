@@ -19,7 +19,9 @@ defmodule HalC2.StreamsPropTest do
 
   Memory holds a single run's turn items, so settled runs go cold and are read back
   from disk (`HalC2.StreamState`, "Hot and cold"): nothing a subscriber is sent, and
-  nothing a read of the stream returns, may tell.
+  nothing a read of the stream returns, may tell. A stream can also be stopped and left
+  as an older MC left it, one whole snapshot as of some recent event, which the next
+  start migrates in the background while it serves: nobody may tell that either.
 
   A client's subscription may carry a tag, a new one each time it follows, as a
   socket mints them. Its messages come under that tag, and the subscription it
@@ -76,8 +78,13 @@ defmodule HalC2.StreamsPropTest do
     hot = Application.get_env(:hal_c2, :stream_hot_items)
     Application.put_env(:hal_c2, :stream_hot_items, 1)
 
+    # Every older MC's snapshot is too long to read whole: it migrates in the background.
+    max_legacy = Application.get_env(:hal_c2, :stream_max_legacy_bytes)
+    Application.put_env(:hal_c2, :stream_max_legacy_bytes, 1)
+
     HalC2.Prop.start_services([
       {Store, path: Store.home_path()},
+      Streams.Migrations,
       Streams
     ])
 
@@ -92,6 +99,10 @@ defmodule HalC2.StreamsPropTest do
       if hot,
         do: Application.put_env(:hal_c2, :stream_hot_items, hot),
         else: Application.delete_env(:hal_c2, :stream_hot_items)
+
+      if max_legacy,
+        do: Application.put_env(:hal_c2, :stream_max_legacy_bytes, max_legacy),
+        else: Application.delete_env(:hal_c2, :stream_max_legacy_bytes)
     end
   end
 
@@ -128,6 +139,7 @@ defmodule HalC2.StreamsPropTest do
       {2, {:call, __MODULE__, :subscribers, [stream()]}},
       {1, {:call, __MODULE__, :idle_stop, [stream()]}},
       {1, {:call, __MODULE__, :crash_stream, [stream(), oneof([:kill, :boom])]}},
+      {3, {:call, __MODULE__, :to_legacy, [stream(), integer(0, 3)]}},
       {1, {:call, __MODULE__, :restart_streams, []}},
       {1, {:call, __MODULE__, :restart_store, []}},
       {2, {:call, __MODULE__, :bulk, [stream(), oneof([600, @max_replay + 1])]}}
@@ -450,6 +462,9 @@ defmodule HalC2.StreamsPropTest do
     do: %{state | subs: Map.reject(state.subs, fn {{n, _}, _} -> n == name end)}
 
   def next_state(state, _result, {:call, _, :crash_stream, [id, _]}),
+    do: stop_subs(state, fn {_, s} -> s == id end)
+
+  def next_state(state, _result, {:call, _, :to_legacy, [id, _]}),
     do: stop_subs(state, fn {_, s} -> s == id end)
 
   def next_state(state, _result, {:call, _, :restart_streams, []}),
@@ -892,6 +907,51 @@ defmodule HalC2.StreamsPropTest do
       [] ->
         :ok
     end
+  end
+
+  # The stream stops, and its storage is left as an older MC left it: no hot snapshot
+  # nor cold rows, one whole snapshot as of `back` events before its last instead.
+  def to_legacy(id, back) do
+    crash_stream(id, :kill)
+    path = Store.path()
+    last = Store.reduce_stream(path, id, 0, 0, fn event, _ -> event.seq end)
+    at = max(last - back, 0)
+
+    legacy =
+      Store.reduce_stream(path, id, 0, StreamState.new(), fn event, state ->
+        if event.seq <= at, do: StreamState.apply_event(state, event), else: state
+      end)
+
+    if last > 0 do
+      legacy = %{Map.from_struct(legacy) | v: 3} |> Map.drop([:floor, :dirty, :src])
+      blob = :erlang.term_to_binary(Map.put(legacy, :__struct__, StreamState), [:compressed])
+      {:ok, db} = Exqlite.Sqlite3.open(path)
+
+      try do
+        for sql <- [
+              "DELETE FROM hot_snapshots WHERE stream = (SELECT key FROM streams WHERE id = ?1)",
+              "DELETE FROM cold WHERE stream = (SELECT key FROM streams WHERE id = ?1)"
+            ],
+            do: sql!(db, sql, [id])
+
+        sql!(
+          db,
+          "INSERT INTO snapshots (stream, seq, state) SELECT key, ?2, ?3 FROM streams WHERE id = ?1 ON CONFLICT(stream) DO UPDATE SET seq = excluded.seq, state = excluded.state",
+          [id, at, {:blob, blob}]
+        )
+      after
+        Exqlite.Sqlite3.close(db)
+      end
+    end
+
+    :ok
+  end
+
+  defp sql!(db, sql, args) do
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(db, sql)
+    :ok = Exqlite.Sqlite3.bind(stmt, args)
+    :done = Exqlite.Sqlite3.step(db, stmt)
+    :ok = Exqlite.Sqlite3.release(db, stmt)
   end
 
   def restart_streams, do: HalC2.Prop.restart_service(Streams)

@@ -62,7 +62,11 @@ beside a snapshot of the hot part, and both are a cache that can be rebuilt from
 ([`HalC2.StreamState`](../../apps/server-ex/lib/hal_c2/stream_state.ex), "Hot and cold"). Code
 that reads a thread's history reads through to disk (`fetch/3`, `all/2`, `run_rows/2`), never
 `get/2`: a check that only looks in memory passes on a short test thread and is wrong on a real
-one. An event to an older run's entity brings that entity back to memory before it applies.
+one. An event to an older run's entity brings that entity back to memory before it applies. A
+thread an older MC kept as one whole snapshot opens with its hot part only, read from that snapshot
+an entity at a time, and its cold rows are written in the background, one thread at a time
+(`HalC2.Streams.Migrations`); until they are, a read of them waits, so nothing that serves a
+client may read cold rows before it answers.
 
 A command's acknowledgement means its intent committed, not that the provider, checkpoint, or
 other follow-up work finished. Command receipts are kept in the store's meta table so a retried
