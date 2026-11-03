@@ -1,11 +1,23 @@
-import { WS_METHODS } from "@hal-c2/contracts";
+import {
+  OrchestrationV2AppThread,
+  ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2ThreadStreamItem,
+  WS_METHODS,
+} from "@hal-c2/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ClusterRpcError, type ClusterSocket, type ShapeFrame } from "./clusterSocket.ts";
-import { makeV3Session } from "./session.ts";
+import { v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
+import {
+  ClusterRpcError,
+  type ClusterSocket,
+  type ShapeFrame,
+  type StreamResumePoint,
+} from "./clusterSocket.ts";
+import { makeV3Session, ThreadResumes } from "./session.ts";
 
 const ENVIRONMENT = "environment-here";
 
@@ -267,6 +279,84 @@ describe("makeV3Session", () => {
       );
 
       expect(error.message).toContain("settings.json cannot be read");
+    }),
+  );
+});
+
+describe("makeV3Session thread resumes", () => {
+  const thread = Schema.encodeSync(Schema.toCodecJson(OrchestrationV2AppThread))(
+    v2Projection.thread,
+  ) as Record<string, unknown>;
+
+  /** A socket whose thread stream sends a snapshot at offset 9 and an event at 12. */
+  function socketStreaming() {
+    const resumes: Array<StreamResumePoint | undefined> = [];
+    const socket = {
+      subscribe: (_shape: unknown, listener: (frame: ShapeFrame) => void) => {
+        queueMicrotask(() => listener({ t: "config", mc: "hal_c2@here", config: CONFIG }));
+        return () => {};
+      },
+      subscribeWindow: (
+        _shape: unknown,
+        _items: number,
+        listener: (frame: ShapeFrame) => void,
+        _floor: unknown,
+        resume?: StreamResumePoint,
+      ) => {
+        resumes.push(resume);
+        queueMicrotask(() => {
+          listener({
+            t: "snapshot",
+            rows: [["thread", v2ThreadId, thread]],
+            part: 0,
+            done: true,
+            offset: 9,
+            floor: null,
+          });
+          listener({ t: "events", offset: 12, events: [[12, "thread", v2ThreadId, {}, 12]] });
+        });
+        return {
+          unsubscribe: () => {},
+          more: () => true,
+          resumePoint: () => ({ offset: 12, floor: null, handle: "log-1" }),
+        };
+      },
+    } as unknown as ClusterSocket;
+    return { socket, resumes };
+  }
+
+  const subscribe = (
+    socket: ClusterSocket,
+    store: ThreadResumes,
+    request: Record<string, unknown>,
+  ) =>
+    Effect.gen(function* () {
+      const session = yield* makeV3Session({ socket, environmentId: ENVIRONMENT, resumes: store });
+      const thread = session.client[ORCHESTRATION_V2_WS_METHODS.subscribeThread] as unknown as (
+        request: unknown,
+      ) => Stream.Stream<OrchestrationV2ThreadStreamItem>;
+      return yield* Stream.runCollect(
+        thread({ threadId: v2ThreadId, ...request }).pipe(Stream.take(2)),
+      );
+    });
+
+  it.effect("carries a replaced session's stream on when the thread state holds all of it", () =>
+    Effect.gen(function* () {
+      const { socket, resumes } = socketStreaming();
+      const store = new ThreadResumes();
+      yield* subscribe(socket, store, {});
+      yield* subscribe(socket, store, { afterSequence: 12 });
+      expect(resumes).toEqual([undefined, { offset: 12, floor: null, handle: "log-1" }]);
+    }),
+  );
+
+  it.effect("loads the thread again when the thread state is behind the stream", () =>
+    Effect.gen(function* () {
+      const { socket, resumes } = socketStreaming();
+      const store = new ThreadResumes();
+      yield* subscribe(socket, store, {});
+      yield* subscribe(socket, store, { afterSequence: 9 });
+      expect(resumes).toEqual([undefined, undefined]);
     }),
   );
 });

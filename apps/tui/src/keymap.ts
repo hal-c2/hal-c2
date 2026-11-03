@@ -185,7 +185,7 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "h", description: "Spaces: a page's history", chords: ["h"] },
       {
         keys: "f",
-        description: "Spaces: a page from a project's files, or a page's own file",
+        description: "Spaces: a page's own file",
         chords: ["f"],
       },
       {

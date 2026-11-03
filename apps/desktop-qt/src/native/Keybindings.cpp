@@ -76,6 +76,10 @@ QList<Rule> buildDefaults() {
       rule(QStringLiteral("mod+shift+s"), QStringLiteral("thread.settle"), notTerminal),
       rule(QStringLiteral("mod+shift+p"), QStringLiteral("thread.pin"), notTerminal),
       rule(QStringLiteral("mod+alt+p"), QStringLiteral("space.open"), notTerminal),
+      // The stage (desktop only): the panel's tab to the centre and back, and
+      // the timeline beside it.
+      rule(QStringLiteral("mod+alt+s"), QStringLiteral("stage.moveTab"), notTerminal),
+      rule(QStringLiteral("mod+alt+f"), QStringLiteral("stage.toggleFocus"), notTerminal),
       rule(QStringLiteral("mod+z"), QStringLiteral("thread.undo"), QStringLiteral("!terminalFocus && !editableFocus")),
   };
   for (int n = 1; n <= 9; ++n) {
@@ -337,6 +341,9 @@ const QStringList& commands() {
                  QStringLiteral("thread.next"), QStringLiteral("thread.copyReference"), QStringLiteral("thread.settle"),
                  QStringLiteral("thread.pin"), QStringLiteral("thread.undo"), QStringLiteral("space.open"),
                  QStringLiteral("space.agent.focus")});
+    list.append({QStringLiteral("stage.moveTab"), QStringLiteral("stage.toggleFocus"), QStringLiteral("stage.nextPane"),
+                 QStringLiteral("stage.dismiss"), QStringLiteral("stage.layout.single"), QStringLiteral("stage.layout.columns"),
+                 QStringLiteral("stage.layout.rows"), QStringLiteral("stage.layout.grid")});
     for (int n = 1; n <= 9; ++n) list.append(QStringLiteral("thread.jump.%1").arg(n));
     return list;
   }();
@@ -462,6 +469,15 @@ QString commandLabel(const QString& command) {
       {QStringLiteral("thread.copyReference"), QStringLiteral("Pull Request: Copy Link or Thread ID")},
       {QStringLiteral("space.open"), QStringLiteral("Space: Open")},
       {QStringLiteral("space.agent.focus"), QStringLiteral("Space: Ask an Agent About the Page")},
+      {QStringLiteral("stage.moveTab"), QStringLiteral("Stage: Move Tab to Centre or Side Panel")},
+      {QStringLiteral("stage.toggleFocus"), QStringLiteral("Stage: Hide or Show the Timeline")},
+      {QStringLiteral("stage.nextPane"), QStringLiteral("Stage: Focus Next Pane")},
+      {QStringLiteral("stage.dismiss"), QStringLiteral("Stage: Move All Tabs to Side Panel")},
+      {QStringLiteral("stage.layout.single"), QStringLiteral("Stage: Single Pane")},
+      {QStringLiteral("stage.layout.columns"), QStringLiteral("Stage: Panes Side by Side")},
+      {QStringLiteral("stage.layout.rows"), QStringLiteral("Stage: Panes Stacked")},
+      {QStringLiteral("stage.layout.grid"), QStringLiteral("Stage: Four Panes")},
+      {QStringLiteral("rightPanel.toggleMaximized"), QStringLiteral("Right Panel: Open in Centre")},
   };
   if (const auto label = special.constFind(command); label != special.cend()) return *label;
   if (command.startsWith(QLatin1String("script.")) && command.endsWith(QLatin1String(".run"))) {

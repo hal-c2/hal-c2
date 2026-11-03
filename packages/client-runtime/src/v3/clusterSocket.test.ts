@@ -225,6 +225,50 @@ describe("ClusterSocket", () => {
       vi.useRealTimers();
     });
 
+    it("carries on from where another socket's subscription stopped", () => {
+      const first = setup();
+      const resumed = first.socket.subscribeWindow(shape, 200, () => {});
+      expect(resumed.resumePoint()).toBeNull();
+      first.sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      first.sockets[0]!.serve({ t: "snapshot", id: 1, offset: 9, floor: 3, handle: "log-1" });
+      first.sockets[0]!.serve({ t: "events", id: 1, offset: 12, events: [] });
+      const point = resumed.resumePoint();
+      expect(point).toEqual({ offset: 12, floor: 3, handle: "log-1" });
+      first.socket.close();
+
+      const second = setup();
+      second.socket.subscribeWindow(shape, 200, () => {}, undefined, point!);
+      second.sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      expect(second.sockets[0]!.sent).toEqual([
+        { t: "sub", id: 1, shape, offset: 12, window: { floor: 3 }, handle: "log-1" },
+      ]);
+      second.socket.close();
+    });
+
+    it("asks again for a stream refused while its MC was out of the cluster", () => {
+      const { socket, sockets } = setup();
+      const frames: ShapeFrame[] = [];
+      socket.subscribe({ type: "shell" }, () => {});
+      socket.subscribeWindow(shape, 200, (frame) => frames.push(frame));
+      sockets[0]!.serve({ t: "hello", mc: "hal_c2@a" });
+      sockets[0]!.serve({ t: "snapshot", id: 2, offset: 9, floor: null, handle: "log-1" });
+      sockets[0]!.serve({ t: "live", id: 2, offset: 9 });
+      sockets[0]!.serve({ t: "error", id: 2, reason: "unknown MC" });
+      sockets[0]!.sent = [];
+
+      sockets[0]!.serve({ t: "shell.mc", id: 1, mc: "hal_c2@other", online: true });
+      sockets[0]!.serve({ t: "shell.mc", id: 1, mc: shape.mc, online: false });
+      expect(sockets[0]!.sent).toEqual([]);
+      sockets[0]!.serve({ t: "shell.mc", id: 1, mc: shape.mc, online: true });
+      expect(sockets[0]!.sent).toEqual([
+        { t: "sub", id: 2, shape, offset: 9, window: { floor: null }, handle: "log-1" },
+      ]);
+      sockets[0]!.serve({ t: "shell.mc", id: 1, mc: shape.mc, online: true });
+      expect(sockets[0]!.sent).toHaveLength(1);
+      expect(frames.map((frame) => frame.t)).toEqual(["snapshot", "live", "error"]);
+      socket.close();
+    });
+
     it("opens at the floor a replaced session held", () => {
       const { socket, sockets } = setup();
       socket.subscribeWindow(shape, 200, () => {}, 5);

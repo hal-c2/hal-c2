@@ -70,6 +70,9 @@ export class ThreadShapeFold {
   // The newest offset the fold has seen (snapshot, page or event). Snapshots carry it,
   // so a page that finishes after later events does not move the sequence backwards.
   private offset = 0;
+  // The sequence of the last item this fold gave the thread state: the state's own
+  // offset when it applied all of them (`resumes`).
+  private emitted = 0;
   private pageRows: Array<ShapeRow> = [];
   private readonly threadId: ThreadId;
 
@@ -131,9 +134,18 @@ export class ThreadShapeFold {
     return this.snapshotItem(this.offset);
   }
 
+  /**
+   * Whether a thread state at `sequence` holds what this fold does, so a new
+   * subscription can carry on from this fold's offset instead of a snapshot.
+   */
+  resumes(sequence: number | undefined): boolean {
+    return sequence !== undefined && sequence > 0 && sequence === this.emitted;
+  }
+
   private snapshotItem(offset: number): ReadonlyArray<OrchestrationV2ThreadStreamItem> {
     const projection = this.projection();
     if (projection === null) return [];
+    this.emitted = offset;
     return [
       {
         kind: "snapshot",
@@ -154,7 +166,10 @@ export class ThreadShapeFold {
   events(events: ReadonlyArray<ShapeEvent>): ReadonlyArray<OrchestrationV2ThreadStreamItem> {
     const items: Array<OrchestrationV2ThreadStreamItem> = [];
     for (const [seq, kind, id, patch, at] of events) {
-      this.offset = Math.max(this.offset, seq);
+      // An event the fold already holds (a catch-up that overlaps what arrived before
+      // a drop): appending its text again would double it.
+      if (seq <= this.offset) continue;
+      this.offset = seq;
       // An entity kind a newer MC publishes and this client has no place for: skipped, so
       // the events after it are still applied.
       if (!KNOWN_KINDS.has(kind)) continue;
@@ -166,7 +181,9 @@ export class ThreadShapeFold {
       if (entity !== null) byKind.set(id, entity);
       this.updatedAt = Math.max(this.updatedAt, at);
       const event = this.domainEvent(seq, kind, id, entity, patch, at);
-      if (event !== null) items.push({ kind: "event", sequence: seq, event });
+      if (event === null) continue;
+      items.push({ kind: "event", sequence: seq, event });
+      this.emitted = seq;
     }
     return items;
   }

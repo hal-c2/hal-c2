@@ -1,5 +1,5 @@
-// What tests/prop/tst_TimelinePreviewsProp.cpp found in ThreadPreviews, each
-// as the plain case that shows it.
+// What tests/prop/tst_TimelinePreviewsProp.cpp found in ThreadPreviews and
+// the BrowserPage following one of its tabs, each as the plain case that shows it.
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "FakeMc.h"
+#include "Browser.h"
 #include "McClient.h"
 #include "ThreadPreviews.h"
 
@@ -17,6 +18,12 @@ namespace {
 const QString kEnvironment = QStringLiteral("env-a");
 const QString kMc = QStringLiteral("mc-a");
 const QString kThread = QStringLiteral("t1");
+const QString kPageA = QStringLiteral("http://localhost:3000/");
+const QString kPageB = QStringLiteral("http://localhost:3000/b");
+
+QJsonObject loadedAt(const QString& url) {
+  return {{QStringLiteral("_tag"), QStringLiteral("Success")}, {QStringLiteral("url"), url}};
+}
 
 QJsonObject tab(const QString& id, const QJsonObject& nav = {{QStringLiteral("_tag"), QStringLiteral("Idle")}}) {
   return {{QStringLiteral("threadId"), kThread}, {QStringLiteral("tabId"), id}, {QStringLiteral("navStatus"), nav}};
@@ -200,6 +207,117 @@ private slots:
     f.mc.reply(f.held[QStringLiteral("preview.open")].takeFirst(), opened);
     QVERIFY(f.barrier());
     QCOMPARE(f.tabIds(), QStringList());
+  }
+
+  // A close the MC refused put the row back without saying the tab changed,
+  // so a page following it kept thinking it was gone.
+  void aRefusedCloseSaysTheTabIsBack() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"))}, 1)));
+    f.previews->close(QStringLiteral("tab-1"));
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.close")).isEmpty(); }));
+    QSignalSpy changed(f.previews.get(), &ThreadPreviews::tabChanged);
+    f.mc.refuse(f.held[QStringLiteral("preview.close")].takeFirst(), QStringLiteral("no"));
+    QVERIFY(f.barrier());
+    QCOMPARE(f.tabIds(), QStringList{QStringLiteral("tab-1")});
+    QVERIFY(!changed.isEmpty());
+    QCOMPARE(changed.constLast().constFirst().toString(), QStringLiteral("tab-1"));
+  }
+
+  // A link opened after the tabs could not be listed again showed a row the
+  // MC may no longer have instead of asking it for a tab.
+  void aLinkAfterAFailedListAsksForATab() {
+    Fixture f;
+    f.previews->setEmbedded(true);
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    f.previews->reload();
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    f.mc.refuse(f.held[QStringLiteral("preview.list")].takeFirst(), QStringLiteral("no"));
+    QVERIFY(f.barrier());
+    QCOMPARE(f.previews->status(), QStringLiteral("failed"));
+    QSignalSpy shown(f.previews.get(), &ThreadPreviews::showRequested);
+    f.previews->openAddress(kPageA);
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.open")).isEmpty(); }));
+    QCOMPARE(shown.count(), 0);
+  }
+
+  // A link opened while the tabs were listed again (as after a reconnect)
+  // showed a row the MC may no longer have instead of asking it for a tab.
+  void aLinkWhileListingAsksForATab() {
+    Fixture f;
+    f.previews->setEmbedded(true);
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    f.previews->reload();
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    QSignalSpy shown(f.previews.get(), &ThreadPreviews::showRequested);
+    f.previews->openAddress(kPageA);
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.open")).isEmpty(); }));
+    QCOMPARE(shown.count(), 0);
+  }
+
+  // A tab the user opened was never shown when the list was read again
+  // before the MC answered.
+  void aNewTabShowsThoughTheListWasReadAgain() {
+    Fixture f;
+    f.previews->setEmbedded(true);
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({}, 1)));
+    f.previews->newTab();
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.open")).isEmpty(); }));
+    f.previews->reload();
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    QSignalSpy shown(f.previews.get(), &ThreadPreviews::showRequested);
+    f.mc.reply(f.held[QStringLiteral("preview.open")].takeFirst(), tab(QStringLiteral("tab-2")));
+    QVERIFY(f.barrier());
+    QCOMPARE(shown.count(), 1);
+    QCOMPARE(shown.constFirst().constFirst().toString(), QStringLiteral("tab-2"));
+  }
+
+  // An agent taking a tab back to an address its page had been at left the
+  // page where it was: every address the page had been at counted as its own.
+  void aPageFollowsAnAgentBackToAnEarlierAddress() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    QSignalSpy loads(&page, &BrowserPage::loadRequested);
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageB))}});
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 3, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageA))}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 2);
+    QCOMPARE(loads.at(0).constFirst().toString(), kPageB);
+    QCOMPARE(loads.at(1).constFirst().toString(), kPageA);
+    // Where the page went by itself is no news when the MC says it back.
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 4, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageB))}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 2);
+  }
+
+  // A page whose tab went from the list (another thread shown) and came back
+  // thought its view was still at the tab's address, and never loaded it.
+  void aPageWhoseTabComesBackLoadsIt() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    QSignalSpy loads(&page, &BrowserPage::loadRequested);
+    f.previews->reload();
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    QVERIFY(f.answerList(list({}, 2)));
+    QVERIFY(!page.exists());
+    f.previews->reload();
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 3)));
+    QCOMPARE(loads.count(), 1);
+    QCOMPARE(loads.constFirst().constFirst().toString(), kPageA);
   }
 };
 

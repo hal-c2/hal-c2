@@ -1,6 +1,6 @@
-// What tests/prop/tst_SpaceFilesProp.cpp found in SpaceController's project files,
-// what opening a file says when there is no Space to open it in, and a refused
-// list of files told apart from an empty one.
+// What tests/prop/tst_SpaceFilesProp.cpp and tst_SpaceProjectsProp.cpp found in
+// SpaceController's project files, a refused list of files told apart from an
+// empty one, and a file's page shown from its project's Space.
 
 #include <QtTest>
 
@@ -58,6 +58,10 @@ struct Shell {
                            {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{QStringLiteral("space"), QStringLiteral("space-1"), research})}},
                            {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("index-1")}});
     space()->selectSpace(QStringLiteral("space-1"));
+    researchArrives();
+  }
+  // The copy of "Research" as a new snapshot of its stream brings it.
+  void researchArrives() {
     QJsonArray rows;
     for (const QString id : {QStringLiteral("page-1"), QStringLiteral("page-2")}) {
       rows.append(QJsonArray{QStringLiteral("page"), id,
@@ -69,6 +73,23 @@ struct Shell {
                                        {QStringLiteral("trashedAt"), QJsonValue::Null}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}}});
     space()->receiveSpace({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("offset"), 1}, {QStringLiteral("part"), 0},
                            {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
+  }
+  // The MC answers an open of docs/guide.md with page-9 of alpha's Space "project-1".
+  void answerOpens() {
+    mc.onRpc(QStringLiteral("space.page.openFile"), [this](const FakeMc::Rpc& rpc) {
+      mc.reply(rpc, QJsonObject{{QStringLiteral("spaceId"), QStringLiteral("project-1")},
+                                {QStringLiteral("page"), QJsonObject{{QStringLiteral("id"), QStringLiteral("page-9")}}},
+                                {QStringLiteral("created"), true}});
+    });
+  }
+  // The copy of alpha's Space, holding page-9 for docs/guide.md.
+  void projectSpaceArrives() {
+    const QJsonObject guide{{QStringLiteral("id"), QStringLiteral("page-9")}, {QStringLiteral("title"), QStringLiteral("Guide")},
+                            {QStringLiteral("parentPageId"), QJsonValue::Null}, {QStringLiteral("trashedAt"), QJsonValue::Null},
+                            {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00Z")}};
+    space()->receiveFileSpace({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("offset"), 1}, {QStringLiteral("part"), 0},
+                               {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{QStringLiteral("page"), QStringLiteral("page-9"), guide})}},
+                               {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("project-log-1")}});
   }
 };
 
@@ -125,65 +146,138 @@ private slots:
     QCOMPARE(shell.paths(QStringLiteral("alpha")), QStringList{});
   }
 
-  // With no Space shown the file opens in the first the MC lists; with none listed
-  // the user is told to make one first.
-  void noSpaceAsksForOneFirst() {
+  // The sections are in the order of the projects' names, not of the MC's rows.
+  void sectionsAreByName() {
+    SpaceProjects projects;
+    projects.setProjects({{QStringLiteral("p2"), QStringLiteral("tools")}, {QStringLiteral("p1"), QStringLiteral("Shop")}});
+    projects.setFiles(QStringLiteral("p2"), {{QStringLiteral("README.md"), QString()}});
+    projects.setFiles(QStringLiteral("p1"), {{QStringLiteral("guide.md"), QString()}});
+    QStringList shown;
+    for (const QVariantMap& row : projects.rows()) shown.append(row.value(QStringLiteral("projectId")).toString());
+    QCOMPARE(shown, (QStringList{QStringLiteral("p1"), QStringLiteral("p2")}));
+  }
+
+  // A file's page is its project's: the Space's own page stays shown until the
+  // project's Space arrives, and one pick of a Space page goes back to it.
+  void aFileOpensInItsProjectSpace() {
     Shell shell;
-    shell.mc.onRpc(QStringLiteral("space.list"), [&](const FakeMc::Rpc& rpc) { shell.mc.reply(rpc, QJsonObject{{QStringLiteral("spaces"), QJsonArray{}}}); });
+    shell.answerOpens();
     QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
+    shell.showResearch();
+    shell.space()->selectPage(QStringLiteral("page-1"));
 
     QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
-    QTRY_COMPARE(shell.error(), QStringLiteral("There is no Space to open the file in. Make a Space first, then open the file."));
+    QTRY_COMPARE(shell.written, QStringList{QStringLiteral("page-9")});
+    QCOMPARE(shell.space()->pageId(), QStringLiteral("page-1"));
+    QCOMPARE(shell.space()->fileSpaceId(), QString());
+    QVERIFY(shell.space()->projects()->isExpanded(QStringLiteral("alpha")));
+
+    shell.projectSpaceArrives();
+    QCOMPARE(shell.space()->pageId(), QStringLiteral("page-9"));
+    QCOMPARE(shell.space()->fileSpaceId(), QStringLiteral("project-1"));
+    QCOMPARE(shell.space()->spaceId(), QStringLiteral("space-1"));
+
+    QVERIFY(shell.space()->handle(QStringLiteral("space.selectPage"), QVariantMap{{QStringLiteral("pageId"), QStringLiteral("page-2")}}));
+    QCOMPARE(shell.space()->pageId(), QStringLiteral("page-2"));
+    QCOMPARE(shell.space()->fileSpaceId(), QString());
+  }
+
+  // The file's project Space's stream failing says only that file's page is
+  // unreachable, and a frame of the selected Space does not hide it (#940 review).
+  void theFileStreamFailingIsTheFilePagesAlone() {
+    Shell shell;
+    shell.answerOpens();
+    QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
+    shell.showResearch();
+    shell.space()->selectPage(QStringLiteral("page-1"));
+    QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
+    QTRY_COMPARE(shell.written, QStringList{QStringLiteral("page-9")});
+
+    // Still on the Space's own page while the file's Space is on its way.
+    shell.space()->setFileUnreachable();
+    QVERIFY(shell.space()->status() != QLatin1String("unreachable"));
+
+    shell.projectSpaceArrives();
+    shell.space()->setFileUnreachable();
+    QCOMPARE(shell.space()->status(), QStringLiteral("unreachable"));
+    shell.researchArrives();
+    QCOMPARE(shell.space()->pageId(), QStringLiteral("page-9"));
+    QCOMPARE(shell.space()->status(), QStringLiteral("unreachable"));
+    shell.projectSpaceArrives();
+    QVERIFY(shell.space()->status() != QLatin1String("unreachable"));
+
+    // The selected Space's stream failing is not cleared by a frame of the file's.
+    shell.space()->setUnreachable(true);
+    shell.projectSpaceArrives();
+    QCOMPARE(shell.space()->status(), QStringLiteral("unreachable"));
+  }
+
+  // A pick made while a file was opening stands: the answer does not take the view.
+  void aPickWhileOpeningAFileStands() {
+    Shell shell;
+    QList<FakeMc::Rpc> opens;
+    shell.mc.onRpc(QStringLiteral("space.page.openFile"), [&](const FakeMc::Rpc& rpc) { opens.append(rpc); });
+    QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
+    shell.showResearch();
+    shell.space()->selectPage(QStringLiteral("page-1"));
+
+    QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
+    QTRY_COMPARE(opens.size(), 1);
+    QVERIFY(shell.space()->handle(QStringLiteral("space.selectPage"), QVariantMap{{QStringLiteral("pageId"), QStringLiteral("page-2")}}));
+    shell.mc.reply(opens.takeFirst(), QJsonObject{{QStringLiteral("spaceId"), QStringLiteral("project-1")},
+                                                  {QStringLiteral("page"), QJsonObject{{QStringLiteral("id"), QStringLiteral("page-9")}}},
+                                                  {QStringLiteral("created"), true}});
+    // The files list the open asks for lands after the open's answer.
+    QTRY_VERIFY(!shell.held.isEmpty());
+    shell.projectSpaceArrives();
+    QCOMPARE(shell.space()->pageId(), QStringLiteral("page-2"));
+    QCOMPARE(shell.space()->fileSpaceId(), QString());
     QCOMPARE(shell.written, QStringList{});
   }
 
-  // A list that failed is not an empty one: the user is told what the MC said.
-  void aFailedListSaysWhy() {
+  // A file the MC will not open says why, in the words of the sidebar.
+  void aRefusedOpenSaysWhy() {
     Shell shell;
-    shell.mc.onRpc(QStringLiteral("space.list"), [&](const FakeMc::Rpc& rpc) { shell.mc.refuse(rpc, QStringLiteral("The Spaces could not be read.")); });
+    shell.mc.onRpc(QStringLiteral("space.page.openFile"), [&](const FakeMc::Rpc& rpc) {
+      shell.mc.refuse(rpc, QStringLiteral("not a Space file"), QJsonObject{{QStringLiteral("reason"), QStringLiteral("notSpaceFile")}});
+    });
     QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
 
-    QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
-    QTRY_COMPARE(shell.error(), QStringLiteral("The Spaces could not be read."));
+    QVERIFY(shell.open(QStringLiteral("src/main.c")));
+    QTRY_VERIFY(shell.error().startsWith(QStringLiteral("src/main.c is not a file this project shows in the Space sidebar.")));
+    QCOMPARE(shell.written, QStringList{});
   }
 
   // The phone's Space screen opens the page `written` names when it changes, so
   // opening the same file again has to say its page again.
   void openingAFileAgainSaysItsPageAgain() {
     Shell shell;
-    const QJsonObject personal{{QStringLiteral("id"), QStringLiteral("space-1")}, {QStringLiteral("name"), QStringLiteral("Personal")}};
-    shell.mc.onRpc(QStringLiteral("space.list"), [&](const FakeMc::Rpc& rpc) { shell.mc.reply(rpc, QJsonObject{{QStringLiteral("spaces"), QJsonArray{personal}}}); });
-    shell.mc.onRpc(QStringLiteral("space.page.openFile"), [&](const FakeMc::Rpc& rpc) {
-      shell.mc.reply(rpc, QJsonObject{{QStringLiteral("spaceId"), QStringLiteral("space-1")},
-                                      {QStringLiteral("page"), QJsonObject{{QStringLiteral("id"), QStringLiteral("page-1")}}},
-                                      {QStringLiteral("created"), false}});
-    });
+    shell.answerOpens();
     QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
 
     QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
-    QTRY_COMPARE(shell.written, QStringList{QStringLiteral("page-1")});
+    QTRY_COMPARE(shell.written, QStringList{QStringLiteral("page-9")});
     QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
-    QTRY_COMPARE(shell.written, (QStringList{QStringLiteral("page-1"), QString(), QStringLiteral("page-1")}));
+    QTRY_COMPARE(shell.written, (QStringList{QStringLiteral("page-9"), QString(), QStringLiteral("page-9")}));
     QCOMPARE(shell.error(), QString());
   }
 
-  // OpenFile(beta, page-1), SelectPage(page-2): the file's page was shown already,
-  // so it stayed awaited, and the next rebuild took the view back from page-2.
-  void aPageOpenedWhileShownIsNotAwaited() {
+  // OpenFile, SelectPage(page-2), then the project's Space catching up: a copy
+  // still on its way once the user went back took the view to the file's page.
+  void theProjectSpaceCatchingUpKeepsThePagePicked() {
     Shell shell;
-    shell.mc.onRpc(QStringLiteral("space.page.openFile"), [&](const FakeMc::Rpc& rpc) {
-      shell.mc.reply(rpc, QJsonObject{{QStringLiteral("spaceId"), QStringLiteral("space-1")},
-                                      {QStringLiteral("page"), QJsonObject{{QStringLiteral("id"), QStringLiteral("page-1")}}},
-                                      {QStringLiteral("created"), false}});
-    });
+    shell.answerOpens();
     QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
     shell.showResearch();
-    shell.space()->selectPage(QStringLiteral("page-1"));
 
     QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
-    QTRY_COMPARE(shell.written, QStringList{QStringLiteral("page-1")});
+    QTRY_COMPARE(shell.written, QStringList{QStringLiteral("page-9")});
+    shell.projectSpaceArrives();
+    QCOMPARE(shell.space()->pageId(), QStringLiteral("page-9"));
     QVERIFY(shell.space()->handle(QStringLiteral("space.selectPage"), QVariantMap{{QStringLiteral("pageId"), QStringLiteral("page-2")}}));
+    shell.projectSpaceArrives();
     QCOMPARE(shell.space()->pageId(), QStringLiteral("page-2"));
+    QCOMPARE(shell.space()->fileSpaceId(), QString());
   }
 
   // The same for a deck: one made from a page while it was shown already stayed

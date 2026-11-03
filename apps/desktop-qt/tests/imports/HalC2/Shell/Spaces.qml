@@ -7,6 +7,7 @@ QtObject {
     property string spaceId: ""
     property string spaceName: ""
     property string pageId: ""
+    property string fileSpaceId: ""
     property var page: ({})
     property var agent: ({})
     signal agentAskRequested
@@ -29,6 +30,8 @@ QtObject {
     readonly property SpaceRows slides: SpaceRows {}
     readonly property SpaceRows images: SpaceRows {}
     readonly property SpaceRows imageTrash: SpaceRows {}
+    // As SpaceProjects: a row per project with Space files, then its folders and files when expanded.
+    readonly property SpaceRows projects: SpaceRows {}
     // As SpaceHistory; load() takes `history` with its fields and rows.
     readonly property QtObject history: QtObject {
         signal changed
@@ -65,6 +68,8 @@ QtObject {
         fill(slides, state.slides);
         fill(images, state.images);
         fill(imageTrash, state.imageTrash);
+        fill(projects, state.projects);
+        fileSpaceId = state.fileSpaceId ?? "";
         const history = state.history ?? {};
         fill(this.history.versions, history.versions);
         fill(this.history.blocks, history.blocks);

@@ -6,7 +6,8 @@ defmodule HalC2.Review do
 
   Untracked files are shown by adding them intent-to-add to a copy of the index, so
   the user's own index is never touched. Only directories inside this MC's
-  projects may be reviewed.
+  projects may be reviewed, links resolved. A folder under no version control has
+  nothing to review; one under Jujutsu without Git is refused, as it cannot be read.
   """
 
   alias HalC2.Git
@@ -20,12 +21,46 @@ defmodule HalC2.Review do
   @doc "`review.getDiffPreview` (`ReviewDiffPreviewInput` to `ReviewDiffPreviewResult`)."
   def diff_preview(%{"cwd" => cwd} = input) do
     with :ok <- within_projects(cwd, "getDiffPreview") do
-      case Git.ok(cwd, ~w(rev-parse --show-toplevel)) do
-        {:ok, root} -> {:ok, preview(String.trim(root), input)}
-        {:error, _} -> {:ok, %{"cwd" => cwd, "generatedAt" => now(), "sources" => []}}
+      case vcs(cwd) do
+        {:git, root} ->
+          {:ok, preview(root, input)}
+
+        nil ->
+          {:ok, %{"cwd" => cwd, "generatedAt" => now(), "sources" => []}}
+
+        kind ->
+          {:error,
+           unsupported(
+             "getDiffPreview",
+             kind,
+             "The #{kind} VCS driver does not support review diff previews."
+           )}
       end
     end
   end
+
+  # The version control a folder is under: Git with its root, another kind by name,
+  # or nil for none.
+  defp vcs(cwd) do
+    case Git.ok(cwd, ~w(rev-parse --show-toplevel)) do
+      {:ok, root} -> {:git, String.trim(root)}
+      {:error, _} -> if jj?(Path.expand(cwd)), do: "jj"
+    end
+  end
+
+  defp jj?(dir) do
+    File.dir?(Path.join(dir, ".jj")) or
+      (Path.dirname(dir) != dir and jj?(Path.dirname(dir)))
+  end
+
+  defp unsupported(operation, kind, detail),
+    do: %{
+      "_tag" => "VcsUnsupportedOperationError",
+      "operation" => "review.#{operation}",
+      "kind" => kind,
+      "detail" => detail,
+      "message" => detail
+    }
 
   defp preview(root, input) do
     file = input["file"]
@@ -130,9 +165,15 @@ defmodule HalC2.Review do
         config = ~w(-c core.splitIndex=false -c splitIndex.sharedIndexExpire=never)
 
         try do
-          if File.exists?(index),
-            do: File.cp!(index, scratch),
-            else: Git.ok(root, ~w(read-tree --empty), env: env)
+          if File.exists?(index) do
+            # Dated before the copy: an index Git rewrites in between only makes
+            # the copy older, so more of its entries stay racy, never fewer.
+            {:ok, %{mtime: mtime}} = File.stat(index, time: :posix)
+            File.cp!(index, scratch)
+            backdate(scratch, mtime)
+          else
+            Git.ok(root, ~w(read-tree --empty), env: env)
+          end
 
           Git.ok(root, config ++ ~w(update-index --no-split-index), env: env)
 
@@ -150,6 +191,12 @@ defmodule HalC2.Review do
         end
     end
   end
+
+  # A copy is newer than the index it copies, and Git trusts the stat of any entry
+  # older than its index: a file rewritten at the same size within the second the
+  # index was written would read as unchanged. Dating the copy a second before the
+  # index keeps those entries racy, so Git compares their contents.
+  defp backdate(scratch, mtime), do: File.touch!(scratch, max(mtime - 1, 0))
 
   # Numstat first, for complete file statistics; then the patch, capped at `limit`.
   defp tracked_diff(root, ref, paths, limit, ignore_ws, env) do
@@ -250,7 +297,21 @@ defmodule HalC2.Review do
   @doc "`review.getDiffFileContents`: both sides of one file, for expanding its diff."
   def file_contents(%{"cwd" => cwd, "sourceKind" => kind} = input) do
     with :ok <- within_projects(cwd, "getDiffFileContents") do
-      if kind == "working-tree", do: working_tree_contents(input), else: branch_contents(input)
+      case vcs(cwd) do
+        {:git, _root} when kind == "working-tree" ->
+          working_tree_contents(input)
+
+        {:git, _root} ->
+          branch_contents(input)
+
+        other ->
+          {:error,
+           unsupported(
+             "getDiffFileContents",
+             other || "unknown",
+             "Unchanged diff expansion currently requires a Git repository."
+           )}
+      end
     end
   end
 
@@ -350,25 +411,35 @@ defmodule HalC2.Review do
     }
 
   # A thread's worktree counts as its project, wherever it is; so does anything under
-  # the MC's worktrees directory.
+  # the MC's worktrees directory. Links are resolved on both sides, so a link inside
+  # a project cannot lead the review out of it.
   defp within_projects(cwd, operation) do
-    cwd = Path.expand(cwd)
-    worktrees = Path.expand(Path.join(HalC2.Paths.data_dir(), "worktrees"))
+    cwd = real(cwd)
+    roots = [Path.join(HalC2.Paths.data_dir(), "worktrees") | HalC2.Projects.roots()]
 
-    if HalC2.Projects.at(cwd) != nil or inside?(cwd, worktrees) do
+    # A resolved cwd under a root as written is under that root; only a root
+    # reached through a link needs resolving, and then only when none matched.
+    if Enum.any?(roots, &inside?(cwd, Path.expand(&1))) or
+         Enum.any?(roots, &inside?(cwd, real(&1))) do
       :ok
     else
-      detail =
-        "This folder is not part of a project on this machine, so its changes cannot be shown."
-
       {:error,
        %{
          "_tag" => "VcsRepositoryDetectionError",
          "operation" => "review.#{operation}",
          "cwd" => cwd,
-         "detail" => detail,
-         "message" => detail
+         "detail" => "Review cwd must be inside one of this MC's projects.",
+         "message" =>
+           "This folder is not part of a project on this machine, so its changes cannot be shown."
        }}
+    end
+  end
+
+  # A folder that does not exist yet is checked as written.
+  defp real(path) do
+    case HalC2.Paths.real(path) do
+      {:ok, real} -> real
+      {:error, _} -> Path.expand(path)
     end
   end
 

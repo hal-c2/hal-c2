@@ -124,7 +124,7 @@ export function createConversationFeature(kit: FeatureKit): Feature {
     ];
     if (projectId === null) {
       kit.status(
-        "This thread's project is on another machine: its files open in its Spaces.",
+        "This thread's project is on another machine: its files are edited as pages there.",
         "info",
       );
     } else if (paths.length === 0) {
@@ -155,8 +155,8 @@ export function createConversationFeature(kit: FeatureKit): Feature {
                     id: "reference.space",
                     // A page follows the project's copy of a file, not the worktree's.
                     title: kit.workspace()?.worktree
-                      ? "Open the project's copy of a file the conversation names in a Space…"
-                      : "Open a file the conversation names in a Space…",
+                      ? "Edit the project's copy of a file the conversation names as a page…"
+                      : "Edit a file the conversation names as a page…",
                     keywords: "page link markdown spaces",
                     action: "reference.space",
                   },

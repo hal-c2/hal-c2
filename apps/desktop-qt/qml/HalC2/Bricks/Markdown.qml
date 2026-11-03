@@ -25,6 +25,9 @@ Item {
 
     // An assistant reply offers "Cite" on a selection (AssistantSelectionToolbar).
     property bool citable: false
+    // A reply offers "Run in terminal" on a code block that is one complete
+    // shell command (Md.shellCommand), once it is no longer streaming.
+    property bool runnable: false
     // The brick this one is a quote of, which cites for it.
     property Markdown host: null
     // The text with the selection, when one has it.
@@ -39,6 +42,8 @@ Item {
     // The selection to quote in the composer: {text, start, end, prefix,
     // suffix}, an AssistantCitation's selector over the reply as drawn.
     signal cited(var selector)
+    // The user ran a code block's command (trimmed) from its Run.
+    signal runCommand(string command)
 
     readonly property color headingColor: Theme.palette.color("text", "#f5f5f5")
     readonly property color mutedColor: Theme.palette.color("textMuted", "#818181")
@@ -527,6 +532,8 @@ Item {
                         property bool copied: false
                         readonly property real lineHeight: Math.round(root.codeSize * 1.375 * 10) / 10
                         readonly property string code: seg.code
+                        // What its Run sends to the terminal; empty when it offers none.
+                        readonly property string command: root.runnable && !root.streaming ? Md.shellCommand(seg) : ""
                         // A Mermaid block is drawn once its fence is closed; the
                         // user can switch back to its source.
                         readonly property bool mermaid: seg.language.toLowerCase() === "mermaid" && !seg.open
@@ -602,6 +609,13 @@ Item {
                                 checked: block.wrapped
                                 label: block.wrapped ? qsTr("Disable line wrap") : qsTr("Wrap lines")
                                 onClicked: block.wrapped = !block.wrapped
+                            }
+                            IconButton {
+                                objectName: "runCode"
+                                visible: block.command.length > 0
+                                iconName: "play"
+                                label: qsTr("Run in terminal")
+                                onClicked: root.runCommand(block.command)
                             }
                             IconButton {
                                 objectName: "copyCode"
@@ -959,8 +973,10 @@ Item {
                                 brick.text = Qt.binding(() => seg.payload);
                                 // A quote reads muted; an alert's body is ordinary text.
                                 brick.textColor = Qt.binding(() => quoteBox.kindOf ? root.textColor : root.mutedColor);
+                                brick.runnable = Qt.binding(() => root.runnable && !root.streaming);
                                 brick.linkPreviews = Qt.binding(() => root.linkPreviews);
                                 brick.linkActivated.connect(root.linkActivated);
+                                brick.runCommand.connect(root.runCommand);
                                 brick.host = root;
                             }
                         }

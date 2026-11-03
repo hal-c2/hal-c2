@@ -8,6 +8,7 @@
 // scenarios the shell does not deliver itself: `navigation/appearance.feature:System*`.
 
 #include <QGuiApplication>
+#include <QtWebEngineQuick/qtwebenginequickglobal.h>
 #include <QTest>
 
 #include <ctime>
@@ -20,6 +21,7 @@ namespace {
 
 const QStringList kDefaultGlobs{
     QStringLiteral("desktop/native-*.feature"),
+    QStringLiteral("desktop/stage.feature"),
     QStringLiteral("connections/cluster.feature"),
     QStringLiteral("timeline/streaming.feature"),
     QStringLiteral("timeline/tool-calls.feature"),
@@ -542,7 +544,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("navigation/layout.feature:A tab kind that the thread cannot show*"),
     QStringLiteral("navigation/layout.feature:Right panel contents survive closing the panel"),
     QStringLiteral("navigation/layout.feature:Resizing the right panel"),
-    QStringLiteral("navigation/layout.feature:Maximizing the right panel"),
+    QStringLiteral("navigation/layout.feature:Opening the right panel's tab in the thread's centre"),
     QStringLiteral("navigation/layout.feature:The right panel's tabs and width survive a restart"),
     QStringLiteral("navigation/layout.feature:Toggling the thread details panel"),
     QStringLiteral("navigation/layout.feature:Hiding the thread details panel"),
@@ -691,6 +693,8 @@ int main(int argc, char** argv) {
   // Snooze presets and wake labels are wall-clock times: pin them to UTC.
   qputenv("TZ", "UTC");
   tzset();
+  // Before the application, as main.cpp does: the browser scenarios' pages.
+  QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
   tst_Features test;
   return QTest::qExec(&test, argc, argv);

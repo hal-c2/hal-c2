@@ -32,8 +32,12 @@ export interface ThreadWorld extends World {
   projectTitle?: string;
 }
 
-/** Ten minutes ago: fixtures are relative to the host's real clock. */
-const BASE_MS = Date.now() - 10 * 60_000;
+/**
+ * Ten minutes ago, but never before today began: fixtures are relative to the
+ * host's real clock, and a message sent yesterday has a wider stamp
+ * ("yesterday at 11:48 PM") than the scenarios draw.
+ */
+const BASE_MS = Math.max(Date.now() - 10 * 60_000, new Date().setHours(0, 0, 0, 0));
 
 /** An ISO time `seconds` after the fixture base. */
 export const at = (seconds: number): string => new Date(BASE_MS + seconds * 1000).toISOString();

@@ -157,13 +157,15 @@ Feature: Thread lifecycle in the orchestration engine
     Then the queued message stays cancelled
 
   # As on the Node server: archiving does not stop a message sent afterwards from
-  # queueing, but nothing starts it until the thread is back.
+  # queueing, but nothing starts it until the thread is back, and the queue of an
+  # archived thread cannot be resumed (queue-and-steering.feature).
   @mc
   Scenario: An archived thread starts nothing from its queue until it is unarchived
     Given thread "t1" was archived with a running turn and a message queued after it
     When the user interrupts the run
-    And the user resumes the queue of "t1"
-    Then the queued message is still queued
+    And a client tries to resume the queue of "t1"
+    Then the command fails with "Thread t1 is not active."
+    And the queued message is still queued
     When a client unarchives "t1"
     And the user resumes the queue of "t1"
     Then the queued message starts

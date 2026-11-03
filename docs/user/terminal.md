@@ -6,3 +6,11 @@ line can be shortened at the start. New terminal output is not truncated.
 
 These limits apply when you reconnect and when HAL-C2 restores saved terminal
 history. A client can show less scrollback than the server keeps.
+
+## Running a command from a reply
+
+When the agent writes a shell command in a code block, **Run in terminal** beside
+**Copy** runs it in the thread's terminal, in the thread's folder. It is offered only
+on a finished reply whose block is one complete command: a `sh`, `bash`, `zsh`,
+`fish`, `shell`, `powershell` or `pwsh` block of a single line that does not end in a
+backslash. Running it does not change the action the header offers next.

@@ -1,4 +1,8 @@
-import type { OrchestrationThread, ProviderApprovalDecision } from "@hal-c2/contracts";
+import type {
+  OrchestrationThread,
+  ProviderApprovalDecision,
+  TimestampFormat,
+} from "@hal-c2/contracts";
 import type { PropertyMap } from "opentui-qml";
 
 import {
@@ -61,6 +65,8 @@ export interface ThreadViewOptions {
   /** The host's mode switch; "compose" resolves through `composeMode`. */
   readonly setMode: (mode: TuiMode) => void;
   readonly nowMs: () => number;
+  /** How this device writes times (default: the locale's). */
+  readonly timestampFormat?: () => TimestampFormat;
   readonly palette?: Palette;
   /** The terminal draws inline images: load previews for image attachments. */
   readonly inlineImages?: boolean;
@@ -249,6 +255,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       detail,
       hasOlderTurns: page?.hasMore ?? false,
       loadingOlderTurns: page?.loadingOlder ?? false,
+      unreachable: page?.unreachable ?? null,
       approvalCount: approvals.length,
       view,
       openTurns: interruptedTurns,
@@ -257,6 +264,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       parent: parentThread(),
       paneWidth,
       nowMs: options.nowMs(),
+      timestampFormat: options.timestampFormat?.() ?? "locale",
       palette,
       emptyHint: projectHint
         ? `${projectHint} — Enter to expand, then Alt+↑/↓ to pick a thread.`
@@ -1023,6 +1031,15 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       case "plan.implement":
         if (!detail || !latestActionableProposedPlan(detail)) return false;
         implementPlan();
+        return true;
+      // The working row's time moved on (WorkingIndicator's timer).
+      case "timeline.stamp": {
+        const full = field(payload, "full");
+        if (typeof full === "string") store.setStatus(full, "info");
+        return true;
+      }
+      case "timeline.tick":
+        publishTimeline();
         return true;
       case "timeline.showOlder":
         showOlder();

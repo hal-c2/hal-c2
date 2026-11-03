@@ -27,6 +27,10 @@ bool g_systemReducedMotion = false;
 
 }  // namespace
 
+bool LayoutController::systemReducedMotion() {
+  return g_systemReducedMotion;
+}
+
 void LayoutController::setSystemReducedMotion(bool reduced) {
   g_systemReducedMotion = reduced;
 }

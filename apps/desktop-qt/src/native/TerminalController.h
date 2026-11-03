@@ -288,6 +288,9 @@ public:
   // Runs a project script in the active terminal, or a new one when
   // that one is busy. False without a place or such a script.
   bool runScript(const QString& scriptId);
+  // Runs `command` the same way, named `name` in what it says when it fails
+  // (a shell command from a reply's code block). False without a place.
+  bool runCommand(const QString& name, const QString& command);
 
 signals:
   void changed();

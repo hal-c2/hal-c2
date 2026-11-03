@@ -251,7 +251,8 @@ Feature: Agents drive the preview browser
       When the agent resizes the page and the desktop never renders that size within the wait
       Then the tool fails saying the viewport was not rendered in time
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationHostProp.cpp (an action on a tab with no page), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: A browser that is not showing the tab in time fails the open
       When an agent opens a preview and the desktop does not show the page's browser within the wait
       Then the tool fails saying the browser did not register in time
@@ -263,7 +264,8 @@ Feature: Agents drive the preview browser
       Then the tool fails saying the tab is no longer available
       And the desktop does not act on the tab it had before the restart
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationHostProp.cpp (the user closes the tab mid-action), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: An action on a tab the user has since closed fails
       Given an agent's current tab shows a page
       When the user closes the tab before the agent's action reaches the desktop
@@ -307,7 +309,8 @@ Feature: Agents drive the preview browser
       When an agent asks to record a tab
       Then the tool fails saying recording cannot start while the main window is closed
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationWeb.cpp (keepsOffDevTools), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: An agent cannot control a tab while its developer tools are open
       Given the user has the developer tools open on a tab
       When an agent acts on that tab
@@ -319,7 +322,8 @@ Feature: Agents drive the preview browser
       When an agent acts on that tab
       Then the tool fails saying agent control cannot attach because another debugger owns the page
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationWeb.cpp (keepsOffDevTools), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: Agent control comes back once the developer tools are closed
       Given an agent was refused because the developer tools were open on a tab
       When the user closes the developer tools
@@ -351,7 +355,8 @@ Feature: Agents drive the preview browser
       Then the tool fails saying the target was rejected
       And the reason the page gave is reported
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationWeb.cpp (evaluates), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: A script that throws reports what it threw
       Given an agent's current tab shows a page
       When the agent evaluates a script that throws an error
@@ -425,24 +430,42 @@ Feature: Agents drive the preview browser
 
   Rule: The desktop hosts the agent's browser
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationWeb.cpp (navigatesAndSnapshots, clicksTypesAndPresses), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: The desktop offers the thread's browser to agents
       Given the user has the thread's browser available on the desktop
       Then agents in that thread can open and operate browser tabs there
 
-    @backlog @desktop
+    # Proved by tst_AgentCue.qml, not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: The user sees where the agent is acting
       Given an agent is clicking through a page in the thread's browser
       Then the user sees the agent's pointer move to each element it acts on
 
-    @backlog @desktop
+    # Proved by tst_AgentCue.qml, not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: The user sees which tab an agent is using
+      Given an agent is acting in one of the thread's browser tabs
+      Then that tab shows that the agent is using it
+      And the mark goes once the agent's action ends
+
+    # Proved by tst_AgentCue.qml, not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: The agent's clicks do not animate when the user asks for less motion
+      Given the user has asked for reduced motion
+      When an agent clicks in a page
+      Then the agent's pointer moves without animating and no ripple is drawn
+
+    # Proved by tst_PreviewAutomationWeb.cpp (tellsTheUserFromTheAgent, yieldsToTheUser), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: The user taking over interrupts the agent's action
       Given an agent is typing into a page
       When the user clicks inside the page
       Then the agent's action stops
       And the agent is told its action was interrupted by human input in that tab
 
-    @backlog @desktop
+    # Proved by tst_PreviewAutomationHostProp.cpp (focus, blur) for the desktop's half, not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
     Scenario: A desktop focusing its window becomes the preferred browser
       Given two desktops offer their browsers
       When the user focuses the second desktop's window

@@ -222,9 +222,7 @@ Item {
         const file = Spaces.page.file ?? {};
         if (view !== "page" || id !== Spaces.pageId || (file.path ?? "") === "")
             return [];
-        return (file.missing === true ? [] : [{ id: "showFile", label: qsTr("Show the file"), icon: "file-text" }]).concat([
-            { id: "unlinkFile", label: qsTr("Stop following the file"), icon: "circle-x" }
-        ]);
+        return file.missing === true ? [] : [{ id: "showFile", label: qsTr("Show the file"), icon: "file-text" }];
     }
 
     // `site`: the open page's site (SpaceController's `page.site`). Of a page only
@@ -253,8 +251,6 @@ Item {
                 askUpdate();
             } else if (choice === "showFile") {
                 Shell.dispatch("space.page.showFile", { pageId: id });
-            } else if (choice === "unlinkFile") {
-                Shell.dispatch("space.page.unlinkFile", { pageId: id });
             } else if (choice === "updateRun") {
                 Shell.dispatch("space.page.schedule.runNow", { pageId: id });
             } else if (choice === "updatePause") {
@@ -732,7 +728,7 @@ Item {
         id: generate
     }
 
-    // Open while `space.picking` names a project: from the pages' bar or the palette.
+    // Open while `space.picking` names a project: from the palette.
     SpaceFilePicker {}
 
     // On Android the system's picker answers with a content address.

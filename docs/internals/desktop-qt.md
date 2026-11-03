@@ -620,10 +620,10 @@ project scripts' `previewUrl`s and this device's last ten pages
 (`previewRecentPages`), with `preview.navigate`. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
 in `RightPanelController::nativeKinds`.
 
-The desktop embeds no browser. QtWebView is WebEngine underneath on Linux,
-with no input injection, zoom or popup control, so it cannot host the agent's
-preview tabs. The embedding scenarios in
-`features/preview/surfaces.feature` are `@backlog-desktop` for that reason.
+The desktop embeds QtWebEngine (a required dependency) for the browser tab,
+as QtWebView is WebEngine underneath on Linux with no input injection, zoom or
+popup control. The phone client links no WebEngine and opens pages in the
+system browser (`Browser::supported`, set by the desktop's main.cpp).
 
 The Pull request review tab (`pull-request:<host>/<repository>#<number>`,
 titled "PR #n") is `PullRequestReviewPanel` over the controller's

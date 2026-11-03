@@ -85,11 +85,13 @@ void finishTurn(World& world, int turn, const QString& patch) {
   const QString run = startRun(world);
   addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Answer %1").arg(turn)}});
   settleRun(world, QStringLiteral("completed"), 30);
+  // The MC has the turn's diff once its checkpoint is ready, which a shown
+  // diff asks for at once.
+  world.mc.part<FakeDiffs>().patches.insert(turn, patch);
+  world.mc.part<FakeDiffs>().runs.insert(turn, run);
   set(world, QStringLiteral("checkpoint"), QStringLiteral("cp-%1").arg(turn),
       {{QStringLiteral("id"), QStringLiteral("cp-%1").arg(turn)}, {QStringLiteral("scopeId"), QStringLiteral("scope-1")},
        {QStringLiteral("runId"), run}, {QStringLiteral("appRunOrdinal"), turn}, {QStringLiteral("status"), QStringLiteral("ready")}});
-  world.mc.part<FakeDiffs>().patches.insert(turn, patch);
-  world.mc.part<FakeDiffs>().runs.insert(turn, run);
 }
 
 void finishTurns(World& world, int count) {
@@ -317,6 +319,21 @@ QString tabIdTitled(World& world, const QString& title) {
     if (at(tab, QStringLiteral("title")) == title) return at(tab, QStringLiteral("id")).toString();
   }
   fail(describePanel(world));
+}
+
+// The stage's tabs, and the tabs docked in the side panel, by id.
+QStringList stageTabs(World& world) {
+  QStringList ids;
+  for (const QVariant& tab : at(world.state(QStringLiteral("panel")), QStringLiteral("stage.tabs")).toList()) ids.append(at(tab, QStringLiteral("id")).toString());
+  return ids;
+}
+
+QStringList dockedTabs(World& world) {
+  QStringList ids;
+  for (const QVariant& tab : at(world.state(QStringLiteral("panel")), QStringLiteral("tabs")).toList()) {
+    if (at(tab, QStringLiteral("dock")) != QLatin1String("stage")) ids.append(at(tab, QStringLiteral("id")).toString());
+  }
+  return ids;
 }
 
 // Where the edge is dragged to.
@@ -822,19 +839,25 @@ const Steps steps([] {
   step(QStringLiteral("the right panel takes the new width"), [](World& world, const Captures&, const Table&) {
     expect(at(world.state(QStringLiteral("panel")), QStringLiteral("width")) == kDraggedWidth, describePanel(world));
   });
-  step(QStringLiteral("the user toggles the right panel to fill the window"), [](World& world, const Captures&, const Table&) {
-    // The keybinding's command (mod+alt+m, bound by the user).
+  // Open in centre (rightPanel.toggleMaximized, the panel's header button and
+  // mod+alt+m when bound): the tab to the stage with the timeline away, and back.
+  step(QStringLiteral("the user opens the right panel's tab in the centre"), [](World& world, const Captures&, const Table&) {
     expect(world.native().controller<KeybindingController>()->commands()->run(QStringLiteral("rightPanel.toggleMaximized")), describePanel(world));
   });
-  step(QStringLiteral("the user toggles it again"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the user opens it in the centre again"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("rightPanel.toggleMaximized"), QVariantMap());
   });
-  step(QStringLiteral("the right panel covers the thread"), [](World& world, const Captures&, const Table&) {
-    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("maximized")).toBool(), describePanel(world));
-  });
-  step(QStringLiteral("the thread is shown beside the right panel"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the tab fills the thread's centre above the composer"), [](World& world, const Captures&, const Table&) {
     const QVariant state = world.state(QStringLiteral("panel"));
-    expect(at(state, QStringLiteral("isOpen")).toBool() && !at(state, QStringLiteral("maximized")).toBool(), describePanel(world));
+    expect(at(state, QStringLiteral("stage.focus")).toBool() && at(state, QStringLiteral("stage.panes")).toStringList() == QStringList{QStringLiteral("diff")} &&
+               dockedTabs(world).isEmpty(),
+           describePanel(world));
+  });
+  step(QStringLiteral("the tab is back in the right panel beside the thread"), [](World& world, const Captures&, const Table&) {
+    const QVariant state = world.state(QStringLiteral("panel"));
+    expect(at(state, QStringLiteral("isOpen")).toBool() && at(state, QStringLiteral("activeId")) == QLatin1String("diff") && stageTabs(world).isEmpty() &&
+               !at(state, QStringLiteral("stage.focus")).toBool(),
+           describePanel(world));
   });
   // The thread details column (threadPanel.toggle, the header's info button).
   step(QStringLiteral("the user toggles the thread details panel"), [](World& world, const Captures&, const Table&) {
@@ -930,6 +953,99 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("rightPanel.toggle"), QVariantMap());
     expectDiffOf(world, {QStringLiteral("src/turn4.ts")});
     expect(world.mc.part<FakeDiffs>().asked.size() == asked + 1, QStringLiteral("opening asked %1 times").arg(world.mc.part<FakeDiffs>().asked.size() - asked));
+  });
+  // The stage (features/desktop/stage.feature): tabs docked in the thread's centre.
+  step(QStringLiteral("the user moves the %1 tab to the centre").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.dock"), QVariantMap{{QStringLiteral("id"), tabIdTitled(world, c[0])}, {QStringLiteral("dock"), QStringLiteral("stage")}});
+  });
+  step(QStringLiteral("the user opens the %1 tab in the centre").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The panel's Open in centre button.
+    world.bridge().dispatch(QStringLiteral("rightPanel.dock"),
+                            QVariantMap{{QStringLiteral("id"), tabIdTitled(world, c[0])}, {QStringLiteral("dock"), QStringLiteral("stage")}, {QStringLiteral("focus"), true}});
+  });
+  step(QStringLiteral("the user moves the %1 tab to the side panel").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.dock"), QVariantMap{{QStringLiteral("id"), tabIdTitled(world, c[0])}, {QStringLiteral("dock"), QStringLiteral("panel")}});
+  });
+  step(QStringLiteral("the user moves every stage tab to the side panel"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("stage.dismiss"), QVariantMap());
+  });
+  step(QStringLiteral("the right panel has an? %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
+    panel(world)->addTab(c[0].toLower());
+    expect(tabTitles(world).contains(c[0]), describePanel(world));
+  });
+  step(QStringLiteral("the (?:%1 tab is|%1 and %1 tabs are) on the stage").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const QString& title : c) {
+      if (title.isEmpty()) continue;
+      if (!world.checking) {
+        if (!tabTitles(world).contains(title)) panel(world)->addTab(title.toLower());
+        panel(world)->moveToStage(tabIdTitled(world, title));
+      }
+      expect(stageTabs(world).contains(tabIdTitled(world, title)), describePanel(world));
+    }
+  });
+  step(QStringLiteral("the %1 tab is in the right panel").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = tabIdTitled(world, c[0]);
+    expect(!stageTabs(world).contains(id) && dockedTabs(world).contains(id), describePanel(world));
+  });
+  step(QStringLiteral("the right panel shows only the %1 tab").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = tabIdTitled(world, c[0]);
+    expect(dockedTabs(world) == QStringList{id} && at(world.state(QStringLiteral("panel")), QStringLiteral("activeId")) == id, describePanel(world));
+  });
+  step(QStringLiteral("the stage is empty"), [](World& world, const Captures&, const Table&) {
+    expect(stageTabs(world).isEmpty() && !at(world.state(QStringLiteral("panel")), QStringLiteral("stage.focus")).toBool(), describePanel(world));
+  });
+  step(QStringLiteral("the timeline is (shown|hidden)"), [](World& world, const Captures& c, const Table&) {
+    const bool hidden = c[0] == QLatin1String("hidden");
+    if (!world.checking && panel(world)->stage().focus != hidden) panel(world)->toggleFocus();
+    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("stage.focus")).toBool() == hidden, describePanel(world));
+  });
+  step(QStringLiteral("the user shows the timeline again"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("stage.toggleFocus"), QVariantMap());
+  });
+  step(QStringLiteral("the user drops the %1 tab at the (left|right|top|bottom) edge of the stage's first pane").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("rightPanel.dock"), QVariantMap{{QStringLiteral("id"), tabIdTitled(world, c[0])},
+                                                                          {QStringLiteral("dock"), QStringLiteral("stage")},
+                                                                          {QStringLiteral("pane"), 0},
+                                                                          {QStringLiteral("zone"), c[1]}});
+  });
+  step(QStringLiteral("the stage shows %1 and %1 side by side").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariant stage = at(world.state(QStringLiteral("panel")), QStringLiteral("stage"));
+    expect(at(stage, QStringLiteral("layout")) == QLatin1String("columns") &&
+               at(stage, QStringLiteral("panes")).toStringList() == QStringList({tabIdTitled(world, c[0]), tabIdTitled(world, c[1])}),
+           describePanel(world));
+  });
+  step(QStringLiteral("the user chooses the (single|columns|rows|grid) layout"), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("stage.layout"), QVariantMap{{QStringLiteral("layout"), c[0]}});
+  });
+  step(QStringLiteral("the stage has (\\d+) panes"), [](World& world, const Captures& c, const Table&) {
+    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("stage.panes")).toList().size() == c[0].toInt(), describePanel(world));
+  });
+  step(QStringLiteral("the diff of the latest turn is on the stage"), [](World& world, const Captures&, const Table&) {
+    finishTurns(world, 3);
+    openDiff(world, -1);
+    panel(world)->moveToStage(QStringLiteral("diff"));
+    world.sync();
+    expect(stageTabs(world) == QStringList{QStringLiteral("diff")}, describePanel(world));
+  });
+  step(QStringLiteral("the agent finishes another turn"), [](World& world, const Captures&, const Table&) {
+    finishTurn(world, 4, patchAdding(QStringLiteral("src/turn4.ts"), {QStringLiteral("export const turn = 4;")}));
+    world.sync();
+  });
+  step(QStringLiteral("the stage's diff shows that turn"), [](World& world, const Captures&, const Table&) {
+    expect(!panel(world)->isOpen() && panel(world)->shownTabs().contains(QStringLiteral("diff")), describePanel(world));
+    expectDiffOf(world, {QStringLiteral("src/turn4.ts")});
+  });
+  step(QStringLiteral("the user drags the divider between the conversation and the stage"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("stage.resize"), QVariantMap{{QStringLiteral("width"), kDraggedWidth}});
+  });
+  step(QStringLiteral("the conversation keeps the width it was dragged to"), [](World& world, const Captures&, const Table&) {
+    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("stage.chatWidth")) == kDraggedWidth, describePanel(world));
+  });
+  step(QStringLiteral("the user double-clicks the divider"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("stage.resize"), QVariantMap());
+  });
+  step(QStringLiteral("the conversation is back to its default width"), [](World& world, const Captures&, const Table&) {
+    expect(at(world.state(QStringLiteral("panel")), QStringLiteral("stage.chatWidth")).toInt() == 0, describePanel(world));
   });
   step(QStringLiteral("the diff is at the same scroll position"), [](World& world, const Captures&, const Table&) {
     const Visit& visit = world.mc.part<Visit>();

@@ -292,6 +292,8 @@ export function fakeSpaceMc(options: {
   readonly agentThreadId: () => string;
   /** Where an ask naming no project runs (`space.page.agentTarget`). */
   readonly agentProjectId?: () => string | null;
+  /** Whether the MC has the project: one with no files written has an empty folder. */
+  readonly hasProject?: (projectId: string) => boolean;
 }) {
   const spaces = new Map<string, Entity>();
   // Each project's own Space, where its files' pages are: in the index, never listed.
@@ -829,6 +831,7 @@ export function fakeSpaceMc(options: {
   };
   const filesOf = (projectId: unknown): Map<string, string> =>
     projectFiles.get(String(projectId)) ??
+    (options.hasProject?.(String(projectId)) ? new Map() : undefined) ??
     refuse("notFound", `There is no project ${String(projectId)} on this MC.`);
   const globRegExp = (glob: string) =>
     new RegExp(

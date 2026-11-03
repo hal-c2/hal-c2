@@ -309,6 +309,19 @@ defmodule HalC2.Projects do
 
   def at(_path), do: nil
 
+  @doc "Every folder of this MC's projects: thread worktrees and live project workspaces."
+  def roots do
+    for {{mc, _id}, {kind, row}} <- HalC2.Shell.rows(),
+        mc == node(),
+        root = owned_root(kind, row),
+        is_binary(root),
+        do: root
+  end
+
+  defp owned_root("thread", row), do: row["worktreePath"]
+  defp owned_root("project", row), do: if(row["deletedAt"] == nil, do: row["workspaceRoot"])
+  defp owned_root(_kind, _row), do: nil
+
   defp within?(path, root) do
     root = Path.expand(root)
     path == root or String.starts_with?(path, root <> "/")

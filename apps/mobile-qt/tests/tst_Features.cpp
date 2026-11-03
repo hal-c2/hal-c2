@@ -16,6 +16,8 @@
 #include <QStandardPaths>
 #include <QTest>
 
+#include <ctime>
+
 #include "Harness.h"
 #include "MobileApp.h"
 #include "Runner.h"
@@ -45,11 +47,14 @@ const QStringList kDefaultGlobs{
     QStringLiteral("space/presence.feature"),
     QStringLiteral("space/markdown.feature"),
     QStringLiteral("space/project-files.feature"),
+    QStringLiteral("timeline/streaming.feature"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
     QStringLiteral("threads/sidebar-list.feature:*plugin*"),
     QStringLiteral("providers/codex.feature:A plan Codex marked finished*"),
+    QStringLiteral("mc/orchestration/queue-and-steering.feature:A usage limit keeps the queue*"),
     QStringLiteral("settings/updates.feature"),
     QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
+    QStringLiteral("source-control/review-diffs.feature"),
     QStringLiteral("source-control/pull-request-threads.feature"),
 };
 
@@ -97,6 +102,9 @@ private:
 };
 
 int main(int argc, char** argv) {
+  // The scenarios' times are read in UTC, as on CI.
+  qputenv("TZ", "UTC");
+  tzset();
   // Qt's own files (the QML cache) go to its test locations, not the user's.
   QStandardPaths::setTestModeEnabled(true);
   QGuiApplication app(argc, argv);
