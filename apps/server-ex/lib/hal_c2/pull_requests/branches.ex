@@ -115,13 +115,15 @@ defmodule HalC2.PullRequests.Branches do
      }}
   end
 
-  def handle_call({:forget_pull_request, host, repository, number}, _from, state) do
+  # Matched on the URL's path alone: a remote's host (`ssh.github.com`) need not be the
+  # one in gh's URL, and a held answer from another host's same path is only forgotten
+  # too soon.
+  def handle_call({:forget_pull_request, _host, repository, number}, _from, state) do
     path = String.downcase("/#{repository}/pull/#{number}")
 
     held? = fn
       {_, %{answer: {:ok, %{"url" => url}}}} when is_binary(url) ->
-        uri = URI.parse(String.downcase(url))
-        uri.host == String.downcase(host) and uri.path == path
+        String.downcase(URI.parse(url).path || "") == path
 
       _ ->
         false

@@ -26,4 +26,16 @@ defmodule HalC2.PullRequestBranchesTest do
     send(second, {:answer, {:ok, nil}})
     assert {{:ok, nil}, true} = Task.await(reader)
   end
+
+  test "a change forgets the pull request held for a checkout whose remote host is not gh's" do
+    url = "https://github.com/O/R/pull/7"
+    fetch = fn _cwd, _branch -> {:ok, %{"number" => 7, "state" => "open", "url" => url}} end
+    start_supervised!({Branches, fetch: fetch})
+
+    assert {_, true} = Branches.lookup("/a", "x")
+    assert {_, false} = Branches.lookup("/a", "x")
+    # An `ssh://git@ssh.github.com:443/o/r.git` remote names another host than gh's URL.
+    :ok = Branches.forget_pull_request("ssh.github.com", "o/r", 7)
+    assert {_, true} = Branches.lookup("/a", "x")
+  end
 end
