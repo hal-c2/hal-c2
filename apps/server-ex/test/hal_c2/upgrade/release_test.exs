@@ -29,6 +29,14 @@ defmodule HalC2.Upgrade.ReleaseTest do
     assert config[:hal_c2][:from_runtime] == :yes
   end
 
+  test "a struct in the environment, as a release's config provider, goes in sys.config" do
+    provider = struct(Config.Provider, providers: [{Provider, :yes}])
+    config = [elixir: [config_provider_init: provider], hal_c2: [on_start: &is_atom/1]]
+
+    assert {[elixir: [config_provider_init: ^provider], hal_c2: []], [{:hal_c2, :on_start, _}]} =
+             Release.split_literal(config)
+  end
+
   test "why an install failed is said in words" do
     assert Release.describe({:code_change_failed, self(), Foo, ~c"1", :badarg}) =~
              "Foo could not migrate"

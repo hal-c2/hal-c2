@@ -430,9 +430,11 @@ defmodule HalC2.Upgrade.Release do
 
   # --- environment ------------------------------------------------------------------
 
+  @doc false
   # What `file:consult/1` can read back goes in `sys.config`; the rest (functions,
-  # pids) is put back after the install.
-  defp split_literal(config) do
+  # pids) is put back after the install. Structs, such as the `Config.Provider` a
+  # release keeps in `:elixir`, are maps to it.
+  def split_literal(config) do
     literal =
       for {app, env} <- config,
           do: {app, for({key, value} <- env, literal?(value), do: {key, value})}
@@ -455,7 +457,10 @@ defmodule HalC2.Upgrade.Release do
 
   defp literal?(value) when is_list(value), do: literal_list?(value)
   defp literal?(value) when is_tuple(value), do: Enum.all?(Tuple.to_list(value), &literal?/1)
-  defp literal?(%{} = value), do: Enum.all?(value, fn {k, v} -> literal?(k) and literal?(v) end)
+
+  defp literal?(%{} = value),
+    do: Enum.all?(Map.to_list(value), fn {k, v} -> literal?(k) and literal?(v) end)
+
   defp literal?(_value), do: true
 
   defp literal_list?([]), do: true
