@@ -795,6 +795,82 @@ void TimelineModel::loadEarlier() {
   emit earlierWanted(windowItems);
 }
 
+void TimelineModel::keepFrom(int row) {
+  if (m_loadingEarlier || m_status != QLatin1String("live") || m_cursor.offset < 0) return;
+  if (row < 0 || row >= m_rows.size()) return;
+  const QHash<QString, QJsonObject> runs = m_entities.value(QStringLiteral("run"));
+  const auto ordinalOf = [&](const QString& runId) -> std::optional<qint64> {
+    const auto run = runs.constFind(runId);
+    if (run == runs.cend()) return std::nullopt;
+    return qint64(run->value(QLatin1String("ordinal")).toDouble());
+  };
+  // The oldest run of the rows from `row` on (a fold's, or its items'): rows
+  // and runs need not be in the same order.
+  std::optional<qint64> reading;
+  const auto read = [&](const std::optional<qint64>& ordinal) {
+    if (ordinal && (!reading || *ordinal < *reading)) reading = ordinal;
+  };
+  for (int at = row; at < m_rows.size(); ++at) {
+    const Row& shown = m_rows.at(at);
+    if (shown.id.startsWith(QLatin1String("fold:"))) read(ordinalOf(shown.id.mid(5)));
+    for (const QString& item : shown.items) read(ordinalOf(text(entity(QStringLiteral("turn-item"), item), QLatin1String("runId"))));
+  }
+  if (!reading) return;
+  // The MC holds a queued run's items whatever the floor
+  // (HalC2.Streams.View.in_window?): the floor stays below the oldest.
+  for (const QJsonObject& run : runs) {
+    if (text(run, QLatin1String("status")) == QLatin1String("queued")) reading = std::min(*reading, qint64(run.value(QLatin1String("ordinal")).toDouble()));
+  }
+  // Above the run read, the newest runs that together hold m_keep turn items
+  // stay (HalC2.Streams.View.take_runs); the floor is the oldest of them.
+  QHash<qint64, int> counts;
+  for (const QJsonObject& item : m_entities.value(QStringLiteral("turn-item"))) {
+    const auto run = runs.constFind(text(item, QLatin1String("runId")));
+    if (run == runs.cend() || text(*run, QLatin1String("status")) == QLatin1String("rolled_back")) continue;
+    const qint64 ordinal = qint64(run->value(QLatin1String("ordinal")).toDouble());
+    if (ordinal < *reading) ++counts[ordinal];
+  }
+  QList<qint64> above = counts.keys();
+  std::sort(above.begin(), above.end(), std::greater<>());
+  std::optional<qint64> floor;
+  int kept = 0;
+  int dropped = 0;
+  for (const qint64 ordinal : std::as_const(above)) {
+    if (floor) {
+      dropped += counts.value(ordinal);
+    } else if ((kept += counts.value(ordinal)) >= m_keep) {
+      floor = ordinal;
+    }
+  }
+  // Not worth a resubscription until it frees as much as a page brings.
+  if (!floor || dropped < m_keep || (m_cursor.floor && *floor <= *m_cursor.floor)) return;
+  for (const QString& kind : kWindowed) {
+    QHash<QString, QJsonObject>& byKind = m_entities[kind];
+    for (auto it = byKind.begin(); it != byKind.end();) {
+      const std::optional<qint64> ordinal = ordinalOf(text(*it, QLatin1String("runId")));
+      if (ordinal && *ordinal < *floor) {
+        m_dirty.remove({kind, it.key()});
+        it = byKind.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  // The captures' JSON of the dropped turns is made again when they come back.
+  m_accessJson.clear();
+  m_cursor.floor = floor;
+  m_cursorDirty = true;
+  // The cache raises its floor and drops the turns below it first, then takes the cursor.
+  if (m_cache && !m_cursor.handle.isEmpty()) m_cache->trimThread(m_threadKey, *floor);
+  flush();
+  sortItems();
+  restructure({});
+  emit turnChanged();
+  emit agentsChanged();
+  emit earlierChanged();
+  emit windowRaised();
+}
+
 // --- The cache -----------------------------------------------------------------------
 
 cache::Entity TimelineModel::cached(const QString& kind, const QString& id, const QJsonObject& fields) const {
