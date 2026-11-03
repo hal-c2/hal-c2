@@ -630,11 +630,10 @@ defmodule HalC2.Space.Markdown do
 
   defp indented([], acc), do: {:raw, Enum.reverse(acc), []}
 
+  # A line of only spaces or a tab is blank, not more code: the code takes blank lines
+  # only when more code follows them.
   defp indented([line | rest] = lines, acc) do
     cond do
-      Regex.match?(~r/^( {4}|\t)/, line) ->
-        indented(rest, [line | acc])
-
       blank?(line) ->
         {blank, after_blank} = Enum.split_while(lines, &blank?/1)
 
@@ -647,6 +646,9 @@ defmodule HalC2.Space.Markdown do
           [] ->
             {:raw, Enum.reverse(acc), lines}
         end
+
+      Regex.match?(~r/^( {4}|\t)/, line) ->
+        indented(rest, [line | acc])
 
       true ->
         {:raw, Enum.reverse(acc), lines}
