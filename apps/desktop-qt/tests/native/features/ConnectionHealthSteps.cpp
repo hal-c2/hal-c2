@@ -52,6 +52,8 @@ struct FakeHealth {
   QString savedEnvironment;  // the cluster member the scenario removes
   qsizetype rowsBefore = 0;
   bool shownDown = false;  // whether a surface said the connection was down
+  bool sawDown = false;    // whether the controller saw the client leave Ready
+  bool saidConnected = false;  // whether a surface said the connection was up
 };
 
 FakeHealth& fake(World& world) {
@@ -559,20 +561,60 @@ const Steps steps([] {
   step(QStringLiteral("the connection drops and comes back at once"), [](World& world, const Captures&, const Table&) {
     client(world).setRetryDelays({20});
     const qsizetype connections = world.mc.connections.size();
+    // Every connection published, not only those a poll lands on.
+    FakeHealth& watched = fake(world);
+    const QMetaObject::Connection watch =
+        QObject::connect(&world.bridge(), &ShellBridge::stateEntryChanged, [&watched](const QString& key, const QVariant& value) {
+          if (key != QLatin1String("connection")) return;
+          const QVariantMap said = value.toMap();
+          if (said.value(QStringLiteral("phase")) == QLatin1String("connected")) return;
+          watched.sawDown = true;
+          if (!said.value(QStringLiteral("settling")).toBool()) watched.shownDown = true;
+        });
     world.mc.drop();
-    world.waitFor([&] {
-                    const QVariantMap said = connection(world);
-                    if (said.value(QStringLiteral("phase")) != QLatin1String("connected") && !said.value(QStringLiteral("settling")).toBool()) {
-                      fake(world).shownDown = true;
-                    }
-                    return world.mc.connections.size() > connections && said.value(QStringLiteral("phase")) == QLatin1String("connected");
-                  },
+    world.waitFor([&] { return world.mc.connections.size() > connections && phase(world) == QLatin1String("connected"); },
                   [&] { return QStringLiteral("the client to be back; the connection is %1").arg(show(connection(world))); });
+    QObject::disconnect(watch);
+    expect(watched.sawDown, QStringLiteral("the controller never saw the connection drop"));
   });
   step(QStringLiteral("no surface said the connection was down"), [](World& world, const Captures&, const Table&) {
     world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nItem { ConnectionNotice {} }\n", QSize(900, 600));
     expect(!fake(world).shownDown && !world.brick->item(QStringLiteral("connectionNotice"))->isVisible(),
            QStringLiteral("the connection was shown down; it is %1").arg(show(connection(world))));
+  });
+  // A fresh launch, its first connection never coming up.
+  step(QStringLiteral("the environment takes no connections"), [](World& world, const Captures&, const Table&) {
+    world.mc.stopAccepting();
+  });
+  step(QStringLiteral("the app starts and connects to it"), [](World& world, const Captures&, const Table&) {
+    world.restart();
+    // A grace long enough that nothing in the scenario could outlast it.
+    health(world).setGrace(600000);
+    FakeHealth& watched = fake(world);
+    QObject::connect(&world.bridge(), &ShellBridge::stateEntryChanged, &world.native(), [&watched](const QString& key, const QVariant& value) {
+      if (key != QLatin1String("connection")) return;
+      const QVariantMap said = value.toMap();
+      if (said.value(QStringLiteral("phase")) == QLatin1String("connected") || said.value(QStringLiteral("settling")).toBool()) {
+        watched.saidConnected = true;
+      }
+    });
+    world.native().open(world.mc.origin(), QStringLiteral("mc-token"));
+  });
+  step(QStringLiteral("within a second and a half the window shows it is not connected"), [](World& world, const Captures&, const Table&) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nItem { ConnectionNotice {} }\n", QSize(900, 600));
+    world.waitFor([&] { return world.brick->item(QStringLiteral("connectionNotice"))->isVisible(); },
+                  [&] { return QStringLiteral("the notice to show; the connection is %1").arg(show(connection(world))); });
+    const QString status = connection(world).value(QStringLiteral("status")).toString();
+    expect(world.brick->item(QStringLiteral("connectionNoticeStatus"))->property("text") == status,
+           QStringLiteral("the notice does not read \"%1\"").arg(status));
+    // And Connections settings reads the same.
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nConnectionStatusRow {}\n", QSize(640, 40));
+    expect(world.brick->shows(status) && !world.brick->shows(QStringLiteral("Connected")),
+           QStringLiteral("Connections settings does not read \"%1\"; the connection is %2").arg(status, show(connection(world))));
+  });
+  step(QStringLiteral("nothing said it was connected"), [](World& world, const Captures&, const Table&) {
+    expect(!fake(world).saidConnected && !connection(world).value(QStringLiteral("settling")).toBool(),
+           QStringLiteral("a surface said it was connected; the connection is %1").arg(show(connection(world))));
   });
   step(QStringLiteral("a connection that failed"), [](World& world, const Captures&, const Table&) { goDown(world, {600000}); });
   step(QStringLiteral("the user copies its trace id"), [](World& world, const Captures&, const Table&) {

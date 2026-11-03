@@ -274,6 +274,15 @@ Feature: Connection health
     When the connection drops and comes back at once
     Then no surface said the connection was down
 
+  # The grace is a reconnect's. An app that has not connected since it started says so at
+  # once, in the window and in Connections settings, however long the environment takes.
+  @desktop @mobile
+  Scenario: An app that starts with its environment out of reach says so at once
+    Given the environment takes no connections
+    When the app starts and connects to it
+    Then within a second and a half the window shows it is not connected
+    And nothing said it was connected
+
   @desktop @mobile @backlog-mobile
   Scenario: The user copies a connection's trace id for a bug report
     Given a connection that failed

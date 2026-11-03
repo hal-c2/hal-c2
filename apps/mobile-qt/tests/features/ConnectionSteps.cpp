@@ -4,10 +4,12 @@
 
 #include <QQuickItem>
 
+#include "ConnectionHealthController.h"
 #include "Harness.h"
 #include "McClient.h"
 #include "NativeShell.h"
 #include "Phone.h"
+#include "ShellBridge.h"
 #include "World.h"
 
 namespace {
@@ -23,6 +25,7 @@ QVariantMap connection(World& world) {
 struct Before {
   qsizetype sockets = 0;
   QString traceId;
+  bool saidConnected = false;  // whether the phone said it was connected since it started
 };
 
 // The environment goes away under a paired phone, which tries once more and
@@ -42,6 +45,35 @@ void loseConnection(World& world) {
 
 const Steps steps([] {
   using S = QString;
+
+  // features/connections/connection-health.feature, as far as the phone runs it.
+  step(S("(?:a client paired with an environment|a paired client)"), [](World& world, const Captures&, const Table&) { pairWithEnvironment(world); });
+
+  // A fresh start, its first connection never coming up.
+  step(S("the environment takes no connections"), [](World& world, const Captures&, const Table&) { world.mc.stopAccepting(); });
+  step(S("the app starts and connects to it"), [](World& world, const Captures&, const Table&) {
+    world.close();
+    world.open();
+    // A grace long enough that nothing in the scenario could outlast it.
+    world.native().shared<ConnectionHealthController>()->setGrace(600000);
+    Before& seen = world.mc.part<Before>();
+    seen.saidConnected = connection(world).value(S("phase")) == QLatin1String("connected") || connection(world).value(S("settling")).toBool();
+    QObject::connect(&world.bridge(), &ShellBridge::stateEntryChanged, &world.native(), [&seen](const QString& key, const QVariant& value) {
+      if (key != QLatin1String("connection")) return;
+      const QVariantMap said = value.toMap();
+      if (said.value(QStringLiteral("phase")) == QLatin1String("connected") || said.value(QStringLiteral("settling")).toBool()) seen.saidConnected = true;
+    });
+  });
+  step(S("within a second and a half the window shows it is not connected"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* status = world.item(S("connectionNoticeStatus"));
+    const QString word = connection(world).value(S("status")).toString();
+    expect(status->property("text") == word && word != S("Connected"),
+           S("the notice reads \"%1\"; the connection is %2").arg(status->property("text").toString(), show(connection(world))));
+  });
+  step(S("nothing said it was connected"), [](World& world, const Captures&, const Table&) {
+    expect(!world.mc.part<Before>().saidConnected && !connection(world).value(S("settling")).toBool(),
+           S("the phone said it was connected; the connection is %1").arg(show(connection(world))));
+  });
 
   // It is back by the time the user looks, which nothing tells the phone.
   step(S("an environment has lost its connection"), [](World& world, const Captures&, const Table&) {

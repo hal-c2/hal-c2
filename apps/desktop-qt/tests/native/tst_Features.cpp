@@ -249,6 +249,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("connections/connection-health.feature:The environment's status says*"),
     QStringLiteral("connections/connection-health.feature:The connection's state is an icon*"),
     QStringLiteral("connections/connection-health.feature:A reconnect within a second and a half*"),
+    QStringLiteral("connections/connection-health.feature:An app that starts with its environment*"),
     QStringLiteral("connections/connection-health.feature:The user copies a connection's trace id*"),
     QStringLiteral("connections/connection-health.feature:Cached data stays readable*"),
     QStringLiteral("connections/connection-health.feature:A thread left for*"),

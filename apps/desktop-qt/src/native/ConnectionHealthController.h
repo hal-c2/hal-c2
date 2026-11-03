@@ -6,6 +6,7 @@
 
 #include <functional>
 
+#include "ConnectionGrace.h"
 #include "NativeController.h"
 #include "PairingExchange.h"
 
@@ -30,7 +31,8 @@ class ShellStore;
 //    title, detail,   a sentence each for the tooltip and the panel; empty
 //                     while connected
 //    settling,        a reconnect younger than the grace (setGrace), which
-//                     no surface shows yet: most are over before it ends
+//                     no surface shows yet: most are over before it ends.
+//                     Never before the first connection (ConnectionGrace)
 //    traceId,         the failed attempt's trace id, or ""
 //    canRetry, needsPairing, pairing, pairingError,
 //    versionWarning:  null | {key, environmentId, clientVersion, serverVersion, text}}
@@ -104,9 +106,8 @@ private:
   // Whether the client's phase was Ready when last seen.
   bool m_ready = false;
   bool m_pairing = false;
-  // Runs while a connection on its way up has not been shown: one coming up
-  // within it never is. Spent once it ran out, until the next connection.
+  // Runs while m_settling is: a reconnect over within it is never shown.
   QTimer m_grace;
-  bool m_graceSpent = false;
+  ConnectionGrace m_settling;
   QString m_pairingError;
 };

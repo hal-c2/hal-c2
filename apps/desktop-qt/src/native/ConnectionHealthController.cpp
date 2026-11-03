@@ -140,7 +140,7 @@ ConnectionHealthController::ConnectionHealthController(ShellBridge* bridge, McCl
   m_grace.setSingleShot(true);
   m_grace.setInterval(1500);
   connect(&m_grace, &QTimer::timeout, this, [this] {
-    m_graceSpent = true;
+    m_settling.expire();
     update();
   });
   update();
@@ -352,19 +352,15 @@ void ConnectionHealthController::update() {
       break;
   }
   const bool connected = name == QLatin1String("connected");
-  // A connection on its way up is not shown before the grace runs out: most
-  // reconnects are over by then. What needs the user is shown at once.
-  const bool comingUp = state == QLatin1String("connecting") || state == QLatin1String("retrying");
-  if (connected) {
+  // A reconnect is not shown before the grace runs out: most are over by
+  // then. What needs the user is shown at once, and so is a first connection.
+  m_settling.see(state);
+  const bool settling = m_settling.settling();
+  if (!settling) {
     m_grace.stop();
-    m_graceSpent = false;
-  } else if (!comingUp) {
-    m_grace.stop();
-    m_graceSpent = true;
-  } else if (!m_graceSpent && !m_grace.isActive()) {
+  } else if (!m_grace.isActive()) {
     m_grace.start();
   }
-  const bool settling = comingUp && !m_graceSpent;
   m_bridge->publish(kKey, QVariantMap{
                               {QStringLiteral("phase"), name},
                               {QStringLiteral("state"), state},
