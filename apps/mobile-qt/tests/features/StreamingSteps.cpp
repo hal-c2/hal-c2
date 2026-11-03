@@ -305,13 +305,32 @@ void replyWith(World& world, const QString& block, bool streaming = false) {
 }
 
 QString preferredScript(World& world) {
-  return show(world.state(S("workspace")).toMap().value(S("preferredScriptId")));
+  return world.state(S("workspace")).toMap().value(S("preferredScriptId")).toString();
 }
 
 // The workspace's preferred script before the user ran a reply's command.
 struct Before {
   QString preferred;
 };
+
+// The thread's project offers "lint" first, as if the user had run it last, so
+// a change to the selected script shows.
+void preferScript(World& world) {
+  const QString project = S("shop");
+  QJsonObject row = world.mc.projects.value(project);
+  QJsonArray scripts = row.value(QLatin1String("scripts")).toArray();
+  scripts.append(QJsonObject{{S("id"), S("lint")}, {S("name"), S("Lint")}, {S("command"), S("bun run lint")},
+                             {S("icon"), S("play")}, {S("runOnWorktreeCreate"), false}});
+  row.insert(S("scripts"), scripts);
+  world.mc.projects.insert(project, row);
+  world.native().controller<SettingsController>()->writeDevice(S("lastProjectScripts"),
+                                                                QVariantMap{{world.mc.environmentId + QLatin1Char(':') + project, S("lint")}});
+  QJsonArray rows;
+  rows.append(QJsonArray{project, S("project"), row});
+  world.mc.sendRows(world.mc.name, rows);
+  world.waitFor([&] { return world.state(S("workspace")).toMap().value(S("preferredScriptId")) == S("lint"); },
+                [&] { return S("the project to offer lint first; the workspace is %1").arg(show(world.state(S("workspace")))); });
+}
 
 QString terminalCalls(World& world) {
   QStringList lines;
@@ -845,9 +864,11 @@ const Steps steps([] {
   // A reply's shell command, run from its code block.
   step(S("the agent's reply has a single-line shell command in a code block"), [](World& world, const Captures&, const Table&) {
     replyWith(world, S("```bash\n") + kCommand + S("\n```"));
+    preferScript(world);
   });
   step(S("the user runs the command from its code block"), [](World& world, const Captures&, const Table&) {
     world.mc.part<Before>().preferred = preferredScript(world);
+    expect(world.mc.part<Before>().preferred == QLatin1String("lint"), S("the project offers %1 first, not lint").arg(world.mc.part<Before>().preferred));
     world.waitFor([&] { return visible(world, S("runCode")).size() == 1; },
                   [&] { return S("the code block to offer Run; %1 offered").arg(visible(world, S("runCode")).size()); });
     tapStill(world, visible(world, S("runCode")).constFirst());
