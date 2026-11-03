@@ -398,15 +398,6 @@ Rectangle {
             }
 
             ShellMenuItem {
-                objectName: "spaceUnlinkFile"
-                text: qsTr("Stop following the file")
-                iconName: "circle-x"
-                visible: page.fileBacked
-                height: visible ? implicitHeight : 0
-                onTriggered: Shell.dispatch("space.page.unlinkFile", { pageId: Spaces.pageId })
-            }
-
-            ShellMenuItem {
                 text: qsTr("Move to the top of the Space")
                 iconName: "arrow-up"
                 visible: (page.current.parentPageId ?? "") !== "" && !page.trashed
@@ -487,7 +478,7 @@ Rectangle {
                     visible: page.file.missing ?? false
                     text: (page.file.unwritten ?? false)
                         ? qsTr("The file is gone, and edits made since are on the page only. If the file comes back, it wins, and those edits stay in the page's history.")
-                        : qsTr("The file is gone. The page keeps what it last said; stop following the file to keep it as an ordinary page.")
+                        : qsTr("The file is gone. The page keeps what it last said, and if the file comes back, it wins.")
                     color: page.foreground
                     wrapMode: Text.Wrap
                     font.pixelSize: Math.round(12 * Theme.fontScale)

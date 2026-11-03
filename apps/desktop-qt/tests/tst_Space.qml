@@ -879,7 +879,7 @@ Item {
                                    file: Object.assign({ projectId: "shop", projectTitle: "Shop", path: "docs/roadmap.md", missing: false, unwritten: false, conflictAt: "" }, file) });
         }
 
-        function test_a_page_that_is_a_file_says_which_with_the_ways_to_it_and_out() {
+        function test_a_page_that_is_a_file_says_which_with_the_way_to_it() {
             const view = root.research({ page: filed({}) });
             verify(findChild(view, "spacePageFile").visible);
             compare(findChild(view, "spacePageFilePath").text, "The file docs/roadmap.md of Shop");
@@ -888,9 +888,7 @@ Item {
             mouseClick(findChild(view, "spacePageFileShow"));
             mouseClick(findChild(view, "spacePageActions"));
             verify(findChild(view, "spaceShowFile").visible);
-            findChild(view, "spaceUnlinkFile").triggered();
-            compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.showFile", "space.page.unlinkFile"]);
-            compare(dispatched("space.page.unlinkFile"), [{ pageId: "page-1" }]);
+            compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.showFile"]);
         }
 
         function test_an_ordinary_page_says_nothing_of_a_file() {
@@ -898,7 +896,55 @@ Item {
             verify(!findChild(view, "spacePageFile").visible);
             mouseClick(findChild(view, "spacePageActions"));
             verify(!findChild(view, "spaceShowFile").visible);
-            verify(!findChild(view, "spaceUnlinkFile").visible);
+        }
+
+        // "shop" with Space files, as SpaceProjects lists it: collapsed, or open on its tree.
+        function sections(expanded, more) {
+            const rows = [{ id: "project:shop", kind: "project", projectId: "shop", path: "", name: "shop", depth: 0, expanded: expanded, pageId: "" }];
+            if (expanded)
+                rows.push({ id: "folder:shop:docs", kind: "folder", projectId: "shop", path: "docs", name: "docs", depth: 1, expanded: true, pageId: "" },
+                          { id: "file:shop:docs/guide.md", kind: "file", projectId: "shop", path: "docs/guide.md", name: "guide.md", depth: 2, expanded: false, pageId: "page-9" },
+                          { id: "file:shop:README.md", kind: "file", projectId: "shop", path: "README.md", name: "README.md", depth: 1, expanded: false, pageId: "" });
+            return root.research(Object.assign({ projects: rows }, more));
+        }
+
+        function test_a_project_section_comes_after_the_spaces_pages_and_expands_on_a_click() {
+            const view = sections(false);
+            const list = findChild(view, "spaceProjects");
+            verify(list.visible);
+            const tree = findChild(view, "spacePageTree");
+            verify(list.mapToItem(view, 0, 0).y >= tree.mapToItem(view, 0, 0).y + tree.height);
+            tryVerify(() => findChild(view, "spaceProject:shop") !== null);
+            verify(findChild(view, "spaceProjectFile:shop:README.md") === null);
+            mouseClick(findChild(view, "spaceProject:shop"));
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: true }]);
+        }
+
+        function test_an_expanded_section_shows_its_files_by_folder_and_collapses_on_a_click() {
+            const view = sections(true);
+            tryVerify(() => findChild(view, "spaceProjectFile:shop:README.md") !== null);
+            const folder = findChild(view, "spaceProjectFolder:shop:docs");
+            const guide = findChild(view, "spaceProjectFile:shop:docs/guide.md");
+            verify(guide.y > folder.y);
+            verify(findChild(view, "spaceProjectFile:shop:README.md").y > guide.y);
+            mouseClick(findChild(view, "spaceProject:shop"));
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: false }]);
+        }
+
+        function test_a_file_in_a_section_is_edited_as_a_page_and_shows_as_chosen() {
+            const view = sections(true);
+            tryVerify(() => findChild(view, "spaceProjectFile:shop:README.md") !== null);
+            mouseClick(findChild(view, "spaceProjectFile:shop:README.md"));
+            compare(dispatched("space.openFile"), [{ projectId: "shop", relativePath: "README.md" }]);
+            verify(!findChild(view, "spaceProjectFile:shop:docs/guide.md").selected);
+            Spaces.fileSpaceId = "project-space-shop";
+            Spaces.pageId = "page-9";
+            verify(findChild(view, "spaceProjectFile:shop:docs/guide.md").selected);
+        }
+
+        function test_no_project_has_space_files_and_no_section_shows() {
+            const view = root.research();
+            verify(!findChild(view, "spaceProjects").visible);
         }
 
         function test_a_page_whose_file_is_gone_says_so_and_whether_it_was_edited_since() {

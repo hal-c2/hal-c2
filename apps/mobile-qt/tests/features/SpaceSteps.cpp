@@ -3915,7 +3915,7 @@ const Steps steps([] {
   step(S("the user opens %1 in a Space from its menu").arg(q), [](World& world, const Captures& c, const Table&) {
     browseFiles(world);
     holdEntry(world, c[0]);
-    world.tap(S("fileEntryOpenInSpace"));
+    world.tap(S("fileEntryEditAsPage"));
   });
   step(S("the Space shows the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expectOpened(world, c[0]);
@@ -3927,7 +3927,7 @@ const Steps steps([] {
                   [&] { return S("the viewer to open %1; it has \"%2\"").arg(c[0], viewerOf(world).openPath()); });
   });
   step(S("the user opens it in a Space"), [](World& world, const Captures&, const Table&) {
-    world.tap(world.item(S("fileOpenInSpace")));
+    world.tap(world.item(S("fileEditAsPage")));
   });
   step(S("the agent's message in a thread of %1 links %1").arg(q), [](World& world, const Captures& c, const Table&) {
     inFilesThread(world);
@@ -3972,11 +3972,11 @@ const Steps steps([] {
   step(S("%1 offers no way to open it in a Space").arg(q), [](World& world, const Captures& c, const Table&) {
     holdEntry(world, c[0]);
     world.sync();
-    expect(world.find(S("fileEntryOpenInSpace")) == nullptr, S("the menu of %1 offers opening it in a Space").arg(c[0]));
+    expect(world.find(S("fileEntryEditAsPage")) == nullptr, S("the menu of %1 offers opening it in a Space").arg(c[0]));
     closeEntryMenu(world);
     // The Markdown beside it is offered, so the menu is not merely waiting.
     holdEntry(world, S("docs/guide.md"));
-    world.item(S("fileEntryOpenInSpace"));
+    world.item(S("fileEntryEditAsPage"));
     closeEntryMenu(world);
   });
   step(S("every Space was deleted"), [](World& world, const Captures&, const Table&) {
@@ -4100,7 +4100,7 @@ const Steps steps([] {
   step(S("the user opens the project's copy of %1 in a Space from its menu").arg(q), [](World& world, const Captures& c, const Table&) {
     browseFiles(world);
     holdEntry(world, c[0]);
-    QQuickItem* item = world.item(S("fileEntryOpenInSpace"));
+    QQuickItem* item = world.item(S("fileEntryEditAsPage"));
     expect(item->property("text").toString().contains(S("project's copy")), S("the entry did not say it opens the project's copy: %1").arg(item->property("text").toString()));
     world.tap(item);
   });
