@@ -183,9 +183,7 @@ defmodule HalC2.Vcs do
   end
 
   defp github_pull_request(cwd, branch) do
-    with gh when is_binary(gh) <-
-           System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")),
-         [pr | _] <- gh_pr_list(gh, cwd, branch) do
+    with [pr | _] <- gh_pr_list(cwd, branch) do
       %{
         "number" => pr["number"],
         "title" => pr["title"],
@@ -216,16 +214,16 @@ defmodule HalC2.Vcs do
     end
   end
 
-  defp gh_pr_list(gh, cwd, branch) do
+  defp gh_pr_list(cwd, branch) do
     args =
       ~w(pr list --state all --limit 1 --json number,title,url,baseRefName,headRefName,state,isDraft,updatedAt --head) ++
         [branch]
 
-    # Unauthenticated or offline `gh` means no pull request, quietly.
-    task = Task.async(fn -> System.cmd(gh, args, cd: cwd, stderr_to_stdout: true) end)
-
-    case Task.yield(task, 10_000) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {out, 0}} -> JSON.decode!(out)
+    # Unauthenticated, offline or rate limited `gh` means no pull request, quietly.
+    # gh may ask an `upstream` on another host than origin's, so the gate reads the remotes
+    # the way gh does to charge the host it asks.
+    case HalC2.GitHub.gh(cwd, args, timeout: 10_000) do
+      {:ok, out} -> JSON.decode!(out)
       _ -> []
     end
   rescue
