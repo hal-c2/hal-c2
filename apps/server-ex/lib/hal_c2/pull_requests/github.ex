@@ -910,12 +910,13 @@ defmodule HalC2.PullRequests.GitHub do
 
   @doc """
   The newest pull request whose head is `branch`, in whichever repository `gh` reads
-  the checkout at `cwd` against: `%{"number", "url", "state", "mergedAt", "closedAt"}`,
-  or nil.
+  the checkout at `cwd` against: `%{"number", "url", "state", "title", "baseRef",
+  "headRef", "isDraft", "updatedAt", "mergedAt", "closedAt"}`, or nil. Every reader of
+  this answer asks it through `HalC2.PullRequests.Branches`.
   """
   def branch_pull_request(cwd, branch) do
     args =
-      ~w(pr list --state all --limit 1 --json number,url,state,mergedAt,closedAt --head) ++
+      ~w(pr list --state all --limit 1 --json number,title,url,baseRefName,headRefName,state,isDraft,updatedAt,mergedAt,closedAt --head) ++
         [branch]
 
     case gh_json(cwd, args) do
@@ -926,6 +927,11 @@ defmodule HalC2.PullRequests.GitHub do
            "number" => number,
            "url" => url,
            "state" => state(pr),
+           "title" => pr["title"],
+           "baseRef" => pr["baseRefName"],
+           "headRef" => pr["headRefName"],
+           "isDraft" => pr["isDraft"] == true,
+           "updatedAt" => pr["updatedAt"],
            "mergedAt" => trimmed(pr["mergedAt"]),
            "closedAt" => trimmed(pr["closedAt"])
          }}
