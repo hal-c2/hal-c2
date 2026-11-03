@@ -5,7 +5,15 @@ import { THEME } from "../theme.ts";
 import { linkifyTimelineUrls } from "../timelineLinks.ts";
 import type { MermaidRenderResult } from "@hal-c2/contracts";
 
-import { markdownBlockLines, markdownLines, mermaidFenceSource, plainText } from "./styledText.ts";
+import {
+  chunk,
+  inlineMarkdown,
+  markdownBlockLines,
+  markdownLines,
+  mermaidFenceSource,
+  plainText,
+  wrapChunks,
+} from "./styledText.ts";
 
 const render = (markdown: string) => markdownLines(linkifyTimelineUrls(markdown), THEME);
 const links = (markdown: string) =>
@@ -218,5 +226,59 @@ describe("Mermaid blocks", () => {
     expect(mermaidFenceSource(`\`\`\`ts\n${FLOW}\n\`\`\``)).toBeNull();
     expect(mermaidFenceSource(`\`\`\`mermaid\n${FLOW}`)).toBeNull();
     expect(mermaidFenceSource(`\`\`\`mermaid\n${FLOW}\n\`\`\`\nafter`)).toBeNull();
+  });
+});
+
+describe("inlineMarkdown", () => {
+  const spans = (text: string) =>
+    inlineMarkdown(text, THEME).map((part) => [part.text, part.attributes ?? 0, part.link?.url]);
+
+  it("draws GitHub's struck text, underscored italic, link titles and www addresses", () => {
+    expect(
+      spans('~~gone~~ _so_ [a](https://example.com "Title") www.example.com/a, snake_case_name'),
+    ).toEqual([
+      ["gone", TextAttributes.STRIKETHROUGH, undefined],
+      [" ", 0, undefined],
+      ["so", TextAttributes.ITALIC, undefined],
+      [" ", 0, undefined],
+      ["a", TextAttributes.UNDERLINE, "https://example.com"],
+      [" ", 0, undefined],
+      ["www.example.com/a", TextAttributes.UNDERLINE, "http://www.example.com/a"],
+      [", snake_case_name", 0, undefined],
+    ]);
+  });
+
+  it("keeps a balanced paren in a www address and leaves an unbalanced one out", () => {
+    expect(spans("see www.example.com/a_(b) ok (www.example.com/c).")).toEqual([
+      ["see ", 0, undefined],
+      ["www.example.com/a_(b)", TextAttributes.UNDERLINE, "http://www.example.com/a_(b)"],
+      [" ok (", 0, undefined],
+      ["www.example.com/c", TextAttributes.UNDERLINE, "http://www.example.com/c"],
+      [").", 0, undefined],
+    ]);
+  });
+});
+
+describe("wrapChunks", () => {
+  it("breaks styled text at spaces as wrapWords does, keeping each style", () => {
+    const lines = wrapChunks(
+      [chunk("one two "), chunk("three four", { bold: true }), chunk("\nfive")],
+      8,
+    );
+    expect(lines.map((parts) => parts.map((part) => part.text))).toEqual([
+      ["one two"],
+      ["three"],
+      ["four"],
+      ["five"],
+    ]);
+    expect(lines[1]![0]!.attributes).toBe(TextAttributes.BOLD);
+  });
+
+  it("joins a word's styles on one line and cuts a word wider than a line", () => {
+    const lines = wrapChunks([chunk("ab"), chunk("cd", { italic: true }), chunk("efghijk ok")], 8);
+    expect(lines.map((parts) => parts.map((part) => part.text))).toEqual([
+      ["ab", "cd", "efgh"],
+      ["ijk ok"],
+    ]);
   });
 });

@@ -2749,6 +2749,131 @@ step("each block is shown as this Markdown, line for line:", (ctx: SpaceWorld, m
   expect(shown).toEqual((markdown as string).split("\n").filter((line) => line.trim() !== ""));
 });
 
+// Inline formatting (markdown.feature): a paragraph is drawn by the chat's inline Markdown,
+// each kind of formatting in its own chunk, with none of its markers left.
+const INLINE_PARAGRAPHS: Record<string, { text: string; drawn: string; spans: SpanWanted[] }> = {
+  "bold and italic text": {
+    text: "**Bold** and _italic_",
+    drawn: "Bold and italic",
+    spans: [
+      ["Bold", TextAttributes.BOLD],
+      ["italic", TextAttributes.ITALIC],
+    ],
+  },
+  "struck-through text": {
+    text: "~~struck~~",
+    drawn: "struck",
+    spans: [["struck", TextAttributes.STRIKETHROUGH]],
+  },
+  "inline code": { text: "`mix test`", drawn: "mix test", spans: [["mix test", 0]] },
+  "a link with a title": {
+    text: 'a [link](https://example.com "Title")',
+    drawn: "a link",
+    spans: [["link", TextAttributes.UNDERLINE, "https://example.com"]],
+  },
+  "an autolinked address and a bare www link": {
+    text: "<https://example.com> and www.example.com",
+    drawn: "https://example.com and www.example.com",
+    spans: [
+      ["https://example.com", TextAttributes.UNDERLINE, "https://example.com"],
+      ["www.example.com", TextAttributes.UNDERLINE, "http://www.example.com"],
+    ],
+  },
+};
+type SpanWanted = [text: string, attributes: number, link?: string];
+const LINKING =
+  "[the docs](https://example.com/docs) hold ![Signups](https://example.com/signups.png)";
+
+step(/^a page with a paragraph holding (.+)$/, (ctx: SpaceWorld, formatting: string) => {
+  const paragraph = INLINE_PARAGRAPHS[formatting];
+  if (!paragraph) throw new Error(`no paragraph holds ${formatting}`);
+  seedBlock(ctx, "Notes", "paragraph", paragraph.text);
+});
+
+step("a page with a paragraph linking to a web address", (ctx: SpaceWorld) => {
+  seedBlock(ctx, "Notes", "paragraph", LINKING);
+});
+
+step("the user opens the page", (ctx: SpaceWorld) => openPage(ctx, "Notes"));
+
+const paragraphRow = (ctx: SpaceWorld) => {
+  const rows = pane(ctx).rows.filter((row) => row.blockKind === "paragraph");
+  expect(rows).toHaveLength(1);
+  return rows[0]!;
+};
+
+const spansOf = (row: TuiSpaceRow, wanted: ReadonlyArray<SpanWanted>) =>
+  wanted.map(([text]): SpanWanted => {
+    const part = row.line.chunks.find((chunk) => chunk.text === text);
+    if (!part) throw new Error(`no chunk "${text}" in ${JSON.stringify(row.text)}`);
+    const attributes = part.attributes ?? 0;
+    return part.link ? [text, attributes, part.link.url] : [text, attributes];
+  });
+
+step(/^the paragraph is shown with (.+)$/, (ctx: SpaceWorld, formatting: string) => {
+  const paragraph = INLINE_PARAGRAPHS[formatting]!;
+  const row = paragraphRow(ctx);
+  expect(words(row)).toBe(paragraph.drawn);
+  expect(spansOf(row, paragraph.spans)).toEqual(paragraph.spans);
+  if (formatting === "inline code") {
+    expect(row.line.chunks.find((chunk) => chunk.text === "mix test")?.fg).toEqual(THEME.warning);
+  }
+});
+
+// The terminal opens a link when the user clicks it; the TUI fetches nothing, and a
+// picture is a link to its address.
+step("nothing is fetched until the user opens the link", (ctx: SpaceWorld) => {
+  const row = paragraphRow(ctx);
+  expect(words(row)).toBe("the docs hold Signups");
+  expect(
+    row.line.chunks.filter((chunk) => chunk.link).map((chunk) => [chunk.text, chunk.link!.url]),
+  ).toEqual([
+    ["the docs", "https://example.com/docs"],
+    ["Signups", "https://example.com/signups.png"],
+  ]);
+});
+
+// Lists (markdown.feature): each item is drawn with its marker as the chat draws one, in
+// bold accent, after the indent that nests it.
+const NESTED = [
+  { kind: "bullet", text: "Plan the release", depth: 0, lead: "- " },
+  { kind: "numbered", text: "Tag", depth: 1, lead: "  1. " },
+  { kind: "numbered", text: "Ship", depth: 1, lead: "  2. " },
+  { kind: "bullet", text: "Notes", depth: 2, lead: "     - " },
+  { kind: "bullet", text: "Announce", depth: 0, lead: "- " },
+];
+
+step(
+  "the page {string} with a bulleted list holding a numbered list",
+  (ctx: SpaceWorld, title: string) => {
+    for (const { kind, text, depth } of NESTED) {
+      mc(ctx).run("space.block.insert", {
+        spaceId: currentSpaceId(ctx),
+        pageId: seedPage(ctx, title),
+        kind,
+        text,
+        depth,
+      });
+    }
+  },
+);
+
+step(
+  "each item is shown with its bullet or its number, indented under its parent",
+  (ctx: SpaceWorld) => {
+    const rows = pane(ctx).rows.filter((row) => row.kind === "block");
+    expect(rows.map((row) => row.text.slice(2))).toEqual(
+      NESTED.map(({ lead, text }) => `${lead}${text}`),
+    );
+    for (const [index, row] of rows.entries()) {
+      const marker = NESTED[index]!.lead.trim();
+      const part = row.line.chunks.find((chunk) => chunk.text.trim() === marker);
+      if (!part) throw new Error(`no marker "${marker}" in ${JSON.stringify(row.text)}`);
+      expect([part.fg, part.attributes]).toEqual([THEME.accent, TextAttributes.BOLD]);
+    }
+  },
+);
+
 step(
   "the page {string} with headings of every level from 1 to 6",
   (ctx: SpaceWorld, title: string) => {

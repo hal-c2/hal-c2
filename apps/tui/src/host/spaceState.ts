@@ -57,6 +57,7 @@ import {
 import type { TuiClient } from "../connection.ts";
 import { buildFileTree, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
+import { linkifyTimelineUrls } from "../timelineLinks.ts";
 import type { StatusKind } from "../store.ts";
 import { type Palette, THEME } from "../theme.ts";
 import type { AskSpec } from "./askState.ts";
@@ -68,7 +69,17 @@ import { wrapWords } from "./settingsSections.ts";
 import { chartData, chartLines } from "./spaceChart.ts";
 import { createMermaidDiagrams, type MermaidDiagrams } from "./mermaidDiagrams.ts";
 import { listItems, markdownFrame, type SpaceListItem } from "./spaceMarkdown.ts";
-import { chunk, mermaidFenceSource, mermaidLines, styled, type StyledText } from "./styledText.ts";
+import {
+  chunk,
+  type ChunkStyle,
+  inlineMarkdown,
+  mermaidFenceSource,
+  mermaidLines,
+  plainText,
+  styled,
+  type StyledText,
+  wrapChunks,
+} from "./styledText.ts";
 
 /** Rows the pane's border and header take. */
 export const SPACE_CHROME_ROWS = 3;
@@ -770,6 +781,30 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     });
   };
 
+  // Text drawn as inline Markdown: what the desktop draws through the chat's Markdown
+  // brick. A section's summary and an image's caption sit inside Markdown the MC writes.
+  const drawnKind = (block: SpaceBlock) =>
+    !["subpage_link", "image", "details", "details_end", "divider", "generated"].includes(
+      block.kind,
+    );
+
+  // A block's text drawn, kept by its look and text: rows are built again on every move
+  // of the selection, and a page can hold hundreds of blocks.
+  const drawnCache = new Map<string, ReturnType<typeof inlineMarkdown>>();
+  const drawnText = (text: string, style: ChunkStyle, look: string) => {
+    const key = `${look}\u0000${text}`;
+    const cached = drawnCache.get(key);
+    if (cached) {
+      drawnCache.delete(key);
+      drawnCache.set(key, cached);
+      return cached;
+    }
+    const drawn = inlineMarkdown(linkifyTimelineUrls(text), palette, style);
+    if (drawnCache.size >= 1000) drawnCache.delete(drawnCache.keys().next().value!);
+    drawnCache.set(key, drawn);
+    return drawn;
+  };
+
   /**
    * A block's rows. A list item, an alert, a divider, a footnote and a collapsed section
    * are shown as the MC writes them (#869, #877): `item` is where the block sits in its
@@ -809,7 +844,6 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
             : `${block.text}${frame.tail}`;
     const agent = block.kind === "generated" ? "written by its update" : agentOf(block);
     const room = width() - 2 - Bun.stringWidth(prefix);
-    const lines = wrapWords(body === "" ? " " : body, room);
     // A terminal has one size of type, so a heading's weight steps down with its level.
     const fg =
       block.kind === "heading"
@@ -825,6 +859,15 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
             : (block.kind === "checklist" && block.checked) || block.kind === "image"
               ? palette.dim
               : palette.text;
+    const style: ChunkStyle = {
+      fg,
+      bold: block.kind === "heading",
+      underline: level === 1,
+      strikethrough: block.kind === "checklist" && block.checked,
+    };
+    const lines = drawnKind(block)
+      ? wrapChunks(drawnText(block.text, style, `${block.kind}.${level}.${block.checked}`), room)
+      : wrapWords(body === "" ? " " : body, room).map((text) => [chunk(text, style)]);
     const bg = active ? { bg: palette.selectedBg } : {};
     // An alert's kind stands above its text, behind the same bar.
     const aboveLead = `${marker(active)}${block.kind === "callout" ? "▌ " : ""}`;
@@ -846,7 +889,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           },
         ]
       : [];
-    const textRows = lines.map((text, index) => {
+    // A list item's marker is drawn as the chat draws one, after the indent that nests it.
+    const listLead = item != null;
+    const indent = listLead ? prefix.length - prefix.trimStart().length : prefix.length;
+    const textRows = lines.map((parts, index) => {
       const first = index === 0 && aboveRows.length === 0;
       const last = index === lines.length - 1;
       const lead =
@@ -854,13 +900,16 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           ? `${first ? marker(active) : "  "}${prefix}`
           : `  ${" ".repeat(Bun.stringWidth(prefix))}`;
       const by = last && agent ? `  · ${agent}` : "";
+      const words = parts.length === 0 ? [chunk(" ", style)] : parts;
+      const cut = index === 0 && listLead ? lead.length - prefix.length + indent : lead.length;
       return {
         key,
         kind: "block",
-        text: `${lead}${text}${by}`,
+        text: `${lead}${plainText({ chunks: parts })}${by}`,
         line: styled(
-          chunk(lead, { fg: palette.dim, ...bg }),
-          chunk(text, { fg, bold: block.kind === "heading", underline: level === 1, ...bg }),
+          chunk(lead.slice(0, cut), { fg: palette.dim, ...bg }),
+          cut < lead.length && chunk(lead.slice(cut), { fg: palette.accent, bold: true, ...bg }),
+          ...words.map((part) => ({ ...part, ...bg })),
           by !== "" && chunk(by, { fg: palette.faint, ...bg }),
         ),
         selected: active,
