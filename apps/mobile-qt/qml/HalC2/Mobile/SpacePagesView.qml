@@ -198,6 +198,10 @@ ColumnLayout {
 
             objectName: section ? "spaceProject:" + model.projectId : "spaceProject" + (model.kind === "file" ? "File:" : "Folder:") + model.projectId + ":" + model.path
             width: ListView.view.width
+            // A gap above each section, outside its highlight.
+            implicitHeight: section ? 60 : 52
+            topInset: section ? 8 : 0
+            topPadding: topInset
             title: model.name
             depth: model.depth
             iconName: section ? (model.expanded ? "chevron-down" : "chevron-right") : model.kind === "folder" ? "folder" : "file-text"

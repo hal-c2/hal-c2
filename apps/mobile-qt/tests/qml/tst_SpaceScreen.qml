@@ -191,7 +191,7 @@ Item {
         function test_aTapOnAProjectsSectionExpandsOrCollapsesIt() {
             const screen = makeScreen({ projects: [sectionRow("project", "")] });
             screen.openSpace("s1");
-            // The list places its footer, where the sections are, when it is drawn.
+            // The sections' list builds its rows when it is drawn.
             waitForRendering(screen);
             verify(findChild(screen, "spaceFromProjectFiles") === null);
             const section = findChild(screen, "spaceProject:shop");

@@ -2337,6 +2337,21 @@ QString describeSections(World& world) {
   return S("the sections are [%1]; %2").arg(rows.join(S(", ")), describe(world));
 }
 
+// The row of the sections for `kind`, `project` and `path`, scrolled into the
+// sections' list first: it builds only the rows on screen.
+QQuickItem* sectionItem(World& world, const QString& kind, const QString& project, const QString& path = {}) {
+  const QList<QVariantMap> rows = sectionRows(world);
+  for (qsizetype i = 0; i < rows.size(); ++i) {
+    const QVariantMap& row = rows.at(i);
+    if (row.value(S("kind")) != kind || row.value(S("projectId")) != project || row.value(S("path")) != path) continue;
+    QMetaObject::invokeMethod(world.item(S("spaceProjects")), "positionViewAtIndex", Q_ARG(int, int(i)), Q_ARG(int, 4 /* ListView.Contain */));
+    break;
+  }
+  const QString name = kind == QLatin1String("project") ? S("spaceProject:") + project
+                       : S("spaceProject%1:%2:%3").arg(kind == QLatin1String("file") ? S("File") : S("Folder"), project, path);
+  return world.item(name);
+}
+
 // The pages of the scenario's Space, or of the first the MC has, where the sections are.
 void lookAtSidebar(World& world) {
   // The palette is a tablet's; the sections under test are the phone's.
@@ -2357,7 +2372,7 @@ QQuickItem* lookAtSection(World& world, const QString& project) {
   lookAtSidebar(world);
   world.waitFor([&] { return sectionRow(world, S("project"), project).has_value(); },
                 [&] { return S("a section of %1; %2").arg(project, describeSections(world)); });
-  return world.item(S("spaceProject:") + project);
+  return sectionItem(world, S("project"), project);
 }
 
 bool expanded(World& world, const QString& project) {
@@ -2378,7 +2393,7 @@ void pickInSection(World& world, const QString& project, const QString& path) {
   setSection(world, project, true);
   world.waitFor([&] { return sectionRow(world, S("file"), project, path).has_value(); },
                 [&] { return S("the section of %1 to show %2; %3").arg(project, path, describeSections(world)); });
-  world.tap(S("spaceProjectFile:%1:%2").arg(project, path));
+  world.tap(sectionItem(world, S("file"), project, path));
 }
 
 // The file's page on show, from its project's Space, with its section expanded.
@@ -4096,7 +4111,7 @@ const Steps steps([] {
       }
       return projects == wanted;
     }, [&] { return S("the project sections to be %1; %2").arg(c[0], describeSections(world)); });
-    for (const QString& project : wanted) world.item(S("spaceProject:") + project);
+    for (const QString& project : wanted) sectionItem(world, S("project"), project);
   });
   step(S("the section of %1 is collapsed").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtSection(world, c[0]);
@@ -4132,8 +4147,8 @@ const Steps steps([] {
       }
       return false;
     }, [&] { return S("the section of %1 to show %2 in %3; %4").arg(c[0], c[1], c[2], describeSections(world)); });
-    world.item(S("spaceProjectFolder:%1:%2").arg(c[0], c[2]));
-    world.item(S("spaceProjectFile:%1:%2/%3").arg(c[0], c[2], c[1]));
+    sectionItem(world, S("folder"), c[0], c[2]);
+    sectionItem(world, S("file"), c[0], c[2] + QLatin1Char('/') + c[1]);
   });
   step(S("the client starts again"), [](World& world, const Captures&, const Table&) {
     world.close();
