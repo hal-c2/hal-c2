@@ -139,6 +139,22 @@ defmodule HalC2.Orchestration.TurnWriterTest do
       end
     end
 
+    test "is marked failed when a long output ends in a non-zero exit code" do
+      output = String.duplicate("compiling lib/a.ex\n", 4_000) <> "Exit code 1\n"
+      assert finish("completed", output)["outputIndicatesFailure"] == true
+    end
+
+    for output <- [
+          "# handles ENOENT gracefully\n",
+          "  if (!found) throw new Error(\"command not found\")\n",
+          "lib/a.ex:12:  # no such file is fine here\n",
+          "12:  # no such file is fine here\n"
+        ] do
+      test "stays a success when its output only mentions #{inspect(output)}" do
+        refute Map.has_key?(finish("completed", unquote(output)), "outputIndicatesFailure")
+      end
+    end
+
     test "stays a success when its output only mentions a zero exit code" do
       refute Map.has_key?(
                finish("completed", "exited with exit code 0"),

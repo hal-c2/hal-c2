@@ -6,7 +6,12 @@ defmodule HalC2.Orchestration.CommandOutput do
   `outputIndicatesFailure` when it finishes.
   """
 
-  @failures ~r/file not found|no files found|enoent|no such file|commandnotfoundexception|command not found|is not recognized as the name of a cmdlet|a parameter cannot be found that matches parameter name/i
+  # A missing file or command counts only on a line that reads as a diagnostic: one that
+  # starts with the phrase, or with a program's name and a colon (`cat: x: No such file`,
+  # `zsh: command not found`). A file that merely mentions ENOENT is not a failure, nor
+  # is a grep match, which starts with a path or a line number.
+  @missing ~r/^(?:[a-z][\w-]*:.*)?(?:file not found|no files found|enoent|no such file|command not found)/im
+  @powershell ~r/commandnotfoundexception|is not recognized as the name of a cmdlet|a parameter cannot be found that matches parameter name/i
   @exit_codes [
     ~r/<exited with exit code\s+[1-9]\d*\s*>/i,
     ~r/exit(?:ed)? with exit code\s+[1-9]\d*/i,
@@ -16,11 +21,10 @@ defmodule HalC2.Orchestration.CommandOutput do
   @doc "Whether `output` reads as a failure."
   @spec failed?(term) :: boolean
   def failed?(output) when is_binary(output) do
-    # A long output says how it ended near its start or not at all; reading all of it costs.
-    output = binary_part(output, 0, min(byte_size(output), 32_768))
+    output = ends(output)
     lower = String.downcase(output)
 
-    Regex.match?(@failures, output) or
+    Regex.match?(@missing, output) or Regex.match?(@powershell, output) or
       (String.contains?(lower, "cannot find path") and
          String.contains?(lower, "because it does not exist")) or
       (String.contains?(lower, "is not recognized") and String.contains?(lower, "the term '")) or
@@ -28,4 +32,13 @@ defmodule HalC2.Orchestration.CommandOutput do
   end
 
   def failed?(_output), do: false
+
+  @half 16_384
+
+  # A long output's first and last 16 KB: an error shows near its start, an exit code at
+  # its end, and reading all of it costs.
+  defp ends(output) when byte_size(output) <= 2 * @half, do: output
+
+  defp ends(output),
+    do: binary_part(output, 0, @half) <> "\n" <> binary_part(output, byte_size(output), -@half)
 end
