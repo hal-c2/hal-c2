@@ -82,9 +82,12 @@ describe("createCodeColours", () => {
     // The lines read before keep their colours; the new one waits.
     expect(meanwhile).toHaveLength(2);
     expect(firstColour(meanwhile, 1)).toEqual(THEME.keyword);
-    // While that reading is under way, a further line does not start another.
-    colours.lines("ts", `${grown} = 4;\nconst e`, false, THEME);
+    // While that reading is under way, a further line does not start another, and the
+    // lines read before still keep their colours.
+    const further = colours.lines("ts", `${grown} = 4;\nconst e`, false, THEME);
     expect(code.reads).toHaveLength(2);
+    expect(further).toHaveLength(2);
+    expect(firstColour(further, 1)).toEqual(THEME.keyword);
     code.release();
     await colours.settled();
     expect(colours.lines("ts", grown, false, THEME)).toHaveLength(3);
@@ -99,6 +102,32 @@ describe("createCodeColours", () => {
     expect(colours.lines("klingon", "Qapla'\n", false, THEME)).toBeNull();
     expect(colours.lines("klingon", "Qapla'\nbatlh\n", false, THEME)).toBeNull();
     expect(code.reads).toHaveLength(1);
+  });
+
+  it("asks again for code whose reading failed, keeping the lines read before", async () => {
+    const reads: string[] = [];
+    let fail = false;
+    const colours = createCodeColours(async (text) => {
+      reads.push(text);
+      if (fail) throw new Error("worker gone");
+      return [...text.matchAll(/const/g)].map((match): SimpleHighlight => [
+        match.index,
+        match.index + 5,
+        "keyword",
+      ]);
+    });
+    colours.lines("ts", "const a = 1;\n", false, THEME);
+    await colours.settled();
+    fail = true;
+    const grown = "const a = 1;\nconst b = 2;\n";
+    colours.lines("ts", grown, true, THEME);
+    await colours.settled();
+    fail = false;
+    // Drawn again: asked for again, the lines read before shown meanwhile.
+    expect(colours.lines("ts", grown, true, THEME)).toHaveLength(1);
+    await colours.settled();
+    expect(colours.lines("ts", grown, true, THEME)).toHaveLength(2);
+    expect(reads).toEqual(["const a = 1;\n", grown, grown]);
   });
 
   it("reads no code past the cap", () => {

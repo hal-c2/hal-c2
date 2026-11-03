@@ -98,24 +98,28 @@ export function createCodeColours(read: ReadCode = readWithTreeSitter): CodeColo
     const reading: Reading = { filetype, text, scopes: undefined };
     readings.set(key, reading);
     evict();
-    const promise = read(text, filetype)
-      .then(
-        (scopes) => scopes,
-        () => null,
-      )
-      .then((scopes) => {
+    // A read that fails is forgotten rather than kept as "no grammar", so the code is
+    // asked for again the next time it is drawn.
+    const promise = read(text, filetype).then(
+      (scopes) => {
         reading.scopes = scopes;
         changed();
-      });
+      },
+      () => {
+        if (readings.get(key) === reading) readings.delete(key);
+      },
+    );
     inFlight.add(promise);
     void promise.finally(() => inFlight.delete(promise));
   };
 
   // The reading of the longest text `text` starts with: the lines read before it grew.
-  const before = (filetype: string, text: string): Reading | null => {
+  // With `landed`, only readings that have arrived count.
+  const before = (filetype: string, text: string, landed = false): Reading | null => {
     let best: Reading | null = null;
     for (const reading of readings.values()) {
       if (reading.filetype !== filetype || reading.text.length >= text.length) continue;
+      if (landed && reading.scopes === undefined) continue;
       if (best && reading.text.length <= best.text.length) continue;
       if (text.startsWith(reading.text)) best = reading;
     }
@@ -146,13 +150,14 @@ export function createCodeColours(read: ReadCode = readWithTreeSitter): CodeColo
         readings.set(key, kept);
         if (kept.scopes !== undefined) return colour(kept, palette);
       }
-      const earlier = before(filetype, text);
+      // What is shown meanwhile: the longest of its lines read so far.
+      const shown = before(filetype, text, true);
       // A language without a grammar stays plain, however the block grows.
-      if (earlier?.scopes === null) return null;
-      // One reading at a time for a growing block: the next starts when this one lands.
-      const earlierRead = earlier === null || earlier.scopes !== undefined;
-      if (!kept && earlierRead) ask(key, filetype, text);
-      return earlier ? colour(earlier, palette) : null;
+      if (shown?.scopes === null) return null;
+      // One reading at a time for a growing block: the next starts when the last lands.
+      const last = before(filetype, text);
+      if (!kept && (last === null || last.scopes !== undefined)) ask(key, filetype, text);
+      return shown ? colour(shown, palette) : null;
     },
     listen: (onChange) => {
       listeners.add(onChange);
