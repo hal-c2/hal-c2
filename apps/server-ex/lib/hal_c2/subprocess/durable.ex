@@ -10,7 +10,7 @@ defmodule HalC2.Subprocess.Durable do
     * `out`, an append-only file of the program's stdout. A file rather than a second
       FIFO because reading a FIFO consumes it: what a dying MC had read but not yet
       recorded would be gone. A program never blocks on it or gets SIGPIPE;
-    * `err`, likewise for stderr, only when the caller asked for a prefix;
+    * `err`, likewise for stderr, only when the caller asked for a prefix or its tail;
     * `status`, and a last line in `out`, once the program has ended;
     * `alive`, which the attached helper touches; a shim that sees it go stale ends
       the program, so one whose MC never comes back does not run on for good;
@@ -188,7 +188,12 @@ defmodule HalC2.Subprocess.Durable do
   # its own and leaves it running when the port closes or the VM goes, and it gets no
   # background job's ignored signals. The shim lets go of the port's pipes first thing.
   defp detach(dir, cmd, opts) do
-    err = if opts[:stderr_prefix], do: Path.join(dir, "err"), else: "/dev/null"
+    # Kept stderr grows for the session's life, as `out` does with far more, and goes
+    # with the dir when the session stops; only its end is ever read.
+    err =
+      if opts[:stderr_prefix] || opts[:stderr_tail],
+        do: Path.join(dir, "err"),
+        else: "/dev/null"
 
     args = ["-c", @shim, "shim", dir, "#{@wait_minutes}", err | cmd]
     look = Application.get_env(:hal_c2, :durable_look_seconds, 30)
@@ -450,6 +455,27 @@ defmodule HalC2.Subprocess.Durable do
     status = read_status(dir)
     remove(dir)
     if status, do: {:ok, status}, else: {:error, :killed}
+  end
+
+  @doc "Up to the last `bytes` the program of `dir` wrote to stderr, if it was kept."
+  def stderr_tail(dir, bytes) do
+    path = Path.join(dir, "err")
+
+    with {:ok, %{size: size}} when size > 0 <- File.stat(path),
+         {:ok, file} <- File.open(path, [:read, :binary]) do
+      try do
+        start = max(size - bytes, 0)
+
+        case :file.pread(file, start, size - start) do
+          {:ok, data} -> data
+          _eof_or_error -> ""
+        end
+      after
+        File.close(file)
+      end
+    else
+      _none -> ""
+    end
   end
 
   @doc "Kills the program of `dir` at once and removes the dir."

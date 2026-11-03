@@ -552,6 +552,45 @@ defmodule HalC2.StreamsTest do
     assert gone.(events) == ~w(item-5 item-6)
   end
 
+  test "runs rolled back together each take their own items out of a window" do
+    seq = long_thread("th-40")
+    rolled = for run <- [2, 3], do: {"run", "run-#{run}", %{"s" => %{"status" => "rolled_back"}}}
+
+    gone = fn events ->
+      for(
+        %{kind: kind, entity: id, patch: patch} <- events,
+        patch == HalC2.Patch.delete(),
+        do: {kind, id}
+      )
+      |> Enum.sort()
+    end
+
+    all_gone =
+      Enum.sort(
+        for n <- 3..6, pair <- [{"node", "node-#{n}"}, {"turn-item", "item-#{n}"}], do: pair
+      )
+
+    # Live, to a client holding both runs.
+    :ok = Streams.subscribe("th-40", self(), nil, %{window: {:items, 4}})
+    {^seq, %{floor: 2}, _rows} = client_snapshot("th-40")
+    assert_receive {:hal_c2_stream, "th-40", {:live, ^seq, _}}
+    {:ok, last} = Streams.commit("th-40", :thread, rolled)
+    assert_receive {:hal_c2_stream, "th-40", {:events, events, ^last}}
+    assert gone.(events) == all_gone
+    :ok = Streams.unsubscribe("th-40", self())
+
+    # Replayed, to a client that was away.
+    client = %{handle: Streams.Server.handle(), window: {:floor, 2}}
+    :ok = Streams.subscribe("th-40", self(), seq, client)
+    assert_receive {:hal_c2_stream, "th-40", {:events, events, ^last}}
+    assert gone.(events) == all_gone
+
+    # And as what changed since.
+    stream = Streams.Server.state(Streams.ensure("th-40"))
+    events = HalC2.Streams.View.changed_since(%{kinds: nil, window: %{floor: 2}}, stream, seq)
+    assert gone.(events) == all_gone
+  end
+
   test "a client that kept a window resumes it" do
     seq = long_thread("th-14")
 

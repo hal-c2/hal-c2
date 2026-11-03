@@ -228,17 +228,15 @@ defmodule HalC2.Store do
   @doc "Every stored sidebar row as `{stream_id, kind, row}`."
   @spec list_shell(String.t()) :: [{String.t(), String.t(), map}]
   def list_shell(path) do
-    with_reader(path, fn db ->
-      {:ok, stmt} =
-        Sqlite3.prepare(
-          db,
-          "SELECT s.id, h.kind, h.row FROM shell h JOIN streams s ON s.key = h.stream"
-        )
-
-      step_reduce(db, stmt, [], fn [id, kind, row], acc ->
-        [{id, kind, JSON.decode!(row)} | acc]
-      end)
-    end)
+    with_query(
+      path,
+      "SELECT s.id, h.kind, h.row FROM shell h JOIN streams s ON s.key = h.stream",
+      fn db, stmt ->
+        step_reduce(db, stmt, [], fn [id, kind, row], acc ->
+          [{id, kind, JSON.decode!(row)} | acc]
+        end)
+      end
+    )
   end
 
   @doc """
@@ -255,16 +253,13 @@ defmodule HalC2.Store do
   `!`), newest first, as `{stream_id, role, text, created_at}`.
   """
   def search_messages(path, pattern, limit) do
-    with_reader(path, fn db ->
-      {:ok, stmt} =
-        Sqlite3.prepare(db, """
-        SELECT s.id, m.role, m.text, m.created_at FROM messages m
-        JOIN streams s ON s.key = m.stream
-        WHERE m.text LIKE ?1 ESCAPE '!' ORDER BY m.created_at DESC LIMIT ?2
-        """)
+    sql = """
+    SELECT s.id, m.role, m.text, m.created_at FROM messages m
+    JOIN streams s ON s.key = m.stream
+    WHERE m.text LIKE ?1 ESCAPE '!' ORDER BY m.created_at DESC LIMIT ?2
+    """
 
-      :ok = Sqlite3.bind(stmt, [pattern, limit])
-
+    with_query(path, sql, [pattern, limit], fn db, stmt ->
       db
       |> step_reduce(stmt, [], fn [id, role, text, at], acc -> [{id, role, text, at} | acc] end)
       |> Enum.reverse()
@@ -273,24 +268,21 @@ defmodule HalC2.Store do
 
   @doc "The messages typed since `since` (an ISO date), as `{stream_id, day, count}`."
   def typed_messages_since(path, since) do
-    with_reader(path, fn db ->
-      {:ok, stmt} =
-        Sqlite3.prepare(db, """
-        SELECT s.id, substr(m.created_at, 1, 10), COUNT(*)
-        FROM messages m JOIN streams s ON s.key = m.stream
-        WHERE m.typed = 1 AND m.created_at >= ?1
-        GROUP BY m.stream, 2
-        """)
+    sql = """
+    SELECT s.id, substr(m.created_at, 1, 10), COUNT(*)
+    FROM messages m JOIN streams s ON s.key = m.stream
+    WHERE m.typed = 1 AND m.created_at >= ?1
+    GROUP BY m.stream, 2
+    """
 
-      :ok = Sqlite3.bind(stmt, [since])
+    with_query(path, sql, [since], fn db, stmt ->
       step_reduce(db, stmt, [], fn [id, day, count], acc -> [{id, day, count} | acc] end)
     end)
   end
 
   @doc "Whether an older MC indexed messages without saying who typed them."
   def untyped_messages?(path) do
-    with_reader(path, fn db ->
-      {:ok, stmt} = Sqlite3.prepare(db, "SELECT 1 FROM messages WHERE typed IS NULL LIMIT 1")
+    with_query(path, "SELECT 1 FROM messages WHERE typed IS NULL LIMIT 1", fn db, stmt ->
       Sqlite3.step(db, stmt) != :done
     end)
   end
@@ -300,10 +292,7 @@ defmodule HalC2.Store do
 
   @doc "A value from the store's `meta` table."
   def meta(path, key) do
-    with_reader(path, fn db ->
-      {:ok, stmt} = Sqlite3.prepare(db, "SELECT value FROM meta WHERE key = ?1")
-      :ok = Sqlite3.bind(stmt, [key])
-
+    with_query(path, "SELECT value FROM meta WHERE key = ?1", [key], fn db, stmt ->
       case Sqlite3.step(db, stmt) do
         {:row, [value]} -> value
         :done -> nil
@@ -313,13 +302,11 @@ defmodule HalC2.Store do
 
   @doc "The `meta` entries whose key starts with `prefix`, as `%{key => value}`, in one read."
   def metas(path, prefix) do
-    with_reader(path, fn db ->
-      {:ok, stmt} =
-        Sqlite3.prepare(db, "SELECT key, value FROM meta WHERE key >= ?1 AND key < ?2")
+    sql = "SELECT key, value FROM meta WHERE key >= ?1 AND key < ?2"
 
-      # The keys from `prefix` up to `prefix` and a 0xFF byte, which no UTF-8 holds, so
-      # exactly the keys that start with it: a seek on the key's index, not a scan.
-      :ok = Sqlite3.bind(stmt, [prefix, prefix <> <<0xFF>>])
+    # The keys from `prefix` up to `prefix` and a 0xFF byte, which no UTF-8 holds, so
+    # exactly the keys that start with it: a seek on the key's index, not a scan.
+    with_query(path, sql, [prefix, prefix <> <<0xFF>>], fn db, stmt ->
       step_reduce(db, stmt, %{}, fn [key, value], acc -> Map.put(acc, key, value) end)
     end)
   end
@@ -404,22 +391,20 @@ defmodule HalC2.Store do
         do: "AND e.kind IN (#{Enum.map_join(kinds, ", ", &"'#{safe_kind!(&1)}'")})",
         else: ""
 
-    with_reader(path, fn db ->
-      {:ok, stmt} =
-        Sqlite3.prepare(db, """
-        SELECT e.seq, e.kind, e.entity, e.patch, e.at FROM events e
-        JOIN streams s ON s.key = e.stream
-        WHERE s.id = ?1 AND e.seq > ?2 AND e.seq <= ?4 #{kind_filter} ORDER BY e.seq LIMIT ?3
-        """)
+    sql = """
+    SELECT e.seq, e.kind, e.entity, e.patch, e.at FROM events e
+    JOIN streams s ON s.key = e.stream
+    WHERE s.id = ?1 AND e.seq > ?2 AND e.seq <= ?4 #{kind_filter} ORDER BY e.seq LIMIT ?3
+    """
 
-      :ok =
-        Sqlite3.bind(stmt, [
-          stream_id,
-          after_seq,
-          Keyword.get(opts, :limit, -1),
-          Keyword.get(opts, :through, @no_seq_limit)
-        ])
+    args = [
+      stream_id,
+      after_seq,
+      Keyword.get(opts, :limit, -1),
+      Keyword.get(opts, :through, @no_seq_limit)
+    ]
 
+    with_query(path, sql, args, fn db, stmt ->
       step_reduce(db, stmt, acc, fn [seq, kind, entity, patch, at], acc ->
         fun.(%{seq: seq, kind: kind, entity: entity, patch: decode_patch(patch), at: at}, acc)
       end)
@@ -431,43 +416,35 @@ defmodule HalC2.Store do
   (`nil` when it has none), without reading the rest.
   """
   def stream_tail(path, stream_id) do
-    with_reader(path, fn db ->
-      {:ok, stmt} =
-        Sqlite3.prepare(db, """
-        SELECT count(*), max(e.seq) FROM events e JOIN streams s ON s.key = e.stream
-        WHERE s.id = ?1
-        """)
+    count_sql = """
+    SELECT count(*), max(e.seq) FROM events e JOIN streams s ON s.key = e.stream
+    WHERE s.id = ?1
+    """
 
-      :ok = Sqlite3.bind(stmt, [stream_id])
-      {:row, [count, seq]} = Sqlite3.step(db, stmt)
-      :ok = Sqlite3.release(db, stmt)
+    {count, seq} =
+      with_query(path, count_sql, [stream_id], fn db, stmt ->
+        {:row, [count, seq]} = Sqlite3.step(db, stmt)
+        {count, seq}
+      end)
 
-      {:ok, stmt} =
-        Sqlite3.prepare(db, "SELECT kind, entity, patch, at FROM events WHERE seq = ?1")
+    tail_sql = "SELECT kind, entity, patch, at FROM events WHERE seq = ?1"
 
-      :ok = Sqlite3.bind(stmt, [seq])
-
-      tail =
+    tail =
+      with_query(path, tail_sql, [seq], fn db, stmt ->
         case Sqlite3.step(db, stmt) do
           {:row, [kind, entity, patch, at]} -> {kind, entity, decode_patch(patch), at}
           :done -> nil
         end
+      end)
 
-      :ok = Sqlite3.release(db, stmt)
-      {count, tail}
-    end)
+    {count, tail}
   end
 
   @doc "Which of `stream_ids` are streams here, as a `MapSet`, in one read of the stream index."
   def streams_present(path, stream_ids) do
-    with_reader(path, fn db ->
-      {:ok, stmt} =
-        Sqlite3.prepare(
-          db,
-          "SELECT id FROM streams WHERE id IN (SELECT value FROM json_each(?1))"
-        )
+    sql = "SELECT id FROM streams WHERE id IN (SELECT value FROM json_each(?1))"
 
-      :ok = Sqlite3.bind(stmt, [JSON.encode!(stream_ids)])
+    with_query(path, sql, [JSON.encode!(stream_ids)], fn db, stmt ->
       step_reduce(db, stmt, MapSet.new(), fn [id], acc -> MapSet.put(acc, id) end)
     end)
   end
@@ -475,15 +452,10 @@ defmodule HalC2.Store do
   @doc "Latest snapshot of a stream, if any."
   @spec get_snapshot(String.t(), String.t()) :: {non_neg_integer, term} | nil
   def get_snapshot(path, stream_id) do
-    with_reader(path, fn db ->
-      {:ok, stmt} =
-        Sqlite3.prepare(
-          db,
-          "SELECT n.seq, n.state FROM snapshots n JOIN streams s ON s.key = n.stream WHERE s.id = ?1"
-        )
+    sql =
+      "SELECT n.seq, n.state FROM snapshots n JOIN streams s ON s.key = n.stream WHERE s.id = ?1"
 
-      :ok = Sqlite3.bind(stmt, [stream_id])
-
+    with_query(path, sql, [stream_id], fn db, stmt ->
       case Sqlite3.step(db, stmt) do
         {:row, [seq, state]} -> {seq, :erlang.binary_to_term(state)}
         :done -> nil
@@ -494,13 +466,12 @@ defmodule HalC2.Store do
   @doc "All streams with their latest seq, for building indexes."
   @spec list_streams(String.t()) :: [%{id: String.t(), kind: String.t(), seq: non_neg_integer}]
   def list_streams(path) do
-    with_reader(path, fn db ->
-      {:ok, stmt} =
-        Sqlite3.prepare(db, """
-        SELECT s.id, s.kind, COALESCE(MAX(e.seq), 0) FROM streams s
-        LEFT JOIN events e ON e.stream = s.key GROUP BY s.key ORDER BY s.key
-        """)
+    sql = """
+    SELECT s.id, s.kind, COALESCE(MAX(e.seq), 0) FROM streams s
+    LEFT JOIN events e ON e.stream = s.key GROUP BY s.key ORDER BY s.key
+    """
 
+    with_query(path, sql, fn db, stmt ->
       step_reduce(db, stmt, [], fn [id, kind, seq], acc ->
         [%{id: id, kind: kind, seq: seq} | acc]
       end)
@@ -946,6 +917,10 @@ defmodule HalC2.Store do
       else: raise(ArgumentError, "bad entity kind #{inspect(kind)}")
   end
 
+  # A read on its own connection. Every statement `fun` prepares must be released
+  # before it returns: `Sqlite3.close/1` cannot close a connection with a live
+  # statement, which keeps its file handles and page cache until the caller's next
+  # garbage collection, and a busy caller piled up hundreds of them.
   defp with_reader(path, fun) do
     {:ok, db} = Sqlite3.open(path, mode: :readonly)
 
@@ -954,6 +929,20 @@ defmodule HalC2.Store do
     after
       Sqlite3.close(db)
     end
+  end
+
+  # A read of one statement, `sql` bound to `args`, released before the connection closes.
+  defp with_query(path, sql, args \\ [], fun) do
+    with_reader(path, fn db ->
+      {:ok, stmt} = Sqlite3.prepare(db, sql)
+
+      try do
+        if args != [], do: :ok = Sqlite3.bind(stmt, args)
+        fun.(db, stmt)
+      after
+        Sqlite3.release(db, stmt)
+      end
+    end)
   end
 
   defp step_reduce(db, stmt, acc, fun) do

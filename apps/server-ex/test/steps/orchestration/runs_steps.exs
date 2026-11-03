@@ -549,6 +549,26 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  step "the provider process exits saying {string} while {string} starts a turn",
+       %{args: [said, thread]} = context do
+    context = World.providers(context)
+    fake = Application.get_env(:hal_c2, :codex_command)
+    dies = "import sys; sys.stderr.write(sys.argv[1] + '\\n'); sys.exit(1)"
+    World.put_app_env(:codex_command, ["python3", "-c", dies, said])
+    context = context |> Map.put(:thread, thread) |> World.dispatch_message(thread, "Hi")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    Application.put_env(:hal_c2, :codex_command, fake)
+    context
+  end
+
+  step "the run is failed, and its error ends with {string}", %{args: [ending]} = context do
+    ending = String.replace(ending, "\\n", "\n")
+    run = World.await_latest_run(context, context.thread, "failed")
+    error = session(context, context.thread, "codex")["lastError"]
+    assert String.ends_with?(error, ending), "the run failed with #{inspect(error)}"
+    Map.put(context, :failed_run, run["id"])
+  end
+
   step "the run is failed with {string}", %{args: [message]} = context do
     run = World.await_latest_run(context, context.thread, "failed")
     assert session(context, context.thread, "codex")["lastError"] == message
