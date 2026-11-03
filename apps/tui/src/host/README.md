@@ -287,12 +287,12 @@ a higher `priority` wins a chord the shell binds.
 ## Plugins, problems and connection
 
 - `plugins` lists what the QML engine registered (`items: [{ id, kind:
-"qml" | "script", file, order }]`), the plugins the user turned off
+  "qml" | "script", file, order }]`), the plugins the user turned off
   (`disabled`) and the URL a downloaded one came from (`sources`, by id). The
   entry attaches the engine with `attachPlugins(enginePluginPort(engine))`;
   `pluginCatalog.ts` handles `plugins.refresh`, `plugin.remove { id }`,
   `plugin.load { file }`, `plugin.disable/enable { id }`, `plugin.install
-{ url }` and `plugin.reload { file }` through that port. A disabled plugin's
+  { url }` and `plugin.reload { file }` through that port. A disabled plugin's
   file stays where it is; `HostOptions.pluginStore` remembers it, and it is
   dropped again right after the engine starts, so a file that only fails once
   turned off is never a reason to lose it. A plugin is reloaded by reading its
@@ -304,7 +304,7 @@ a higher `priority` wins a chord the shell binds.
   directories), capped at 50. The runtime never throws for a plugin, so this is
   the only place a failure shows.
 - `connection` is `{ state: "connecting" | "connected" | "reconnecting",
-environments, pairingHint }`, from the client's connection phase
+  environments, pairingHint }`, from the client's connection phase
   (`TuiClient.subscribeConnection`, `connectionPhases()` in `connection.ts`).
   The TUI knows one environment, the server that launched it; pairing lives in
   the other clients, so `pairingHint` is null.

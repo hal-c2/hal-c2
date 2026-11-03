@@ -25,7 +25,7 @@ NativeShell (McClient) ── WebSocket (protocol 3) ─────────
   the MC it started.
 - **The host starts the MC.** A release
   (`HAL_C2_MC_RELEASE`, else the bundled `hal-c2-mc/`) runs `bin/hal_c2
-start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
+  start`; a checkout without one runs `mix hal_c2.server` in `apps/server-ex`.
   Either gets `HAL_C2_BOOTSTRAP_STDIN=1` and one JSON line on stdin (port, host
   `127.0.0.1`, `halC2Home` from `--base-dir`; `HalC2.Desktop`), and
   `HAL_C2_NODE_COMMAND` names the host's Node for the MC's JavaScript
