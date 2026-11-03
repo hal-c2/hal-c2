@@ -834,4 +834,109 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   step "the pause is neither ended nor shortened by that request's answer", context do
     still_paused(context, context.until)
   end
+
+  # Signs `login` in to github.com the way `gh auth login` and `gh auth switch` leave
+  # it, in a gh configuration of the scenario's own, with no token in the environment.
+  defp sign_in_as(context, login) do
+    context =
+      if context[:gh_config] do
+        context
+      else
+        for name <- ~w(GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN),
+            do: World.put_os_env(name, nil)
+
+        config = Mc.tmp_dir(context.mc, "gh-config")
+        World.put_os_env("GH_CONFIG_DIR", config)
+        Map.put(context, :gh_config, config)
+      end
+
+    File.write!(Path.join(context.gh_config, "hosts.yml"), """
+    github.com:
+        users:
+            monalisa: {}
+            hubot: {}
+        user: #{login}
+    """)
+
+    context
+  end
+
+  # What `gh api rate_limit` says of the GraphQL budget: `remaining`, resetting at `reset`.
+  defp rate_limit_rule(remaining, reset) do
+    budget = &%{"limit" => 5000, "remaining" => &1, "reset" => reset}
+
+    %{
+      "args" => ["api rate_limit"],
+      "stdout" => %{"resources" => %{"graphql" => budget.(remaining), "core" => budget.(4999)}}
+    }
+  end
+
+  step "GitHub rate limits the account signed in for {string}", %{args: [repository]} = context do
+    context = context |> clock() |> sign_in_as("monalisa")
+    reset = div(now(context), 1_000) + 600
+
+    # Budget left when the limit hit: a secondary limit, on every budget of the account.
+    context =
+      context
+      |> World.cli_rules([@rate_limited, rate_limit_rule(4000, reset)])
+      |> relist()
+
+    assert {:ok, %{"errors" => errors}} = context.reply
+    assert repository in Enum.map(errors, & &1["repository"])
+    Map.put(context, :until, now(context) + 30_000)
+  end
+
+  # A background read of each host through the MC's one way to `gh`.
+  step "reads from a self-hosted GitHub are sent as usual", context do
+    assert paused_until(context) == at(context.until)
+    sent = fn host -> length(World.cli_calls(context, "api user --hostname #{host}")) end
+    before = {sent.("github.com"), sent.("ghe.test")}
+
+    assert {:error, {:rate_limited, _}} =
+             HalC2.GitHub.gh(context.cwd, ~w(api user --hostname github.com))
+
+    assert {:ok, _} = HalC2.GitHub.gh(context.cwd, ~w(api user --hostname ghe.test))
+    assert {sent.("github.com"), sent.("ghe.test")} == {elem(before, 0), elem(before, 1) + 1}
+    context
+  end
+
+  step "once another account is signed in on the same host, its reads are sent as usual",
+       context do
+    before = graphql_calls(context)
+    context = context |> sign_in_as("hubot") |> unlimit() |> relist()
+    assert {:ok, %{"errors" => []}} = context.reply
+    assert graphql_calls(context) > before
+
+    # The account that met the limit is still paused, every budget of it.
+    context = sign_in_as(context, "monalisa")
+    before = length(World.cli_calls(context, "api user"))
+    assert {:error, {:rate_limited, detail}} = HalC2.GitHub.gh(context.cwd, ~w(api user))
+    assert detail =~ "resets at #{at(context.until)} UTC"
+    assert length(World.cli_calls(context, "api user")) == before
+    context
+  end
+
+  step "GitHub reported that the quota of one signed-in account is used up", context do
+    context = context |> clock() |> sign_in_as("monalisa")
+    reset = div(now(context), 1_000) + 600
+
+    context
+    |> World.cli_rules([@rate_limited, rate_limit_rule(0, reset)])
+    |> relist()
+    |> still_paused(reset * 1_000)
+  end
+
+  step "another account is signed in on the same host with quota left", context do
+    context |> sign_in_as("hubot") |> unlimit()
+  end
+
+  step "pull requests are read again with the second account", context do
+    context |> Map.put(:graphql_before, graphql_calls(context)) |> relist()
+  end
+
+  step "the read is sent", context do
+    assert graphql_calls(context) > context.graphql_before
+    assert {:ok, %{"errors" => []}} = context.reply
+    context
+  end
 end

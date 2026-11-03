@@ -1444,6 +1444,19 @@ Feature: Planner
       When the user relinks #8's task to #12
       Then GitHub is asked last to move #8 out of its milestone
 
+    # A link knows nothing of where GitHub has the issue, but the push of the milestone the
+    # task left, refused or still on its way, does: the issue is still in that milestone.
+    @mc
+    Scenario: A task relinked back to its issue in another milestone takes the issue out of the milestone GitHub has it in when removed
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub refuses changes to #7
+      When the user relinks #7's task to #8
+      And the user moves "Issue 7" from "Beta" to "Launch"
+      And the user relinks #8's task to #7
+      And the user removes "Issue 7"
+      Then GitHub is asked last to move #7 out of its milestone
+
     # The same removal while the milestone waits on GitHub for another push. That push may
     # never report, or report twice, and the issue still has to go.
     @mc

@@ -35,9 +35,13 @@ defmodule HalC2.Search do
     path = Store.path()
 
     if not read?() do
+      # A thread an import has not finished is left to it: the import indexes it when
+      # it lands, and a stream opened on it now would miss the rest it then writes.
+      unfinished = HalC2.Import.PreviousInstall.unfinished(path)
       long = MapSet.new(Store.legacy_streams(path, StreamState.max_legacy()))
 
       for %{id: id, kind: "thread"} <- Store.list_streams(path),
+          id not in unfinished,
           do: read(path, id, id in long, &index_thread(id, &1))
 
       :ok = Store.forget_untyped_messages()

@@ -2,7 +2,8 @@ defmodule HalC2.GitHub do
   @moduledoc """
   The one way the MC runs `gh`. Pull requests, issues, the branch status, commit
   messages, repository lookups and plugins all call `gh/3`, so every call that reaches
-  GitHub's API passes `HalC2.GitHub.Limits`: while the host's budget for it is spent,
+  GitHub's API passes `HalC2.GitHub.Limits`: while the budget it spends is used up for
+  the account it is made as (`account/1`),
   the call is refused without asking GitHub, and the first call to meet a limit asks
   GitHub when it resets (`gh api rate_limit`, which costs nothing). What the user asked
   for (`asked/1`) goes through a pause.
@@ -66,7 +67,9 @@ defmodule HalC2.GitHub do
   defp gated(path, cwd, args, opts, _host, nil), do: run(path, cwd, args, opts)
 
   defp gated(path, cwd, args, opts, host, bucket) do
-    case Limits.check(host, bucket, now()) do
+    account = account(host)
+
+    case Limits.check(account, bucket, now()) do
       {:paused, until} ->
         {:error, {:rate_limited, paused(host, until)}}
 
@@ -74,10 +77,11 @@ defmodule HalC2.GitHub do
         case run(path, cwd, args, opts) do
           {:error, {:rate_limited, _}} ->
             {scope, reset} = budget(path, cwd, host, bucket)
-            {:error, {:rate_limited, paused(host, Limits.limited(host, scope, now(), reset))}}
+            until = Limits.limited(account, scope, now(), reset)
+            {:error, {:rate_limited, paused(host, until)}}
 
           {:ok, _} = ok ->
-            Limits.answered(host, bucket, now())
+            Limits.answered(account, bucket, now())
             ok
 
           error ->
@@ -161,6 +165,58 @@ defmodule HalC2.GitHub do
     end)
   end
 
+  @doc """
+  The account `gh` calls `host` as, `{host, who}`, read without running gh so it costs
+  nothing per call: who is a digest of the token the MC's environment gives gh for the
+  host (`GH_TOKEN` or `GITHUB_TOKEN`; off github.com, `GH_ENTERPRISE_TOKEN` or
+  `GITHUB_ENTERPRISE_TOKEN`), else the user gh's hosts file has active on it, which
+  `gh auth login` and `gh auth switch` change, else "".
+  """
+  def account(host) do
+    host = String.downcase(host)
+
+    who =
+      case Enum.find_value(token_env(host), &System.get_env/1) do
+        token when is_binary(token) and token != "" ->
+          "token:" <> (:crypto.hash(:sha256, token) |> binary_part(0, 12) |> Base.encode16())
+
+        _ ->
+          hosts_user(host) || ""
+      end
+
+    {host, who}
+  end
+
+  # As gh reads them: github.com and its data-residency tenancies (`*.ghe.com`) take
+  # the plain tokens, a GitHub Enterprise Server the enterprise ones.
+  defp token_env(host) do
+    if host in ["github.com", "github.localhost"] or String.ends_with?(host, ".ghe.com"),
+      do: ~w(GH_TOKEN GITHUB_TOKEN),
+      else: ~w(GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN)
+  end
+
+  @doc "gh's configuration directory, where its `hosts.yml` names who is signed in."
+  def config_dir do
+    System.get_env("GH_CONFIG_DIR") ||
+      Path.join(System.get_env("XDG_CONFIG_HOME") || Path.expand("~/.config"), "gh")
+  end
+
+  # The `user:` directly under the host's entry of `hosts.yml`, not one of its `users:`.
+  defp hosts_user(host) do
+    with {:ok, text} <- File.read(Path.join(config_dir(), "hosts.yml")),
+         [_ | _] = entry <- host_entry(String.split(text, ~r/\r?\n/), host),
+         [indent | _] <- Regex.run(~r/^\s+/, hd(entry)) do
+      Enum.find_value(entry, fn line ->
+        with true <- String.starts_with?(line, indent <> "user:"),
+             [_, user] <- Regex.run(~r/^\s*user:\s*["']?([^"'\s]+)/, line),
+             do: "user:" <> user,
+             else: (_ -> nil)
+      end)
+    else
+      _ -> nil
+    end
+  end
+
   # A call that names no host asks the one gh picks from `cwd`'s remotes: `upstream`,
   # then `github`, then `origin`, then any.
   defp remote_host(cwd) when is_binary(cwd) do
@@ -182,6 +238,14 @@ defmodule HalC2.GitHub do
   end
 
   defp remote_host(_), do: nil
+
+  defp host_entry(lines, host) do
+    lines
+    |> Enum.drop_while(&(String.downcase(String.trim_trailing(&1)) != host <> ":"))
+    |> Enum.drop(1)
+    |> Enum.reject(&(String.trim(&1) == ""))
+    |> Enum.take_while(&String.match?(&1, ~r/^\s/))
+  end
 
   defp pairs(args), do: Enum.zip(args, Enum.drop(args, 1))
 
@@ -242,11 +306,10 @@ defmodule HalC2.GitHub do
     error -> {:error, {:failed, Exception.message(error)}}
   end
 
-  # Auth trouble is matched in both streams, but a rate limit or a missing object only on
+  # gh's own messages, auth trouble, a rate limit or a missing object, are matched only on
   # stderr: a GraphQL answer with `errors` still prints its body, user-written titles
   # and comments included, on stdout.
   defp failure(err, out) do
-    said = String.downcase(err <> "\n" <> out)
     told = String.downcase(err)
 
     detail =
@@ -254,7 +317,7 @@ defmodule HalC2.GitHub do
       |> String.replace_prefix("gh: ", "")
 
     cond do
-      String.contains?(said, [
+      String.contains?(told, [
         "gh auth login",
         "not logged in",
         "authentication failed",
