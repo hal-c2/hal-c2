@@ -26,14 +26,28 @@ defmodule HalC2.Projection do
     end
   end
 
-  @doc "Computes and stores the row for a stream from its log."
+  defp streams?(path), do: Process.whereis(HalC2.Streams) != nil and path == Store.path()
+
+  @doc """
+  Computes and stores the row for a stream from its log. Through its stream when the
+  streams run on `store`; otherwise nothing else writes it, and it is loaded the way
+  its stream would load it, folding a long log a page at a time with the older runs
+  written to disk.
+  """
   @spec rebuild(GenServer.server(), String.t()) :: {String.t(), map} | nil
   def rebuild(store \\ Store, stream_id) do
     path = Store.path(store)
-    state = StreamState.load(path, stream_id)
 
-    with {_kind, _row} = kind_row <- row(path, stream_id, state) do
-      :ok = Store.put_shell(store, stream_id, state.seq, kind_row)
+    {seq, kind_row} =
+      if streams?(path),
+        do: HalC2.Streams.read(stream_id, &{&1.seq, row(path, stream_id, &1)}),
+        else:
+          path
+          |> StreamState.load(stream_id, store: store, max_legacy: :infinity)
+          |> then(&{&1.seq, row(path, stream_id, &1)})
+
+    with {_kind, _row} <- kind_row do
+      :ok = Store.put_shell(store, stream_id, seq, kind_row)
       kind_row
     end
   end

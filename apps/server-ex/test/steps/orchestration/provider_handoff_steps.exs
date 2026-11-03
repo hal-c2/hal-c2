@@ -163,7 +163,7 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
   end
 
   # A runtime started before it recorded its instance, then updated in place as
-  # `HalC2.Hot.reload/2` does.
+  # a release upgrade does.
   step "the Codex runtime of {string} was started before it recorded its instance",
        %{args: [thread]} = context do
     {pid, _} = World.codex_runtime(context, thread)

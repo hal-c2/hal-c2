@@ -4,6 +4,7 @@
 #   packages/contracts/src/rpc.ts (vcs.refreshStatus, subscribeVcsStatus, vcs.init)
 #   apps/server-ex/lib/hal_c2/vcs.ex (status, init)
 #   apps/server-ex/lib/hal_c2/vcs/watch.ex
+#   apps/server-ex/lib/hal_c2/pull_requests/branches.ex (one answer per branch's pull request)
 #   apps/server/src/git/GitManager.ts, apps/server/src/vcs/VcsStatusBroadcaster.ts (pull request lookup cadence, shared polling, automatic pull)
 #   apps/server/src/vcs/VcsProjectConfig.ts, VcsDriverRegistry.ts, VcsProcess.ts (project vcs.json, detection, concurrency)
 #   apps/server/src/vcs/GitVcsDriverCore.ts (index lock, unborn HEAD, upstream refresh back-off)
@@ -167,18 +168,20 @@ Feature: Repository status and working tree changes
     Then the status carries no pull request
 
   # Legacy: apps/server/src/git/GitManager.ts (prLookupFailureTtl)
-  @mc @backlog
+  @mc
   Scenario: A host that keeps refusing the pull request lookup is asked less and less often
     Given the host refuses the pull request lookup for "feature/tax" every time
-    When status is read for "shop" repeatedly
+    And a client in front is showing a thread in "shop" on "feature/tax"
+    When the status's automatic fetch runs again and again
     Then the lookup is retried after 20 seconds, then 40 seconds, doubling up to 15 minutes
     And the first answer that succeeds brings back the normal rhythm
 
   # Legacy: apps/server/src/git/GitManager.ts (PR_LOOKUP_CACHE_TTL, PR_LOOKUP_NO_OPEN_PR_CACHE_TTL)
-  @mc @backlog
+  @mc
   Scenario Outline: How soon status asks the host about a branch's pull request again depends on what it found
     Given the host's last answer for "feature/tax" was <answer>
-    When status is read for "shop" over the next minutes
+    And a client in front is showing a thread in "shop" on "feature/tax"
+    When the status's automatic fetch runs over the next minutes
     Then the host is asked again after about <wait>
 
     Examples:
@@ -186,6 +189,33 @@ Feature: Repository status and working tree changes
       | an open pull request     | 1 minute   |
       | a merged pull request    | 5 minutes  |
       | no pull request at all   | 5 minutes  |
+
+  # One answer per branch: the thread's pull request discovery and the checkout's status
+  # share it (`HalC2.PullRequests.Branches`), so GitHub is asked once for both.
+  @mc
+  Scenario: A checkout's branch status shows the pull request the MC already found, without asking GitHub again
+    Given "feature/tax" has an open draft pull request on GitHub
+    And the MC has found the pull request of the thread "work" on "feature/tax"
+    When a client in front is showing a thread in "shop"
+    Then the status carries that pull request with its state open and marked as a draft
+    And the status did not ask the host about "feature/tax"
+
+  @mc
+  Scenario: Refreshing the status asks the host about the pull request again
+    Given "feature/tax" has an open draft pull request on GitHub
+    And the MC has found the pull request of the thread "work" on "feature/tax"
+    When status is read for "shop"
+    Then the status carries that pull request with its state open and marked as a draft
+    And the status asked the host about "feature/tax" again
+
+  @mc
+  Scenario: A pull request change made through HAL-C2 has the status ask the host again
+    Given "feature/tax" has an open draft pull request on GitHub
+    And the automatic Git fetch interval is 30 seconds
+    And a client in front is showing a thread in "shop"
+    When the user refreshes the pull requests
+    And the status's automatic fetch runs
+    Then the status asked the host about "feature/tax" again
 
   # Legacy: apps/server/src/git/GitManager.ts (isUnpublishedBranch)
   @mc @backlog

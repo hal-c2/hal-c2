@@ -884,16 +884,10 @@ defmodule HalC2.TextGeneration do
 
   # Only github.com: ambient `gh` credentials never go to a host named in message text.
   defp subject(cwd, url, endpoint) do
-    gh = System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh"))
-
-    with true <- gh != nil,
-         {out, 0} <-
-           System.cmd(
-             gh,
-             ["api", "--hostname", "github.com", endpoint, "--jq", "{title, body}"],
-             cd: cwd,
-             env: [{"GH_PROMPT_DISABLED", "1"}],
-             stderr_to_stdout: false
+    with {:ok, out} <-
+           HalC2.GitHub.gh(
+             cwd,
+             ["api", "--hostname", "github.com", endpoint, "--jq", "{title, body}"]
            ),
          {:ok, %{"title" => title} = subject} when is_binary(title) <- JSON.decode(out) do
       body = if is_binary(subject["body"]), do: subject["body"], else: ""

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QColor>
 #include <QDateTime>
 #include <QHash>
 #include <QObject>
@@ -16,6 +17,7 @@
 #include <optional>
 #include <vector>
 
+#include "CodeReader.h"
 #include "FileTreeModel.h"
 
 class McClient;
@@ -24,20 +26,43 @@ class TimelineModel;
 
 // A file's text as one row per line, so a ListView only lays out the lines on
 // screen: a 1 MB file is one string and a list of offsets into it.
+//
+// The text is coloured by its language once read (codereader, off the GUI
+// thread), when `path` names a syntax and the text is no longer than
+// codereader::kMaxChars. A row's `styled` is then its line as StyledText, cut
+// at `columnLimit` characters as the viewer cuts `text`; it is empty while the
+// line is plain. Only the rows asked for are made up. `background` picks the
+// light or the dark colouring, and a switch changes `styled` alone, with
+// nothing read again.
 class TextLinesModel : public QAbstractListModel {
   Q_OBJECT
   Q_PROPERTY(int count READ rowCount NOTIFY textChanged)
   // The longest line, in characters.
   Q_PROPERTY(int maxColumns READ maxColumns NOTIFY textChanged)
+  Q_PROPERTY(QColor background READ background WRITE setBackground NOTIFY backgroundChanged)
+  // The most of a line `styled` holds; past it, "…".
+  Q_PROPERTY(int columnLimit READ columnLimit WRITE setColumnLimit NOTIFY columnLimitChanged)
+  // Whether the lines show coloured now, and whether the text is being read.
+  Q_PROPERTY(bool coloured READ coloured NOTIFY colouredChanged)
+  Q_PROPERTY(bool reading READ reading NOTIFY readingChanged)
 
 public:
-  enum Role { TextRole = Qt::UserRole + 1, NumberRole };
+  enum Role { TextRole = Qt::UserRole + 1, NumberRole, StyledRole };
 
   explicit TextLinesModel(QObject* parent = nullptr) : QAbstractListModel(parent) {}
 
-  void setText(const QString& text);
+  // `path` is the file's, whose name picks its syntax; none leaves it plain.
+  void setText(const QString& text, const QString& path = QString());
   int maxColumns() const { return m_maxColumns; }
   Q_INVOKABLE QString line(int row) const;
+  QColor background() const { return m_background; }
+  void setBackground(const QColor& background);
+  int columnLimit() const { return m_columnLimit; }
+  void setColumnLimit(int limit);
+  bool coloured() const;
+  bool reading() const { return m_reading; }
+  // Row `row` as its `styled` role reads.
+  QString styled(int row) const;
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;
@@ -45,11 +70,30 @@ public:
 
 signals:
   void textChanged();
+  void backgroundChanged();
+  void columnLimitChanged();
+  void colouredChanged();
+  void readingChanged();
 
 private:
+  bool readable() const;
+  QString key() const;
+  void read();
+  void setRuns(std::shared_ptr<const codereader::Runs> runs);
+  void setReading(bool reading);
+  void restyle();
+
   QString m_text;
+  QString m_path;
   std::vector<std::pair<int, int>> m_lines;  // offset, length
   int m_maxColumns = 0;
+  QColor m_background;
+  int m_columnLimit = 2000;
+  // What reading the text made; null while it is plain.
+  std::shared_ptr<const codereader::Runs> m_runs;
+  bool m_reading = false;
+  // Lets a finished read find this model only while it is for the text shown.
+  std::shared_ptr<int> m_alive = std::make_shared<int>(0);
 };
 
 // The Files tab: a thread's workspace (its worktree, else its project's

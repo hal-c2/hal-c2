@@ -175,6 +175,9 @@ public:
   };
   bool holdSnapshot = false;
   bool answerPings = true;  // false: the MC has stopped answering, its socket still open
+  bool sayHello = true;     // false: it takes sockets but never says hello on them
+  // The clients' sockets still open on this MC, the current one's and any other's.
+  int openSockets() const;
   // The cluster's other members, in the order they joined, and the MC serving
   // each environment.
   QStringList members;
@@ -224,7 +227,9 @@ public:
   // nothing it says is read, whatever the socket still does on its way out.
   void drop();
   void stopAccepting() { m_tcp.close(); }
-  void startAccepting() { m_tcp.listen(QHostAddress::LocalHost, m_port); }
+  void startAccepting() {
+    if (!m_tcp.isListening()) m_tcp.listen(QHostAddress::LocalHost, m_port);
+  }
 
 private:
   void accept();
@@ -251,6 +256,7 @@ private:
   QHash<QString, RawHandler> m_rawHandlers;
   quint16 m_port = 0;
   QPointer<QWebSocket> m_socket;
+  QList<QPointer<QWebSocket>> m_accepted;
   int m_shellSubscription = -1;
   // The `have` of the shell subscription being answered.
   QJsonObject m_have;

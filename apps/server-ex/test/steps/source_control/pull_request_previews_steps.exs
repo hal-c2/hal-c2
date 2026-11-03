@@ -197,7 +197,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestPreviews do
   step "pull request {int} is refused as paused until the limit resets",
        %{args: [number]} = context do
     assert {:error, _, %{"detail" => detail}} = context.replies[number]
-    assert detail =~ ~r/previews are paused until it resets at \d\d:\d\d:\d\d UTC/
+    assert detail =~ ~r/paused until it resets at \d\d:\d\d:\d\d UTC/
     assert length(preview_requests(context, number)) == context.asked[number]
     context
   end

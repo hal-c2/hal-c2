@@ -94,6 +94,7 @@ foreach(test_name IN ITEMS ShellRuntime ShellExamples)
     # themselves, as in the app.
     ../../src/native/ComposerHighlighter.cpp
     ../../src/native/CodeHighlighter.cpp
+    ../../src/native/CodeReader.cpp
   )
   target_include_directories(tst_${test_name} PRIVATE ../../src ../../src/native)
   target_compile_definitions(tst_${test_name} PRIVATE

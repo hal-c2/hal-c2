@@ -433,6 +433,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
   # steps and delegates for this file): discovery starts and its minute tick lands.
   def minute_passes(context) do
     context = github_checkout(context)
+    HalC2.Test.Mc.ensure(HalC2.PullRequests.Branches)
     pid = HalC2.Test.Mc.ensure({HalC2.PullRequests.Discovery, interval: 60_000})
     context = Map.put(context, :branch_before, branch_calls(context, nil))
     send(pid, :tick)
@@ -484,6 +485,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     # Discovery belongs to this MC's boot set, with its timer (and so its
     # start-up backfill), as in `HalC2.Application`; "the MC starts" (the
     # shared restart step) starts it again.
+    HalC2.Test.Mc.ensure(HalC2.PullRequests.Branches)
     HalC2.Test.Mc.ensure({HalC2.PullRequests.Discovery, interval: 60_000})
     context
   end
@@ -493,6 +495,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     # No `pr list` rule answers, so every look-up fails.
     context = if context[:cli], do: context, else: World.fake_cli(context)
     context = github_remote_only(context)
+    HalC2.Test.Mc.ensure(HalC2.PullRequests.Branches)
     pid = HalC2.Test.Mc.ensure({HalC2.PullRequests.Discovery, interval: 60_000})
     for _ <- 1..4, do: :ok = HalC2.PullRequests.Discovery.sweep()
     Map.put(context, :discovery, pid)
@@ -623,6 +626,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
   end
 
   step "the MC looks for branch pull requests", context do
+    HalC2.Test.Mc.ensure(HalC2.PullRequests.Branches)
     HalC2.Test.Mc.ensure({HalC2.PullRequests.Discovery, interval: nil})
     context = Map.put(context, :asked_before, asked_about(context, "feature/x"))
     flush(context)
@@ -633,6 +637,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
   step "the MC looks for branch pull requests and finds none for {string}",
        %{args: [branch]} = context do
     context = branch_answer(context, branch, [])
+    HalC2.Test.Mc.ensure(HalC2.PullRequests.Branches)
     HalC2.Test.Mc.ensure({HalC2.PullRequests.Discovery, interval: nil})
     flush(context)
     :ok = HalC2.PullRequests.Discovery.sweep()
@@ -662,6 +667,8 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
       context
       |> github_checkout()
       |> branch_answer("feature/x", pr_entry(pr, "OPEN"))
+
+    HalC2.Test.Mc.ensure(HalC2.PullRequests.Branches)
 
     HalC2.Test.Mc.ensure({HalC2.PullRequests.Discovery, interval: nil})
     flush(context)
@@ -1454,6 +1461,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
   # Discovery running without its timer, with the branch look-ups so far counted.
   defp discoverable(context) do
     context = github_checkout(context)
+    HalC2.Test.Mc.ensure(HalC2.PullRequests.Branches)
     HalC2.Test.Mc.ensure({HalC2.PullRequests.Discovery, interval: nil})
     context |> flush() |> Map.put(:branch_before, branch_calls(context, nil))
   end

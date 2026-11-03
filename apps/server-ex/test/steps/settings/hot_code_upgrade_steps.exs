@@ -3,10 +3,11 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   Steps for features/settings/hot-code-upgrade.feature, and the release the
   background service and update scenarios share.
 
-  The MC runs from a release root on disk (`RELEASE_ROOT`) whose only code of
-  its own is a probe module reporting the version it was built as. A later
-  version is a bundle holding the probe rebuilt; a bundle that "changes a native
-  library" has another version of the dependency carrying it, which forces a restart. The service
+  The MC runs from a real release on disk (`RELEASE_ROOT`, `HalC2.Test.Mc.release/2`)
+  whose code of its own includes a probe module reporting the version it was built
+  as. A later version is a bundle holding the probe rebuilt, which the release handler
+  installs in place; a bundle that "changes a native library" also adds a module
+  loading a NIF, which only a restart can take. The service
   is the real `bin/hal-c2-service` around a stand-in `bin/hal_c2` that logs each boot and
   runs until the MC signals the stop an update restart makes.
   """
@@ -52,30 +53,26 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   def running_release(%{release: %{}} = context, _version), do: context
 
   def running_release(context, version) do
-    root = Mc.tmp_dir(context.mc, "release")
-    release_root(root, version)
-    File.mkdir_p!(Path.join(root, "bin"))
+    :persistent_term.erase({Upgrade, :outcome})
+    :persistent_term.put({Upgrade, :version}, version)
+    # The release runs the probe: its beam is in the release's code before it is written.
+    [{@probe, probe}] = compile_probe(version)
+    ebin = Path.join([context.mc.home, "release", "lib", "hal_c2_bundle-#{version}", "ebin"])
+    File.mkdir_p!(ebin)
+    File.write!(Path.join(ebin, "#{@probe}.beam"), probe)
+    root = Mc.release(context.mc, service: false)
     File.cp!(@service, Path.join([root, "bin", "hal-c2-service"]))
     File.write!(Path.join([root, "bin", "hal_c2"]), @fake_hal_c2)
     File.chmod!(Path.join([root, "bin", "hal_c2"]), 0o755)
-    World.put_env("RELEASE_ROOT", root)
-
-    # Loading in place moves code paths and reloads the probe.
-    path = :code.get_path()
     Code.put_compiler_option(:ignore_module_conflict, true)
 
     ExUnit.Callbacks.on_exit(fn ->
-      :code.set_path(path)
       Code.put_compiler_option(:ignore_module_conflict, false)
       :code.purge(@probe)
       :code.delete(@probe)
-      :persistent_term.erase({Upgrade, :version})
-      :persistent_term.erase({Upgrade, :outcome})
+      :code.purge(@probe)
     end)
 
-    :persistent_term.erase({Upgrade, :outcome})
-    :persistent_term.put({Upgrade, :version}, version)
-    compile_probe(version)
     Mc.ensure(HalC2.Settings)
     Mc.ensure(HalC2.Upgrade)
     Map.put(context, :release, %{root: root, version: version})
@@ -88,30 +85,11 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   """
   def bundle(context, version, kind) do
     context = running_release(context)
-    dir = Mc.tmp_dir(context.mc, "bundle")
-    ebin = Path.join([dir, "lib", "hal_c2_probe-#{version}", "ebin"])
-    File.mkdir_p!(ebin)
-    [{mod, bin}] = compile_probe(version)
-    File.write!(Path.join(ebin, "#{mod}.beam"), bin)
+    [{@probe, new}] = compile_probe(version)
     # The running version stays loaded.
-    compile_probe(Upgrade.version())
-    write_manifest(dir, version, if(kind == :native, do: "changed", else: "same"))
-
-    archive =
-      Path.join(
-        Mc.tmp_dir(context.mc, "build"),
-        Source.file_name(version, Upgrade.platform())
-      )
-
-    :ok =
-      :erl_tar.create(
-        String.to_charlist(archive),
-        for(entry <- ["lib", "releases"], do: {~c"#{entry}", ~c"#{Path.join(dir, entry)}"}),
-        [:compressed]
-      )
-
-    File.write!(archive <> ".sha256", sha256(archive))
-    {context, archive}
+    [{@probe, running}] = compile_probe(Upgrade.version())
+    native = if kind == :native, do: [Mc.nif_module(context.mc)], else: []
+    {context, Mc.bundle(context.mc, version, %{}, [{@probe, new, running} | native])}
   end
 
   @doc "Builds the bundle of `version` and puts it in this MC's cache."
@@ -251,7 +229,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
   step "the MC installs {string} and restarts", %{args: [version]} = context do
     assert {:ok, %{"targetVersion" => ^version}} = context.reply
-    assert File.dir?(Path.join([context.release.root, "lib", "hal_c2_probe-#{version}", "ebin"]))
+    assert File.dir?(Path.join([context.release.root, "lib", "hal_c2_bundle-#{version}", "ebin"]))
     assert await_service(context) == 0
     assert boots(context) == [context.release.version, version]
     assert start_version(context) == version
@@ -397,7 +375,7 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     assert reason =~ "does not match its checksum"
     assert Upgrade.version() == version
     assert apply(@probe, :version, []) == version
-    refute File.exists?(Path.join([context.release.root, "lib", "hal_c2_probe-1.4.0"]))
+    refute File.exists?(Path.join([context.release.root, "lib", "hal_c2_bundle-1.4.0"]))
     context
   end
 
@@ -535,36 +513,6 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
   # --- helpers ------------------------------------------------------------------------------
 
-  defp release_root(root, version) do
-    File.mkdir_p!(Path.join(root, "releases"))
-    File.mkdir_p!(Path.join(root, "lib"))
-    write_manifest(root, version, "same")
-
-    File.write!(
-      Path.join([root, "releases", "start_erl.data"]),
-      "#{:erlang.system_info(:version)} #{version}\n"
-    )
-  end
-
-  defp write_manifest(dir, version, dependency) do
-    rel = Path.join([dir, "releases", version])
-    File.mkdir_p!(rel)
-
-    File.write!(
-      Path.join(rel, "upgrade.json"),
-      JSON.encode!(%{
-        "version" => version,
-        "otpRelease" => System.otp_release(),
-        "erts" => to_string(:erlang.system_info(:version)),
-        "platform" => Upgrade.platform(),
-        "applications" => %{"hal_c2_probe" => version, "exqlite" => dependency},
-        "code" => ["hal_c2_probe"],
-        "dependencies" => %{"exqlite" => dependency},
-        "config" => "same"
-      })
-    )
-  end
-
   defp compile_probe(version) do
     Code.compile_string("""
     defmodule #{inspect(@probe)} do
@@ -659,7 +607,12 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
 
     home = Mc.tmp_dir(context.mc, "peer-#{name}")
     root = Path.join(home, "release")
-    release_root(root, "1.3.0")
+    [{@probe, probe}] = compile_probe("1.3.0")
+    ebin = Path.join([root, "lib", "hal_c2_bundle-1.3.0", "ebin"])
+    File.mkdir_p!(ebin)
+    File.write!(Path.join(ebin, "#{@probe}.beam"), probe)
+    HalC2.Test.Release.root(root, "1.3.0", Mc.manifest("1.3.0"))
+    compile_probe(Upgrade.version())
 
     for {key, value} <- [start_mc: false, home: home, port: 0],
         do: :ok = :erpc.call(peer, Application, :put_env, [:hal_c2, key, value])
@@ -673,7 +626,6 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     :ok = :erpc.call(peer, :persistent_term, :put, [{Upgrade, :version}, "1.3.0"])
 
     # The peer runs the probe at 1.3.0 too.
-    [{@probe, probe}] = compile_probe("1.3.0")
     {:module, _} = :erpc.call(peer, :code, :load_binary, [@probe, ~c"probe", probe])
 
     {:ok, _} = :erpc.call(peer, Supervisor, :start_child, [HalC2.Supervisor, HalC2.Upgrade])

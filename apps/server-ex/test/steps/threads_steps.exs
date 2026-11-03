@@ -3786,6 +3786,7 @@ defmodule HalC2.Steps.Threads do
   end
 
   defp discover(context) do
+    HalC2.Test.Mc.ensure(HalC2.PullRequests.Branches)
     Mc.ensure({HalC2.PullRequests.Discovery, interval: nil})
     :ok = HalC2.PullRequests.Discovery.sweep()
     context

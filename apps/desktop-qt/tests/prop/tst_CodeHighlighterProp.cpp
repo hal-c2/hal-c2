@@ -21,6 +21,7 @@
 #include <QTextLayout>
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -90,26 +91,26 @@ struct Model {
 
 struct Block {
   QTextDocument document;
-  CodeHighlighter highlighter;
+  std::unique_ptr<CodeHighlighter> highlighter = std::make_unique<CodeHighlighter>();
 
   Block() {
     // A document tells of its changes only once laid out, as a TextEdit's is.
     document.documentLayout();
-    highlighter.setLanguage(QStringLiteral("ts"));
-    highlighter.setBackground(kDark);
-    highlighter.setTextDocument(&document);
+    highlighter->setLanguage(QStringLiteral("ts"));
+    highlighter->setBackground(kDark);
+    highlighter->setTextDocument(&document);
   }
 };
 
 void check(const Model& model, Block& block) {
   // What a change settles a moment later, as an emptied text's colouring.
   QCoreApplication::processEvents();
-  RC_ASSERT(halc2::prop::until([&] { return !block.highlighter.reading(); }));
+  RC_ASSERT(halc2::prop::until([&] { return !block.highlighter->reading(); }));
   RC_ASSERT(block.document.toPlainText() == model.text);
   const QList<QRgb> shown = shownColours(block.document);
   const QList<QRgb> expected = freshColours(model.language, model.covered, model.dark ? 1 : 0, shown.size());
   RC_ASSERT(shown == expected);
-  RC_ASSERT(block.highlighter.coloured() == std::any_of(expected.begin(), expected.end(), [](QRgb c) { return c != 0; }));
+  RC_ASSERT(block.highlighter->coloured() == std::any_of(expected.begin(), expected.end(), [](QRgb c) { return c != 0; }));
 }
 
 using Command = rc::state::Command<Model, Block>;
@@ -125,9 +126,9 @@ struct Write : Command {
     apply(after);
     // What was coloured is still the text's start, so it stays coloured all
     // the way, though the text comes emptied and then filled.
-    const bool was = block.highlighter.coloured();
+    const bool was = block.highlighter->coloured();
     std::vector<bool> told;
-    const auto spy = QObject::connect(&block.highlighter, &CodeHighlighter::colouredChanged, [&] { told.push_back(block.highlighter.coloured()); });
+    const auto spy = QObject::connect(block.highlighter.get(), &CodeHighlighter::colouredChanged, [&] { told.push_back(block.highlighter->coloured()); });
     // As the TextEdit's text binding does: the whole text again.
     block.document.setPlainText(after.text);
     check(after, block);
@@ -164,7 +165,7 @@ struct Language : Command {
   void run(const Model& before, Block& block) const override {
     Model after = before;
     apply(after);
-    block.highlighter.setLanguage(language);
+    block.highlighter->setLanguage(language);
     check(after, block);
   }
   void show(std::ostream& os) const override { os << "Language(" << language.toStdString() << ")"; }
@@ -179,7 +180,7 @@ struct Streaming : Command {
   void run(const Model& before, Block& block) const override {
     Model after = before;
     apply(after);
-    block.highlighter.setStreaming(streaming);
+    block.highlighter->setStreaming(streaming);
     check(after, block);
   }
   void show(std::ostream& os) const override { os << "Streaming(" << streaming << ")"; }
@@ -190,12 +191,35 @@ struct ThemeSwitch : Command {
   void run(const Model& before, Block& block) const override {
     Model after = before;
     apply(after);
-    block.highlighter.setBackground(after.dark ? kDark : kLight);
+    block.highlighter->setBackground(after.dark ? kDark : kLight);
     // A theme is shown from what was read: nothing is read again.
-    RC_ASSERT(!block.highlighter.reading());
+    RC_ASSERT(!block.highlighter->reading());
     check(after, block);
   }
   void show(std::ostream& os) const override { os << "ThemeSwitch"; }
+};
+
+// The block scrolled away and back while its read waited: its highlighter
+// goes and another is made on the same code, which reads it whole.
+struct Recreate : Command {
+  QString piece = *rc::gen::elementOf(kPieces);
+  void apply(Model& model) const override {
+    model.text += piece;
+    model.covered = model.target();
+  }
+  void run(const Model& before, Block& block) const override {
+    Model after = before;
+    apply(after);
+    block.document.setPlainText(after.text);
+    block.highlighter.reset();
+    block.highlighter = std::make_unique<CodeHighlighter>();
+    block.highlighter->setLanguage(after.language);
+    block.highlighter->setStreaming(after.streaming);
+    block.highlighter->setBackground(after.dark ? kDark : kLight);
+    block.highlighter->setTextDocument(&block.document);
+    check(after, block);
+  }
+  void show(std::ostream& os) const override { os << "Recreate(" << piece.toStdString() << ")"; }
 };
 
 const QString kTs = QStringLiteral("const x = 1;\n");
@@ -212,7 +236,7 @@ private slots:
       CodeHighlighter::clearCache();
       Model model;
       Block block;
-      rc::state::check(model, block, rc::state::gen::execOneOfWithArgs<Write, Replace, Language, Streaming, ThemeSwitch>());
+      rc::state::check(model, block, rc::state::gen::execOneOfWithArgs<Write, Replace, Language, Streaming, ThemeSwitch, Recreate>());
     }));
   }
 

@@ -136,7 +136,7 @@ defmodule HalC2.McpTest do
     assert HalC2.Mcp.prepared?(thread_id, "codex")
   end
 
-  # New code loaded over a running server (`HalC2.Hot`) migrates it through
+  # New code loaded over a running server (a release upgrade) migrates it through
   # code_change, never init. A server started before MCP sessions were kept
   # has no sessions table; its initialize raised, the endpoint answered 500,
   # and no provider's MCP client could connect — so no agent tool, such as

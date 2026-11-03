@@ -124,6 +124,7 @@ defmodule HalC2.PullRequestSyncTest do
     ])
 
     id = thread!("t-discover", %{"branch" => "feature-5"})
+    start_supervised!(HalC2.PullRequests.Branches)
     start_supervised!({Discovery, interval: nil})
     :ok = Discovery.sweep()
 

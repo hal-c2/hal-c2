@@ -253,6 +253,13 @@ QQuickItem* World::item(const QString& objectName) {
   return found;
 }
 
+void World::openConnectionNotice() {
+  QQuickItem* notice = item(QStringLiteral("connectionNotice"));
+  if (!notice->property("open").toBool()) tap(QStringLiteral("connectionNoticeButton"));
+  waitFor([&] { return notice->property("open").toBool(); },
+          [&] { return QStringLiteral("the connection notice to open; the screen shows: %1").arg(texts().join(QStringLiteral(" | "))); });
+}
+
 bool World::popupShowing(const QString& objectName) {
   expect(popup(objectName) != nullptr, QStringLiteral("the window has no %1").arg(objectName));
   return searchPopup(&window(), objectName, "visible") != nullptr;

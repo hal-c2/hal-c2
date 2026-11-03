@@ -509,4 +509,183 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     assert length(World.pull_listings(context)) > context.calls_before.list
     context
   end
+
+  # --- rate limits (`HalC2.GitHub.Limits`), on a clock the steps move ---------------
+
+  @rate_limited %{
+    "args" => ["api graphql"],
+    "stderr" => "GraphQL: API rate limit exceeded for user ID 7.\n",
+    "exit" => 1
+  }
+
+  defp clock(context) do
+    ref = :atomics.new(1, signed: true)
+    :atomics.put(ref, 1, DateTime.to_unix(~U[2026-11-03 10:00:00Z], :millisecond))
+    Application.put_env(:hal_c2, :github_clock, fn -> :atomics.get(ref, 1) end)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :github_clock) end)
+    Map.put(context, :clock, ref)
+  end
+
+  defp now(context), do: :atomics.get(context.clock, 1)
+  defp move_clock(context, ms), do: :atomics.put(context.clock, 1, ms)
+
+  # Lists past the MC's own cache, so what is asked of GitHub is up to the gate.
+  defp relist(context) do
+    HalC2.PullRequests.invalidate(%{})
+    list(context)
+  end
+
+  defp graphql_calls(context), do: length(World.cli_calls(context, "api graphql"))
+
+  defp unlimit(context) do
+    rules = context.cli.rules |> File.read!() |> JSON.decode!() |> List.delete(@rate_limited)
+    File.write!(context.cli.rules, JSON.encode!(rules))
+    context
+  end
+
+  # The time every GitHub project's error says calls resume, "HH:MM:SS".
+  defp paused_until(context) do
+    assert {:ok, %{"errors" => errors}} = context.reply
+    assert errors |> Enum.map(& &1["repository"]) |> Enum.sort() == ["acme/api", "acme/shop"]
+
+    [until] =
+      errors
+      |> Enum.map(fn %{"message" => message} ->
+        assert [_, at] = Regex.run(~r/paused until it resets at (\d\d:\d\d:\d\d) UTC/, message)
+        at
+      end)
+      |> Enum.uniq()
+
+    until
+  end
+
+  defp at(ms), do: ms |> DateTime.from_unix!(:millisecond) |> Calendar.strftime("%H:%M:%S")
+
+  # Lists again with nothing asked of GitHub, and the pause ending at `until`.
+  defp still_paused(context, until) do
+    before = graphql_calls(context)
+    context = relist(context)
+    assert graphql_calls(context) == before
+    assert paused_until(context) == at(until)
+    context
+  end
+
+  # GitHub turns a listing away while `until` holds the pause that follows.
+  defp limited_again(context, pause) do
+    context = relist(context)
+    assert {:ok, %{"errors" => [_, _]}} = context.reply
+    until = now(context) + pause
+    context |> still_paused(until) |> Map.put(:until, until)
+  end
+
+  step "GitHub answers a read with a rate limit and no time to retry", context do
+    context = context |> clock() |> World.cli_rules(@rate_limited) |> relist()
+    Map.put(context, :until, now(context) + 30_000)
+  end
+
+  step "GitHub answers a read with a rate limit and its read budget resets in 10 minutes",
+       context do
+    context = clock(context)
+    reset = div(now(context), 1_000) + 600
+    budget = &%{"limit" => 5000, "remaining" => &1, "reset" => reset}
+
+    context
+    |> World.cli_rules([
+      @rate_limited,
+      %{
+        "args" => ["api rate_limit"],
+        "stdout" => %{"resources" => %{"graphql" => budget.(0), "core" => budget.(4999)}}
+      }
+    ])
+    |> relist()
+    |> Map.put(:until, reset * 1_000)
+  end
+
+  step "the host is paused after a rate limit", context do
+    context = context |> clock() |> World.cli_rules(@rate_limited) |> relist()
+    Map.put(context, :until, now(context) + 30_000)
+  end
+
+  step "the user lists pull requests again straight away", context do
+    context |> Map.put(:graphql_before, graphql_calls(context)) |> relist()
+  end
+
+  step "no request goes to GitHub", context do
+    assert graphql_calls(context) == context.graphql_before
+    context
+  end
+
+  step ~r/^the projects on GitHub report they are paused until (the rate limit resets and when|the time GitHub gave)$/,
+       context do
+    assert paused_until(context) == at(context.until)
+    context
+  end
+
+  step "the pause is 30 seconds the first time, doubles each time the limit is hit again and never passes 15 minutes",
+       context do
+    Enum.reduce([60, 120, 240, 480, 900, 900], context, fn seconds, context ->
+      move_clock(context, context.until)
+      limited_again(context, seconds * 1_000)
+    end)
+  end
+
+  step "the first answer that succeeds ends the pause and the doubling", context do
+    move_clock(context, context.until)
+    context = context |> unlimit() |> relist()
+    assert {:ok, %{"errors" => []}} = context.reply
+
+    context
+    |> World.cli_rules(@rate_limited)
+    |> limited_again(30_000)
+  end
+
+  step "a read from another of GitHub's budgets is still sent", context do
+    before = length(World.cli_calls(context, "api user"))
+    HalC2.PullRequests.invalidate(%{})
+
+    {reply, context} =
+      World.call(context, "pullRequests.routingIdentity", %{"host" => "github.com"})
+
+    assert {:ok, %{"viewer" => @me}} = reply
+    assert length(World.cli_calls(context, "api user")) == before + 1
+    context
+  end
+
+  step "the user comments on a pull request or merges it", context do
+    context =
+      World.cli_rules(context, [
+        Shared.permissions_rule("WRITE"),
+        %{"args" => ["pr merge 1", "--squash"]},
+        %{"args" => ["pr comment 1"], "stdout" => ""}
+      ])
+
+    ref = %{
+      "projectId" => World.project(context, "acme/shop").id,
+      "repository" => "acme/shop",
+      "number" => 1
+    }
+
+    {commented, context} =
+      World.call(context, "pullRequests.comment", Map.put(ref, "body", "Looks good"))
+
+    {merged, context} =
+      World.call(
+        context,
+        "pullRequests.runAction",
+        Map.merge(ref, %{"action" => "merge", "mergeMethod" => "squash"})
+      )
+
+    Map.put(context, :asked, [commented, merged])
+  end
+
+  step "the request is sent to the host", context do
+    assert [{:ok, _}, {:ok, _}] = context.asked
+    assert [_] = World.cli_calls(context, "pr comment 1")
+    assert [_] = World.cli_calls(context, "pr merge 1")
+    context
+  end
+
+  step "the pause is neither ended nor shortened by that request's answer", context do
+    still_paused(context, context.until)
+  end
 end

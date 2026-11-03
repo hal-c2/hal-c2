@@ -139,7 +139,9 @@ defmodule HalC2.Steps.Space.Visualize do
     source = World.thread_id(context, "To file")
     Store.put_meta("test.flush", "1")
     {:ok, archive} = HalC2.ThreadArchive.build(source)
-    thread_file(context, archive |> HalC2.ThreadArchive.encode() |> String.replace(source, id))
+    data = HalC2.ThreadArchive.encode(archive)
+    HalC2.ThreadArchive.discard(archive)
+    thread_file(context, String.replace(data, source, id))
   end
 
   step "a previous server's thread file holds one turn of the thread {string}",
@@ -182,7 +184,9 @@ defmodule HalC2.Steps.Space.Visualize do
 
   step "that thread moved away, and a thread file holds it with one turn fewer", context do
     id = World.thread_id(context, "Coming back")
-    {:ok, archive} = HalC2.ThreadArchive.build(id)
+    {:ok, built} = HalC2.ThreadArchive.build(id)
+    archive = built |> HalC2.ThreadArchive.encode() |> JSON.decode!()
+    HalC2.ThreadArchive.discard(built)
     entities = Enum.reject(archive["entities"], &match?(["message", "msg-gone", _], &1))
     assert length(entities) < length(archive["entities"])
     moved_away(context)
