@@ -683,6 +683,22 @@ const Steps steps([] {
     expect(composer && composer->isVisible(), S("the thread's screen is not up: %1").arg(screenTexts(world)));
   });
 
+  step(S("the user has the thread's files open"), [](World& world, const Captures&, const Table&) {
+    ensureThread(world);
+    world.tap(S("openFiles"));
+    world.item(S("filesPanel"));
+  });
+
+  step(S("the user steps back from the terminal"), [](World& world, const Captures&, const Table&) {
+    world.back();
+    world.sync();
+  });
+
+  step(S("the thread's files are shown"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !terminals(world)->isOpen() && world.find(S("terminalScreen")) == nullptr; }, [&] { return S("the files; %1").arg(describeScreen(world)); });
+    world.item(S("filesPanel"));
+  });
+
   step(S("the user is in %1 and has opened another screen over it").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     have(world, {c[0]});
     openOn(world, c[0]);

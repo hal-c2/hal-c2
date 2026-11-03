@@ -92,6 +92,13 @@ Feature: Using a terminal on a phone
     Then the thread is shown
 
   @mobile
+  Scenario: Back from a terminal opened over the thread's files returns to the files
+    Given the user has the thread's files open
+    When the user opens the terminal
+    And the user steps back from the terminal
+    Then the thread's files are shown
+
+  @mobile
   Scenario: A shell that ends under the user's open terminal screen is left on return
     Given the user is in "term-1" and has opened another screen over it
     And the shell in "term-1" exits
