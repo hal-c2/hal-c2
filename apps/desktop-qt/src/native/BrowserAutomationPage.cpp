@@ -194,6 +194,8 @@ bool BrowserAutomationPage::pageHasFocus() const {
 
 bool BrowserAutomationPage::onPage(const QPointF& scene) const {
   if (!m_view || !m_window) return false;
+  // The cheap check first: the walk below visits the whole window.
+  if (!m_view->contains(m_view->mapFromScene(scene))) return false;
   return pressTarget(m_window->contentItem(), scene, m_view) == m_view;
 }
 
