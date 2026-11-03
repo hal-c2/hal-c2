@@ -152,7 +152,9 @@ defmodule HalC2.Orchestration.TurnWriterTest do
           "  if (!found) throw new Error(\"command not found\")\n",
           "lib/a.ex:12:  # no such file is fine here\n",
           "12:  # no such file is fine here\n",
-          "Makefile:12: no such file is fine here\n"
+          "Makefile:12: no such file is fine here\n",
+          "lib/foo.ex:      {:error, :enoent} -> :ok\n",
+          "src/a.ts: // no such file here\n"
         ] do
       test "stays a success when its output only mentions #{inspect(output)}" do
         refute Map.has_key?(finish("completed", unquote(output)), "outputIndicatesFailure")
