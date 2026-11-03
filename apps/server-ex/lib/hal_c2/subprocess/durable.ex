@@ -188,6 +188,8 @@ defmodule HalC2.Subprocess.Durable do
   # its own and leaves it running when the port closes or the VM goes, and it gets no
   # background job's ignored signals. The shim lets go of the port's pipes first thing.
   defp detach(dir, cmd, opts) do
+    # Kept stderr grows for the session's life, as `out` does with far more, and goes
+    # with the dir when the session stops; only its end is ever read.
     err =
       if opts[:stderr_prefix] || opts[:stderr_tail],
         do: Path.join(dir, "err"),

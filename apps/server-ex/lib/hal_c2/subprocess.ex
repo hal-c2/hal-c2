@@ -12,9 +12,12 @@ defmodule HalC2.Subprocess do
   Stderr is discarded unless `:stderr_prefix` is given: then another reader drains
   it and sends the owner only the lines that start with the prefix, as
   `{:subprocess_stderr, reader, lines}`. The rest never leaves the reader, since an
-  agent's stderr can carry credentials. With `:stderr_tail`, the reader also keeps the
-  last few KB of it, which `stderr_tail/1` hands over once the program has ended: what a
-  program that died on start said is the only account of why.
+  agent's stderr can carry credentials. `:stderr_tail` is the one exception, for a
+  program whose own stderr is its error log: the reader keeps the last few KB, which
+  `stderr_tail/1` hands over once the program has ended, and its last lines become the
+  run's error, in the thread's log and wherever that error is shown. What a program that
+  died on start said is the only account of why, so ask for it only where that is worth
+  the chance of a secret in it.
 
   Exile stops the program when its owner exits, but not when the VM dies;
   `HalC2.Subprocess.Orphans` records each program so the next boot kills those.
@@ -303,6 +306,18 @@ defmodule HalC2.Subprocess do
     pid
   end
 
+  @doc """
+  The exit status in `message`, when it is an owned program's exit as Exile sends it to
+  the owner. That can arrive before its output ends, and `stop/2` cannot get it once
+  the owner has taken it from its mailbox, so an owner that receives every message
+  keeps it from here.
+  """
+  @spec exit_status(t, term) :: {:ok, non_neg_integer} | :error
+  def exit_status(%__MODULE__{durable: nil, proc: %Proc{exit_ref: ref}}, {ref, {:ok, status}}),
+    do: {:ok, status}
+
+  def exit_status(_sub, _message), do: :error
+
   @doc "Closes stdin and waits for the program to exit, escalating to signals after `timeout`."
   @spec stop(t, timeout) :: {:ok, non_neg_integer} | term
   def stop(sub, timeout \\ 2_000)
@@ -325,6 +340,15 @@ defmodule HalC2.Subprocess do
   def stop(%__MODULE__{proc: proc}, timeout) do
     Proc.close_stdin(proc)
     Proc.await_exit(proc, timeout)
+  catch
+    # With no pipe left open, Exile's process ends as soon as the program does, so it
+    # may be gone before it is asked. It mailed the program's exit status first.
+    :exit, reason ->
+      receive do
+        {ref, status} when ref == proc.exit_ref -> status
+      after
+        0 -> exit(reason)
+      end
   end
 
   # Stdin closed first, so what was written still reaches the program: the helper ends

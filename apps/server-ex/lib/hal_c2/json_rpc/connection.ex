@@ -170,13 +170,14 @@ defmodule HalC2.JsonRpc.Connection do
     # The exit status is read here, while the subprocess can still be asked, so a
     # call left open fails with the exit rather than a bare close.
     state =
-      if state.program && state.exit_status == nil do
+      if state.program do
         # Before the stop, which removes a durable program's dir and its stderr with it.
         stderr = if state.stderr_tail, do: Subprocess.stderr_tail(state.sub), else: ""
 
         status =
-          case Subprocess.stop(state.sub, 1_000) do
+          case state.exit_status || Subprocess.stop(state.sub, 1_000) do
             {:ok, status} -> status
+            status when is_integer(status) -> status
             _ -> nil
           end
 
@@ -191,7 +192,14 @@ defmodule HalC2.JsonRpc.Connection do
   end
 
   def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
-  def handle_info(_other, state), do: {:noreply, state}
+
+  # The program's exit can arrive before its output ends; kept for the eof above.
+  def handle_info(other, state) do
+    case Subprocess.exit_status(state.sub, other) do
+      {:ok, status} -> {:noreply, %{state | exit_status: status}}
+      :error -> {:noreply, state}
+    end
+  end
 
   @impl true
   def terminate(_reason, state) do
