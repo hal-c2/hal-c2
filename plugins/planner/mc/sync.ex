@@ -1347,19 +1347,21 @@ defmodule HalC2Plugins.Planner.Sync do
   no longer has it: GitHub keeps the move it takes last, and a push that took after
   another milestone's for the same issue, the task having moved on meanwhile, left it
   behind. Each op moves an issue to the milestone holding its task, or out of any, as
-  `pushes/5` does; none goes for an issue the milestone's own `ops` move, or whose last
-  move is where the plan has it, so a move that sets one right is only checked again,
-  once it took. The op takes the task off the milestone's `synced` `misplaced`, which
-  `misplaced/2` puts it on with the issue, so a refusal of the op leaves it for the
-  milestone's next push (`held_pushes/4`), whichever issue the task names by then.
+  `pushes/5` does, and out of any when no task names it any more: its task was removed,
+  unlinked or relinked while the move waited, and the push that took the issue out for
+  it may have taken first. None goes for an issue the milestone's own `ops` move, or
+  whose last move is where the plan has it, so a move that sets one right is only
+  checked again, once it took. The op takes the task, nil when none names the issue, off
+  the milestone's `synced` `misplaced`, which `misplaced/2` puts it on with the issue, so
+  a refusal of the op leaves it for the milestone's next push (`held_pushes/4`),
+  whichever issue the task names by then.
   """
   def reasserts(moved, ops, items, projects) do
     sent = for {"update", %{"milestone" => _} = input, _} <- ops, do: key(input)
 
     for %{"milestone" => wrote} = issue <- moved |> Enum.reverse() |> Enum.uniq_by(&key/1),
         key(issue) not in sent,
-        task = linked(items, issue),
-        task != nil,
+        task = linked(items, issue) || %{},
         held = holders(items, issue["repository"], task["id"]),
         if(held == [], do: wrote != nil, else: wrote not in held),
         project = project_id(Map.put(task, "issue", issue), projects),
