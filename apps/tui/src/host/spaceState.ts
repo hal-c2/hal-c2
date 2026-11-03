@@ -68,6 +68,7 @@ import { scheduleLabel } from "./sections/scheduledTasks.ts";
 import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
 import { chartData, chartLines } from "./spaceChart.ts";
+import { createCodeColours, type CodeColours } from "./codeColours.ts";
 import { createMermaidDiagrams, type MermaidDiagrams } from "./mermaidDiagrams.ts";
 import { listItems, markdownFrame, type SpaceListItem } from "./spaceMarkdown.ts";
 import {
@@ -164,6 +165,8 @@ export interface SpaceControllerOptions {
   readonly palette?: Palette;
   /** The Mermaid drawings the MC sent, shared with the timeline and file viewer. */
   readonly diagrams?: MermaidDiagrams;
+  /** Code coloured by its language, shared with the timeline and file viewer. */
+  readonly codeColours?: CodeColours;
   readonly setOpen: (open: boolean) => void;
   readonly publish: (state: TuiSpaceState) => void;
   readonly status: (text: string, kind?: StatusKind) => void;
@@ -429,6 +432,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   const { client } = options;
   const palette = options.palette ?? THEME;
   const diagrams = options.diagrams ?? createMermaidDiagrams(client);
+  const codeColours = options.codeColours ?? createCodeColours();
   let open = false;
   let view: TuiSpaceView = "spaces";
   let spaces: StreamEntities = EMPTY_STREAM_ENTITIES;
@@ -721,7 +725,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const label = language === "" ? [] : [styled(chunk(language, { fg: palette.dim }))];
     return linesRows(block, [
       ...label,
-      ...markdownLines(fenced(block.text, language), palette, room),
+      ...markdownLines(fenced(block.text, language), palette, room, undefined, codeColours.lines),
     ]);
   };
 
@@ -1421,6 +1425,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     });
   };
   const stopDiagrams = diagrams.listen(() => {
+    if (open) publish();
+  });
+  const stopCodeColours = codeColours.listen(() => {
     if (open) publish();
   });
 
@@ -3590,9 +3597,11 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     settled: async () => {
       while (pending.size > 0) await Promise.allSettled(pending);
       await diagrams.settled();
+      await codeColours.settled();
     },
     dispose: () => {
       stopDiagrams();
+      stopCodeColours();
       unsubscribeViewers?.();
       unsubscribeViewers = null;
       unsubscribeSpaces?.();

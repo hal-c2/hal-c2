@@ -2773,14 +2773,16 @@ step(
 );
 
 // A terminal draws every character a column wide, so the face is fixed-width already; the
-// code is in the code colour the chat draws it in, with no colours of its language.
+// code is coloured for its language as the chat colours a reply's (host/codeColours.ts).
 step(
   "its text is shown in a fixed-width face, coloured for that language where the surface can",
-  (ctx: SpaceWorld) => {
+  async (ctx: SpaceWorld) => {
+    await settle(ctx);
     const rows = drawnRows(ctx, CODE.join("\n")).slice(1);
     expect(rows.map((row) => row.text.slice(2))).toEqual(CODE);
     for (const row of rows) {
-      for (const part of row.line.chunks.slice(1)) expect(part.fg).toEqual(THEME.warning);
+      const call = row.line.chunks.find((part) => /^\s*(run|done)$/.test(part.text));
+      expect(call?.fg).toEqual(THEME.function);
     }
   },
 );

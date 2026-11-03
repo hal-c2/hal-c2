@@ -38,6 +38,7 @@ import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import { memoryTimestampFormat, type TimestampFormatStore } from "./timestampFormatSetting.ts";
 import { TIMESTAMP_FORMAT_LABELS, TIMESTAMP_FORMATS } from "../timestampFormat.ts";
 import { createFilesController, type TuiFilesState } from "./filesState.ts";
+import { createCodeColours } from "./codeColours.ts";
 import { createMermaidDiagrams } from "./mermaidDiagrams.ts";
 import { createSpaceController } from "./spaceState.ts";
 import {
@@ -401,6 +402,8 @@ export function createHost(options: HostOptions): Host {
   let last: StoreState | null = null;
   // Mermaid diagrams the MC drew, shared by replies, pages and the file viewer.
   const diagrams = createMermaidDiagrams(client);
+  // Code coloured by its language, shared the same way.
+  const codeColours = createCodeColours();
   const timestampFormats = options.timestampFormat ?? memoryTimestampFormat();
   let timestampFormat = timestampFormats.load();
   const threadView = createThreadView({
@@ -408,6 +411,7 @@ export function createHost(options: HostOptions): Host {
     client,
     state,
     diagrams,
+    codeColours,
     mode: () => mode,
     setMode: (next) => setMode(next),
     nowMs: () => Date.parse(now()),
@@ -748,6 +752,7 @@ export function createHost(options: HostOptions): Host {
   const files = createFilesController({
     client,
     diagrams,
+    codeColours,
     cwd: () => filesFor?.cwd ?? selectedWorkspace()?.cwd ?? null,
     height: () => layout.panesRows,
     width: () => layout.chatWidth,
@@ -785,6 +790,7 @@ export function createHost(options: HostOptions): Host {
   const space = createSpaceController({
     client,
     diagrams,
+    codeColours,
     height: () => layout.panesRows,
     width: () => layout.chatWidth,
     setOpen: (open) => {
