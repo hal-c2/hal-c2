@@ -6,9 +6,10 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// The pages of the open Space as a tree, then a section for each project with
-// Space files (`Spaces.projects`, collapsed until the user expands it), its decks
-// and its trash. A file picked in a section is edited as a page of its project.
+// The pages of the open Space as a tree with its decks and its trash, and under
+// them a section for each project with Space files (`Spaces.projects`, collapsed
+// until the user expands it). A file picked in a section is edited as a page of
+// its project.
 ColumnLayout {
     id: view
 
@@ -89,31 +90,6 @@ ColumnLayout {
                 color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(14 * Theme.fontScale)
                 text: view.emptyText
-            }
-
-            Repeater {
-                model: Spaces.projects
-
-                delegate: SpaceListRow {
-                    required property var model
-                    readonly property bool section: model.kind === "project"
-
-                    objectName: section ? "spaceProject:" + model.name : "spaceProject" + (model.kind === "file" ? "File:" : "Folder:") + model.projectId + ":" + model.path
-                    Layout.fillWidth: true
-                    Layout.topMargin: section ? 8 : 0
-                    title: model.name
-                    depth: model.depth
-                    iconName: section ? (model.expanded ? "chevron-down" : "chevron-right") : model.kind === "folder" ? "folder" : "file-text"
-                    // A folder only holds its files, which are always shown under it.
-                    enabled: model.kind !== "folder"
-                    Accessible.name: section ? (model.expanded ? qsTr("Collapse %1") : qsTr("Expand %1")).arg(model.name) : model.name
-                    onClicked: {
-                        if (section)
-                            Shell.dispatch("space.project.setExpanded", { projectId: model.projectId, expanded: !model.expanded });
-                        else
-                            Shell.dispatch("space.openFile", { projectId: model.projectId, relativePath: model.path });
-                    }
-                }
             }
 
             RowLayout {
@@ -201,6 +177,38 @@ ColumnLayout {
                     onClicked: view.screen.openDeck(model.id)
                     onMenuRequested: view.screen.deckTrashMenu(model.id)
                 }
+            }
+        }
+    }
+
+    ListView {
+        objectName: "spaceProjects"
+        Layout.fillWidth: true
+        // The sections take the room they need, up to half the screen's; their own
+        // list, so an expanded project builds only the rows on screen.
+        Layout.preferredHeight: Math.min(contentHeight, view.height / 2)
+        visible: count > 0
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        model: Spaces.projects
+
+        delegate: SpaceListRow {
+            required property var model
+            readonly property bool section: model.kind === "project"
+
+            objectName: section ? "spaceProject:" + model.projectId : "spaceProject" + (model.kind === "file" ? "File:" : "Folder:") + model.projectId + ":" + model.path
+            width: ListView.view.width
+            title: model.name
+            depth: model.depth
+            iconName: section ? (model.expanded ? "chevron-down" : "chevron-right") : model.kind === "folder" ? "folder" : "file-text"
+            // A folder only holds its files, which are always shown under it.
+            enabled: model.kind !== "folder"
+            Accessible.name: section ? (model.expanded ? qsTr("Collapse %1") : qsTr("Expand %1")).arg(model.name) : model.name
+            onClicked: {
+                if (section)
+                    Shell.dispatch("space.project.setExpanded", { projectId: model.projectId, expanded: !model.expanded });
+                else
+                    Shell.dispatch("space.openFile", { projectId: model.projectId, relativePath: model.path });
             }
         }
     }

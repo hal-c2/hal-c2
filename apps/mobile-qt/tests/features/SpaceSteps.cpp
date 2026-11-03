@@ -2357,7 +2357,7 @@ QQuickItem* lookAtSection(World& world, const QString& project) {
   lookAtSidebar(world);
   world.waitFor([&] { return sectionRow(world, S("project"), project).has_value(); },
                 [&] { return S("a section of %1; %2").arg(project, describeSections(world)); });
-  return world.item(S("spaceProject:") + text(world.mc.projects.value(project), QLatin1String("title")));
+  return world.item(S("spaceProject:") + project);
 }
 
 bool expanded(World& world, const QString& project) {
@@ -4096,7 +4096,7 @@ const Steps steps([] {
       }
       return projects == wanted;
     }, [&] { return S("the project sections to be %1; %2").arg(c[0], describeSections(world)); });
-    for (const QString& project : wanted) world.item(S("spaceProject:") + text(world.mc.projects.value(project), QLatin1String("title")));
+    for (const QString& project : wanted) world.item(S("spaceProject:") + project);
   });
   step(S("the section of %1 is collapsed").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtSection(world, c[0]);
@@ -4106,7 +4106,8 @@ const Steps steps([] {
         return row.value(S("projectId")) == c[0] && (row.value(S("kind")) != QLatin1String("project") || row.value(S("expanded")).toBool());
       });
     }, [&] { return S("the section of %1 to be collapsed; %2").arg(c[0], describeSections(world)); });
-    expect(world.find(S("spaceProjectFolder:%1:docs").arg(c[0])) == nullptr, S("the collapsed section still shows its folders"));
+    // The list lets go of a removed row on its next pass.
+    world.waitFor([&] { return world.find(S("spaceProjectFolder:%1:docs").arg(c[0])) == nullptr; }, S("the collapsed section to hide its folders"));
   });
   step(S("the section of %1 is expanded").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtSection(world, c[0]);
