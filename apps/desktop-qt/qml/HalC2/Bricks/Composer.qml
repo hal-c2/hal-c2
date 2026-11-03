@@ -25,7 +25,12 @@ Rectangle {
     readonly property bool stashOpen: ready && Shell.state.composerStash?.open === true
     readonly property var attachments: ready ? (model.attachments ?? []) : []
     readonly property var citations: ready ? (model.citations ?? []) : []
-    readonly property bool ready: model !== null && model.target !== null
+    // A Space page's own prompt (SpacePage). The prompt aims at a page while
+    // one is open, and only the page's composer is ready then; a shell's is
+    // ready everywhere else, so a shell that shows its composer when ready
+    // never draws a second prompt under a page.
+    property bool pageHost: false
+    readonly property bool ready: model !== null && model.target !== null && (model.routeKind === "page") === pageHost
     readonly property string publishedTarget: ready ? model.target : ""
     readonly property string publishedText: ready ? model.text : ""
     readonly property int publishedCursor: ready ? model.cursor : 0
@@ -119,9 +124,10 @@ Rectangle {
     color: canvas
 
     // The model-picker and toolbar keybindings land here while this
-    // brick hosts those controls.
+    // brick hosts those controls: the one on show (a Space page has its own).
     Connections {
         target: Shell
+        enabled: composer.visible
         function onActionRequested(action, payload) {
             if (action === "composer.modelPicker.toggle") {
                 if (modelPicker.popup.visible) {

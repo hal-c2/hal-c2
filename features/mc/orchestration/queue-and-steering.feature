@@ -326,6 +326,13 @@ Feature: Queueing, steering and restarting
       | edit                    | Automatic completion deliveries cannot be edited.            |
 
   @mc
+  Scenario: A restart goes ahead of the user's queued messages but behind a queued task result
+    Given "t1" has a queued delegated task result and a queued message "Next"
+    When the user sends "Instead" to "t1" with restart delivery
+    Then the turn carrying the task result starts when the interrupted run ends
+    And "Instead" and "Next" wait behind it in that order
+
+  @mc
   Scenario: A queued message cannot be moved ahead of a queued delegated task result
     Given "t1" has a queued delegated task result and a queued message "Next"
     When the user moves "Next" before the queued result
@@ -345,6 +352,20 @@ Feature: Queueing, steering and restarting
     When the user queues "B" on "t1"
     Then "B" is held behind "A"
     And no run starts until the user resumes the queue
+
+  # Only what the user queues waits on a held queue: what the agent is sent still wakes it.
+  @mc
+  Scenario Outline: What the agent is sent while the queue is held still wakes it
+    Given "t1" has a held queued message "A"
+    When <what> reaches "t1" while no turn is running
+    Then a turn for it starts
+    And "A" is still queued
+
+    Examples:
+      | what                        |
+      | a delegated task result     |
+      | a background command's end  |
+      | another agent's message     |
 
   @mc
   Scenario: A queued message that could not start says so in the timeline
@@ -387,7 +408,7 @@ Feature: Queueing, steering and restarting
   @mc
   Scenario Outline: A turn that is compacting or signing out cannot be steered
     Given "t1" has a running turn started by "<command>" sent by itself
-    When the user tries to send "Also check the docs" to "t1" as a steer
+    When the user sends "Also check the docs" to "t1" as a steer
     Then the command fails with "<message>"
 
     Examples:

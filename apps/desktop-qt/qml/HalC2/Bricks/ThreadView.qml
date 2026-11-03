@@ -17,6 +17,8 @@ Item {
 
     // The corner radius of layouts that round the centre.
     property real radius: 0
+    // Whether messages show their time and actions without hover (touch layouts).
+    property alias alwaysShowMeta: timeline.alwaysShowMeta
     readonly property var route: Shell.state.route ?? null
     readonly property bool draft: route !== null && route.kind === "draft"
     // The user scrolled a thread's conversation away from its latest output (the composer rests then).
@@ -41,16 +43,18 @@ Item {
     readonly property color mutedColor: Theme.palette.color("textMuted", "#8b8b93")
     readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
 
-    // Where web addresses go: the system browser, a dev server on another MC's
-    // machine through the connected MC's forward (tests keep them in).
-    property var openExternally: url => Shell.dispatch("thread.openAddress", {
-            url: url
+    // Where web addresses go: a pull request beside the thread, the system
+    // browser, a dev server on another MC's machine through the connected
+    // MC's forward (tests keep them in). external: to the browser regardless.
+    property var openExternally: (url, external) => Shell.dispatch("thread.openLink", {
+            url: url,
+            external: external === true
         })
 
     // Web addresses leave the app; anything else is a path in the project.
-    function openLink(link) {
+    function openLink(link, external) {
         if (/^(https?|mailto):/i.test(link)) {
-            view.openExternally(link);
+            view.openExternally(link, external);
             return;
         }
         let path = link.replace(/^file:\/\//i, "");
@@ -117,7 +121,8 @@ Item {
         model: view.model
         sending: view.sending
         showStatus: false
-        onLinkActivated: link => view.openLink(link)
+        linkPreviews: Panel.linkPreviews
+        onLinkActivated: (link, external) => view.openLink(link, external)
         onFileActivated: (path, tab, rowId) => view.openFile(path, tab, rowId)
         // Saving a queued message's edit sends its text alone, so no quote
         // is taken while one is edited.

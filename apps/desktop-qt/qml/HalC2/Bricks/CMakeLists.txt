@@ -127,6 +127,7 @@ set(hal_c2_bricks_qml_files
     TerminalPanel.qml
     PullRequestsPanel.qml
     PullRequestReviewPanel.qml
+    PullRequestLinkCard.qml
     PreviewsPanel.qml
     ThreadDetailsPanel.qml
     CommandPalette.qml

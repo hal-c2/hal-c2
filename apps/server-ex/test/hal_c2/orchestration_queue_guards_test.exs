@@ -114,8 +114,8 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
     await_statuses(thread_id, ["interrupted", "queued"])
 
-    assert Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id}) ==
-             {:error, "Thread #{thread_id} is not active."}
+    assert {:error, "Thread #{thread_id} is not active."} ==
+             Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id})
 
     assert ["interrupted", "queued"] = Enum.map(runs(current(thread_id)), & &1["status"])
 
@@ -177,7 +177,8 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     await_statuses(thread_id, ["running", "queued"])
     restart(thread_id)
 
-    {:ok, _} = send_now(thread_id, "m3", "usage limit m3")
+    # Sent, not queued: an explicitly queued message would wait behind the held queue.
+    {:ok, _} = send_message(thread_id, "m3", "usage limit m3", "start_immediately")
     await_statuses(thread_id, ["interrupted", "failed", "queued"])
     {:ok, _} = recover(thread_id)
     restart(thread_id)
@@ -199,7 +200,8 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     await_statuses(thread_id, ["running", "queued"])
     restart(thread_id)
 
-    {:ok, _} = send_now(thread_id, "m3", "usage limit m3")
+    # Sent, not queued: an explicitly queued message would wait behind the held queue.
+    {:ok, _} = send_message(thread_id, "m3", "usage limit m3", "start_immediately")
     await_statuses(thread_id, ["interrupted", "failed", "queued"])
     {:ok, _} = recover(thread_id)
     restart(thread_id)
@@ -235,6 +237,17 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     assert runs(current(thread_id)) == []
   end
 
+  # Found by the orchestration property: the archived refusal answered first.
+  test "resuming the queue of an archived thread that was deleted says it is deleted",
+       %{thread_id: thread_id} do
+    {:ok, _} = Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => thread_id})
+    {:ok, _} = Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread_id})
+    deleted = "Thread #{thread_id} is deleted."
+
+    assert {:error, ^deleted} =
+             Orchestration.dispatch(%{"type" => "queue.resume", "threadId" => thread_id})
+  end
+
   test "boot recovery interrupts a running turn behind a cancelled queued message",
        %{thread_id: thread_id} do
     {:ok, _} = send_message(thread_id, "m1")
@@ -261,26 +274,14 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     await_statuses(thread_id, ["interrupted", "cancelled"])
   end
 
-  defp send_message(thread_id, message_id, text \\ nil) do
+  defp send_message(thread_id, message_id, text \\ nil, mode \\ "queue_after_active") do
     Orchestration.dispatch(%{
       "type" => "message.dispatch",
       "threadId" => thread_id,
       "messageId" => message_id,
       "text" => text || "wait #{message_id}",
       "attachments" => [],
-      "dispatchMode" => %{"type" => "queue_after_active"}
-    })
-  end
-
-  # A message sent to run now rather than queued: it starts even while a restart holds
-  # the queue, where a queued one would wait behind it.
-  defp send_now(thread_id, message_id, text) do
-    Orchestration.dispatch(%{
-      "type" => "message.dispatch",
-      "threadId" => thread_id,
-      "messageId" => message_id,
-      "text" => text,
-      "attachments" => []
+      "dispatchMode" => %{"type" => mode}
     })
   end
 

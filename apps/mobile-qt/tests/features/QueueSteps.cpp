@@ -1,11 +1,9 @@
 // A thread's queue on the phone (features/mc/orchestration/queue-and-steering.feature):
-// what the composer lists of the messages waiting behind a turn, against the
-// stream ComposerSteps.cpp fakes.
+// what a usage limit leaves of it. The thread's stream is ComposerSteps' fake
+// (FakeThreads.h), fed as HalC2.Orchestration records a limited run.
 
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QQuickItem>
-#include <algorithm>
 
 #include "FakeThreads.h"
 #include "Harness.h"
@@ -14,47 +12,44 @@
 
 namespace {
 
+using S = QString;
+
 const QString kNow = QStringLiteral("2026-09-23T10:00:00Z");
 
-// The commands the MC had when the provider stopped, to tell what the phone sent since.
-struct QueueWatch {
-  qsizetype commandsBefore = 0;
-};
-
-// The texts of the queued messages the composer lists, top to bottom.
+// The texts of the queue under the composer, front first.
 QStringList queued(World& world) {
-  QList<QQuickItem*> items;
-  world.findWhere([&](QQuickItem* item) {
-    if (item->objectName().startsWith(QLatin1String("queueText-")) && item->isVisible()) items.append(item);
-    return false;
-  });
-  std::sort(items.begin(), items.end(), [](QQuickItem* a, QQuickItem* b) { return a->mapToScene({0, 0}).y() < b->mapToScene({0, 0}).y(); });
   QStringList texts;
-  for (QQuickItem* item : std::as_const(items)) texts.append(item->property("text").toString());
+  for (const QVariant& entry : world.state(S("turn")).toMap().value(S("queue")).toList()) texts.append(entry.toMap().value(S("text")).toString());
   return texts;
 }
 
-const Steps steps([] {
-  using S = QString;
+int commandsBefore = 0;
 
+const Steps steps([] {
+  // The orchestration features' Background: the fake MC serves the one
+  // project, and the phone is paired with it.
   step(S("an MC with a project %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.mc.projects.clear();
+    world.mc.threads.clear();
     world.mc.projects.insert(c[0], {{S("id"), c[0]}, {S("title"), c[0]}, {S("workspaceRoot"), S("/work/") + c[0]},
-                                    {S("scripts"), QJsonArray()}, {S("createdAt"), S("2026-09-01T09:00:00Z")},
-                                    {S("updatedAt"), S("2026-09-01T09:00:00Z")}});
+                                     {S("scripts"), QJsonArray()}, {S("createdAt"), S("2026-09-01T09:00:00Z")},
+                                     {S("updatedAt"), S("2026-09-01T09:00:00Z")}});
     pairWithEnvironment(world);
+    threadList(world);
   });
   step(S("thread %1 exists in %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     world.thread = haveThread(world, c[0]);
+    world.mc.threads[world.thread].insert(S("projectId"), c[1]);
     updateRow(world.mc, world.thread, {{S("projectId"), c[1]}});
-    threadRow(world, c[0]);
+    openThread(world, c[0]);
   });
 
   step(S("%1 has a running turn and queued messages %1 and %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
-    openThread(world, c[0]);
     FakeStreams& fake = world.mc.part<FakeStreams>();
-    world.run = S("run-%1").arg(++fake.ordinal);
+    world.run = S("run-%1").arg(fake.ordinal + 1);
     setEntity(world.mc, world.thread, S("run"), world.run,
-              {{S("id"), world.run}, {S("ordinal"), fake.ordinal}, {S("status"), S("running")}, {S("requestedAt"), kNow}, {S("startedAt"), kNow}});
+              {{S("id"), world.run}, {S("ordinal"), ++fake.ordinal}, {S("status"), S("running")}, {S("requestedAt"), kNow}, {S("startedAt"), kNow}});
+    updateRow(world.mc, world.thread, {{S("activeRunId"), world.run}, {S("latestRunId"), world.run}});
     int position = 0;
     for (const QString& text : {c[1], c[2]}) {
       const QString run = S("run-queued-") + text;
@@ -63,25 +58,23 @@ const Steps steps([] {
                 {{S("id"), run}, {S("ordinal"), ++fake.ordinal}, {S("status"), S("queued")}, {S("queuePosition"), ++position},
                  {S("userMessageId"), S("message:") + run}, {S("requestedAt"), kNow}});
     }
-    updateRow(world.mc, world.thread, {{S("activeRunId"), world.run}, {S("latestRunId"), world.run}});
     world.waitFor([&] { return queued(world) == QStringList{c[1], c[2]}; },
-                  [&] { return S("the composer to list the queue; it lists [%1]").arg(queued(world).join(S(", "))); });
+                  [&] { return S("the queue; the turn is %1").arg(show(world.state(S("turn")))); });
   });
 
-  // The run fails as a usage limit, which holds the queue where it is.
   step(S("the provider stops %1 because its usage limit was reached").arg(kQuoted), [](World& world, const Captures&, const Table&) {
-    world.sync();
-    world.mc.part<QueueWatch>().commandsBefore = world.mc.commands.size();
     FakeStreams& fake = world.mc.part<FakeStreams>();
-    const QString error = S("error:") + world.run;
-    setEntity(world.mc, world.thread, S("turn-item"), error,
-              {{S("id"), error}, {S("type"), S("error")}, {S("runId"), world.run}, {S("ordinal"), ++fake.ordinal}, {S("status"), S("failed")},
-               {S("failure"), QJsonObject{{S("class"), S("usage_limit")}, {S("message"), S("You've hit your usage limit.")}}},
-               {S("updatedAt"), kNow}});
+    world.sync();
+    commandsBefore = world.mc.commands.size();
+    // The run fails as a usage limit, which holds the queue where it is.
+    setEntity(world.mc, world.thread, S("turn-item"), S("item-limit"),
+              {{S("id"), S("item-limit")}, {S("type"), S("error")}, {S("runId"), world.run}, {S("ordinal"), ++fake.ordinal},
+               {S("status"), S("failed")}, {S("updatedAt"), kNow},
+               {S("failure"), QJsonObject{{S("class"), S("usage_limit")}, {S("message"), S("You've hit your usage limit.")}}}});
     setEntity(world.mc, world.thread, S("run"), world.run, {{S("status"), S("failed")}, {S("completedAt"), kNow}});
     const QMap<QString, QJsonObject> entities = fake.threads.value(world.thread);
     for (auto it = entities.cbegin(); it != entities.cend(); ++it) {
-      if (it.key().startsWith(QLatin1String("run\n")) && it->value(QLatin1String("status")) == QLatin1String("queued")) {
+      if (it.key().startsWith(S("run\n")) && it->value(QLatin1String("status")) == QLatin1String("queued")) {
         setEntity(world.mc, world.thread, S("run"), it->value(QLatin1String("id")).toString(), {{S("queueHeld"), true}});
       }
     }
@@ -90,20 +83,22 @@ const Steps steps([] {
   });
 
   step(S("%1 and %1 stay queued in their original order").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] { return !world.item(S("primaryAction"))->property("stopMode").toBool(); },
-                  [&] { return S("the turn to end; the composer is %1").arg(show(world.state(S("composer")))); });
-    expect(queued(world) == QStringList{c[0], c[1]}, S("the composer lists [%1]").arg(queued(world).join(S(", "))));
+    world.waitFor([&] { return !world.state(S("turn")).toMap().value(S("running")).toBool(); },
+                  [&] { return S("the turn to stop; it is %1").arg(show(world.state(S("turn")))); });
+    expect(queued(world) == QStringList{c[0], c[1]},
+           S("the composer lists [%1]; the turn is %2").arg(queued(world).join(S(", ")), show(world.state(S("turn")))));
   });
 
   step(S("neither is discarded or sent early"), [](World& world, const Captures&, const Table&) {
     world.sync();
     // The phone asked nothing of the MC on its own: no cancel, no steer, no send.
     QStringList sent;
-    for (qsizetype i = world.mc.part<QueueWatch>().commandsBefore; i < world.mc.commands.size(); ++i) sent.append(show(world.mc.commands.at(i).toVariantMap()));
+    for (qsizetype i = commandsBefore; i < world.mc.commands.size(); ++i) sent.append(show(world.mc.commands.at(i).toVariantMap()));
     expect(sent.isEmpty() && queued(world).size() == 2, S("the phone sent %1").arg(sent.join(S("; "))));
-    // The limit is one line, the row's title.
-    world.waitFor([&] { return world.texts().join(S(" | ")).contains(S("Usage limit reached")); },
-                  [&] { return S("the limit in the thread; the screen says: %1").arg(world.texts().join(S(" | "))); });
+    // The limit is one line; the provider's own words are not shown.
+    world.waitFor([&] { return world.shows(S("Usage limit reached"), false); },
+                  [&] { return S("the usage limit; the screen says: %1").arg(world.texts().join(S(" | "))); });
+    expect(!world.shows(S("You've hit your usage limit."), false), S("the provider's words are shown: %1").arg(world.texts().join(S(" | "))));
   });
 });
 

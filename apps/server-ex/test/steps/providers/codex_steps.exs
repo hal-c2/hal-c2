@@ -3152,9 +3152,7 @@ Red"} <- StreamState.get(state, "message")[message],
 
   step "the user stopped a running Codex turn", context do
     context = World.fake_providers(context)
-    ignore = Path.join(context.mc.home, "ignore-interrupt")
-    File.write!(ignore, "")
-    World.put_os_env("FAKE_CODEX_IGNORE_INTERRUPT", ignore)
+    World.put_os_env("FAKE_CODEX_IGNORE_INTERRUPT", "1")
     World.put_app_env(:codex_interrupt_deadline_ms, 2_000)
     context = start_waiting(context) |> Map.put(:thread, @thread)
     {_, runtime} = World.codex_runtime(context, @thread)

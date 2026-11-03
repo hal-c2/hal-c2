@@ -138,6 +138,45 @@ export interface ComposerOptions {
   /** Attachment chips carry an 8×3 preview (the terminal draws inline images). */
   readonly inlineImages?: boolean;
   readonly palette?: Palette;
+  /** The Space page the prompt writes to while one is open (`spaceState.ts`), else null. */
+  readonly page?: () => ComposerPage | null;
+}
+
+/**
+ * A Space page as the prompt's target. The prompt keeps its own draft, model, modes and
+ * project for each page; the page decides what the words become (a block, a chart, an ask).
+ */
+export interface ComposerPage {
+  /** Its draft's key, never a thread's. */
+  readonly key: string;
+  readonly title: string;
+  /** What plain words write, as "writes a paragraph" (or what "/" chose). */
+  readonly writes: string;
+  /** Its agent is running or stopping: Esc in an empty prompt stops it. */
+  readonly agentActive: boolean;
+  /** Where an ask runs unless the user picks another project (null: nowhere yet). */
+  readonly defaultProjectId: string | null;
+  /** The projects an ask can run in: this MC's. */
+  readonly projects: () => ReadonlyArray<{ readonly id: string; readonly title: string }>;
+  /** What "/" offers: the kinds of block, and "Visualize". */
+  readonly kinds: ReadonlyArray<{ readonly label: string; readonly value: string }>;
+  /** A kind was picked: what the prompt then starts with ("" for none), or null when the page asks itself. */
+  readonly chooseKind: (value: string) => string | null;
+  /** Writes or asks what the prompt holds; resolves to why it was refused, or null. */
+  readonly submit: (prompt: PagePrompt) => Promise<string | null>;
+  readonly stop: () => void;
+  /** Esc with nothing to clear or stop: the page's keys again. */
+  readonly leave: () => void;
+}
+
+/** What the page's prompt sends: its words, and what an ask runs with. */
+export interface PagePrompt {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ComposerImageAttachment["upload"]>;
+  readonly projectId: string | null;
+  readonly modelSelection: ModelSelection | null;
+  readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
 }
 
 /** One attachment chip: `id` is the path the image came from, `name` its file name. */
@@ -416,6 +455,7 @@ export interface Composer {
   /** For the palette: what the composer can offer right now. */
   readonly context: () => {
     readonly newDraft: boolean;
+    readonly page: boolean;
     readonly workspaceMode: NewThreadWorkspaceMode | null;
     readonly threadId: string | null;
     readonly interactionMode: ProviderInteractionMode;
@@ -434,6 +474,16 @@ export function createComposer(options: ComposerOptions): Composer {
   const drafts = new Map<string, Draft>();
   const interactionOverrides = new Map<string, ProviderInteractionMode>();
   const modelOverrides = new Map<string, ModelSelection>();
+  /** What the user chose on a page's prompt, by its key: an ask runs with it. */
+  const pageChoices = new Map<
+    string,
+    {
+      readonly projectId?: string;
+      readonly modelSelection?: ModelSelection;
+      readonly runtimeMode?: RuntimeMode;
+      readonly interactionMode?: ProviderInteractionMode;
+    }
+  >();
   /** The model last sent with, per provider instance, newest last (this session). */
   const lastUsedModels = new Map<string, ModelSelection>();
   const rememberModel = (selection: ModelSelection | null | undefined) => {
@@ -542,8 +592,12 @@ export function createComposer(options: ComposerOptions): Composer {
     if (selection?.kind !== "thread") return null;
     return current.detail && current.detail.id === selection.id ? current.detail : null;
   };
+  /** The open Space page, unless a new-thread draft has the prompt. */
+  const openPage = (): ComposerPage | null => (newDraft ? null : (options.page?.() ?? null));
   const target = (): string | null => {
     if (newDraft) return NEW_TARGET;
+    const page = openPage();
+    if (page) return page.key;
     const selection = store.getState().selection;
     return selection?.kind === "thread" ? threadTarget(selection.id) : null;
   };
@@ -567,7 +621,7 @@ export function createComposer(options: ComposerOptions): Composer {
   const recallPrompt = (direction: "previous" | "next"): boolean => {
     const key = target();
     const detail = selectedDetail();
-    if (!key || newDraft || !detail) return false;
+    if (!key || newDraft || openPage() || !detail) return false;
     const current = draftFor(key).text;
     const recalling = recall !== null && recall.key === key && recall.text === current;
     if (!recalling && (direction === "next" || current.length > 0)) return false;
@@ -592,8 +646,43 @@ export function createComposer(options: ComposerOptions): Composer {
     newDraft
       ? (resolveModelSelection(modelOptions, newDraft.modelSelection) ?? newDraft.modelSelection)
       : null;
+  // A page's ask runs where the user picked, else where the MC says; on the model a new
+  // thread there would start on (openNewThread's order), with that project's defaults.
+  const pageProjectId = (page: ComposerPage) =>
+    pageChoices.get(page.key)?.projectId ?? page.defaultProjectId;
+  const pageProject = (page: ComposerPage) => {
+    const id = pageProjectId(page);
+    return id === null ? null : (projects().find((project) => project.id === id) ?? null);
+  };
+  const pageDefaults = (page: ComposerPage) =>
+    resolveProjectSettings(settings, pageProjectId(page) as never, pageProject(page)).settings;
+  const pageModel = (page: ComposerPage): ModelSelection | null => {
+    const chosen = pageChoices.get(page.key)?.modelSelection;
+    if (chosen) return resolveModelSelection(modelOptions, chosen) ?? chosen;
+    const projectId = pageProjectId(page);
+    const latest = (store.getState().shell?.threads ?? [])
+      .filter((thread) => thread.projectId === projectId && !thread.archivedAt)
+      .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    const carried = latest ? (modelOverrides.get(latest.id) ?? latest.modelSelection) : null;
+    const selection =
+      pageDefaults(page).defaultModelSelection ??
+      carried ??
+      [...lastUsedModels.values()].at(-1) ??
+      null;
+    return selection ? (resolveModelSelection(modelOptions, selection) ?? selection) : null;
+  };
+  const pageRuntime = (page: ComposerPage): RuntimeMode =>
+    pageChoices.get(page.key)?.runtimeMode ?? pageDefaults(page).defaultRuntimeMode;
+  const pageInteraction = (page: ComposerPage): ProviderInteractionMode =>
+    pageChoices.get(page.key)?.interactionMode ?? "default";
+  const choosePage = (
+    page: ComposerPage,
+    choice: NonNullable<ReturnType<typeof pageChoices.get>>,
+  ) => pageChoices.set(page.key, { ...pageChoices.get(page.key), ...choice });
   const activeModel = () => {
     if (newDraft) return newModel();
+    const page = openPage();
+    if (page) return pageModel(page);
     const detail = selectedDetail();
     return detail ? threadModel(detail) : null;
   };
@@ -609,6 +698,8 @@ export function createComposer(options: ComposerOptions): Composer {
         process.cwd()
       );
     }
+    const page = openPage();
+    if (page) return pageProject(page)?.workspaceRoot ?? process.cwd();
     const detail = selectedDetail();
     if (!detail) return process.cwd();
     return (
@@ -631,39 +722,51 @@ export function createComposer(options: ComposerOptions): Composer {
   const composerState = (): TuiComposerState => {
     const key = target();
     const draft = draftFor(key);
-    const detail = newDraft ? null : selectedDetail();
-    const working = !!detail && isWorking(detail);
+    const page = openPage();
+    const detail = newDraft || page ? null : selectedDetail();
+    const working = page ? page.agentActive : !!detail && isWorking(detail);
     const pendingUserInputCount = detail ? derivePendingUserInputs(detail.activities).length : 0;
     const pendingApprovalCount = detail ? derivePendingApprovals(detail.activities).length : 0;
     const model = activeModel();
     const effort = reasoningChoicesForSelection(modelOptions, model)?.selectedId ?? null;
     const interactionMode: ProviderInteractionMode = newDraft
       ? newDraft.interactionMode
-      : detail
-        ? threadInteraction(detail)
-        : "default";
+      : page
+        ? pageInteraction(page)
+        : detail
+          ? threadInteraction(detail)
+          : "default";
     const runtimeMode: RuntimeMode = newDraft
       ? newDraft.runtimeMode
-      : (detail?.runtimeMode ?? "full-access");
+      : page
+        ? pageRuntime(page)
+        : (detail?.runtimeMode ?? "full-access");
     const project = newProject();
     const placeholder = newDraft
       ? project
         ? `What should we build in ${project.title}?`
         : "What should we build?"
-      : detail
-        ? "Ask anything, @tag files/folders, $use skills, or / for commands"
-        : store.getState().selection?.kind === "project"
-          ? "Enter to expand · Alt+↑/↓ to pick a thread"
-          : "Select a thread with Alt+↑/↓ or click";
+      : page
+        ? `Write on ${page.title}, / for a kind of block, or @agent to ask an agent`
+        : detail
+          ? "Ask anything, @tag files/folders, $use skills, or / for commands"
+          : store.getState().selection?.kind === "project"
+            ? "Enter to expand · Alt+↑/↓ to pick a thread"
+            : "Select a thread with Alt+↑/↓ or click";
     const surfaceWidth = composerSurfaceWidth(options.chatWidth());
     const compact = surfaceWidth < COMPACT_SURFACE_WIDTH;
-    const question = newDraft ? null : (options.question?.() ?? null);
+    // A page's agent asks its questions in its thread.
+    const question = newDraft || page ? null : (options.question?.() ?? null);
     const answering = question !== null;
     const mode = options.mode();
     // The OpenTUI client also drops the editor while a send is pending, which
     // loses what the user types meanwhile; only a checkout switch does here.
     const inputFocused =
-      (mode === "compose" || mode === "newThread" || mode === "userInput") && !switchPending;
+      (mode === "compose" ||
+        mode === "newThread" ||
+        mode === "userInput" ||
+        mode === "pagePrompt") &&
+      !switchPending;
     const attachments = draft.images.map((image): TuiComposerAttachment => ({
       id: image.relativePath,
       name: image.upload.name,
@@ -676,7 +779,7 @@ export function createComposer(options: ComposerOptions): Composer {
     );
     const hiddenCount = Math.max(0, attachments.length - visibleCount);
     const hasText = draft.text.length > 0 || draft.images.length > 0;
-    const context = composerContext(detail);
+    const context = page ? pageContext(page) : composerContext(detail);
     const references = referencesIn(draft).map((path) => ({
       path,
       label: clip(`@${path}`, 28),
@@ -732,7 +835,7 @@ export function createComposer(options: ComposerOptions): Composer {
       attachments,
       placeholder,
       canSend:
-        (newDraft !== null || detail !== null) &&
+        (newDraft !== null || page !== null || detail !== null) &&
         !replyPending &&
         !createPending &&
         (draft.text.trim().length > 0 ||
@@ -859,6 +962,18 @@ export function createComposer(options: ComposerOptions): Composer {
       vcsStatus.refName ?? detail.branch ?? "(detached)",
       false,
     );
+  };
+
+  /** A page's context: where an ask runs (a click picks the project) and what words write. */
+  const pageContext = (page: ComposerPage): TuiComposerContext => {
+    const room = Math.max(1, Math.floor((composerSurfaceWidth(options.chatWidth()) - 1) / 2));
+    const project = pageProject(page);
+    const where = project ? `ask runs in ${project.title}` : "an ask has nowhere to run";
+    return {
+      workspace: clip(`${where} ▾`, room),
+      branch: clip(`${page.writes} ▾`, room),
+      pickable: true,
+    };
   };
 
   const workspaceLabelFor = (current: NewDraft) =>
@@ -1093,7 +1208,7 @@ export function createComposer(options: ComposerOptions): Composer {
 
   const openModelPicker = () => {
     if (toggles("model")) return;
-    if (!newDraft && !selectedDetail()) return;
+    if (!newDraft && !openPage() && !selectedDetail()) return;
     const selection = activeModel();
     openPicker({
       kind: "model",
@@ -1121,7 +1236,7 @@ export function createComposer(options: ComposerOptions): Composer {
 
   const openReasoningPicker = () => {
     const selection = activeModel();
-    if ((!newDraft && !selectedDetail()) || !selection) {
+    if ((!newDraft && !openPage() && !selectedDetail()) || !selection) {
       store.setStatus("Select a model first.", "info");
       return;
     }
@@ -1161,9 +1276,14 @@ export function createComposer(options: ComposerOptions): Composer {
 
   const openRuntimePicker = () => {
     const detail = selectedDetail();
-    if (!newDraft && !detail) return;
+    const page = openPage();
+    if (!newDraft && !page && !detail) return;
     if (toggles("runtime")) return;
-    const runtimeMode = newDraft ? newDraft.runtimeMode : (detail?.runtimeMode ?? "full-access");
+    const runtimeMode = newDraft
+      ? newDraft.runtimeMode
+      : page
+        ? pageRuntime(page)
+        : (detail?.runtimeMode ?? "full-access");
     openPicker({
       kind: "runtime",
       title: "access",
@@ -1178,6 +1298,11 @@ export function createComposer(options: ComposerOptions): Composer {
   };
 
   const openWorkspacePicker = () => {
+    const page = openPage();
+    if (page) {
+      openPageProjectPicker(page);
+      return;
+    }
     if (!newDraft) return;
     if (toggles("workspace")) return;
     openPicker({
@@ -1218,6 +1343,11 @@ export function createComposer(options: ComposerOptions): Composer {
     });
 
   const openBranchPicker = () => {
+    const page = openPage();
+    if (page) {
+      openKindPicker(page);
+      return;
+    }
     if (!newDraft) return;
     if (toggles("branch")) return;
     const refs = newDraft.refs;
@@ -1263,6 +1393,45 @@ export function createComposer(options: ComposerOptions): Composer {
     });
   };
 
+  /** Where a page's ask runs: this MC's projects. */
+  const openPageProjectPicker = (page: ComposerPage) => {
+    const list = page.projects();
+    if (list.length === 0) {
+      store.setStatus("This machine has no project for an agent to run in.", "info");
+      return;
+    }
+    pick({
+      title: "ask runs in",
+      options: list.map((project) => ({ label: project.title, value: project.id })),
+      index: Math.max(
+        0,
+        list.findIndex((project) => project.id === pageProjectId(page)),
+      ),
+      onChoose: (projectId) => {
+        choosePage(page, { projectId });
+        const title = list.find((project) => project.id === projectId)?.title ?? projectId;
+        store.setStatus(`An ask runs in ${title}.`, "success");
+        publish();
+      },
+    });
+  };
+
+  /** "/" on a page: the kinds of block, and "Visualize". The "/" is not kept as words. */
+  const openKindPicker = (page: ComposerPage) =>
+    pick({
+      title: "kind of block",
+      searchable: true,
+      options: page.kinds,
+      onChoose: (value) => {
+        const start = page.chooseKind(value);
+        setDraft(page.key, (draft) => {
+          const rest = draft.text === "/" ? "" : draft.text;
+          return { ...draft, text: start === null || rest.startsWith(start) ? rest : start + rest };
+        });
+        options.onTextCompleted?.(draftFor(page.key).text);
+      },
+    });
+
   const setProjectScope = (value: string) => {
     const projectScopeId = value === ALL_PROJECTS ? null : value;
     store.setProjectScope(projectScopeId);
@@ -1283,7 +1452,9 @@ export function createComposer(options: ComposerOptions): Composer {
     );
     if (!option) return;
     const selection = modelSelectionForOption(option);
+    const page = openPage();
     if (newDraft) newDraft = { ...newDraft, modelSelection: selection };
+    else if (page) choosePage(page, { modelSelection: selection });
     else {
       const detail = selectedDetail();
       if (!detail) return;
@@ -1320,7 +1491,9 @@ export function createComposer(options: ComposerOptions): Composer {
       return;
     }
     const next = withModelSelectionOption(selection, id, value);
+    const page = openPage();
     if (newDraft) newDraft = { ...newDraft, modelSelection: next };
+    else if (page) choosePage(page, { modelSelection: next });
     else {
       const detail = selectedDetail();
       if (!detail) return;
@@ -1344,7 +1517,7 @@ export function createComposer(options: ComposerOptions): Composer {
    */
   const openOptionsPicker = () => {
     const selection = activeModel();
-    if ((!newDraft && !selectedDetail()) || !selection) {
+    if ((!newDraft && !openPage() && !selectedDetail()) || !selection) {
       store.setStatus("Select a model first.", "info");
       return;
     }
@@ -1388,8 +1561,10 @@ export function createComposer(options: ComposerOptions): Composer {
 
   const setRuntimeMode = (mode: RuntimeMode) => {
     if (!RUNTIME_MODES.includes(mode)) return;
-    if (newDraft) {
-      newDraft = { ...newDraft, runtimeMode: mode };
+    const page = openPage();
+    if (newDraft || page) {
+      if (newDraft) newDraft = { ...newDraft, runtimeMode: mode };
+      else choosePage(page!, { runtimeMode: mode });
       store.setStatus(`Access → ${runtimeModeLabel(mode)}`, "success");
       publish();
       return;
@@ -1405,8 +1580,10 @@ export function createComposer(options: ComposerOptions): Composer {
   };
 
   const setInteractionMode = (next: ProviderInteractionMode) => {
-    if (newDraft) {
-      newDraft = { ...newDraft, interactionMode: next };
+    const page = openPage();
+    if (newDraft || page) {
+      if (newDraft) newDraft = { ...newDraft, interactionMode: next };
+      else choosePage(page!, { interactionMode: next });
       store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
       publish();
       return;
@@ -1427,12 +1604,15 @@ export function createComposer(options: ComposerOptions): Composer {
   };
 
   const toggleInteractionMode = () => {
+    const page = openPage();
     const current = newDraft
       ? newDraft.interactionMode
-      : (() => {
-          const detail = selectedDetail();
-          return detail ? threadInteraction(detail) : null;
-        })();
+      : page
+        ? pageInteraction(page)
+        : (() => {
+            const detail = selectedDetail();
+            return detail ? threadInteraction(detail) : null;
+          })();
     if (current === null) return;
     setInteractionMode(current === "plan" ? "default" : "plan");
   };
@@ -1829,7 +2009,60 @@ export function createComposer(options: ComposerOptions): Composer {
     );
   };
 
+  /** Sends to the page; a refusal keeps the words and images, and says why in the prompt. */
+  const submitPage = (page: ComposerPage) => {
+    if (replyPending) return;
+    const key = page.key;
+    const submitted = draftFor(key);
+    const typed = submitted.text.trim();
+    if (typed.length === 0 && submitted.images.length === 0) return;
+    if (options.offline?.()) {
+      sendFailures.set(key, OFFLINE_REASON);
+      store.setStatus("Not sent: not connected.", "error");
+      publish();
+      return;
+    }
+    sendFailures.delete(key);
+    replyPending = true;
+    publish();
+    void track(
+      page
+        .submit({
+          text: typed,
+          attachments: submitted.images.map((image) => image.upload),
+          projectId: pageProjectId(page),
+          modelSelection: pageModel(page),
+          runtimeMode: pageRuntime(page),
+          interactionMode: pageInteraction(page),
+        })
+        .then(
+          (refused) => refused,
+          (error: unknown) => errorText(error),
+        )
+        .then((refused) => {
+          replyPending = false;
+          if (refused !== null) {
+            sendFailures.set(key, refused);
+            publish();
+            return;
+          }
+          // Clear only what was sent; text typed while sending stays.
+          setDraft(key, (current) => ({
+            text: current.text.startsWith(submitted.text)
+              ? current.text.slice(submitted.text.length).replace(/^\s+/, "")
+              : current.text,
+            images: current.images.filter((image) => !submitted.images.includes(image)),
+          }));
+        }),
+    );
+  };
+
   const interrupt = () => {
+    const page = openPage();
+    if (page) {
+      if (page.agentActive) page.stop();
+      return;
+    }
     const detail = selectedDetail();
     if (!detail) return;
     void track(client.interrupt(detail.id).catch(() => {}));
@@ -1856,6 +2089,13 @@ export function createComposer(options: ComposerOptions): Composer {
       setDraft(key, () => EMPTY_DRAFT);
       return;
     }
+    const page = openPage();
+    if (page) {
+      // As a thread's prompt stops its turn; with nothing running, the page has the keys.
+      if (page.agentActive) page.stop();
+      else page.leave();
+      return;
+    }
     const detail = selectedDetail();
     if (detail && isWorking(detail)) interrupt();
   };
@@ -1868,7 +2108,12 @@ export function createComposer(options: ComposerOptions): Composer {
       return false;
     }
     const detail = selectedDetail();
-    if (!newDraft && detail && derivePendingUserInputs(detail.activities).length > 0) {
+    if (
+      !newDraft &&
+      !openPage() &&
+      detail &&
+      derivePendingUserInputs(detail.activities).length > 0
+    ) {
       store.setStatus("Answer the pending question before attaching an image.", "warning");
       return false;
     }
@@ -2035,33 +2280,44 @@ export function createComposer(options: ComposerOptions): Composer {
     const provider = providers.find((candidate) => candidate.instanceId === model?.instanceId);
     if (trigger === "@") {
       const key = target();
-      void track(
-        client.listEntries(composerCwd()).then(
-          (entries) => {
-            // Nothing to offer, or the user typed on (or left) meanwhile: the "@" stays text.
-            const listed = entries.filter((entry) => entry.ignored !== true);
-            if (listed.length === 0 || target() !== key || !draftFor(key).text.endsWith("@")) {
-              return;
-            }
-            if (picker !== null) return;
-            pick({
-              title: "files",
-              searchable: true,
-              options: entries
-                .filter((entry) => entry.ignored !== true)
-                .map((entry) => ({
-                  label: entry.kind === "directory" ? `${entry.path}/` : entry.path,
-                  value: entry.path,
-                })),
-              onChoose: (path) => completeTrigger("@", `@${path}`, path),
-            });
-          },
-          () => {},
-        ),
-      );
+      // On a page, "@agent" leads the list: an ask, not a file.
+      const asking = openPage() !== null && draftFor(key).text === "@";
+      const offer = (entries: Awaited<ReturnType<TuiClient["listEntries"]>>) => {
+        // Nothing to offer, or the user typed on (or left) meanwhile: the "@" stays text.
+        const listed = entries.filter((entry) => entry.ignored !== true);
+        if (
+          (listed.length === 0 && !asking) ||
+          target() !== key ||
+          !draftFor(key).text.endsWith("@")
+        ) {
+          return;
+        }
+        if (picker !== null) return;
+        pick({
+          title: "files",
+          searchable: true,
+          options: [
+            ...(asking
+              ? [{ label: "@agent", description: "Ask an agent about this page", value: "" }]
+              : []),
+            ...listed.map((entry) => ({
+              label: entry.kind === "directory" ? `${entry.path}/` : entry.path,
+              value: entry.path,
+            })),
+          ],
+          onChoose: (path) =>
+            path === "" ? completeTrigger("@", "@agent") : completeTrigger("@", `@${path}`, path),
+        });
+      };
+      void track(client.listEntries(composerCwd()).then(offer, () => offer([])));
       return;
     }
     // A provider with no commands (or skills) opens nothing: the character is just text.
+    const page = openPage();
+    if (trigger === "/" && page) {
+      openKindPicker(page);
+      return;
+    }
     if (trigger === "/") {
       // A provider whose limits the MC knows also answers "/usage-limits" (here, not in a turn).
       const commands =
@@ -2278,10 +2534,24 @@ export function createComposer(options: ComposerOptions): Composer {
         return recallPrompt("previous");
       case "composer.history.next":
         return recallPrompt("next");
-      case "composer.submit":
+      case "composer.submit": {
+        const page = openPage();
         if (newDraft) submitNewThread();
+        else if (page) submitPage(page);
         else sendReply();
         return true;
+      }
+      case "composer.page.ask": {
+        // An ask started from the page's keys, menu or palette keeps what was written.
+        const page = openPage();
+        if (!page) return true;
+        setDraft(page.key, (draft) => ({
+          ...draft,
+          text: /^@agent(\s|$)/i.test(draft.text) ? draft.text : `@agent ${draft.text}`,
+        }));
+        options.onTextCompleted?.(draftFor(page.key).text);
+        return true;
+      }
       case "composer.escape":
         escape();
         return true;
@@ -2467,7 +2737,8 @@ export function createComposer(options: ComposerOptions): Composer {
   return {
     dispatch,
     addContext: (record) => {
-      if (newDraft || !selectedDetail()) return false;
+      // A page has no terminal, diff or replies to quote.
+      if (newDraft || openPage() || !selectedDetail()) return false;
       setDraft(target(), (draft) => ({
         ...draft,
         contexts: [...(draft.contexts ?? []), record],
@@ -2503,15 +2774,19 @@ export function createComposer(options: ComposerOptions): Composer {
     },
     context: () => {
       const detail = selectedDetail();
+      const page = openPage();
       return {
         newDraft: newDraft !== null,
+        page: page !== null,
         workspaceMode: newDraft?.workspaceMode ?? null,
         threadId: detail?.id ?? null,
         interactionMode: newDraft
           ? newDraft.interactionMode
-          : detail
-            ? threadInteraction(detail)
-            : "default",
+          : page
+            ? pageInteraction(page)
+            : detail
+              ? threadInteraction(detail)
+              : "default",
         attachmentCount: draftFor(target()).images.length,
         referenceCount: referencesIn(draftFor(target())).length,
       };

@@ -30,15 +30,17 @@ defmodule HalC2.Space.FilesTest do
     HalC2.Streams.flush_shell("demo")
     :sys.get_state(HalC2.Shell)
 
-    {:ok, space} = Space.create("Research")
-    %{space: space["id"], root: Path.expand(work)}
+    %{root: Path.expand(work)}
   end
 
-  defp open!(space, root, path, text) do
+  defp open!(root, path, text) do
     File.write!(Path.join(root, path), text)
-    {:ok, %{"page" => page}} = Space.open_file(space, "demo", path)
+    {:ok, %{"page" => page}} = Space.open_file("demo", path)
     page["id"]
   end
+
+  # The project's own Space, where its files' pages are.
+  defp space, do: Space.project_space_id("demo")
 
   defp texts(space, page_id) do
     {:ok, state} = Space.state(space)
@@ -46,9 +48,10 @@ defmodule HalC2.Space.FilesTest do
   end
 
   test "an edit written to its file does not make the server follow the folder",
-       %{space: space, root: root} do
-    a = open!(space, root, "a.md", "# A\n\nalpha\n")
-    b = open!(space, root, "b.md", "# B\n\nbeta\n")
+       %{root: root} do
+    a = open!(root, "a.md", "# A\n\nalpha\n")
+    space = space()
+    b = open!(root, "b.md", "# B\n\nbeta\n")
     File.write!(Path.join(root, "b.md"), "# B\n\nchanged quietly\n")
     seen = Files.generation(root)
 
@@ -63,8 +66,9 @@ defmodule HalC2.Space.FilesTest do
   end
 
   test "a page with no links is still followed after an edit skips looking for its twins",
-       %{space: space, root: root} do
-    a = open!(space, root, "a.md", "# A\n\nalpha\n")
+       %{root: root} do
+    a = open!(root, "a.md", "# A\n\nalpha\n")
+    space = space()
     {:ok, state} = Space.state(space)
     [block] = Blocks.of_page(state, a)
     {:ok, _} = Space.update_block(space, block["id"], "gamma")
@@ -79,9 +83,10 @@ defmodule HalC2.Space.FilesTest do
   end
 
   test "a write through a link the server has not seen yet still reaches the file's page",
-       %{space: space, root: root} do
-    a = open!(space, root, "a.md", "# A\n\nalpha\n")
-    l = open!(space, root, "l.md", "# A\n\nalpha\n")
+       %{root: root} do
+    a = open!(root, "a.md", "# A\n\nalpha\n")
+    space = space()
+    l = open!(root, "l.md", "# A\n\nalpha\n")
 
     # No page went through a link when the server looked; now l.md is one, unsignalled.
     File.rm!(Path.join(root, "l.md"))
@@ -97,10 +102,11 @@ defmodule HalC2.Space.FilesTest do
   end
 
   test "a link seen when the server follows the folder keeps its page taking the file's edits",
-       %{space: space, root: root} do
-    a = open!(space, root, "a.md", "# A\n\nalpha\n")
+       %{root: root} do
+    a = open!(root, "a.md", "# A\n\nalpha\n")
+    space = space()
     File.ln_s!("a.md", Path.join(root, "l.md"))
-    {:ok, %{"page" => %{"id" => l}}} = Space.open_file(space, "demo", "l.md")
+    {:ok, %{"page" => %{"id" => l}}} = Space.open_file("demo", "l.md")
 
     seen = Files.generation(root)
     Files.changed(root)

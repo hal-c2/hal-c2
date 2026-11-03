@@ -999,6 +999,8 @@ Rectangle {
                         required property bool ignored
                         required property string problem
                         required property bool selected
+                        // Set by a finger's long press on a file, whose lift still clicks.
+                        property bool held: false
 
                         objectName: "filesEntry-" + (kind === "file" || kind === "directory" ? path : kind + "-" + path)
                         width: treeView.width
@@ -1010,7 +1012,14 @@ Rectangle {
                         ToolTip.visible: hovered && nameText.truncated
                         ToolTip.delay: 400
                         ToolTip.text: path
+                        onPressed: held = false
+                        onCanceled: held = false
                         onClicked: {
+                            // One click only: a lift the menu took may never click.
+                            if (held) {
+                                held = false;
+                                return;
+                            }
                             if (kind === "directory")
                                 root.tree.toggle(path);
                             else if (kind === "file")
@@ -1018,15 +1027,20 @@ Rectangle {
                             else if (kind === "error")
                                 root.tree.retry(path);
                         }
-                        // A held press is a finger's right-click: it opens the menu
-                        // instead of the file.
-                        onPressAndHold: {
-                            if (kind === "file")
-                                menu();
-                        }
                         function menu() {
                             entryMenu.path = path;
                             entryMenu.popup(entry);
+                        }
+                        // A finger held on a file is its right-click: the menu instead of
+                        // the file. Only a finger: a slow mouse click, or a held folder or
+                        // error row, still clicks.
+                        TapHandler {
+                            acceptedDevices: PointerDevice.TouchScreen
+                            enabled: entry.kind === "file"
+                            onLongPressed: {
+                                entry.held = true;
+                                entry.menu();
+                            }
                         }
                         TapHandler {
                             acceptedButtons: Qt.RightButton

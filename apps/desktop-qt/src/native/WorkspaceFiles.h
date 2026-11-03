@@ -303,8 +303,6 @@ private:
   bool writingOpenFile() const;
   // Reads the open file for the latest request, to show it.
   void readOpenFile();
-  // What the agent last did to the workspace, or empty.
-  QString mutation() const;
   void followMutation();
   // The newest file change the agent made names `path`.
   bool newestChangeNames(const QString& path) const;

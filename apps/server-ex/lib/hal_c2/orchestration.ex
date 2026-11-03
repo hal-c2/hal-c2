@@ -22,6 +22,8 @@ defmodule HalC2.Orchestration do
 
   # How long a stopped thread's agent gets to go, after the caller has stopped waiting.
   @thread_stop_ms 120_000
+  # How long a restart waits for the run it interrupted to end (`await_restart/3`).
+  @restart_end_ms 30_000
   @active_statuses ~w(preparing starting running waiting)
 
   # The built-in runtimes' registries, in the order a release visits them. One
@@ -371,38 +373,46 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # Cancelling a queued delegated task result gives up waking the agent for its tasks:
-  # their deliveries are disposed, and their results stay readable from their status.
+  # Cancelling a delegated result's wake gives up waking the agent for its tasks: they
+  # are not woken for again, and their results stay readable from their status.
   def dispatch(%{"type" => "queued-run.cancel", "threadId" => thread_id, "runId" => run_id}) do
-    state = HalC2.Streams.state(thread_id)
-    run = StreamState.get(state, "run")[run_id]
+    queue_change(thread_id, fn state ->
+      at = Entities.now()
+      run = StreamState.get(state, "run")[run_id]
 
-    tasks =
-      if run && run["status"] == "queued",
-        do:
-          get_in(StreamState.get(state, "message"), [
-            run["userMessageId"],
-            "delegatedCompletion",
-            "taskIds"
-          ]),
-        else: nil
+      # A run that already started is not the queue's to cancel.
+      if run["status"] == "queued" do
+        message = StreamState.get(state, "message")[run["userMessageId"]] || %{}
 
-    with {:ok, result} <- cancel_queued_run(thread_id, run_id) do
-      # The queue may have started the run since the snapshot; then the agent is hearing
-      # the result, and its deliveries are not the cancel's to dispose.
-      cancelled? =
-        StreamState.get(HalC2.Streams.state(thread_id), "run")[run_id]["status"] == "cancelled"
+        disposed =
+          for task_id <- get_in(message, ["delegatedCompletion", "taskIds"]) || [],
+              do:
+                upsert(state, "subagent", task_id, fn
+                  # One the caller already acknowledged keeps the run that saw it.
+                  %{"completionDelivery" => %{"state" => waiting}} = task
+                  when waiting in ["pending", "delivered"] ->
+                    Map.merge(task, %{
+                      "completionDelivery" => %{"state" => "disposed", "observedByRunId" => nil},
+                      "updatedAt" => at
+                    })
 
-      for task_id <- tasks || [], cancelled? do
-        dispatch(%{
-          "type" => "delegated_task.completion-delivery.dispose",
-          "parentThreadId" => thread_id,
-          "taskId" => task_id
-        })
+                  _ ->
+                    nil
+                end)
+
+        [
+          upsert(
+            state,
+            "run",
+            run_id,
+            &Map.merge(&1, %{"status" => "cancelled", "queuePosition" => nil, "completedAt" => at})
+          )
+          | disposed
+        ]
+      else
+        []
       end
-
-      {:ok, result}
-    end
+    end)
   end
 
   def dispatch(
@@ -410,8 +420,10 @@ defmodule HalC2.Orchestration do
       ) do
     # Attachments, when given, replace the message's (uploads join the thread first);
     # context, when given, replaces its context records.
-    with :ok <- users_run(HalC2.Streams.state(thread_id), run_id, "edited"),
-         :ok <- non_empty_edit(HalC2.Streams.state(thread_id), run_id, command),
+    state = HalC2.Streams.state(thread_id)
+
+    with :ok <- users_run(state, run_id, "edited"),
+         :ok <- not_emptied(state, run_id, command),
          {:ok, command} <- edit_claims(thread_id, command) do
       edited =
         %{"text" => command["text"] || "", "updatedAt" => Entities.now()}
@@ -430,37 +442,19 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # Delegated task results go first in the queue and keep their place: neither they nor
-  # a message moved ahead of them are reordered.
+  # The agent's queued results go ahead of the user's messages (`queued_runs/1`), and
+  # stay there.
   def dispatch(
         %{"type" => "queued-run.reorder", "threadId" => thread_id, "runId" => run_id} = command
       ) do
     state = HalC2.Streams.state(thread_id)
-    runs = StreamState.get(state, "run")
+    before = StreamState.get(state, "run")[command["beforeRunId"]]
 
-    with :ok <- reorder_refusal(state, run_id, runs[command["beforeRunId"]]) do
-      queue_change(thread_id, fn state ->
-        {automatic, queued} =
-          queued_runs(state) |> Enum.split_with(&automatic?(state, &1))
-
-        queued = Enum.map(queued, & &1["id"])
-
-        # A run that already started, or never existed, has no place in the queue.
-        if run_id in queued do
-          queued = List.delete(queued, run_id)
-
-          order =
-            case Enum.find_index(queued, &(&1 == command["beforeRunId"])) do
-              nil -> queued ++ [run_id]
-              index -> List.insert_at(queued, index, run_id)
-            end
-
-          for {id, position} <- Enum.with_index(order, length(automatic) + 1),
-              do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
-        else
-          []
-        end
-      end)
+    with :ok <- users_run(state, run_id, "reordered") do
+      if before && before["status"] == "queued" && automatic?(state, before),
+        do:
+          {:error, "Queued messages cannot be reordered ahead of automatic completion delivery."},
+        else: reorder(thread_id, run_id, command)
     end
   end
 
@@ -660,6 +654,10 @@ defmodule HalC2.Orchestration do
       agent_message?(message) ->
         users_run(state, queued["id"], "promoted to Steer")
 
+      reason =
+          target && target["status"] in @active_statuses && steer_refusal(state, target, message) ->
+        {:error, reason}
+
       message && target && target["status"] in @active_statuses &&
           steerable?(target, queued["providerInstanceId"]) ->
         promote(thread_id, queued, target, message, command)
@@ -670,12 +668,8 @@ defmodule HalC2.Orchestration do
   end
 
   # After a restart the queue waits until the user resumes it.
-  # An archived thread's queue waits until it is unarchived.
   def dispatch(%{"type" => "queue.resume", "threadId" => thread_id}) do
-    thread = StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id] || %{}
-    archived? = thread["archivedAt"] != nil and thread["deletedAt"] == nil
-
-    with :ok <- if(archived?, do: {:error, "Thread #{thread_id} is not active."}, else: :ok),
+    with :ok <- unarchived(thread_id),
          {:ok, result} <-
            queue_change(thread_id, fn state ->
              for run <- queued_runs(state),
@@ -1264,9 +1258,27 @@ defmodule HalC2.Orchestration do
         thread_id,
         turn.ids.run,
         "failed",
-        HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
+        start_failure(turn, kind, reason)
       )
   end
+
+  # A queued message whose provider could not start says why in its timeline
+  # (`TurnWriter`'s queued start failure): the user was not there when it was sent.
+  defp start_failure(%{queued: true} = turn, kind, reason) do
+    why =
+      case reason do
+        %MatchError{term: {:error, why}} when is_binary(why) -> why
+        _ -> String.replace_prefix(Exception.format_banner(kind, reason), "** ", "")
+      end
+
+    HalC2.Orchestration.TurnWriter.start_failure(
+      HalC2.ThreadMove.provider_name(turn.ids.instance),
+      String.slice(why, 0, 3_000)
+    )
+  end
+
+  defp start_failure(_turn, _kind, _reason),
+    do: HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
 
   # A runtime that released itself as idle just before this run began stops with the
   # call unanswered (or is gone by the call); a new one takes the turn.
@@ -1472,7 +1484,9 @@ defmodule HalC2.Orchestration do
     thread_id
     |> HalC2.Streams.state()
     |> queued_runs()
-    |> Enum.map(&cancel_queued_run(thread_id, &1["id"]))
+    |> Enum.map(
+      &dispatch(%{"type" => "queued-run.cancel", "threadId" => thread_id, "runId" => &1["id"]})
+    )
     |> Enum.any?(&match?({:ok, _}, &1))
   end
 
@@ -2114,10 +2128,16 @@ defmodule HalC2.Orchestration do
       end
 
     results = Enum.map(asked, &interrupt_result(&1, thread_id, run_id))
+    refusal = Enum.find(results, &(match?({:error, _}, &1) and not no_turn?(&1)))
 
     cond do
       :ok in results ->
         :ok
+
+      # Between turns, a runtime whose background work would not stop (a Codex
+      # terminal still listed after it was ended) says why.
+      active == nil and refusal != nil ->
+        refusal
 
       # A runtime that refuses the stop with a reason of its own — not that it
       # has no turn, but that the stop could not be delivered to the one it has
@@ -2369,16 +2389,28 @@ defmodule HalC2.Orchestration do
         end
 
       "checkpoint.capture" ->
-        {:ok,
-         HalC2.Checkpoint.capture_run(
-           args["cwd"],
-           args["scopeId"],
-           args["runOrdinal"],
-           args["runId"],
-           args["rootNodeId"],
-           thread_id,
-           args["at"]
-         )}
+        checkpoint =
+          HalC2.Checkpoint.capture_run(
+            args["cwd"],
+            args["scopeId"],
+            args["runOrdinal"],
+            args["runId"],
+            args["rootNodeId"],
+            thread_id,
+            args["at"]
+          )
+
+        # Replayed after a restart, with no turn waiting on it: it completes the run.
+        if payload != :turn,
+          do:
+            HalC2.Orchestration.TurnWriter.checkpointed(
+              thread_id,
+              args["runId"],
+              args,
+              checkpoint
+            )
+
+        {:ok, checkpoint}
 
       "terminal.cleanup" ->
         if Process.whereis(HalC2.Terminal.Registry),
@@ -2425,7 +2457,8 @@ defmodule HalC2.Orchestration do
         steer(thread_id, run, message_id, command)
 
       {:restart, active_run_id, run_id} ->
-        # The queued message goes first; the interrupted run's end starts it.
+        # The queued message goes first, behind only the agent's delegated results
+        # (`queue_run/5`); the interrupted run's end starts it.
         _ =
           HalC2.Orchestration.Effects.run_now(
             thread_id,
@@ -2434,7 +2467,8 @@ defmodule HalC2.Orchestration do
             {thread_id, active_run_id}
           )
 
-        restarted(thread_id, active_run_id, run_id)
+        await_restart(thread_id, active_run_id, run_id)
+        {:ok, %{"sequence" => sequence(thread_id)}}
 
       turn ->
         begin_turn(thread_id, turn)
@@ -2442,80 +2476,84 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # A restart waits for the interrupted turn to end. One the provider never ends would
-  # leave the restart's message to start whenever it does, beside or long after it, so
-  # the restart fails instead and its message leaves the queue, failed.
-  defp restarted(thread_id, active_run_id, run_id) do
-    if await_run_end(thread_id, active_run_id, restart_end_ms()) do
-      {:ok, %{"sequence" => sequence(thread_id)}}
+  # A restart's message starts when the run it interrupted ends (`start_next/1`). A
+  # provider that never ends that run fails the restart instead, so no second turn runs
+  # alongside the first. Bundled runtimes settle a turn that ignores its stop within
+  # their own deadline (Codex's `:codex_interrupt_deadline_ms`), well inside this one.
+  defp await_restart(thread_id, interrupted, run_id) do
+    deadline =
+      System.monotonic_time(:millisecond) +
+        Application.get_env(:hal_c2, :restart_end_ms, @restart_end_ms)
+
+    Task.start(fn ->
+      :ok = HalC2.Streams.watch(thread_id, self())
+      unless run_ended?(thread_id, interrupted, deadline), do: fail_restart(thread_id, run_id)
+    end)
+  end
+
+  defp run_ended?(thread_id, run_id, deadline) do
+    if StreamState.get(HalC2.Streams.state(thread_id), "run")[run_id]["status"] in @active_statuses do
+      receive do
+        {:hal_c2_stream, ^thread_id, _} -> run_ended?(thread_id, run_id, deadline)
+      after
+        max(deadline - System.monotonic_time(:millisecond), 0) -> false
+      end
     else
-      reason = "The provider turn did not end before the restart."
-
-      HalC2.Streams.transact(thread_id, :thread, fn state ->
-        at = Entities.now()
-
-        changes =
-          case StreamState.get(state, "run")[run_id] do
-            %{"status" => "queued"} ->
-              [
-                upsert(
-                  state,
-                  "run",
-                  run_id,
-                  &Map.merge(&1, %{
-                    "status" => "failed",
-                    "queuePosition" => nil,
-                    "completedAt" => at,
-                    "error" => reason
-                  })
-                )
-              ]
-
-            _ ->
-              []
-          end
-
-        {changes, :ok}
-      end)
-
-      {:error, reason}
+      true
     end
   end
 
-  # Longer than a built-in runtime gives a stopped turn to end on its own
-  # (`:codex_interrupt_deadline_ms`), so a restart fails only for a turn nothing ends.
-  defp restart_end_ms, do: Application.get_env(:hal_c2, :restart_end_ms, 15_000)
+  defp fail_restart(thread_id, run_id) do
+    failure = %{
+      "class" => "provider_error",
+      "message" => "The provider turn did not end before the restart.",
+      "code" => "restart_timeout",
+      "retryable" => true
+    }
 
-  # Whether the run left the active statuses within `timeout` ms, woken by its stream.
-  # A stream has one subscription per process, so the watch is a process of its own:
-  # the caller (a client's socket) may be following the thread.
-  defp await_run_end(thread_id, run_id, timeout) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-
-    Task.async(fn ->
-      :ok = HalC2.Streams.watch(thread_id, self())
-      await_run_end_loop(thread_id, run_id, deadline)
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      {fail_queued(state, run_id, "Restart failed", failure), :ok}
     end)
-    |> Task.await(:infinity)
   end
 
-  defp await_run_end_loop(thread_id, run_id, deadline) do
-    run = StreamState.get(HalC2.Streams.state(thread_id), "run")[run_id]
-    left = deadline - System.monotonic_time(:millisecond)
+  @doc """
+  Ends a run that left the queue without starting as failed, with an error item titled
+  `title` that carries `failure` (`OrchestrationV2ProviderFailure`). Nothing for a run
+  that is no longer queued.
+  """
+  def fail_queued(state, run_id, title, failure) do
+    case StreamState.get(state, "run")[run_id] do
+      %{"status" => "queued"} = run ->
+        at = Entities.now()
 
-    cond do
-      run == nil or run["status"] not in @active_statuses ->
-        true
+        ids = %{
+          thread: run["threadId"],
+          run: run_id,
+          root_node: run["rootNodeId"],
+          provider_thread: run["providerThreadId"]
+        }
 
-      left <= 0 ->
-        false
+        id = "turn-item:queued-failure:#{run_id}"
 
-      true ->
-        receive do
-          {:hal_c2_stream, ^thread_id, _} -> await_run_end_loop(thread_id, run_id, deadline)
-        after
-          left -> await_run_end_loop(thread_id, run_id, deadline)
-        end
+        [
+          upsert(
+            state,
+            "run",
+            run_id,
+            &Map.merge(&1, %{"status" => "failed", "queuePosition" => nil, "completedAt" => at})
+          ),
+          create(
+            "turn-item",
+            id,
+            Entities.turn_item(ids, id, "error", next_ordinal(state), "failed", at, %{
+              "title" => title,
+              "failure" => failure
+            })
+          )
+        ]
+
+      _ ->
+        []
     end
   end
 
@@ -2624,17 +2662,17 @@ defmodule HalC2.Orchestration do
     :ok
   end
 
-  # Queue positions with `run_id` first, behind the delegated task results that go
-  # first (`queued_runs/1`), and the other queued runs after it, in order. A run that
-  # is no longer queued keeps its place out of the queue.
+  # Queue positions with `run_id` first and the other queued runs after it, in order,
+  # behind the agent's queued results (`queued_runs/1`). A run that is no longer queued
+  # keeps its place out of the queue.
   defp first_in_queue(state, run_id) do
-    {automatic, queued} = queued_runs(state) |> Enum.split_with(&automatic?(state, &1))
-    {automatic, queued} = {Enum.map(automatic, & &1["id"]), Enum.map(queued, & &1["id"])}
+    {automatic, users} = state |> queued_runs() |> Enum.split_with(&automatic?(state, &1))
+    {automatic, users} = {Enum.map(automatic, & &1["id"]), Enum.map(users, & &1["id"])}
 
     order =
-      if run_id in queued,
-        do: automatic ++ [run_id | List.delete(queued, run_id)],
-        else: automatic ++ queued
+      if run_id in users,
+        do: automatic ++ [run_id | List.delete(users, run_id)],
+        else: automatic ++ users
 
     for {id, position} <- Enum.with_index(order, 1),
         do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
@@ -2763,6 +2801,7 @@ defmodule HalC2.Orchestration do
           command
           |> Map.put("messageId", message_id)
           |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
+          |> Map.put("fromSteer", true)
           |> Map.delete("deliveryIntent")
 
         case HalC2.Streams.transact(thread_id, :thread, &unsteer(&1, thread_id, run, resend)) do
@@ -3418,50 +3457,52 @@ defmodule HalC2.Orchestration do
   defp agent_message?(message),
     do: message["notification"] != nil or message["delegatedCompletion"] != nil
 
-  # A queued message the MC sent for the agent is not the user's to rewrite or steer
-  # with: it is what the agent is told, and when.
-  # A delegated task result (`automatic?/2`) is refused as one, naming what it cannot be.
-  defp users_run(state, run_id, refused) do
+  # A queued message the MC sent for the agent is not the user's to rewrite, move or
+  # steer with: it is what the agent is told, and when. `done` is what was refused
+  # ("edited", "reordered", "promoted to Steer").
+  defp users_run(state, run_id, done) do
     with %{"status" => "queued", "userMessageId" => message_id} <-
            StreamState.get(state, "run")[run_id],
          %{} = message <- StreamState.get(state, "message")[message_id],
          true <- agent_message?(message) do
-      if message["delegatedCompletion"] != nil,
-        do: {:error, "Automatic completion deliveries cannot be #{refused}."},
-        else:
-          {:error,
-           "Queued run #{run_id} is the agent's own message, not one to edit or steer with."}
+      {:error, "Automatic completion deliveries cannot be #{done}."}
     else
       _ -> :ok
     end
   end
 
-  # A queued message is not moved in the queue, or ahead of a delegated task result.
-  defp reorder_refusal(state, run_id, before) do
-    run = StreamState.get(state, "run")[run_id]
-
-    cond do
-      run != nil and run["status"] == "queued" and automatic?(state, run) ->
-        {:error, "Automatic completion deliveries cannot be reordered."}
-
-      before != nil and before["status"] == "queued" and automatic?(state, before) ->
-        {:error, "Queued messages cannot be reordered ahead of automatic completion delivery."}
-
-      true ->
-        :ok
-    end
-  end
-
-  # A queued message keeps some text or an attachment.
-  defp non_empty_edit(state, run_id, command) do
+  # A queued message keeps something to send: text, or attachments.
+  defp not_emptied(state, run_id, command) do
     run = StreamState.get(state, "run")[run_id] || %{}
     message = StreamState.get(state, "message")[run["userMessageId"]] || %{}
-    attachments = command["attachments"] || message["attachments"] || []
+    attachments = Map.get(command, "attachments", message["attachments"]) || []
 
     if run["status"] == "queued" and String.trim(command["text"] || "") == "" and
          attachments == [],
        do: {:error, "Queued run #{run_id} cannot be edited to an empty message."},
        else: :ok
+  end
+
+  defp reorder(thread_id, run_id, command) do
+    queue_change(thread_id, fn state ->
+      queued = queued_runs(state) |> Enum.map(& &1["id"])
+
+      # A run that already started, or never existed, has no place in the queue.
+      if run_id in queued do
+        queued = List.delete(queued, run_id)
+
+        order =
+          case Enum.find_index(queued, &(&1 == command["beforeRunId"])) do
+            nil -> queued ++ [run_id]
+            index -> List.insert_at(queued, index, run_id)
+          end
+
+        for {id, position} <- Enum.with_index(order, 1),
+            do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
+      else
+        []
+      end
+    end)
   end
 
   # A deleted thread's provider sessions stop in the commit that deletes it; the
@@ -3594,41 +3635,24 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  @doc """
-  Cancels a queued run, as `queued-run.cancel` does, but for the MC itself: the
-  deliveries of a delegated task result it cancels are the caller's to settle.
-  """
-  def cancel_queued_run(thread_id, run_id) do
-    queue_change(thread_id, fn state ->
-      at = Entities.now()
-
-      [
-        upsert(
-          state,
-          "run",
-          run_id,
-          # A run that already started is not the queue's to cancel.
-          &if(&1["status"] == "queued",
-            do:
-              Map.merge(&1, %{
-                "status" => "cancelled",
-                "queuePosition" => nil,
-                "completedAt" => at
-              }),
-            else: &1
-          )
-        )
-      ]
-    end)
-  end
-
-  # The queue in delivery order: delegated task results (`automatic?/2`) first, so the
-  # agent hears what it delegated before the user's next message, then by position.
+  # The queue in the order it starts: the agent's delegated results first, then the
+  # user's messages by position.
   defp queued_runs(state) do
     state
     |> StreamState.list("run")
     |> Enum.filter(&(&1["status"] == "queued"))
-    |> Enum.sort_by(&{not automatic?(state, &1), &1["queuePosition"] || 0, &1["ordinal"] || 0})
+    |> Enum.sort_by(
+      &{if(automatic?(state, &1), do: 0, else: 1), &1["queuePosition"] || 0, &1["ordinal"] || 0}
+    )
+  end
+
+  defp unarchived(thread_id) do
+    thread = StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id] || %{}
+
+    # A deleted one says so, in `queue_change/2`.
+    if thread["archivedAt"] != nil and thread["deletedAt"] == nil,
+      do: {:error, "Thread #{thread_id} is not active."},
+      else: :ok
   end
 
   defp renumber(state) do
@@ -3686,6 +3710,7 @@ defmodule HalC2.Orchestration do
   defp decide_message(state, thread_id, command) do
     thread = StreamState.get(state, "thread")[thread_id]
     runs = StreamState.list(state, "run")
+    command = late_steer(runs, command)
 
     cond do
       thread == nil ->
@@ -3739,17 +3764,17 @@ defmodule HalC2.Orchestration do
         instance = message_instance(thread, command)
         active_instance = active["providerInstanceId"] || instance
 
+        refusal = steer_refusal(state, active, command)
+
         # Steer a running turn that can take it,
         # else queue; a restart (or a steer that cannot be) interrupts and goes first.
+        # `/compact` and `/logout` run as turns of their own, and cannot be steered.
         auto_steer =
           intent in [nil, "auto"] and mode != "queue_after_active" and
-            active["status"] in ["running", "waiting"] and
-            maintenance_refusal(state, active, command) == nil
-
-        refusal = steer && maintenance_refusal(state, active, command)
+            active["status"] in ["running", "waiting"] and refusal == nil
 
         cond do
-          refusal ->
+          steer and refusal != nil ->
             {[], {:error, refusal}}
 
           intent == "restart" or mode == "restart_active" ->
@@ -3781,9 +3806,9 @@ defmodule HalC2.Orchestration do
             end
         end
 
-      # Nothing runs, but the queue waits for the user to resume it: a message queued
-      # now joins it, held behind the others.
-      get_in(command, ["dispatchMode", "type"]) == "queue_after_active" and
+      # A message the user queues while the queue is held waits there, held too
+      # (`queue_run/5`), until the user resumes it.
+      queued_by_user?(command) and
           Enum.any?(runs, &(&1["status"] == "queued" and &1["queueHeld"] == true)) ->
         queue_run(state, thread, runs, command, nil)
 
@@ -3792,20 +3817,69 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # A steer for a turn that completed before it arrived (the client still showed the
+  # turn running) is sent as a message of its own, never lost.
+  defp late_steer(runs, command) do
+    target = get_in(command, ["dispatchMode", "targetRunId"])
+
+    if get_in(command, ["dispatchMode", "type"]) == "steer_active" and
+         Enum.any?(runs, &(&1["id"] == target and &1["status"] == "completed")) do
+      command
+      |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
+      |> Map.put("fromSteer", true)
+      |> Map.delete("deliveryIntent")
+    else
+      command
+    end
+  end
+
+  # The user queued the message themselves. What an agent or the MC sends (a delegated
+  # result, a provider's background wake, another agent's send, a reply or scheduled
+  # prompt) and a steer that came too late or was refused are sent as queued too, but
+  # are not the user waiting on a held queue.
+  defp queued_by_user?(command) do
+    get_in(command, ["dispatchMode", "type"]) == "queue_after_active" and
+      command["createdBy"] in [nil, "user"] and command["creationSource"] != "server" and
+      command["scheduledTaskId"] == nil and command["fromSteer"] != true
+  end
+
+  # Why `message` cannot be steered into the active run `run`, or nil: `/compact` and
+  # `/logout` sent by themselves run as turns of their own, neither steered with nor
+  # steered into.
+  defp steer_refusal(state, run, message) do
+    target = StreamState.get(state, "message")[run["userMessageId"]]
+
+    case {maintenance(message), target && maintenance(target)} do
+      {"/compact", _} ->
+        "Context compaction must run as a separate turn. Queue it or wait for the active turn to finish."
+
+      {"/logout", _} ->
+        "Signing out must run as a separate turn. Queue it or wait for the active turn to finish."
+
+      {_, "/compact"} ->
+        "Wait for context compaction to finish before steering the thread."
+
+      {_, "/logout"} ->
+        "Wait for sign-out to finish before steering the thread."
+
+      _ ->
+        nil
+    end
+  end
+
+  defp maintenance(message) do
+    text = String.downcase(String.trim(message["text"] || ""))
+    if (message["attachments"] || []) == [] and text in ~w(/compact /logout), do: text
+  end
+
   # A steer or restart naming a run other than the active one (or naming one
   # when nothing runs) cannot be delivered as asked, whatever the provider.
-  # A steer for a turn that completed before it arrived, with nothing running now, is
-  # not lost: it starts a turn of its own (the client still showed the turn running).
   defp untargeted_delivery(runs, command) do
     mode = get_in(command, ["dispatchMode", "type"])
     target = get_in(command, ["dispatchMode", "targetRunId"])
     active = Enum.find(runs, &(&1["status"] in @active_statuses))
 
-    late_steer =
-      mode == "steer_active" and active == nil and
-        Enum.any?(runs, &(&1["id"] == target and &1["status"] == "completed"))
-
-    if mode in ["steer_active", "restart_active"] and is_binary(target) and not late_steer and
+    if mode in ["steer_active", "restart_active"] and is_binary(target) and
          (active == nil or active["id"] != target) do
       instance =
         get_in(command, ["modelSelection", "instanceId"]) ||
@@ -3814,37 +3888,6 @@ defmodule HalC2.Orchestration do
       HalC2.Orchestration.UserFacingErrors.unsupported_delivery_message(instance)
     end
   end
-
-  # Compacting the context and signing out each run as a turn of their own: neither is
-  # steered into a running turn, and a turn doing either takes no steer.
-  defp maintenance_refusal(state, active, command) do
-    target = StreamState.get(state, "message")[active["userMessageId"]]
-
-    case {maintenance(command), maintenance(target)} do
-      {"/compact", _} ->
-        "Context compaction must run as a separate turn. Queue it or wait for the active turn to finish."
-
-      {"/logout", _} ->
-        "Signing out must run as a separate turn. Queue it or wait for the active turn to finish."
-
-      {nil, "/compact"} ->
-        "Wait for context compaction to finish before steering the thread."
-
-      {nil, "/logout"} ->
-        "Wait for sign-out to finish before steering the thread."
-
-      _ ->
-        nil
-    end
-  end
-
-  # The maintenance command a message is, sent by itself with nothing attached, or nil.
-  defp maintenance(%{} = message) do
-    command = String.downcase(String.trim(message["text"] || ""))
-    if (message["attachments"] || []) == [] and command in ~w(/compact /logout), do: command
-  end
-
-  defp maintenance(nil), do: nil
 
   # A message naming another provider instance hands the conversation over as
   # context at its turn; one that cannot receive a handoff refuses the message.
@@ -3990,27 +4033,19 @@ defmodule HalC2.Orchestration do
       message: message_id
     }
 
-    # A restart's message goes ahead of the user's queued messages, and a delegated task
-    # result ahead of them too, behind the results queued before it (`queued_runs/1`).
     queued = queued_runs(state)
-    automatic = command["delegatedCompletion"] != nil
-
-    {ahead, behind} =
-      if restart_of || automatic,
-        do: Enum.split_with(queued, &automatic?(state, &1)),
-        else: {queued, []}
-
-    position = length(ahead) + 1
 
     # Above every other run until it starts (`start_ordinal/3`).
     ordinal = Enum.max(Enum.map(runs, &(&1["ordinal"] || 0)), fn -> 0 end) + 1
 
-    # A message queued behind a held queue is held with it, until the user resumes it.
-    held = restart_of == nil and Enum.any?(queued, &(&1["queueHeld"] == true))
+    # A message the user queues while the queue is held waits with it; a restart is sent now.
+    held =
+      restart_of == nil and queued_by_user?(command) and
+        Enum.any?(queued, &(&1["queueHeld"] == true))
 
     run =
       Entities.run(ids, ordinal, selection, at)
-      |> Map.merge(%{"status" => "queued", "queuePosition" => position})
+      |> Map.put("status", "queued")
       |> then(&if(held, do: Map.put(&1, "queueHeld", true), else: &1))
 
     message =
@@ -4022,10 +4057,22 @@ defmodule HalC2.Orchestration do
       })
       |> with_message_fields(command)
 
-    # The runs behind it move down one.
+    # A restart's message, or the agent's delegated result, goes ahead of the user's
+    # queued messages (behind the agent's results); anything else goes last.
+    {automatic, users} = Enum.split_with(queued, &automatic?(state, &1))
+
+    order =
+      if restart_of || command["delegatedCompletion"],
+        do: automatic ++ [run] ++ users,
+        else: queued ++ [run]
+
+    run = Map.put(run, "queuePosition", Enum.find_index(order, &(&1 == run)) + 1)
+
     shifted =
-      for {queued_run, index} <- Enum.with_index(behind, position + 1),
-          change = upsert(state, "run", queued_run["id"], &Map.put(&1, "queuePosition", index)),
+      for {queued_run, position} <- Enum.with_index(order, 1),
+          queued_run["id"] != ids.run,
+          change =
+            upsert(state, "run", queued_run["id"], &Map.put(&1, "queuePosition", position)),
           do: change
 
     {[create("run", ids.run, run), create("message", message_id, message)] ++ shifted,
@@ -4408,6 +4455,8 @@ defmodule HalC2.Orchestration do
 
     turn = %{
       ids: ids,
+      # A run that left the queue (`start_failure/3`).
+      queued: queued != nil,
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text:

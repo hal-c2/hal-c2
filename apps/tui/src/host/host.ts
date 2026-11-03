@@ -167,6 +167,8 @@ export interface HostOptions {
   readonly cellPixels?: () => CellPixels | null;
   /** Where this device keeps the threads whose alerts it muted (default: this run only). */
   readonly mutedThreads?: MutedThreadsStore;
+  /** Where this device keeps the Space pane's expanded project sections (default: this run only). */
+  readonly projectSections?: MutedThreadsStore;
   /**
    * The HAL-C2 version this client shipped as. A server on an older one is
    * offered its update; without it no server is known to be behind.
@@ -789,7 +791,7 @@ export function createHost(options: HostOptions): Host {
       }
       publishLayout();
       if (open) setMode("space");
-      else if (mode === "space") setMode(restingMode());
+      else if (mode === "space" || mode === "pagePrompt") setMode(restingMode());
       palette.sync();
     },
     publish: (next) => state.set("space", next),
@@ -825,6 +827,7 @@ export function createHost(options: HostOptions): Host {
       dispatch("thread.open", { key: threadKey(threadId) });
     },
     projects: () => homeProjects().map((project) => ({ id: project.id, title: project.title })),
+    ...(options.projectSections ? { projectSections: options.projectSections } : {}),
     showFile: (projectId, path) => {
       const project = homeProjects().find((entry) => entry.id === projectId);
       if (!project) {
@@ -837,6 +840,12 @@ export function createHost(options: HostOptions): Host {
       filesFor = null;
     },
     commandsChanged: () => palette.sync(),
+    // The prompt below the page writes on it: it re-aims, and ^P moves the keys.
+    promptChanged: () => {
+      if (mode === "space" || mode === "pagePrompt") setMode("compose");
+      composer?.relayout();
+    },
+    askInPrompt: () => composer?.dispatch("composer.page.ask"),
   });
   // Adding a project is a page over the conversation (mode "project").
   const addProject = createAddProjectController({
@@ -961,7 +970,7 @@ export function createHost(options: HostOptions): Host {
     const worktree = browsing !== null && browsing !== project.workspaceRoot;
     return [
       {
-        title: worktree ? "Open the project's copy in a Space" : "Open this file in a Space",
+        title: worktree ? "Edit the project's copy as a page" : "Edit as a page",
         action: "space.openProjectFile",
         payload: { projectId, path },
       },
@@ -988,6 +997,7 @@ export function createHost(options: HostOptions): Host {
     client,
     store,
     state,
+    page: () => space.prompt(),
     mode: () => mode,
     setMode,
     chatWidth: () => layout.chatWidth,

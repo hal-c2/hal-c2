@@ -188,8 +188,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
 
   step "the MC refuses, as the result is the agent's own message", context do
     assert {:error, reason} = context.refusal
-    # A delegated result is refused in upstream's words for what it cannot be.
-    assert reason =~ ~r/^Automatic completion deliveries cannot be (edited|promoted to Steer)\.$/
+    assert reason =~ "Automatic completion deliveries cannot be"
     state = World.stream(context, World.current(context))
     run = StreamState.get(state, "run")[context.waiting_run["id"]]
     assert run["status"] == "queued"

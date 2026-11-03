@@ -44,6 +44,18 @@ add_executable(tst_ReleaseNotes tst_ReleaseNotes.cpp ../../src/native/DesktopUpd
 target_include_directories(tst_ReleaseNotes PRIVATE ../../src/native)
 target_link_libraries(tst_ReleaseNotes PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME ReleaseNotes COMMAND tst_ReleaseNotes)
+# What the pull request thread dialog reads from a pasted reference.
+add_executable(tst_PullRequestReference tst_PullRequestReference.cpp ../../src/native/PullRequestReference.cpp)
+target_include_directories(tst_PullRequestReference PRIVATE ../../src/native)
+target_link_libraries(tst_PullRequestReference PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME PullRequestReference COMMAND tst_PullRequestReference)
+# The fake MC's code fences against what the MC itself reads and writes.
+add_executable(tst_CodeFence tst_CodeFence.cpp features/CodeFence.h)
+target_include_directories(tst_CodeFence PRIVATE features)
+target_compile_definitions(tst_CodeFence PRIVATE
+  HAL_C2_CODE_FENCES="${CMAKE_CURRENT_SOURCE_DIR}/../../../server-ex/test/fixtures/space/code-fences.json")
+target_link_libraries(tst_CodeFence PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME CodeFence COMMAND tst_CodeFence)
 add_executable(tst_BackendProcess tst_BackendProcess.cpp ../../src/BackendProcess.cpp)
 target_include_directories(tst_BackendProcess PRIVATE ../../src)
 target_link_libraries(tst_BackendProcess PRIVATE Qt6::Core Qt6::Test)
@@ -112,6 +124,10 @@ add_test(NAME ThemeResolution COMMAND tst_ThemeResolution)
 add_executable(tst_ThisMachine tst_ThisMachine.cpp)
 target_link_libraries(tst_ThisMachine PRIVATE hal_c2_native Qt6::Test)
 add_test(NAME ThisMachine COMMAND tst_ThisMachine)
+# Which links in the conversation are pull requests, and which project reads one.
+add_executable(tst_PullRequestLinks tst_PullRequestLinks.cpp)
+target_link_libraries(tst_PullRequestLinks PRIVATE hal_c2_native Qt6::Test)
+add_test(NAME PullRequestLinks COMMAND tst_PullRequestLinks)
 set_tests_properties(ThemeResolution PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 # Regressions the property tests (tests/prop) found, one tst_*Regression.cpp
 # each, picked up on the next build.

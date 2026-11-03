@@ -16,6 +16,7 @@
 
 #include "Harness.h"
 #include "Plugins.h"
+#include "PullRequestSteps.h"
 #include "SharedSteps.h"
 #include "ShellBridge.h"
 #include "World.h"
@@ -960,6 +961,8 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the pull request cannot be linked"), [](World& world, const Captures&, const Table&) {
+    // Or the thread's Pull requests tab's link field.
+    if (pullRequestCannotBeLinked(world)) return;
     expect(!waitShownNamed(world, QStringLiteral("plannerItemLinkButton"))->isEnabled(), QStringLiteral("the Link PR button is enabled"));
     expect(asked(world, QStringLiteral("link")).isEmpty(), QStringLiteral("the MC was asked %1").arg(showAsked(world, QStringLiteral("link"))));
     expect(!textOf(world, QStringLiteral("plannerItemLink")).isEmpty(), QStringLiteral("the field lost what the user entered"));

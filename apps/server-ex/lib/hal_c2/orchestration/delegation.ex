@@ -634,7 +634,12 @@ defmodule HalC2.Orchestration.Delegation do
           (get_in(message, ["delegatedCompletion", "taskIds"]) || []) -- [task_id]
 
         if remaining == [] do
-          {:ok, _} = Orchestration.cancel_queued_run(parent_id, run["id"])
+          {:ok, _} =
+            Orchestration.dispatch(%{
+              "type" => "queued-run.cancel",
+              "threadId" => parent_id,
+              "runId" => run["id"]
+            })
 
           :ok
         else
@@ -732,7 +737,12 @@ defmodule HalC2.Orchestration.Delegation do
     for run <- StreamState.list(state, "run"),
         run["status"] == "queued",
         get_in(messages, [run["userMessageId"], "delegatedCompletion", "parentRunId"]) in cohorts do
-      _ = Orchestration.cancel_queued_run(thread_id, run["id"])
+      _ =
+        Orchestration.dispatch(%{
+          "type" => "queued-run.cancel",
+          "threadId" => thread_id,
+          "runId" => run["id"]
+        })
     end
 
     :ok
@@ -943,9 +953,10 @@ defmodule HalC2.Orchestration.Delegation do
   # A disposed task, and one whose caller is archived or deleted, wakes nobody. A
   # task that wakes only an idle caller (`settled_only`) ending while the caller
   # works is only acknowledged, which is the caller's wait reading it (`wait/3`).
-  # Otherwise the result joins a wake still queued for the run that started it, or
-  # starts one, at most two wakes per such run: later results stay readable from
-  # the task's status instead of waking the caller again and again.
+  # Otherwise the result joins a wake still queued for the run that started it,
+  # waits for the one follow-up wake after a wake of that run still with the caller
+  # (`flush_pending/1`), or starts one. Every result reaches the caller once, and
+  # results that land while it works share one wake.
   defp plan_wake(state, parent_id, task, status, result) do
     thread = StreamState.get(state, "thread")[parent_id] || %{}
     task = Map.merge(task, %{"status" => status, "result" => result})
@@ -967,9 +978,6 @@ defmodule HalC2.Orchestration.Delegation do
       # one follow-up wake that runs when it ends (`flush_pending/1`).
       wake_in_flight?(state, task["runId"]) ->
         {"pending", [], {nil, nil}}
-
-      settled_wake_count(state, task["runId"]) >= 2 ->
-        {"acknowledged", [], {nil, nil}}
 
       true ->
         command = wake_command(state, parent_id, thread, [task])
@@ -994,9 +1002,8 @@ defmodule HalC2.Orchestration.Delegation do
             {_delivery, changes, sent} = join_wake(state, queued, current)
             {changes ++ delivered_change(state, current), sent}
 
-          settled_wake_count(state, current["runId"]) >= 2 and
-              not wake_in_flight?(state, current["runId"]) ->
-            {[], nil}
+          wake_in_flight?(state, current["runId"]) ->
+            {pending_change(state, current), nil}
 
           true ->
             command = wake_command(state, parent_id, thread, [current])
@@ -1013,11 +1020,15 @@ defmodule HalC2.Orchestration.Delegation do
     :ok
   end
 
-  defp delivered_change(state, task) do
+  defp delivered_change(state, task), do: delivery_change(state, task, "delivered")
+
+  defp pending_change(state, task), do: delivery_change(state, task, "pending")
+
+  defp delivery_change(state, task, delivery) do
     [
       Orchestration.upsert(state, "subagent", task["id"], fn entity ->
         Map.merge(entity, %{
-          "completionDelivery" => %{"state" => "delivered", "observedByRunId" => nil},
+          "completionDelivery" => %{"state" => delivery, "observedByRunId" => nil},
           "updatedAt" => Entities.now()
         })
       end)
@@ -1076,20 +1087,8 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp queued_wake(_state, _parent_run_id), do: nil
 
-  # Wakes for a run that have run their course, and whether one is with the
-  # caller now. Cancelled wakes never woke it, so they count for neither:
-  # only wakes that actually ran count as settled.
-  defp settled_wake_count(state, parent_run_id) when is_binary(parent_run_id) do
-    runs = StreamState.get(state, "run")
-
-    Enum.count(StreamState.list(state, "message"), fn message ->
-      get_in(message, ["delegatedCompletion", "parentRunId"]) == parent_run_id and
-        (runs[message["runId"]] || %{})["status"] in ~w(completed failed interrupted)
-    end)
-  end
-
-  defp settled_wake_count(_state, _parent_run_id), do: 0
-
+  # Whether a wake for a run is with the caller now: its result message joined a
+  # running turn, or its own run started.
   defp wake_in_flight?(state, parent_run_id) when is_binary(parent_run_id) do
     runs = StreamState.get(state, "run")
 

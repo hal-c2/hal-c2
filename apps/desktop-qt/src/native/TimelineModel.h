@@ -197,6 +197,10 @@ public:
   // The thread's entities of one stream kind (run, runtime-request, plan,
   // turn-item, ...) by id, for the composer's turn state.
   QHash<QString, QJsonObject> entities(const QString& kind) const { return m_entities.value(kind); }
+  // What the agent last did to the workspace (its newest settled command or
+  // file change, and the checkpoints), or empty: a change of it after
+  // workspaceChanged means the files may differ.
+  QString workspaceMutation() const;
 
   // Opens or closes a fold ("fold:<runId>") or a work group ("work:<itemId>").
   Q_INVOKABLE void toggle(const QString& rowId);

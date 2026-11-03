@@ -16,7 +16,6 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     "opencode" => "fake/one",
     "grok" => "fake/one"
   }
-  @noqueue "noqueue"
   @started ~w(starting running waiting completed failed interrupted)
 
   # --- active turns --------------------------------------------------------------------
@@ -116,7 +115,10 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context =
       context |> Map.put(:thread, thread) |> World.dispatch_message(thread, text, delivery)
 
-    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    # A steer may be refused; the refusal steps read the reply.
+    if how != "as a steer",
+      do: assert({:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}")
+
     Map.put(context, :sent, text)
   end
 
@@ -210,6 +212,22 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     # while its own turn keeps running.
     {pid, _} = World.codex_runtime(context, context.thread)
     :sys.replace_state(pid, &put_in(&1.turn.native_turn_id, "turn-elsewhere"))
+    context
+  end
+
+  step "the turn carrying the task result starts when the interrupted run ends", context do
+    id = context.delegated_run
+
+    state =
+      World.await_state(context, context.thread, &(&1.entities["run"][id]["startedAt"] != nil))
+
+    assert state.entities["run"][context.running]["status"] == "interrupted"
+    context
+  end
+
+  step "{string} and {string} wait behind it in that order", %{args: [first, second]} = context do
+    assert %{"status" => "queued", "queuePosition" => 1} = run_for(context, first)
+    assert %{"status" => "queued", "queuePosition" => 2} = run_for(context, second)
     context
   end
 
@@ -769,136 +787,331 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context
   end
 
-  # --- what each provider can queue ---------------------------------------------------
+  # --- which provider can queue ------------------------------------------------------
 
-  # A provider plugin that declares everything but queued messages; the thread runs on
-  # it, or on Codex, which queues.
+  # Two provider plugins, one declaring everything but a queue; the thread runs on the
+  # one the scenario names.
   step ~r/^"(?<thread>[^"]+)" has a running turn on a provider that (?<can>can|cannot) queue messages$/,
        %{args: [thread, can]} = context do
-    capabilities = HalC2.Plugins.ProviderAdapter.capabilities() -- [:queued_messages]
-
     context =
       context
       |> World.providers()
-      |> HalC2.Steps.Plugins.Fixtures.install(
-        @noqueue,
-        HalC2.Steps.Plugins.Fixtures.provider(@noqueue,
-          name: @noqueue,
-          capabilities: capabilities
-        )
-      )
-      |> HalC2.Steps.Plugins.Fixtures.enable(@noqueue)
+      |> queue_plugin("queues", [])
+      |> queue_plugin("noqueue", [:queued_messages])
+
+    instance = if can == "can", do: "queues", else: "noqueue"
 
     context =
-      if can == "can",
-        do: provider_turn(context, thread, "codex"),
-        else:
-          context
-          |> Map.put(:thread, thread)
-          |> World.patch_thread(thread, %{
-            "modelSelection" => queue_selection("cannot"),
-            "providerInstanceId" => @noqueue
-          })
-          |> World.running_turn(thread)
+      World.create_thread(context, thread, "demo", %{
+        "modelSelection" => %{"instanceId" => instance, "model" => "#{instance}-1"}
+      })
 
-    Map.put(context, :thread_model, World.thread(context, thread)["modelSelection"])
+    context = World.dispatch_message(context, thread, "wait")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    run = World.await_latest_run(context, thread, "running")
+
+    context
+    |> Map.delete(:reply)
+    |> Map.merge(%{thread: thread, running: run["id"], running_instance: instance})
   end
 
   step ~r/^the user queues "(?<text>[^"]+)" for a provider that (?<can>can|cannot) queue messages$/,
        %{args: [text, can]} = context do
-    context
-    |> World.dispatch_message(context.thread, text, %{
+    instance = if can == "can", do: "queues", else: "noqueue"
+
+    World.dispatch_message(context, context.thread, text, %{
       "dispatchMode" => %{"type" => "queue_after_active"},
-      "modelSelection" => queue_selection(can)
+      "modelSelection" => %{"instanceId" => instance, "model" => "#{instance}-1"}
     })
-    |> Map.put(:sent, text)
   end
 
   step "the message waits in the queue", context do
     assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
-    assert %{"status" => "queued"} = run_for(context, context.sent)
+    assert %{"status" => "queued", "providerInstanceId" => "queues"} = run_for(context, "Next")
     context
   end
 
   step "the message is refused saying queued messages are not supported", context do
     assert {:error, message, _} = context.reply
-    assert message =~ "queue"
-
-    assert Enum.all?(
-             World.entities(context, context.thread, "message"),
-             &(&1["text"] != context.sent)
-           )
-
+    assert message =~ "cannot queue messages"
+    refute Enum.any?(World.entities(context, context.thread, "message"), &(&1["text"] == "Next"))
     context
   end
 
   step "{string} stays on the model of the running turn", %{args: [thread]} = context do
-    assert World.thread(context, thread)["modelSelection"] == context.thread_model
+    instance = context.running_instance
+    assert %{"modelSelection" => %{"instanceId" => ^instance}} = World.thread(context, thread)
     assert run(context, context.running)["status"] == "running"
     context
   end
 
-  # --- a restart the provider does not let go of -----------------------------------------
+  # --- a restart the provider never finishes -------------------------------------------
 
+  # The fake acknowledges the stop and goes on with the turn. Codex's own deadline for a
+  # stop (`:codex_interrupt_deadline_ms`) is put past the restart's.
   step "the user sends {string} to {string} to restart the active turn and the provider never ends the interrupted turn",
        %{args: [text, thread]} = context do
-    File.write!(Path.join(context.mc.home, "ignore-interrupt"), "")
-    World.put_app_env(:restart_end_ms, 300)
+    File.touch!(Path.join(context.mc.home, "ignore-interrupt"))
+    World.put_app_env(:codex_interrupt_deadline_ms, 600_000)
+    World.put_app_env(:restart_end_ms, 200)
 
-    context
-    |> Map.put(:thread, thread)
-    |> World.dispatch_message(thread, text, %{"dispatchMode" => %{"type" => "restart_active"}})
-    |> Map.put(:sent, text)
+    context =
+      World.dispatch_message(context, thread, text, %{
+        "dispatchMode" => %{"type" => "restart_active", "targetRunId" => context.running}
+      })
+
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    Map.put(context, :sent, text)
   end
 
   step "the restart fails saying the provider turn did not end before the restart", context do
-    assert {:error, message, _} = context.reply
-    assert message =~ "did not end before the restart"
-    assert %{"status" => "failed", "queuePosition" => nil} = run_for(context, context.sent)
+    id = message(context, context.sent)["runId"]
+
+    state =
+      World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] == "failed"))
+
+    assert state.entities["run"][id]["queuePosition"] == nil
+
+    assert Enum.any?(StreamState.list(state, "turn-item"), fn item ->
+             item["runId"] == id and item["type"] == "error" and
+               item["failure"]["message"] =~ "did not end before the restart"
+           end)
+
     context
   end
 
   step "no second turn is started alongside the first", context do
+    assert [%{"id" => id}] =
+             Enum.filter(
+               World.entities(context, context.thread, "run"),
+               &(&1["status"] == "running")
+             )
+
+    assert id == context.running
     assert [_only] = World.codex_requests(context, "turn/start")
-    assert run(context, context.running)["status"] == "running"
+    context
+  end
+
+  # --- delegated task results ----------------------------------------------------------
+
+  step "a delegated task of {string} finished, so its result is queued after {string}",
+       %{args: [thread, _text]} = context do
+    delegated_result(context, thread, ["task-one"])
+  end
+
+  step "{string} has a running turn and a queued delegated task result",
+       %{args: [thread]} = context do
+    context |> World.running_turn(thread) |> delegated_result(thread, ["task-one"])
+  end
+
+  step "{string} has a queued delegated task result and a queued message {string}",
+       %{args: [thread, text]} = context do
+    context
+    |> World.running_turn(thread)
+    |> delegated_result(thread, ["task-one"])
+    |> World.queue_message(thread, text)
+  end
+
+  step "{string} has a running turn and a queued result for delegated tasks {string} and {string}",
+       %{args: [thread, a, b]} = context do
+    context |> World.running_turn(thread) |> delegated_result(thread, [a, b])
+  end
+
+  step "the turn carrying the task result starts first", context do
+    id = context.delegated_run
+
+    state =
+      World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] in @started))
+
+    assert state.entities["run"][run_for(context, "Next")["id"]]["status"] == "queued"
+    context
+  end
+
+  # Once the turn carrying the result ends.
+  step "{string} starts after it", %{args: [text]} = context do
+    delegated = context.delegated_run
+
+    World.await_state(
+      context,
+      context.thread,
+      &(&1.entities["run"][delegated]["status"] == "running")
+    )
+
+    {_pid, runtime} = World.codex_runtime(context, context.thread)
+
+    World.codex_notify(context, context.thread, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
+
+    id = run_for(context, text)["id"]
+
+    state =
+      World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] in @started))
+
+    assert state.entities["run"][delegated]["status"] == "completed"
+    assert state.entities["run"][id]["ordinal"] > state.entities["run"][delegated]["ordinal"]
+    context
+  end
+
+  step ~r/^the user tries to (?<action>promote it to a steer|move it in the queue|edit) the queued result$/,
+       %{args: [action]} = context do
+    id = context.delegated_run
+
+    command =
+      case action do
+        "promote it to a steer" ->
+          %{
+            "type" => "queued-message.promote-to-steer",
+            "queuedRunId" => id,
+            "targetRunId" => context.running
+          }
+
+        "move it in the queue" ->
+          %{"type" => "queued-run.reorder", "runId" => id, "beforeRunId" => nil}
+
+        "edit" ->
+          %{"type" => "queued-run.edit", "runId" => id, "text" => "something else"}
+      end
+
+    try_queue_command(context, command)
+  end
+
+  step "the user moves {string} before the queued result", %{args: [text]} = context do
+    try_queue_command(context, %{
+      "type" => "queued-run.reorder",
+      "runId" => run_for(context, text)["id"],
+      "beforeRunId" => context.delegated_run
+    })
+  end
+
+  step "the user cancels the queued result", context do
+    queue_command(context, "queued-run.cancel", %{"runId" => context.delegated_run})
+  end
+
+  step "it leaves the queue", context do
+    assert %{"status" => "cancelled", "queuePosition" => nil} =
+             run(context, context.delegated_run)
+
     assert queued(context) == []
     context
   end
 
-  # --- a message queued behind a held queue ---------------------------------------------
+  # The running turn ends, which is when a result left waiting would wake the agent.
+  step "the agent of {string} is not woken again for {string} or {string}",
+       %{args: [thread, a, b]} = context do
+    tasks = World.state(context, thread).entities["subagent"]
+    assert tasks[a]["completionDelivery"]["state"] == "disposed"
+    assert tasks[b]["completionDelivery"]["state"] == "disposed"
 
-  step "the user queues {string} on {string}", %{args: [text, thread]} = context do
-    World.queue_message(Map.put(context, :thread, thread), thread, text)
+    {_pid, runtime} = World.codex_runtime(context, thread)
+
+    World.codex_notify(context, thread, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
+
+    World.await_state(
+      context,
+      thread,
+      &(&1.entities["run"][context.running]["status"] == "completed")
+    )
+
+    thread_id = World.thread_id(context, thread)
+    :ok = HalC2.Orchestration.Delegation.flush_pending(thread_id)
+    :ok = HalC2.Orchestration.start_next(thread_id)
+
+    assert World.entities(context, thread, "run") |> Enum.map(& &1["status"]) |> Enum.sort() ==
+             ~w(cancelled completed)
+
+    context
   end
 
-  step "{string} is held behind {string}", %{args: [b, a]} = context do
-    assert %{"status" => "queued", "queueHeld" => true, "queuePosition" => 1} =
-             run_for(context, a)
+  step "their results can still be read from each task's status", context do
+    thread_id = World.thread_id(context, context.thread)
 
+    for id <- context.delegated_tasks do
+      assert {:ok, %{"status" => "completed", "summary" => summary}} =
+               HalC2.Orchestration.Delegation.task_status(thread_id, id)
+
+      assert summary == "#{id} is done"
+    end
+
+    context
+  end
+
+  # --- a held queue takes new messages ------------------------------------------------
+
+  # Each as its sender queues it after the active turn, of which there is none:
+  # `HalC2.Orchestration.Delegation`, Codex's background wake, and `hal_c2_thread_send`.
+  step ~r/^(?<what>a delegated task result|a background command's end|another agent's message) reaches "(?<thread>[^"]+)" while no turn is running$/,
+       %{args: [what, thread]} = context do
+    message_id = "message:wake-#{System.unique_integer([:positive])}"
+    queued = %{"messageId" => message_id, "dispatchMode" => %{"type" => "queue_after_active"}}
+
+    fields =
+      case what do
+        "a delegated task result" ->
+          %{
+            "createdBy" => "system",
+            "creationSource" => "server",
+            "notification" => %{"kind" => "delegated_tasks", "summary" => "Tasks finished"},
+            "delegatedCompletion" => %{
+              "parentRunId" => "run-1",
+              "taskIds" => ["task-one"],
+              "acceptedAt" => nil
+            }
+          }
+
+        "a background command's end" ->
+          %{"createdBy" => "agent", "creationSource" => "provider"}
+
+        "another agent's message" ->
+          %{"createdBy" => "agent", "creationSource" => "mcp"}
+      end
+
+    context = World.dispatch_message(context, thread, what, Map.merge(queued, fields))
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    run_id = World.state(context, thread).entities["message"][message_id]["runId"]
+    Map.put(context, :woken_run, run_id)
+  end
+
+  step "a turn for it starts", context do
+    id = context.woken_run
+    World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] in @started))
+    assert run(context, id)["queueHeld"] != true
+    context
+  end
+
+  step "the user queues {string} on {string}", %{args: [text, thread]} = context do
+    World.queue_message(context, thread, text)
+  end
+
+  step "{string} is held behind {string}", %{args: [later, earlier]} = context do
     assert %{"status" => "queued", "queueHeld" => true, "queuePosition" => 2} =
-             run_for(context, b)
+             run_for(context, later)
+
+    assert %{"status" => "queued", "queueHeld" => true, "queuePosition" => 1} =
+             run_for(context, earlier)
 
     context
   end
 
   step "no run starts until the user resumes the queue", context do
-    :ok = HalC2.Orchestration.start_next(World.thread_id(context, context.thread))
-    assert Enum.all?(context.queued, &(run(context, &1)["status"] == "queued"))
+    thread_id = World.thread_id(context, context.thread)
+    :ok = HalC2.Orchestration.start_next(thread_id)
     assert World.codex_requests(context, "turn/start") == []
+    assert Enum.all?(context.queued, &(run(context, &1)["status"] == "queued"))
 
+    # The way out: resuming sends them in order.
     context = queue_command(context, "queue.resume", %{})
     [first | _] = context.queued
 
-    World.await_state(context, context.thread, fn state ->
-      state.entities["run"][first]["status"] in @started
-    end)
-
+    World.await_state(context, context.thread, &(&1.entities["run"][first]["status"] in @started))
     context
   end
 
-  # --- a queued run whose provider cannot start ------------------------------------------
+  # --- a queued message whose provider cannot start ----------------------------------
 
-  # The queued message is for Claude, whose CLI is missing.
+  # "Next" was queued for Claude, whose command is not there to start.
   step "the running turn completes and the provider for {string} cannot be started",
        %{args: [text]} = context do
     World.put_app_env(:claude_command, [Path.join(context.mc.home, "no-such-claude")])
@@ -906,49 +1119,38 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context =
       World.put_entity(context, context.thread, "run", run_for(context, text)["id"], %{
         "s" => %{
-          "modelSelection" => selection("claudeAgent"),
-          "providerInstanceId" => "claudeAgent"
+          "providerInstanceId" => "claudeAgent",
+          "modelSelection" => selection("claudeAgent")
         }
       })
 
     {_pid, state} = World.codex_runtime(context, context.thread)
 
-    context
-    |> World.codex_notify(context.thread, "turn/completed", %{
+    World.codex_notify(context, context.thread, "turn/completed", %{
       "turn" => %{"id" => state.turn.native_turn_id, "status" => "completed"}
     })
-    |> Map.put(:sent, text)
   end
 
   step "the run for {string} fails", %{args: [text]} = context do
     id = run_for(context, text)["id"]
     World.await_state(context, context.thread, &(&1.entities["run"][id]["status"] == "failed"))
-    context
+    Map.put(context, :failed_run, id)
   end
 
   step "the timeline shows an error titled {string} with the reason",
        %{args: [title]} = context do
-    run_id = run_for(context, context.sent)["id"]
+    assert %{"failure" => %{"message" => reason}} =
+             Enum.find(
+               World.entities(context, context.thread, "turn-item"),
+               &(&1["runId"] == context.failed_run and &1["type"] == "error" and
+                   &1["title"] == title)
+             ) || flunk("no #{inspect(title)} error for #{context.failed_run}")
 
-    IO.inspect(
-      {run(context, run_id),
-       World.entities(context, context.thread, "turn-item")
-       |> Enum.map(&Map.take(&1, ~w(id runId type inputIntent title failure messageId)))},
-      limit: :infinity
-    )
-
-    item =
-      Enum.find(
-        World.entities(context, context.thread, "turn-item"),
-        &(&1["runId"] == run_id and &1["type"] == "error")
-      ) || flunk("no error turn item for #{inspect(context.sent)}")
-
-    assert item["title"] == title
-    assert is_binary(item["failure"]["message"]) and item["failure"]["message"] != ""
+    assert reason =~ "could not start"
     context
   end
 
-  # --- steers and restarts aimed at the wrong turn ---------------------------------------
+  # --- steers that name a turn --------------------------------------------------------
 
   step "{string} had a running turn that completed", %{args: [thread]} = context do
     context = World.running_turn(context, thread)
@@ -964,16 +1166,17 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
       &(&1.entities["run"][context.running]["status"] == "completed")
     )
 
-    Map.put(context, :completed, context.running)
+    context
   end
 
   step "a steer the user sent for that turn reaches the MC afterwards", context do
-    context
-    |> World.dispatch_message(context.thread, "Also", %{
-      "deliveryIntent" => "steer",
-      "dispatchMode" => %{"type" => "steer_active", "targetRunId" => context.completed}
-    })
-    |> Map.put(:sent, "Also")
+    context =
+      World.dispatch_message(context, context.thread, "Also this", %{
+        "deliveryIntent" => "steer",
+        "dispatchMode" => %{"type" => "steer_active", "targetRunId" => context.running}
+      })
+
+    Map.put(context, :sent, "Also this")
   end
 
   step "the message is not lost", context do
@@ -983,11 +1186,15 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   end
 
   step "it starts a new turn of {string}", %{args: [thread]} = context do
-    id = run_for(context, context.sent)["id"]
-    assert id != context.completed
+    id = message(context, context.sent)["runId"]
+    assert id != context.running
 
-    World.await_state(context, thread, &(&1.entities["run"][id]["status"] in @started))
-    assert length(World.codex_requests(context, "turn/start")) == 2
+    state =
+      World.await_state(context, thread, &(&1.entities["run"][id]["status"] in @started))
+
+    assert state.entities["run"][id]["ordinal"] >
+             state.entities["run"][context.running]["ordinal"]
+
     context
   end
 
@@ -1010,42 +1217,35 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   end
 
   step "the running turn is not disturbed", context do
-    assert run(context, context.running)["status"] == "running"
+    assert [%{"id" => id}] =
+             Enum.filter(
+               World.entities(context, context.thread, "run"),
+               &(&1["status"] == "running")
+             )
+
+    assert id == context.running
+    refute Enum.any?(World.entities(context, context.thread, "message"), &(&1["text"] == "Now"))
     assert World.codex_requests(context, "turn/interrupt") == []
     assert World.codex_requests(context, "turn/steer") == []
-    assert [_only] = World.codex_requests(context, "turn/start")
     context
   end
 
-  # --- compacting and signing out --------------------------------------------------------
+  # --- /compact and /logout -----------------------------------------------------------
 
   step "the user sends {string} by itself to {string} as a steer",
        %{args: [text, thread]} = context do
     World.dispatch_message(context, thread, text, %{"deliveryIntent" => "steer"})
   end
 
-  # The run is only a record: what matters is the message that started it.
+  # The running turn's message is the command alone, as a client sends it.
   step "{string} has a running turn started by {string} sent by itself",
        %{args: [thread, text]} = context do
-    context
-    |> World.providers()
-    |> Map.put(:thread, thread)
-    |> World.numbered_run(thread, 1, "running", %{"userMessageId" => "msg-alone"})
-    |> World.put_entity(thread, "message", "msg-alone", %{
-      "s" => %{
-        "id" => "msg-alone",
-        "threadId" => World.thread_id(context, thread),
-        "runId" => "run-1",
-        "role" => "user",
-        "text" => text,
-        "attachments" => [],
-        "streaming" => false
-      }
-    })
-    |> Map.put(:running, "run-1")
+    context = World.running_turn(context, thread)
+    message_id = run(context, context.running)["userMessageId"]
+    World.put_entity(context, thread, "message", message_id, %{"s" => %{"text" => text}})
   end
 
-  # --- editing and an archived thread's queue ---------------------------------------------
+  # --- editing and archived queues ------------------------------------------------------
 
   step "{string} has a queued message {string} with no attachments",
        %{args: [thread, text]} = context do
@@ -1055,9 +1255,8 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   end
 
   step "the user edits the queued message to empty text", context do
-    World.command(context, %{
+    try_queue_command(context, %{
       "type" => "queued-run.edit",
-      "threadId" => World.thread_id(context, context.thread),
       "runId" => List.last(context.queued),
       "text" => "  "
     })
@@ -1070,31 +1269,27 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   end
 
   step "the queued message still reads {string}", %{args: [text]} = context do
-    assert %{"status" => "queued"} = run(context, List.last(context.queued))
     assert queued_message(context)["text"] == text
+    assert run(context, List.last(context.queued))["status"] == "queued"
     context
   end
 
   step "{string} has a queued message {string} and is archived",
        %{args: [thread, text]} = context do
     context = context |> World.running_turn(thread) |> World.queue_message(thread, text)
-    id = World.thread_id(context, thread)
-    {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => id})
-    World.await_row(id, &(&1["archivedAt"] != nil))
-    context
+    World.patch_thread(context, thread, %{"archivedAt" => World.iso_from_now(0)})
   end
 
   step "a client tries to promote {string} to a steer", %{args: [text]} = context do
-    World.command(context, %{
+    try_queue_command(context, %{
       "type" => "queued-message.promote-to-steer",
-      "threadId" => World.thread_id(context, context.thread),
       "queuedRunId" => run_for(context, text)["id"],
       "targetRunId" => context.running
     })
   end
 
   step "a client tries to resume the queue of {string}", %{args: [thread]} = context do
-    World.command(context, %{
+    try_queue_command(context, %{
       "type" => "queue.resume",
       "threadId" => World.thread_id(context, thread)
     })
@@ -1103,9 +1298,6 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   # --- helpers -----------------------------------------------------------------------
 
   defp selection(provider), do: %{"instanceId" => provider, "model" => @models[provider]}
-
-  defp queue_selection("can"), do: selection("codex")
-  defp queue_selection("cannot"), do: %{"instanceId" => @noqueue, "model" => "#{@noqueue}-1"}
 
   # A turn that keeps running on `provider`, which the thread is set to.
   defp provider_turn(context, thread, provider, text \\ "wait for it") do
@@ -1151,6 +1343,78 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
       Map.merge(%{"type" => type, "threadId" => World.thread_id(context, context.thread)}, fields)
     )
     |> tap(&assert({:ok, _} = &1.reply, "#{type} failed: #{inspect(&1.reply)}"))
+  end
+
+  # A command the scenario expects may be refused: its reply is `context.reply`.
+  defp try_queue_command(context, fields) do
+    World.command(
+      context,
+      Map.put_new(fields, "threadId", World.thread_id(context, context.thread))
+    )
+  end
+
+  # Delegated tasks of the running turn that finished, and the message that wakes the
+  # agent for them waiting in the queue (as `HalC2.Orchestration.Delegation` queues it).
+  defp delegated_result(context, thread, task_ids) do
+    thread_id = World.thread_id(context, thread)
+    at = World.iso_from_now(0)
+
+    context =
+      Enum.reduce(task_ids, context, fn id, context ->
+        World.put_entity(context, thread, "subagent", id, %{
+          "s" => %{
+            "id" => id,
+            "threadId" => thread_id,
+            "runId" => context.running,
+            "origin" => "app_owned",
+            "childThreadId" => "th-child-#{id}-#{System.unique_integer([:positive])}",
+            "title" => id,
+            "completionWake" => "settled_only",
+            "completionDelivery" => %{"state" => "delivered", "observedByRunId" => nil},
+            "status" => "completed",
+            "result" => "#{id} is done",
+            "startedAt" => at,
+            "completedAt" => at,
+            "updatedAt" => at
+          }
+        })
+      end)
+
+    message_id = "message:delegate-result:#{hd(task_ids)}"
+
+    context =
+      World.dispatch_message(context, thread, "The delegated tasks finished.", %{
+        "messageId" => message_id,
+        "createdBy" => "system",
+        "creationSource" => "server",
+        "dispatchMode" => %{"type" => "queue_after_active"},
+        "notification" => %{"kind" => "delegated_tasks", "summary" => "Tasks finished"},
+        "delegatedCompletion" => %{
+          "parentRunId" => context.running,
+          "taskIds" => task_ids,
+          "acceptedAt" => nil
+        }
+      })
+
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    run_id = World.state(context, thread).entities["message"][message_id]["runId"]
+    assert %{"status" => "queued", "queuePosition" => 1} = run(context, run_id)
+
+    context
+    |> Map.delete(:reply)
+    |> Map.merge(%{delegated_run: run_id, delegated_tasks: task_ids})
+  end
+
+  defp queue_plugin(context, id, missing) do
+    context
+    |> HalC2.Steps.Plugins.Fixtures.install(
+      id,
+      HalC2.Steps.Plugins.Fixtures.provider(id,
+        name: id,
+        capabilities: HalC2.Plugins.ProviderAdapter.capabilities() -- missing
+      )
+    )
+    |> HalC2.Steps.Plugins.Fixtures.enable(id)
   end
 
   defp run(context, id), do: World.state(context, context.thread).entities["run"][id]

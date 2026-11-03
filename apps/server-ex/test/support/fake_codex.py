@@ -11,7 +11,13 @@
 # in FAKE_CODEX_GATE (see stream_reply); "answer from gate" waits for the gate file
 # "answer" and replies with its contents, or with no message when it is empty; a steer
 # with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
-import glob, json, os, re, sys, threading, time, uuid
+import glob, json, os, re, signal, sys, threading, time, uuid
+
+# A "will-not-exit" file in the working directory has the process ignore SIGTERM and a
+# closed stdin, as a wedged app-server does: only SIGKILL ends it.
+WILL_NOT_EXIT = os.path.exists("will-not-exit")
+if WILL_NOT_EXIT:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
 # With FAKE_CODEX_TRACE set, every message read is appended to it as a JSON line.
 # FAKE_CODEX_MODELS is the JSON `data` model/list answers with.
@@ -636,12 +642,19 @@ for line in sys.stdin:
             if outcome == "reset":
                 open(os.environ["FAKE_CODEX_CONSUME_LOG"] + ".reset", "w").close()
             send({"id": mid, "result": {"outcome": outcome}})
+    # A "terminal-stays" file in the working directory has the terminal outlive the
+    # terminate, still listed.
     elif method == "thread/backgroundTerminals/terminate":
-        send({"id": mid, "result": {"terminated": True}})
+        send({"id": mid, "result": {"terminated": not os.path.exists("terminal-stays")}})
+    elif method == "thread/backgroundTerminals/list":
+        stays = [{"processId": "4275"}] if os.path.exists("terminal-stays") else []
+        send({"id": mid, "result": {"data": stays, "nextCursor": None}})
     elif method == "turn/interrupt":
-        # While the file FAKE_CODEX_IGNORE_INTERRUPT names exists, a stop is acknowledged
-        # and the turn never ends.
-        ignore = os.path.exists(os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT", "/nonexistent"))
+        # FAKE_CODEX_IGNORE_INTERRUPT, or the file FAKE_CODEX_IGNORE_INTERRUPT_FILE names
+        # existing, acknowledges the stop and never ends the turn.
+        ignore = os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT") or os.path.exists(
+            os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT_FILE", "/nonexistent")
+        )
         if not ignore:
             interrupted_turns.add(params["turnId"])
         # While the file FAKE_CODEX_HOLD_INTERRUPT names exists, a stop waits, bounded as a
@@ -656,3 +669,6 @@ for line in sys.stdin:
             send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})
     else:
         send({"id": mid, "error": {"code": -32601, "message": method}})
+
+while WILL_NOT_EXIT:
+    time.sleep(1)

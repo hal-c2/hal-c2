@@ -1,5 +1,6 @@
 #include "ThreadDiff.h"
 
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QRegularExpression>
 
@@ -8,8 +9,31 @@
 #include "McClient.h"
 #include "TimelineModel.h"
 
+namespace {
+
+const QString kAutomatic = QStringLiteral("automatic");
+const QString kGone = QStringLiteral("Diff no longer available. Refresh the comparison.");
+
+// A remote ref's branch: "origin/release" -> "release".
+QString remoteBranch(const QJsonObject& ref) {
+  const QString name = ref.value(QLatin1String("name")).toString();
+  const QString remote = ref.value(QLatin1String("remoteName")).toString();
+  if (!remote.isEmpty() && name.startsWith(remote + QLatin1Char('/'))) return name.mid(remote.size() + 1);
+  return name;
+}
+
+}  // namespace
+
 ThreadDiff::ThreadDiff(McClient* client, Notify notify, QObject* parent)
-    : QObject(parent), m_client(client), m_notify(std::move(notify)) {}
+    : QObject(parent), m_client(client), m_notify(std::move(notify)) {
+  connect(&m_model, &DiffModel::fileWanted, this, &ThreadDiff::loadFile);
+  // Back from working elsewhere: the checkout may have moved on.
+  if (qGuiApp) {
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+      if (state == Qt::ApplicationActive) follow();
+    });
+  }
+}
 
 ThreadDiff::Facts ThreadDiff::facts() const {
   return {choices(), latestTurn(), latestCheckpoint(), m_selection, shownTurn(), reviewing(), m_status, m_message, m_focus, m_fileTotal, m_baseRef, m_comparedBase,
@@ -27,14 +51,21 @@ void ThreadDiff::tell(const Facts& before) {
       now.truncated != before.truncated) {
     emit reviewChanged();
   }
+  // The branch under review is left out of the bases.
+  if (now.comparedHead != before.comparedHead) emit basesChanged();
   if (now.canRevert != before.canRevert || now.revertTurn != before.revertTurn || now.reverting != before.reverting) emit revertChanged();
 }
 
-void ThreadDiff::setThread(const QString& environmentId, const QString& threadId, TimelineModel* timeline) {
+void ThreadDiff::setThread(const QString& environmentId, const QString& threadId, TimelineModel* timeline, const QString& cwd) {
   const bool sameThread = environmentId == m_environment && threadId == m_threadId;
-  if (sameThread && timeline == m_timeline) return;
+  if (sameThread && timeline == m_timeline) {
+    setCheckout(cwd);
+    return;
+  }
   const Facts before = facts();
   if (!sameThread) {
+    if (!m_threadId.isEmpty()) m_choices.insert(m_environment + QLatin1Char(':') + m_threadId, {m_selection, m_baseRef});
+    const Choice choice = m_choices.take(environmentId + QLatin1Char(':') + threadId);
     m_environment = environmentId;
     m_threadId = threadId;
     ++m_request;
@@ -49,16 +80,32 @@ void ThreadDiff::setThread(const QString& environmentId, const QString& threadId
     m_truncated = false;
     m_revertTurn = 0;
     m_reverting = false;
-    m_selection = -1;
+    m_selection = choice.selection;
+    m_baseRef = choice.baseRef;
+    m_sourceKey.clear();
+    m_lazy = false;
+    m_refs = {};
+    m_baseQuery.clear();
+    ++m_basesRequest;
+    m_basesLoading = false;
+    emit basesChanged();
     setStatus(QStringLiteral("idle"));
   }
   disconnect(m_checkpointsConnection);
   disconnect(m_workingConnection);
+  disconnect(m_workspaceConnection);
   m_timeline = timeline;
+  m_mutation = timeline ? timeline->workspaceMutation() : QString();
   if (timeline) {
     m_checkpointsConnection = connect(timeline, &TimelineModel::checkpointsChanged, this, &ThreadDiff::readCheckpoints);
     m_workingConnection = connect(timeline, &TimelineModel::workingChanged, this, &ThreadDiff::revertChanged);
+    m_workspaceConnection = connect(timeline, &TimelineModel::workspaceChanged, this, [this] {
+      const QString now = m_timeline ? m_timeline->workspaceMutation() : QString();
+      if (now == std::exchange(m_mutation, now)) return;
+      follow();
+    });
   }
+  m_cwd = cwd;
   takeCheckpoints();
   tell(before);
 }
@@ -125,8 +172,11 @@ void ThreadDiff::takeCheckpoints() {
   }
   m_turns = turns;
   // A turn that went away (rewound) leaves the picker on the latest one, as
-  // does all changes once no turn is left.
-  if ((m_selection > 0 && !m_turns.contains(m_selection)) || (m_selection == 0 && m_turns.isEmpty())) m_selection = -1;
+  // does all changes once no turn is left, and the checkout's choices without one.
+  if ((m_selection > 0 && !m_turns.contains(m_selection)) || (m_selection == 0 && m_turns.isEmpty()) ||
+      (m_selection <= WorkingTree && m_cwd.isEmpty())) {
+    m_selection = -1;
+  }
   load();
 }
 
@@ -242,6 +292,17 @@ void ThreadDiff::reload() {
   tell(before);
 }
 
+void ThreadDiff::follow() {
+  if (!reviewing()) return;
+  const Facts before = facts();
+  // A hidden tab loads when it is shown again.
+  m_loaded.clear();
+  m_quiet = m_status == QLatin1String("ready");
+  load();
+  m_quiet = false;
+  tell(before);
+}
+
 void ThreadDiff::load() {
   if (!m_active || m_threadId.isEmpty()) return;
   if (!m_timeline) {
@@ -259,6 +320,8 @@ void ThreadDiff::load() {
     ++m_request;
     m_loaded.clear();
     m_patch.clear();
+    m_lazy = false;
+    m_sourceKey.clear();
     m_fileTotal = 0;
     m_model.clear();
     setStatus(QStringLiteral("empty"), QStringLiteral("No completed turns yet."));
@@ -287,16 +350,23 @@ void ThreadDiff::load() {
       // Asking again (reload, another turn) tries once more.
       m_loaded.clear();
       m_patch.clear();
+      m_lazy = false;
+      m_sourceKey.clear();
       m_fileTotal = 0;
       m_model.clear();
       setStatus(QStringLiteral("error"), error->isEmpty() ? QStringLiteral("Could not load the diff.") : *error);
       tell(before);
       return;
     }
-    m_patch = result.toObject().value(QLatin1String("diff")).toString();
+    const QString diff = result.toObject().value(QLatin1String("diff")).toString();
+    m_patch = diff;
+    m_lazy = false;
+    m_sourceKey.clear();
     present();
     if (m_model.fileCount() == 0) {
-      setStatus(QStringLiteral("empty"), QStringLiteral("No net changes in this selection."));
+      // Something came back, but no file of it can be shown.
+      setStatus(QStringLiteral("empty"), diff.trimmed().isEmpty() ? QStringLiteral("No net changes in this selection.")
+                                                                  : QStringLiteral("No patch available for this selection."));
     } else {
       setStatus(QStringLiteral("ready"));
     }
@@ -313,7 +383,7 @@ void ThreadDiff::loadReview(int selection) {
   const int request = ++m_request;
   QJsonObject payload{{QStringLiteral("cwd"), m_cwd}, {QStringLiteral("ignoreWhitespace"), ignoreWhitespace()}};
   if (selection == Branch && !m_baseRef.isEmpty()) payload.insert(QStringLiteral("baseRef"), m_baseRef);
-  setStatus(QStringLiteral("loading"), QStringLiteral("Loading changes..."));
+  if (!m_quiet) setStatus(QStringLiteral("loading"), QStringLiteral("Loading changes..."));
   m_client->call(this, m_environment, QStringLiteral("review.getDiffPreview"), payload,
                  [this, request, selection](const QJsonValue& result, const std::optional<QString>& error) {
     if (request != m_request) return;
@@ -321,6 +391,8 @@ void ThreadDiff::loadReview(int selection) {
     if (error) {
       m_loaded.clear();
       m_patch.clear();
+      m_sourceKey.clear();
+      m_lazy = false;
       m_fileTotal = 0;
       m_model.clear();
       setStatus(QStringLiteral("error"), error->isEmpty() ? QStringLiteral("Could not load the diff.") : *error);
@@ -329,19 +401,45 @@ void ThreadDiff::loadReview(int selection) {
     }
     const QString kind = selection == Branch ? QStringLiteral("branch-range") : QStringLiteral("working-tree");
     QJsonObject source;
+    bool found = false;
     for (const QJsonValue& value : result.toObject().value(QLatin1String("sources")).toArray()) {
-      if (value.toObject().value(QLatin1String("kind")).toString() == kind) source = value.toObject();
+      if (value.toObject().value(QLatin1String("kind")).toString() == kind) {
+        source = value.toObject();
+        found = true;
+      }
     }
     m_comparedBase = source.value(QLatin1String("baseRef")).toString();
     m_comparedHead = source.value(QLatin1String("headRef")).toString();
     m_truncated = source.value(QLatin1String("truncated")).toBool();
-    m_patch = source.value(QLatin1String("diff")).toString();
-    present();
+    const QJsonArray files = source.value(QLatin1String("files")).toArray();
+    // The same answer again leaves what the user opened as it is.
+    const QString hash = source.value(QLatin1String("diffHash")).toString();
+    const QString sourceKey = found && !hash.isEmpty() ? QStringLiteral("%1 %2 %3").arg(kind, hash).arg(m_truncated) : QString();
+    // A file focused or let go meanwhile changes what is shown of it.
+    if (sourceKey.isEmpty() || sourceKey != m_sourceKey || m_focus != m_presented) {
+      m_sourceKey = sourceKey;
+      // Cut short with every file counted: each file's changes come when it is opened.
+      m_lazy = m_truncated && !files.isEmpty();
+      m_lazyKind = kind;
+      m_patch = m_lazy ? QString() : DiffModel::withoutTruncatedMarker(source.value(QLatin1String("diff")).toString());
+      if (m_lazy) {
+        ++m_listing;
+        m_model.setFiles(files);
+        m_fileTotal = m_model.fileCount();
+      }
+      present();
+    }
     if (m_model.fileCount() > 0) {
       setStatus(QStringLiteral("ready"));
+    } else if (!found) {
+      setStatus(QStringLiteral("empty"), QStringLiteral("No patch available for this selection."));
+    } else if (selection == Branch && m_comparedBase.isEmpty()) {
+      setStatus(QStringLiteral("empty"), QStringLiteral("This branch has no base to compare against."));
+    } else if (!source.value(QLatin1String("diff")).toString().trimmed().isEmpty()) {
+      // Something came back, but no file of it can be shown.
+      setStatus(QStringLiteral("empty"), QStringLiteral("No patch available for this selection."));
     } else if (selection == Branch) {
-      setStatus(QStringLiteral("empty"), m_comparedBase.isEmpty() ? QStringLiteral("This branch has no base to compare against.")
-                                                                 : QStringLiteral("No changes against %1.").arg(m_comparedBase));
+      setStatus(QStringLiteral("empty"), QStringLiteral("No changes against %1.").arg(m_comparedBase));
     } else {
       setStatus(QStringLiteral("empty"), QStringLiteral("No uncommitted changes."));
     }
@@ -350,7 +448,154 @@ void ThreadDiff::loadReview(int selection) {
   });
 }
 
+// One file of a review cut short: its own patch, from the source it was listed by.
+void ThreadDiff::loadFile(int file) {
+  if (!m_lazy || file < 0 || file >= m_model.fileCount()) return;
+  const QString path = m_model.path(file);
+  const QString previous = m_model.previousPath(file);
+  const int listing = m_listing;
+  m_model.setFileState(file, QStringLiteral("loading"));
+  QJsonObject payload{{QStringLiteral("cwd"), m_cwd},
+                      {QStringLiteral("ignoreWhitespace"), ignoreWhitespace()},
+                      {QStringLiteral("file"), QJsonObject{{QStringLiteral("path"), path},
+                                                           {QStringLiteral("previousPath"), previous.isEmpty() ? QJsonValue() : QJsonValue(previous)},
+                                                           {QStringLiteral("sourceKind"), m_lazyKind}}}};
+  if (m_lazyKind == QLatin1String("branch-range") && !m_baseRef.isEmpty()) payload.insert(QStringLiteral("baseRef"), m_baseRef);
+  m_client->call(this, m_environment, QStringLiteral("review.getDiffPreview"), payload,
+                 [this, listing, path](const QJsonValue& result, const std::optional<QString>& error) {
+    // Another diff is shown meanwhile; the same one asked for again keeps waiting for it.
+    if (listing != m_listing || !m_lazy) return;
+    const int file = m_model.fileOf(path);
+    if (file < 0) return;
+    if (error) {
+      m_model.setFileState(file, QStringLiteral("error"), error->isEmpty() ? QStringLiteral("Could not load the diff.") : *error);
+      return;
+    }
+    for (const QJsonValue& value : result.toObject().value(QLatin1String("sources")).toArray()) {
+      const QJsonObject source = value.toObject();
+      if (source.value(QLatin1String("kind")).toString() != m_lazyKind) continue;
+      const bool partial = source.value(QLatin1String("truncated")).toBool();
+      if (!m_model.setFilePatch(file, DiffModel::withoutTruncatedMarker(source.value(QLatin1String("diff")).toString()), partial)) {
+        m_model.setFileState(file, QStringLiteral("missing"), QStringLiteral("No patch available for this file."));
+      }
+      return;
+    }
+    // The checkout no longer has what was listed.
+    m_model.setFileState(file, QStringLiteral("gone"), kGone);
+  });
+}
+
+void ThreadDiff::retryFile(const QString& path) {
+  loadFile(m_model.fileOf(path));
+}
+
+QVariantList ThreadDiff::baseChoices() const {
+  QList<QJsonObject> locals;
+  QList<QJsonObject> remotes;
+  for (const QJsonValue& value : m_refs) {
+    const QJsonObject ref = value.toObject();
+    if (ref.value(QLatin1String("isRemote")).toBool()) {
+      remotes.append(ref);
+    } else if (ref.value(QLatin1String("name")).toString() != m_comparedHead) {
+      locals.append(ref);
+    }
+  }
+  struct Entry {
+    QString id;
+    QString label;
+    QString local;
+    QString remote;
+  };
+  QList<Entry> entries;
+  QList<bool> used(remotes.size(), false);
+  // Each local branch with its remote one, origin's first.
+  for (const QJsonObject& local : std::as_const(locals)) {
+    const QString name = local.value(QLatin1String("name")).toString();
+    qsizetype match = -1;
+    for (qsizetype i = 0; i < remotes.size(); ++i) {
+      if (used.at(i) || remoteBranch(remotes.at(i)) != name) continue;
+      if (match < 0 || remotes.at(i).value(QLatin1String("remoteName")) == QLatin1String("origin")) match = i;
+    }
+    QString remote;
+    if (match >= 0) {
+      used[match] = true;
+      remote = remotes.at(match).value(QLatin1String("name")).toString();
+    }
+    entries.append({QStringLiteral("local:") + name, name, name, remote});
+  }
+  for (qsizetype i = 0; i < remotes.size(); ++i) {
+    if (used.at(i)) continue;
+    const QString name = remotes.at(i).value(QLatin1String("name")).toString();
+    entries.append({QStringLiteral("remote:") + name, name, QString(), name});
+  }
+  const QString query = m_baseQuery.trimmed().toLower();
+  QVariantList out;
+  if (query.isEmpty()) {
+    out.append(QVariantMap{{QStringLiteral("id"), kAutomatic}, {QStringLiteral("label"), QStringLiteral("Automatic")},
+                           {QStringLiteral("ref"), QString()}, {QStringLiteral("remoteOnly"), false}});
+  }
+  for (const Entry& entry : std::as_const(entries)) {
+    if (!query.isEmpty() && !entry.label.toLower().contains(query) && !entry.local.toLower().contains(query) && !entry.remote.toLower().contains(query)) {
+      continue;
+    }
+    out.append(QVariantMap{{QStringLiteral("id"), entry.id}, {QStringLiteral("label"), entry.label},
+                           {QStringLiteral("ref"), entry.local.isEmpty() ? entry.remote : entry.local}, {QStringLiteral("remoteOnly"), entry.local.isEmpty()}});
+  }
+  return out;
+}
+
+void ThreadDiff::setBaseQuery(const QString& query) {
+  if (query == m_baseQuery) return;
+  m_baseQuery = query;
+  emit basesChanged();
+}
+
+void ThreadDiff::loadBases() {
+  if (m_cwd.isEmpty() || m_threadId.isEmpty()) return;
+  const int request = ++m_basesRequest;
+  m_basesLoading = true;
+  emit basesChanged();
+  // Every ref at once, filtered here: "origin/release" finds the local "release".
+  m_client->call(this, m_environment, QStringLiteral("vcs.listRefs"),
+                 QJsonObject{{QStringLiteral("cwd"), m_cwd}, {QStringLiteral("limit"), 500}, {QStringLiteral("includeMatchingRemoteRefs"), true}},
+                 [this, request](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (request != m_basesRequest) return;
+                   m_basesLoading = false;
+                   if (!error) m_refs = result.toObject().value(QLatin1String("refs")).toArray();
+                   emit basesChanged();
+                 });
+}
+
+void ThreadDiff::chooseBase(const QString& id) {
+  for (const QVariant& choice : baseChoices()) {
+    if (choice.toMap().value(QStringLiteral("id")).toString() != id) continue;
+    setBaseRef(choice.toMap().value(QStringLiteral("ref")).toString());
+    return;
+  }
+}
+
+void ThreadDiff::chooseTypedBase(const QString& text) {
+  const QString typed = text.trimmed();
+  if (typed.isEmpty() || typed.compare(QLatin1String("Automatic"), Qt::CaseInsensitive) == 0) {
+    setBaseRef(QString());
+    return;
+  }
+  for (const QVariant& choice : baseChoices()) {
+    if (choice.toMap().value(QStringLiteral("label")).toString() == typed) {
+      setBaseRef(choice.toMap().value(QStringLiteral("ref")).toString());
+      return;
+    }
+  }
+  setBaseRef(typed);
+}
+
 void ThreadDiff::present() {
+  // A review cut short lists every file and shows none alone.
+  if (m_lazy) {
+    m_focus.clear();
+    m_presented.clear();
+    return;
+  }
   m_model.setPatch(m_patch);
   m_fileTotal = m_model.fileCount();
   if (!m_focus.isEmpty()) {
@@ -367,6 +612,7 @@ void ThreadDiff::present() {
       m_focus.clear();
     }
   }
+  m_presented = m_focus;
 }
 
 void ThreadDiff::focusFile(const QString& path) {
@@ -463,4 +709,10 @@ void ThreadDiff::confirmRevert(bool restoreFiles) {
                               }
                               m_notify(QStringLiteral("success"), QStringLiteral("Reverted to turn %1.").arg(turn), {});
                             });
+}
+
+QString ThreadDiff::workspacePath(const QString& path) const {
+  if (m_folder.isEmpty()) return path;
+  const QString prefix = m_folder + QLatin1Char('/');
+  return path.startsWith(prefix) ? path.mid(prefix.size()) : QString();
 }

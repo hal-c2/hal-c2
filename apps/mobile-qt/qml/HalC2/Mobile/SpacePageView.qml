@@ -20,10 +20,90 @@ ColumnLayout {
     readonly property var file: page.file ?? ({})
     // The row being written in, kept above the keyboard.
     property SpaceBlockRow editing: null
+    // What the prompt holds as typed, and whether it asks an agent.
+    readonly property string promptText: composer.editor.text
+    readonly property bool asking: /^@agent(\s|$)/i.test(promptText.trim())
+    // The kind of block the prompt writes.
+    property string newKind: "paragraph"
+    readonly property string pageId: Spaces.pageId
 
     function keepEditingInView() {
         if (editing !== null)
             blocks.positionViewAtIndex(editing.index, ListView.Contain);
+    }
+
+    function kindIcon(kind) {
+        const icons = { paragraph: "text-wrap", heading: "hash", checklist: "square-check", callout: "info" };
+        return icons[kind] ?? "text-wrap";
+    }
+
+    function kindLabel(kind) {
+        const labels = { paragraph: qsTr("Text"), heading: qsTr("Heading"), checklist: qsTr("Checklist"), callout: qsTr("Callout") };
+        return labels[kind] ?? kind;
+    }
+
+    // Puts `text` in the prompt, the caret at its end and the keyboard on it.
+    function setPrompt(text) {
+        composer.editor.text = text;
+        composer.editor.cursorPosition = text.length;
+        composer.flushText();
+        composer.focusInput();
+    }
+
+    // Starts the words of an ask in the prompt, ahead of a draft already there.
+    function startAsk() {
+        composer.flushText();
+        Shell.dispatch("composer.ask");
+    }
+
+    // Writes the prompt's words (all but an ask, which the controller sends) as
+    // a block of the chosen kind at the end, or asks for the chart they name.
+    function write(text) {
+        if (slash.visible) {
+            slash.choose();
+            return;
+        }
+        if (text.length === 0 || text === "/visualize")
+            return;
+        if (text.startsWith("/visualize ")) {
+            Shell.dispatch("space.block.visualize", { pageId: Spaces.pageId, request: text });
+        } else {
+            view.screen.insert({ kind: view.newKind, text: text }, undefined);
+            if (view.newKind === "heading" || view.newKind === "callout")
+                view.newKind = "paragraph";
+        }
+        view.setPrompt("");
+    }
+
+    function chooseKind(kind) {
+        view.setPrompt(kind === "chart" ? "/visualize " : "");
+        if (kind === "subpage_link")
+            view.screen.pickLink(undefined);
+        else if (kind === "image")
+            view.screen.pickImage(undefined);
+        else if (kind !== "chart")
+            view.newKind = kind;
+    }
+
+    // A `/` at the start offers the kinds of block, filtered by what follows.
+    onPromptTextChanged: {
+        if (promptText.startsWith("/") && !promptText.startsWith("/visualize ")) {
+            slash.query = promptText.slice(1);
+            if (!slash.visible)
+                slash.open();
+        } else if (slash.visible) {
+            slash.close();
+        }
+    }
+    onPageIdChanged: newKind = "paragraph"
+
+    // The words the prompt does not send to an agent come back to be written.
+    Connections {
+        target: Shell
+        function onActionRequested(action, payload) {
+            if (action === "space.prompt.write" && payload.pageId === Spaces.pageId)
+                view.write(payload.text);
+        }
     }
 
     objectName: "spacePageView"
@@ -315,5 +395,63 @@ ColumnLayout {
         text: qsTr("Drawing a chart…")
         color: Theme.palette.color("textMuted", "#a1a1aa")
         font.pixelSize: Math.round(13 * Theme.fontScale)
+    }
+
+    // The timeline's prompt, aimed at the page. It has no checkout, queue or
+    // second model: those belong to a thread.
+    Composer {
+        id: composer
+
+        objectName: "spaceComposer"
+        Layout.fillWidth: true
+        pageHost: true
+        visible: !view.trashed && ready
+        editorActions: [
+            ShellButton {
+                objectName: "spaceNewKind"
+                subtle: true
+                visible: !view.asking
+                iconName: view.kindIcon(view.newKind)
+                text: view.kindLabel(view.newKind)
+                toolTip: qsTr("Kind of block")
+                onClicked: view.setPrompt("/")
+            },
+            // Where the ask runs: the project the MC would pick, or the one picked.
+            ShellButton {
+                objectName: "spaceAskProject"
+                subtle: true
+                visible: view.asking
+                iconName: "folder"
+                chevron: true
+                text: composer.model?.project?.title ?? qsTr("No project")
+                toolTip: qsTr("The project the agent runs in")
+                onClicked: view.screen.pickAskProject(composer.model?.projects ?? [], composer.model?.project?.id ?? "")
+            }
+        ]
+        onEditorKeyPressed: event => {
+            if (event.accepted || !slash.visible || event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))
+                return;
+            event.accepted = true;
+            if (event.key === Qt.Key_Up)
+                slash.move(-1);
+            else if (event.key === Qt.Key_Down)
+                slash.move(1);
+            else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                slash.choose();
+            else if (event.key === Qt.Key_Escape) {
+                slash.close();
+                view.setPrompt("");
+            } else
+                event.accepted = false;
+        }
+
+        SpaceSlashMenu {
+            id: slash
+
+            objectName: "spaceSlashMenu"
+            x: composer.gutter
+            y: -implicitHeight - 4
+            onChosen: kind => view.chooseKind(kind)
+        }
     }
 }
