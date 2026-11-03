@@ -20,6 +20,7 @@ export interface ChunkStyle {
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: boolean;
+  readonly strikethrough?: boolean;
   readonly link?: string;
 }
 
@@ -27,7 +28,8 @@ export function chunk(text: string, style: ChunkStyle = {}): TextChunk {
   const attributes =
     (style.bold ? TextAttributes.BOLD : 0) |
     (style.italic ? TextAttributes.ITALIC : 0) |
-    (style.underline ? TextAttributes.UNDERLINE : 0);
+    (style.underline ? TextAttributes.UNDERLINE : 0) |
+    (style.strikethrough ? TextAttributes.STRIKETHROUGH : 0);
   return {
     __isChunk: true,
     text,
@@ -45,8 +47,22 @@ export const styled = (...chunks: ReadonlyArray<TextChunk | null | false>): Styl
 /** The plain text of a styled line (steps and tests read it). */
 export const plainText = (text: StyledText): string => text.chunks.map((c) => c.text).join("");
 
-const INLINE =
-  /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\s][^*\n]*)\*|(!)?\[([^\]\n]*)\]\(((?:[^()\s]|\([^()\s]*\))+)\)|<(https?:\/\/[^>\s]+)>/g;
+// GitHub's inline Markdown, one span at a time: an underscore or a `www.` address
+// counts only where no letter or digit runs into it, so snake_case stays a word.
+const INLINE = new RegExp(
+  [
+    /(?<ticks>`+)(?<code>[^`]|[^`][\s\S]*?[^`])\k<ticks>(?!`)/u.source,
+    /\*\*(?<strong>[^*\n]+)\*\*|__(?<under>[^_\n]+)__/u.source,
+    /~~(?<struck>[^~\n]+)~~/u.source,
+    /\*(?<em>[^*\s][^*\n]*)\*/u.source,
+    /(?<![\p{L}\p{N}_])_(?<emu>[^_\s][^_\n]*?)_(?![\p{L}\p{N}_])/u.source,
+    /(?<image>!)?\[(?<label>[^\]\n]*)\]\((?<url>(?:[^()\s]|\([^()\s]*\))+)(?:\s+"[^"\n]*")?\)/u
+      .source,
+    /<(?<auto>https?:\/\/[^>\s]+)>/u.source,
+    /(?<![\p{L}\p{N}_/.])(?<www>www\.[^\s<>]*[^\s<>.,;:!?'")\]*_~])/u.source,
+  ].join("|"),
+  "gu",
+);
 
 /**
  * A link the terminal may open: the web, mail, or a path. A message's text is
@@ -58,9 +74,10 @@ export function isSafeLink(url: string): boolean {
 }
 
 /**
- * Inline Markdown: code spans, bold, italic, links and autolinks. An image is
- * a link to its address (nothing is fetched); a link that is not safe to open
- * is just its text. HTML is not Markdown here: it shows as it was written.
+ * Inline Markdown: code spans, bold, italic, strikethrough, links (their title
+ * left out) and autolinks, `<https://…>` and `www.…`. An image is a link to its
+ * address (nothing is fetched); a link that is not safe to open is just its
+ * text. HTML is not Markdown here: it shows as it was written.
  */
 export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle = {}): TextChunk[] {
   const chunks: TextChunk[] = [];
@@ -68,26 +85,118 @@ export function inlineMarkdown(text: string, palette: Palette, base: ChunkStyle 
   const push = (value: string, style: ChunkStyle) => {
     if (value.length > 0) chunks.push(chunk(value, { fg: palette.text, ...base, ...style }));
   };
+  const linked = (label: string, url: string) =>
+    push(label, { fg: palette.accent, underline: true, link: url });
   for (const match of text.matchAll(INLINE)) {
     const index = match.index ?? 0;
+    const span = match.groups ?? {};
     push(text.slice(last, index), {});
     last = index + match[0].length;
-    if (match[2] !== undefined) push(match[2], { fg: palette.warning });
-    else if (match[3] !== undefined || match[4] !== undefined) {
-      push(match[3] ?? match[4]!, { bold: true });
-    } else if (match[5] !== undefined) push(match[5], { italic: true });
-    else if (match[8] !== undefined) {
-      const url = match[8];
-      const label = match[7] !== "" ? match[7]! : match[6] ? url : "";
+    if (span.code !== undefined) push(span.code, { fg: palette.warning });
+    else if (span.strong !== undefined || span.under !== undefined) {
+      push(span.strong ?? span.under!, { bold: true });
+    } else if (span.struck !== undefined) push(span.struck, { strikethrough: true });
+    else if (span.em !== undefined || span.emu !== undefined) {
+      push(span.em ?? span.emu!, { italic: true });
+    } else if (span.url !== undefined) {
+      const url = span.url;
+      const label = span.label !== "" ? span.label! : span.image ? url : "";
       if (label === "") push(match[0], {});
-      else if (isSafeLink(url)) push(label, { fg: palette.accent, underline: true, link: url });
+      else if (isSafeLink(url)) linked(label, url);
       else push(label, {});
-    } else if (match[9] !== undefined) {
-      push(match[9], { fg: palette.accent, underline: true, link: match[9] });
-    }
+    } else if (span.auto !== undefined) linked(span.auto, span.auto);
+    else if (span.www !== undefined) linked(span.www, `http://${span.www}`);
   }
   push(text.slice(last), {});
   return chunks;
+}
+
+const sameStyle = (a: TextChunk, b: TextChunk) =>
+  a.fg === b.fg &&
+  a.bg === b.bg &&
+  (a.attributes ?? 0) === (b.attributes ?? 0) &&
+  a.link?.url === b.link?.url;
+
+/** `chunks` with each run of one style as one chunk. */
+function joined(chunks: ReadonlyArray<TextChunk>): TextChunk[] {
+  const out: TextChunk[] = [];
+  for (const part of chunks) {
+    const before = out.at(-1);
+    if (before && sameStyle(before, part))
+      out[out.length - 1] = { ...before, text: before.text + part.text };
+    else out.push(part);
+  }
+  return out;
+}
+
+/**
+ * Styled text on lines of `width` cells, broken as `wrapWords` breaks plain text: at a
+ * line end, and at spaces, a run of them closing up to one in the style it was written
+ * in; a word wider than a line is cut across lines.
+ */
+export function wrapChunks(chunks: ReadonlyArray<TextChunk>, width: number): TextChunk[][] {
+  const size = Math.max(8, width);
+  const lines: TextChunk[][] = [];
+  let line: TextChunk[] = [];
+  let used = 0;
+  let word: TextChunk[] = [];
+  let gap: TextChunk | null = null;
+  const endLine = () => {
+    lines.push(joined(line));
+    line = [];
+    used = 0;
+  };
+  const place = () => {
+    let rest = joined(word);
+    word = [];
+    let cells = rest.reduce((sum, part) => sum + Bun.stringWidth(part.text), 0);
+    if (cells === 0) return;
+    while (cells > size) {
+      if (line.length > 0) endLine();
+      const [head, tail] = cutCells(rest, size);
+      lines.push(head);
+      rest = tail;
+      cells = rest.reduce((sum, part) => sum + Bun.stringWidth(part.text), 0);
+    }
+    if (line.length > 0 && used + 1 + cells > size) endLine();
+    if (line.length > 0) {
+      line.push({ ...(gap ?? rest[0]!), text: " " });
+      used += 1;
+    }
+    line.push(...rest);
+    used += cells;
+  };
+  for (const part of chunks) {
+    for (const piece of part.text.split(/(\n|[^\S\n]+)/)) {
+      if (piece === "") continue;
+      if (piece === "\n") {
+        place();
+        endLine();
+      } else if (/^\s+$/.test(piece)) {
+        place();
+        gap = part;
+      } else word.push({ ...part, text: piece });
+    }
+  }
+  place();
+  endLine();
+  return lines;
+}
+
+/** The first `width` cells of a styled word, and the rest of it. */
+function cutCells(word: ReadonlyArray<TextChunk>, width: number): [TextChunk[], TextChunk[]] {
+  const head: TextChunk[] = [];
+  let room = width;
+  for (const [index, part] of word.entries()) {
+    const taken = clipCells(part.text, room);
+    if (taken.length < part.text.length) {
+      if (taken !== "") head.push({ ...part, text: taken });
+      return [head, [{ ...part, text: part.text.slice(taken.length) }, ...word.slice(index + 1)]];
+    }
+    head.push(part);
+    room -= Bun.stringWidth(part.text);
+  }
+  return [head, []];
 }
 
 const FENCE = /^[ \t]{0,3}(`{3,}|~{3,})/;
