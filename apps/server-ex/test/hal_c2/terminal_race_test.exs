@@ -128,6 +128,29 @@ defmodule HalC2.TerminalRaceTest do
     assert session == {summary["threadId"], summary["terminalId"]}
   end
 
+  test "a detach queued behind a close does not follow the next process", %{input: input} do
+    {:ok, _} = Terminal.attach(input, self())
+    old = session(input)
+    down = Process.monitor(old)
+
+    # The detach reaches the terminal only after the close, and the hub before the
+    # close has told it anything to forget.
+    :sys.suspend(old)
+    ref = make_ref()
+    send(old, {:"$gen_call", {self(), ref}, {:close, false}})
+    :ok = Terminal.detach(input["threadId"], input["terminalId"], self())
+    :sys.resume(old)
+    assert_receive {^ref, {:ok, nil}}, 5_000
+    assert_receive {:DOWN, ^down, _, _, _}
+    flush_terminal_events()
+
+    # A follower handed over gets a snapshot as soon as the new process has it.
+    {:ok, _} = Terminal.open(input)
+    :sys.get_state(Hub)
+    :sys.get_state(session(input))
+    refute_received {:hal_c2_terminal, _, %{"type" => "snapshot"}}
+  end
+
   test "closing a terminal frees its shell before the call returns", %{input: input} do
     {:ok, %{"pid" => os_pid}} = Terminal.open(input)
     {:ok, nil} = Terminal.close(input)
@@ -174,6 +197,42 @@ defmodule HalC2.TerminalRaceTest do
     Process.exit(pid, :kill)
     assert_receive {:DOWN, ^ref, _, _, _}
     assert gone?(os_pid)
+  end
+
+  # hal-c2/hal-c2#100: erlexec's own SIGKILL escalation runs in the loop that also reads
+  # its children's output, so a neighbour that keeps printing starves it, and a shell that
+  # ignores SIGTERM outlived the restart that replaced it.
+  test "a shell that ignores the stop request is gone when the restart returns, next to a busy neighbour",
+       %{input: input, tmp_dir: dir} do
+    System.put_env("SHELL", "/bin/sh")
+    busy = %{input | "terminalId" => "busy"}
+    {:ok, _} = Terminal.open(busy)
+    {:ok, _} = Terminal.attach(busy, self())
+
+    {:ok, nil} =
+      Terminal.write(Map.put(busy, "data", "while :; do echo tick; sleep 0.02; done\n"))
+
+    receive_until("tick\r\n")
+
+    stubborn = Path.join(dir, "stubborn")
+    File.write!(stubborn, "#!/bin/sh\ntrap '' TERM\necho ready\nwhile :; do sleep 0.1; done\n")
+    File.chmod!(stubborn, 0o755)
+    System.put_env("SHELL", stubborn)
+    {:ok, %{"pid" => old}} = Terminal.open(input)
+    {:ok, _} = Terminal.attach(input, self())
+    receive_until("ready\r\n")
+
+    {:ok, %{"pid" => new}} = Terminal.restart(input)
+    assert new != old
+    refute File.exists?("/proc/#{old}")
+  end
+
+  defp flush_terminal_events do
+    receive do
+      {:hal_c2_terminal, _, _} -> flush_terminal_events()
+    after
+      0 -> :ok
+    end
   end
 
   defp receive_until(suffix, acc \\ "") do

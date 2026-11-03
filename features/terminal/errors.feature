@@ -36,8 +36,7 @@ Feature: Terminal failures
       When a client opens a terminal in "/root/private"
       Then opening fails with "Failed to access terminal cwd: /root/private" and the reason
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (provider_env)
-    @backlog @mc
+    @mc
     Scenario: A terminal for a provider instance that is not configured is refused
       Given no provider instance "ghost" is configured and none is built in under that name
       When a client opens a terminal for the provider instance "ghost"
@@ -97,7 +96,7 @@ Feature: Terminal failures
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (fails closed when attaching would create a missing
     #   provider terminal; attaches to a running provider terminal without resolving the provider again)
-    @backlog @mc
+    @mc
     Scenario: Attaching to a terminal that does not exist for a provider instance that is gone starts no shell
       Given no provider instance "deleted_instance" is configured
       And the thread has no terminal "term-2"
@@ -107,7 +106,7 @@ Feature: Terminal failures
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (attaches to a running provider terminal without
     #   resolving the provider again)
-    @backlog @mc
+    @mc
     Scenario: A running provider terminal can be attached to after its instance was removed
       Given a terminal running for the provider instance "work"
       And the provider instance "work" has since been removed
@@ -127,8 +126,7 @@ Feature: Terminal failures
       When a client lists the thread's terminals
       Then it receives terminals 1 and 2
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/terminal.ex (list sorts term-N by number)
-    @backlog @mc
+    @mc
     Scenario: A thread's terminals are listed in the order of their numbers
       Given a thread with saved terminals "term-10", "term-2" and "default"
       When a client lists the thread's terminals
@@ -163,10 +161,10 @@ Feature: Terminal failures
     @desktop
     Scenario: A terminal that fails to open tells the user why
       When the user opens a terminal in a folder that no longer exists
-      Then the terminal says the folder does not exist
+      Then the user is told the folder does not exist
       And the rest of the thread keeps working
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A failed terminal action is written into the terminal
       Given the terminal shows a running shell
       When <action> fails with "<reason>"
@@ -174,17 +172,40 @@ Feature: Terminal failures
       And the terminal keeps working
 
       Examples:
-        | action                                | reason               | message                      |
-        | sending what the user typed           | MC is unreachable    | MC is unreachable            |
-        | sending what the user typed           |                      | Terminal write failed        |
-        | copying the selection                 |                      | Unable to copy terminal selection |
-        | pasting from the clipboard            |                      | Unable to read the clipboard |
-        | moving the cursor by word or line     |                      | Failed to move cursor        |
-        | deleting to the start of the line     |                      | Failed to delete terminal input |
-        | clearing from the keyboard            |                      | Failed to clear terminal     |
-        | opening a file path from the output   |                      | Unable to open path          |
+        | action                                  | reason            | message                           |
+        | sending what the user typed             | MC is unreachable | MC is unreachable                 |
+        | sending what the user typed             |                   | Terminal write failed             |
+        | moving the cursor by word or line       |                   | Failed to move cursor             |
+        | deleting to the start of the line       |                   | Failed to delete terminal input   |
+        | clearing from the keyboard              |                   | Failed to clear terminal          |
+        | opening a file path from the output     |                   | Unable to open path               |
+        | copying the selection                   |                   | Unable to copy terminal selection |
+        | copying a link from the terminal's menu |                   | Unable to copy link               |
 
-    @backlog @desktop
+      # QClipboard cannot report a failed read: one that failed looks the same as an empty
+      # clipboard, and pasting nothing is what the user then sees.
+      @dropped
+      Examples:
+        | action                                | reason               | message                      |
+        | pasting from the clipboard            |                      | Unable to read the clipboard |
+
+    @desktop
+    Scenario: Typing while the MC is unreachable says so once
+      Given the terminal shows a running shell
+      When sending what the user typed fails with "MC is unreachable"
+      And the user types again while the MC is still unreachable
+      Then the terminal shows "[terminal] MC is unreachable" once
+      And the terminal keeps working
+
+    @desktop
+    Scenario: Each time the MC is unreachable is said
+      Given the terminal shows a running shell
+      And sending what the user typed fails with "MC is unreachable"
+      When the MC drops the connection and the terminal attaches again
+      And sending what the user typed fails with "MC is unreachable"
+      Then the terminal shows "[terminal] MC is unreachable"
+
+    @desktop
     Scenario: A link that cannot be opened anywhere is reported without losing the terminal
       Given the user's links open in the in-app browser
       And neither the in-app browser nor the system browser can open an address
@@ -192,7 +213,7 @@ Feature: Terminal failures
       Then the user sees an "error" toast "Unable to open link"
       And the terminal keeps working
 
-    @backlog @desktop
+    @desktop
     Scenario: A first terminal that fails to start leaves no empty tab and is retried
       Given the thread has no terminals
       And the MC refuses to open the terminal
@@ -201,7 +222,7 @@ Feature: Terminal failures
       When the user shows the terminal again and the MC accepts
       Then the terminal opens and the drawer shows it
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A terminal that fails to start leaves the existing terminal as it was
       Given the thread has one running terminal that is active
       And the MC refuses to open another terminal
@@ -216,7 +237,7 @@ Feature: Terminal failures
         | opens a new terminal                           |
         | runs a project script that wants a new terminal |
 
-    @backlog @desktop
+    @desktop
     Scenario: A script that cannot reopen its terminal does not close it
       Given a project script's terminal is already known to the thread
       And the MC refuses to open it again
@@ -224,14 +245,17 @@ Feature: Terminal failures
       Then the terminal stays in the thread
       And the script's command is not typed
 
-    @backlog @desktop
+    # The web drawer's state. On the desktop showing the drawer starts a terminal and closing the
+    # last one hides it, so it is never empty ("A first terminal that fails to start" relies on that).
+    @dropped @desktop
     Scenario: An empty drawer offers to start a terminal
       Given the thread has no terminals
       When the drawer is shown
       Then the drawer says "No terminal sessions for this thread yet."
       And it offers to open a new terminal
 
-    @backlog @desktop
+    # Sets what the engine's createTerminal() sets on failure: nothing can make the real one fail.
+    @desktop
     Scenario: A terminal engine that fails to load tells the user how to retry
       Given the terminal's rendering engine cannot start
       When the user opens a terminal

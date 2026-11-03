@@ -74,6 +74,11 @@ export interface RpcSession {
     threadId: string,
   ) => Effect.Effect<void, EarlierTurnsUnavailableError>;
   /**
+   * Says everything up to `sequence` of a terminal attached with `acks` was handled.
+   * Only protocol-3 sessions have it, and nothing happens once that attach has ended.
+   */
+  readonly ackTerminal?: (threadId: string, terminalId: string, sequence: number) => void;
+  /**
    * `mcCall` on the MC serving another environment (a cluster member or a linked
    * environment), reached through this one. Only protocol-3 sessions have it.
    */

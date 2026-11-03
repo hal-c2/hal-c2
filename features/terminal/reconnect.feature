@@ -85,7 +85,7 @@ Feature: Reattaching to terminals
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (keeps attach streams live when a terminal id is
     #   closed and reopened)
-    @backlog @mc
+    @mc
     Scenario: A client attached to a terminal stays attached when it is closed and opened again
       Given a client attached to a running terminal
       When the terminal is closed and then opened again
@@ -95,7 +95,7 @@ Feature: Reattaching to terminals
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (buffers attach output delivered during the
     #   initial snapshot callback; streams attach snapshots followed by live events without duplicates)
-    @backlog @mc
+    @mc
     Scenario: Output that arrives while a client is receiving its snapshot is not lost
       Given a running terminal whose shell prints as a client attaches
       When the shell prints "during snapshot" before the client has taken its snapshot
@@ -105,7 +105,7 @@ Feature: Reattaching to terminals
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (preserves queued PTY output ordering through exit
     #   callbacks)
-    @backlog @mc
+    @mc
     Scenario: Output queued before a shell ends arrives before its exit
       Given a running terminal
       When the shell prints "first" and "second" and exits at once
@@ -157,7 +157,7 @@ Feature: Reattaching to terminals
         | 6,000 lines     | 5,000 lines      |
         | 10 MiB of text  | 8 MiB of text    |
 
-    @backlog @mc
+    @mc
     Scenario: The MC keeps at most 128 ended terminals in memory
       Given the MC holds 128 terminals whose shells have ended
       When another terminal's shell ends
@@ -165,7 +165,7 @@ Feature: Reattaching to terminals
       And its saved output stays on disk
       And a terminal whose shell is running is never dropped
 
-    @backlog @mc
+    @mc
     Scenario: Output saved by an older layout is picked up by the default terminal
       Given the terminal log folder holds an old per-thread file for "thread-1" with the text "old build"
       When a client opens the default terminal of "thread-1"

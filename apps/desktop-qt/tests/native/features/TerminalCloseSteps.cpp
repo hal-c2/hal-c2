@@ -3,7 +3,9 @@
 // a shell that leaves on its own, a close the MC cannot do, a terminal that
 // does not open, and how much output the client keeps.
 
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QTest>
 
 #include "Brick.h"
 #include "ComposerController.h"
@@ -23,6 +25,8 @@ struct CloseWorld {
   QString terminal;
   // Every question the shell asked, in order.
   QList<QVariantMap> questions;
+  // The active group when the last close was asked for.
+  QString groupBefore;
   int printed = 0;
   QString firstChunk;
   QString lastChunk;
@@ -54,6 +58,15 @@ void openTerminals(World& world, int count) {
                   [&] { return describeRows(world); });
   }
   world.sync();
+}
+
+// The drawer drawn, in the world's brick.
+void drawDrawer(World& world) {
+  if (world.brick) return;
+  world.brick = std::make_unique<Brick>(world,
+                                        "import QtQuick\nimport HalC2.Bricks\nItem { TerminalDrawer { anchors.left: parent.left; "
+                                        "anchors.right: parent.right; anchors.bottom: parent.bottom } }\n",
+                                        QSize(900, 600));
 }
 
 QVariant question(World& world) {
@@ -202,29 +215,271 @@ const Steps steps([] {
     world.bridge().dispatch(QStringLiteral("terminal.toggle"));
     world.sync();
   });
-  step(QStringLiteral("the terminal says the folder does not exist"), [](World& world, const Captures&, const Table&) {
-    TerminalSession* session = terminalSession(world, QStringLiteral("term-1"));
-    world.waitFor([&] { return session->transcript().contains(QLatin1String("[Terminal cwd does not exist: /work/p1]")); },
-                  [&] { return QStringLiteral("the terminal to say why; it shows \"%1\"").arg(session->transcript()); });
-    // The drawer draws it where the shell would have been.
-    Brick drawer(world, "import QtQuick\nimport HalC2.Bricks\nItem { TerminalDrawer { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom } }\n",
-                 QSize(900, 700));
-    QQuickItem* terminal = drawer.item(QStringLiteral("HalC2Terminal"));
-    QString text;
-    QMetaObject::invokeMethod(terminal, "text", Q_RETURN_ARG(QString, text));
-    expect(text.contains(QLatin1String("Terminal cwd does not exist: /work/p1")), QStringLiteral("the drawer draws \"%1\"").arg(text));
+  step(QStringLiteral("the user is told the folder does not exist"), [](World& world, const Captures&, const Table&) {
+    const auto told = [&] {
+      for (const QVariant& item : at(world.state(QStringLiteral("toasts")), QStringLiteral("items")).toList()) {
+        if (item.toMap().value(QStringLiteral("title")) == QLatin1String("Unable to open terminal")) return item.toMap().value(QStringLiteral("description")).toString();
+      }
+      return QString();
+    };
+    world.waitFor([&] { return told() == QLatin1String("Terminal cwd does not exist: /work/p1"); },
+                  [&] { return QStringLiteral("the reason; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
+    expect(rowsIn(world, false).isEmpty() && !terminals(world)->isOpen(), describeRows(world));
   });
   step(QStringLiteral("the rest of the thread keeps working"), [](World& world, const Captures&, const Table&) {
     const QString key = world.native().controller<NavigationController>()->threadKey();
     expect(at(world.state(QStringLiteral("route")), QStringLiteral("kind")) == QLatin1String("thread") && world.state(QStringLiteral("backendError")).toString().isEmpty(),
            QStringLiteral("the window shows %1").arg(show(world.state(QStringLiteral("route")))));
-    // The composer still takes the user's words, and the drawer still hides.
+    // The composer still takes the user's words.
     world.bridge().dispatch(QStringLiteral("composer.text.set"),
                             QVariantMap{{QStringLiteral("target"), key}, {QStringLiteral("text"), QStringLiteral("try again")}, {QStringLiteral("cursor"), 9}});
     world.waitFor([&] { return at(world.state(QStringLiteral("composer")), QStringLiteral("text")) == QLatin1String("try again"); },
                   [&] { return QStringLiteral("the composer shows %1").arg(show(world.state(QStringLiteral("composer")))); });
+  });
+
+  // Which terminal is active as terminals close and lists arrive
+  // (terminal/tabs.feature).
+  const auto active = [](World& world, int number) {
+    const QString id = QStringLiteral("term-%1").arg(number);
+    world.waitFor([&] { return terminals(world)->activeTerminalId() == id; },
+                  [&] { return QStringLiteral("%1 active; %2 is. %3").arg(id, terminals(world)->activeTerminalId(), describeRows(world)); });
+  };
+  step(QStringLiteral("the thread has terminals 1, 2 and 3 with terminal 3 active"), [](World& world, const Captures&, const Table&) {
+    openTerminals(world, 3);
+  });
+  step(QStringLiteral("terminal (\\d) is active"), [active](World& world, const Captures& c, const Table&) {
+    world.sync();
+    active(world, c[0].toInt());
+  });
+  step(QStringLiteral("terminal (\\d) is still active"), [active](World& world, const Captures& c, const Table&) {
+    world.sync();
+    active(world, c[0].toInt());
+  });
+  step(QStringLiteral("the user closes terminal (\\d)"), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<CloseWorld>().groupBefore = terminals(world)->activeGroup();
+    world.bridge().dispatch(QStringLiteral("terminal.close"), QVariantMap{{QStringLiteral("terminalId"), QStringLiteral("term-") + c[0]}});
+    confirmTerminalClose(world);
+    world.sync();
+  });
+  step(QStringLiteral("its group and place in the row are unchanged"), [](World& world, const Captures&, const Table&) {
+    const QList<TerminalTabs::Row> rows = rowsIn(world, false);
+    expect(rows.size() == 2 && rows.last().terminalId == QLatin1String("term-3") && rows.last().group == world.mc.part<CloseWorld>().groupBefore &&
+               terminals(world)->activeGroup() == world.mc.part<CloseWorld>().groupBefore,
+           describeRows(world));
+  });
+
+  step(QStringLiteral("the thread has one terminal on its own, a group of two side by side, and a stacked group of three"), [](World& world, const Captures&, const Table&) {
+    openTerminals(world, 1);
+    const auto add = [&](const char* action, int number) {
+      const QString id = QStringLiteral("term-%1").arg(number);
+      world.bridge().dispatch(QString::fromLatin1(action), QVariantMap{{QStringLiteral("terminalId"), terminals(world)->activeTerminalId()}});
+      world.waitFor([&] { return terminals(world)->activeTerminalId() == id; }, [&] { return describeRows(world); });
+    };
+    add("terminal.new", 2);
+    add("terminal.split", 3);
+    add("terminal.new", 4);
+    add("terminal.splitVertical", 5);
+    add("terminal.splitVertical", 6);
+    world.sync();
+  });
+  step(QStringLiteral("the user looks at the terminal list"), [](World& world, const Captures&, const Table&) {
+    drawDrawer(world);
+    world.waitFor([&] { return visibleItems(world, QStringLiteral("terminalGroupLabel")).size() == 3; },
+                  [&] { return QStringLiteral("three groups; %1 show").arg(visibleItems(world, QStringLiteral("terminalGroupLabel")).size()); });
+  });
+  step(QStringLiteral("the groups are labelled %1, %1 and %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const QList<QQuickItem*> labels = visibleItems(world, QStringLiteral("terminalGroupLabel"));
+    for (int at = 0; at < 3; ++at) {
+      const QString text = labels.at(at)->property("text").toString();
+      expect(text.startsWith(c[at]), QStringLiteral("group %1 says \"%2\"").arg(at + 1).arg(text));
+    }
+  });
+  step(QStringLiteral("each label shows how many terminals the group holds"), [](World& world, const Captures&, const Table&) {
+    const QList<QQuickItem*> labels = visibleItems(world, QStringLiteral("terminalGroupLabel"));
+    for (int at = 0; at < 3; ++at) {
+      const QString text = labels.at(at)->property("text").toString();
+      expect(text.contains(QStringLiteral("(%1)").arg(at + 1)), QStringLiteral("group %1 says \"%2\"").arg(at + 1).arg(text));
+    }
+  });
+  step(QStringLiteral("choosing a group's label makes that group's terminal active"), [active](World& world, const Captures&, const Table&) {
+    QQuickItem* single = visibleItems(world, QStringLiteral("terminalGroupLabel")).first();
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(single));
+    active(world, 1);
+  });
+
+  step(QStringLiteral("the thread has one terminal"), [](World& world, const Captures&, const Table&) {
+    openTerminals(world, 1);
+    drawDrawer(world);
+  });
+  step(QStringLiteral("the terminal offers split, new and close actions over its own corner"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* terminal = visibleItems(world, QStringLiteral("HalC2Terminal")).first();
+    const QRectF drawn = terminal->mapRectToScene(terminal->boundingRect());
+    for (const char* name : {"terminalSplit", "terminalSplitVertical", "terminalNew", "terminalClose"}) {
+      QQuickItem* action = world.brick->item(QString::fromLatin1(name));
+      const QPointF centre = action->mapToScene(QPointF(action->width() / 2, action->height() / 2));
+      expect(action->isVisible() && drawn.contains(centre) && centre.x() > drawn.center().x() && centre.y() < drawn.center().y(),
+             QStringLiteral("%1 is at %2,%3 over a terminal of %4x%5").arg(QString::fromLatin1(name)).arg(centre.x()).arg(centre.y()).arg(drawn.width()).arg(drawn.height()));
+    }
+  });
+  step(QStringLiteral("no terminal list is shown"), [](World& world, const Captures&, const Table&) {
+    expect(!world.brick->item(QStringLiteral("terminalList"))->isVisible(), QStringLiteral("the list shows"));
+  });
+  step(QStringLiteral("the user opens a second terminal"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("terminal.new"));
+    world.waitFor([&] { return terminals(world)->activeTerminalId() == QLatin1String("term-2"); }, [&] { return describeRows(world); });
+    world.sync();
+  });
+  step(QStringLiteral("the terminal list appears beside the terminals with the same actions"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* list = world.brick->item(QStringLiteral("terminalList"));
+    world.waitFor([&] { return list->isVisible(); }, QStringLiteral("the terminal list"));
+    QQuickItem* terminal = visibleItems(world, QStringLiteral("HalC2Terminal")).first();
+    const QRectF drawn = terminal->mapRectToScene(terminal->boundingRect());
+    expect(drawn.right() <= list->mapRectToScene(list->boundingRect()).left(), QStringLiteral("the terminal runs under the list"));
+    for (const char* name : {"terminalSplit", "terminalSplitVertical", "terminalNew", "terminalClose"}) {
+      expect(world.brick->item(QString::fromLatin1(name))->isVisible(), QString::fromLatin1(name));
+    }
+  });
+
+  step(QStringLiteral("the thread has two terminals side by side with the first active"), [active](World& world, const Captures&, const Table&) {
+    openTerminals(world, 1);
+    world.bridge().dispatch(QStringLiteral("terminal.split"), QVariantMap{{QStringLiteral("terminalId"), QStringLiteral("term-1")}});
+    active(world, 2);
+    drawDrawer(world);
+    world.bridge().dispatch(QStringLiteral("terminal.select"), QVariantMap{{QStringLiteral("terminalId"), QStringLiteral("term-1")}});
+    active(world, 1);
+    world.sync();
+  });
+  step(QStringLiteral("the user clicks inside the second terminal"), [](World& world, const Captures&, const Table&) {
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, world.brick->at(world.brick->item(QStringLiteral("terminalCell-term-2"))));
+    world.sync();
+  });
+  step(QStringLiteral("the second terminal is active and has the keyboard"), [active](World& world, const Captures&, const Table&) {
+    active(world, 2);
+    QQuickItem* cell = world.brick->item(QStringLiteral("terminalCell-term-2"));
+    world.waitFor([&] { return cell->childItems().size() > 0 && cell->childItems().first()->hasActiveFocus(); }, QStringLiteral("the second terminal to have the keyboard"));
+  });
+  step(QStringLiteral("closing the active terminal now closes the second terminal"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("terminal.close"));
+    confirmTerminalClose(world);
+    const QString threadId = shownThread(world);
+    world.waitFor([&] { return terminalCall(world, QStringLiteral("terminal.close"), threadId, QStringLiteral("term-2")).has_value(); },
+                  [&] { return QStringLiteral("the second terminal to close; the MC got %1").arg(describeTerminalCalls(world)); });
+    expect(terminals(world)->tabs()->indexOf(QStringLiteral("term-1")) >= 0, describeRows(world));
+  });
+
+  step(QStringLiteral("the thread has terminals 1 and 2"), [](World& world, const Captures&, const Table&) {
+    openTerminals(world, 2);
+    world.mc.part<FakeTerminals>().holdRemove = true;
+  });
+  step(QStringLiteral("the MC's list of terminals, sent before the close finished, still includes terminal 1"), [](World& world, const Captures&, const Table&) {
+    const QString threadId = shownThread(world);
+    expect(terminalCall(world, QStringLiteral("terminal.close"), threadId, QStringLiteral("term-1")).has_value(), describeTerminalCalls(world));
+    sendTerminals(world.mc, {{QStringLiteral("type"), QStringLiteral("snapshot")},
+                             {QStringLiteral("terminals"), QJsonArray{terminalSummary(threadId, QStringLiteral("term-1"), QStringLiteral("/work")),
+                                                                      terminalSummary(threadId, QStringLiteral("term-2"), QStringLiteral("/work"))}}});
+    world.sync();
+  });
+  step(QStringLiteral("terminal 1 does not return to the terminal list"), [](World& world, const Captures&, const Table&) {
+    expect(terminals(world)->tabs()->indexOf(QStringLiteral("term-1")) < 0, describeRows(world));
+    expect(!attached(world.mc).contains(shownThread(world) + QStringLiteral("/term-1")), QStringLiteral("it attached again"));
+  });
+  step(QStringLiteral("terminal 1 is opened again later"), [](World& world, const Captures&, const Table&) {
+    FakeTerminals& fake = world.mc.part<FakeTerminals>();
+    fake.holdRemove = false;
+    for (const QJsonObject& remove : std::as_const(fake.heldRemoves)) sendTerminals(world.mc, remove);
+    fake.heldRemoves.clear();
+    addTerminal(world.mc, shownThread(world), QStringLiteral("term-1"), QString(), false);
+    world.sync();
+  });
+  step(QStringLiteral("terminal 1 appears in the terminal list again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return terminals(world)->tabs()->indexOf(QStringLiteral("term-1")) >= 0; }, [&] { return describeRows(world); });
+  });
+
+  step(QStringLiteral("the user opens a second terminal and the MC's list of terminals still shows only the first"), [active](World& world, const Captures&, const Table&) {
+    openTerminals(world, 1);
+    const QString threadId = shownThread(world);
+    world.mc.part<FakeTerminals>().quietOpen = true;
+    world.bridge().dispatch(QStringLiteral("terminal.split"), QVariantMap{{QStringLiteral("terminalId"), QStringLiteral("term-1")}});
+    world.waitFor([&] { return terminalAttach(world, threadId, QStringLiteral("term-2")).has_value(); }, [&] { return describeRows(world); });
+    sendTerminals(world.mc, {{QStringLiteral("type"), QStringLiteral("snapshot")},
+                             {QStringLiteral("terminals"), QJsonArray{terminalSummary(threadId, QStringLiteral("term-1"), QStringLiteral("/work"))}}});
+    world.sync();
+  });
+  step(QStringLiteral("the second terminal stays in the terminal list"), [](World& world, const Captures&, const Table&) {
+    expect(terminals(world)->tabs()->indexOf(QStringLiteral("term-2")) >= 0, describeRows(world));
+  });
+  step(QStringLiteral("it stays in the split group it was opened in"), [](World& world, const Captures&, const Table&) {
+    const QList<TerminalTabs::Row> rows = rowsIn(world, false);
+    expect(rows.size() == 2 && rows.first().group == rows.last().group && rows.last().span == 2, describeRows(world));
+  });
+
+  // Terminals that do not start (terminal/errors.feature): nothing is left behind.
+  const auto refuse = [](World& world) {
+    world.mc.part<FakeTerminals>().refuseOpen = QStringLiteral("Terminal limit reached on this machine");
+  };
+  step(QStringLiteral("the thread has no terminals"), [](World& world, const Captures&, const Table&) {
+    ensureProject(world);
+    ensureThread(world);
+    world.waitFor([&] { return terminals(world)->available(); }, QStringLiteral("the thread's terminal drawer"));
+    expect(rowsIn(world, false).isEmpty(), describeRows(world));
+  });
+  step(QStringLiteral("the MC refuses to open the terminal"), [refuse](World& world, const Captures&, const Table&) { refuse(world); });
+  step(QStringLiteral("the MC refuses to open another terminal"), [refuse](World& world, const Captures&, const Table&) { refuse(world); });
+  step(QStringLiteral("the MC refuses to open it again"), [refuse](World& world, const Captures&, const Table&) { refuse(world); });
+  step(QStringLiteral("the drawer does not stay open with a dead terminal"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !terminals(world)->isOpen() && rowsIn(world, false).isEmpty() && toastShown(world, QStringLiteral("Unable to open terminal")); },
+                  [&] { return describeRows(world) + QStringLiteral("; the shell shows ") + show(world.state(QStringLiteral("toasts"))); });
+  });
+  step(QStringLiteral("the user shows the terminal again and the MC accepts"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<FakeTerminals>().refuseOpen.clear();
     world.bridge().dispatch(QStringLiteral("terminal.toggle"));
-    world.waitFor([&] { return !terminals(world)->isOpen(); }, QStringLiteral("the terminal drawer to hide"));
+    world.sync();
+  });
+  step(QStringLiteral("the terminal opens and the drawer shows it"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return terminals(world)->isOpen() && rowsIn(world, false).size() == 1 && world.mc.part<FakeTerminals>().terminals.size() == 1; },
+                  [&] { return describeRows(world); });
+  });
+
+  step(QStringLiteral("the thread has one running terminal that is active"), [](World& world, const Captures&, const Table&) {
+    openTerminals(world, 1);
+    // A script would rather not type into a busy one.
+    addTerminal(world.mc, shownThread(world), QStringLiteral("term-1"), QString(), true);
+    world.sync();
+  });
+  step(QStringLiteral("the user splits the terminal (side by side|stacked)"), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(c[0] == QLatin1String("stacked") ? QStringLiteral("terminal.splitVertical") : QStringLiteral("terminal.split"),
+                            QVariantMap{{QStringLiteral("terminalId"), QStringLiteral("term-1")}});
+    world.sync();
+  });
+  const auto runScript = [](World& world) {
+    addAction(world, QStringLiteral("p1"), QStringLiteral("Dev"), QStringLiteral("bun dev"));
+    world.bridge().dispatch(QStringLiteral("workspace.runScript"), QVariantMap{{QStringLiteral("scriptId"), QStringLiteral("dev")}});
+    world.sync();
+  };
+  step(QStringLiteral("the user runs a project script that wants a new terminal"), [runScript](World& world, const Captures&, const Table&) { runScript(world); });
+  step(QStringLiteral("a project script's terminal is already known to the thread"), [](World& world, const Captures&, const Table&) { openTerminals(world, 1); });
+  step(QStringLiteral("the user runs the script"), [runScript](World& world, const Captures&, const Table&) { runScript(world); });
+  const auto toldItFailed = [](World& world) {
+    return toastShown(world, QStringLiteral("Unable to open terminal")) || toastShown(world, QStringLiteral("Failed to run script \"Dev\"."));
+  };
+  step(QStringLiteral("the thread still has only its first terminal and it is still active"), [toldItFailed](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      const QList<TerminalTabs::Row> rows = rowsIn(world, false);
+      return toldItFailed(world) && rows.size() == 1 && rows.first().terminalId == QLatin1String("term-1") && rows.first().span == 1 &&
+             terminals(world)->activeTerminalId() == QLatin1String("term-1");
+    }, [&] { return describeRows(world) + QStringLiteral("; the shell shows ") + show(world.state(QStringLiteral("toasts"))); });
+  });
+  step(QStringLiteral("nothing is typed into any terminal"), [](World& world, const Captures&, const Table&) {
+    for (const QJsonObject& call : world.mc.part<FakeTerminals>().calls) {
+      expect(call.value(QLatin1String("method")) != QLatin1String("terminal.write"), describeTerminalCalls(world));
+    }
+  });
+  step(QStringLiteral("the terminal stays in the thread"), [toldItFailed](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return toldItFailed(world) && rowsIn(world, false).size() == 1 && terminals(world)->tabs()->indexOf(QStringLiteral("term-1")) >= 0; },
+                  [&] { return describeRows(world) + QStringLiteral("; the shell shows ") + show(world.state(QStringLiteral("toasts"))); });
+  });
+  step(QStringLiteral("the script's command is not typed"), [](World& world, const Captures&, const Table&) {
+    expect(!terminalWrites(world, QStringLiteral("term-1")).join(QString()).contains(QLatin1String("bun dev")), describeTerminalCalls(world));
   });
 
   step(QStringLiteral("a terminal that has printed more than 512 KiB since the client attached"), [](World& world, const Captures&, const Table&) {
@@ -237,6 +492,9 @@ const Steps steps([] {
       if (n == 0) close.firstChunk = chunk.left(9);
       close.lastChunk = chunk.left(9);
       close.printed += int(chunk.size());
+      // A client that reads as it goes: the MC would hold the rest back.
+      const FakeTerminals::Window* window = terminalWindow(world.mc, threadId + QStringLiteral("/term-1"));
+      world.waitFor([&] { return window->bytes < FakeTerminals::kWindowLimit - chunk.size(); }, QStringLiteral("the client to say what it has read"));
       print(world.mc, threadId, QStringLiteral("term-1"), chunk);
     }
     world.sync();

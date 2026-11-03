@@ -74,7 +74,7 @@ target_compile_definitions(tst_Features PRIVATE
 target_link_libraries(tst_Features PRIVATE hal_c2_native Qt6::GuiPrivate Qt6::Quick Qt6::Test)
 hal_c2_target_platform_window(tst_Features)
 # The terminal bricks draw with qml-ghostty's Terminal.
-target_link_libraries(tst_Features PRIVATE qmlghosttyplugin)
+target_link_libraries(tst_Features PRIVATE qmlghosttyplugin qmlghostty)
 # The in-app browser's pages (BrowserPanel).
 find_package(Qt6 6.9 REQUIRED COMPONENTS WebEngineQuick)
 target_link_libraries(tst_Features PRIVATE Qt6::WebEngineQuick)

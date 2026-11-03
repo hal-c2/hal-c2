@@ -135,6 +135,8 @@ interface Subscription {
   handle?: string;
   /** Items of a `more` the MC has not finished answering; asked again after a resubscription. */
   pendingMore?: number;
+  /** A terminal whose client acknowledges what it has handled; every sub says so. */
+  readonly acks?: true;
   /** The MC refused the stream (its MC left the cluster) and forgot it. */
   refused?: boolean;
 }
@@ -153,6 +155,13 @@ export interface WindowedSubscription {
   readonly more: (items: number) => boolean;
   /** Where the stream is now; null before it has an offset. */
   readonly resumePoint: () => StreamResumePoint | null;
+}
+
+/** A terminal that acknowledges; `ack` says everything up to `sequence` was handled. */
+export interface AcknowledgedSubscription {
+  readonly unsubscribe: () => void;
+  /** Dropped when the socket is not connected: the next sub starts over from a snapshot. */
+  readonly ack: (sequence: number) => void;
 }
 
 type SocketLike = Pick<WebSocket, "send" | "close" | "readyState"> & {
@@ -253,7 +262,18 @@ export class ClusterSocket {
     });
   }
 
-  private add(subscription: Subscription): WindowedSubscription {
+  /**
+   * Subscribes to a terminal whose output the MC holds back once too much of it waits
+   * unacknowledged (`HalC2.Terminal.OutputWindow`); a reconnect starts over the same way.
+   */
+  subscribeAcknowledged(
+    shape: TerminalShape,
+    onFrame: (frame: ShapeFrame) => void,
+  ): AcknowledgedSubscription {
+    return this.add({ shape, onFrame, offset: null, acks: true });
+  }
+
+  private add(subscription: Subscription): WindowedSubscription & AcknowledgedSubscription {
     const id = this.nextId++;
     this.subscriptions.set(id, subscription);
     this.sendSub(id);
@@ -267,6 +287,9 @@ export class ClusterSocket {
         subscription.pendingMore = items;
         this.send({ t: "more", id, items });
         return true;
+      },
+      ack: (sequence) => {
+        if (this.ready && this.subscriptions.has(id)) this.send({ t: "ack", id, sequence });
       },
       resumePoint: () =>
         subscription.offset === null
@@ -375,7 +398,13 @@ export class ClusterSocket {
     delete subscription.refused;
     const offset = subscription.shape.type === "stream" ? subscription.offset : null;
     if (subscription.windowItems === undefined) {
-      this.send({ t: "sub", id, shape: subscription.shape, offset });
+      this.send({
+        t: "sub",
+        id,
+        shape: subscription.shape,
+        offset,
+        ...(subscription.acks ? { acks: true } : {}),
+      });
       return;
     }
     this.send({

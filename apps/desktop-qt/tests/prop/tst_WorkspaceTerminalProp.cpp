@@ -4,16 +4,26 @@
 // switches thread, toggles the drawer, opens, picks, focuses, splits and
 // closes terminals. Meanwhile other clients open, rename and close terminals,
 // shells print, exit and restart, output arrives for terminals that are
-// gone, the MC holds closes and answers them late, a thread moves to a
-// worktree, and the connection drops and comes back.
+// gone, the MC holds closes and answers them late, its list of terminals lags
+// behind what it has done (it stays in order, and may start with a list from
+// before the lag), it refuses to open a terminal, a thread moves to a worktree,
+// and the connection drops and comes back.
 //
 // The model is what the user should see: the shown thread's tabs in order
 // with their labels, groups and current one; an open drawer always shows a
 // terminal that exists; each tab's screen is what its shell printed; the
 // terminals of threads the user left stay attached and keep printing; the
 // MC is never asked to attach a terminal nobody shows, and so never reopens
-// one that was closed. `changed` fires once when what it notifies changes
-// and never otherwise.
+// one that was closed. A lagging list changes nothing the user sees, and a
+// refused terminal leaves the thread as it was. `changed` fires once when what
+// it notifies changes and never otherwise.
+//
+// The fake MC holds output back as HalC2.Terminal.OutputWindow does, over a small
+// window. Every attach asks for it, acks never run ahead of what was sent or go
+// backwards, and once things settle nothing is left unacknowledged or held back,
+// snapshots included: the desktop never stalls itself. A parked terminal
+// acknowledges nothing until the user returns: what it has seen is the window's
+// worth, and if more was held back it catches up from a new snapshot.
 //
 // Not covered: the right panel's terminal tabs (addPanelGroup), project
 // scripts and a reply's shell commands (runScript, runCommand), the store
@@ -23,6 +33,7 @@
 #include "Prop.h"
 #include "WorkspaceModels.h"
 
+#include <QHash>
 #include <QJsonArray>
 #include <QSignalSpy>
 
@@ -130,13 +141,33 @@ struct Facts {
   QString active;
   QString activeGroup;
   QVariantMap groupSizes;
+  int drawerCount = 0;
   bool operator==(const Facts&) const = default;
 };
 
 void showValue(const Facts& facts, std::ostream& os) {
   os << "{" << facts.threadKey.toStdString() << " " << (facts.open ? "open" : "closed") << " on '" << facts.active.toStdString() << "' in '"
-     << facts.activeGroup.toStdString() << "' groups " << prop::debug(facts.groupSizes) << "}";
+     << facts.activeGroup.toStdString() << "' groups " << prop::debug(facts.groupSizes) << " of " << facts.drawerCount << "}";
 }
+
+// How much output the fake MC lets a client leave unacknowledged.
+constexpr int kWindow = 32;
+
+// HalC2.Terminal.OutputWindow's sums; a snapshot starts it over and does not count.
+struct Window {
+  int bytes = 0;
+  bool behind = false;
+  // Whether output of this size goes out.
+  bool take(int size) {
+    if (behind) return false;
+    if (bytes >= kWindow) {
+      behind = true;
+      return false;
+    }
+    bytes += size;
+    return true;
+  }
+};
 
 struct Model {
   Terms mc;
@@ -153,11 +184,16 @@ struct Model {
   // The attached sessions of threads the user left, and where they ran.
   QMap<QString, QStringList> parked;
   QMap<QString, QString> parkedCwd;
+  // The output windows of parked sessions, by "thread/terminal".
+  QMap<QString, Window> windows;
   // What each attached session's screen shows, by "thread/terminal".
   QMap<QString, QString> screens;
   bool holding = false;
   // Closes the MC holds, oldest first.
   QStringList held;
+  // The MC's list of terminals lags, and the `remove`s it still owes.
+  bool lagging = false;
+  QSet<QString> owed;
   int groupCount = 0;
   int serial = 0;
 
@@ -179,12 +215,13 @@ struct Model {
     }
     return out;
   }
-  // The lowest free id; ids still closing stay taken.
+  // The lowest free id; ids still closing, or whose `remove` is still to come, stay taken.
   QString nextId() const {
     const QStringList taken = terminalsOf(thread);
     const QSet<QString> closing = ui.value(thread).closing;
+    const auto free = [&](const QString& id) { return !taken.contains(id) && !closing.contains(id) && !owed.contains(keyOf(thread, id)); };
     int next = 1;
-    while (taken.contains(QStringLiteral("term-%1").arg(next)) || closing.contains(QStringLiteral("term-%1").arg(next))) ++next;
+    while (!free(QStringLiteral("term-%1").arg(next))) ++next;
     return QStringLiteral("term-%1").arg(next);
   }
   static Group* groupOf(Ui& of, const QString& id) {
@@ -238,12 +275,21 @@ struct Model {
     for (auto it = screens.begin(); it != screens.end();) it = keys.contains(it.key()) ? std::next(it) : screens.erase(it);
   }
 
+  bool isParked(const QString& key) const { return parked.value(threadOf(key)).contains(idOf(key)); }
+  // The shell prints: what the session sees of it, if it is attached.
+  void printed(const QString& key, const QString& data) {
+    mc[key].history += data;
+    if (!screens.contains(key)) return;
+    if (!isParked(key) || windows[key].take(int(data.size()))) screens[key] += data;
+  }
+
   // The route's thread or its checkout changed.
   void refresh(const QString& next) {
     if (next != thread || cwd(next) != placedCwd) {
       if (next != thread && attached && !tabs.isEmpty()) {
         parked[thread] = tabs;
         parkedCwd[thread] = placedCwd;
+        for (const QString& id : std::as_const(tabs)) windows[keyOf(thread, id)] = {};
       }
       tabs.clear();
       attached = false;
@@ -252,6 +298,10 @@ struct Model {
         if (parkedCwd.value(next) == cwd(next)) {
           attached = true;
           tabs = parked.value(next);
+          // Told it has read all it got, the MC sends what it held back as a snapshot.
+          for (const QString& id : std::as_const(tabs)) {
+            if (windows.value(keyOf(next, id)).behind) screens[keyOf(next, id)] = mc.value(keyOf(next, id)).history;
+          }
         }
         parked.remove(next);
         parkedCwd.remove(next);
@@ -295,7 +345,19 @@ struct Model {
   // The MC answered the user's close.
   void closed(const QString& key) {
     ui[threadOf(key)].closing.remove(idOf(key));
+    if (lagging) owed.insert(key);
     gone(key);
+  }
+
+  // The MC refused the terminal the user asked for: the drawer that opened for
+  // it stays if it has a terminal to show, and nothing else changed.
+  void refused() {
+    // The refused id was the next free one: focus left on a closed terminal of
+    // that id goes with it.
+    if (focused == nextId()) focused.clear();
+    ui[thread].open = true;
+    attached = true;
+    sync();
   }
 
   // The MC closed the terminal and said so. A close of the user's it has not
@@ -324,6 +386,7 @@ struct Model {
       out.activeGroup = group ? group->id : u.active;
     }
     for (const Group& group : u.groups) out.groupSizes.insert(group.id, int(group.terminals.size()));
+    out.drawerCount = int(ids(thread).size());
     return out;
   }
 
@@ -365,6 +428,22 @@ struct Sut {
   Terms terms;
   bool holding = false;
   QList<FakeMc::Rpc> held;
+  // Attaching does not open a terminal that is not there.
+  bool refuseOpen = false;
+  // The list as it was when it started to lag, and what it has held back since.
+  bool lagging = false;
+  QJsonObject lateList;
+  QList<QJsonObject> lagged;
+  // What each subscription has been sent and not heard back about.
+  struct SubWindow : Window {
+    QList<QPair<qint64, int>> pending;
+    qint64 sent = 0;
+    qint64 acked = -1;
+  };
+  QHash<int, SubWindow> windows;
+  // The output sequence of each terminal.
+  QHash<QString, qint64> sequences;
+  QStringList ackProblems;
   std::unique_ptr<ShellBridge> bridge;
   std::unique_ptr<NativeShell> native;
   std::unique_ptr<prop::ModelMirror> mirror;
@@ -372,6 +451,7 @@ struct Sut {
   QObject barrier;
 
   Sut() {
+    TerminalSession::setAckDelay(0);
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{{QStringLiteral("id"), QStringLiteral("p1")},
                                                          {QStringLiteral("title"), QStringLiteral("p1")},
                                                          {QStringLiteral("workspaceRoot"), kRoot},
@@ -384,18 +464,14 @@ struct Sut {
         mc.forget(id);
         return;
       }
-      QJsonArray list;
-      for (auto it = terms.cbegin(); it != terms.cend(); ++it) list.append(summary(it.key()));
-      mc.send({{QStringLiteral("t"), QStringLiteral("terminals")},
-               {QStringLiteral("id"), id},
-               {QStringLiteral("event"), QJsonObject{{QStringLiteral("type"), QStringLiteral("snapshot")}, {QStringLiteral("terminals"), list}}}});
+      mc.send({{QStringLiteral("t"), QStringLiteral("terminals")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), listEvent()}});
     });
     // HalC2.Terminal.attach: a terminal that is not there opens when the input has a cwd.
     mc.onShape(QStringLiteral("terminal"), [this](int id, const QJsonObject& shape) {
       const QJsonObject input = shape.value(QLatin1String("input")).toObject();
       const QString key = keyOf(input.value(QLatin1String("threadId")).toString(), input.value(QLatin1String("terminalId")).toString());
       if (!terms.contains(key)) {
-        if (!input.contains(QLatin1String("cwd"))) {
+        if (!input.contains(QLatin1String("cwd")) || refuseOpen) {
           mc.forget(id);
           mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("Unknown terminal")}});
           return;
@@ -403,11 +479,25 @@ struct Sut {
         terms.insert(key, {});
         sendTerminals({{QStringLiteral("type"), QStringLiteral("upsert")}, {QStringLiteral("terminal"), summary(key)}});
       }
-      QJsonObject snapshot = summary(key);
-      snapshot.insert(QStringLiteral("history"), terms.value(key).history);
-      mc.send({{QStringLiteral("t"), QStringLiteral("terminal")},
-               {QStringLiteral("id"), id},
-               {QStringLiteral("event"), QJsonObject{{QStringLiteral("type"), QStringLiteral("snapshot")}, {QStringLiteral("snapshot"), snapshot}}}});
+      if (!mc.subscriptions.last().value(QLatin1String("acks")).toBool()) ackProblems.append(key + QStringLiteral(" attached without acks"));
+      sendSnapshot(id, key, QStringLiteral("snapshot"));
+    });
+    mc.onFrame(QStringLiteral("ack"), [this](const QJsonObject& frame) {
+      const int id = frame.value(QLatin1String("id")).toInt();
+      const auto window = windows.find(id);
+      if (window == windows.end()) return;
+      const qint64 sequence = frame.value(QLatin1String("sequence")).toInteger();
+      if (sequence > window->sent) ackProblems.append(QStringLiteral("ack of %1, sent up to %2").arg(sequence).arg(window->sent));
+      if (sequence < window->acked) ackProblems.append(QStringLiteral("ack of %1 after %2").arg(sequence).arg(window->acked));
+      window->acked = sequence;
+      window->pending.removeIf([&](const QPair<qint64, int>& sent) {
+        if (sent.first > sequence) return false;
+        window->bytes -= sent.second;
+        return true;
+      });
+      if (!window->behind || !window->pending.isEmpty()) return;
+      const QJsonObject input = mc.shapeOf(id).value(QLatin1String("input")).toObject();
+      sendSnapshot(id, keyOf(input.value(QLatin1String("threadId")).toString(), input.value(QLatin1String("terminalId")).toString()), QStringLiteral("snapshot"));
     });
     mc.onRpc(QStringLiteral("terminal.close"), [this](const FakeMc::Rpc& rpc) {
       if (holding) {
@@ -432,6 +522,7 @@ struct Sut {
   }
 
   ~Sut() {
+    TerminalSession::setAckDelay();
     changed.reset();
     mirror.reset();
     native.reset();
@@ -492,6 +583,12 @@ struct Sut {
             {QStringLiteral("label"), term.label}};
   }
 
+  QJsonObject listEvent() const {
+    QJsonArray list;
+    for (auto it = terms.cbegin(); it != terms.cend(); ++it) list.append(summary(it.key()));
+    return {{QStringLiteral("type"), QStringLiteral("snapshot")}, {QStringLiteral("terminals"), list}};
+  }
+
   void sendTerminal(const QString& key, const QJsonObject& event) {
     for (const int id : mc.subscribers(QStringLiteral("terminal"))) {
       const QJsonObject input = mc.shapeOf(id).value(QLatin1String("input")).toObject();
@@ -499,7 +596,58 @@ struct Sut {
       mc.send({{QStringLiteral("t"), QStringLiteral("terminal")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), event}});
     }
   }
+  // A snapshot, or a restart's: it starts the subscription's window over.
+  void sendSnapshot(int id, const QString& key, const QString& type) {
+    const qint64 sequence = sequences.value(key);
+    SubWindow window;
+    window.pending = {{sequence, 0}};
+    window.sent = sequence;
+    windows.insert(id, window);
+    QJsonObject snapshot = summary(key);
+    snapshot.insert(QStringLiteral("history"), terms.value(key).history);
+    snapshot.insert(QStringLiteral("sequence"), sequence);
+    mc.send({{QStringLiteral("t"), QStringLiteral("terminal")},
+             {QStringLiteral("id"), id},
+             {QStringLiteral("event"), QJsonObject{{QStringLiteral("type"), type}, {QStringLiteral("snapshot"), snapshot}}}});
+  }
+  QList<int> subscribersOf(const QString& key) const {
+    QList<int> ids;
+    for (const int id : mc.subscribers(QStringLiteral("terminal"))) {
+      const QJsonObject input = mc.shapeOf(id).value(QLatin1String("input")).toObject();
+      if (keyOf(input.value(QLatin1String("threadId")).toString(), input.value(QLatin1String("terminalId")).toString()) == key) ids.append(id);
+    }
+    return ids;
+  }
+  // Output to whoever's window lets it through.
+  void output(const QString& key, const QString& data) {
+    const qint64 sequence = ++sequences[key];
+    const QJsonObject event{{QStringLiteral("type"), QStringLiteral("output")}, {QStringLiteral("data"), data}, {QStringLiteral("sequence"), sequence}};
+    for (const int id : subscribersOf(key)) {
+      SubWindow& window = windows[id];
+      if (!window.take(int(data.size()))) continue;
+      window.pending.append({sequence, int(data.size())});
+      window.sent = sequence;
+      mc.send({{QStringLiteral("t"), QStringLiteral("terminal")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), event}});
+    }
+  }
+  // The attached sessions the user sees have said they read everything.
+  bool settled(const Model& expected) const {
+    const QStringList live = expected.live();
+    for (const QString& key : live) {
+      if (expected.isParked(key)) continue;
+      for (const int id : subscribersOf(key)) {
+        const SubWindow window = windows.value(id);
+        if (!window.pending.isEmpty() || window.behind) return false;
+      }
+    }
+    return true;
+  }
+
   void sendTerminals(const QJsonObject& event) {
+    if (lagging) {
+      lagged.append(event);
+      return;
+    }
     for (const int id : mc.subscribers(QStringLiteral("terminals"))) {
       mc.send({{QStringLiteral("t"), QStringLiteral("terminals")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), event}});
     }
@@ -511,6 +659,9 @@ struct Sut {
   void close(const QString& key) {
     if (!terms.remove(key)) return;
     sendTerminal(key, {{QStringLiteral("type"), QStringLiteral("closed")}});
+    // A new process counts from nothing, and owes nothing.
+    sequences.remove(key);
+    for (const int id : subscribersOf(key)) windows.remove(id);
     sendTerminals({{QStringLiteral("type"), QStringLiteral("remove")},
                    {QStringLiteral("threadId"), threadOf(key)},
                    {QStringLiteral("terminalId"), idOf(key)}});
@@ -551,12 +702,26 @@ struct Sut {
 
   Facts facts() const {
     TerminalController* t = terminals();
-    return {t->threadKey(), t->isOpen(), t->activeTerminalId(), t->activeGroup(), t->groupSizes()};
+    return {t->threadKey(), t->isOpen(), t->activeTerminalId(), t->activeGroup(), t->groupSizes(), t->drawerCount()};
   }
 };
 
-void check(const Facts& before, const Model& expected, Sut& sut) {
+// `settles`: the command ends in one go. A refusal comes later than the command,
+// so what it undoes has been told too.
+void check(const Facts& before, const Model& expected, Sut& sut, bool settles = true) {
   RC_ASSERT(sut.sync());
+  RC_ASSERT(prop::until([&] { return sut.settled(expected); }));
+  RC_ASSERT(sut.sync());
+  RC_ASSERT(sut.ackProblems.isEmpty());
+  const QStringList live = expected.live();
+  for (const QString& key : live) {
+    if (!expected.isParked(key)) continue;
+    for (const int id : sut.subscribersOf(key)) {
+      const Sut::SubWindow window = sut.windows.value(id);
+      RC_ASSERT(window.bytes == expected.windows.value(key).bytes);
+      RC_ASSERT(window.behind == expected.windows.value(key).behind);
+    }
+  }
   RC_ASSERT(sut.terms == expected.mc);
   TerminalController* t = sut.terminals();
   RC_ASSERT(t->available());
@@ -570,7 +735,7 @@ void check(const Facts& before, const Model& expected, Sut& sut) {
   RC_ASSERT(!now.open || ids.contains(now.active));
   // The MC attaches what the client shows and keeps, nothing else.
   RC_ASSERT(sut.attached() == expected.live());
-  RC_ASSERT(sut.changed->count() == (before == now ? 0 : 1));
+  if (settles) RC_ASSERT(sut.changed->count() == (before == now ? 0 : 1));
   sut.changed->clear();
   const QStringList problems = sut.mirror->problems();
   RC_ASSERT(problems.isEmpty());
@@ -720,6 +885,67 @@ struct Close : Step<Close> {
   void show(std::ostream& os) const override { os << "close " << (id.isEmpty() ? std::string("the focused one") : id.toStdString()); }
 };
 
+// The user asks for a terminal and the MC refuses it.
+template <typename Self>
+struct Refused : Command {
+  void run(const Model& before, Sut& sut) const override {
+    Model expected = before;
+    apply(expected);
+    sut.refuseOpen = true;
+    static_cast<const Self*>(this)->act(before, sut);
+    RC_ASSERT(sut.sync());
+    sut.refuseOpen = false;
+    check(before.facts(), expected, sut, false);
+  }
+};
+
+struct RefusedFirst : Refused<RefusedFirst> {
+  explicit RefusedFirst(const Model& model) { RC_PRE(allowed(model)); }
+  static bool allowed(const Model& model) { return !model.ui.value(model.thread).open && model.ids(model.thread).isEmpty(); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(allowed(model)); }
+  void apply(Model& model) const override { model.refused(); }
+  void act(const Model&, Sut& sut) const { sut.bridge->dispatch(QStringLiteral("terminal.toggle")); }
+  void show(std::ostream& os) const override { os << "toggle the drawer, and the MC refuses its first terminal"; }
+};
+
+struct RefusedNew : Refused<RefusedNew> {
+  explicit RefusedNew(const Model&) {}
+  void apply(Model& model) const override {
+    if (model.ids(model.thread).size() < TerminalController::maxTerminals) model.refused();
+  }
+  void act(const Model&, Sut& sut) const { sut.bridge->dispatch(QStringLiteral("terminal.new")); }
+  void show(std::ostream& os) const override { os << "new terminal, and the MC refuses it"; }
+};
+
+struct RefusedSplit : Refused<RefusedSplit> {
+  QString id = *rc::gen::weightedOneOf<QString>({{2, rc::gen::just(QString())}, {3, oneOf(kIds)}});
+  bool vertical = *rc::gen::arbitrary<bool>();
+  explicit RefusedSplit(const Model&) {}
+  void apply(Model& model) const override {
+    Ui& u = model.ui[model.thread];
+    const QStringList ids = model.ids(model.thread);
+    const QString target = ids.contains(id) ? id : ids.contains(model.focused) ? model.focused : u.active;
+    if (ids.isEmpty()) {
+      ++model.groupCount;
+      model.refused();
+      return;
+    }
+    if (target.isEmpty() || !ids.contains(target)) return;
+    const Group* group = Model::groupOf(u, target);
+    if ((group && group->terminals.size() >= TerminalController::maxPerGroup) || ids.size() >= TerminalController::maxTerminals) return;
+    if (!group) ++model.groupCount;
+    model.refused();
+  }
+  void act(const Model&, Sut& sut) const {
+    QVariantMap payload;
+    if (!id.isEmpty()) payload.insert(QStringLiteral("terminalId"), id);
+    sut.bridge->dispatch(vertical ? QStringLiteral("terminal.splitVertical") : QStringLiteral("terminal.split"), payload);
+  }
+  void show(std::ostream& os) const override {
+    os << (vertical ? "split under " : "split beside ") << (id.isEmpty() ? std::string("the focused one") : id.toStdString()) << ", and the MC refuses it";
+  }
+};
+
 // --- The MC -------------------------------------------------------------------------
 
 struct Hold : Step<Hold> {
@@ -728,6 +954,48 @@ struct Hold : Step<Hold> {
   void apply(Model& model) const override { model.holding = holding; }
   void act(const Model&, Sut& sut) const { sut.holding = holding; }
   void show(std::ostream& os) const override { os << (holding ? "the MC holds closes" : "the MC answers closes"); }
+};
+
+// The MC's list falls behind. Only what the user did is held back: what others
+// do would rightly show late.
+struct Lag : Step<Lag> {
+  explicit Lag(const Model& model) { RC_PRE(!model.lagging); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.lagging); }
+  void apply(Model& model) const override { model.lagging = true; }
+  void act(const Model&, Sut& sut) const {
+    sut.lateList = sut.listEvent();
+    sut.lagging = true;
+  }
+  void show(std::ostream& os) const override { os << "the MC's list of terminals lags"; }
+};
+
+// The list from before the lag arrives, well ahead of what has happened since.
+struct LateList : Step<LateList> {
+  explicit LateList(const Model& model) { RC_PRE(model.lagging); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.lagging); }
+  void apply(Model&) const override {}
+  void act(const Model&, Sut& sut) const {
+    for (const int id : sut.mc.subscribers(QStringLiteral("terminals"))) {
+      sut.mc.send({{QStringLiteral("t"), QStringLiteral("terminals")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), sut.lateList}});
+    }
+  }
+  void show(std::ostream& os) const override { os << "the MC's list from before the lag arrives"; }
+};
+
+// It catches up, in order.
+struct CatchUp : Step<CatchUp> {
+  explicit CatchUp(const Model& model) { RC_PRE(model.lagging); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.lagging); }
+  void apply(Model& model) const override {
+    model.lagging = false;
+    model.owed.clear();
+  }
+  void act(const Model&, Sut& sut) const {
+    sut.lagging = false;
+    for (const QJsonObject& event : std::as_const(sut.lagged)) sut.sendTerminals(event);
+    sut.lagged.clear();
+  }
+  void show(std::ostream& os) const override { os << "the MC's list catches up"; }
 };
 
 struct AnswerClose : Step<AnswerClose> {
@@ -751,8 +1019,8 @@ struct Pick {
 
 struct Elsewhere : Step<Elsewhere> {
   QString thread = *oneOf(kThreads);
-  explicit Elsewhere(const Model& model) { RC_PRE(model.terminalsOf(thread).size() < kIds.size()); }
-  void checkPreconditions(const Model& model) const override { RC_PRE(model.terminalsOf(thread).size() < kIds.size()); }
+  explicit Elsewhere(const Model& model) { RC_PRE(!model.lagging && model.terminalsOf(thread).size() < kIds.size()); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.lagging && model.terminalsOf(thread).size() < kIds.size()); }
   QString id(const Model& model) const {
     const QStringList taken = model.terminalsOf(thread);
     int next = 1;
@@ -774,8 +1042,8 @@ struct Elsewhere : Step<Elsewhere> {
 struct Rename : Step<Rename>, Pick {
   QString label = *oneOf(kLabels);
   bool busy = *rc::gen::arbitrary<bool>();
-  explicit Rename(const Model& model) { RC_PRE(model.mc.contains(key())); }
-  void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.contains(key())); }
+  explicit Rename(const Model& model) { RC_PRE(!model.lagging && model.mc.contains(key())); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.lagging && model.mc.contains(key())); }
   void apply(Model& model) const override {
     model.mc[key()].label = label;
     model.mc[key()].busy = busy;
@@ -792,8 +1060,8 @@ struct Rename : Step<Rename>, Pick {
 };
 
 struct CloseElsewhere : Step<CloseElsewhere>, Pick {
-  explicit CloseElsewhere(const Model& model) { RC_PRE(model.mc.contains(key())); }
-  void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.contains(key())); }
+  explicit CloseElsewhere(const Model& model) { RC_PRE(!model.lagging && model.mc.contains(key())); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.lagging && model.mc.contains(key())); }
   void apply(Model& model) const override { model.gone(key()); }
   void act(const Model&, Sut& sut) const { sut.close(key()); }
   void show(std::ostream& os) const override { os << "another client closes " << key().toStdString(); }
@@ -806,14 +1074,33 @@ struct Print : Step<Print>, Pick {
   void apply(Model& model) const override {
     const QString printed = data(model);
     ++model.serial;
-    model.mc[key()].history += printed;
-    if (model.screens.contains(key())) model.screens[key()] += printed;
+    model.printed(key(), printed);
   }
   void act(const Model& before, Sut& sut) const {
     sut.terms[key()].history += data(before);
-    sut.sendTerminal(key(), {{QStringLiteral("type"), QStringLiteral("output")}, {QStringLiteral("data"), data(before)}});
+    sut.output(key(), data(before));
   }
   void show(std::ostream& os) const override { os << key().toStdString() << " prints"; }
+};
+
+// More in one go than the window lets through without an ack in between.
+struct Flood : Step<Flood>, Pick {
+  explicit Flood(const Model& model) { RC_PRE(model.mc.contains(key()) && !model.mc.value(key()).exited); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.contains(key()) && !model.mc.value(key()).exited); }
+  static QString chunk() { return QString(kWindow / 2 + 2, QLatin1Char('x')) + QStringLiteral("\r\n"); }
+  void apply(Model& model) const override {
+    const bool wasParked = model.isParked(key());
+    for (int n = 0; n < 4; ++n) model.printed(key(), chunk());
+    // A session that reads as it goes ends up with all of it, one way or another.
+    if (!wasParked && model.screens.contains(key())) model.screens[key()] = model.mc.value(key()).history;
+  }
+  void act(const Model&, Sut& sut) const {
+    for (int n = 0; n < 4; ++n) {
+      sut.terms[key()].history += chunk();
+      sut.output(key(), chunk());
+    }
+  }
+  void show(std::ostream& os) const override { os << key().toStdString() << " floods"; }
 };
 
 // Output of a terminal the MC no longer has, sent before its close.
@@ -822,7 +1109,7 @@ struct LateOutput : Step<LateOutput>, Pick {
   void checkPreconditions(const Model& model) const override { RC_PRE(!model.mc.contains(key())); }
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const {
-    sut.sendTerminal(key(), {{QStringLiteral("type"), QStringLiteral("output")}, {QStringLiteral("data"), QStringLiteral("late\r\n")}});
+    sut.output(key(), QStringLiteral("late\r\n"));
   }
   void show(std::ostream& os) const override { os << "late output of " << key().toStdString(); }
 };
@@ -850,13 +1137,13 @@ struct Restart : Step<Restart>, Pick {
     model.mc[key()].history = kPrompt;
     model.mc[key()].exited = false;
     if (model.screens.contains(key())) model.screens[key()] = kPrompt;
+    model.windows.remove(key());
   }
   void act(const Model&, Sut& sut) const {
     sut.terms[key()].history = kPrompt;
     sut.terms[key()].exited = false;
-    QJsonObject snapshot = sut.summary(key());
-    snapshot.insert(QStringLiteral("history"), kPrompt);
-    sut.sendTerminal(key(), {{QStringLiteral("type"), QStringLiteral("restarted")}, {QStringLiteral("snapshot"), snapshot}});
+    sut.sequences[key()] = 0;
+    for (const int id : sut.subscribersOf(key())) sut.sendSnapshot(id, key(), QStringLiteral("restarted"));
   }
   void show(std::ostream& os) const override { os << key().toStdString() << " restarts"; }
 };
@@ -884,9 +1171,14 @@ struct Drop : Step<Drop> {
   void apply(Model& model) const override {
     for (const QString& key : std::as_const(model.held)) model.closed(key);
     model.held.clear();
+    model.lagging = false;
+    model.owed.clear();
     for (auto it = model.screens.begin(); it != model.screens.end(); ++it) it.value() = model.mc.value(it.key()).history;
+    model.windows.clear();
   }
   void act(const Model&, Sut& sut) const {
+    sut.lagging = false;
+    sut.lagged.clear();
     sut.mc.drop();
     for (const FakeMc::Rpc& rpc : std::as_const(sut.held)) sut.close(Sut::keyOfRpc(rpc));
     sut.held.clear();
@@ -908,8 +1200,33 @@ private slots:
       // unasked costs a delayed ACK (~40 ms) before the next barrier returns.
       const auto commands = *rc::gen::scale(
           0.5, rc::state::gen::commands(Model(), rc::state::gen::execOneOfWithArgs<Show, Show, Toggle, New, New, Select, Focus, Split, Close,
-                                                                                    Close, Hold, AnswerClose, Elsewhere, Rename, CloseElsewhere,
-                                                                                    Print, LateOutput, Exit, Restart, Move, Drop>()));
+                                                                                    Close, RefusedFirst, RefusedNew, RefusedSplit, Hold, AnswerClose,
+                                                                                    Lag, LateList, CatchUp, Elsewhere, Rename, CloseElsewhere, Print, LateOutput,
+                                                                                    Flood, Exit, Restart, Move, Drop>()));
+      rc::state::runAll(commands, Model(), sut);
+    }));
+  }
+
+  // Reaching a full window takes a parked terminal and a lot of output, which the
+  // whole mix above rarely gets to.
+  void acks() {
+    QVERIFY(rc::check("output is acknowledged as it is read, and a parked terminal stops at the window", [] {
+      Sut sut;
+      const auto commands = *rc::gen::scale(
+          0.5, rc::state::gen::commands(Model(), rc::state::gen::execOneOfWithArgs<Show, Show, Show, Toggle, New, Close, Print, Print, Flood, Flood, Flood,
+                                                                                    Exit, Restart, Drop>()));
+      rc::state::runAll(commands, Model(), sut);
+    }));
+  }
+
+  // The races of a lagging list need a close and an open inside one lag, which
+  // the whole mix above rarely gets to.
+  void lateLists() {
+    QVERIFY(rc::check("a lagging list changes nothing the user sees", [] {
+      Sut sut;
+      const auto commands = *rc::gen::scale(
+          0.5, rc::state::gen::commands(Model(), rc::state::gen::execOneOfWithArgs<Toggle, New, New, Split, Close, Close, RefusedNew, Hold, AnswerClose,
+                                                                                    Lag, Lag, LateList, CatchUp>()));
       rc::state::runAll(commands, Model(), sut);
     }));
   }

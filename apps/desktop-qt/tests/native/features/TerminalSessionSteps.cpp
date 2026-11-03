@@ -4,7 +4,15 @@
 // bricks the user reaches it through.
 
 #include <QJsonObject>
+#include <QPointer>
 #include <QTest>
+
+// Nothing makes the real engine fail and its `error` is read-only, while Qt
+// resolves `Terminal` to this registered type ahead of the test double: only
+// what createTerminal() does when it fails can stand in for the failure.
+#define private public
+#include <GhosttyTerminal.h>
+#undef private
 
 #include "Brick.h"
 #include "FakeTerminals.h"
@@ -27,9 +35,29 @@ struct SessionWorld {
   int attaches = 0;
   QJsonObject scriptLaunch;
   int windowHeight = 0;
+  // The window shrank: the drawer is pulled in, and the height the user chose stays.
+  bool windowShrunk = false;
+  int resizes = 0;
 };
 
 const QString kWorktree = QStringLiteral("/work/p1-wt");
+const QString kTerm = QStringLiteral("term-1");
+
+struct AckWorld {
+  // The acks heard before what a step counts.
+  qsizetype marked = 0;
+  // The terminal looked at, and its thread if the user has left it.
+  QString key;
+  QString thread;
+  // The Terminal whose engine failed.
+  QPointer<QQuickItem> engine;
+  ~AckWorld() { TerminalSession::setAckDelay(); }
+};
+
+QString shownOrLeft(World& world) {
+  const QString key = world.mc.part<AckWorld>().key;
+  return key.isEmpty() ? shownThread(world) + QLatin1Char('/') + kTerm : key;
+}
 const QString kBuild = QStringLiteral("building cart… 42 modules");
 
 TerminalController* terminals(World& world) {
@@ -155,8 +183,39 @@ const Steps steps([] {
   });
   step(QStringLiteral("the terminal is (\\d+) pixels tall"), [](World& world, const Captures& c, const Table&) {
     QQuickItem* drawer = world.brick->item(QStringLiteral("drawer"));
-    world.waitFor([&] { return int(drawer->height()) == c[0].toInt() && terminals(world)->height() == c[0].toInt(); },
+    const bool shrunk = world.mc.part<SessionWorld>().windowShrunk;
+    world.waitFor([&] { return int(drawer->height()) == c[0].toInt() && (shrunk || terminals(world)->height() == c[0].toInt()); },
                   [&] { return QStringLiteral("the drawer to be %1 tall; it is %2 and the shell keeps %3").arg(c[0]).arg(drawer->height()).arg(terminals(world)->height()); });
+  });
+
+  step(QStringLiteral("the terminal is showing (\\d+) pixels tall in a window (\\d+) pixels tall"), [](World& world, const Captures& c, const Table&) {
+    openDrawer(world);
+    world.bridge().dispatch(QStringLiteral("terminal.resize"), QVariantMap{{QStringLiteral("height"), c[0].toInt()}});
+    world.waitFor([&] { return terminals(world)->height() == c[0].toInt(); }, QStringLiteral("the terminal's height to be kept"));
+    QQuickItem* drawer = drawerBrick(world, c[1].toInt()).item(QStringLiteral("drawer"));
+    world.waitFor([&] { return int(drawer->height()) == c[0].toInt(); }, [&] { return QStringLiteral("the drawer is %1 tall").arg(drawer->height()); });
+    QQuickItem* terminal = world.brick->item(QStringLiteral("HalC2Terminal"));
+    const int rows = terminal->property("rows").toInt();
+    world.waitFor([&] {
+      const auto resize = lastTerminalCall(world, QStringLiteral("terminal.resize"), shownThread(world), QStringLiteral("term-1"));
+      return resize && resize->value(QLatin1String("rows")).toInt() == rows;
+    }, [&] { return QStringLiteral("the shell at %1 rows; the MC got %2").arg(rows).arg(describeTerminalCalls(world)); });
+    world.mc.part<SessionWorld>().resizes = rows;
+  });
+  step(QStringLiteral("the user shrinks the window to (\\d+) pixels tall"), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<SessionWorld>().windowShrunk = true;
+    Brick& brick = *world.brick;
+    brick.window().resize(brick.window().width(), c[0].toInt());
+    brick.root()->setHeight(c[0].toInt());
+    world.sync();
+  });
+  step(QStringLiteral("the terminal's shell is resized to match"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* terminal = world.brick->item(QStringLiteral("HalC2Terminal"));
+    world.waitFor([&] {
+      const auto resize = lastTerminalCall(world, QStringLiteral("terminal.resize"), shownThread(world), QStringLiteral("term-1"));
+      const int rows = terminal->property("rows").toInt();
+      return rows < world.mc.part<SessionWorld>().resizes && resize && resize->value(QLatin1String("rows")).toInt() == rows;
+    }, [&] { return QStringLiteral("the shell at %1 rows; the MC got %2").arg(terminal->property("rows").toInt()).arg(describeTerminalCalls(world)); });
   });
 
   step(QStringLiteral("the terminal shows the output of a running build"), [](World& world, const Captures&, const Table&) {
@@ -355,6 +414,140 @@ const Steps steps([] {
                  .arg(QString::fromUtf8(QJsonDocument(launch).toJson(QJsonDocument::Compact)), QString::fromUtf8(QJsonDocument(script).toJson(QJsonDocument::Compact))));
     }
     expect(launch.value(QLatin1String("cwd")) == kWorktree, QStringLiteral("term-2 started in %1").arg(launch.value(QLatin1String("cwd")).toString()));
+  });
+
+  // Saying what was read (terminal/io.feature): the fake MC's output window.
+  const auto ackedAll = [](World& world) {
+    const QString key = shownOrLeft(world);
+    const FakeTerminals& fake = world.mc.part<FakeTerminals>();
+    const FakeTerminals::Window* window = terminalWindow(world.mc, key);
+    return window && window->pending.isEmpty() && !fake.acks.isEmpty();
+  };
+  step(QStringLiteral("saying what was read waits as long as it can"), [](World& world, const Captures&, const Table&) {
+    const QString key = shownThread(world) + QLatin1Char('/') + kTerm;
+    world.waitFor([&] { return terminalWindow(world.mc, key)->pending.isEmpty(); }, QStringLiteral("the MC to hear of the output so far"));
+    world.mc.part<AckWorld>().marked = world.mc.part<FakeTerminals>().acks.size();
+    TerminalSession::setAckDelay(3600000);
+  });
+  step(QStringLiteral("the shell prints a little, five times"), [](World& world, const Captures&, const Table&) {
+    for (int chunk = 0; chunk < 5; ++chunk) print(world.mc, shownThread(world), kTerm, QStringLiteral("chunk %1\r\n").arg(chunk));
+    world.waitFor([&] { return terminalSession(world, kTerm)->transcript().contains(QLatin1String("chunk 4")); }, QStringLiteral("the output to arrive"));
+  });
+  step(QStringLiteral("the shell prints a little"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    world.mc.part<AckWorld>().key = shownThread(world) + QLatin1Char('/') + kTerm;
+    print(world.mc, shownThread(world), kTerm, QStringLiteral("a little\r\n"));
+  });
+  step(QStringLiteral("the MC has heard nothing about that output yet"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const qsizetype acks = world.mc.part<FakeTerminals>().acks.size() - world.mc.part<AckWorld>().marked;
+    expect(acks == 0, QStringLiteral("the MC heard %1 times").arg(acks));
+  });
+  step(QStringLiteral("the shell prints 20 KiB more"), [](World& world, const Captures&, const Table&) {
+    print(world.mc, shownThread(world), kTerm, QString(20 * 1024, QLatin1Char('x')) + QStringLiteral("\r\n"));
+  });
+  step(QStringLiteral("the MC hears once that all of it has been read"), [ackedAll](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return ackedAll(world); }, QStringLiteral("the MC to hear"));
+    world.sync();
+    const FakeTerminals& fake = world.mc.part<FakeTerminals>();
+    expect(fake.acks.size() - world.mc.part<AckWorld>().marked == 1, QStringLiteral("the MC heard %1 times").arg(fake.acks.size() - world.mc.part<AckWorld>().marked));
+    const qint64 printed = fake.terminals.value(shownOrLeft(world)).sequence;
+    expect(fake.acks.last().value(QLatin1String("sequence")).toInteger() == printed, QStringLiteral("the MC heard of an earlier chunk than %1").arg(printed));
+  });
+  step(QStringLiteral("the MC hears that all of it has been read"), [ackedAll](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return ackedAll(world); }, [&] { return QStringLiteral("the MC to hear; it has heard %1 times").arg(world.mc.part<FakeTerminals>().acks.size()); });
+  });
+  step(QStringLiteral("the user hides the terminal drawer"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("terminal.toggle"));
+    world.sync();
+    expect(!world.native().controller<TerminalController>()->isOpen(), QStringLiteral("the drawer is still open"));
+  });
+  step(QStringLiteral("the connection to the MC drops and comes back"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    world.mc.part<AckWorld>().marked = world.mc.part<FakeTerminals>().acks.size();
+    const qsizetype subscribed = world.mc.subscriptions.size();
+    world.mc.drop();
+    world.waitFor([&] { return world.mc.subscriptions.size() > subscribed && !attached(world.mc).isEmpty(); }, QStringLiteral("the terminal to attach again"));
+    world.sync();
+  });
+  step(QStringLiteral("the terminal asks again to say what it has read"), [](World& world, const Captures&, const Table&) {
+    expect(terminalWindow(world.mc, shownThread(world) + QLatin1Char('/') + kTerm) != nullptr, QStringLiteral("the attach asked for no window"));
+  });
+  step(QStringLiteral("the MC hears once, of the new snapshot"), [](World& world, const Captures&, const Table&) {
+    const QString key = shownThread(world) + QLatin1Char('/') + kTerm;
+    world.waitFor([&] { return terminalWindow(world.mc, key)->pending.isEmpty(); }, QStringLiteral("the MC to hear of the snapshot"));
+    world.sync();
+    const FakeTerminals& fake = world.mc.part<FakeTerminals>();
+    expect(fake.acks.size() - world.mc.part<AckWorld>().marked == 1, QStringLiteral("the MC heard %1 times").arg(fake.acks.size() - world.mc.part<AckWorld>().marked));
+  });
+  step(QStringLiteral("the user goes to another thread"), [](World& world, const Captures&, const Table&) {
+    AckWorld& acks = world.mc.part<AckWorld>();
+    acks.key = shownThread(world) + QLatin1Char('/') + kTerm;
+    acks.thread = shownThread(world);
+    world.waitFor([&] { return terminalWindow(world.mc, acks.key)->pending.isEmpty(); }, QStringLiteral("the MC to hear of the output so far"));
+    const QString other = QStringLiteral("elsewhere");
+    QJsonObject row = world.mc.threads.value(acks.thread);
+    row.insert(QStringLiteral("id"), other);
+    world.mc.threads.insert(other, row);
+    world.mc.sendRow(other, row);
+    world.native().controller<NavigationController>()->open(NavigationController::Route::thread(world.mc.environmentId + QLatin1Char(':') + other));
+    world.waitFor([&] { return shownThread(world) == other; }, QStringLiteral("the other thread to show"));
+    world.sync();
+  });
+  step(QStringLiteral("the shell prints more than the MC sends a client that has not read it"), [](World& world, const Captures&, const Table&) {
+    AckWorld& acks = world.mc.part<AckWorld>();
+    world.sync();
+    acks.marked = world.mc.part<FakeTerminals>().acks.size();
+    for (int chunk = 0; chunk < 5; ++chunk) print(world.mc, acks.thread, kTerm, QString(20 * 1024, QLatin1Char('x')) + QStringLiteral("\r\n"));
+    print(world.mc, acks.thread, kTerm, QStringLiteral("the very last line\r\n"));
+    world.sync();
+  });
+  step(QStringLiteral("the MC holds the rest back"), [](World& world, const Captures&, const Table&) {
+    AckWorld& acks = world.mc.part<AckWorld>();
+    expect(terminalWindow(world.mc, acks.key)->behind, QStringLiteral("everything went out: the parked terminal said it had read it"));
+    expect(world.mc.part<FakeTerminals>().acks.size() == acks.marked, QStringLiteral("the parked terminal said what it read"));
+  });
+  step(QStringLiteral("the terminal stays attached"), [](World& world, const Captures&, const Table&) {
+    expect(attached(world.mc).contains(world.mc.part<AckWorld>().key), attached(world.mc).join(QLatin1Char(' ')));
+  });
+  step(QStringLiteral("the user returns to the terminal's thread"), [](World& world, const Captures&, const Table&) {
+    const QString thread = world.mc.part<AckWorld>().thread;
+    world.native().controller<NavigationController>()->open(NavigationController::Route::thread(world.mc.environmentId + QLatin1Char(':') + thread));
+    world.waitFor([&] { return shownThread(world) == thread; }, QStringLiteral("the thread to show again"));
+  });
+  step(QStringLiteral("the terminal has everything the shell printed"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return terminalSession(world, kTerm)->transcript().contains(QLatin1String("the very last line")); },
+                  QStringLiteral("what the MC held back"));
+  });
+  step(QStringLiteral("the MC holds nothing back"), [](World& world, const Captures&, const Table&) {
+    const QString key = world.mc.part<AckWorld>().key;
+    world.waitFor([&] { return !terminalWindow(world.mc, key)->behind && terminalWindow(world.mc, key)->pending.isEmpty(); }, QStringLiteral("the MC to hear of the snapshot"));
+  });
+
+  step(QStringLiteral("the terminal's rendering engine cannot start"), [](World& world, const Captures&, const Table&) {
+    ensureProject(world);
+    ensureThread(world);
+  });
+  step(QStringLiteral("the user opens a terminal"), [](World& world, const Captures&, const Table&) {
+    auto* terminal = qobject_cast<GhosttyTerminalItem*>(drawnTerminal(world));
+    expect(terminal != nullptr, QStringLiteral("the drawer has no Terminal"));
+    world.mc.part<AckWorld>().engine = terminal;
+    terminal->setError(QStringLiteral("Could not create a terminal"));
+  });
+  step(QStringLiteral("the terminal says why, followed by %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* said = world.brick->item(QStringLiteral("terminalEngineError"));
+    const QString text = said->property("text").toString();
+    expect(said->isVisible() && text == QStringLiteral("Could not create a terminal: ") + c[0], QStringLiteral("the terminal says \"%1\"").arg(text));
+  });
+  step(QStringLiteral("the user closes the terminal and opens it again"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("terminal.close"));
+    confirmTerminalClose(world);
+    world.waitFor([&] { return world.mc.part<AckWorld>().engine.isNull(); }, QStringLiteral("the failed engine to go"));
+    world.bridge().dispatch(QStringLiteral("terminal.toggle"));
+    world.waitFor([&] { return !visibleItems(world, QStringLiteral("HalC2Terminal")).isEmpty(); }, [&] { return describeRows(world); });
+  });
+  step(QStringLiteral("the terminal tries to start the engine again"), [](World& world, const Captures&, const Table&) {
+    expect(!world.brick->item(QStringLiteral("terminalEngineError"))->isVisible(), QStringLiteral("the new Terminal still says it failed"));
   });
 });
 

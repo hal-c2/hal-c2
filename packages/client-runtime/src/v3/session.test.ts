@@ -90,6 +90,83 @@ describe("makeV3Session", () => {
     }),
   );
 
+  describe("a terminal attached with acks", () => {
+    const attach = { threadId: "thread-1", terminalId: "term-1" };
+
+    /** A socket whose MC answers an attach with one frame, recording what was asked. */
+    function terminalSocket() {
+      const { socket, calls: _calls } = socketAnswering(async () => null);
+      const acks: number[] = [];
+      const shapes: Array<{ readonly acknowledged: boolean; readonly shape: unknown }> = [];
+      const answer = (shape: { readonly type: string }, listener: (frame: ShapeFrame) => void) =>
+        queueMicrotask(() =>
+          listener(
+            shape.type === "terminal"
+              ? { t: "terminal", event: { type: "output", data: "x", sequence: 1 } }
+              : { t: "config", mc: "hal_c2@here", config: CONFIG },
+          ),
+        );
+      socket.subscribe = ((shape: { readonly type: string }, listener: never) => {
+        if (shape.type === "terminal") shapes.push({ acknowledged: false, shape });
+        answer(shape, listener);
+        return () => {};
+      }) as never;
+      socket.subscribeAcknowledged = ((shape: never, listener: never) => {
+        shapes.push({ acknowledged: true, shape });
+        answer(shape, listener);
+        return { unsubscribe: () => {}, ack: (sequence: number) => acks.push(sequence) };
+      }) as never;
+      return { socket, acks, shapes };
+    }
+
+    const inputOf = (shape: unknown) => (shape as { readonly input: object }).input;
+
+    it.effect("acknowledges on the attach while it lasts, and asks the MC for no acks field", () =>
+      Effect.gen(function* () {
+        const { socket, acks, shapes } = terminalSocket();
+        const session = yield* makeV3Session({ socket, environmentId: ENVIRONMENT });
+        const stream = session.client[WS_METHODS.terminalAttach]({
+          ...attach,
+          acks: true,
+        } as never) as unknown as Stream.Stream<unknown>;
+
+        yield* stream.pipe(
+          Stream.take(1),
+          Stream.runForEach(() =>
+            Effect.sync(() => session.ackTerminal?.(attach.threadId, attach.terminalId, 1)),
+          ),
+        );
+        expect(acks).toEqual([1]);
+        expect(shapes).toHaveLength(1);
+        expect(shapes[0]!.acknowledged).toBe(true);
+        expect(inputOf(shapes[0]!.shape)).toEqual(attach);
+
+        // The attach has ended, and an ack still on its way goes nowhere.
+        session.ackTerminal?.(attach.threadId, attach.terminalId, 2);
+        expect(acks).toEqual([1]);
+      }),
+    );
+
+    it.effect("leaves an attach without acks to be sent everything", () =>
+      Effect.gen(function* () {
+        const { socket, acks, shapes } = terminalSocket();
+        const session = yield* makeV3Session({ socket, environmentId: ENVIRONMENT });
+        const stream = session.client[WS_METHODS.terminalAttach](
+          attach as never,
+        ) as unknown as Stream.Stream<unknown>;
+
+        yield* stream.pipe(
+          Stream.take(1),
+          Stream.runForEach(() =>
+            Effect.sync(() => session.ackTerminal?.(attach.threadId, attach.terminalId, 1)),
+          ),
+        );
+        expect(shapes.map((shape) => shape.acknowledged)).toEqual([false]);
+        expect(acks).toEqual([]);
+      }),
+    );
+  });
+
   it.effect("follows who else is on a page, by the page's own shape", () =>
     Effect.gen(function* () {
       const shapes: Array<{ readonly type: string }> = [];

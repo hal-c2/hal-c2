@@ -171,7 +171,7 @@ defmodule HalC2.TerminalTest do
 
       # Opening an exited terminal starts a fresh shell.
       assert {:ok, %{"status" => "running"}} = Terminal.open(input)
-      assert_receive {:hal_c2_terminal, _, %{"type" => "snapshot"}}
+      assert_receive {:hal_c2_terminal, _, %{"type" => "restarted"}}
     end
 
     test "scrollback survives the terminal closing, unless deleted", %{input: input} do

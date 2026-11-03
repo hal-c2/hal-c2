@@ -6,8 +6,10 @@
 #include <QJsonObject>
 #include <QMap>
 
+#include <functional>
 #include <optional>
 
+#include "Brick.h"
 #include "ComposerBrick.h"
 #include "DraftController.h"
 #include "NavigationController.h"
@@ -64,17 +66,67 @@ void addTerminal(FakeMc& mc, const QString& threadId, const QString& terminalId,
 
 void print(FakeMc& mc, const QString& threadId, const QString& terminalId, const QString& data) {
   const QString key = threadId + QLatin1Char('/') + terminalId;
-  mc.part<FakeTerminals>().terminals[key].history += data;
-  sendTerminal(mc, key, {{QStringLiteral("type"), QStringLiteral("output")}, {QStringLiteral("data"), data}});
+  FakeTerminals& fake = mc.part<FakeTerminals>();
+  FakeTerminals::Terminal& terminal = fake.terminals[key];
+  terminal.history += data;
+  ++terminal.sequence;
+  const QJsonObject event{{QStringLiteral("type"), QStringLiteral("output")}, {QStringLiteral("data"), data}, {QStringLiteral("sequence"), terminal.sequence}};
+  for (const int id : mc.subscribers(QStringLiteral("terminal"))) {
+    if (terminalKey(mc.shapeOf(id).value(QLatin1String("input")).toObject()) != key) continue;
+    if (const auto window = fake.windows.find(id); window != fake.windows.end()) {
+      if (window->bytes >= FakeTerminals::kWindowLimit) {
+        window->behind = true;
+        continue;
+      }
+      const qsizetype size = data.toUtf8().size();
+      window->pending.append({terminal.sequence, size});
+      window->bytes += size;
+    }
+    mc.send({{QStringLiteral("t"), QStringLiteral("terminal")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), event}});
+  }
+}
+
+FakeTerminals::Window* terminalWindow(FakeMc& mc, const QString& key) {
+  for (const int id : mc.subscribers(QStringLiteral("terminal"))) {
+    if (terminalKey(mc.shapeOf(id).value(QLatin1String("input")).toObject()) != key) continue;
+    if (const auto window = mc.part<FakeTerminals>().windows.find(id); window != mc.part<FakeTerminals>().windows.end()) return &*window;
+  }
+  return nullptr;
+}
+
+// The terminal as it is now; a window restarts here, and counts its history.
+void sendSnapshot(FakeMc& mc, int id, const QString& key) {
+  FakeTerminals& fake = mc.part<FakeTerminals>();
+  const FakeTerminals::Terminal& terminal = fake.terminals[key];
+  QJsonObject snapshot = terminal.summary;
+  snapshot.insert(QStringLiteral("history"), terminal.history);
+  snapshot.insert(QStringLiteral("sequence"), terminal.sequence);
+  if (const auto window = fake.windows.find(id); window != fake.windows.end()) {
+    // A snapshot starts the window over: to be acknowledged, but not counted.
+    *window = {{{terminal.sequence, 0}}, 0, false};
+  }
+  mc.send({{QStringLiteral("t"), QStringLiteral("terminal")},
+           {QStringLiteral("id"), id},
+           {QStringLiteral("event"), QJsonObject{{QStringLiteral("type"), QStringLiteral("snapshot")}, {QStringLiteral("snapshot"), snapshot}}}});
 }
 
 void closeTerminal(FakeMc& mc, const QString& threadId, const QString& terminalId) {
   const QString key = threadId + QLatin1Char('/') + terminalId;
   if (!mc.part<FakeTerminals>().terminals.remove(key)) return;
   sendTerminal(mc, key, {{QStringLiteral("type"), QStringLiteral("closed")}});
-  sendTerminals(mc, {{QStringLiteral("type"), QStringLiteral("remove")},
-                       {QStringLiteral("threadId"), threadId},
-                       {QStringLiteral("terminalId"), terminalId}});
+  // A new process counts from nothing, and owes nothing.
+  for (const int id : mc.subscribers(QStringLiteral("terminal"))) {
+    FakeTerminals& fake = mc.part<FakeTerminals>();
+    if (fake.windows.contains(id) && terminalKey(mc.shapeOf(id).value(QLatin1String("input")).toObject()) == key) fake.windows[id] = {};
+  }
+  const QJsonObject remove{{QStringLiteral("type"), QStringLiteral("remove")},
+                           {QStringLiteral("threadId"), threadId},
+                           {QStringLiteral("terminalId"), terminalId}};
+  if (mc.part<FakeTerminals>().holdRemove) {
+    mc.part<FakeTerminals>().heldRemoves.append(remove);
+  } else {
+    sendTerminals(mc, remove);
+  }
 }
 
 // The `terminal` subscriptions still attached, by terminal key.
@@ -97,7 +149,7 @@ bool ensureTerminal(FakeMc& mc, const QJsonObject& input) {
                                               input.value(QLatin1String("terminalId")).toString(),
                                               input.value(QLatin1String("cwd")).toString());
   fake.terminals.insert(key, {summary, QString()});
-  sendTerminals(mc, {{QStringLiteral("type"), QStringLiteral("upsert")}, {QStringLiteral("terminal"), summary}});
+  if (!fake.quietOpen) sendTerminals(mc, {{QStringLiteral("type"), QStringLiteral("upsert")}, {QStringLiteral("terminal"), summary}});
   return true;
 }
 
@@ -130,12 +182,25 @@ const FakeMc::Extension extension([](FakeMc& mc) {
                {QStringLiteral("reason"), refusal.isEmpty() || !input.contains(QLatin1String("cwd")) ? QStringLiteral("Unknown terminal") : refusal}});
       return;
     }
-    const FakeTerminals::Terminal& terminal = mc.part<FakeTerminals>().terminals[terminalKey(input)];
-    QJsonObject snapshot = terminal.summary;
-    snapshot.insert(QStringLiteral("history"), terminal.history);
-    mc.send({{QStringLiteral("t"), QStringLiteral("terminal")},
-               {QStringLiteral("id"), id},
-               {QStringLiteral("event"), QJsonObject{{QStringLiteral("type"), QStringLiteral("snapshot")}, {QStringLiteral("snapshot"), snapshot}}}});
+    FakeTerminals& fake = mc.part<FakeTerminals>();
+    fake.windows.remove(id);
+    if (mc.subscriptions.last().value(QLatin1String("acks")).toBool()) fake.windows.insert(id, {});
+    sendSnapshot(mc, id, terminalKey(input));
+  });
+  mc.onFrame(QStringLiteral("ack"), [&mc](const QJsonObject& frame) {
+    FakeTerminals& fake = mc.part<FakeTerminals>();
+    fake.acks.append(frame);
+    const int id = frame.value(QLatin1String("id")).toInt();
+    const auto window = fake.windows.find(id);
+    if (window == fake.windows.end()) return;
+    const qint64 sequence = frame.value(QLatin1String("sequence")).toInteger();
+    window->pending.removeIf([&](const QPair<qint64, qsizetype>& sent) {
+      if (sent.first > sequence) return false;
+      window->bytes -= sent.second;
+      return true;
+    });
+    // Caught up: it reads the screen afresh rather than what it missed.
+    if (window->behind && window->pending.isEmpty()) sendSnapshot(mc, id, terminalKey(mc.shapeOf(id).value(QLatin1String("input")).toObject()));
   });
   mc.onRpc(QStringLiteral("terminal."), [&mc](const FakeMc::Rpc& rpc) {
     mc.part<FakeTerminals>().calls.append({{QStringLiteral("method"), rpc.method}, {QStringLiteral("payload"), rpc.payload}});
@@ -145,6 +210,10 @@ const FakeMc::Extension extension([](FakeMc& mc) {
         return;
       }
       ensureTerminal(mc, rpc.payload);
+    }
+    if (const auto refusal = mc.part<FakeTerminals>().refuseWrite; refusal && rpc.method == QLatin1String("terminal.write")) {
+      mc.refuse(rpc, *refusal);
+      return;
     }
     auto answer = [&mc, rpc] {
       if (!mc.current(rpc)) return;
@@ -225,6 +294,19 @@ std::optional<QJsonObject> terminalCall(World& world, const QString& method, con
   return std::nullopt;
 }
 
+std::optional<QJsonObject> lastTerminalCall(World& world, const QString& method, const QString& threadId,
+                                            const QString& terminalId) {
+  const QList<QJsonObject>& calls = world.mc.part<FakeTerminals>().calls;
+  for (auto call = calls.rbegin(); call != calls.rend(); ++call) {
+    const QJsonObject payload = call->value(QLatin1String("payload")).toObject();
+    if (call->value(QLatin1String("method")) == method && payload.value(QLatin1String("threadId")) == threadId &&
+        payload.value(QLatin1String("terminalId")) == terminalId) {
+      return payload;
+    }
+  }
+  return std::nullopt;
+}
+
 QString describeTerminalCalls(World& world) {
   QStringList lines;
   for (const QJsonObject& call : world.mc.part<FakeTerminals>().calls) {
@@ -295,6 +377,17 @@ QString ensureThread(World& world) {
   return shownThread(world);
 }
 
+QList<QQuickItem*> visibleItems(World& world, const QString& objectName) {
+  QList<QQuickItem*> found;
+  const std::function<void(QQuickItem*)> walk = [&](QQuickItem* item) {
+    if (!item->isVisible()) return;
+    if (item->objectName() == objectName) found.append(item);
+    for (QQuickItem* child : item->childItems()) walk(child);
+  };
+  walk(world.brick->window().contentItem());
+  return found;
+}
+
 // The drawer's (or the right panel's) terminals, in order.
 QList<TerminalTabs::Row> rowsIn(World& world, bool panel) {
   QList<TerminalTabs::Row> rows;
@@ -347,6 +440,7 @@ void ensureProject(World& world) {
   if (world.mc.projects.isEmpty()) {
     world.mc.projects.insert(QStringLiteral("p1"), {{QStringLiteral("id"), QStringLiteral("p1")}, {QStringLiteral("title"), QStringLiteral("p1")},
                                                       {QStringLiteral("workspaceRoot"), QStringLiteral("/work/p1")}, {QStringLiteral("scripts"), QJsonArray()}});
+    if (world.shellSubscriptions() != 0) world.mc.sendRow(QStringLiteral("p1"), world.mc.projects.value(QStringLiteral("p1")), QStringLiteral("project"));
   }
   if (world.shellSubscriptions() == 0) world.connect();
   world.sync();

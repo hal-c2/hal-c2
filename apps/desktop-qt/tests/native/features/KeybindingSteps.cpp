@@ -20,6 +20,7 @@
 
 #include <algorithm>
 
+#include "FakeTerminals.h"
 #include "Brick.h"
 #include "CommandPaletteController.h"
 #include "ComposerBrick.h"
@@ -488,6 +489,7 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user is on (macOS|Linux|Windows)"), [](World& world, const Captures& c, const Table&) {
     setMac(world, c[0] == QLatin1String("macOS"));
+    terminalfake::setTerminalPlatform(world, c[0]);
   });
 
   // Threads of their own for the scenarios with no Background.
