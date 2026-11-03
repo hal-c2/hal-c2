@@ -218,6 +218,14 @@ public:
   // Asks for the turns before the ones held (earlierWanted). Their rows are
   // inserted above the first; the rows held keep their ids.
   Q_INVOKABLE void loadEarlier();
+  // The user is reading from `row` on: lets go of the turns above it beyond a
+  // margin of turn items (setKeep), once that frees at least as many more,
+  // and drops them from the cache too. The MC's window rises with it
+  // (windowRaised); loadEarlier() fetches them again.
+  Q_INVOKABLE void keepFrom(int row);
+  // The turn items keepFrom() keeps above the run read, and frees at least
+  // before it lets go (windowItems; small in tests).
+  void setKeep(int items) { m_keep = items; }
 
   // The thread's entities of one stream kind (run, runtime-request, plan,
   // turn-item, ...) by id, for the composer's turn state.
@@ -292,6 +300,8 @@ signals:
   void foldsChanged();
   // loadEarlier(): the runs before the window holding `items` turn items are wanted.
   void earlierWanted(int items);
+  // keepFrom() raised the floor: the subscription is to be made again with it.
+  void windowRaised();
 
 private:
   void refreshLatest();
@@ -404,6 +414,7 @@ private:
   QString m_timestampFormat = QStringLiteral("locale");
   QLocale m_locale;
   cache::Cursor m_cursor;
+  int m_keep = windowItems;
   // Between a `sub` frame and the `live` that answers it.
   bool m_catchingUp = false;
   // `events` frames of a catch-up whose last part has not come: its parts

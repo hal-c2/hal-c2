@@ -493,31 +493,28 @@ defmodule HalC2.Store do
   (`nil` when it has none), without reading the rest.
   """
   def stream_tail(path, stream_id) do
-    with_reader(path, fn db ->
-      {:ok, stmt} =
-        Sqlite3.prepare(db, """
-        SELECT count(*), max(e.seq) FROM events e JOIN streams s ON s.key = e.stream
-        WHERE s.id = ?1
-        """)
+    count_sql = """
+    SELECT count(*), max(e.seq) FROM events e JOIN streams s ON s.key = e.stream
+    WHERE s.id = ?1
+    """
 
-      :ok = Sqlite3.bind(stmt, [stream_id])
-      {:row, [count, seq]} = Sqlite3.step(db, stmt)
-      :ok = Sqlite3.release(db, stmt)
+    {count, seq} =
+      with_query(path, count_sql, [stream_id], fn db, stmt ->
+        {:row, [count, seq]} = Sqlite3.step(db, stmt)
+        {count, seq}
+      end)
 
-      {:ok, stmt} =
-        Sqlite3.prepare(db, "SELECT kind, entity, patch, at FROM events WHERE seq = ?1")
+    tail_sql = "SELECT kind, entity, patch, at FROM events WHERE seq = ?1"
 
-      :ok = Sqlite3.bind(stmt, [seq])
-
-      tail =
+    tail =
+      with_query(path, tail_sql, [seq], fn db, stmt ->
         case Sqlite3.step(db, stmt) do
           {:row, [kind, entity, patch, at]} -> {kind, entity, decode_patch(patch), at}
           :done -> nil
         end
+      end)
 
-      :ok = Sqlite3.release(db, stmt)
-      {count, tail}
-    end)
+    {count, tail}
   end
 
   @doc "Which of `stream_ids` are streams here, as a `MapSet`, in one read of the stream index."
