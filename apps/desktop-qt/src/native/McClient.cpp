@@ -35,7 +35,11 @@ McClient::McClient(QObject* parent) : QObject(parent) {
   m_pingTimer.setInterval(25000);
   connect(&m_pingTimer, &QTimer::timeout, this, &McClient::ping);
   m_pongTimer.setSingleShot(true);
-  // Past the 15 s an MC may take to answer a cluster call on the socket.
+  // Past the 15 s (`remote_timeout`) an MC's socket may block on one call to a
+  // cluster member before it reads the next ping: subscribing to a watched
+  // shape, a config, a terminal, a preview host, a server update or a git
+  // action still calls the member from the socket process (socket.ex
+  // `subscribe/4`). Back to 10 s once those move off it (hal-c2#976).
   m_pongTimer.setInterval(20000);
   connect(&m_pongTimer, &QTimer::timeout, this, [this] {
     qCInfo(lcMc).noquote() << "no pong in" << m_pongTimer.interval() << "ms (trace" << m_traceId + ")";
