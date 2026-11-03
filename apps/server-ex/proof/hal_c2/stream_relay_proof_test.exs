@@ -42,6 +42,9 @@ defmodule HalC2.StreamRelayProofTest do
       "HalC2.Web.Socket handle_info {:hal_c2_stream, {_, _}, _}" =>
         ~w(stream-message stream-resync stale),
       "HalC2.Web.Socket handle_info {:DOWN, _, :process, _, _}" => "stream-down",
+      "HalC2.Web.Socket handle_info {:hal_c2_followed, _, _}" =>
+        ~w(followed follow-failed stale-reply),
+      "HalC2.Web.Socket handle_info {:nodedown, _}" => "parted",
       "HalC2.Web.Socket handle_info _" => "stale-reply",
       "HalC2.Streams.Server state :stream" => "st",
       "HalC2.Streams.Server state :subscribers" => "of",
@@ -103,7 +106,8 @@ defmodule HalC2.StreamRelayProofTest do
       "subscriber-down" => "a socket goes",
       "nodedown" => "the MCs lose each other",
       "heal" => "they reach each other again",
-      "time-out" => "an :erpc call to follow/4 gives up"
+      "time-out" =>
+        "an :erpc call to follow/4 gives up, or the client stops following before it is answered"
     },
     scenarios: %{
       "connections/cluster.feature" => [

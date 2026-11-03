@@ -179,12 +179,13 @@ Feature: GitHub Markdown in a page
       Then the table is shown as its Markdown, exactly as written, in a fixed-width face
       And the user can edit it as text
 
+    # A table and code are drawn while the user reads them (see Tables and Code).
     # https://github.com/hal-c2/hal-c2/issues/854
     @shared
-    Scenario: A table and code are shown as their source until they are drawn as such
+    Scenario: A table and code are edited as their source
       Given the page "Plan" holds a table and a code block
       When the user opens "Plan"
-      Then the table and the code are each shown line for line in a fixed-width face
+      Then the user edits the table and the code each as its source, exactly as written
 
     # The blocks the next scenario gives the clients, as the MC reads them from its Markdown;
     # `-` is a field the block does not have.
@@ -688,8 +689,9 @@ Feature: GitHub Markdown in a page
         |    12 |
         """
 
+    # Drawn by the Markdown the chat draws replies with.
     # https://github.com/hal-c2/hal-c2/issues/854
-    @shared @backlog
+    @shared
     Scenario: A table is shown as a table
       Given the page "Plan" with a table whose columns are aligned left, centre and right
       When the user opens "Plan"
@@ -783,20 +785,23 @@ Feature: GitHub Markdown in a page
         |   ```ts\n  x\n  ```               | raw   |
         | ``` ts\nx\n```                    | raw   |
 
+    # Drawn by the Markdown the chat draws replies with, coloured as it colours a reply's code.
     # https://github.com/hal-c2/hal-c2/issues/854
-    @shared @backlog
+    @shared
     Scenario: A code block is shown as code
       Given the page "Plan" with a "ts" code block
       When the user opens "Plan"
       Then its text is shown in a fixed-width face, coloured for that language where the surface can
       And its language is named on it
 
+    # The terminal copies the whole page (y), not one block.
     # https://github.com/hal-c2/hal-c2/issues/854
-    @shared @backlog
+    @shared @backlog-tui
     Scenario: The user copies a code block
       Given the page "Plan" with a code block
-      When the user copies the code block
-      Then the clipboard holds its text without the fence
+      When the user opens "Plan"
+      And the user copies the code block on the page
+      Then the code is on the clipboard without its fence
 
     # https://github.com/hal-c2/hal-c2/issues/854
     @shared @backlog

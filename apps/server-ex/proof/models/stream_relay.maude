@@ -164,8 +164,9 @@ mod STREAM-RELAY is
   crl [deliver] : ln(Y, to(R, X) ; E) mb(R, L) => ln(Y, E) mb(R, L ; X) if lands?(Y, X, L) .
   crl [deliver] : { ln(Y, to(R, X) ; E) C } => { ln(Y, E) C } if not has?(R, C) .
   rl [deliver] : ln(Y, run(A) ; E) => ln(Y, E) A .
-  --- An answer lands at any time, since a socket waits for it alone. sb is all
-  --- there is on b.
+  --- An answer lands at any time: it comes from the socket's own process for the
+  --- call, apart from the stream's messages, which the socket holds for the
+  --- subscription until it is answered. sb is all there is on b.
   op lands? : Key Msg Msgs -> Bool .
   eq lands?(nn(b, a), X, L) = true .
   eq lands?(Y, X, L) = L == nomsg or reply?(X) [owise] .
@@ -317,13 +318,15 @@ mod STREAM-RELAY is
 
   --- a socket ------------------------------------------------------------------------
 
-  --- subscribe/4 calls follow/4 through remote/4.
+  --- subscribe/4 calls follow/4 through remote/4, in a process of its own: the
+  --- socket goes on taking its client's frames and other subscriptions' messages.
   crl [follow] :
     { sk(P, off) subs(s J) gen(G) C }
     => { spawn(P, fol(P, G, false), sk(P, asking(G)) subs(J) gen(s G) C) }
     if not lost?(P, C) .
 
-  --- :erpc answers: the socket monitors the stream, or casts unsubscribe/2.
+  --- followed/3, when :erpc answers: the socket monitors the stream and replays what
+  --- it held, or casts unsubscribe/3.
   crl [followed] :
     { sk(P, asking(G)) mb(P, L ; rep(G, done) ; L') C }
     => { seeing(P, sk(P, on(G, pre, 0)) mb(P, L ; L') C) }
@@ -352,9 +355,10 @@ mod STREAM-RELAY is
   crl [stream-message] :
     sk(P, on(G, Z, N)) mb(P, sm(G, B) ; L) => sk(P, took(G, Z, N, B)) mb(P, L) wrong(Z, N, B)
     if B =/= resync .
+  --- What comes for the subscription still asking is held (left in the mailbox).
   crl [stream-message] :
     { sk(P, U) mb(P, sm(G, B) ; L) C } => { stale(P, G, B, sk(P, U) mb(P, L) C) }
-    if not current?(G, U) /\ not asking?(U) /\ U =/= gone .
+    if not current?(G, U) /\ not asking?(G, U) /\ U =/= gone .
 
   op stale : Pid Nat Body Conf -> Conf .
   eq stale(P, G, live(N), C) = spawn(P, unf(P, G), C) .
@@ -366,6 +370,10 @@ mod STREAM-RELAY is
   eq asking?(asking(G)) = true .
   eq asking?(parted(G)) = true .
   eq asking?(U) = false [owise] .
+  op asking? : Nat Sock -> Bool .
+  eq asking?(G, asking(G)) = true .
+  eq asking?(G, parted(G)) = true .
+  eq asking?(G, U) = false [owise] .
   --- stream_message/3 for :resync: the socket forgets the subscription, and its
   --- client follows the stream again.
   rl [stream-resync] :
@@ -389,12 +397,17 @@ mod STREAM-RELAY is
   rl [stream-down] : sk(P, on(G, Z, N)) mb(P, dst(W) ; L) => sk(P, off) mb(P, L) .
   rl [stream-down] : sk(P, off) mb(P, dst(W) ; L) => sk(P, off) mb(P, L) .
 
-  --- An answer to a call that gave up.
+  --- An answer to a follow the socket gave up or its client left: one the stream
+  --- took is cast unsubscribe/3, by its tag.
   crl [stale-reply] :
-    sk(P, U) mb(P, rep(G, W) ; L) => sk(P, U) mb(P, L) if U =/= asking(G) /\ U =/= parted(G) .
+    { sk(P, U) mb(P, rep(G, done) ; L) C } => { send(P, st, unsub(P, G), sk(P, U) mb(P, L) C) }
+    if not asking?(G, U) .
+  crl [stale-reply] :
+    sk(P, U) mb(P, rep(G, fail) ; L) => sk(P, U) mb(P, L) if not asking?(G, U) .
 
   --- unsubscribe/2's stream clause: demonitors the stream, flushing, and casts to it.
   rl [unfollow] : { sk(P, on(G, Z, N)) C } => { send(P, st, unsub(P, G), sk(P, off) unseen(P, C)) } .
+  --- Its pending clause, for a follow not answered yet, is [time-out]'s step.
   op unseen : Pid Conf -> Conf .
   eq unseen(P, mb(P, L ; dst(W) ; L') C) = unseen(P, mb(P, L ; L') C) .
   eq unseen(P, ln(Y, E ; to(P, dst(W)) ; E') C) = unseen(P, ln(Y, E ; E') C) .
@@ -448,7 +461,9 @@ mod STREAM-RELAY is
 
   rl [heal] : split => empty .
 
-  --- An :erpc call to follow/4 gives up.
+  --- An :erpc call to follow/4 gives up, or the client stops following before it
+  --- is answered (unsubscribe/2's pending clause): either way the socket forgets
+  --- the follow and casts unsubscribe/3 by its tag. One fault bounds both.
   crl [time-out] :
     { sk(P, U) faults(s F) C } => { spawn(P, unf(P, G), sk(P, off) faults(F) C) }
     if asking?(U) /\ G := ask(U) .

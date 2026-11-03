@@ -153,8 +153,12 @@ function joined(chunks: ReadonlyArray<TextChunk>): TextChunk[] {
  * line end, and at spaces, a run of them closing up to one in the style it was written
  * in; a word wider than a line is cut across lines.
  */
-export function wrapChunks(chunks: ReadonlyArray<TextChunk>, width: number): TextChunk[][] {
-  const size = Math.max(8, width);
+export function wrapChunks(
+  chunks: ReadonlyArray<TextChunk>,
+  width: number,
+  narrowest = 8,
+): TextChunk[][] {
+  const size = Math.max(narrowest, width);
   const lines: TextChunk[][] = [];
   let line: TextChunk[] = [];
   let used = 0;
@@ -227,8 +231,9 @@ const TABLE_ROW = /^\s*\|.*\|\s*$/;
 
 /**
  * A pipe table boxed across `width` in equal columns, header cells in the list
- * style. A cell longer than its column wraps onto more lines of its row, or is
- * cut to one line when the table's cells are `collapsed`.
+ * style, each cell's inline Markdown drawn and aligned as its column says. A cell
+ * longer than its column wraps onto more lines of its row, or is cut to one line
+ * when the table's cells are `collapsed`.
  */
 function tableLines(
   table: MarkdownTable,
@@ -245,18 +250,26 @@ function tableLines(
   const border = (left: string, mid: string, right: string) =>
     styled(chunk(left + widths.map((w) => "─".repeat(w)).join(mid) + right, { fg: palette.faint }));
   const row = (cells: ReadonlyArray<string>, style: ChunkStyle): StyledText[] => {
-    const wrapped = widths.map((w, index) =>
-      collapsed ? [clipCells(cells[index] ?? "", w)] : wrapCell(cells[index] ?? "", w),
-    );
+    const wrapped = widths.map((w, index) => {
+      const text = inlineMarkdown(cells[index] ?? "", palette, { fg: palette.text, ...style });
+      return collapsed ? [cutCells(text, w)[0]] : wrapChunks(text, w, 1);
+    });
     const height = Math.max(1, ...wrapped.map((lines) => lines.length));
     return Array.from({ length: height }, (_, line) =>
       styled(
         ...widths.flatMap((w, index) => {
-          const text = wrapped[index]![line] ?? "";
+          const parts = wrapped[index]![line] ?? [];
+          const spare = Math.max(
+            0,
+            w - parts.reduce((sum, part) => sum + Bun.stringWidth(part.text), 0),
+          );
+          const align = table.alignments[index];
+          const before = align === "right" ? spare : align === "center" ? Math.floor(spare / 2) : 0;
           return [
             chunk("│", { fg: palette.faint }),
-            chunk(text, { fg: palette.text, ...style }),
-            chunk(" ".repeat(Math.max(0, w - Bun.stringWidth(text)))),
+            before > 0 && chunk(" ".repeat(before)),
+            ...parts,
+            spare - before > 0 && chunk(" ".repeat(spare - before)),
           ];
         }),
         chunk("│", { fg: palette.faint }),
