@@ -32,10 +32,10 @@ defmodule HalC2.Import.PreviousInstallTest do
   test "a stream started before a stopped import is continued holds the whole thread",
        %{install: install, log: log} do
     input = %{"source" => install, "threadIds" => [@id]}
+    # A stream running while an attempt fails is not left with what it held before.
+    _ = Streams.ensure(@id)
     assert {:ok, %{"failed" => [%{"id" => @id}]}} = PreviousInstall.import_threads(input)
-
-    partial = Streams.read(@id, &Enum.count(StreamState.all(&1, "message")))
-    assert partial in 1..(@messages - 1)
+    assert messages() in 1..(@messages - 1)
 
     readable(log)
     assert {:ok, %{"imported" => [@id]}} = PreviousInstall.import_threads(input)
