@@ -4,8 +4,9 @@ import type { Feature, FeatureKit } from "./kit.ts";
 
 /**
  * How the client looks: its colour theme (the terminal's own by default) and
- * whether its icons are Nerd Fonts glyphs. The host owns the switch and the
- * repaint (`theme.set`, `icons.nerdFont.set`); this offers them.
+ * whether its icons are Nerd Fonts glyphs, and how it writes times. The host owns
+ * the switch and the repaint (`theme.set`, `icons.nerdFont.set`,
+ * `timestampFormat.pick`); this offers them.
  */
 export function createAppearanceFeature(kit: FeatureKit): Feature {
   const pickTheme = () => {
@@ -38,6 +39,12 @@ export function createAppearanceFeature(kit: FeatureKit): Feature {
 
   return {
     commands: () => [
+      {
+        id: "timestampFormat.pick",
+        title: "Change time format…",
+        keywords: "timestamp clock 12-hour 24-hour",
+        action: "timestampFormat.pick",
+      },
       {
         id: "theme.pick",
         title: "Change colour theme…",

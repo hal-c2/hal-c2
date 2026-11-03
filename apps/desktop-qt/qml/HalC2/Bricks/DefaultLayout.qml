@@ -49,7 +49,7 @@ Item {
     readonly property bool detailsSheet: besideList - detailsView.implicitWidth < threadMinimumWidth
     readonly property real besidePanel: besideList - (detailsView.visible && !detailsSheet ? detailsView.implicitWidth : 0) - threadMinimumWidth
     readonly property bool panelNarrow: width <= 980 || besidePanel < panelView.minimumWidth
-    readonly property bool panelSheet: panelNarrow && !panelView.maximized
+    readonly property bool panelSheet: panelNarrow
     // The sheet: 42% of the window up to 448, 88% up to 384 under 760.
     readonly property real panelSheetWidth: width < 760 ? Math.min(0.88 * width, 384) : Math.max(320, Math.min(0.42 * width, 448))
     // A sheet starts under the header, whose toggle puts it away again.
@@ -72,14 +72,20 @@ Item {
 
     // Local QML extensions can customize one brick without copying the layout.
     property alias sidebar: sidebarView
-    property alias composer: composerView
+    property alias composer: threadArea.composer
     property alias workspace: workspaceView
-    property alias centreView: centreHost
+    property alias centreView: threadArea.centreView
     property alias rightPanel: panelView
+    property alias stage: threadArea.stage
     property alias toolbar: toolbarLoader.sourceComponent
     property alias navigationPanel: sidebarExtension.sourceComponent
     // Null in a build without a terminal (Terminals.supported).
     readonly property Item terminalDrawer: terminalView.item as Item
+
+    // The right panel's tab bodies, shared by the panel and the stage.
+    PanelBodies {
+        id: panelBodies
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -220,8 +226,7 @@ Item {
 
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                // A maximized right panel covers the thread.
-                visible: !panelView.maximized && !layout.pluginTab
+                visible: !layout.pluginTab
                 spacing: 0
 
                 // Away from a thread (home, pull requests, usage, settings)
@@ -282,24 +287,17 @@ Item {
                     visible: layout.window.settingsActive
                 }
 
-                // The route's centre: a thread, draft, home, pull requests or usage.
-                CentreHost {
-                    id: centreHost
-                    objectName: "centreHost"
+                // The route's centre, with a thread's stage beside or over it.
+                ThreadArea {
+                    id: threadArea
 
+                    objectName: "threadArea"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    kind: layout.window.route?.kind ?? ""
                     visible: !layout.window.settingsActive
-                }
-
-                Composer {
-                    id: composerView
-
-                    takesDrops: false
-                    Layout.fillWidth: true
-                    visible: ready && !layout.window.settingsActive
-                    conversationScrolled: centreHost.conversationScrolled
+                    routeKind: layout.window.route?.kind ?? ""
+                    bodies: panelBodies
+                    threadMinimumWidth: layout.threadMinimumWidth
                 }
 
                 // The terminal drawer, in a build that has a terminal: the
@@ -331,7 +329,7 @@ Item {
                 Layout.topMargin: layout.detailsSheet ? layout.headerHeight : 0
                 z: layout.detailsSheet ? 2 : 0
                 details: Shell.state.panel?.details ?? null
-                visible: details !== null && !panelView.maximized && !layout.pluginTab
+                visible: details !== null && !layout.pluginTab
             }
 
             RightPanel {
@@ -339,13 +337,12 @@ Item {
                 objectName: "rightPanel"
 
                 Layout.fillHeight: true
-                Layout.fillWidth: maximized
                 // A sheet takes no room from the thread either.
                 Layout.leftMargin: layout.panelSheet ? -implicitWidth : 0
                 Layout.topMargin: layout.panelSheet ? layout.headerHeight : 0
                 z: layout.panelSheet ? 2 : 0
                 ownToggle: false
-                canMaximize: !layout.panelNarrow || maximized
+                bodies: panelBodies
                 resizable: !layout.panelSheet
                 trailingInset: layout.corner === "panel" ? layout.windowButtonsInset : 0
                 Layout.preferredWidth: implicitWidth
@@ -466,6 +463,7 @@ Item {
             anchors.fill: parent
             anchors.topMargin: 24
             source: Panel.device
+            tabId: Shell.state.panel?.floatingDevice ?? ""
         }
 
         Item {
@@ -512,17 +510,18 @@ Item {
 
     // Over the conversation (the route's centre and the composer under it,
     // not the terminal or the panels) files go to the draft instead: a
-    // single folder there is referenced, not opened as a project. It is above
+    // single folder there is referenced, not opened as a project (not the
+    // stage beside it, nor the stage over the timeline). It is above
     // everything in `body`, so it stops short of the details shown as a
     // sheet, and is away while a list or panel over the thread has its
     // scrim: drops there are theirs (a thread row's attaches to that thread).
     ConversationDrop {
-        x: body.x + centre.x
-        y: body.y + centre.y + centreHost.y
-        width: detailsView.visible && layout.detailsSheet ? Math.max(0, detailsView.x - centre.x) : centre.width
-        height: composerView.y + composerView.height - centreHost.y
-        visible: centre.visible && composerView.visible && !sidebarScrim.visible && !panelScrim.visible
-        composer: composerView
+        x: body.x + centre.x + threadArea.x
+        y: body.y + centre.y + threadArea.y + threadArea.conversationTop
+        width: detailsView.visible && layout.detailsSheet ? Math.min(threadArea.conversationWidth, Math.max(0, detailsView.x - centre.x - threadArea.x)) : threadArea.conversationWidth
+        height: threadArea.height - threadArea.conversationTop
+        visible: centre.visible && threadArea.visible && threadArea.composer.visible && !sidebarScrim.visible && !panelScrim.visible
+        composer: threadArea.composer
     }
 
     // Toasts stack from the top right, under the header strip (or the band

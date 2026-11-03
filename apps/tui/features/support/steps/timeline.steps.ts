@@ -38,11 +38,17 @@ type Line = {
   text: {
     chunks: Array<{ text: string; attributes?: number; link?: { url: string }; fg?: unknown }>;
   };
+  parts?: ReadonlyArray<unknown> | null;
 };
 type Item = { key: string; kind: string; align: string; boxed: boolean; lines: Line[] };
 
 const items = (ctx: ThreadWorld): Item[] => hostState(ctx, "timeline").items;
-const itemText = (item: Item) => item.lines.map((line) => plain(line.text)).join("\n");
+// A reply's meta line (copy and time) is all parts and no text: it is not the reply's text.
+const itemText = (item: Item) =>
+  item.lines
+    .filter((line) => !(line.parts && plain(line.text) === ""))
+    .map((line) => plain(line.text))
+    .join("\n");
 const allChunks = (ctx: ThreadWorld) =>
   items(ctx).flatMap((item) => item.lines.flatMap((line) => line.text.chunks));
 
@@ -180,7 +186,7 @@ step(
   async (ctx: ThreadWorld) => {
     const working = hostState(ctx, "timeline").working;
     expect(working.elapsedSeconds).toBeGreaterThanOrEqual(600);
-    expect(await snapshot(ctx)).toMatch(/● Working… \d+s/);
+    expect(await snapshot(ctx)).toMatch(/● Working for \d+m/);
   },
 );
 
@@ -857,8 +863,20 @@ step(
   },
 );
 
+// The fixtures are timed on the real clock, so a message's stamp reads `<time>`.
+const STAMP = /\d{1,2}:\d{2}(?: [AP]M)?$/;
+const unstamped = (rows: ReadonlyArray<string>) =>
+  rows.map((row) => {
+    const text = row.trimEnd();
+    // A user message's stamp keeps its right edge, under the bubble.
+    if (/^ *\d{1,2}:\d{2}(?: [AP]M)?$/.test(text)) return "<time>".padStart(text.length);
+    return /⧉ Copy · /.test(text) ? text.replace(STAMP, "<time>") : row;
+  });
+
 step("the timeline reads:", async (ctx: ThreadWorld, expected: string) => {
-  expect(block(await objectRows(ctx, "timelineColumn"))).toBe(block(expected.split("\n")));
+  expect(block(unstamped(await objectRows(ctx, "timelineColumn")))).toBe(
+    block(expected.split("\n")),
+  );
 });
 
 step(

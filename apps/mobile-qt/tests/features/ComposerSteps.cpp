@@ -6,6 +6,8 @@
 #include <QJsonObject>
 #include <QQuickItem>
 
+#include <utility>
+
 #include "FakeThreads.h"
 #include "Harness.h"
 #include "NativeShell.h"
@@ -24,18 +26,63 @@ QList<int> followers(FakeMc& mc, const QString& thread) {
   return ids;
 }
 
-const FakeMc::Extension streams([](FakeMc& mc) {
-  mc.onShape(QStringLiteral("stream"), [&mc](int id, const QJsonObject& shape) {
-    FakeStreams& fake = mc.part<FakeStreams>();
+// A frame for a follower of a stream, counted in what the MC sent.
+void deliver(FakeMc& mc, const QJsonObject& frame) {
+  mc.part<FakeStreams>().sent.append(frame);
+  mc.send(frame);
+}
+
+// Answers a `sub` to a thread's stream as the MC does
+// (lib/hal_c2/streams/server.ex): the changes since its offset when it comes
+// back with the MC's handle, else the thread whole; then `live`.
+void answer(FakeMc& mc, int id, const QJsonObject& shape, const QJsonObject& sub) {
+  FakeStreams& fake = mc.part<FakeStreams>();
+  const QString thread = shape.value(QLatin1String("stream")).toString();
+  fake.asked.append({thread, sub, fake.sent.size(), fake.unfollowed.take(thread)});
+  const QJsonValue offset = sub.value(QLatin1String("offset"));
+  const bool resumes = !fake.handle.isEmpty() && sub.value(QLatin1String("handle")) == fake.handle && offset.isDouble() && offset.toInt() <= fake.seq;
+  if (resumes) {
+    QJsonArray events;
+    for (const FakeStreams::Change& change : fake.log.value(thread)) {
+      if (change.seq > offset.toInt()) events.append(QJsonArray{change.seq, change.kind, change.id, change.patch, kNow});
+    }
+    if (std::exchange(fake.cutCatchUp, false) && events.size() > 1) {
+      // The first part of two carries the offset the client is at; the
+      // connection goes before the second.
+      deliver(mc, {{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), offset},
+                   {QStringLiteral("events"), QJsonArray{events.first()}}});
+      mc.drop();
+      return;
+    }
+    if (!events.isEmpty()) {
+      deliver(mc, {{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), id},
+                   {QStringLiteral("offset"), events.last().toArray().at(0)}, {QStringLiteral("events"), events}});
+    }
+  } else {
     QJsonArray rows;
-    const QMap<QString, QJsonObject> entities = fake.threads.value(shape.value(QLatin1String("stream")).toString());
+    const QMap<QString, QJsonObject> entities = fake.threads.value(thread);
     for (auto it = entities.cbegin(); it != entities.cend(); ++it) {
       const QStringList key = it.key().split(QLatin1Char('\n'));
       rows.append(QJsonArray{key.at(0), key.at(1), *it});
     }
-    mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), fake.seq},
-             {QStringLiteral("at"), kNow}, {QStringLiteral("part"), 0}, {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}});
-    mc.send({{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), fake.seq}});
+    QJsonObject snapshot{{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), fake.seq},
+                         {QStringLiteral("at"), kNow}, {QStringLiteral("part"), 0}, {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}};
+    if (!fake.handle.isEmpty()) snapshot.insert(QStringLiteral("handle"), fake.handle);
+    deliver(mc, snapshot);
+  }
+  QJsonObject live{{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("id"), id}, {QStringLiteral("offset"), fake.seq}};
+  if (!fake.handle.isEmpty()) live.insert(QStringLiteral("handle"), fake.handle);
+  deliver(mc, live);
+}
+
+const FakeMc::Extension streams([](FakeMc& mc) {
+  mc.onShape(QStringLiteral("stream"), [&mc](int id, const QJsonObject& shape) {
+    if (mc.part<FakeStreams>().offline.contains(shape.value(QLatin1String("environment")).toString())) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("error")}, {QStringLiteral("id"), id}, {QStringLiteral("reason"), QStringLiteral("unknown environment")}});
+      mc.forget(id);
+      return;
+    }
+    answer(mc, id, shape, mc.subscriptions.last());
   });
 });
 
@@ -155,17 +202,27 @@ std::pair<QString, QString> listedModel(World& world, const QString& name) {
 }  // namespace
 
 void setEntity(FakeMc& mc, const QString& thread, const QString& kind, const QString& id, const QJsonObject& fields) {
+  changeEntity(mc, thread, kind, id, {{QStringLiteral("s"), fields}});
+}
+
+void changeEntity(FakeMc& mc, const QString& thread, const QString& kind, const QString& id, const QJsonObject& patch, bool quiet) {
   FakeStreams& fake = mc.part<FakeStreams>();
   QJsonObject& entity = fake.threads[thread][kind + QLatin1Char('\n') + id];
-  for (auto it = fields.begin(); it != fields.end(); ++it) entity.insert(it.key(), it.value());
+  const QJsonObject set = patch.value(QLatin1String("s")).toObject();
+  for (auto it = set.begin(); it != set.end(); ++it) entity.insert(it.key(), it.value());
+  const QJsonObject append = patch.value(QLatin1String("a")).toObject();
+  for (auto it = append.begin(); it != append.end(); ++it) entity.insert(it.key(), entity.value(it.key()).toString() + it.value().toString());
   const int seq = ++fake.seq;
+  fake.log[thread].append({seq, kind, id, patch});
+  const QList<int> following = quiet || !mc.connected() ? QList<int>() : followers(mc, thread);
+  if (following.isEmpty()) ++fake.unfollowed[thread];
   // QJsonValue keeps the event nested: Apple clang before 20 reads
   // QJsonArray{QJsonArray{...}} as a copy of the inner array.
-  for (const int follower : followers(mc, thread)) {
-    mc.send({{QStringLiteral("t"), QStringLiteral("events")},
-             {QStringLiteral("id"), follower},
-             {QStringLiteral("offset"), seq},
-             {QStringLiteral("events"), QJsonArray{QJsonValue(QJsonArray{seq, kind, id, QJsonObject{{QStringLiteral("s"), fields}}, kNow})}}});
+  for (const int follower : following) {
+    deliver(mc, {{QStringLiteral("t"), QStringLiteral("events")},
+                 {QStringLiteral("id"), follower},
+                 {QStringLiteral("offset"), seq},
+                 {QStringLiteral("events"), QJsonArray{QJsonValue(QJsonArray{seq, kind, id, patch, kNow})}}});
   }
 }
 

@@ -114,7 +114,7 @@ step("the agent starts implementing it in this thread", async (ctx: PlanWorld) =
     state: "running",
     sourceProposedPlan: { threadId: "t1", planId: ctx.planId },
   });
-  expect(await snapshot(ctx)).toContain("● Working…");
+  expect(await snapshot(ctx)).toContain("● Working");
 });
 
 step("the plan card is no longer offered", async (ctx: PlanWorld) => {

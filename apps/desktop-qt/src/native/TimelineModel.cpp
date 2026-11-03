@@ -220,7 +220,8 @@ std::optional<QJsonObject> patched(const QJsonObject& entity, const QJsonObject&
   return next;
 }
 
-// apps/tui/src/timeline.ts formatDuration.
+// packages/shared/src/orchestrationTiming.ts formatDuration: tenths under ten
+// seconds, then hours, minutes and seconds, leaving out the empty ones.
 QString formatDuration(qint64 ms) {
   if (ms < 0) return QStringLiteral("0ms");
   if (ms < 1000) return QStringLiteral("%1ms").arg(std::max<qint64>(1, ms));
@@ -229,11 +230,12 @@ QString formatDuration(qint64 ms) {
     return tenths >= 10 ? QStringLiteral("10s") : QStringLiteral("%1s").arg(tenths, 0, 'f', 1);
   }
   if (ms < 60000) return QStringLiteral("%1s").arg(std::llround(ms / 1000.0));
-  const qint64 minutes = ms / 60000;
-  const qint64 seconds = std::llround((ms % 60000) / 1000.0);
-  if (seconds == 0) return QStringLiteral("%1m").arg(minutes);
-  if (seconds == 60) return QStringLiteral("%1m").arg(minutes + 1);
-  return QStringLiteral("%1m %2s").arg(minutes).arg(seconds);
+  const qint64 total = std::llround(ms / 1000.0);
+  QStringList parts;
+  if (total >= 3600) parts.append(QStringLiteral("%1h").arg(total / 3600));
+  if (total % 3600 >= 60) parts.append(QStringLiteral("%1m").arg(total % 3600 / 60));
+  if (total % 60 > 0) parts.append(QStringLiteral("%1s").arg(total % 60));
+  return parts.join(QLatin1Char(' '));
 }
 
 enum class Kind { Message, Work, Plan, Subagent, Error, Marker, Checkpoint };
@@ -353,6 +355,47 @@ TimelineModel::TimelineModel(const QString& threadKey, QObject* parent)
   m_flushTimer.setSingleShot(true);
   m_flushTimer.setInterval(flushDelayMs);
   connect(&m_flushTimer, &QTimer::timeout, this, &TimelineModel::flush);
+  connect(this, &QAbstractItemModel::rowsInserted, this, &TimelineModel::refreshLatest);
+  connect(this, &QAbstractItemModel::rowsRemoved, this, &TimelineModel::refreshLatest);
+  connect(this, &QAbstractItemModel::modelReset, this, &TimelineModel::refreshLatest);
+  connect(this, &QAbstractItemModel::dataChanged, this, [this](const QModelIndex&, const QModelIndex& last) {
+    // Only the newest rows can change the line.
+    if (last.row() >= rowCount() - 4) refreshLatest();
+  });
+}
+
+void TimelineModel::refreshLatest() {
+  // The first line with words in it, as plain text.
+  const auto lineOf = [](const QString& text) {
+    static const QRegularExpression lead(QStringLiteral(R"(^[#>\s]+)"));
+    for (const QString& line : text.split(QLatin1Char('\n'))) {
+      if (line.trimmed().startsWith(QLatin1String("```"))) continue;
+      const QString plain = timeline::plainDetail(line).remove(lead);
+      if (!plain.isEmpty()) return plain.left(240);
+    }
+    return QString();
+  };
+  QString latest;
+  for (int at = rowCount() - 1; at >= 0 && latest.isEmpty(); --at) {
+    const QModelIndex row = index(at);
+    const QString kind = data(row, KindRole).toString();
+    if (kind == QLatin1String("fold")) continue;
+    if (kind == QLatin1String("work")) {
+      latest = lineOf(data(row, SummaryRole).toString());
+      const QVariantList entries = data(row, EntriesRole).toList();
+      if (latest.isEmpty() && !entries.isEmpty()) {
+        const QVariantMap entry = entries.last().toMap();
+        latest = lineOf(QStringList{entry.value(QStringLiteral("label")).toString(), entry.value(QStringLiteral("detail")).toString()}.join(QLatin1Char(' ')));
+      }
+      continue;
+    }
+    latest = lineOf(data(row, TextRole).toString());
+    if (latest.isEmpty()) latest = lineOf(data(row, TitleRole).toString());
+    if (!latest.isEmpty() && kind == QLatin1String("message") && data(row, AuthorRole).toString() == QLatin1String("user")) latest = QStringLiteral("You: ") + latest;
+  }
+  if (latest == m_latest) return;
+  m_latest = latest;
+  emit latestChanged();
 }
 
 void TimelineModel::setStatus(const QString& status, const QString& problem) {
@@ -362,6 +405,10 @@ void TimelineModel::setStatus(const QString& status, const QString& problem) {
   // Earlier turns only come over a stream that is live.
   if (status != QLatin1String("live") && std::exchange(m_loadingEarlier, false)) emit earlierChanged();
   emit statusChanged();
+}
+
+QString TimelineModel::durationText(qint64 ms) {
+  return formatDuration(ms);
 }
 
 QString TimelineModel::workingLabel() const {
@@ -375,6 +422,12 @@ void TimelineModel::setTimestampFormat(const QString& format) {
   if (next == m_timestampFormat) return;
   m_timestampFormat = next;
   redrawTimes();
+}
+
+void TimelineModel::setFolds(Folds folds) {
+  if (folds == m_folds) return;
+  m_folds = folds;
+  restructure({});
 }
 
 void TimelineModel::setLocale(const QLocale& locale) {
@@ -976,6 +1029,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
   // Each run's items after the user message that started it.
   struct Turn {
     QStringList items;
+    QString first;       // its first assistant message
     QString terminal;    // its last assistant message
     QString checkpoint;  // its latest checkpoint with files
     bool streaming = false;
@@ -1009,6 +1063,7 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     Turn& turn = turns[runId];
     turn.items.append(id);
     if (type == QLatin1String("assistant_message")) {
+      if (turn.first.isEmpty()) turn.first = id;
       turn.terminal = id;
       turn.streaming = turn.streaming || item.value(QLatin1String("streaming")).toBool();
     } else if (type == QLatin1String("checkpoint") && !item.value(QLatin1String("files")).toArray().isEmpty()) {
@@ -1027,14 +1082,18 @@ QList<TimelineModel::Row> TimelineModel::project() const {
   };
   QHash<QString, Fold> foldAt;  // by the turn's first item
   QHash<QString, QString> folded;  // hidden item -> run
+  const bool phone = m_folds == Folds::Phone;
+  const auto failed = [&](const QString& runId) {
+    return text(runs.value(runId), QLatin1String("status")) == QLatin1String("failed");
+  };
   for (const QString& runId : std::as_const(turnOrder)) {
     const Turn& turn = turns[runId];
     const QJsonObject run = runs.value(runId);
     const QString status = text(run, QLatin1String("status"));
-    if (!kSettled.contains(status) || turn.streaming) continue;
+    if (!kSettled.contains(status) || turn.streaming || (phone && failed(runId))) continue;
     QStringList hidden;
     for (const QString& id : turn.items) {
-      if (id == turn.terminal) continue;
+      if (id == turn.terminal || (phone && id == turn.first)) continue;
       const Kind kind = classify(items.value(id));
       // Work a turn left running (a background command) stays in view.
       if (kind == Kind::Work && text(items.value(id), QLatin1String("status")) == QLatin1String("running")) continue;
@@ -1098,6 +1157,11 @@ QList<TimelineModel::Row> TimelineModel::project() const {
         if (callKind == Kind::Checkpoint) continue;
         if (callKind != Kind::Work || folded.contains(callId) || text(call, QLatin1String("runId")) != runId) break;
         row.items.append(callId);
+        // On the phone a failed turn shows each call on its own row.
+        if (phone && failed(runId)) {
+          ++next;
+          break;
+        }
       }
       row.summarized = row.items.size() > 1 && kSettled.contains(text(runs.value(runId), QLatin1String("status")));
       row.startsOpen = m_keptOpen.contains(runId);
@@ -1172,6 +1236,9 @@ void TimelineModel::updateWorking() {
   QDateTime since;
   for (const QJsonObject& run : m_entities.value(QStringLiteral("run"))) {
     if (!kRunning.contains(text(run, QLatin1String("status")))) continue;
+    // From when the run began, or from the message that asked for it while its
+    // session starts (deriveActiveWorkStartedAt). Not requestedAt once begun: a
+    // queued message keeps the time it was queued.
     QDateTime started = timeOf(run.value(QLatin1String("startedAt")));
     if (!started.isValid()) started = timeOf(run.value(QLatin1String("requestedAt")));
     if (!started.isValid()) started = m_now();
@@ -1208,11 +1275,15 @@ int TimelineModel::indexOf(const QString& rowId) const {
   return -1;
 }
 
-bool TimelineModel::copy(const QString& rowId) const {
+QString TimelineModel::copy(const QString& rowId) const {
   const int at = indexOf(rowId);
-  if (at < 0 || m_rows.at(at).kind != QLatin1String("message")) return false;
-  QGuiApplication::clipboard()->setText(data(index(at), TextRole).toString());
-  return true;
+  if (at < 0 || m_rows.at(at).kind != QLatin1String("message")) return QStringLiteral("The message is no longer shown.");
+  const QString text = data(index(at), TextRole).toString();
+  if (m_writeClipboard) return m_writeClipboard(text) ? QString() : QStringLiteral("The clipboard could not be written.");
+  QClipboard* clipboard = QGuiApplication::clipboard();
+  if (!clipboard) return QStringLiteral("This system has no clipboard.");
+  clipboard->setText(text);
+  return {};
 }
 
 QString TimelineModel::finishedRunOf(const QString& rowId) const {

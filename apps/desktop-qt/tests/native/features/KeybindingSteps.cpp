@@ -236,6 +236,7 @@ void pressSequence(World& world, const QString& sequence) {
   // As ShellWindow enables its shortcuts.
   const auto focused = [&state](const char* what) { return state.focus.value(QLatin1String(what)).toBool(); };
   const bool enabled = shortcut.value(focused("terminal")   ? QStringLiteral("terminal")
+                                      : focused("preview")  ? QStringLiteral("preview")
                                       : focused("composer") ? QStringLiteral("composer")
                                       : focused("editable") ? QStringLiteral("editable")
                                                             : QStringLiteral("chrome")).toBool();
@@ -444,9 +445,13 @@ const Steps steps([] {
   const QString q = kQuoted;
 
   // Where the keyboard is.
-  step(QStringLiteral("the user is (anywhere|outside a terminal|in a terminal|with the model picker open)"),
+  step(QStringLiteral("the user is (anywhere|outside a terminal|in a terminal|in the preview|with the model picker open)"),
        [](World& world, const Captures& c, const Table&) {
-         setFocus(world, c[0] == QLatin1String("in a terminal") ? QVariantMap{{QStringLiteral("terminal"), true}} : QVariantMap{},
+         // In the preview: a browser tab's page has the keyboard (ShellWindow's previewFocused).
+         setFocus(world,
+                  c[0] == QLatin1String("in a terminal")    ? QVariantMap{{QStringLiteral("terminal"), true}}
+                  : c[0] == QLatin1String("in the preview") ? QVariantMap{{QStringLiteral("preview"), true}}
+                                                            : QVariantMap{},
                   c[0] == QLatin1String("with the model picker open"));
        });
   step(QStringLiteral("(?:the native chrome has keyboard focus|the user is in the desktop app|anything|the terminal is closed)"),

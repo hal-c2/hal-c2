@@ -31,6 +31,15 @@ class McClient;
 // forwards to it (`preview.forward`), its path, query and fragment kept. The
 // thread's MC forwards only a port one of its tabs names, so an address no tab
 // names (a link in a reply) opens a tab for it first.
+//
+// Embedded (setEmbedded, the desktop with its in-app browser): each tab is a
+// page in the panel (BrowserPage) rather than the user's browser. The tabs
+// are followed while a thread shows at all, so one an agent or another
+// window opens appears; the MC's machine's servers only while `suggesting`.
+// navigate() points the tab at the page without opening it elsewhere, and a
+// dev server's address (openAddress) opens in a tab of its own, or the one
+// already showing it (showRequested). A page reports how it loads
+// (report, `preview.reportStatus`) and the size it is shown at (resizeTab).
 class ThreadPreviews : public QAbstractListModel {
   Q_OBJECT
   Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
@@ -70,8 +79,16 @@ public:
   // The thread shown, and the MC whose events carry its tabs (empty when
   // none does).
   void setThread(const QString& environmentId, const QString& threadId, const QString& mc);
+  QString environmentId() const { return m_environment; }
+  QString threadId() const { return m_thread; }
   // Loads and follows while shown; forgets nothing when hidden.
   void setActive(bool active);
+  // Pages open in the app's own browser (above).
+  void setEmbedded(bool embedded);
+  bool embedded() const { return m_embedded; }
+  // Embedded, the MC's machine's servers are followed only while an empty
+  // tab or the overview offers them.
+  void setSuggesting(bool suggesting);
   // The preview addresses the thread's project configures (its scripts' previewUrl).
   void setConfigured(const QStringList& urls);
   void setRecents(Recents read, Remember write);
@@ -97,6 +114,19 @@ public:
   Q_INVOKABLE void openAddress(const QString& url);
   // Opens the page in a browser tab of the thread, wherever its address is.
   void openPage(const QUrl& url);
+  // Whether embedded openAddress shows `url` in a tab here: a dev server's
+  // (loopback) web address.
+  static bool opensHere(const QUrl& url);
+  // Embedded: shows the tab in the panel (showRequested).
+  Q_INVOKABLE void show(const QString& tabId);
+  // The tab as the MC last said, or {} when there is none.
+  QJsonObject tab(const QString& tabId) const;
+  // What the page showing the tab did: `preview.reportStatus`, navStatus a
+  // PreviewNavStatus.
+  void report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward);
+  // The size the tab's page is shown at: `preview.resize`, viewport a
+  // PreviewViewportSetting. `failed` runs when the MC refused it.
+  void resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const QString&)> failed = {});
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;
@@ -107,10 +137,18 @@ signals:
   void statusChanged();
   void suggestionsChanged();
   void emptyTabChanged();
+  // The MC said something new of the tab, or it went.
+  void tabChanged(const QString& tabId);
+  // Embedded: the tab is to be shown: the user asked (show, newTab,
+  // openAddress), or someone opened it just now (an agent, another window).
+  void showRequested(const QString& tabId);
 
 private:
   void follow();
   void unfollow();
+  void followServers();
+  void unfollowServers();
+  bool wantsServers() const { return m_active && (!m_embedded || m_suggesting); }
   bool forwards(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc) const;
   void openFor(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc);
   // openFor through one of `tabs` at the url's port, or a tab opened for it.
@@ -130,6 +168,8 @@ private:
   QString m_thread;
   QString m_mc;
   bool m_active = false;
+  bool m_embedded = false;
+  bool m_suggesting = false;
   int m_subscription = -1;
   // Replies for another thread (or an older load) are dropped.
   int m_generation = 0;

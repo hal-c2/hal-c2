@@ -22,7 +22,8 @@
 #   chat.newLocal, editor.openFavorite, modelPicker.toggle, modelPicker.previousProvider,
 #   modelPicker.nextProvider, modelPicker.jump.1-9, thread.stop, thread.steerQueuedMessage,
 #   thread.editQueuedMessage, thread.previous, thread.next, thread.copyReference,
-#   thread.settle, thread.pin, thread.undo, thread.jump.1-9, script.<id>.run
+#   thread.settle, thread.pin, thread.undo, thread.jump.1-9, script.<id>.run,
+#   stage.moveTab, stage.toggleFocus, stage.nextPane, stage.dismiss, stage.layout.* (desktop only)
 #   apps/web/src/routes/_chat.tsx (thread shortcuts wait for the command palette; one project needs no chooser)
 
 Feature: Keybindings
@@ -105,18 +106,20 @@ Feature: Keybindings
         | composer.sendBackground   | mod+alt+enter   | in the composer of a new thread   | aligned |
         | thread.undo               | mod+z           | outside text fields and terminals | aligned |
 
-      # preview.refresh, focusUrl and the zoom keys act on the in-app browser, which the
-      # desktop does not have yet.
-      @backlog
-      Examples: Not yet honoured by the native client
+      # preview.refresh, focusUrl and the zoom keys act on the page in the in-app browser
+      # (BrowserPanel), so only while it has the keyboard; elsewhere mod+= zooms the app.
+      Examples: Run on the page in a browser tab
         | command                   | key             | context                           | status  |
-        | preview.refresh           | mod+r           | in the preview                    | backlog |
-        | preview.focusUrl          | mod+l           | in the preview                    | backlog |
-        | preview.zoomIn            | mod+=           | in the preview                    | backlog |
-        | preview.zoomIn            | mod++           | in the preview                    | backlog |
-        | preview.zoomOut           | mod+-           | in the preview                    | backlog |
-        | preview.resetZoom         | mod+0           | in the preview                    | backlog |
+        | preview.refresh           | mod+r           | in the preview                    | aligned |
+        | preview.focusUrl          | mod+l           | in the preview                    | aligned |
+        | preview.zoomIn            | mod+=           | in the preview                    | aligned |
+        | preview.zoomIn            | mod++           | in the preview                    | aligned |
+        | preview.zoomOut           | mod+-           | in the preview                    | aligned |
+        | preview.resetZoom         | mod+0           | in the preview                    | aligned |
 
+    # rightPanel.toggleMaximized is Open in centre on the desktop: the right panel's tab
+    # goes to the thread's centre and back (desktop/stage.feature, which also has the
+    # desktop-only stage.* commands and their mod+alt+s and mod+alt+f defaults).
     @desktop
     Scenario Outline: A command with no default binding can still be bound
       Given no custom keybindings

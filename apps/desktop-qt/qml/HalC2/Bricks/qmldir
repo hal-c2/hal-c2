@@ -17,6 +17,11 @@ DefaultShell 1.0 DefaultShell.qml
 GitActions 1.0 GitActions.qml
 Notifications 1.0 Notifications.qml
 RightPanel 1.0 RightPanel.qml
+Stage 1.0 Stage.qml
+ThreadArea 1.0 ThreadArea.qml
+PanelTabDrag 1.0 PanelTabDrag.qml
+PanelBodySlot 1.0 PanelBodySlot.qml
+PanelBodies 1.0 PanelBodies.qml
 SettingsNav 1.0 SettingsNav.qml
 ShellErrorOverlay 1.0 ShellErrorOverlay.qml
 ConnectionNotice 1.0 ConnectionNotice.qml
@@ -159,3 +164,7 @@ PluginSettings 1.0 PluginSettings.qml
 NotificationsSettings 1.0 NotificationsSettings.qml
 PairingSettings 1.0 PairingSettings.qml
 MaintenanceSettings 1.0 MaintenanceSettings.qml
+BrowserPanel 1.0 BrowserPanel.qml
+BrowserDevicesView 1.0 BrowserDevicesView.qml
+DevicesPicker 1.0 DevicesPicker.qml
+AgentCue 1.0 AgentCue.qml

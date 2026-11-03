@@ -247,7 +247,8 @@ step("the agent answers with a link to {string}", async (ctx: MarkdownWorld, url
 
 step("the link's text is shown and nothing can be opened", async (ctx: MarkdownWorld) => {
   const lines = reply(ctx).lines;
-  expect(linesOf(reply(ctx))).toEqual(["Open the pricing docs now."]);
+  // The reply's text, above its time-and-copy row.
+  expect(linesOf(reply(ctx))[0]).toBe("Open the pricing docs now.");
   expect(lines.flatMap((line) => line.text.chunks).some((part) => part.link)).toBe(false);
   expect(await snapshot(ctx)).not.toContain("javascript:");
   const before = ctx.dispatched!.length;
@@ -341,7 +342,10 @@ step("the user's message has two lines", async (ctx: MarkdownWorld) => {
 });
 
 step("the message is shown on two lines", async (ctx: MarkdownWorld) => {
-  const bubble = hostState(ctx, "timeline").items.at(-1);
+  // The last message, above the time it was sent.
+  const bubble = hostState(ctx, "timeline").items.findLast(
+    (item: { kind: string }) => item.kind === "message",
+  );
   expect(bubble).toMatchObject({ kind: "message", boxed: true });
   expect(linesOf(bubble)).toEqual(["Thanks!", "What about refunds?"]);
   const rows = (await snapshot(ctx)).split("\n");

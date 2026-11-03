@@ -436,6 +436,31 @@ describe("makeClusterClient", () => {
     expect(moved).toMatchObject({ status: "moved", projectId: "env-desktop:p1" });
   });
 
+  it("Given an open thread of a member, when that member leaves the cluster and comes back, then the thread says so meanwhile", async () => {
+    const { laptop, desktop, client, setStatus } = await clustered();
+    laptop.pushShell(shell([], []));
+    desktop.pushShell(shell([], [{ id: "beta" }]));
+    const told: Array<string | null | undefined> = [];
+    client.subscribeThread("beta" as Parameters<TuiClient["subscribeThread"]>[0], (_, page) =>
+      told.push(page.unreachable),
+    );
+    desktop.pushThread({ id: "beta" });
+
+    setStatus(cluster([member("env-desktop", "desktop", false)]));
+    await client.clusterStatus();
+    desktop.pushThread({ id: "beta" });
+    setStatus(cluster([member("env-desktop", "desktop", true)]));
+    await client.clusterStatus();
+
+    expect(told).toEqual([
+      null,
+      "This thread's MC cannot be reached: desktop has left the cluster.",
+      "This thread's MC cannot be reached: desktop has left the cluster.",
+      null,
+    ]);
+    expect([...desktop.threadSubs]).toEqual(["beta"]);
+  });
+
   it("Given a member that left the cluster, when the cluster is read again, then its rows and its client go", async () => {
     const { laptop, desktop, client, last, setStatus } = await clustered();
     laptop.pushShell(shell([], [{ id: "alpha" }]));

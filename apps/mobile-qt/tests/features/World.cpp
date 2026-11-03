@@ -16,12 +16,14 @@
 #include <QThread>
 #include <qpa/qwindowsysteminterface.h>
 
+#include "ComposerController.h"
 #include "ConnectionHealthController.h"
 #include "Harness.h"
 #include "Maintenance.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "ThreadStore.h"
 
 namespace {
 
@@ -200,6 +202,12 @@ void World::resize(int width, int height) {
   window().resize(m_size);
   waitFor([&] { return window().size() == m_size; },
           [&] { return QStringLiteral("a %1x%2 window; it is %3x%4").arg(width).arg(height).arg(window().width()).arg(window().height()); });
+}
+
+void World::setTime(const QDateTime& time) {
+  const QDateTime now = time.toUTC();
+  native().controller<ThreadStore>()->setClock([now] { return now; });
+  native().controller<ComposerController>()->setClock([now] { return now; });
 }
 
 MobileApp& World::app() {
