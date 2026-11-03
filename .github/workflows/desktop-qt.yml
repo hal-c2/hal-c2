@@ -74,7 +74,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libfuse2 \
-            libxcb-cursor0 pkg-config libavcodec-dev libavutil-dev libswscale-dev dbus
+            libxcb-cursor0 pkg-config libavcodec-dev libavutil-dev libswscale-dev dbus patchelf
 
       - name: Install build tools (macOS)
         if: runner.os == 'macOS'
