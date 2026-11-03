@@ -289,8 +289,11 @@ defmodule HalC2.Space.PageAgent do
   # its provider session last said.
   defp failure(stream, %{"id" => run_id}) do
     stream
-    |> StreamState.list("turn-item")
-    |> Enum.filter(&(&1["type"] == "error" and &1["runId"] == run_id))
+    |> StreamState.run_rows([run_id])
+    |> Enum.flat_map(fn
+      {"turn-item", _, %{"type" => "error"} = item} -> [item]
+      _ -> []
+    end)
     |> Enum.sort_by(&(&1["ordinal"] || 0))
     |> List.last(%{})
     |> Map.get("failure")

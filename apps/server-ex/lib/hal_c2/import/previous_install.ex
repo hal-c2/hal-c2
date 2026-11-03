@@ -228,7 +228,7 @@ defmodule HalC2.Import.PreviousInstall do
     :ok = HalC2.Search.index_thread(id, state)
 
     for kind <- ["message", "turn-item"],
-        entity <- StreamState.list(state, kind),
+        entity <- StreamState.all(state, kind),
         %{"id" => attachment} when is_binary(attachment) <- entity["attachments"] || [],
         name <- files.attachments,
         String.starts_with?(name, attachment <> ".") do

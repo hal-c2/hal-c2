@@ -59,7 +59,7 @@ defmodule HalC2.Search do
     :ok = read_again()
 
     gone =
-      for message <- StreamState.list(StreamState.load(Store.path(), id), "message"),
+      for message <- StreamState.all(StreamState.load(Store.path(), id), "message"),
           do: {message["id"], :deleted}
 
     if gone != [], do: Store.index_messages(id, gone)
@@ -77,7 +77,7 @@ defmodule HalC2.Search do
     thread = StreamState.get(state, "thread")[id]
 
     entries =
-      for message <- StreamState.list(state, "message"),
+      for message <- StreamState.all(state, "message"),
           entry = entry(message["id"], message, thread),
           do: entry
 

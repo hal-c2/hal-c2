@@ -938,7 +938,7 @@ defmodule HalC2.Orchestration do
 
     cond do
       request["status"] != "pending" ->
-        if StreamState.get(state, "message")[message_id],
+        if StreamState.fetch(state, "message", message_id),
           do: {:ok, %{"sequence" => sequence(thread_id)}},
           else: {:error, "This question has already been answered."}
 
@@ -1605,8 +1605,7 @@ defmodule HalC2.Orchestration do
   defp with_first_run(state, thread_id, change, created, {:ok, project, command}) do
     {kind, id, patch} = change || {"thread", thread_id, %{}}
 
-    launched =
-      StreamState.apply_event(state, %{seq: state.seq, kind: kind, entity: id, patch: patch})
+    launched = StreamState.with_changes(state, [{kind, id, patch}])
 
     {changes, decided} = decide_message(launched, thread_id, command)
     {Enum.reject([change], &is_nil/1) ++ changes, {:ok, created, {project, command, decided}}}
@@ -1614,7 +1613,8 @@ defmodule HalC2.Orchestration do
 
   defp reusable?(state, thread, project_id) do
     thread["projectId"] == project_id and thread["archivedAt"] == nil and
-      thread["deletedAt"] == nil and StreamState.get(state, "message") == %{} and
+      thread["deletedAt"] == nil and state.floor == nil and
+      StreamState.get(state, "message") == %{} and
       StreamState.get(state, "run") == %{}
   end
 
@@ -1758,9 +1758,10 @@ defmodule HalC2.Orchestration do
     state = HalC2.Streams.state(thread_id)
     previous = (StreamState.get(state, "thread")[thread_id] || %{})["title"] || ""
 
+    # The first message counts, so older runs' are read too.
     messages =
       state
-      |> StreamState.list("message")
+      |> StreamState.all("message")
       |> Enum.filter(&(&1["role"] in ["user", "assistant"] and &1["streaming"] != true))
 
     case HalC2.TextGeneration.Prompts.thread_context(messages) do
@@ -2898,11 +2899,7 @@ defmodule HalC2.Orchestration do
 
   # `state` as it is once `changes` are committed, for deciding more in the same
   # transaction.
-  defp with_changes(state, changes) do
-    Enum.reduce(changes, state, fn {kind, id, patch}, acc ->
-      StreamState.apply_event(acc, %{seq: acc.seq, kind: kind, entity: id, patch: patch})
-    end)
-  end
+  defp with_changes(state, changes), do: StreamState.with_changes(state, changes)
 
   # What a runtime's `steer/3` is handed: the text the provider reads (with its composer
   # context) and the message's files, as a turn carries them.
@@ -3723,7 +3720,7 @@ defmodule HalC2.Orchestration do
       # now, so it is a map, which `dispatch_once/1` keeps no receipt of.
       sent =
           is_binary(command["messageId"]) &&
-            StreamState.get(state, "message")[command["messageId"]] ->
+            StreamState.fetch(state, "message", command["messageId"]) ->
         if sent["steer"] == "pending",
           do: {[], {:error, %{"message" => "This message is still being sent. Try again."}}},
           else: {[], {:ok, :sent}}
@@ -4207,11 +4204,7 @@ defmodule HalC2.Orchestration do
   # Every change replays at `state.seq`: safe only while
   # `StreamState.apply_event/2` neither dedupes nor orders by seq and the
   # result's `created`/`changed` stamps go unread before commit.
-  defp applied(state, changes) do
-    Enum.reduce(changes, state, fn {kind, id, patch}, state ->
-      StreamState.apply_event(state, %{seq: state.seq, kind: kind, entity: id, patch: patch})
-    end)
-  end
+  defp applied(state, changes), do: StreamState.with_changes(state, changes)
 
   # Starts a run for a message: a new one, or a queued run (with its stored message
   # as `command`), which keeps its ids and takes the next ordinal (`start_ordinal/3`).
@@ -4556,12 +4549,16 @@ defmodule HalC2.Orchestration do
 
   @doc "The next free turn-item ordinal in a thread."
   def next_ordinal(state) do
-    state
-    |> StreamState.get("turn-item")
-    |> Map.values()
-    |> Enum.map(& &1["ordinal"])
-    |> Enum.max(fn -> -1 end)
-    |> Kernel.+(1)
+    hot = StreamState.get(state, "turn-item")
+
+    # Older runs' items have lower ordinals than those in memory, unless memory has none
+    # (the newest runs rolled back, say).
+    items =
+      if hot == %{} and state.floor != nil,
+        do: StreamState.all(state, "turn-item"),
+        else: Map.values(hot)
+
+    items |> Enum.map(& &1["ordinal"]) |> Enum.max(fn -> -1 end) |> Kernel.+(1)
   end
 
   # The changes recording a provider's own diff for a turn, or the refusal
@@ -4634,7 +4631,7 @@ defmodule HalC2.Orchestration do
 
   @doc "A change updating an existing entity with `fun`, or `nil` when nothing changes."
   def upsert(state, kind, id, fun) do
-    current = StreamState.get(state, kind)[id]
+    current = StreamState.fetch(state, kind, id)
 
     # `fun` returning nil leaves the entity as it is, a missing one included.
     with %{} = next <- fun.(current),

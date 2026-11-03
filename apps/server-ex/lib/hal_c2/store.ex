@@ -605,19 +605,6 @@ defmodule HalC2.Store do
     end)
   end
 
-  @doc "How many cold rows of `kind` a stream holds per run id."
-  @spec cold_counts(String.t(), String.t(), String.t()) :: %{(String.t() | nil) => pos_integer}
-  def cold_counts(path, stream_id, kind) do
-    sql = """
-    SELECT c.run, count(*) FROM cold c JOIN streams s ON s.key = c.stream
-    WHERE s.id = ?1 AND c.kind = ?2 GROUP BY c.run
-    """
-
-    with_query(path, sql, [stream_id, kind], fn db, stmt ->
-      step_reduce(db, stmt, %{}, fn [run, count], acc -> Map.put(acc, run, count) end)
-    end)
-  end
-
   defp cold_row([kind, id, run, created, changed, entity]),
     do: {kind, id, run, created, changed, :erlang.binary_to_term(entity)}
 

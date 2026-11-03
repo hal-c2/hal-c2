@@ -194,21 +194,42 @@ defmodule HalC2.Mcp.Tools do
       after_position = args["afterPosition"] || -1
       limit = args["limit"] || 50
       max_chars = args["maxCharsPerItem"] || 20_000
-      messages = StreamState.get(state, "message")
 
-      items =
+      shown? =
+        &((view == "activity" or &1["type"] in ["user_message", "assistant_message"]) and
+            (args["itemId"] == nil or &1["id"] == args["itemId"]))
+
+      # One pass over every item, older runs' read from disk a page at a time: how many
+      # are shown, the page asked for, and the last answer. The answer is picked from the
+      # unfiltered turn items: the shown ones may be narrowed to one earlier item by
+      # `itemId`.
+      {total, page, last_answer_id} =
         state
-        |> StreamState.list("turn-item")
-        |> Enum.filter(
-          &(view == "activity" or &1["type"] in ["user_message", "assistant_message"])
-        )
-        |> Enum.filter(&(args["itemId"] == nil or &1["id"] == args["itemId"]))
-        |> Enum.with_index()
+        |> StreamState.all("turn-item")
+        |> Enum.reduce({0, [], 0, nil}, fn item, {total, page, taken, answer} ->
+          answer = if item["type"] == "assistant_message", do: item["id"], else: answer
 
-      page =
-        items
-        |> Enum.filter(fn {_, position} -> position > after_position end)
-        |> Enum.take(limit)
+          cond do
+            not shown?.(item) ->
+              {total, page, taken, answer}
+
+            total > after_position and taken < limit ->
+              {total + 1, [{item, total} | page], taken + 1, answer}
+
+            true ->
+              {total + 1, page, taken, answer}
+          end
+        end)
+        |> then(fn {total, page, _taken, answer} -> {total, Enum.reverse(page), answer} end)
+
+      messages =
+        for {{"message", id}, message} <-
+              StreamState.lookup(
+                state,
+                for({%{"messageId" => id}, _} when is_binary(id) <- page, do: {"message", id})
+              ),
+            into: %{},
+            do: {id, message}
 
       read =
         Enum.map(page, fn {item, position} ->
@@ -219,14 +240,7 @@ defmodule HalC2.Mcp.Tools do
       # its result: its automatic delivery is acknowledged, so no wake follows.
       # The answer is the child's last assistant message, so only a page that
       # contains it untruncated counts, not an early progress message or the
-      # first page of a long child. It is picked from the unfiltered turn items:
-      # `items` may already be narrowed to one earlier item by `itemId`.
-      last_answer_id =
-        state
-        |> StreamState.list("turn-item")
-        |> Enum.filter(&(&1["type"] == "assistant_message"))
-        |> List.last(%{})
-        |> Map.get("id")
+      # first page of a long child.
 
       answer_read? =
         Enum.any?(page, fn {item, position} ->
@@ -252,7 +266,7 @@ defmodule HalC2.Mcp.Tools do
 
       {:ok,
        %{
-         "thread" => Map.put(list_item(row), "totalItems", length(items)),
+         "thread" => Map.put(list_item(row), "totalItems", total),
          "recentRuns" =>
            state
            |> StreamState.list("run")
@@ -265,7 +279,7 @@ defmodule HalC2.Mcp.Tools do
              {_, position} -> position
              nil -> nil
            end,
-         "hasMore" => length(items) > after_position + 1 + length(page)
+         "hasMore" => total > after_position + 1 + length(page)
        }}
     end
   end
@@ -558,7 +572,7 @@ defmodule HalC2.Mcp.Tools do
   defp user_attached?(me, thread_id) do
     me["id"]
     |> stream()
-    |> StreamState.list("message")
+    |> StreamState.all("message")
     |> Enum.any?(fn message ->
       message["role"] == "user" and message["createdBy"] == "user" and
         Enum.any?(
@@ -983,7 +997,7 @@ defmodule HalC2.Mcp.Tools do
   def message_run(thread_id, message_id) do
     state = stream(thread_id)
 
-    with %{"runId" => run_id} <- StreamState.get(state, "message")[message_id],
+    with %{"runId" => run_id} <- StreamState.fetch(state, "message", message_id),
          do: StreamState.get(state, "run")[run_id],
          else: (_ -> nil)
   end

@@ -408,10 +408,11 @@ defmodule HalC2.Orchestration.Recovery do
   # A recovery that ran again (a boot cut short after it asked) asks once.
   defp continued?(thread_id, run),
     do:
-      Map.has_key?(
-        StreamState.get(HalC2.Streams.state(thread_id), "message"),
+      StreamState.fetch(
+        HalC2.Streams.state(thread_id),
+        "message",
         "message:restart-continuation:#{run["id"]}"
-      )
+      ) != nil
 
   defp continuation(thread_id, run, text) do
     command = %{

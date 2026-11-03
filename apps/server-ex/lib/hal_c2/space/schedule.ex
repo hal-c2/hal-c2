@@ -178,7 +178,7 @@ defmodule HalC2.Space.Schedule do
       messages =
         id
         |> Streams.state()
-        |> StreamState.list("message")
+        |> StreamState.all("message")
         |> Enum.filter(&(&1["role"] in ["user", "assistant"] and &1["streaming"] != true))
 
       {text, _attachments} = Prompts.thread_context(messages)

@@ -5,6 +5,7 @@ defmodule HalC2.StreamsColdTest do
   use ExUnit.Case, async: false
 
   alias HalC2.{Store, StreamState, Streams}
+  alias HalC2.Projection.Timeline
   alias HalC2.Streams.Server
 
   @moduletag :tmp_dir
@@ -130,6 +131,58 @@ defmodule HalC2.StreamsColdTest do
     end
   end
 
+  test "the transcript counts what a whole fold shows, cold items included", %{path: path} do
+    for i <- 1..3, do: run("src", i, 3)
+    {:ok, _} = Streams.commit("src", :thread, [{"thread", "src", %{"s" => %{"id" => "src"}}}])
+
+    for i <- 1..8, do: run("th", i, 3)
+
+    # Run 2 was steered: its first attempt's interrupt result is noise, unless the user
+    # asked for the stop, as in run 3. Run 4 was a queued message, cancelled.
+    {:ok, _} =
+      Streams.commit("th", :thread, [
+        {"thread", "th",
+         %{
+           "s" => %{
+             "id" => "th",
+             "forkedFrom" => %{"type" => "run", "threadId" => "src", "runId" => "r2"}
+           }
+         }},
+        {"run-attempt", "a2",
+         %{"s" => %{"runId" => "r2", "rootNodeId" => "n2", "status" => "superseded"}}},
+        {"run-attempt", "a3",
+         %{"s" => %{"runId" => "r3", "rootNodeId" => "n3", "status" => "superseded"}}},
+        item("r2", "x2", %{"type" => "run_interrupt_result", "nodeId" => "n2"}),
+        item("r3", "x3", %{"type" => "run_interrupt_result", "nodeId" => "n3"}),
+        item("r3", "q3", %{"type" => "run_interrupt_request"}),
+        item("r4", "u4", %{"type" => "user_message", "inputIntent" => "queued_turn"})
+      ])
+
+    for i <- 9..12, do: run("th", i, 3)
+
+    # Statuses change after the items went cold: run 5 is rolled back, run 4 cancelled.
+    {:ok, _} =
+      Streams.commit("th", :thread, [
+        {"run", "r5", %{"s" => %{"status" => "rolled_back"}}},
+        {"run", "r4", %{"s" => %{"status" => "cancelled"}}}
+      ])
+
+    state = Streams.state("th")
+    assert Map.has_key?(StreamState.tally(state), "r2")
+    whole = fold(Store.reduce_stream(path, "th", 0, [], &[&1 | &2]) |> Enum.reverse())
+    source = Streams.state("src")
+    whole_source = fold(Store.reduce_stream(path, "src", 0, [], &[&1 | &2]) |> Enum.reverse())
+
+    assert Timeline.local_count(state) == length(Timeline.local_items(whole))
+    assert Timeline.local_items(state) == Timeline.local_items(whole)
+
+    assert Timeline.visible_count(state, fn "src" -> source end) ==
+             length(Timeline.visible_items(whole, fn "src" -> whole_source end))
+
+    shell = HalC2.Projection.Shell.thread_shell(state)
+    assert shell["itemCount"] == length(Timeline.local_items(whole))
+  end
+
   # --- helpers ----------------------------------------------------------------
 
   # One settled run of `n` turn items with its user message, `ordinal` `i`.
@@ -142,13 +195,20 @@ defmodule HalC2.StreamsColdTest do
         {"message", "#{run}-m", %{"s" => %{"runId" => run, "text" => "q#{i}"}}}
         | for(
             j <- 1..n,
-            do: {"turn-item", "#{run}-i#{j}", %{"s" => %{"runId" => run, "text" => "#{i}.#{j}"}}}
+            do:
+              {"turn-item", "#{run}-i#{j}",
+               %{"s" => %{"runId" => run, "threadId" => stream, "text" => "#{i}.#{j}"}}}
           )
       ])
 
     {:ok, _} =
       Streams.commit(stream, :thread, [{"run", run, %{"s" => %{"status" => "completed"}}}])
   end
+
+  defp item(run, id, fields),
+    do:
+      {"turn-item", "#{run}-#{id}",
+       %{"s" => Map.merge(%{"runId" => run, "threadId" => "th", "id" => "#{run}-#{id}"}, fields)}}
 
   defp fold(events), do: Enum.reduce(events, StreamState.new(), &StreamState.apply_event(&2, &1))
 

@@ -928,7 +928,7 @@ defmodule HalC2.Orchestration.Delegation do
                })
              end),
              Orchestration.upsert(state, "node", task["id"], finish),
-             StreamState.get(state, "turn-item")[item_id] &&
+             StreamState.fetch(state, "turn-item", item_id) &&
                Orchestration.upsert(state, "turn-item", item_id, fn item ->
                  Map.merge(item, %{
                    "status" => status,
@@ -1420,8 +1420,9 @@ defmodule HalC2.Orchestration.Delegation do
           into: MapSet.new(),
           do: run["id"]
 
+    # Older runs' messages too: the latest runs may have said nothing.
     child
-    |> StreamState.list("message")
+    |> StreamState.all("message")
     |> Enum.filter(
       &(&1["role"] == "assistant" and MapSet.member?(kept, &1["runId"]) and
           String.trim(&1["text"] || "") != "")
@@ -1433,10 +1434,11 @@ defmodule HalC2.Orchestration.Delegation do
   # Why a child that never started ended: its worktree could not be prepared, or the
   # preparation was cancelled. Nil for any other run, a queued one cancelled included.
   defp preparation_failure(child, %{"id" => run_id}) do
-    items = StreamState.get(child, "turn-item")
-
-    case {items["turn-item:workspace-preparation-failure:#{run_id}"],
-          items["turn-item:workspace-preparation:#{run_id}"]} do
+    case {StreamState.fetch(
+            child,
+            "turn-item",
+            "turn-item:workspace-preparation-failure:#{run_id}"
+          ), StreamState.fetch(child, "turn-item", "turn-item:workspace-preparation:#{run_id}")} do
       {%{"failure" => %{"message" => message}}, _} -> "Workspace preparation failed: #{message}"
       {_, %{"status" => "cancelled"}} -> "Workspace preparation was cancelled."
       _ -> nil
@@ -1457,8 +1459,11 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp failure_text(child, %{"id" => run_id}, "failed") do
     child
-    |> StreamState.list("turn-item")
-    |> Enum.filter(&(&1["type"] == "error" and &1["runId"] == run_id))
+    |> StreamState.run_rows([run_id])
+    |> Enum.flat_map(fn
+      {"turn-item", _, %{"type" => "error"} = item} -> [item]
+      _ -> []
+    end)
     |> Enum.sort_by(&(&1["ordinal"] || 0))
     |> List.last(%{})
     |> Map.get("failure")

@@ -626,7 +626,7 @@ defmodule HalC2.Mcp.Tools.Threads do
 
   defp first_message(thread_id) do
     stream(thread_id)
-    |> StreamState.list("message")
+    |> StreamState.all("message")
     |> Enum.find_value(&(&1["role"] == "user" and (&1["text"] || "") != "" and &1["text"]))
   end
 

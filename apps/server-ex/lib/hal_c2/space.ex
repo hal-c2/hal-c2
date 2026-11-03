@@ -524,11 +524,7 @@ defmodule HalC2.Space do
   def import_markdown(_, _, _, _, _, _), do: {:error, :invalid, "markdown is a string."}
 
   @doc "`state` as if `changes` were committed, to decide what follows them in one step."
-  def with_changes(state, changes) do
-    Enum.reduce(changes, state, fn {kind, id, patch}, state ->
-      StreamState.apply_event(state, %{seq: state.seq, kind: kind, entity: id, patch: patch})
-    end)
-  end
+  def with_changes(state, changes), do: StreamState.with_changes(state, changes)
 
   @doc """
   `spec` as a block of this Space: a link to a page it does not have is a paragraph, and
@@ -601,7 +597,7 @@ defmodule HalC2.Space do
       messages =
         thread_id
         |> Streams.state()
-        |> StreamState.list("message")
+        |> StreamState.all("message")
         |> Enum.filter(&(&1["role"] in ["user", "assistant"] and &1["streaming"] != true))
 
       case HalC2.TextGeneration.Prompts.thread_context(messages) do

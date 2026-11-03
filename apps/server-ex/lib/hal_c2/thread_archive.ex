@@ -621,9 +621,11 @@ defmodule HalC2.ThreadArchive do
           not MapSet.member?(incoming, {kind, eid}),
           do: {kind, eid, Patch.delete(), at}
 
+    existing = StreamState.lookup(current, incoming)
+
     upserts =
       for {kind, eid, entity} <- entities,
-          patch = Patch.diff(StreamState.get(current, kind)[eid], entity),
+          patch = Patch.diff(existing[{kind, eid}], entity),
           patch != :unchanged,
           do: {kind, eid, patch, at}
 
@@ -784,7 +786,7 @@ defmodule HalC2.ThreadArchive do
   end
 
   defp attachments(state) do
-    for message <- StreamState.list(state, "message"),
+    for message <- StreamState.all(state, "message"),
         %{"id" => _} = attachment <- List.wrap(message["attachments"]),
         path = Attachments.path(attachment),
         path != nil,

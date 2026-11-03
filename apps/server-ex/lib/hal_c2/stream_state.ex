@@ -29,7 +29,9 @@ defmodule HalC2.StreamState do
   goes out in bounded memory. An event to a cold entity is applied after
   `promote/2` brings it back to memory; `dirty` names the cold rows that became
   stale that way (or by a delete), which reads skip and the next snapshot deletes.
-  `src` says where the cold rows are, and is not part of a snapshot.
+  `tally` counts the cold turn items of each run by what a transcript needs to know
+  of them (`tally/1`), so counts never read the cold rows. `src` says where the cold
+  rows are, and is not part of a snapshot.
   """
 
   alias HalC2.{Patch, Store}
@@ -52,10 +54,12 @@ defmodule HalC2.StreamState do
             since: 0,
             floor: nil,
             dirty: %{},
+            tally: %{},
             src: nil
 
   @type key :: {kind :: String.t(), id :: String.t()}
   @type row :: {String.t(), String.t(), Patch.entity()}
+  @type tag :: :item | :queued_user | :interrupt_request | {:interrupt_result, String.t()}
   @type t :: %__MODULE__{
           v: pos_integer,
           seq: non_neg_integer,
@@ -67,6 +71,7 @@ defmodule HalC2.StreamState do
           since: non_neg_integer,
           floor: integer | nil,
           dirty: %{key => String.t() | nil},
+          tally: %{String.t() => %{tag => pos_integer}},
           src: {path :: String.t(), stream_id :: String.t()} | nil
         }
 
@@ -318,21 +323,34 @@ defmodule HalC2.StreamState do
   def item_counts(state) do
     hot = state |> get("turn-item") |> Enum.frequencies_by(fn {_id, item} -> item["runId"] end)
 
-    case state do
-      %{floor: floor, src: {path, id}} when floor != nil ->
-        # A stale row is still counted by the query, and its entity (if any) in memory.
-        stale =
-          for {{"turn-item", _}, run} <- state.dirty, reduce: %{} do
-            acc -> Map.update(acc, run, -1, &(&1 - 1))
-          end
-
-        [hot, Store.cold_counts(path, id, "turn-item"), stale]
-        |> Enum.reduce(&Map.merge(&2, &1, fn _run, a, b -> a + b end))
-
-      _ ->
-        hot
+    for {run, tags} <- state.tally, reduce: hot do
+      acc -> Map.update(acc, run, Enum.sum(Map.values(tags)), &(&1 + Enum.sum(Map.values(tags))))
     end
   end
+
+  @doc """
+  The cold turn items of each run, counted by `tag`: `:queued_user` for a queued
+  turn's user message, `:interrupt_request`, `{:interrupt_result, node_id}`, and
+  `:item` for any other. That is what `HalC2.Projection.Timeline` needs to know which
+  are visible.
+  """
+  @spec tally(t) :: %{String.t() => %{tag => pos_integer}}
+  def tally(state), do: state.tally
+
+  defp tag(%{"type" => "run_interrupt_result", "nodeId" => node}) when node != nil,
+    do: {:interrupt_result, node}
+
+  defp tag(%{"type" => "run_interrupt_request"}), do: :interrupt_request
+  defp tag(%{"type" => "user_message", "inputIntent" => "queued_turn"}), do: :queued_user
+  defp tag(_item), do: :item
+
+  defp count(tally, "turn-item", run, item, by) do
+    tags = tally |> Map.get(run, %{}) |> Map.update(tag(item), by, &(&1 + by))
+    tags = for {tag, n} <- tags, n > 0, into: %{}, do: {tag, n}
+    if tags == %{}, do: Map.delete(tally, run), else: Map.put(tally, run, tags)
+  end
+
+  defp count(tally, _kind, _run, _entity, _by), do: tally
 
   # The cold rows of `keys` still current: neither in memory nor stale.
   defp cold(%{floor: floor, src: {path, id}} = state, keys) when floor != nil do
@@ -401,6 +419,22 @@ defmodule HalC2.StreamState do
   end
 
   @doc """
+  `state` as if `changes` (`{kind, id, patch}`) were committed, to decide what
+  follows them in one step. Every change applies at `state.seq`, to the entity as it
+  is, a cold one brought back first (`promote/2`).
+  """
+  @spec with_changes(t, [{String.t(), String.t(), Patch.t()}]) :: t
+  def with_changes(state, changes) do
+    state
+    |> promote(for {kind, id, _} <- changes, do: {kind, id})
+    |> then(fn state ->
+      Enum.reduce(changes, state, fn {kind, id, patch}, state ->
+        apply_event(state, %{seq: state.seq, kind: kind, entity: id, patch: patch})
+      end)
+    end)
+  end
+
+  @doc """
   Brings the cold entities among `keys` (`{kind, id}`) back to memory, as they
   were, so events to them apply to what they are. Their cold rows are stale from
   here on.
@@ -420,7 +454,8 @@ defmodule HalC2.StreamState do
         | entities: Map.update(state.entities, kind, %{id => entity}, &Map.put(&1, id, entity)),
           created: Map.put(state.created, {kind, id}, created),
           changed: Map.put(state.changed, {kind, id}, changed),
-          dirty: Map.put(state.dirty, {kind, id}, run)
+          dirty: Map.put(state.dirty, {kind, id}, run),
+          tally: count(state.tally, kind, run, entity, -1)
       }
     end)
   end
@@ -458,10 +493,16 @@ defmodule HalC2.StreamState do
 
       keys = for {kind, id, _} <- moving, do: {kind, id}
 
+      tally =
+        Enum.reduce(moving, state.tally, fn {kind, _, entity}, tally ->
+          count(tally, kind, entity["runId"], entity, 1)
+        end)
+
       {%{
          state
          | entities: entities,
            floor: floor,
+           tally: tally,
            created: Map.drop(state.created, keys),
            changed: Map.drop(state.changed, keys)
        }, rows}
@@ -600,7 +641,14 @@ defmodule HalC2.StreamState do
 
   # v3 held every entity in memory: nothing is cold.
   def migrate(%{v: 3} = state),
-    do: %{struct(__MODULE__, Map.from_struct(state)) | v: 4, floor: nil, dirty: %{}, src: nil}
+    do: %{
+      struct(__MODULE__, Map.from_struct(state))
+      | v: 4,
+        floor: nil,
+        dirty: %{},
+        tally: %{},
+        src: nil
+    }
 
   # v2 did not record when entities changed: nothing is known before its seq.
   def migrate(%{v: 2} = state) do

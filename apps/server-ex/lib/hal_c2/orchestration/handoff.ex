@@ -475,8 +475,11 @@ defmodule HalC2.Orchestration.Handoff do
       )
       |> Enum.sort_by(& &1["ordinal"])
 
+    # Older runs' entities are read from disk.
+    rows = state |> StreamState.run_rows(Enum.map(runs, & &1["id"])) |> Enum.to_list()
+
     messages =
-      for message <- StreamState.list(state, "message"),
+      for {"message", _, message} <- rows,
           text = String.trim(message["text"] || ""),
           text != "" do
         role = if message["role"] == "user", do: :user, else: :assistant
@@ -485,8 +488,7 @@ defmodule HalC2.Orchestration.Handoff do
       end
 
     commands =
-      for %{"type" => "command_execution", "input" => input} = item <-
-            StreamState.list(state, "turn-item"),
+      for {"turn-item", _, %{"type" => "command_execution", "input" => input} = item} <- rows,
           is_binary(input) and item["status"] in ~w(completed failed interrupted),
           do: {item["runId"], item["startedAt"] || "", :command, command(item)}
 
