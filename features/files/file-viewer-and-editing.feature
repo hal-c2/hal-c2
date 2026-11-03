@@ -9,6 +9,8 @@
 #   apps/desktop-qt/src/native/ThisMachine.cpp, WorkspaceController.cpp (localPathFor, openHere: editors and the file manager start only on this machine)
 #   apps/tui/src/thisMachine.ts, apps/tui/src/host/filesState.ts (the same for the terminal client)
 #   apps/web/src/components/files/FilePreviewPanel.tsx
+#   apps/desktop-qt/src/native/CodeReader.cpp, WorkspaceFiles.cpp (TextLinesModel: a file's lines coloured by its language, off the GUI thread)
+#   native/syntax (syntect with bat's syntaxes: the language a file's name picks; the Pierre light and dark themes)
 #   apps/web/src/components/chat/ThreadDetailsPanel.tsx, OpenInPicker.tsx, OpenInPicker.logic.ts (open the workspace)
 #   apps/web/src/remoteOpen.ts (SSH deep links for a remote environment; remoteOpenTargets not sent by the MC)
 #   apps/desktop/src/ipc/methods/window.ts (probeRemoteEditors: which local editors can work over SSH)
@@ -129,6 +131,47 @@ Feature: Viewing and editing files
       When the user browses files and opens "src/app.ts"
       Then the contents of "src/app.ts" are shown with syntax colouring
       And the user can scroll through the file and go back to the tree
+
+    @desktop @mobile @backlog-mobile
+    Scenario Outline: An opened file is coloured by its language
+      Given "<file>" in "shop" holds <language> code
+      When the user opens "<file>"
+      Then the lines of "<file>" are coloured as <language>
+
+      Examples:
+        | file                | language   |
+        | src/cart.ts         | TypeScript |
+        | lib/shop/cart.ex    | Elixir     |
+        | ui/Cart.qml         | QML        |
+
+    @desktop @mobile @backlog-mobile
+    Scenario Outline: A file of no known language, or too large to colour, is shown plain
+      Given "<file>" in "shop" <holds>
+      When the user opens "<file>"
+      Then the lines of "<file>" are shown plain
+
+      Examples:
+        | file            | holds                                      |
+        | notes/todo.txt  | holds plain text                           |
+        | data/blob.zzz   | holds plain text                           |
+        | src/bundle.ts   | holds more than 512K characters of code    |
+
+    @desktop @mobile @backlog-mobile
+    Scenario: A coloured line too long to show is cut with its colours
+      Given "src/long.ts" in "shop" has a line of TypeScript 3000 characters long
+      When the user opens "src/long.ts"
+      Then the long line is shown up to its 2000th character and then "…"
+      And no colour reaches past the cut
+
+    @desktop @mobile @backlog-mobile
+    Scenario: An open file follows the theme without being read again
+      Given the appearance is Light
+      And "src/cart.ts" in "shop" holds TypeScript code
+      And the user is reading "src/cart.ts" in the viewer
+      And the lines of "src/cart.ts" are coloured as TypeScript
+      When the app turns dark while the file is open
+      Then the lines of "src/cart.ts" are coloured for the dark theme
+      And the file was not read again
 
     @tui
     Scenario: The terminal client marks an empty file as empty
@@ -799,6 +842,17 @@ Feature: Viewing and editing files
         | notes.md    | rendered Markdown that can switch to source |
         | build.log   | text                                        |
         | invoice.pdf | a document the user can page through        |
+
+    @desktop @mobile @backlog-mobile
+    Scenario Outline: A text attachment is coloured by the language its name says
+      Given the user has attached "<file>" to a draft
+      When the user opens the attachment from the draft
+      Then its text is shown <shown>
+
+      Examples:
+        | file      | shown                  |
+        | cart.ts   | coloured as TypeScript |
+        | notes.txt | plain                  |
 
     @desktop @mobile
     Scenario: An attachment in a sent message opens in the same viewer

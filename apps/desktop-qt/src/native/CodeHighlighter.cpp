@@ -1,45 +1,14 @@
 #include "CodeHighlighter.h"
 
-#include <QCache>
 #include <QCoreApplication>
 #include <QQmlEngine>
 #include <QTextBlock>
 #include <QTextCharFormat>
 #include <QTextDocument>
-#include <QThreadPool>
 
 #include <algorithm>
 
-#include "hal_c2_syntax.h"
-
 namespace {
-
-// Readers for every highlighter: the code of a reply is read off the GUI
-// thread, two at a time at most. Its children are deleted with the app, after
-// waiting for what they read.
-QThreadPool* readers() {
-  static QPointer<QThreadPool> pool;
-  if (!pool) {
-    pool = new QThreadPool(QCoreApplication::instance());
-    pool->setMaxThreadCount(2);
-  }
-  return pool;
-}
-
-// What was read of code that was not being written, by language and text,
-// up to about 32 MB of keys and runs.
-struct Cached {
-  std::shared_ptr<const CodeHighlighter::Runs> runs;
-};
-QCache<QString, Cached>& cache() {
-  static QCache<QString, Cached> cache(32 * 1024 * 1024);
-  return cache;
-}
-
-void collect(void* context, const HalC2SyntaxSpan* span) {
-  auto* runs = static_cast<CodeHighlighter::Runs*>(context);
-  runs->themes[span->theme & 1].append({span->start, span->length, span->color, span->flags});
-}
 
 void registerCodeHighlighter() {
   qmlRegisterType<CodeHighlighter>("HalC2.Shell", 1, 0, "CodeHighlighter");
@@ -48,36 +17,6 @@ void registerCodeHighlighter() {
 }  // namespace
 
 Q_COREAPP_STARTUP_FUNCTION(registerCodeHighlighter)
-
-void CodeHighlighter::SyntaxDeleter::operator()(HalC2Syntax* syntax) const {
-  hal_c2_syntax_free(syntax);
-}
-
-// One read: what to go on from, what to read, and what came of it.
-struct CodeHighlighter::Job {
-  QByteArray language;
-  bool byPath = false;
-  Syntax syntax;
-  QString base;
-  QString delta;
-  std::shared_ptr<const Runs> runs;
-  bool known = true;
-
-  void run() {
-    if (!syntax) {
-      syntax.reset(byPath ? hal_c2_syntax_for_path(language.constData(), size_t(language.size()))
-                          : hal_c2_syntax_for_language(language.constData(), size_t(language.size())));
-      if (!syntax) {
-        known = false;
-        return;
-      }
-    }
-    auto out = std::make_shared<Runs>(runs ? *runs : Runs{});
-    const QByteArray code = delta.toUtf8();
-    hal_c2_syntax_feed(syntax.get(), code.constData(), size_t(code.size()), collect, out.get());
-    runs = std::move(out);
-  }
-};
 
 CodeHighlighter::CodeHighlighter(QObject* parent) : QSyntaxHighlighter(parent) {}
 
@@ -88,7 +27,7 @@ CodeHighlighter::~CodeHighlighter() {
 }
 
 void CodeHighlighter::clearCache() {
-  cache().clear();
+  codereader::clearCache();
 }
 
 void CodeHighlighter::setQuickDocument(QQuickTextDocument* document) {
@@ -139,7 +78,7 @@ void CodeHighlighter::setStreaming(bool streaming) {
 }
 
 int CodeHighlighter::theme() const {
-  return m_background.isValid() && m_background.lightnessF() >= 0.5 ? 0 : 1;
+  return codereader::themeFor(m_background);
 }
 
 void CodeHighlighter::textChanged() {
@@ -190,7 +129,7 @@ QString CodeHighlighter::target() const {
 }
 
 QString CodeHighlighter::cacheKey(const QString& text) const {
-  return (m_path.isEmpty() ? QStringLiteral("l:") + m_language : QStringLiteral("p:") + m_path) + QChar(0) + text;
+  return codereader::cacheKey(m_language, m_path, text);
 }
 
 void CodeHighlighter::schedule() {
@@ -208,10 +147,10 @@ void CodeHighlighter::schedule() {
     job->base = m_read;
     job->delta = text.mid(m_read.size());
     job->runs = m_runs;
-  } else if (const Cached* hit = cache().object(cacheKey(text))) {
+  } else if (auto hit = codereader::cached(cacheKey(text))) {
     m_syntax.reset();
     m_read = text;
-    m_runs = hit->runs;
+    m_runs = std::move(hit);
     m_current = true;
     apply();
     return;
@@ -221,14 +160,7 @@ void CodeHighlighter::schedule() {
   }
 
   setRunning(true);
-  QThreadPool* pool = readers();
-  std::weak_ptr<int> alive = m_alive;
-  pool->start([job, alive, pool, self = this] {
-    job->run();
-    QMetaObject::invokeMethod(pool, [job, alive, self] {
-      if (alive.lock()) self->finished(job);
-    }, Qt::QueuedConnection);
-  });
+  codereader::start(job, m_alive, [this](const std::shared_ptr<Job>& job) { finished(job); });
 }
 
 void CodeHighlighter::setRunning(bool running) {
@@ -247,12 +179,7 @@ void CodeHighlighter::finished(const std::shared_ptr<Job>& job) {
   m_read = job->base + job->delta;
   m_runs = job->runs;
   m_current = m_text.startsWith(m_read);
-  if (!m_streaming && m_current) {
-    const QString key = cacheKey(m_read);
-    qsizetype cost = key.size() * qsizetype(sizeof(QChar));
-    for (const auto& runs : m_runs->themes) cost += runs.size() * qsizetype(sizeof(Run));
-    cache().insert(key, new Cached{m_runs}, cost);
-  }
+  if (!m_streaming && m_current) codereader::keep(cacheKey(m_read), m_runs);
   apply();
   // Straight on to what was written meanwhile, reading all along.
   m_running = false;
