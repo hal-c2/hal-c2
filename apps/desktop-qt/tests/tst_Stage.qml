@@ -351,7 +351,7 @@ Item {
             const holder = createTemporaryObject(areaComponent, root);
             const area = holder.area;
             verify(!area.narrow);
-            const centre = findChild(area, "centreHost");
+            const centre = findChild(area, "routeView");
             const stage = findChild(area, "stage");
             const strip = findChild(area, "stageActivity");
             verify(!centre.visible, "the timeline is put away");
@@ -384,7 +384,7 @@ Item {
             const holder = createTemporaryObject(areaComponent, root, { width: 700 });
             const area = holder.area;
             verify(area.narrow);
-            const centre = findChild(area, "centreHost");
+            const centre = findChild(area, "routeView");
             const stage = findChild(area, "stage");
             const strip = findChild(area, "stageActivity");
             verify(centre.visible);

@@ -110,7 +110,7 @@ The bricks come in two layers. Chrome bricks each own one piece of the window
 and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
 strip), `Composer`, `RightPanel`, `SettingsNav`, `ClusterSettings`,
 `ConnectionsSettings`, `GitActions`, `Notifications`, `ContextMenuHost`, plus
-`CentreHost` (the view `route.kind` names), `SettingsHost`, `DefaultShell` and
+`CentreHost` (the view `route.kind` names, and a thread's stage), `SettingsHost`, `DefaultShell` and
 `ShellErrorOverlay`. `TerminalDrawer` reads the native
 `Terminals` controller instead (see the terminal drawer below), and `Timeline`
 renders a native `Threads` timeline (see the thread store below). `RightPanel`'s

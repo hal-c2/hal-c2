@@ -448,7 +448,7 @@ Rectangle {
                         anchors.fill: parent
                         z: 4
                         keys: ["hal-c2/panel-tab"]
-                        enabled: stage.bodies.dragging.length > 0
+                        enabled: (stage.bodies?.dragging ?? "").length > 0
                         onExited: pane.zone = ""
                         onPositionChanged: drag => {
                             const across = drag.x / width;
@@ -543,7 +543,7 @@ Rectangle {
         width: 48
         z: 5
         keys: ["hal-c2/panel-tab"]
-        enabled: stage.bodies.dragging.length > 0 && stage.panel?.isOpen !== true && stage.tabOf(stage.bodies.dragging) !== null
+        enabled: (stage.bodies?.dragging ?? "").length > 0 && stage.panel?.isOpen !== true && stage.tabOf(stage.bodies.dragging) !== null
         onDropped: drop => {
             const id = stage.bodies.dragging;
             drop.accept();

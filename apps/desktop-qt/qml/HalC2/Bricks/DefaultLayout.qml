@@ -82,11 +82,6 @@ Item {
     // Null in a build without a terminal (Terminals.supported).
     readonly property Item terminalDrawer: terminalView.item as Item
 
-    // The right panel's tab bodies, shared by the panel and the stage.
-    PanelBodies {
-        id: panelBodies
-    }
-
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -296,7 +291,7 @@ Item {
                     Layout.fillHeight: true
                     visible: !layout.window.settingsActive
                     routeKind: layout.window.route?.kind ?? ""
-                    bodies: panelBodies
+                    bodies: layout.window.panelBodies
                     threadMinimumWidth: layout.threadMinimumWidth
                 }
 
@@ -342,7 +337,7 @@ Item {
                 Layout.topMargin: layout.panelSheet ? layout.headerHeight : 0
                 z: layout.panelSheet ? 2 : 0
                 ownToggle: false
-                bodies: panelBodies
+                bodies: layout.window.panelBodies
                 resizable: !layout.panelSheet
                 trailingInset: layout.corner === "panel" ? layout.windowButtonsInset : 0
                 Layout.preferredWidth: implicitWidth
@@ -520,7 +515,7 @@ Item {
         y: body.y + centre.y + threadArea.y + threadArea.conversationTop
         width: detailsView.visible && layout.detailsSheet ? Math.min(threadArea.conversationWidth, Math.max(0, detailsView.x - centre.x - threadArea.x)) : threadArea.conversationWidth
         height: threadArea.height - threadArea.conversationTop
-        visible: centre.visible && threadArea.visible && threadArea.composer.visible && !sidebarScrim.visible && !panelScrim.visible
+        visible: centre.visible && threadArea.visible && threadArea.composer?.visible === true && !sidebarScrim.visible && !panelScrim.visible
         composer: threadArea.composer
     }
 

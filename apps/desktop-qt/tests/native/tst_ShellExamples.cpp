@@ -430,7 +430,7 @@ private slots:
     if (example == "folders") {
       auto* explorer = window->findChild<QQuickItem*>("folderExplorer");
       QVERIFY(explorer);
-      auto* centre = window->findChild<QQuickItem*>("centreHost");
+      auto* centre = window->findChild<QQuickItem*>("routeView");
       QVERIFY(centre);
       auto* threads = window->findChild<QQuickItem*>("threadSidebar");
       QVERIFY(threads);
@@ -806,7 +806,7 @@ private slots:
     QTRY_VERIFY(toasts->height() > 0);
     const auto rect = [](QQuickItem* item) { return QRectF(item->mapToScene(QPointF()), QSizeF(item->width(), item->height())); };
     // The one notice takes room of its own, below everything the window lays out.
-    for (const char* name : {"workspace", "centreHost", "threadSidebar"}) {
+    for (const char* name : {"workspace", "routeView", "threadSidebar"}) {
       auto* other = findVisualItem(window->contentItem(), name);
       QVERIFY(other);
       QVERIFY2(!rect(notice).intersects(rect(other)), name);

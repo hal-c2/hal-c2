@@ -3989,8 +3989,10 @@ QQuickWindow* shellWindow(World& world, const QString& shell = {}) {
       QFile file(path);
       expect(file.open(QIODevice::WriteOnly) && file.write("import HalC2.Bricks\nDefaultShell { width: 1200; height: 800 }\n") > 0, path);
     } else {
-      const QString example = QStringLiteral(HAL_C2_QML_DIR "/../examples/%1/shell.qml").arg(shell);
-      expect(QFile::copy(example, path), QStringLiteral("no example shell at %1").arg(example));
+      // With the files beside it, as a user copies it (glass-macos has MacToolbarButton).
+      const QDir example(QStringLiteral(HAL_C2_QML_DIR "/../examples/%1").arg(shell));
+      expect(example.exists(QStringLiteral("shell.qml")), QStringLiteral("no example shell at %1").arg(example.path()));
+      for (const QString& file : example.entryList(QDir::Files)) QFile::copy(example.filePath(file), dir.filePath(file));
     }
     // The bricks, from the source tree.
     QFile::link(QStringLiteral(HAL_C2_QML_DIR), dir.filePath(QStringLiteral("qml")));
@@ -4012,6 +4014,16 @@ QList<QQuickItem*> promptsShown(QQuickItem* item) {
   if (item->property("composerInput").toBool()) shown.append(item);
   for (QQuickItem* child : item->childItems()) shown.append(promptsShown(child));
   return shown;
+}
+
+// The item named `name` under `item` that is on screen, or null.
+QQuickItem* shownItem(QQuickItem* item, const QString& name) {
+  if (!item->isVisible()) return nullptr;
+  if (item->objectName() == name) return item;
+  for (QQuickItem* child : item->childItems()) {
+    if (QQuickItem* found = shownItem(child, name)) return found;
+  }
+  return nullptr;
 }
 
 bool onPage(QQuickItem* editor) {
@@ -4208,8 +4220,20 @@ const Steps promptSteps([] {
     world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
     world.waitFor([&] { return prompt(world).value(QStringLiteral("target")) == key; }, QStringLiteral("the prompt to be the thread's"));
   });
-  step(QStringLiteral("the window is drawn by (?:the (default) shell|the (\\w+) example shell)"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the window is drawn by (?:the (default) shell|the ([\\w-]+) example shell)"), [](World& world, const Captures& c, const Table&) {
     shellWindow(world, c[0].isEmpty() ? c[1] : c[0]);
+  });
+  // The tab's body (PanelBodies) on screen inside the window's stage.
+  step(QStringLiteral("the window shows the %1 tab in the centre").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickWindow* window = shellWindow(world);
+    const QString body = QStringLiteral("panelBody-") + c[0].toLower();
+    world.waitFor([&] {
+      QQuickItem* stage = shownItem(window->contentItem(), QStringLiteral("stage"));
+      QQuickItem* shown = stage ? shownItem(stage, body) : nullptr;
+      return shown && shown->width() > 0 && shown->height() > 0;
+    }, [&] {
+      return QStringLiteral("the %1 tab to show on the window's stage; the stage is %2").arg(c[0], shownItem(window->contentItem(), QStringLiteral("stage")) ? QStringLiteral("shown") : QStringLiteral("not shown"));
+    });
   });
   step(QStringLiteral("the user opens %1 in the window").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString id = idOfPage(world, c[0]);

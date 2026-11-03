@@ -24,6 +24,10 @@ Window {
     // The shell's menus (`menu`) as a popup where they were asked for. A
     // layout that draws them itself (the phone's sheet) turns it off.
     property bool contextMenus: true
+    // The side panel's tab bodies, shared by the panel (RightPanel) and the
+    // stage (CentreHost, ThreadArea) so a tab moving between them keeps its
+    // page, stream and scroll.
+    readonly property PanelBodies panelBodies: panelBodiesPool
 
     // Whether the thread list is hidden (LayoutController, sidebar.toggle).
     readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
@@ -90,6 +94,10 @@ Window {
         height: root.height / root.zoom
         scale: root.zoom
         transformOrigin: Item.TopLeft
+    }
+
+    PanelBodies {
+        id: panelBodiesPool
     }
 
     ContextMenuHost {

@@ -6,20 +6,28 @@ import HalC2.Shell
 // The route's centre, and a thread's stage: the conversation (timeline and
 // composer) with the stage beside it, or, with the timeline put away, the
 // stage over the composer and a line of what the agent did last. Where the two
-// do not fit side by side, one shows at a time and that line switches.
+// do not fit side by side, one shows at a time and that line switches. A
+// layout with a composer of its own uses CentreHost, which has none.
 //
-//   ThreadArea { routeKind: window.route?.kind ?? ""; bodies: panelBodies }
+//   ThreadArea { routeKind: window.route?.kind ?? ""; bodies: window.panelBodies }
 Item {
     id: threadArea
 
     // The route's kind (js/centreViews.js); only a thread has a stage.
     property string routeKind: ""
-    // The tab bodies the stage borrows, shared with the side panel.
+    // The tab bodies the stage borrows, shared with the side panel; no
+    // stage without them.
     required property PanelBodies bodies
+    // Whether the conversation has its composer under the timeline.
+    property bool composerShown: true
+    // The route view's corner radius, for layouts that round the centre.
+    property real radius: 0
+    // Whether the route's view is a conversation scrolled away from its latest output.
+    readonly property bool conversationScrolled: centreHost.conversationScrolled
     // The narrowest the conversation goes beside the stage.
     property int threadMinimumWidth: 360
     property alias centreView: centreHost
-    property alias composer: composerView
+    readonly property Composer composer: composerView.item as Composer
     property alias stage: stageView
     // The conversation's own room, for drops on it: its width beside the
     // stage, and where it starts under a stage over the timeline.
@@ -27,7 +35,7 @@ Item {
     readonly property real conversationTop: stageView.visible && focusMode ? stageRoom.height : 0
 
     readonly property var stageModel: Shell.state.panel?.stage ?? null
-    readonly property bool staged: routeKind === "thread" && (stageModel?.tabs ?? []).length > 0
+    readonly property bool staged: bodies !== null && routeKind === "thread" && (stageModel?.tabs ?? []).length > 0
     readonly property bool focusMode: staged && stageModel.focus === true
     readonly property bool narrow: width < threadArea.threadMinimumWidth + stageView.minimumWidth + 1
     readonly property bool timelineShown: !staged || !focusMode
@@ -48,14 +56,15 @@ Item {
         height: threadArea.height
         spacing: 0
 
-        // The route's centre: a thread, draft, home, pull requests or usage.
-        CentreHost {
+        // The route's view: a thread, draft, home, pull requests or usage.
+        RouteView {
             id: centreHost
-            objectName: "centreHost"
+            objectName: "routeView"
 
             Layout.fillWidth: true
             Layout.fillHeight: true
             kind: threadArea.routeKind
+            radius: threadArea.radius
             visible: threadArea.timelineShown
         }
 
@@ -138,14 +147,19 @@ Item {
             }
         }
 
-        Composer {
+        Loader {
             id: composerView
 
-            // ConversationDrop (DefaultLayout) takes files over the conversation.
-            takesDrops: false
             Layout.fillWidth: true
-            visible: ready
-            conversationScrolled: centreHost.conversationScrolled
+            Layout.preferredHeight: visible ? item.implicitHeight : 0
+            visible: (item as Composer)?.ready ?? false
+            active: threadArea.composerShown
+
+            sourceComponent: Composer {
+                // ConversationDrop (DefaultLayout) takes files over the conversation.
+                takesDrops: false
+                conversationScrolled: centreHost.conversationScrolled
+            }
         }
     }
 
@@ -211,7 +225,7 @@ Item {
         width: threadArea.width - x
         height: threadArea.height - (composerView.visible ? composerView.height : 0)
         keys: ["hal-c2/panel-tab"]
-        enabled: threadArea.routeKind === "thread" && !stageView.visible && threadArea.bodies.dragging.length > 0
+        enabled: threadArea.routeKind === "thread" && !stageView.visible && (threadArea.bodies?.dragging ?? "").length > 0
         onDropped: drop => {
             const id = threadArea.bodies.dragging;
             drop.accept();

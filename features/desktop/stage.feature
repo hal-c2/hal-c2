@@ -5,6 +5,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Stage.qml (tab strip, layout switcher, pane headers, drop zones)
 #   apps/desktop-qt/qml/HalC2/Bricks/PanelBodies.qml, PanelBodySlot.qml (one body per kind, moved, never remade)
 #   apps/desktop-qt/qml/HalC2/Bricks/ThreadArea.qml (beside the conversation, focus mode, narrow windows)
+#   apps/desktop-qt/qml/HalC2/Bricks/CentreHost.qml (the stage in a shell that lays out its own composer)
 #   apps/desktop-qt/tests/tst_Stage.qml (the scenarios tagged @backlog-desktop, by name)
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   apps/desktop-qt/tests/prop/tst_RightPanelProp.cpp (the stage's invariants over any command sequence)
@@ -39,6 +40,25 @@ Feature: The stage: right panel tabs in the thread's centre
       When the user shows the timeline again
       Then the timeline is shown
       And the "Diff" tab is on the stage
+
+    # A shell lays out its own centre (CentreHost), which draws the stage. glass-macos
+    # has the same centre as glass, with controls only macOS has.
+    @desktop
+    Scenario Outline: Open in centre shows the tab in any shell
+      Given the window is drawn by <shell>
+      And the right panel has "Diff" and "Files" tabs
+      And the user switches to "Diff"
+      When the user opens the "Diff" tab in the centre
+      Then the window shows the "Diff" tab in the centre
+
+      Examples:
+        | shell                       |
+        | the default shell           |
+        | the minimal example shell   |
+        | the dashboard example shell |
+        | the folders example shell   |
+        | the glass example shell     |
+        | the terminal example shell  |
 
     @desktop
     Scenario: A tab goes back to the side panel
