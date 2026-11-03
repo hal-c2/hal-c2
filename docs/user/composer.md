@@ -184,6 +184,9 @@ When a task the agent delegated finishes, its result waits at the front of the q
 agent hears it before your next message. It cannot be moved, edited, or sent as a steer.
 Removing it means the agent is not woken for that task; the task's result stays readable.
 
+A queued row shows its message's attachments; select one to open it full size, as in the
+timeline.
+
 The pencil on a queued row opens that message in the composer for editing. The original message
 stays in the queue until you save, and its row is highlighted while you edit. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.

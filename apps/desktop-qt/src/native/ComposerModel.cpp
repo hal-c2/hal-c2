@@ -861,7 +861,20 @@ Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>&
                                         {QStringLiteral("workerThreadId"), notice ? notice->workerThreadId : QString()}});
       continue;
     }
-    queued.queue.append(QVariantMap{{QStringLiteral("runId"), runId}, {QStringLiteral("text"), message.value(QLatin1String("text")).toString()}});
+    QVariantList attachments;
+    for (const QJsonValue& value : message.value(QLatin1String("attachments")).toArray()) {
+      const QJsonObject attachment = value.toObject();
+      attachments.append(QVariantMap{{QStringLiteral("id"), attachment.value(QLatin1String("id")).toString()},
+                                     {QStringLiteral("name"), attachment.value(QLatin1String("name")).toString()},
+                                     {QStringLiteral("mimeType"), attachment.value(QLatin1String("mimeType")).toString()},
+                                     {QStringLiteral("kind"), attachment.value(QLatin1String("type")).toString() == QLatin1String("image")
+                                                                  ? QStringLiteral("image")
+                                                                  : QStringLiteral("file")}});
+    }
+    queued.queue.append(QVariantMap{{QStringLiteral("runId"), runId},
+                                    {QStringLiteral("messageId"), message.value(QLatin1String("id")).toString()},
+                                    {QStringLiteral("text"), message.value(QLatin1String("text")).toString()},
+                                    {QStringLiteral("attachments"), attachments}});
   }
   return queued;
 }

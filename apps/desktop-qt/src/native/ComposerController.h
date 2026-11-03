@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
 #include <QMetaObject>
@@ -133,10 +134,11 @@ class TimelineModel;
 // `[Assistant quote](hal-c2-citation://v1/...)` link to the text, which holds
 // the whole citation (AssistantCitation in packages/contracts).
 //
-// Editing a queued message puts its text in the thread's composer
-// (`composer.editingQueuedRunId`) and sets the thread's own draft aside; a
-// send saves the edit (`queued-run.edit`, text only) and cancelling gives the
-// draft back. A run that leaves the queue mid-edit ends it: a changed edit
+// Editing a queued message puts its text and attachments in the thread's
+// composer (`composer.editingQueuedRunId`; the message's attachments are
+// listed with `sent`) and sets the thread's own draft, attachments included,
+// aside; a send saves the edit (`queued-run.edit`, its text and, when they
+// changed, its attachments) and cancelling gives the draft back. A run that leaves the queue mid-edit ends it: a changed edit
 // stays in the composer when the set-aside draft was empty, and is dropped
 // with a toast otherwise.
 class ComposerController : public QObject, public NativeController {
@@ -478,6 +480,10 @@ private:
   // shared state (Kept) the others show too.
   static void publishEverywhere(NativeShell* shell);
   QVariantMap turnState() const;
+  // A sent image's signed address, asked of the thread's timeline when it has none yet.
+  QString sentAddress(const QString& id) const;
+  // What the composer shows of an edited queued message's own attachments.
+  QVariantList shownSent() const;
   bool queueHeld() const;
   QVariant composerState(const QVariantMap& turn) const;
   QVariantMap pickerState() const;
@@ -528,8 +534,12 @@ private:
   bool m_pageProjectAsked = false;
   bool m_pageRunning = false;
   QPointer<TimelineModel> m_timeline;
+  // Sent attachments whose address was asked of the timeline (sentAddress),
+  // until it signs one; one it would not sign is not asked for again.
+  mutable QSet<QString> m_sentAsked;
   QMetaObject::Connection m_timelineConnection;
   QMetaObject::Connection m_timelineStatus;
+  QMetaObject::Connection m_timelineSigned;
   // The files attached to each question's answer, by request id then
   // question id; they go with the answer and stay out of the thread's draft.
   QHash<QString, QHash<QString, QList<Attachment>>> m_answerFiles;
@@ -575,9 +585,18 @@ private:
   struct QueuedEdit {
     QString thread;
     QString runId;
+    QString messageId;
     QString original;
+    // The message's attachments still on it, as the MC holds them, and
+    // whether any were taken off.
+    QJsonArray sent;
+    bool sentChanged = false;
     QString saved;
     int savedCursor = 0;
+    QList<Attachment> savedAttachments;
+    // Added images the MC has stored for the message, by draft id: a save
+    // the MC refused reuses them rather than storing them again.
+    QHash<QString, QJsonObject> stored;
     bool saving = false;
   };
   std::optional<QueuedEdit> m_queuedEdit;

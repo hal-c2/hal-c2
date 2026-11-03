@@ -135,7 +135,8 @@ std::optional<int> scoreQueryMatch(const QString& value, const QString& query, i
 
 // What waits behind the running turn, from the thread's runs and the messages
 // the timeline holds, each in the order it runs: the user's queued follow-ups
-// (`runId`, `text`), and what the MC queued for the agent itself, a delegated
+// (`runId`, `messageId`, `text`, `attachments`: [{id, name, mimeType, kind
+// ("image" | "file")}]), and what the MC queued for the agent itself, a delegated
 // task's result or the provider's wake-up (`runId`, `summary`, `outcome`), which
 // is not the user's to edit, steer with or remove. A run whose message has not
 // arrived yet is in neither: which it is, and what it says, comes with the

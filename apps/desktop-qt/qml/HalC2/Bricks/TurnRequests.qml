@@ -593,7 +593,7 @@ Item {
                     objectName: "queueList"
                     visible: queueCard.expanded
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(contentHeight, 128)
+                    Layout.preferredHeight: Math.min(contentHeight, 200)
                     contentHeight: queueRows.implicitHeight
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
@@ -622,61 +622,157 @@ Item {
                         Repeater {
                             model: requests.queue
 
-                            delegate: RowLayout {
+                            delegate: ColumnLayout {
                                 id: queued
 
                                 required property var modelData
+                                readonly property var attachments: modelData.attachments ?? []
 
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 32
-                                Layout.leftMargin: 12
-                                Layout.rightMargin: 6
-                                spacing: 6
+                                spacing: 0
 
-                                Text {
-                                    objectName: "queueText-" + queued.modelData.runId
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    text: queued.modelData.text
-                                    textFormat: Text.PlainText
-                                    color: requests.foreground
-                                    font.family: requests.uiFont
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                                    elide: Text.ElideRight
-                                    maximumLineCount: 1
+                                    Layout.preferredHeight: 32
+                                    Layout.leftMargin: 12
+                                    Layout.rightMargin: 6
+                                    spacing: 6
+
+                                    Text {
+                                        objectName: "queueText-" + queued.modelData.runId
+                                        Layout.fillWidth: true
+                                        // An attachment-only message says what it carries.
+                                        text: queued.modelData.text.length > 0 || queued.attachments.length === 0 ? queued.modelData.text : qsTr("%n attachment(s)", "", queued.attachments.length)
+                                        textFormat: Text.PlainText
+                                        color: queued.modelData.text.length > 0 ? requests.foreground : requests.muted
+                                        font.family: requests.uiFont
+                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        elide: Text.ElideRight
+                                        maximumLineCount: 1
+                                    }
+
+                                    // Editing puts the message in the composer; sending saves it.
+                                    ShellButton {
+                                        objectName: "queueEdit-" + queued.modelData.runId
+                                        implicitHeight: 24
+                                        subtle: true
+                                        text: requests.composerModel?.editingQueuedRunId === queued.modelData.runId ? qsTr("Editing") : qsTr("Edit")
+                                        enabled: requests.composerModel?.editingQueuedRunId !== queued.modelData.runId
+                                        onClicked: Shell.dispatch("composer.queue.edit", {
+                                            runId: queued.modelData.runId
+                                        })
+                                    }
+
+                                    ShellButton {
+                                        objectName: "queueSteer-" + queued.modelData.runId
+                                        implicitHeight: 24
+                                        subtle: true
+                                        text: qsTr("Steer")
+                                        onClicked: Shell.dispatch("composer.queue.steer", {
+                                            runId: queued.modelData.runId
+                                        })
+                                    }
+
+                                    ShellButton {
+                                        objectName: "queueRemove-" + queued.modelData.runId
+                                        implicitHeight: 24
+                                        subtle: true
+                                        iconName: "x"
+                                        implicitWidth: implicitHeight
+                                        Accessible.name: qsTr("Remove from the queue")
+                                        onClicked: Shell.dispatch("composer.queue.remove", {
+                                            runId: queued.modelData.runId
+                                        })
+                                    }
                                 }
 
-                                // Editing puts the message in the composer; sending saves it.
-                                ShellButton {
-                                    objectName: "queueEdit-" + queued.modelData.runId
-                                    implicitHeight: 24
-                                    subtle: true
-                                    text: requests.composerModel?.editingQueuedRunId === queued.modelData.runId ? qsTr("Editing") : qsTr("Edit")
-                                    enabled: requests.composerModel?.editingQueuedRunId !== queued.modelData.runId
-                                    onClicked: Shell.dispatch("composer.queue.edit", {
-                                        runId: queued.modelData.runId
-                                    })
-                                }
+                                // What it carries: an image's thumbnail, a file by name;
+                                // either opens large in the attachment viewer.
+                                Flow {
+                                    objectName: "queueAttachments-" + queued.modelData.runId
+                                    visible: queued.attachments.length > 0
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: 12
+                                    Layout.rightMargin: 6
+                                    Layout.bottomMargin: 6
+                                    spacing: 6
 
-                                ShellButton {
-                                    objectName: "queueSteer-" + queued.modelData.runId
-                                    implicitHeight: 24
-                                    subtle: true
-                                    text: qsTr("Steer")
-                                    onClicked: Shell.dispatch("composer.queue.steer", {
-                                        runId: queued.modelData.runId
-                                    })
-                                }
+                                    Repeater {
+                                        model: queued.attachments
 
-                                ShellButton {
-                                    objectName: "queueRemove-" + queued.modelData.runId
-                                    implicitHeight: 24
-                                    subtle: true
-                                    iconName: "x"
-                                    implicitWidth: implicitHeight
-                                    Accessible.name: qsTr("Remove from the queue")
-                                    onClicked: Shell.dispatch("composer.queue.remove", {
-                                        runId: queued.modelData.runId
-                                    })
+                                        delegate: Rectangle {
+                                            id: carried
+
+                                            required property var modelData
+                                            readonly property bool image: modelData.kind === "image"
+                                            readonly property bool pictured: thumbnail.status === Image.Ready
+
+                                            function open() {
+                                                Shell.dispatch("attachment.sent.view", {
+                                                    id: modelData.id,
+                                                    name: modelData.name,
+                                                    mimeType: modelData.mimeType ?? ""
+                                                });
+                                            }
+
+                                            objectName: "queueAttachment-" + modelData.id
+                                            Accessible.role: Accessible.Button
+                                            Accessible.name: qsTr("Open %1").arg(modelData.name)
+                                            Accessible.onPressAction: open()
+                                            activeFocusOnTab: true
+                                            Keys.onReturnPressed: open()
+                                            Keys.onEnterPressed: open()
+                                            Keys.onSpacePressed: open()
+                                            width: image ? 48 : Math.min(220, fileLabel.implicitWidth + 30)
+                                            height: image ? 48 : 24
+                                            radius: 2
+                                            color: Qt.alpha(requests.foreground, 0.04)
+                                            border.color: activeFocus ? requests.foreground : Qt.alpha(requests.foreground, 0.12)
+
+                                            Image {
+                                                id: thumbnail
+                                                visible: carried.image
+                                                anchors.fill: parent
+                                                anchors.margins: 1
+                                                source: carried.image ? carried.modelData.url ?? "" : ""
+                                                sourceSize.height: 96
+                                                fillMode: Image.PreserveAspectCrop
+                                                clip: true
+                                            }
+                                            ShellIcon {
+                                                visible: carried.image ? !carried.pictured : true
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                anchors.horizontalCenter: carried.image ? parent.horizontalCenter : undefined
+                                                x: 6
+                                                name: carried.image ? "image" : "file-text"
+                                                size: carried.image ? 18 : 12
+                                                color: requests.muted
+                                            }
+                                            Text {
+                                                id: fileLabel
+                                                visible: !carried.image
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                x: 22
+                                                width: parent.width - 28
+                                                text: carried.modelData.name
+                                                textFormat: Text.PlainText
+                                                color: requests.foreground
+                                                font.family: requests.uiFont
+                                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                elide: Text.ElideMiddle
+                                            }
+                                            HoverHandler {
+                                                id: carriedHover
+                                                cursorShape: Qt.PointingHandCursor
+                                            }
+                                            TapHandler {
+                                                onTapped: carried.open()
+                                            }
+                                            ToolTip.visible: carriedHover.hovered && carried.image
+                                            ToolTip.delay: 500
+                                            ToolTip.text: carried.modelData.name
+                                        }
+                                    }
                                 }
                             }
                         }

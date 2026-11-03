@@ -258,6 +258,8 @@ public:
   // The address the MC signed for an image and when it stops working; an
   // empty one when the MC had none, so the next ask tries again.
   void setAttachmentUrl(const QString& id, const QUrl& url, const QDateTime& expiresAt);
+  // The address signed for an attachment that still works, else empty.
+  QUrl attachmentAddress(const QString& id) const;
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;
