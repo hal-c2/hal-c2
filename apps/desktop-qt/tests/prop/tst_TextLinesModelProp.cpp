@@ -136,7 +136,9 @@ void check(const Model& model, Viewer& viewer, bool settled) {
       RC_ASSERT(styled.isEmpty());
       continue;
     }
-    RC_ASSERT(colour);
+    // While a changed file is read, the lines after the change wait plain.
+    if (!settled && styled.isEmpty()) continue;
+    RC_ASSERT(fresh.has_value());
     const auto [offset, length] = lines[size_t(row)];
     const bool cut = length > model.limit;
     Drawn expected{model.text.mid(offset, cut ? model.limit : length), fresh->mid(offset, cut ? model.limit : length)};
@@ -178,6 +180,7 @@ struct Open : Command {
       for (int row = 0; row < viewer.lines.rowCount(); ++row) atReset.append(viewer.lines.styled(row));
     });
     QSignalSpy restyled(&viewer.lines, &QAbstractItemModel::dataChanged);
+    const bool wasRead = viewer.lines.coloured() && !viewer.lines.reading();
     viewer.lines.setText(after.text, after.path);
     QObject::disconnect(rebuilt);
     // Read already, or the same file again, or nothing to read: no new read.
@@ -186,6 +189,16 @@ struct Open : Command {
     // and then again.
     for (int row = 0; row < int(atReset.size()); ++row) RC_ASSERT(atReset.at(row) == viewer.lines.styled(row));
     if (!same) RC_ASSERT(restyled.isEmpty());
+    // The same file changed keeps its colours on the whole lines before the
+    // first change.
+    if (wasRead && !same && before.path == after.path && after.readable()) {
+      const qsizetype common = std::mismatch(after.text.cbegin(), after.text.cbegin() + std::min(after.text.size(), before.text.size()), before.text.cbegin()).first - after.text.cbegin();
+      const auto lines = after.lines();
+      const qsizetype kept = QStringView(after.text).left(common).count(QLatin1Char('\n'));
+      for (qsizetype row = 0; row < kept; ++row) {
+        if (lines[size_t(row)].second > 0) RC_ASSERT(!viewer.lines.styled(int(row)).isEmpty());
+      }
+    }
     if (!after.readable() || same || after.kept.contains({after.path, after.text})) RC_ASSERT(codereader::requested() == reads);
     if (after.kept.contains({after.path, after.text}) && !same) RC_ASSERT(!viewer.lines.reading());
     check(after, viewer, !viewer.lines.reading());
@@ -270,6 +283,21 @@ private slots:
     QVERIFY(restyled.isEmpty());
     QTRY_VERIFY(lines.coloured());
     QVERIFY(draw(lines.styled(0)).text == QStringLiteral("defmodule A do"));
+  }
+
+  // From review: a file changed under the viewer, as an agent's edit or a
+  // ticked task changes it, went plain until it was read again.
+  void aChangedFileKeepsItsColoursUntilRead() {
+    TextLinesModel lines;
+    lines.setText(QStringLiteral("const a = 1;\nconst b = 2;\n"), QStringLiteral("a.ts"));
+    QTRY_VERIFY(lines.coloured());
+    lines.setText(QStringLiteral("const a = 1;\nlet c = \"3\";\n"), QStringLiteral("a.ts"));
+    QVERIFY(lines.reading());
+    QVERIFY(lines.coloured());
+    QCOMPARE(draw(lines.styled(0)).text, QStringLiteral("const a = 1;"));
+    QVERIFY(lines.styled(1).isEmpty());
+    QTRY_VERIFY(!lines.reading());
+    QCOMPARE(draw(lines.styled(1)).text, QStringLiteral("let c = \"3\";"));
   }
 
   void markupIsEscaped() {

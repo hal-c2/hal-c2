@@ -47,6 +47,15 @@ void TextLinesModel::setText(const QString& text, const QString& path) {
   // The same file again (written back as it was) keeps its colours.
   const bool same = path == m_path && text == m_text;
   const bool was = coloured();
+  // The same file changed keeps its colours on the lines before the first
+  // change, which a read of the new text colours the same, until that read
+  // lands.
+  qsizetype kept = 0;
+  if (!same && path == m_path && m_runs) {
+    const qsizetype common = std::mismatch(text.cbegin(), text.cbegin() + std::min(text.size(), m_text.size()), m_text.cbegin()).first - text.cbegin();
+    // Kept already from a read of an older text, only as far as before.
+    kept = std::min(QStringView(text).left(common).count(QLatin1Char('\n')), qsizetype(m_freshRows));
+  }
   beginResetModel();
   m_text = text;
   m_path = path;
@@ -64,7 +73,12 @@ void TextLinesModel::setText(const QString& text, const QString& path) {
   }
   // The rows are built in the new file's colours, as kept from an earlier
   // read, or plain until it is read: never in the last file's.
-  if (!same) m_runs = readable() ? codereader::cached(key()) : nullptr;
+  if (!same) {
+    auto hit = readable() ? codereader::cached(key()) : nullptr;
+    if (!readable()) kept = 0;
+    m_freshRows = hit ? int(m_lines.size()) : int(kept);
+    if (hit || !kept) m_runs = std::move(hit);
+  }
   endResetModel();
   emit textChanged();
   if (coloured() != was) emit colouredChanged();
@@ -84,7 +98,7 @@ void TextLinesModel::read() {
   // A read under way is for what was before: it finishes and is let go.
   m_alive = std::make_shared<int>(0);
   setReading(false);
-  if (m_runs || !readable()) return;
+  if (!readable() || (m_runs && m_freshRows == int(m_lines.size()))) return;
   const QString key = this->key();
   auto job = std::make_shared<codereader::Job>();
   job->byPath = true;
@@ -104,6 +118,7 @@ void TextLinesModel::setRuns(std::shared_ptr<const codereader::Runs> runs) {
   if (!runs && !m_runs) return;
   const bool was = coloured();
   m_runs = std::move(runs);
+  m_freshRows = int(m_lines.size());
   restyle();
   if (coloured() != was) emit colouredChanged();
 }
@@ -146,7 +161,7 @@ QString TextLinesModel::line(int row) const {
 }
 
 QString TextLinesModel::styled(int row) const {
-  if (row < 0 || row >= int(m_lines.size()) || !coloured()) return {};
+  if (row < 0 || row >= std::min(int(m_lines.size()), m_freshRows) || !coloured()) return {};
   const auto [offset, length] = m_lines[size_t(row)];
   // Cut as the viewer cuts a plain line, so no colour reaches past the cut.
   const bool cut = length > m_columnLimit;
