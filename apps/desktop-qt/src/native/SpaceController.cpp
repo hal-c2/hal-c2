@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QMimeDatabase>
 #include <QRegularExpression>
+#include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QUrl>
 
@@ -1481,24 +1482,32 @@ void SpaceController::refreshProjects() {
 void SpaceController::restoreExpanded() {
   auto* settings = NativeShell::of(this)->controller<SettingsController>();
   const QString environment = m_client->environment();
-  if (!settings || environment.isEmpty()) return;
+  if (!settings || environment.isEmpty() || m_rememberingExpanded) return;
   QStringList projects;
   for (const QString& key : settings->deviceValue(kExpandedKey).toStringList()) {
     if (key.startsWith(environment + QLatin1Char(':'))) projects.append(key.mid(environment.size() + 1));
   }
-  m_projects->restoreExpanded(projects);
+  m_projects->restoreExpanded(projects, settings->deviceValue(kExpandedFoldersKey).toMap().value(environment).toMap());
 }
 
 void SpaceController::rememberExpanded() {
   auto* settings = NativeShell::of(this)->controller<SettingsController>();
   const QString environment = m_client->environment();
   if (!settings || environment.isEmpty()) return;
+  const QScopedValueRollback remembering(m_rememberingExpanded, true);
   QStringList keys;
   for (const QString& key : settings->deviceValue(kExpandedKey).toStringList()) {
     if (!key.startsWith(environment + QLatin1Char(':'))) keys.append(key);
   }
   for (const QString& project : m_projects->expandedProjects()) keys.append(environment + QLatin1Char(':') + project);
   settings->writeDevice(kExpandedKey, keys.isEmpty() ? QVariant() : QVariant(keys));
+  QVariantMap folders = settings->deviceValue(kExpandedFoldersKey).toMap();
+  if (const QVariantMap here = m_projects->expandedFolders(); here.isEmpty()) {
+    folders.remove(environment);
+  } else {
+    folders.insert(environment, here);
+  }
+  settings->writeDevice(kExpandedFoldersKey, folders.isEmpty() ? QVariant() : QVariant(folders));
 }
 
 bool SpaceController::pageOnShow() const {
@@ -1768,7 +1777,7 @@ void SpaceController::openFile(const QString& environmentId, const QString& proj
   const int token = m_opening = ++m_fileTokens;
   call(
       QStringLiteral("page.openFile"), {{QStringLiteral("projectId"), projectId}, {QStringLiteral("relativePath"), relativePath}},
-      [this, token, projectId](const QJsonObject& result) {
+      [this, token, projectId, relativePath](const QJsonObject& result) {
         listFiles(m_client->environment(), projectId);
         // Another file was opened since, or the user picked something else.
         if (m_opening != token) return;
@@ -1780,8 +1789,8 @@ void SpaceController::openFile(const QString& environmentId, const QString& proj
         if (auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
           navigation->open(NavigationController::Route::of(kRoute));
         }
-        // The page is its project's: the sidebar shows it in the project's section.
-        m_projects->setExpanded(projectId, true);
+        // The page is its project's: the sidebar shows its row, in its folders in the project's section.
+        m_projects->reveal(projectId, relativePath);
         openFilePage(result.value(QLatin1String("spaceId")).toString(), m_written);
       },
       [this, token, relativePath](const QJsonObject& detail) {
@@ -2078,7 +2087,12 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
       scanFiles(project, input.value(QLatin1String("replace")).toBool());
     }
   } else if (action == QLatin1String("space.project.setExpanded")) {
-    m_projects->setExpanded(field(QLatin1String("projectId")), input.value(QLatin1String("expanded")).toBool());
+    // With a path, the folder at that path in the project's section.
+    if (const QString path = input.value(QLatin1String("path")).toString(); !path.isEmpty()) {
+      m_projects->setFolderExpanded(field(QLatin1String("projectId")), path, input.value(QLatin1String("expanded")).toBool());
+    } else {
+      m_projects->setExpanded(field(QLatin1String("projectId")), input.value(QLatin1String("expanded")).toBool());
+    }
   } else if (action == QLatin1String("space.page.showFile")) {
     showFile(pageId);
   } else if (action == QLatin1String("space.selectPage")) {

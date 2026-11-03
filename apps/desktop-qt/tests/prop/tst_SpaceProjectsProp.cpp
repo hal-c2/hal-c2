@@ -1,15 +1,16 @@
 // The Space sidebar's project sections and the page a file opens on, as a state
 // machine over what moves them: a project's Space files changing and listed
-// again, sections expanded and collapsed (here, or by another window through the
-// device's preferences), files opened with the MC answering in any order or
+// again, sections and their folders expanded and collapsed (here, or by another
+// window through the device's preferences), files opened with the MC answering in any order or
 // refusing, the project's Space arriving, and the user picking a page or the
 // Space itself, and either Space's stream failing and coming back.
 //
 // After each step the sections are this MC's projects with files, each a project
 // row and, when expanded, its folders and files depth first (folders before files,
-// each by name); the expanded ones are what the device remembers. Only the latest
-// open applies, and only if the user picked nothing since: it expands the file's
-// section and shows the file's page once its project's Space has arrived, the
+// each by name), a folder's own only while it is expanded too; the expanded sections
+// and folders are what the device remembers. Only the latest open applies, and only
+// if the user picked nothing since: it expands the file's section and the folders it
+// is in, and shows the file's page once its project's Space has arrived, the
 // Space's own page staying on show until then. Picking a Space page, or the Space,
 // leaves the file's page in one step, and a project's Space arriving after that
 // changes nothing. The view reads as unreachable while the selected Space's stream
@@ -41,7 +42,29 @@ const QStringList kPages = {QStringLiteral("page-1"), QStringLiteral("page-2")};
 const QStringList kProjects = {QStringLiteral("alpha"), QStringLiteral("beta")};
 const QStringList kFiles = {QStringLiteral("README.md"), QStringLiteral("docs/guide.md"), QStringLiteral("docs/api/Index.md"),
                             QStringLiteral("docs/zebra.md"), QStringLiteral("notes/a.md")};
+const QStringList kFolders = {QStringLiteral("docs"), QStringLiteral("docs/api"), QStringLiteral("notes")};
 const QString kExpandedKey = QStringLiteral("spaceExpandedProjects");
+const QString kExpandedFoldersKey = QStringLiteral("spaceExpandedFolders");
+
+// What the device remembers of an MC's expanded folders, project to paths, sorted
+// as a set: another window writes them in its own order.
+using FolderMemory = QMap<QString, QStringList>;
+FolderMemory folderMemory(const QVariant& value, const QString& environment) {
+  FolderMemory memory;
+  const QVariantMap projects = value.toMap().value(environment).toMap();
+  for (auto it = projects.cbegin(); it != projects.cend(); ++it) {
+    QStringList paths = it.value().toStringList();
+    paths.sort();
+    paths.removeDuplicates();
+    memory.insert(it.key(), paths);
+  }
+  return memory;
+}
+QVariantMap folderValue(const FolderMemory& memory) {
+  QVariantMap projects;
+  for (auto it = memory.cbegin(); it != memory.cend(); ++it) projects.insert(it.key(), it.value());
+  return projects;
+}
 
 QString oneOf(const QStringList& values) {
   return *rc::gen::elementOf(std::vector<QString>(values.cbegin(), values.cend()));
@@ -69,14 +92,14 @@ int byName(const QString& a, const QString& b) {
   return folded != 0 ? folded : QString::compare(a, b);
 }
 
-void emitFolder(const Folder& folder, const QString& at, int depth, QStringList& rows) {
+void emitFolder(const Folder& folder, const QString& at, int depth, const QSet<QString>& expanded, QStringList& rows) {
   std::vector<QString> names;
   for (const auto& [name, _] : folder.folders) names.push_back(name);
   std::sort(names.begin(), names.end(), [](const QString& a, const QString& b) { return byName(a, b) < 0; });
   for (const QString& name : names) {
     const QString path = at.isEmpty() ? name : at + QLatin1Char('/') + name;
-    rows.append(QStringLiteral("folder %1 %2").arg(depth).arg(path));
-    emitFolder(folder.folders.at(name), path, depth + 1, rows);
+    rows.append(QStringLiteral("folder %1 %2 %3").arg(depth).arg(path).arg(expanded.contains(path)));
+    if (expanded.contains(path)) emitFolder(folder.folders.at(name), path, depth + 1, expanded, rows);
   }
   QStringList files = folder.files;
   std::sort(files.begin(), files.end(), [](const QString& a, const QString& b) { return byName(a, b) < 0; });
@@ -87,6 +110,8 @@ struct Model {
   // The files each project's spaces section covers, as the MC lists them.
   QMap<QString, QSet<QString>> files{{kProjects.first(), {kFiles.at(0), kFiles.at(1)}}, {kProjects.last(), {}}};
   QSet<QString> expanded;
+  // Each project's expanded folders, kept while its section is collapsed.
+  QMap<QString, QSet<QString>> folders;
   std::vector<Open> opens;
   int asked = 0;
   // The open that applies when answered, or 0 once the user picked something since.
@@ -131,7 +156,7 @@ struct Model {
           for (qsizetype i = 0; i + 1 < parts.size(); ++i) at = &at->folders[parts.at(i)];
           at->files.append(parts.last());
         }
-        emitFolder(root, QString(), 1, section);
+        emitFolder(root, QString(), 1, folders.value(it.key()), section);
       }
       rows.insert(it.key(), section);
     }
@@ -142,6 +167,24 @@ struct Model {
     for (const QString& project : expanded) keys.append(kEnvironment + QLatin1Char(':') + project);
     keys.sort();
     return keys;
+  }
+  FolderMemory rememberedFolders() const {
+    FolderMemory memory;
+    for (auto it = folders.cbegin(); it != folders.cend(); ++it) {
+      if (it.value().isEmpty()) continue;
+      QStringList paths(it.value().cbegin(), it.value().cend());
+      paths.sort();
+      memory.insert(it.key(), paths);
+    }
+    return memory;
+  }
+  void setFolder(const QString& project, const QString& path, bool open) {
+    if (open) {
+      folders[project].insert(path);
+    } else if (folders.contains(project)) {
+      folders[project].remove(path);
+      if (folders.value(project).isEmpty()) folders.remove(project);
+    }
   }
 };
 
@@ -240,19 +283,25 @@ struct Shell {
       const QVariantMap row = projects->get(i);
       const QString kind = row.value(QStringLiteral("kind")).toString();
       const QString project = row.value(QStringLiteral("projectId")).toString();
+      const QString at = QStringLiteral("%1 %2 %3").arg(kind).arg(row.value(QStringLiteral("depth")).toInt()).arg(row.value(QStringLiteral("path")).toString());
       rows[project].append(kind == QLatin1String("project") ? QStringLiteral("project %1").arg(row.value(QStringLiteral("expanded")).toBool())
-                                                            : QStringLiteral("%1 %2 %3").arg(kind).arg(row.value(QStringLiteral("depth")).toInt()).arg(row.value(QStringLiteral("path")).toString()));
+                           : kind == QLatin1String("folder") ? QStringLiteral("%1 %2").arg(at).arg(row.value(QStringLiteral("expanded")).toBool())
+                                                             : at);
     }
     return rows;
   }
 
   void check(const Model& model) {
     const auto remembered = [this] { return settings()->deviceValue(kExpandedKey).toStringList(); };
-    prop::until([&] { return arrivedOpens == model.asked && sections() == model.sections() && remembered() == model.remembered(); });
+    const auto folders = [this] { return folderMemory(settings()->deviceValue(kExpandedFoldersKey), kEnvironment); };
+    prop::until([&] {
+      return arrivedOpens == model.asked && sections() == model.sections() && remembered() == model.remembered() && folders() == model.rememberedFolders();
+    });
     RC_ASSERT(arrivedOpens == model.asked);
     RC_ASSERT(held.size() == model.opens.size());
     RC_ASSERT(sections() == model.sections());
     RC_ASSERT(remembered() == model.remembered());
+    RC_ASSERT(folders() == model.rememberedFolders());
     RC_ASSERT(space()->spaceId() == kSpaceId);
     RC_ASSERT(space()->pageId() == model.page);
     RC_ASSERT(space()->fileSpaceId() == (model.fileShown ? projectSpace(model.followed) : QString()));
@@ -301,16 +350,42 @@ struct SetExpanded : Command {
   void show(std::ostream& os) const override { os << "SetExpanded(" << project.toStdString() << ", " << expanded << ")"; }
 };
 
-// Another window of this device writes which sections are expanded, with another
-// MC's entry beside them that this one leaves alone.
+struct SetFolderExpanded : Command {
+  QString project = oneOf(kProjects);
+  QString path = oneOf(kFolders);
+  bool expanded = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override { model.setFolder(project, path, expanded); }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    RC_ASSERT(shell.space()->handle(QStringLiteral("space.project.setExpanded"),
+                                    QVariantMap{{QStringLiteral("projectId"), project}, {QStringLiteral("path"), path}, {QStringLiteral("expanded"), expanded}}));
+    shell.check(expected);
+  }
+  void show(std::ostream& os) const override { os << "SetFolderExpanded(" << project.toStdString() << ", " << path.toStdString() << ", " << expanded << ")"; }
+};
+
+// Another window of this device writes which sections and folders are expanded,
+// with another MC's entries beside them that this one leaves alone.
 struct OtherWindow : Command {
   std::vector<QString> chosen = *rc::gen::container<std::vector<QString>>(*rc::gen::inRange(0, 3), rc::gen::elementOf(std::vector<QString>(kProjects.cbegin(), kProjects.cend())));
-  void apply(Model& model) const override { model.expanded = QSet<QString>(chosen.cbegin(), chosen.cend()); }
+  std::vector<QString> chosenFolders = *rc::gen::container<std::vector<QString>>(*rc::gen::inRange(0, 4), rc::gen::elementOf(std::vector<QString>(kFolders.cbegin(), kFolders.cend())));
+  QString folderProject = oneOf(kProjects);
+  void apply(Model& model) const override {
+    model.expanded = QSet<QString>(chosen.cbegin(), chosen.cend());
+    model.folders.clear();
+    for (const QString& path : chosenFolders) model.setFolder(folderProject, path, true);
+  }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;
     apply(expected);
     QStringList keys{QStringLiteral("env-b:alpha")};
     for (const QString& project : chosen) keys.append(kEnvironment + QLatin1Char(':') + project);
+    const QVariantMap elsewhere{{QStringLiteral("alpha"), QStringList{QStringLiteral("docs")}}};
+    QVariantMap folders{{QStringLiteral("env-b"), elsewhere}};
+    if (!chosenFolders.empty()) folders.insert(kEnvironment, folderValue({{folderProject, QStringList(chosenFolders.cbegin(), chosenFolders.cend())}}));
+    // One write, as another window's single preferences file carries both.
+    RC_ASSERT(shell.settings()->writeDevice(kExpandedFoldersKey, folders));
     RC_ASSERT(shell.settings()->writeDevice(kExpandedKey, keys));
     const auto here = [&] {
       QStringList mine;
@@ -324,14 +399,22 @@ struct OtherWindow : Command {
     prop::until([&] { return shell.sections() == expected.sections(); });
     RC_ASSERT(shell.sections() == expected.sections());
     RC_ASSERT(here() == expected.remembered());
+    RC_ASSERT(folderMemory(shell.settings()->deviceValue(kExpandedFoldersKey), kEnvironment) == expected.rememberedFolders());
     RC_ASSERT(shell.settings()->deviceValue(kExpandedKey).toStringList().contains(QStringLiteral("env-b:alpha")));
     // What follows holds the device to this MC's entries alone.
     shell.settings()->writeDevice(kExpandedKey, expected.remembered().isEmpty() ? QVariant() : QVariant(expected.remembered()));
+    // Another MC's folders stay as they were through this MC's writes.
+    const FolderMemory theirs{{QStringLiteral("alpha"), {QStringLiteral("docs")}}};
+    RC_ASSERT(folderMemory(shell.settings()->deviceValue(kExpandedFoldersKey), QStringLiteral("env-b")) == theirs);
+    const FolderMemory mine = expected.rememberedFolders();
+    shell.settings()->writeDevice(kExpandedFoldersKey, mine.isEmpty() ? QVariant() : QVariant(QVariantMap{{kEnvironment, folderValue(mine)}}));
     shell.check(expected);
   }
   void show(std::ostream& os) const override {
     os << "OtherWindow(";
     for (const QString& project : chosen) os << " " << project.toStdString();
+    os << ";" << folderProject.toStdString() << ":";
+    for (const QString& path : chosenFolders) os << " " << path.toStdString();
     os << ")";
   }
 };
@@ -366,6 +449,8 @@ struct AnswerOpen : Command {
     model.latest = 0;
     if (!model.files.value(open.project).contains(open.path)) return;
     model.expanded.insert(open.project);
+    const QStringList parts = open.path.split(QLatin1Char('/'));
+    for (qsizetype i = 1; i < parts.size(); ++i) model.setFolder(open.project, parts.mid(0, i).join(QLatin1Char('/')), true);
     if (model.followed != open.project) {
       // A page of the project followed before goes with its copy.
       if (model.fileShown) model.page.clear();
@@ -486,10 +571,10 @@ class SpaceProjectsProp : public QObject {
 
 private slots:
   void sectionsFollowTheFilesAndTheLatestOpenApplies() {
-    QVERIFY(rc::check("the sections are each project's files by folder as expanded and remembered, and only the latest open, unpicked since, shows its page once its Space arrives", [] {
+    QVERIFY(rc::check("the sections are each project's files by folder as sections and folders are expanded and remembered, and only the latest open, unpicked since, shows its page once its Space arrives", [] {
       Shell shell;
       rc::state::check(Model{}, shell,
-                       rc::state::gen::execOneOfWithArgs<ChangeFiles, SetExpanded, SetExpanded, OtherWindow, OpenFile, OpenFile, AnswerOpen, AnswerOpen,
+                       rc::state::gen::execOneOfWithArgs<ChangeFiles, SetExpanded, SetExpanded, SetFolderExpanded, SetFolderExpanded, OtherWindow, OpenFile, OpenFile, AnswerOpen, AnswerOpen,
                                                          ProjectSpaceArrives, ProjectSpaceArrives, SelectPage, SelectSpace, StreamFails,
                                                          SpaceStreamBack>());
     }));
