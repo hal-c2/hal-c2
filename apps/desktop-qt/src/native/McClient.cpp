@@ -1,6 +1,7 @@
 #include "McClient.h"
 
 #include <QJsonDocument>
+#include <QLoggingCategory>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -10,11 +11,20 @@
 
 #include <algorithm>
 
+// The socket's lifecycle, one line per step, under the attempt's trace id: the MC
+// logs its side under the same id (HalC2.Web.Socket).
+Q_LOGGING_CATEGORY(lcMc, "hal_c2.mc")
+
 namespace {
 
 // A fresh W3C trace id: 32 hex digits.
 QString newTraceId() {
   return QUuid::createUuid().toString(QUuid::Id128);
+}
+
+// What every request of one attempt carries, so the MC's log names it.
+void trace(QNetworkRequest& request, const QString& traceId) {
+  request.setRawHeader("traceparent", QStringLiteral("00-%1-%2-01").arg(traceId, traceId.left(16)).toLatin1());
 }
 
 }  // namespace
@@ -25,11 +35,25 @@ McClient::McClient(QObject* parent) : QObject(parent) {
   m_pingTimer.setInterval(25000);
   connect(&m_pingTimer, &QTimer::timeout, this, &McClient::ping);
   m_pongTimer.setSingleShot(true);
-  m_pongTimer.setInterval(10000);
+  // Past the 15 s an MC may take to answer a cluster call on the socket.
+  m_pongTimer.setInterval(20000);
   connect(&m_pongTimer, &QTimer::timeout, this, [this] {
+    qCInfo(lcMc).noquote() << "no pong in" << m_pongTimer.interval() << "ms (trace" << m_traceId + ")";
     emit checked(false);
     drop(QStringLiteral("timeout"));
   });
+  // A socket that opens but is never said hello to is as dead as one that drops.
+  m_setupTimer.setSingleShot(true);
+  m_setupTimer.setInterval(15000);
+  connect(&m_setupTimer, &QTimer::timeout, this, [this] {
+    qCInfo(lcMc).noquote() << "no hello in" << m_setupTimer.interval() << "ms (trace" << m_traceId + ")";
+    drop(QStringLiteral("timeout"));
+  });
+  // Only a connection that held starts the retry delays over: one that drops as
+  // soon as it is up is retried ever more slowly, not every half second.
+  m_heldTimer.setSingleShot(true);
+  m_heldTimer.setInterval(30000);
+  connect(&m_heldTimer, &QTimer::timeout, this, [this] { m_attempt = 0; });
 }
 
 McClient::~McClient() {
@@ -39,6 +63,8 @@ McClient::~McClient() {
 }
 
 void McClient::open(const QUrl& origin, const QString& token) {
+  // Opened again (paired anew): the socket it had goes first, or both would feed it.
+  if (!m_closed) close();
   QUrl url = origin;
   url.setScheme(origin.scheme() == QLatin1String("https") ? QStringLiteral("wss") : QStringLiteral("ws"));
   url.setPath(QStringLiteral("/ws"));
@@ -62,6 +88,8 @@ void McClient::close() {
   ++m_generation;
   m_retryTimer.stop();
   m_pongTimer.stop();
+  m_setupTimer.stop();
+  m_heldTimer.stop();
   if (m_socket) {
     QWebSocket* socket = m_socket;
     m_socket = nullptr;
@@ -93,6 +121,7 @@ void McClient::failCalls() {
 
 void McClient::setPhase(Phase phase) {
   if (phase == m_phase) return;
+  if (phase == Phase::Offline) qCInfo(lcMc) << "offline: waiting for the network";
   m_phase = phase;
   emit phaseChanged();
 }
@@ -299,10 +328,13 @@ void McClient::connectSocket() {
   m_traceId = newTraceId();
   m_dropReason.clear();
   m_retryDelay = 0;
+  qCInfo(lcMc).noquote() << "connecting to" << m_origin.toString(QUrl::RemoveUserInfo) << "(attempt" << m_attempt + 1
+                         << "trace" << m_traceId + ")";
   setPhase(Phase::Connecting);
   if (!m_http) m_http = new QNetworkAccessManager(this);
   QNetworkRequest descriptor = request(QStringLiteral("/.well-known/hal-c2/environment"));
   descriptor.setTransferTimeout(5000);
+  trace(descriptor, m_traceId);
   QNetworkReply* answer = m_http->get(descriptor);
   connect(answer, &QNetworkReply::finished, this, [this, answer, generation] {
     answer->deleteLater();
@@ -315,6 +347,8 @@ void McClient::connectSocket() {
         // Retrying cannot help: one side has to be updated.
         m_blockedProtocol = protocol.toInt();
         m_failureTraceId = m_traceId;
+        qCInfo(lcMc).noquote() << "blocked: the MC speaks protocol" << m_blockedProtocol << "and this client" << kProtocol
+                               << "(trace" << m_traceId + ")";
         setPhase(Phase::Blocked);
         return;
       }
@@ -343,6 +377,7 @@ void McClient::openWithTicket() {
   QNetworkRequest ticket = request(QStringLiteral("/api/auth/websocket-ticket"));
   ticket.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
   ticket.setTransferTimeout(5000);
+  trace(ticket, m_traceId);
   QNetworkReply* answer = m_http->post(ticket, QByteArrayLiteral("{}"));
   connect(answer, &QNetworkReply::finished, this, [this, answer, generation] {
     answer->deleteLater();
@@ -351,11 +386,16 @@ void McClient::openWithTicket() {
     const QString issued = QJsonDocument::fromJson(answer->readAll()).object().value(QLatin1String("ticket")).toString();
     if (status == 401) {
       // The MC no longer knows this credential: no retry mends that.
+      m_failure = QStringLiteral("refused");
+      m_failureTraceId = m_traceId;
+      qCInfo(lcMc).noquote() << "refused: the MC does not know this credential (trace" << m_traceId + ")";
       setPhase(Phase::Refused);
     } else if (status == 200 && !issued.isEmpty()) {
       m_ticketed = true;
       openSocket(issued);
     } else {
+      m_failure = status > 0 ? QStringLiteral("HTTP %1").arg(status) : answer->errorString();
+      m_failureTraceId = m_traceId;
       scheduleRetry();
     }
   });
@@ -364,7 +404,10 @@ void McClient::openWithTicket() {
 void McClient::openSocket(const QString& ticket) {
   auto* socket = new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this);
   m_socket = socket;
-  connect(socket, &QWebSocket::textMessageReceived, this, &McClient::onMessage);
+  // Only the current socket speaks for the MC.
+  connect(socket, &QWebSocket::textMessageReceived, this, [this, socket](const QString& text) {
+    if (socket == m_socket) onMessage(text);
+  });
   connect(socket, &QWebSocket::disconnected, this, [this, socket] { onClosed(socket); });
   connect(socket, &QWebSocket::errorOccurred, this, [this, socket] { onClosed(socket); });
   QUrl url = m_url;
@@ -374,7 +417,8 @@ void McClient::openSocket(const QString& ticket) {
     url.setQuery(query);
   }
   QNetworkRequest handshake(url);
-  handshake.setRawHeader("traceparent", QStringLiteral("00-%1-%2-01").arg(m_traceId, m_traceId.left(16)).toLatin1());
+  trace(handshake, m_traceId);
+  m_setupTimer.start();
   socket->open(handshake);
 }
 
@@ -387,13 +431,16 @@ void McClient::onMessage(const QString& text) {
     emit checked(true);
   }
   if (type == QLatin1String("hello")) {
+    m_setupTimer.stop();
+    m_heldTimer.start();
+    m_readySince.start();
     m_ready = true;
-    m_attempt = 0;
     m_failure.clear();
     m_failureTraceId.clear();
     m_mc = frame.value(QLatin1String("mc")).toString();
     m_environment = frame.value(QLatin1String("environment")).toString();
     m_pingTimer.start();
+    qCInfo(lcMc).noquote() << "ready: mc" << m_mc << "(trace" << m_traceId + ")";
     for (auto it = m_subscriptions.cbegin(); it != m_subscriptions.cend(); ++it) sendSub(it.key());
     setPhase(Phase::Ready);
     emit readyChanged(true);
@@ -440,18 +487,25 @@ void McClient::onClosed(QWebSocket* socket) {
   if (reason.isEmpty()) reason = socket->closeReason();
   if (reason.isEmpty() && socket->error() != QAbstractSocket::UnknownSocketError) reason = socket->errorString();
   if (reason.isEmpty()) reason = QStringLiteral("closed");
+  const int code = socket->closeCode();
   socket->disconnect(this);
   socket->deleteLater();
   const bool wasReady = m_ready;
   m_ready = false;
   m_pingTimer.stop();
   m_pongTimer.stop();
+  m_setupTimer.stop();
+  m_heldTimer.stop();
+  qCInfo(lcMc).noquote() << "closed:" << reason << "code" << code
+                         << (wasReady ? QStringLiteral("after %1 ms ready").arg(m_readySince.elapsed()) : QStringLiteral("before hello"))
+                         << "(trace" << m_traceId + ")";
   failCalls();
   if (wasReady) emit readyChanged(false);
   if (m_closed) return;
   m_failure = reason;
   m_failureTraceId = m_traceId;
   if (revoked) {
+    qCInfo(lcMc).noquote() << "refused: the MC revoked this session (trace" << m_traceId + ")";
     setPhase(Phase::Refused);
     return;
   }
@@ -461,10 +515,10 @@ void McClient::onClosed(QWebSocket* socket) {
 // A socket that never got its hello may have been turned away for its
 // credential. With the bare token that is either a paired session's token,
 // which needs a ticket, or one the MC refuses: asking for a ticket tells which.
-// A ticketed socket that failed is retried like any other.
+// A ticketed socket that failed is retried like any other, and so is one that
+// timed out: the MC took it, so it took its credential.
 void McClient::failed(const QString& reason, bool wasReady) {
-  Q_UNUSED(reason);
-  if (wasReady || m_ticketed) {
+  if (wasReady || m_ticketed || reason == QLatin1String("timeout")) {
     scheduleRetry();
     return;
   }
@@ -480,6 +534,7 @@ void McClient::scheduleRetry() {
                      ? 8000
                      : m_retryDelaysMs.at(std::min<qsizetype>(m_attempt, m_retryDelaysMs.size() - 1));
   m_attempt++;
+  qCInfo(lcMc).noquote() << "retrying in" << m_retryDelay << "ms (trace" << m_traceId + ")";
   m_retryTimer.start(m_retryDelay);
   // Retrying again says so again: the delay changed.
   if (m_phase == Phase::Retrying) {
