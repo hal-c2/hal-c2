@@ -3045,6 +3045,11 @@ step(
   },
 );
 
+step('the user picks "Edit as a page" in the file viewer', async (ctx: SpaceWorld) => {
+  await chooseCommand(ctx, EDIT_AS_A_PAGE);
+  await settle(ctx);
+});
+
 step('the user picks "Edit as a page" on that link', async (ctx: SpaceWorld) => {
   await chooseCommand(ctx, "Edit a file the conversation names as a page…");
   await settle(ctx);

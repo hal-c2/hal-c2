@@ -124,7 +124,7 @@ bool FileActionsController::handle(const QString& action, const QVariant& payloa
     }
   } else if (action == kCopyContents) {
     copyContents();
-  } else if (action == QLatin1String("files.openInSpace")) {
+  } else if (action == QLatin1String("files.editAsPage")) {
     auto* panel = shell->controller<RightPanelController>();
     if (auto* spaces = shell->controller<SpaceController>()) spaces->openFile(panel->environmentId(), panel->projectId(), path);
   } else if (action == QLatin1String("files.addToChat")) {

@@ -5,7 +5,9 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The Space view's own sidebar (SpaceController): which Space is shown and
-// what can be done to it, its page tree, its decks, and its trash.
+// what can be done to it, its page tree, a section for each project with Space
+// files (`Spaces.projects`, collapsed until the user expands it), its decks, and
+// its trash. A file picked in a section is edited as a page of its project.
 Rectangle {
     id: sidebar
 
@@ -90,15 +92,6 @@ Rectangle {
                 Accessible.name: qsTr("Import Markdown")
                 enabled: Spaces.spaceId !== ""
                 onClicked: sidebar.importRequested()
-            }
-
-            ShellButton {
-                objectName: "spaceFromProjectFiles"
-                subtle: true
-                iconName: "folder-open"
-                Accessible.name: qsTr("Add a page from a project's files")
-                enabled: Spaces.spaceId !== ""
-                onClicked: Shell.dispatch("space.files.pick", {})
             }
 
             ShellButton {
@@ -297,6 +290,82 @@ Rectangle {
                         iconName: "trash"
                         destructive: true
                         onTriggered: Shell.dispatch("space.page.trash", { pageId: row.model.id })
+                    }
+                }
+            }
+        }
+
+        ListView {
+            id: projectSections
+
+            objectName: "spaceProjects"
+            Layout.fillWidth: true
+            // The sections take the room they need, up to half the sidebar's.
+            Layout.preferredHeight: Math.min(contentHeight, sidebar.height / 2)
+            visible: count > 0
+            clip: true
+            spacing: 1
+            model: Spaces.projects
+            boundsBehavior: Flickable.StopAtBounds
+
+            delegate: Rectangle {
+                id: entry
+
+                required property var model
+                required property string kind
+                required property string projectId
+                required property string path
+                required property string name
+                required property int depth
+                required property bool expanded
+                required property string pageId
+                readonly property bool section: kind === "project"
+                readonly property bool selected: kind === "file" && pageId !== "" && pageId === Spaces.pageId && Spaces.fileSpaceId !== "" && Spaces.deckId === ""
+
+                objectName: section ? "spaceProject:" + name : "spaceProject" + (kind === "file" ? "File:" : "Folder:") + projectId + ":" + path
+                width: ListView.view.width
+                height: section ? 28 : 26
+                radius: Math.min(Theme.radius, 6)
+                color: selected ? sidebar.selectedFill : entryMouse.containsMouse && kind !== "folder" ? sidebar.hoverFill : "transparent"
+
+                Accessible.role: section ? Accessible.Button : Accessible.ListItem
+                Accessible.name: section ? (expanded ? qsTr("Collapse %1") : qsTr("Expand %1")).arg(name) : name
+
+                MouseArea {
+                    id: entryMouse
+
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    enabled: entry.kind !== "folder"
+                    onClicked: {
+                        if (entry.section) {
+                            Shell.dispatch("space.project.setExpanded", { projectId: entry.projectId, expanded: !entry.expanded });
+                        } else {
+                            Shell.dispatch("space.openFile", { projectId: entry.projectId, relativePath: entry.path });
+                            sidebar.pageChosen();
+                        }
+                    }
+                }
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 8 + entry.depth * 14
+                    anchors.rightMargin: 6
+                    spacing: 6
+
+                    ShellIcon {
+                        name: entry.section ? (entry.expanded ? "chevron-down" : "chevron-right") : entry.kind === "folder" ? "folder" : "file-text"
+                        size: entry.section ? 12 : 14
+                        color: sidebar.muted
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: entry.name
+                        elide: entry.section ? Text.ElideRight : Text.ElideMiddle
+                        color: entry.section || entry.kind === "folder" ? sidebar.muted : sidebar.foreground
+                        font.pixelSize: Math.round((entry.section ? 12 : 13) * Theme.fontScale)
+                        font.weight: entry.selected || entry.section ? Font.Medium : Font.Normal
                     }
                 }
             }

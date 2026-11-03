@@ -164,13 +164,6 @@ Rectangle {
                         text: qsTr("Import Markdown")
                         onClicked: importDialog.open()
                     }
-
-                    ShellButton {
-                        objectName: "spaceEmptyFromFiles"
-                        iconName: "folder-open"
-                        text: qsTr("From project files")
-                        onClicked: Shell.dispatch("space.files.pick", {})
-                    }
                 }
             }
 

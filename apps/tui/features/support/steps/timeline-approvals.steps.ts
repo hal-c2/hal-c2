@@ -234,7 +234,7 @@ async function moveTo(ctx: ThreadWorld, label: string) {
   throw new Error(`the arrow keys never reached "${label}"`);
 }
 
-// With no question offering it, `label` is a command (the file viewer's "Edit as a page").
+// With no question offering it, `label` is a command.
 step("the user picks {string}", async (ctx: ThreadWorld, label: string) => {
   const options: ReadonlyArray<{ label: string }> = hostState(ctx, "userInput")?.options ?? [];
   if (!options.some((option) => option.label === label)) {

@@ -1199,10 +1199,6 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
     const auto answer = [&] { return Answer{{{QStringLiteral("page"), one(mc, stream, QStringLiteral("page"), pageId)}}}; };
     if (method == QLatin1String("page.exportMarkdown")) return {{{QStringLiteral("markdown"), exportMarkdown(mc, space, page)}}};
     if (method == QLatin1String("page.syncFile")) return syncFile(mc, space, page);
-    if (method == QLatin1String("page.unlinkFile")) {
-      set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("file"), QJsonValue::Null}, {QStringLiteral("updatedAt"), stamp(mc)}});
-      return answer();
-    }
     if (method == QLatin1String("page.restore")) {
       if (!trashed(page)) return refused(QStringLiteral("invalid"), QStringLiteral("The page is not in the trash."));
       // Back where it was, unless that page is gone or in the trash itself.
@@ -3937,7 +3933,7 @@ const Steps steps([] {
   step(S("the user opens %1 in a Space from its menu").arg(q), [](World& world, const Captures& c, const Table&) {
     browseFiles(world);
     holdEntry(world, c[0]);
-    world.tap(S("fileEntryOpenInSpace"));
+    world.tap(S("fileEntryEditAsPage"));
   });
   step(S("the Space shows the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expectOpened(world, c[0]);
@@ -3949,7 +3945,7 @@ const Steps steps([] {
                   [&] { return S("the viewer to open %1; it has \"%2\"").arg(c[0], viewerOf(world).openPath()); });
   });
   step(S("the user opens it in a Space"), [](World& world, const Captures&, const Table&) {
-    world.tap(world.item(S("fileOpenInSpace")));
+    world.tap(world.item(S("fileEditAsPage")));
   });
   step(S("the agent's message in a thread of %1 links %1").arg(q), [](World& world, const Captures& c, const Table&) {
     inFilesThread(world);
@@ -3994,11 +3990,11 @@ const Steps steps([] {
   step(S("%1 offers no way to open it in a Space").arg(q), [](World& world, const Captures& c, const Table&) {
     holdEntry(world, c[0]);
     world.sync();
-    expect(world.find(S("fileEntryOpenInSpace")) == nullptr, S("the menu of %1 offers opening it in a Space").arg(c[0]));
+    expect(world.find(S("fileEntryEditAsPage")) == nullptr, S("the menu of %1 offers opening it in a Space").arg(c[0]));
     closeEntryMenu(world);
     // The Markdown beside it is offered, so the menu is not merely waiting.
     holdEntry(world, S("docs/guide.md"));
-    world.item(S("fileEntryOpenInSpace"));
+    world.item(S("fileEntryEditAsPage"));
     closeEntryMenu(world);
   });
   step(S("every Space was deleted"), [](World& world, const Captures&, const Table&) {
@@ -4096,16 +4092,6 @@ const Steps steps([] {
       return versions.size() >= 2 && versions.first().value(S("byFile")).toBool() && !versions.at(1).value(S("byFile")).toBool();
     }, S("the history to hold the file's version over the user's edit"));
   });
-  step(S("the user unlinks the page %1 from its file").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString page = idOfPage(world, c[0]);
-    lookAtPage(world, page);
-    expectShown(world, [&] { return !shownFile(world).isEmpty(); }, S("the page to say it is a file"));
-    openPageMenu(world, page, S("unlinkFile"));
-  });
-  step(S("the page no longer says it is a file"), [](World& world, const Captures&, const Table&) {
-    expectShown(world, [&] { return shownFile(world).isEmpty() && world.find(S("spacePageFile")) == nullptr; }, S("the page to be an ordinary page"));
-    expect(fakeFiles(world.mc).files.contains(S("docs/guide.md")), S("unlinking the page deleted its file"));
-  });
   step(S("%1 of %1 was rewritten outside HAL-C2 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     fakeFiles(world.mc).files.insert(c[0], QString(c[2]).replace(S("\\n"), S("\n")));
   });
@@ -4122,7 +4108,7 @@ const Steps steps([] {
   step(S("the user opens the project's copy of %1 in a Space from its menu").arg(q), [](World& world, const Captures& c, const Table&) {
     browseFiles(world);
     holdEntry(world, c[0]);
-    QQuickItem* item = world.item(S("fileEntryOpenInSpace"));
+    QQuickItem* item = world.item(S("fileEntryEditAsPage"));
     expect(item->property("text").toString().contains(S("project's copy")), S("the entry did not say it opens the project's copy: %1").arg(item->property("text").toString()));
     world.tap(item);
   });

@@ -272,11 +272,11 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
                : MenuController::Item{QStringLiteral("open"), tr("Open link"), QStringLiteral("external-link")},
         {QStringLiteral("copy"), isFile ? tr("Copy path") : tr("Copy link"), QStringLiteral("copy")}};
     const QString environmentId = m_thread.left(m_thread.indexOf(QLatin1Char(':')));
-    // A file of the project that is Space content opens as a page too.
+    // A file of the project that is Space content is edited as a page too.
     auto* spaces = NativeShell::of(this)->controller<SpaceController>();
     const QString relative = isFile ? relativeTo(file.path, m_files.root()) : QString();
     if (m_onThread && spaces && !relative.isEmpty() && spaces->isSpaceFile(environmentId, m_projectId, relative)) {
-      items.insert(1, {QStringLiteral("open-in-space"), m_onWorktree ? tr("Open the project's copy in a Space") : tr("Open in a Space"),
+      items.insert(1, {QStringLiteral("edit-as-page"), m_onWorktree ? tr("Edit the project's copy as a page") : tr("Edit as a page"),
                        QStringLiteral("book")});
     }
     if (m_onThread && ThreadPullRequests::parseUrl(url) &&
@@ -287,7 +287,7 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
     NativeShell::of(this)->controller<MenuController>()->open(
         map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble(), items,
         [this, url, file, environmentId, project = m_projectId, relative](const QString& id) {
-          if (id == QLatin1String("open-in-space")) {
+          if (id == QLatin1String("edit-as-page")) {
             if (auto* spaces = NativeShell::of(this)->controller<SpaceController>()) spaces->openFile(environmentId, project, relative);
           } else if (id == QLatin1String("open")) {
             if (file.path.isEmpty()) {
@@ -398,7 +398,7 @@ void RightPanelController::retarget() {
     m_diff.setThread(environmentId, threadId, timeline, root);
     m_agents.setThread(environmentId, timeline);
     m_files.setTarget(environmentId, root, threadId);
-    // Which of the project's files open in a Space, for the tab's menus and the links.
+    // Which of the project's files are edited as pages, for the tab's menus and the links.
     m_projectId = row.value(QLatin1String("projectId")).toString();
     const QString listed = environmentId + QLatin1Char(':') + m_projectId + QLatin1Char('@') + m_client->environment();
     if (auto* spaces = shell->controller<SpaceController>(); spaces && std::exchange(m_listedFiles, listed) != listed) {
