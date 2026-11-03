@@ -755,7 +755,8 @@ Rectangle {
             Layout.leftMargin: -composer.gutter
             Layout.rightMargin: -composer.gutter
             Layout.bottomMargin: 4
-            visible: !page.trashed && ready && model.routeKind === "page"
+            pageHost: true
+            visible: !page.trashed && ready
             color: "transparent"
             editorActions: [
                 ShellButton {

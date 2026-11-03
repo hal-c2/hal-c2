@@ -116,6 +116,12 @@ bool FileActionsController::handle(const QString& action, const QVariant& payloa
     } else {
       toasts->error(tr("Failed to copy mention"));
     }
+  } else if (action == QLatin1String("files.copyPath")) {
+    if (m_writeClipboard(path)) {
+      toasts->show(QStringLiteral("success"), tr("Path copied"), path);
+    } else {
+      toasts->error(tr("Failed to copy path"));
+    }
   } else if (action == kCopyContents) {
     copyContents();
   } else if (action == QLatin1String("files.editAsPage")) {
