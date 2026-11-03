@@ -878,7 +878,7 @@ defmodule HalC2.PullRequests do
   defp forget(reference) do
     with {:ok, project} <- project_for(reference) do
       Held.forget(project.host, project.repository, reference["number"])
-      Branches.forget_pull_request(project.host, project.repository, reference["number"])
+      Branches.forget_pull_request(project.repository, reference["number"])
     end
   end
 
@@ -1270,7 +1270,7 @@ defmodule HalC2.PullRequests do
         fun.(project, ctx)
       after
         Held.forget(project.host, project.repository, ctx.number)
-        Branches.forget_pull_request(project.host, project.repository, ctx.number)
+        Branches.forget_pull_request(project.repository, ctx.number)
       end
     end
 

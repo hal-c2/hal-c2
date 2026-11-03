@@ -198,7 +198,7 @@ defmodule HalC2.PullRequestBranchesPropTest do
 
   def forget(cwd), do: Branches.forget(cwd)
 
-  def forget_pull_request(number), do: Branches.forget_pull_request("GitHub.com", "o/r", number)
+  def forget_pull_request(number), do: Branches.forget_pull_request("o/r", number)
 
   def pass(ms) do
     {clock, _, _} = :persistent_term.get({__MODULE__, :world})

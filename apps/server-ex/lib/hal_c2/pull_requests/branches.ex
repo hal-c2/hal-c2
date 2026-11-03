@@ -13,7 +13,7 @@ defmodule HalC2.PullRequests.Branches do
   answer rather than asking again.
 
   A change made through the MC forgets what is held (`forget/0,1`, or of one pull
-  request with `forget_pull_request/3`), and a read that was under way then answers its
+  request with `forget_pull_request/2`), and a read that was under way then answers its
   callers but is not kept. A call made for something the
   user asked (`HalC2.GitHub.asked/1`) is never held nor shared. With the service down,
   every read asks the host. Times come from `:github_clock` (milliseconds), as in
@@ -57,12 +57,12 @@ defmodule HalC2.PullRequests.Branches do
   end
 
   @doc """
-  Forgets the branches held as having pull request `number` of `repository` on `host`,
+  Forgets the branches held as having pull request `number` of `repository` on any host,
   and drops every read under way, whose answer could be that pull request.
   """
-  def forget_pull_request(host, repository, number) do
+  def forget_pull_request(repository, number) do
     if GenServer.whereis(__MODULE__),
-      do: GenServer.call(__MODULE__, {:forget_pull_request, host, repository, number})
+      do: GenServer.call(__MODULE__, {:forget_pull_request, repository, number})
 
     :ok
   end
@@ -118,7 +118,7 @@ defmodule HalC2.PullRequests.Branches do
   # Matched on the URL's path alone: a remote's host (`ssh.github.com`) need not be the
   # one in gh's URL, and a held answer from another host's same path is only forgotten
   # too soon.
-  def handle_call({:forget_pull_request, _host, repository, number}, _from, state) do
+  def handle_call({:forget_pull_request, repository, number}, _from, state) do
     path = String.downcase("/#{repository}/pull/#{number}")
 
     held? = fn

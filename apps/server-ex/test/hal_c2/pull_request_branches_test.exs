@@ -35,7 +35,7 @@ defmodule HalC2.PullRequestBranchesTest do
     assert {_, true} = Branches.lookup("/a", "x")
     assert {_, false} = Branches.lookup("/a", "x")
     # An `ssh://git@ssh.github.com:443/o/r.git` remote names another host than gh's URL.
-    :ok = Branches.forget_pull_request("ssh.github.com", "o/r", 7)
+    :ok = Branches.forget_pull_request("o/r", 7)
     assert {_, true} = Branches.lookup("/a", "x")
   end
 end
