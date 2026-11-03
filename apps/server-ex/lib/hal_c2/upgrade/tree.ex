@@ -25,7 +25,7 @@ defmodule HalC2.Upgrade.Tree do
 
   @doc "Keeps the specs of every static supervisor of the MC for `sync/0`."
   def snapshot do
-    :persistent_term.put(@key, specs())
+    :persistent_term.put(@key, specs(&own?/1))
     :ok
   end
 
@@ -38,8 +38,10 @@ defmodule HalC2.Upgrade.Tree do
     before = Map.new(:persistent_term.get(@key, []))
     :persistent_term.erase(@key)
 
+    # The supervisors snapshotted are the MC's; after the install, which application
+    # a module belongs to can name the new release's rather than `:hal_c2`.
     changes =
-      for {sup, new} <- specs(),
+      for {sup, new} <- specs(fn {pid, _module} -> Map.has_key?(before, pid) end),
           old = Map.get(before, sup),
           change <- sync(sup, old, new),
           do: change
@@ -121,7 +123,7 @@ defmodule HalC2.Upgrade.Tree do
   # it whose own module of the MC implements `init/1`. Dynamic supervisors start what they are
   # asked, and a supervisor started straight from a list cannot say what it would
   # start now.
-  defp specs do
+  defp specs(own?) do
     case Process.whereis(HalC2.Supervisor) do
       nil ->
         []
@@ -130,25 +132,27 @@ defmodule HalC2.Upgrade.Tree do
         children =
           if Application.get_env(:hal_c2, :start_mc), do: HalC2.Application.children(), else: []
 
-        [{root, normalize(children)} | nested(root)]
+        [{root, normalize(children)} | nested(root, own?)]
     end
   end
 
-  defp nested(sup) do
+  defp nested(sup, own?) do
     for {_id, pid, :supervisor, _} <- Supervisor.which_children(sup),
         is_pid(pid),
-        entry <- own(pid) ++ nested(pid),
+        entry <- own(pid, own?) ++ nested(pid, own?),
         do: entry
   catch
     :exit, _ -> []
   end
 
-  defp own(pid) do
+  defp own?({_pid, module}), do: Application.get_application(module) == :hal_c2
+
+  defp own(pid, own?) do
     case :sys.get_state(pid, 5_000) do
       state when is_tuple(state) and elem(state, 0) == :state ->
         {module, args} = {elem(state, tuple_size(state) - 2), elem(state, tuple_size(state) - 1)}
 
-        with true <- is_atom(module) and Application.get_application(module) == :hal_c2,
+        with true <- is_atom(module) and own?.({pid, module}),
              true <- function_exported?(module, :init, 1),
              {:ok, {_flags, children}} <- module.init(args) do
           [{pid, normalize(children)}]

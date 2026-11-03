@@ -919,7 +919,9 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
   # A checkout's `_build/dev`: a copy of the MC's compiled application, `modules`
   # (`{module, beam}`) over it, whose beams the scenario's end loads back.
+  # A reload moves the MC's code path into the checkout, which goes with the scenario.
   defp checkout(context, name, modules) do
+    Mc.put_back_on_exit()
     source = Application.app_dir(:hal_c2)
     build = Path.join([Mc.tmp_dir(context.mc, name), "_build", "dev"])
     app = Path.join([build, "lib", "hal_c2"])

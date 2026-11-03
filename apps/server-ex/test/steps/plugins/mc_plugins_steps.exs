@@ -248,6 +248,8 @@ defmodule HalC2.Steps.Plugins.NodePlugins do
   end
 
   step "a developer reloads the MC from its checkout", context do
+    # The reload moves the MC's code path into the scenario's home.
+    HalC2.Test.Mc.put_back_on_exit()
     assert {:ok, _report} = HalC2.Upgrade.reload_checkout()
     context
   end

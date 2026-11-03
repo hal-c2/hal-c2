@@ -1101,6 +1101,8 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
     # As an MC that runs as one: a test MC leaves its host alone otherwise.
     World.put_app_env(:start_mc, true)
+    # The reload moves the MC's code path into the scenario's home.
+    HalC2.Test.Mc.put_back_on_exit()
     assert {:ok, _report} = HalC2.Upgrade.reload_checkout()
     context
   end

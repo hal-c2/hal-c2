@@ -238,7 +238,8 @@ defmodule HalC2.Upgrade.Release do
   applications, so a checkout's MC finds it in the OTP `root`.
   """
   def load_sasl(root) do
-    if :code.which(:release_handler) == :non_existing do
+    # On the code path, not only loaded: the handler loads more of SASL as it goes.
+    if :code.where_is_file(~c"release_handler.beam") == :non_existing do
       for ebin <- Path.wildcard(Path.join([root, "lib", "sasl-*", "ebin"])),
           do: :code.add_pathz(String.to_charlist(ebin))
     end
@@ -361,14 +362,18 @@ defmodule HalC2.Upgrade.Release do
 
   defp c(path), do: String.to_charlist(path)
 
+  # Whether the new release's code has `HalC2.Upgrade.Tree.sync/0`: in `:hal_c2`, or
+  # wherever else the release keeps the MC's code.
   defp tree_sync?(spec) do
-    with {:hal_c2, _, dir} <- List.keyfind(spec.to_libs, :hal_c2, 0),
-         {:ok, binary} <- File.read(Path.join([dir, "ebin", "Elixir.HalC2.Upgrade.Tree.beam"])),
-         {:ok, {_, [exports: exports]}} <- :beam_lib.chunks(binary, [:exports]) do
-      {:sync, 0} in exports
-    else
-      _ -> false
-    end
+    Enum.any?(spec.to_libs, fn {app, _, dir} ->
+      with false <- MapSet.member?(spec.otp_apps, app),
+           {:ok, binary} <- File.read(Path.join([dir, "ebin", "Elixir.HalC2.Upgrade.Tree.beam"])),
+           {:ok, {_, [exports: exports]}} <- :beam_lib.chunks(binary, [:exports]) do
+        {:sync, 0} in exports
+      else
+        _ -> false
+      end
+    end)
   end
 
   # --- modules --------------------------------------------------------------------------

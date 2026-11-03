@@ -662,6 +662,17 @@ defmodule HalC2.Test.Mc do
     test = self()
     Application.put_env(:hal_c2, :restart_exit, &send(test, {:hal_c2_restart, &1}))
 
+    put_back_on_exit()
+    root
+  end
+
+  @doc """
+  Puts back, when the scenario ends, what an upgrade in this VM changes: the
+  release environment, the code path, the MC's application specification and the
+  modules `remember_module/1` saw. `release/2` does this; a scenario that reloads
+  from a checkout without it calls it itself.
+  """
+  def put_back_on_exit do
     unless :persistent_term.get({__MODULE__, :release}, false) do
       :persistent_term.put({__MODULE__, :release}, true)
       paths = :code.get_path()
@@ -680,7 +691,7 @@ defmodule HalC2.Test.Mc do
       end)
     end
 
-    root
+    :ok
   end
 
   # An upgrade from a checkout gives the MC's application the new release's version
