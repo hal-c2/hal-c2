@@ -9,6 +9,22 @@
 
 #include "CodeHighlighter.h"
 
+namespace {
+
+// Waits, without handling events, until `count` reads have started: a read
+// heard of meanwhile would come back to a highlighter still there. False
+// once it has waited too long.
+bool readsReach(int count) {
+  QDeadlineTimer deadline(30000);
+  while (CodeHighlighter::readsStarted() < count) {
+    if (deadline.hasExpired()) return false;
+    QThread::yieldCurrentThread();
+  }
+  return true;
+}
+
+}  // namespace
+
 class CodeHighlighterRegression : public QObject {
   Q_OBJECT
 private slots:
@@ -108,7 +124,7 @@ private slots:
       kept[i].setLanguage(QStringLiteral("ts"));
       kept[i].setTextDocument(&shown[i]);
     }
-    while (CodeHighlighter::readsStarted() < idle + 2) QThread::yieldCurrentThread();
+    QVERIFY2(readsReach(idle + 2), "the busy reads never started");
     const int before = CodeHighlighter::readsStarted();
     {
       QTextDocument document(QStringLiteral("let gone = 1;\n"));
@@ -135,7 +151,7 @@ private slots:
       gone.setLanguage(QStringLiteral("ts"));
       gone.setTextDocument(&document);
       // Gone once its read has started, before that read can be heard of.
-      while (CodeHighlighter::readsStarted() == before) QThread::yieldCurrentThread();
+      QVERIFY2(readsReach(before + 1), "its read never started");
     }
     QTRY_VERIFY_WITH_TIMEOUT([&] {
       QTextDocument document(code);
