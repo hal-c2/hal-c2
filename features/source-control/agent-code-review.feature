@@ -308,6 +308,12 @@ Feature: Agent code review
       Then the review of #12 is failed saying the agent gave no findings
 
     @mc
+    Scenario: A review whose agent's turn fails says why
+      Given a review of #12 is running
+      When the agent's turn fails with "The provider stopped while starting the turn."
+      Then the review of #12 is failed saying "The provider stopped while starting the turn."
+
+    @mc
     Scenario: A review stopped by the agent's usage limit waits instead of failing
       Given a review of #12 is running
       When the agent's turn ends because its usage limit is reached
