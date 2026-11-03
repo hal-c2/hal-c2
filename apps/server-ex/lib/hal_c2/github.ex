@@ -216,10 +216,19 @@ defmodule HalC2.GitHub do
     end
   end
 
-  # A call that names no host asks the one `cwd`'s origin is on, as gh does.
+  # A call that names no host asks the one gh picks from `cwd`'s remotes: `upstream`,
+  # then `github`, then `origin`, then any.
   defp remote_host(cwd) when is_binary(cwd) do
     with true <- File.dir?(cwd),
-         {:ok, url} <- HalC2.Git.ok(cwd, ~w(remote get-url origin)),
+         {:ok, out} <- HalC2.Git.ok(cwd, ~w(remote -v)),
+         remotes =
+           for(
+             [name, url | _] <- Enum.map(String.split(out, "\n"), &String.split/1),
+             do: {name, url}
+           ),
+         {_, url} <-
+           Enum.find_value(~w(upstream github origin), &List.keyfind(remotes, &1, 0)) ||
+             List.first(remotes),
          %{host: host} <- HalC2.PullRequests.parse_remote(url) do
       host
     else
