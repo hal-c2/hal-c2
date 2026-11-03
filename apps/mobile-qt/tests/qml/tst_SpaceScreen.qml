@@ -909,14 +909,16 @@ Item {
         // marker in the lead.
         function test_anItemKeepsTextThatReadsAsNoItem() {
             const item = { kind: "bullet", markdownLead: "- " };
-            const screen = openWith([root.block("b1", "--", item), root.block("b2", "> quoted", item), root.block("b4", "\t> tabbed", item), root.block("b5", "| a | b |\n|---|---|", item), root.block("b3", "First\n\nSecond", item)]);
+            const screen = openWith([root.block("b1", "--", item), root.block("b2", "> quoted", item), root.block("b4", "\t> tabbed", item), root.block("b5", "Name | Age\n---|---", item), root.block("b6", "| just text", item), root.block("b3", "First\n\nSecond", item)]);
             tryVerify(() => findChild(screen, "spaceBlock:First\n\nSecond") !== null);
-            for (const text of ["--", "> quoted", "\t> tabbed", "| a | b |\n|---|---|"]) {
+            for (const text of ["--", "> quoted", "\t> tabbed", "Name | Age\n---|---"]) {
                 const shown = findChild(screen, "spaceBlock:" + text);
                 compare(shown.marker, "", text);
                 compare(findChild(shown, "spaceBlockText:" + text).text, text);
                 compare(findChild(screen, "spaceMarkdownLead:" + text).text, "- ", text);
             }
+            // A pipe over no delimiter row is no table: the item is drawn.
+            compare(findChild(screen, "spaceBlock:| just text").marker, "- ");
             const both = findChild(screen, "spaceBlock:First\n\nSecond");
             compare(both.marker, "- ");
             compare(findChild(both, "spaceBlockText:First\n\nSecond").text, "- First\n  \n  Second");
