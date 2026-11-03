@@ -556,6 +556,10 @@ void servePicture(World& world, const S& path) {
 
 }  // namespace
 
+// StreamingSteps' turn, when the scenario is one of streaming.feature's.
+bool expectShownDuration(World& world, const QString& shown);
+bool completeStreamedTurn(World& world);
+
 // The image the agent viewed, loaded from the thread's workspace, when a
 // scenario's call viewed one; FilesSteps' "the image is shown" asks first.
 bool expectViewedImage(World& world) {
@@ -576,12 +580,7 @@ namespace {
 const Steps steps([] {
   const QString q = kQuoted;
 
-  step(S("the user is looking at a thread in %1").arg(q), [](World& world, const Captures&, const Table&) {
-    world.thread = haveThread(world, kTitle);
-    openThread(world, kTitle);
-    world.waitFor([&] { return world.native().controller<ThreadStore>()->activeTimeline() && timeline(world).status() == QLatin1String("live"); },
-                  S("the thread to follow its MC"));
-  });
+  // "the user is looking at a thread in" is StreamingSteps'.
 
   // Progress on a call already shown, while the agent writes.
   step(S("the agent is writing a message"), [](World& world, const Captures&, const Table&) {
@@ -669,6 +668,7 @@ const Steps steps([] {
            S("the collapsed group shows %1").arg(show(shown)));
   });
   step(S("it reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (expectShownDuration(world, c[0])) return;
     expect(groupLine(world) == c[0], S("the group reads \"%1\"").arg(groupLine(world)));
     expectDrawn(world, c[0]);
   });
@@ -877,6 +877,7 @@ const Steps steps([] {
     world.mc.part<FakeTurn>().changedFiles = {c[0], c[1]};
   });
   step(S("the turn completes"), [](World& world, const Captures&, const Table&) {
+    if (completeStreamedTurn(world)) return;
     QJsonArray files;
     int n = 0;
     for (const S& path : world.mc.part<FakeTurn>().changedFiles) {
@@ -1113,7 +1114,8 @@ const Steps steps([] {
     addItem(world, S("command_execution"), {{S("input"), S("bun test cart")}, {S("output"), S("12 passed")}, {S("exitCode"), 0}});
     addFailure(world, {{S("message"), S("The provider stopped responding.")}});
     settleRun(world, S("failed"), 30);
-    openFold(world);
+    // A failed turn stays open on the phone, a row per call.
+    if (!rowsOf(timeline(world), S("fold")).isEmpty()) openFold(world);
   });
   const auto copies = [](World& world, QQuickItem* line, const S& text) {
     world.clipboard.clear();
