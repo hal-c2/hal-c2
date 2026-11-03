@@ -54,7 +54,15 @@ The event log is the source of truth ([`HalC2.Store`](../../apps/server-ex/lib/h
 A _stream_ is a project or a thread, and every event is a `HalC2.Patch` to one entity of it. One
 process per active stream ([`HalC2.Streams`](../../apps/server-ex/lib/hal_c2/streams.ex)) folds
 patches into its state, appends them to the log, and only then sends them to its subscribers, so
-no client sees a change the log lacks. Snapshots are a cache that can be rebuilt from events.
+no client sees a change the log lacks.
+
+A stream's process holds only the hot part of its state: the small kinds, and the turn items,
+messages and nodes of its latest and unsettled runs. A long thread's older runs are kept on disk
+beside a snapshot of the hot part, and both are a cache that can be rebuilt from events
+([`HalC2.StreamState`](../../apps/server-ex/lib/hal_c2/stream_state.ex), "Hot and cold"). Code
+that reads a thread's history reads through to disk (`fetch/3`, `all/2`, `run_rows/2`), never
+`get/2`: a check that only looks in memory passes on a short test thread and is wrong on a real
+one. An event to an older run's entity brings that entity back to memory before it applies.
 
 A command's acknowledgement means its intent committed, not that the provider, checkpoint, or
 other follow-up work finished. Command receipts are kept in the store's meta table so a retried
