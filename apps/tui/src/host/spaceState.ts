@@ -3026,9 +3026,31 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   // --- project files ---
 
   const knowSpaceFiles = (projectId: string, result: SpaceFilesListResult) => {
-    spaceFiles.set(projectId, new Set(result.files.map((file) => file.relativePath)));
+    const paths = result.files.map((file) => file.relativePath);
+    spaceFiles.set(projectId, new Set(paths));
     options.commandsChanged?.();
+    if (forgetGoneFolders(projectId, paths)) sectionStore.save([...expandedSections]);
     if (open) publish();
+  };
+
+  /**
+   * Forgets the project's expanded folders none of its listed files are in. An empty
+   * list (no section, or a scan still to come) forgets nothing.
+   */
+  const forgetGoneFolders = (projectId: string, paths: readonly string[]) => {
+    if (paths.length === 0) return false;
+    const folders = new Set(
+      paths.flatMap((path) => {
+        const parts = path.split("/").filter(Boolean);
+        return parts.slice(0, -1).map((_, at) => parts.slice(0, at + 1).join("/"));
+      }),
+    );
+    const prefix = `${projectId}|`;
+    const gone = [...expandedSections].filter(
+      (id) => id.startsWith(prefix) && !folders.has(id.slice(prefix.length)),
+    );
+    for (const id of gone) expandedSections.delete(id);
+    return gone.length > 0;
   };
 
   /** Asks the MC for the project's Space files; what it last said stands meanwhile. */

@@ -223,6 +223,9 @@ signals:
 
 private:
   void build();
+  // Drops the project's expanded folders its listed files are no longer in, once it
+  // lists any; true when it dropped some.
+  bool forgetGoneFolders(const QString& projectId);
 
   QList<Project> m_projects;
   QHash<QString, QHash<QString, QString>> m_files;

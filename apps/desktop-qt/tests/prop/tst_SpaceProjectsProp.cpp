@@ -178,8 +178,24 @@ struct Model {
     }
     return memory;
   }
+  // The folders a project's files are in: the only ones it keeps expanded, once it
+  // lists any.
+  QSet<QString> foldersOf(const QString& project) const {
+    QSet<QString> found;
+    for (const QString& path : files.value(project)) {
+      const QStringList parts = path.split(QLatin1Char('/'));
+      for (qsizetype i = 1; i < parts.size(); ++i) found.insert(parts.mid(0, i).join(QLatin1Char('/')));
+    }
+    return found;
+  }
+  void forgetGoneFolders(const QString& project) {
+    if (!folders.contains(project) || files.value(project).isEmpty()) return;
+    folders[project].intersect(foldersOf(project));
+    if (folders.value(project).isEmpty()) folders.remove(project);
+  }
   void setFolder(const QString& project, const QString& path, bool open) {
     if (open) {
+      if (!files.value(project).isEmpty() && !foldersOf(project).contains(path)) return;
       folders[project].insert(path);
     } else if (folders.contains(project)) {
       folders[project].remove(path);
@@ -316,12 +332,18 @@ struct ChangeFiles : Command {
   QString project = oneOf(kProjects);
   std::vector<QString> chosen = *rc::gen::container<std::vector<QString>>(*rc::gen::inRange(0, 4), rc::gen::elementOf(std::vector<QString>(kFiles.cbegin(), kFiles.cend())));
   QSet<QString> files() const { return QSet<QString>(chosen.cbegin(), chosen.cend()); }
-  void apply(Model& model) const override { model.files.insert(project, files()); }
+  void apply(Model& model) const override {
+    model.files.insert(project, files());
+    model.forgetGoneFolders(project);
+  }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;
     apply(expected);
     shell.files.insert(project, files());
     RC_ASSERT(shell.space()->handle(QStringLiteral("space.files.list"), QVariantMap{{QStringLiteral("projectId"), project}}));
+    // A collapsed section looks the same before and after, so wait for the list itself:
+    // which folders stay expanded depends on it.
+    shell.settle();
     shell.check(expected);
   }
   void show(std::ostream& os) const override {
@@ -399,7 +421,10 @@ struct OtherWindow : Command {
     prop::until([&] { return shell.sections() == expected.sections(); });
     RC_ASSERT(shell.sections() == expected.sections());
     RC_ASSERT(here() == expected.remembered());
-    RC_ASSERT(folderMemory(shell.settings()->deviceValue(kExpandedFoldersKey), kEnvironment) == expected.rememberedFolders());
+    // Restoring writes nothing back, but a listing that arrives after it forgets the
+    // folders no file is in, and saves that.
+    const FolderMemory stored = folderMemory(shell.settings()->deviceValue(kExpandedFoldersKey), kEnvironment);
+    RC_ASSERT(stored == folderMemory(folders, kEnvironment) || stored == expected.rememberedFolders());
     RC_ASSERT(shell.settings()->deviceValue(kExpandedKey).toStringList().contains(QStringLiteral("env-b:alpha")));
     // What follows holds the device to this MC's entries alone.
     shell.settings()->writeDevice(kExpandedKey, expected.remembered().isEmpty() ? QVariant() : QVariant(expected.remembered()));
