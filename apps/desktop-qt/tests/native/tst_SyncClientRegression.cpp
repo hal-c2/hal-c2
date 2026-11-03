@@ -87,6 +87,70 @@ private slots:
     client.close();
     QCOMPARE(order, made);
   }
+
+  // Opened again without a close (pairing anew), the client kept its old socket
+  // open beside the new one, and read the frames of both.
+  void openedAgainItHoldsOneSocket() {
+    FakeMc mc;
+    McClient client;
+    client.open(mc.origin(), QStringLiteral("token"));
+    QTRY_VERIFY(client.isReady());
+    client.open(mc.origin(), QStringLiteral("token"));
+    QTRY_VERIFY(client.isReady());
+    QTRY_COMPARE(mc.openSockets(), 1);
+    QCOMPARE(mc.connections.size(), 2);
+  }
+
+  // A socket the MC took and never said hello on left the client connecting
+  // for good.
+  void aSocketWithoutHelloIsGivenUpOn() {
+    FakeMc mc;
+    mc.sayHello = false;
+    McClient client;
+    client.setRetryDelays({20});
+    client.setSetupTimeout(200);
+    client.open(mc.origin(), QStringLiteral("token"));
+    QTRY_COMPARE(client.phase(), McClient::Phase::Retrying);
+    QCOMPARE(client.failure(), QStringLiteral("timeout"));
+    mc.sayHello = true;
+    QTRY_VERIFY(client.isReady());
+  }
+
+  // Every hello started the delays over, so an MC that dropped each connection
+  // as soon as it was up was asked again every half second.
+  void aConnectionThatDropsAtOnceIsRetriedMoreSlowly() {
+    FakeMc mc;
+    McClient client;
+    client.setRetryDelays({20, 40, 80});
+    client.open(mc.origin(), QStringLiteral("token"));
+    QTRY_VERIFY(client.isReady());
+    QList<int> delays;
+    for (int i = 0; i < 3; ++i) {
+      mc.drop();
+      QTRY_COMPARE(client.phase(), McClient::Phase::Retrying);
+      delays.append(client.retryDelay());
+      QTRY_VERIFY(client.isReady());
+    }
+    QCOMPARE(delays, (QList<int>{20, 40, 80}));
+  }
+
+  // One that held starts them over.
+  void aConnectionThatHeldStartsTheDelaysOver() {
+    FakeMc mc;
+    McClient client;
+    client.setRetryDelays({20, 40, 80});
+    client.setSteadyAfter(50);
+    client.open(mc.origin(), QStringLiteral("token"));
+    QTRY_VERIFY(client.isReady());
+    mc.drop();
+    QTRY_COMPARE(client.phase(), McClient::Phase::Retrying);
+    QCOMPARE(client.retryDelay(), 20);
+    QTRY_VERIFY(client.isReady());
+    QTest::qWait(100);
+    mc.drop();
+    QTRY_COMPARE(client.phase(), McClient::Phase::Retrying);
+    QCOMPARE(client.retryDelay(), 20);
+  }
 };
 
 QTEST_MAIN(tst_SyncClientRegression)
