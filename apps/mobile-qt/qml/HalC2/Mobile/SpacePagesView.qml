@@ -219,8 +219,14 @@ ColumnLayout {
                     setExpanded(!model.expanded);
             }
             // A hardware keyboard: Space clicks, Left and Right collapse and expand.
-            Keys.onLeftPressed: setExpanded(false)
-            Keys.onRightPressed: setExpanded(true)
+            Keys.onLeftPressed: event => {
+                event.accepted = model.kind !== "file";
+                setExpanded(false);
+            }
+            Keys.onRightPressed: event => {
+                event.accepted = model.kind !== "file";
+                setExpanded(true);
+            }
         }
     }
 }
