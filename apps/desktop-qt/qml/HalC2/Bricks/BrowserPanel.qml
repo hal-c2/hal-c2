@@ -171,8 +171,9 @@ Rectangle {
                 objectName: "browserBack"
                 subtle: true
                 iconName: "arrow-left"
-                // Chromium shows a page's source in place of the page, so
-                // back from it is the page again.
+                // Chromium shows a page's source in the page's own history
+                // entry (and the page again in place of the source), so back
+                // from the source is the page; goBack() would skip it.
                 enabled: webView.canGoBack || root.address !== root.webAddress
                 Accessible.name: qsTr("Back")
                 onClicked: root.address !== root.webAddress ? root.go(root.webAddress, false) : webView.goBack()

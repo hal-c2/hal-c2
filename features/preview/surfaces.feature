@@ -1786,6 +1786,17 @@ Feature: In-app preview browser
       Then the tab loads the dev server
 
     @desktop
+    Scenario: Back from a page's source goes back through the tab's history
+      Given a browser tab showing the thread's dev server
+      When the user opens another page from the address field
+      And the user views the page's source
+      Then the tab shows the other page's source
+      When the user goes back in the tab
+      Then the tab shows the other page
+      When the user goes back in the tab
+      Then the tab loads the dev server
+
+    @desktop
     Scenario: The user types a page's source address
       Given a browser tab showing the thread's dev server
       When the user types the page's address after "view-source:" and presses Enter

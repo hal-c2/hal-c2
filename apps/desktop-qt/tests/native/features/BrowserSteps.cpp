@@ -829,8 +829,8 @@ const Steps steps([] {
     typeText(world, c[0] + devServer(world).url().mid(7));
     world.brick->press(QStringLiteral("enter"));
   });
-  step(QStringLiteral("the tab shows the page's source"), [](World& world, const Captures&, const Table&) {
-    const QString source = QStringLiteral("view-source:") + devServer(world).url();
+  step(QStringLiteral("the tab shows the (other )?page's source"), [](World& world, const Captures& c, const Table&) {
+    const QString source = QStringLiteral("view-source:") + devServer(world).url(c.value(0).isEmpty() ? QStringLiteral("/") : QStringLiteral("/other"));
     waitForEngine(world, [&] { return viewUrl(world) == source && !loading(world); }, [&] { return QStringLiteral("the tab to show %1; %2").arg(source, state(world)); });
     // Over the start page, with the address it has.
     QQuickItem* start = find(world, QStringLiteral("browserStart"));
@@ -847,6 +847,18 @@ const Steps steps([] {
     const QVariantList shown = world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
     expect(shown.isEmpty(), QStringLiteral("the toasts are %1").arg(show(world.state(QStringLiteral("toasts")))));
   });
+  // From the address field: Chromium skips, going back, a page that moved
+  // on by script without the user's gesture.
+  step(QStringLiteral("the user opens another page from the address field"), [](World& world, const Captures&, const Table&) {
+    devServer(world).page(QStringLiteral("/other"), QStringLiteral("Other"));
+    QQuickItem* field = world.brick->item(QStringLiteral("browserAddress"));
+    field->forceActiveFocus();
+    QMetaObject::invokeMethod(field, "selectAll");
+    typeText(world, devServer(world).url(QStringLiteral("/other")).mid(7));
+    world.brick->press(QStringLiteral("enter"));
+    waitForTitle(world, QStringLiteral("Other"));
+  });
+  step(QStringLiteral("the tab shows the other page"), [](World& world, const Captures&, const Table&) { waitForPage(world, devServer(world).url(QStringLiteral("/other"))); });
   step(QStringLiteral("the user goes back in the tab"), [](World& world, const Captures&, const Table&) { world.brick->click(QStringLiteral("browserBack")); });
   step(QStringLiteral("the address field says only web addresses can be opened"), [](World& world, const Captures&, const Table&) {
     const QString problem = panel(world)->property("addressProblem").toString();
