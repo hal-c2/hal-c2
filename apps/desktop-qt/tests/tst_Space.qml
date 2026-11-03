@@ -69,6 +69,21 @@ Item {
         return Shell.dispatchedActions.filter(entry => entry.action === action).map(entry => entry.payload);
     }
 
+    // Whether `name` is in `view` and shown.
+    function showing(view, name) {
+        const item = test.findChild(view, name);
+        return item !== null && item.visible;
+    }
+
+    // The source editor of the block with `text`, shown as a click on its
+    // drawn text shows it.
+    function editorOf(view, text) {
+        const shown = test.findChild(view, "spaceBlock:" + text);
+        if (shown.editor === null)
+            shown.edit();
+        return shown.editor;
+    }
+
     TestCase {
         id: test
 
@@ -200,7 +215,7 @@ Item {
             verify(findChild(chart, "spaceChartLine") === null);
             verify(!findChild(chart, "spaceChartUnmatched").visible);
             verify(!findChild(chart, "spaceChartLegend").visible, "one series needs no legend");
-            verify(!findChild(view, "spaceBlockEditor:" + chartBlock("bar").text).visible, "a chart is not edited as text");
+            verify(!root.showing(view, "spaceBlockEditor:" + chartBlock("bar").text), "a chart is not edited as text");
         }
 
         function test_a_chart_keeps_a_long_label_inside_the_plot() {
@@ -644,7 +659,7 @@ Item {
             const diagram = findChild(view, "spaceDiagram:" + row.text);
             verify(diagram.visible);
             compare(findChild(diagram, "mermaidImage").width, 200);
-            verify(!findChild(view, "spaceBlockEditor:" + row.text).visible);
+            verify(!root.showing(view, "spaceBlockEditor:" + row.text));
             verify(!note.visible);
 
             // The source is the way to edit it, and what is saved is drawn.
@@ -712,19 +727,22 @@ Item {
                 root.block("t1", "| mermaid |\n| --- |", { kind: "table" })
             ] });
             tryVerify(() => findChild(view, "spaceBlockEditor:| mermaid |\n| --- |"), 1000, "every block is on the page");
-            compare(Object.keys(Diagrams.asked).length, 0);
+            // A paragraph is drawn as the chat's Markdown, where a fence is code.
+            compare(Object.keys(Diagrams.asked), ["dark\nflowchart LR\n  A --> B"]);
         }
 
         function test_return_writes_an_edited_block_and_escape_drops_the_edit() {
             const view = root.research({});
-            const editor = findChild(view, "spaceBlockEditor:One");
-            editor.forceActiveFocus();
+            let editor = root.editorOf(view, "One");
             editor.selectAll();
             keyClick("X");
             keyClick(Qt.Key_Escape);
-            compare(editor.text, "One");
             compare(root.dispatched("space.block.update").length, 0);
-            editor.forceActiveFocus();
+            const shown = findChild(view, "spaceBlock:One");
+            compare(shown.editor, null, "the block is drawn again");
+            compare(findChild(shown, "spaceBlockText:One").text, "One");
+            editor = root.editorOf(view, "One");
+            compare(editor.text, "One");
             editor.selectAll();
             keyClick("F");
             keyClick(Qt.Key_Return);
@@ -770,18 +788,19 @@ Item {
             const levels = [1, 2, 3, 4, 5, 6];
             const headings = levels.map(level => root.block("h" + level, "Level " + level, { kind: "heading", level: level }));
             const view = root.research({ blocks: headings.concat([root.block("h", "Plain", { kind: "heading" })]) });
-            tryVerify(() => findChild(view, "spaceBlockEditor:Plain") !== null);
-            const sizes = levels.map(level => findChild(view, "spaceBlockEditor:Level " + level).font.pixelSize);
+            tryVerify(() => findChild(view, "spaceBlockText:Plain") !== null);
+            const sizes = levels.map(level => findChild(view, "spaceBlockText:Level " + level).fontSize);
             for (let i = 1; i < sizes.length; ++i)
                 verify(sizes[i] < sizes[i - 1], "level " + (i + 1) + " is smaller than level " + i + ": " + sizes);
             // Level 2 is the page's usual heading, and so is a heading with no level.
-            compare(findChild(view, "spaceBlockEditor:Plain").font.pixelSize, sizes[1]);
+            compare(findChild(view, "spaceBlockText:Plain").fontSize, sizes[1]);
+            // Its source is written at the size it is drawn.
+            compare(root.editorOf(view, "Level 1").font.pixelSize, sizes[0]);
         }
 
         function test_what_the_user_is_writing_is_not_overwritten_by_the_stream() {
             const view = root.research({});
-            const editor = findChild(view, "spaceBlockEditor:One");
-            editor.forceActiveFocus();
+            const editor = root.editorOf(view, "One");
             editor.selectAll();
             keyClick("M");
             // Another client changes the block while the user writes in it.
@@ -819,11 +838,136 @@ Item {
             compare(sidebar.movesFor(2).map(page => page.title), ["Roadmap", "Q3"]);
         }
 
+        // features/space/markdown.feature, Inline formatting: a text block is
+        // drawn through the chat's Markdown brick, untrusted, until it is edited.
+        function test_a_block_is_drawn_with_its_inline_formatting() {
+            const source = "Ship **soon**, ~~later~~ with `mix test` and [the docs](https://example.com \"Docs\")";
+            const view = root.research({ blocks: [root.block("b1", source)] });
+            const shown = findChild(view, "spaceBlock:" + source);
+            compare(shown.editor, null, "an idle block holds no editor");
+            const drawn = findChild(shown, "spaceBlockText:" + source);
+            verify(drawn.visible);
+            verify(!drawn.trusted);
+            const html = findChild(drawn, "markdownProse").text;
+            verify(/<(b|strong)>soon<\/(b|strong)>/.test(html), html);
+            verify(/<s>later<\/s>/.test(html), html);
+            verify(/class="c"[^>]*>(<span[^>]*> <\/span>)?mix test</.test(html), "inline code: " + html);
+            verify(html.includes("href=\"https://example.com\""), html);
+            verify(!html.includes("**") && !html.includes("~~"), "no markers show: " + html);
+        }
+
+        // An image is a link to it, and nothing is fetched until it is followed.
+        function test_a_link_in_a_block_never_loads_anything_by_itself() {
+            const source = "![cat](https://example.com/cat.png)";
+            const view = root.research({ blocks: [root.block("b1", source)] });
+            const html = findChild(findChild(view, "spaceBlockText:" + source), "markdownProse").text;
+            verify(!html.includes("<img"), html);
+            verify(html.includes("href=\"https://example.com/cat.png\""), html);
+            compare(Shell.openedExternally, []);
+        }
+
+        // A click on a link opens it as a link in the chat does; anywhere else
+        // in the text edits its source, with the caret where it was clicked.
+        function test_a_click_opens_a_link_and_elsewhere_edits_the_source() {
+            const source = "[docs](https://example.com) and more words after it";
+            const view = root.research({ blocks: [root.block("b1", source)] });
+            const shown = findChild(view, "spaceBlock:" + source);
+            const drawn = findChild(shown, "spaceBlockText:" + source);
+            const prose = findChild(drawn, "markdownProse");
+            const link = drawn.mapFromItem(prose, 4, prose.height / 2);
+            compare(drawn.linkAt(link.x, link.y), "https://example.com");
+            mouseClick(drawn, link.x, link.y);
+            compare(Shell.openedExternally, ["https://example.com"]);
+            compare(shown.editor, null, "a link is followed, not edited");
+
+            mouseClick(drawn, prose.implicitWidth - 2, prose.height / 2);
+            const editor = shown.editor;
+            verify(editor !== null);
+            verify(editor.activeFocus);
+            compare(editor.text, source);
+            compare(Shell.openedExternally, ["https://example.com"]);
+            // Leaving it draws it again.
+            editor.focus = false;
+            compare(shown.editor, null);
+            verify(findChild(shown, "spaceBlockText:" + source).visible);
+        }
+
+        // Where plain words are drawn as written, the caret lands on the word clicked.
+        function test_the_caret_lands_where_the_drawn_text_was_clicked() {
+            const source = "Plain words in a row";
+            const view = root.research({ blocks: [root.block("b1", source)] });
+            tryVerify(() => findChild(view, "spaceBlockText:" + source) !== null);
+            const shown = findChild(view, "spaceBlock:" + source);
+            const drawn = findChild(shown, "spaceBlockText:" + source);
+            const prose = findChild(drawn, "markdownProse");
+            const at = drawn.mapFromItem(prose, prose.implicitWidth - 2, prose.height / 2);
+            mouseClick(drawn, at.x, at.y);
+            verify(shown.editor.activeFocus);
+            verify(shown.editor.cursorPosition >= source.length - 1, "the caret is at the click: " + shown.editor.cursorPosition);
+        }
+
+        // The keyboard reaching a drawn block edits it, the caret at its end.
+        function test_focusing_a_drawn_block_edits_its_source() {
+            const view = root.research({});
+            tryVerify(() => findChild(view, "spaceBlock:Two") !== null);
+            const shown = findChild(view, "spaceBlock:Two");
+            findChild(shown, "spaceBlockText:Two").parent.forceActiveFocus();
+            verify(shown.editor !== null && shown.editor.activeFocus);
+            compare(shown.editor.cursorPosition, 3);
+            keyClick("s");
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.update"), [{ blockId: "b2", text: "Twos" }]);
+            compare(shown.editor, null);
+        }
+
+        // A ticked item is drawn struck out, a heading at its size.
+        function test_a_ticked_item_is_drawn_struck_out() {
+            const view = root.research({ blocks: [root.block("b1", "Ship *it*", { kind: "checklist", checked: true }), root.block("b2", "Plan", { kind: "heading", level: 1 })] });
+            tryVerify(() => findChild(view, "spaceBlockText:Plan") !== null);
+            verify(findChild(view, "spaceBlockText:Ship *it*").struck);
+            verify(!findChild(view, "spaceBlockText:Plan").struck);
+            compare(findChild(view, "spaceBlockText:Plan").fontWeight, Font.DemiBold);
+        }
+
+        // A page of hundreds of blocks: the ones drawn hold Text, no TextEdit,
+        // until one is edited. Logs the time to lay the page out and scroll it.
+        function test_a_long_page_draws_its_blocks_without_editors() {
+            const blocks = [];
+            for (let i = 0; i < 400; ++i)
+                blocks.push(root.block("b" + i, "Block " + i + " has **bold**, `code` and [a link](https://example.com/" + i + ")", { kind: i % 10 === 0 ? "heading" : i % 7 === 0 ? "checklist" : "paragraph" }));
+            const started = Date.now();
+            const view = root.research({ blocks: blocks });
+            const list = findChild(view, "spaceBlocks");
+            tryVerify(() => list.count === 400);
+            list.forceLayout();
+            const laidOut = Date.now() - started;
+            const editors = item => {
+                let count = item.cursorRectangle !== undefined ? 1 : 0;
+                for (const child of item.children)
+                    count += editors(child);
+                return count;
+            };
+            let seen = 0;
+            const scrolled = Date.now();
+            for (let at = 0; at < 400; at += 20) {
+                list.positionViewAtIndex(at, ListView.Beginning);
+                list.forceLayout();
+                for (const child of list.contentItem.children) {
+                    if (child.blockId === undefined)
+                        continue;
+                    ++seen;
+                    compare(editors(child), 0, "block " + child.text + " holds no TextEdit");
+                }
+            }
+            console.log("400-block page: laid out in " + laidOut + " ms, scrolled through in " + (Date.now() - scrolled) + " ms");
+            verify(seen > 0);
+        }
+
         function test_a_trashed_page_is_read_only_with_the_way_back() {
             const view = root.research({ page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: true, sourceThreadId: "", sourceThreadTitle: "" } });
             verify(findChild(view, "spaceTrashedBanner").visible);
             verify(!findChild(view, "spaceComposer").visible);
-            verify(findChild(view, "spaceBlockEditor:One").readOnly);
+            verify(root.editorOf(view, "One").readOnly);
             mouseClick(findChild(view, "spacePageRestore"));
             mouseClick(findChild(view, "spacePageDelete"));
             compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.restore", "space.page.delete"]);
@@ -1306,10 +1450,10 @@ Item {
             const view = root.research({ blocks: [root.block("b1", "Mine"), root.block("b2", "Three **threads**", { kind: "generated" })] });
             tryVerify(() => findChild(view, "spaceBlock:Three **threads**") !== null);
             const generated = findChild(view, "spaceBlock:Three **threads**");
-            verify(!findChild(generated, "spaceBlockEditor:Three **threads**").visible);
+            verify(!root.showing(generated, "spaceBlockEditor:Three **threads**"));
             tryVerify(() => findChild(generated, "spaceGenerated") !== null);
             compare(findChild(generated, "spaceGenerated").text, "Three **threads**");
-            verify(findChild(view, "spaceBlockEditor:Mine").visible);
+            verify(findChild(view, "spaceBlockText:Mine").visible);
             // It can still be moved, deleted and commented on.
             verify(findChild(generated, "spaceDeleteBlock:Three **threads**").visible);
             verify(findChild(generated, "spaceComment:Three **threads**") !== null);

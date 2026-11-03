@@ -1,11 +1,14 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 
-// One block of a page (a row of Spaces.blocks): its text edited in place and
-// written when the user leaves it or presses Return, a heading sized by its
+// One block of a page (a row of Spaces.blocks): its text drawn as Markdown (the
+// chat's Markdown brick, untrusted) until the user clicks or tabs into it, then
+// edited in place as its source and written when the user leaves it or presses
+// Return; a click on a link opens it instead. A heading sized by its
 // level, a checklist item's tick, a callout's tint, a subpage link that opens
 // the page, an image above its caption, a chart drawn from its description,
 // what a page's update wrote (Markdown nobody edits by hand), Markdown the page
@@ -54,7 +57,10 @@ Item {
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color info: Theme.palette.color("info", "#3b82f6")
-    readonly property bool editing: editor.activeFocus
+    // The source editor: made while the user edits a drawn block, and always
+    // for a block that is shown as its source.
+    readonly property TextEdit editor: editorLoader.item as TextEdit
+    readonly property bool editing: editor !== null && editor.activeFocus
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
     readonly property bool raw: kind === "raw" || kind === "table" || kind === "code"
     // Level 2 keeps the page's usual heading; 1 is larger, 3 to 6 step down.
@@ -66,6 +72,15 @@ Item {
                                         : block.kind === "raw" ? block.mermaidOf(block.text) : ""
     property bool diagramSource: false
     readonly property bool diagramShown: diagramCode.length > 0 && diagram.drawn && !diagramSource
+    // The block shows text: a link, a chart, what an update wrote, a divider,
+    // a section's end and a drawn diagram show something else.
+    readonly property bool textShown: !diagramShown && ["subpage_link", "chart", "generated", "divider", "details_end"].indexOf(kind) < 0
+    // Text drawn as Markdown while it is not edited. Raw, table and code blocks
+    // are their source, and an image's caption and a section's summary sit
+    // between Markdown the MC writes around them on their line.
+    readonly property bool drawn: textShown && !raw && kind !== "details" && kind !== "image"
+    // The user is writing in a drawn block: its source shows.
+    property bool sourceShown: false
 
     signal commentRequested(string blockId)
     signal addBelowRequested(string blockId)
@@ -79,20 +94,37 @@ Item {
 
     // Writes what the user typed, if it differs from the block's text.
     function commit() {
+        if (editor === null)
+            return;
         const typed = editor.text;
         if (typed !== block.text && !block.readOnly)
             Shell.dispatch("space.block.update", { blockId: block.blockId, text: typed });
+    }
+
+    // Shows a drawn block's source to edit, the caret near (x, y) in the drawn
+    // text, or at its end with no point.
+    function edit(x, y) {
+        sourceShown = true;
+        editor.forceActiveFocus();
+        if (x === undefined) {
+            editor.cursorPosition = editor.length;
+        } else {
+            const at = editor.mapFromItem(renderedLoader, x, y);
+            editor.cursorPosition = editor.positionAt(at.x, at.y);
+        }
     }
 
     objectName: "spaceBlock:" + text
     implicitHeight: Math.max(row.implicitHeight, 28) + (block.kind === "heading" ? 10 : block.raw ? 16 : 4) + (picture.visible ? picture.height + 6 : 0) + diagramNote.height
 
     // The editor follows the block, and a diagram is drawn again, while the
-    // user is not writing in it.
+    // user is not writing in it. The editor's focus is read, not `editing`: a
+    // write it makes as it loses the keyboard lands before that follows.
     onTextChanged: {
-        if (editor.activeFocus)
+        if (editor !== null && editor.activeFocus)
             return;
-        editor.text = block.text;
+        if (editor !== null)
+            editor.text = block.text;
         block.diagramSource = false;
     }
 
@@ -276,65 +308,137 @@ Item {
                     objectName: "spaceBlockScroll:" + block.text
                     Layout.fillWidth: true
                     // A divider and a section's end have no text: their Markdown is all they show.
-                    visible: block.kind !== "divider" && block.kind !== "details_end"
+                    visible: block.textShown
                     // Up to its text's width when something follows it on its line.
-                    Layout.maximumWidth: block.markdownTail.length > 0 ? Math.max(40, editor.implicitWidth + 2) : Number.POSITIVE_INFINITY
-                    implicitHeight: editor.height
+                    Layout.maximumWidth: block.markdownTail.length > 0 ? Math.max(40, (block.editor?.implicitWidth ?? 0) + 2) : Number.POSITIVE_INFINITY
+                    implicitHeight: block.editor !== null ? editorLoader.height : renderedLoader.height
                     clip: block.raw
                     interactive: false
                     flickableDirection: Flickable.HorizontalFlick
                     boundsBehavior: Flickable.StopAtBounds
-                    contentWidth: editor.width
+                    contentWidth: block.editor !== null ? editorLoader.width : width
                     contentHeight: height
 
-                    TextEdit {
-                        id: editor
+                    // The text drawn, at its size and with its tick's strikeout. A
+                    // click on a link opens it; anywhere else edits the source, as
+                    // the keyboard's focus does.
+                    Loader {
+                        id: renderedLoader
 
-                        objectName: "spaceBlockEditor:" + block.text
-                        width: block.raw ? Math.max(implicitWidth, scroller.width) : scroller.width
-                        readOnly: block.readOnly
-                        textFormat: TextEdit.PlainText
-                        wrapMode: block.raw ? TextEdit.NoWrap : TextEdit.Wrap
-                        selectByMouse: true
-                        color: block.foreground
-                        selectionColor: Theme.palette.color("accent", "#2563eb")
-                        selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
-                        font.family: block.raw ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Qt.application.font.family
-                        font.pixelSize: block.raw ? Theme.fontSizeCode : Math.round((block.kind === "heading" ? block.headingSize : 15) * Theme.fontScale)
-                        font.weight: block.kind === "heading" ? Font.DemiBold : Font.Normal
-                        font.strikeout: block.kind === "checklist" && block.checked
-                        // Source shows each character as typed, so no ligatures turn "---" or "->" into one glyph.
-                        font.features: block.raw ? { "liga": 0, "calt": 0 } : ({})
-                        opacity: block.kind === "checklist" && block.checked ? 0.7 : 1
-                        Component.onCompleted: text = block.text
-                        onActiveFocusChanged: {
-                            if (!activeFocus) {
-                                block.commit();
-                                editor.text = block.text;
+                        active: block.drawn
+                        visible: block.editor === null
+                        width: scroller.width
+
+                        sourceComponent: FocusScope {
+                            height: Math.max(drawnText.implicitHeight, 22)
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.EditableText
+                            Accessible.name: block.text
+                            onActiveFocusChanged: {
+                                if (activeFocus)
+                                    block.edit();
+                            }
+
+                            Markdown {
+                                id: drawnText
+
+                                objectName: "spaceBlockText:" + block.text
+                                width: parent.width
+                                selectable: false
+                                text: block.text
+                                textColor: block.foreground
+                                fontSize: Math.round((block.kind === "heading" ? block.headingSize : 15) * Theme.fontScale)
+                                fontWeight: block.kind === "heading" ? Font.DemiBold : Font.Normal
+                                struck: block.kind === "checklist" && block.checked
+                                opacity: block.kind === "checklist" && block.checked ? 0.7 : 1
+                            }
+
+                            MouseArea {
+                                id: drawnMouse
+
+                                property string link: ""
+
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: drawnMouse.link.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
+                                onPositionChanged: mouse => drawnMouse.link = drawnText.linkAt(mouse.x, mouse.y)
+                                onExited: drawnMouse.link = ""
+                                onClicked: mouse => {
+                                    const target = drawnText.linkAt(mouse.x, mouse.y);
+                                    if (target.length > 0)
+                                        Shell.openExternal(target);
+                                    else
+                                        block.edit(mouse.x, mouse.y);
+                                }
+                                ToolTip.visible: drawnMouse.link.length > 0
+                                ToolTip.text: drawnMouse.link
+                                ToolTip.delay: 600
                             }
                         }
-                        // The caret stays in sight on a line wider than the block.
-                        onCursorRectangleChanged: {
-                            if (!block.raw)
-                                return;
-                            if (cursorRectangle.x < scroller.contentX)
-                                scroller.contentX = cursorRectangle.x;
-                            else if (cursorRectangle.x + cursorRectangle.width > scroller.contentX + scroller.width)
-                                scroller.contentX = cursorRectangle.x + cursorRectangle.width - scroller.width;
-                        }
-                        // Return writes the block (by leaving it); Shift+Return starts a
-                        // new line in it. In a raw block, which is lines of source,
-                        // Return starts a line and Ctrl+Return writes it.
-                        Keys.onReturnPressed: event => {
-                            if ((event.modifiers & Qt.ShiftModifier) || (block.raw && !(event.modifiers & Qt.ControlModifier))) {
-                                event.accepted = false;
-                                return;
+                    }
+
+                    Loader {
+                        id: editorLoader
+
+                        // A diagram keeps its source while it is drawn, a tap away.
+                        active: (block.textShown || block.diagramCode.length > 0) && (!block.drawn || block.sourceShown)
+                        sourceComponent: editorComponent
+                    }
+
+                    Component {
+                        id: editorComponent
+
+                        TextEdit {
+                            id: sourceEditor
+
+                            objectName: "spaceBlockEditor:" + block.text
+                            width: block.raw ? Math.max(implicitWidth, scroller.width) : scroller.width
+                            readOnly: block.readOnly
+                            textFormat: TextEdit.PlainText
+                            wrapMode: block.raw ? TextEdit.NoWrap : TextEdit.Wrap
+                            selectByMouse: true
+                            color: block.foreground
+                            selectionColor: Theme.palette.color("accent", "#2563eb")
+                            selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
+                            font.family: block.raw ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Qt.application.font.family
+                            font.pixelSize: block.raw ? Theme.fontSizeCode : Math.round((block.kind === "heading" ? block.headingSize : 15) * Theme.fontScale)
+                            font.weight: block.kind === "heading" ? Font.DemiBold : Font.Normal
+                            font.strikeout: block.kind === "checklist" && block.checked
+                            // Source shows each character as typed, so no ligatures turn "---" or "->" into one glyph.
+                            font.features: block.raw ? { "liga": 0, "calt": 0 } : ({})
+                            opacity: block.kind === "checklist" && block.checked ? 0.7 : 1
+                            Component.onCompleted: text = block.text
+                            // Leaving it writes it, and a drawn block is drawn again.
+                            onActiveFocusChanged: {
+                                if (!activeFocus) {
+                                    block.commit();
+                                    sourceEditor.text = block.text;
+                                    block.sourceShown = false;
+                                }
                             }
-                            editor.focus = false;
-                        }
-                        Keys.onEscapePressed: {
-                            editor.text = block.text;
-                            editor.focus = false;
+                            // The caret stays in sight on a line wider than the block.
+                            onCursorRectangleChanged: {
+                                if (!block.raw)
+                                    return;
+                                if (cursorRectangle.x < scroller.contentX)
+                                    scroller.contentX = cursorRectangle.x;
+                                else if (cursorRectangle.x + cursorRectangle.width > scroller.contentX + scroller.width)
+                                    scroller.contentX = cursorRectangle.x + cursorRectangle.width - scroller.width;
+                            }
+                            // Return writes the block (by leaving it); Shift+Return starts a
+                            // new line in it. In a raw block, which is lines of source,
+                            // Return starts a line and Ctrl+Return writes it.
+                            Keys.onReturnPressed: event => {
+                                if ((event.modifiers & Qt.ShiftModifier) || (block.raw && !(event.modifiers & Qt.ControlModifier))) {
+                                    event.accepted = false;
+                                    return;
+                                }
+                                sourceEditor.focus = false;
+                            }
+                            Keys.onEscapePressed: {
+                                sourceEditor.text = block.text;
+                                sourceEditor.focus = false;
+                            }
                         }
                     }
 

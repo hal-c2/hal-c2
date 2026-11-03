@@ -1683,7 +1683,8 @@ QStringList shownMarkdown(QQuickItem* root) {
     const QString ticked = tick && tick->isVisible() ? (block->property("checked").toBool() ? QStringLiteral("- [x] ") : QStringLiteral("- [ ] ")) : QString();
     QStringList own;
     if (const QString above = shown(QStringLiteral("spaceMarkdownAbove:")); !above.isEmpty()) own.append(above);
-    own.append((shown(QStringLiteral("spaceMarkdownLead:")) + ticked + shown(QStringLiteral("spaceBlockEditor:")) + shown(QStringLiteral("spaceMarkdownTail:")))
+    own.append((shown(QStringLiteral("spaceMarkdownLead:")) + ticked + shown(QStringLiteral("spaceBlockEditor:")) + shown(QStringLiteral("spaceBlockText:")) +
+                shown(QStringLiteral("spaceMarkdownTail:")))
                    .split(QLatin1Char('\n')));
     if (const QString below = shown(QStringLiteral("spaceMarkdownBelow:")); !below.isEmpty()) own.append(below);
     for (const QString& line : own) {
@@ -2424,15 +2425,18 @@ const Steps steps([] {
   const auto drawPage = [](World& world) {
     return std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nSpacePage { width: 900; height: 700 }\n", QSize(900, 700));
   };
-  const auto editorOf = [](Brick& brick, World& world, const QString& said) {
-    QQuickItem* editor = nullptr;
+  // The item `name` + `said` of the drawn page; a block's source is "spaceBlockEditor:",
+  // its text drawn as Markdown "spaceBlockText:".
+  const auto shownOf = [](Brick& brick, World& world, const QString& name, const QString& said) {
+    QQuickItem* item = nullptr;
     world.waitFor([&] {
       brick.grab();
-      editor = brick.root() ? findEditor(brick.root(), QStringLiteral("spaceBlockEditor:") + said) : nullptr;
-      return editor != nullptr;
+      item = brick.root() ? findEditor(brick.root(), name + said) : nullptr;
+      return item != nullptr;
     }, [&] { return QStringLiteral("the page to show the block %1; %2").arg(said, describe(world)); });
-    return editor;
+    return item;
   };
+  const auto editorOf = [shownOf](Brick& brick, World& world, const QString& said) { return shownOf(brick, world, QStringLiteral("spaceBlockEditor:"), said); };
   // Mermaid diagrams on a page: imported as the MC reads a "mermaid" fence (a
   // code block in "mermaid" holding the bare source), and drawn by the page
   // through the fake renderer (MermaidSteps.cpp).
@@ -2624,17 +2628,66 @@ const Steps steps([] {
                   [&] { return QStringLiteral("the MC to hold the edited table; it holds %1").arg(show(editor->property("text"))); });
     expect(text(findBlock(world, edited), QLatin1String("kind")) == QLatin1String("raw"), QStringLiteral("the edited table is no longer kept as written"));
   });
-  step(QStringLiteral("each heading is smaller than the one of the level above it"), [drawPage, editorOf](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("each heading is smaller than the one of the level above it"), [drawPage, shownOf](World& world, const Captures&, const Table&) {
     const std::unique_ptr<Brick> page = drawPage(world);
     QList<int> sizes;
     QStringList said;
     for (int level = 1; level <= 6; ++level) {
-      sizes.append(editorOf(*page, world, QStringLiteral("Level %1").arg(level))->property("font").value<QFont>().pixelSize());
+      sizes.append(shownOf(*page, world, QStringLiteral("spaceBlockText:"), QStringLiteral("Level %1").arg(level))->property("fontSize").toInt());
       said.append(QString::number(sizes.last()));
     }
     for (int i = 1; i < sizes.size(); ++i) {
       expect(sizes[i] < sizes[i - 1], QStringLiteral("level %1 is not smaller than level %2: %3").arg(i + 1).arg(i).arg(said.join(QStringLiteral(", "))));
     }
+  });
+  // Inline formatting (markdown.feature): a paragraph is drawn by the chat's Markdown brick,
+  // each kind of formatting as the brick writes it, with none of its markers left.
+  static const QMap<QString, std::pair<QString, QStringList>> kInline{
+      {QStringLiteral("bold and italic text"), {QStringLiteral("**Bold** and _italic_"), {QStringLiteral("<b>Bold</b>"), QStringLiteral("<i>italic</i>")}}},
+      {QStringLiteral("struck-through text"), {QStringLiteral("~~struck~~"), {QStringLiteral("<s>struck</s>")}}},
+      {QStringLiteral("inline code"), {QStringLiteral("`mix test`"), {QStringLiteral("class=\"c\""), QStringLiteral("mix test")}}},
+      {QStringLiteral("a link with a title"), {QStringLiteral("a [link](https://example.com \"Title\")"), {QStringLiteral("href=\"https://example.com\">link</a>")}}},
+      {QStringLiteral("an autolinked address and a bare www link"),
+       {QStringLiteral("<https://example.com> and www.example.com"),
+        {QStringLiteral("href=\"https://example.com\">https://example.com</a>"), QStringLiteral("href=\"http://www.example.com\">www.example.com</a>")}}}};
+  static const QString kLinking = QStringLiteral("[the docs](https://example.com/docs) hold ![Signups](https://example.com/signups.png)");
+  const auto prose = [shownOf](World& world, const QString& said) {
+    QQuickItem* drawn = shownOf(*world.brick, world, QStringLiteral("spaceBlockText:"), said);
+    expect(!findEditor(world.brick->root(), QStringLiteral("spaceBlockEditor:") + said), QStringLiteral("the paragraph shows its source"));
+    expect(!drawn->property("trusted").toBool(), QStringLiteral("the paragraph is drawn trusted"));
+    QQuickItem* html = findEditor(drawn, QStringLiteral("markdownProse"));
+    expect(html != nullptr, QStringLiteral("the paragraph is not drawn as prose"));
+    return html;
+  };
+  step(QStringLiteral("a page with a paragraph holding (.+)"), [](World& world, const Captures& c, const Table&) {
+    expect(kInline.contains(c[0]), QStringLiteral("no paragraph holds %1").arg(c[0]));
+    givenBlock(world, QStringLiteral("Notes"), QStringLiteral("paragraph"), kInline.value(c[0]).first);
+  });
+  step(QStringLiteral("a page with a paragraph linking to a web address"), [](World& world, const Captures&, const Table&) {
+    givenBlock(world, QStringLiteral("Notes"), QStringLiteral("paragraph"), kLinking);
+  });
+  step(QStringLiteral("the user opens the page"), [drawPage](World& world, const Captures&, const Table&) {
+    lookAtPage(world, idOfPage(world, QStringLiteral("Notes")));
+    world.brick = drawPage(world);
+  });
+  step(QStringLiteral("the paragraph is shown with (.+)"), [prose](World& world, const Captures& c, const Table&) {
+    const auto& [said, wanted] = kInline.value(c[0]);
+    const QString html = prose(world, said)->property("text").toString();
+    for (const QString& part : wanted) expect(html.contains(part), QStringLiteral("%1 is not drawn in %2").arg(part, html));
+    for (const QString& marker : {QStringLiteral("**"), QStringLiteral("~~"), QStringLiteral("`"), QStringLiteral("]("), QStringLiteral("Title")})
+      expect(!html.contains(marker), QStringLiteral("%1 shows in %2").arg(marker, html));
+  });
+  step(QStringLiteral("nothing is fetched until the user opens the link"), [prose](World& world, const Captures&, const Table&) {
+    QQuickItem* drawn = prose(world, kLinking);
+    const QString html = drawn->property("text").toString();
+    expect(!html.contains(QStringLiteral("<img")), QStringLiteral("the picture is loaded: %1").arg(html));
+    expect(html.contains(QStringLiteral("href=\"https://example.com/signups.png\">")), QStringLiteral("the picture is no link: %1").arg(html));
+    expect(world.openedUrls.isEmpty(), QStringLiteral("the browser opened %1").arg(show(QVariant::fromValue(world.openedUrls))));
+    // The link starts the paragraph: a click on its first letters follows it.
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, {}, world.brick->at(drawn, 4.0 / drawn->width(), 0.5));
+    world.waitFor([&] { return !world.openedUrls.isEmpty(); }, [&] { return QStringLiteral("the link to open; %1").arg(describe(world)); });
+    expect(world.openedUrls == QList<QUrl>{QUrl(QStringLiteral("https://example.com/docs"))},
+           QStringLiteral("the browser opened %1").arg(show(QVariant::fromValue(world.openedUrls))));
   });
   step(QStringLiteral("the user links %1 from %1").arg(q), [](World& world, const Captures& c, const Table&) {
     actOnPage(world, idOfPage(world, c[1]), QStringLiteral("space.block.insert"),

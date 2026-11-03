@@ -22,6 +22,14 @@ Item {
     // ticked. A reply must never have them, or it could tick a box in a file.
     property bool trusted: false
     property color textColor: Qt.alpha(Theme.palette.color("text", "#f5f5f5"), 0.8)
+    // The prose's font: a page's heading is larger, a ticked item struck out.
+    property int fontSize: Math.round(14 * Theme.fontScale)
+    property int fontWeight: Font.Normal
+    property bool struck: false
+    // Off, prose is drawn as plain Text with no selection, menu or link
+    // handling, for a page's hundreds of idle blocks whose owner edits on a
+    // click and opens what linkAt finds.
+    property bool selectable: true
 
     // An assistant reply offers "Cite" on a selection (AssistantSelectionToolbar).
     property bool citable: false
@@ -163,8 +171,25 @@ Item {
         }
     }
 
-    // Puts plain text on the clipboard.
+    // The link at (x, y) in the brick, or "".
+    function linkAt(x: real, y: real): string {
+        for (let i = 0; i < segments.count; ++i) {
+            const item = segmentAt(i);
+            if (!item || typeof item.linkAt !== "function")
+                continue;
+            const at = item.mapFromItem(root, x, y);
+            if (at.y >= 0 && at.y < item.height)
+                return item.linkAt(at.x, at.y);
+        }
+        return "";
+    }
+
+    // Puts plain text on the clipboard, through a TextEdit made on the first
+    // copy: most bricks never copy.
+    property TextEdit clipboard: null
     function copyText(value) {
+        if (clipboard === null)
+            clipboard = clipboardEdit.createObject(root);
         clipboard.text = value;
         clipboard.selectAll();
         clipboard.copy();
@@ -251,10 +276,12 @@ Item {
         onTriggered: root.measure()
     }
 
-    TextEdit {
-        id: clipboard
-        visible: false
-        textFormat: TextEdit.PlainText
+    Component {
+        id: clipboardEdit
+        TextEdit {
+            visible: false
+            textFormat: TextEdit.PlainText
+        }
     }
 
     // A 24px icon button: ghost-muted, or
@@ -301,7 +328,9 @@ Item {
         selectionColor: root.selectionColor
         color: root.textColor
         font.family: root.uiFamily
-        font.pixelSize: Math.round(14 * Theme.fontScale)
+        font.pixelSize: root.fontSize
+        font.weight: root.fontWeight
+        font.strikeout: root.struck
         onLinkActivated: link => {
             if (link.startsWith("task:"))
                 root.linkActivated(link, false);
@@ -380,6 +409,36 @@ Item {
         }
     }
 
+    // Prose that is only drawn (`selectable` off). The Text sits in an item
+    // the loader sizes, as a Text sized from outside lays itself out again.
+    component DrawnText: Item {
+        id: drawnItem
+
+        property alias text: drawnLabel.text
+
+        function linkAt(x: real, y: real): string {
+            return drawnLabel.linkAt(x, y);
+        }
+        function texts() {
+            return [];
+        }
+
+        implicitWidth: drawnLabel.implicitWidth
+        implicitHeight: drawnLabel.implicitHeight
+
+        Text {
+            id: drawnLabel
+            width: drawnItem.width
+            textFormat: Text.RichText
+            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+            color: root.textColor
+            font.family: root.uiFamily
+            font.pixelSize: root.fontSize
+            font.weight: root.fontWeight
+            font.strikeout: root.struck
+        }
+    }
+
     // Horizontal scrolling for code and tables: the wheel's sideways axis or
     // shift, and a thin bar; flicking is for touch, so a mouse drag selects.
     component SideScroll: Flickable {
@@ -417,43 +476,50 @@ Item {
 
     // "Cite" under the selection's last line, or over it at the brick's foot
     // when there is a line above to sit on (AssistantSelectionToolbar). It
-    // takes no focus: the selection stays.
-    ShellButton {
-        id: citeButton
-        objectName: "citeSelection"
-
-        readonly property bool tooLong: root.selection !== null && root.selection.selectedText.length > 8000
-        readonly property rect end: {
-            const edit = root.selection;
-            if (edit === null)
-                return Qt.rect(0, 0, 0, 0);
-            edit.width;
-            root.width;
-            const caret = edit.positionToRectangle(edit.selectionEnd);
-            const at = root.mapFromItem(edit, caret.x, caret.y);
-            return Qt.rect(at.x, at.y, caret.width, caret.height);
-        }
-
-        visible: root.citable && root.selection !== null
+    // takes no focus: the selection stays. Only a brick that can be
+    // selected makes it.
+    Loader {
         z: 1
-        x: Math.max(0, Math.min(end.x, root.width - width))
-        y: end.y + end.height + 4 + height <= root.height || end.y - height - 4 < 0 ? end.y + end.height + 4 : end.y - height - 4
-        implicitHeight: 24
-        iconName: "quote"
-        iconSize: 12
-        font.pixelSize: Math.round(12 * Theme.fontScale)
-        focusPolicy: Qt.NoFocus
-        enabled: !tooLong
-        text: tooLong ? qsTr("Shorten selection") : qsTr("Cite")
-        Accessible.name: tooLong ? qsTr("Selection is too long to cite") : qsTr("Cite selection in composer")
-        onClicked: root.cite(root.selection)
+        active: root.selectable
+        sourceComponent: Component {
+            ShellButton {
+                id: citeButton
+                objectName: "citeSelection"
 
-        // The outline button is see-through; this one floats over text.
-        Rectangle {
-            z: -2
-            anchors.fill: parent
-            radius: citeButton.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
+                readonly property bool tooLong: root.selection !== null && root.selection.selectedText.length > 8000
+                readonly property rect end: {
+                    const edit = root.selection;
+                    if (edit === null)
+                        return Qt.rect(0, 0, 0, 0);
+                    edit.width;
+                    root.width;
+                    const caret = edit.positionToRectangle(edit.selectionEnd);
+                    const at = root.mapFromItem(edit, caret.x, caret.y);
+                    return Qt.rect(at.x, at.y, caret.width, caret.height);
+                }
+
+                visible: root.citable && root.selection !== null
+                z: 1
+                x: Math.max(0, Math.min(end.x, root.width - width))
+                y: end.y + end.height + 4 + height <= root.height || end.y - height - 4 < 0 ? end.y + end.height + 4 : end.y - height - 4
+                implicitHeight: 24
+                iconName: "quote"
+                iconSize: 12
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                focusPolicy: Qt.NoFocus
+                enabled: !tooLong
+                text: tooLong ? qsTr("Shorten selection") : qsTr("Cite")
+                Accessible.name: tooLong ? qsTr("Selection is too long to cite") : qsTr("Cite selection in composer")
+                onClicked: root.cite(root.selection)
+
+                // The outline button is see-through; this one floats over text.
+                Rectangle {
+                    z: -2
+                    anchors.fill: parent
+                    radius: citeButton.radius
+                    color: Theme.palette.color("surfaceOverlay", "#18181b")
+                }
+            }
         }
     }
 
@@ -491,6 +557,14 @@ Item {
                     return block && typeof block.texts === "function" ? block.texts() : [];
                 }
 
+                // Prose and quotes have links; code and tables are not looked in.
+                function linkAt(x: real, y: real): string {
+                    if (!block || typeof block.linkAt !== "function")
+                        return "";
+                    const at = block.mapFromItem(seg, x, y);
+                    return block.linkAt(at.x, at.y);
+                }
+
                 objectName: "markdownSegment"
                 width: column.width
                 height: gap + loader.height
@@ -511,12 +585,20 @@ Item {
                         if (root.fitWidth)
                             measureLater.restart();
                     }
-                    sourceComponent: seg.kind === "code" ? codeBlock : seg.kind === "table" ? table : seg.kind === "quote" ? quote : prose
+                    sourceComponent: seg.kind === "code" ? codeBlock : seg.kind === "table" ? table : seg.kind === "quote" ? quote : root.selectable ? prose : drawnProse
                 }
 
                 Component {
                     id: prose
                     RichText {
+                        objectName: "markdownProse"
+                        text: root.rich(seg.html)
+                    }
+                }
+
+                Component {
+                    id: drawnProse
+                    DrawnText {
                         objectName: "markdownProse"
                         text: root.rich(seg.html)
                     }
@@ -970,6 +1052,10 @@ Item {
                                 // Before the text, which is parsed as it is set.
                                 brick.lineBreaks = Qt.binding(() => root.lineBreaks);
                                 brick.trusted = Qt.binding(() => root.trusted);
+                                brick.selectable = Qt.binding(() => root.selectable);
+                                brick.fontSize = Qt.binding(() => root.fontSize);
+                                brick.fontWeight = Qt.binding(() => root.fontWeight);
+                                brick.struck = Qt.binding(() => root.struck);
                                 brick.text = Qt.binding(() => seg.payload);
                                 // A quote reads muted; an alert's body is ordinary text.
                                 brick.textColor = Qt.binding(() => quoteBox.kindOf ? root.textColor : root.mutedColor);
@@ -983,6 +1069,10 @@ Item {
 
                         function texts() {
                             return quoteBox.quoted ? quoteBox.quoted.texts() : [];
+                        }
+
+                        function linkAt(x: real, y: real): string {
+                            return quoteBox.quoted ? quoteBox.quoted.linkAt(x - inner.x, y - inner.y) : "";
                         }
                     }
                 }

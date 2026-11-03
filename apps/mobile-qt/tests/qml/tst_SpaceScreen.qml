@@ -33,6 +33,21 @@ Item {
         return Object.assign({ id: id, title: id, parentPageId: "", trashed: false, sourceThreadId: "", sourceThreadTitle: "" }, more ?? {});
     }
 
+    // Whether `name` is in `item` and shown.
+    function showing(item, name) {
+        const found = test.findChild(item, name);
+        return found !== null && found.visible;
+    }
+
+    // The source editor of the block with `text`, shown as a tap on its drawn
+    // text shows it.
+    function editorOf(item, text) {
+        const shown = test.findChild(item, "spaceBlock:" + text);
+        if (shown.editor === null)
+            shown.edit();
+        return shown.editor;
+    }
+
     TestCase {
         id: test
 
@@ -494,7 +509,7 @@ Item {
             waitForRendering(screen);
             verify(findChild(screen, "spaceTrashedNotice").visible);
             verify(!findChild(screen, "spaceAddBlock").visible);
-            verify(findChild(screen, "spaceBlockEditor:One").readOnly);
+            verify(root.editorOf(screen, "One").readOnly);
             verify(!findChild(screen, "spaceBlockMenu:One").visible);
         }
 
@@ -807,7 +822,7 @@ Item {
             compare(findChild(card, "spaceUpdateSays").text, "Summarise");
             verify(findChild(card, "spaceUpdateFailure").text.includes("the model is overloaded"));
             verify(!findChild(card, "spaceUpdateRun").visible);
-            verify(!findChild(screen, "spaceBlockEditor:Three threads").visible);
+            verify(!root.showing(screen, "spaceBlockEditor:Three threads"));
             tryVerify(() => findChild(screen, "spaceGenerated") !== null);
         }
 
@@ -816,14 +831,70 @@ Item {
             screen.openSpace("s1");
             screen.openPage("p1");
             waitForRendering(screen);
-            const editor = findChild(screen, "spaceBlockEditor:Draft");
-            editor.forceActiveFocus();
+            const editor = root.editorOf(screen, "Draft");
             verify(findChild(screen, "spaceEditDone").visible);
             editor.text = "Final";
             screen.stepBack();
             const update = dispatched("space.block.update")[0];
             compare(update.blockId, "b1");
             compare(update.text, "Final");
+        }
+
+        function openWith(blocks) {
+            const screen = makeScreen({ blocks: blocks });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            waitForRendering(screen);
+            return screen;
+        }
+
+        // features/space/markdown.feature, Inline formatting: a block is drawn
+        // through the chat's Markdown brick, untrusted, until it is edited.
+        function test_aBlockIsDrawnWithItsInlineFormatting() {
+            const source = "Ship **soon**, ~~later~~ with `mix test` and [the docs](https://example.com)";
+            const screen = openWith([root.block("b1", source)]);
+            tryVerify(() => findChild(screen, "spaceBlockText:" + source) !== null);
+            compare(findChild(screen, "spaceBlock:" + source).editor, null, "an idle block holds no editor");
+            const drawn = findChild(screen, "spaceBlockText:" + source);
+            verify(drawn.visible);
+            verify(!drawn.trusted);
+            const html = findChild(drawn, "markdownProse").text;
+            verify(/<(b|strong)>soon<\/(b|strong)>/.test(html), html);
+            verify(/<s>later<\/s>/.test(html), html);
+            verify(/class="c"/.test(html), html);
+            verify(html.includes("href=\"https://example.com\""), html);
+            verify(!html.includes("**") && !html.includes("~~"), html);
+        }
+
+        // A tap on a link opens it; a tap anywhere else edits the source.
+        function test_aTapOpensALinkAndElsewhereEditsTheSource() {
+            const source = "[docs](https://example.com) and more words after it";
+            const screen = openWith([root.block("b1", source)]);
+            tryVerify(() => findChild(screen, "spaceBlockText:" + source) !== null);
+            const shown = findChild(screen, "spaceBlock:" + source);
+            const drawn = findChild(shown, "spaceBlockText:" + source);
+            const prose = findChild(drawn, "markdownProse");
+            const link = drawn.mapFromItem(prose, 4, prose.height / 2);
+            mouseClick(drawn, link.x, link.y);
+            compare(Shell.openedExternally, ["https://example.com"]);
+            compare(shown.editor, null, "a link is followed, not edited");
+
+            mouseClick(drawn, prose.implicitWidth - 2, prose.height / 2);
+            verify(shown.editor !== null && shown.editor.activeFocus);
+            compare(shown.editor.text, source);
+            compare(Shell.openedExternally, ["https://example.com"]);
+            shown.editor.focus = false;
+            compare(shown.editor, null);
+            verify(root.showing(shown, "spaceBlockText:" + source));
+        }
+
+        // A ticked item is drawn struck out, a heading at its weight.
+        function test_aTickedItemIsDrawnStruckOut() {
+            const screen = openWith([root.block("b1", "Ship *it*", { kind: "checklist", checked: true }), root.block("b2", "Plan", { kind: "heading", level: 1 })]);
+            tryVerify(() => findChild(screen, "spaceBlockText:Plan") !== null);
+            verify(findChild(screen, "spaceBlockText:Ship *it*").struck);
+            verify(!findChild(screen, "spaceBlockText:Plan").struck);
+            compare(findChild(screen, "spaceBlockText:Plan").fontWeight, Font.DemiBold);
         }
 
         // The prompt aimed at the open page, as ComposerController publishes it.
@@ -968,8 +1039,7 @@ Item {
             screen.openSpace("s1");
             screen.openPage("p1");
             waitForRendering(screen);
-            const editor = findChild(screen, "spaceBlockEditor:Draft");
-            editor.forceActiveFocus();
+            const editor = root.editorOf(screen, "Draft");
             editor.text = "Final";
             screen.destroy();
             tryCompare(Shell, "dispatchCount", 5);
@@ -996,7 +1066,7 @@ Item {
             tryVerify(() => findChild(screen, "spaceChart") !== null);
             compare(findChild(screen, "spaceChartTitle").text, "Signups");
             compare(findChild(screen, "spaceChartSource").text, "Numbers from this page");
-            verify(!findChild(screen, "spaceBlockEditor:Signups (a chart; Numbers from this page)").visible);
+            verify(!root.showing(screen, "spaceBlockEditor:Signups (a chart; Numbers from this page)"));
         }
 
         function test_aChartShowsItsNumbers() {

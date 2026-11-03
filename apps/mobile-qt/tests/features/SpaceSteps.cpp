@@ -1578,7 +1578,8 @@ QStringList shownMarkdown(QQuickItem* root) {
     const QString ticked = tick && tick->isVisible() ? (block->property("checked").toBool() ? S("- [x] ") : S("- [ ] ")) : QString();
     QStringList own;
     if (const QString above = shown(S("spaceMarkdownAbove:")); !above.isEmpty()) own.append(above);
-    own.append((shown(S("spaceMarkdownLead:")) + ticked + shown(S("spaceBlockEditor:")) + shown(S("spaceMarkdownTail:"))).split(QLatin1Char('\n')));
+    own.append((shown(S("spaceMarkdownLead:")) + ticked + shown(S("spaceBlockEditor:")) + shown(S("spaceBlockText:")) + shown(S("spaceMarkdownTail:")))
+                   .split(QLatin1Char('\n')));
     if (const QString below = shown(S("spaceMarkdownBelow:")); !below.isEmpty()) own.append(below);
     for (const QString& line : own) {
       if (line.isEmpty()) continue;
@@ -2792,8 +2793,9 @@ const Steps steps([] {
   });
   step(S("the user changes the block %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtPage(world, text(blockSaying(world, c[0]), QLatin1String("pageId")));
+    // A tap on the drawn text shows its source to edit.
+    world.tap(world.item(S("spaceBlockText:") + c[0]));
     QQuickItem* editor = world.item(S("spaceBlockEditor:") + c[0]);
-    world.tap(editor);
     world.waitFor([&] { return editor->hasActiveFocus(); }, S("the block's text to take the keyboard"));
     QMetaObject::invokeMethod(editor, "selectAll");
     world.type(c[1]);
@@ -3413,10 +3415,56 @@ const Steps steps([] {
     }
   });
   step(S("each heading is smaller than the one of the level above it"), [](World& world, const Captures&, const Table&) {
-    const auto size = [&](int level) { return world.item(S("spaceBlockEditor:Level %1").arg(level))->property("font").value<QFont>().pixelSize(); };
+    const auto size = [&](int level) { return world.item(S("spaceBlockText:Level %1").arg(level))->property("fontSize").toInt(); };
     for (int level = 2; level <= 6; ++level) {
       expect(size(level) < size(level - 1), S("a level %1 heading is %2px, a level %3 one %4px").arg(level).arg(size(level)).arg(level - 1).arg(size(level - 1)));
     }
+  });
+  // Inline formatting (markdown.feature): a paragraph is drawn by the chat's Markdown brick,
+  // each kind of formatting as the brick writes it, with none of its markers left.
+  static const QMap<QString, std::pair<QString, QStringList>> inlined{
+      {S("bold and italic text"), {S("**Bold** and _italic_"), {S("<b>Bold</b>"), S("<i>italic</i>")}}},
+      {S("struck-through text"), {S("~~struck~~"), {S("<s>struck</s>")}}},
+      {S("inline code"), {S("`mix test`"), {S("class=\"c\""), S("mix test")}}},
+      {S("a link with a title"), {S("a [link](https://example.com \"Title\")"), {S("href=\"https://example.com\">link</a>")}}},
+      {S("an autolinked address and a bare www link"),
+       {S("<https://example.com> and www.example.com"),
+        {S("href=\"https://example.com\">https://example.com</a>"), S("href=\"http://www.example.com\">www.example.com</a>")}}}};
+  static const QString linking = S("[the docs](https://example.com/docs) hold ![Signups](https://example.com/signups.png)");
+  const auto prose = [](World& world, const QString& said) {
+    QQuickItem* drawn = world.item(S("spaceBlockText:") + said);
+    expect(!world.find(S("spaceBlockEditor:") + said), S("the paragraph shows its source"));
+    expect(!drawn->property("trusted").toBool(), S("the paragraph is drawn trusted"));
+    QQuickItem* html = named(drawn, S("markdownProse"));
+    expect(html != nullptr, S("the paragraph is not drawn as prose"));
+    return html;
+  };
+  step(S("a page with a paragraph holding (.+)"), [](World& world, const Captures& c, const Table&) {
+    expect(inlined.contains(c[0]), S("no paragraph holds %1").arg(c[0]));
+    givenBlock(world, S("Notes"), S("paragraph"), inlined.value(c[0]).first);
+  });
+  step(S("a page with a paragraph linking to a web address"), [](World& world, const Captures&, const Table&) {
+    givenBlock(world, S("Notes"), S("paragraph"), linking);
+  });
+  step(S("the user opens the page"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, idOfPage(world, S("Notes")));
+  });
+  step(S("the paragraph is shown with (.+)"), [prose](World& world, const Captures& c, const Table&) {
+    const auto& [said, wanted] = inlined.value(c[0]);
+    const QString html = prose(world, said)->property("text").toString();
+    for (const QString& part : wanted) expect(html.contains(part), S("%1 is not drawn in %2").arg(part, html));
+    for (const QString& marker : {S("**"), S("~~"), S("`"), S("]("), S("Title")}) expect(!html.contains(marker), S("%1 shows in %2").arg(marker, html));
+  });
+  step(S("nothing is fetched until the user opens the link"), [prose](World& world, const Captures&, const Table&) {
+    QQuickItem* drawn = prose(world, linking);
+    const QString html = drawn->property("text").toString();
+    expect(!html.contains(S("<img")), S("the picture is loaded: %1").arg(html));
+    expect(html.contains(S("href=\"https://example.com/signups.png\">")), S("the picture is no link: %1").arg(html));
+    expect(world.openedUrls.isEmpty(), S("the phone opened %1").arg(world.openedUrls.size()));
+    // The link starts the paragraph: a click on its first letters follows it.
+    QTest::mouseClick(&world.window(), Qt::LeftButton, {}, drawn->mapToScene(QPointF(4, drawn->height() / 2)).toPoint());
+    world.waitFor([&] { return !world.openedUrls.isEmpty(); }, S("the link to open"));
+    expect(world.openedUrls == QList<QUrl>{QUrl(S("https://example.com/docs"))}, S("the phone opened %1").arg(world.openedUrls.value(0).toString()));
   });
 
   // A page from a thread.
