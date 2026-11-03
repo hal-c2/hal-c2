@@ -90,6 +90,9 @@ Item {
             objectName: "stageActivity"
             Layout.fillWidth: true
             Layout.preferredHeight: 30
+            // The centre's bottom corners where no composer lies under it.
+            bottomLeftRadius: threadArea.composerShown ? 0 : threadArea.radius
+            bottomRightRadius: bottomLeftRadius
             visible: threadArea.oneAtATime && !threadArea.timelineChosen
             color: activityTap.hovered ? Theme.palette.color("surface", "#141416") : Theme.palette.color("chrome", "#0b0b0d")
             Accessible.role: Accessible.Button

@@ -463,6 +463,12 @@ Item {
             compare(stage.topLeftRadius, 12, "over the conversation, its top edge is the centre's");
             compare(stage.topRightRadius, 12);
             compare(stage.bottomRightRadius, 0);
+            const activity = findChild(area, "stageActivity");
+            verify(activity.visible);
+            compare(activity.bottomLeftRadius, 0, "the composer is under the line");
+            area.composerShown = false;
+            compare(activity.bottomLeftRadius, 12, "with no composer, the line is the centre's bottom edge");
+            compare(activity.bottomRightRadius, 12);
         }
 
         // Scenario: A narrow window shows the conversation or the stage, one at a time.
