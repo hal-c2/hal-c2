@@ -13,6 +13,14 @@ defmodule HalC2.GitHub.Limits do
   call that was already in flight) does not lengthen it, and a reset never shortens
   it. An answer once a pause is over ends its backoff, and the host's secondary one.
   Hosts are lowercase; times are milliseconds from the caller's clock.
+
+  A repository GitHub keeps giving up on (a gateway's 502 or 504, an answer cut off)
+  is held back from background reads the same way, keyed by host and repository: 30
+  seconds after its first failure, doubling up to 15 minutes, a failure while it is
+  held back changing nothing. `release/2` lets the next read through without ending
+  the doubling (a hand refresh); the first read that succeeds ends it. Each repository
+  also keeps the page size its last read got through with, so the next read starts
+  there rather than at a size GitHub already gave up on.
   """
 
   use GenServer
@@ -34,6 +42,34 @@ defmodule HalC2.GitHub.Limits do
 
   @doc "Records that `bucket` of `host` answered at `now`."
   def answered(host, bucket, now), do: call({:answered, lower(host), bucket, now}, :ok)
+
+  @doc """
+  How `repository` of `host` may be read at `now`: `{:ok, page}`, with the page size
+  that last got through or nil, or `{:held, until, page, detail}` while it is held
+  back after failing with `detail`.
+  """
+  def repository(host, repository, now),
+    do: call({:repository, lower(host), lower(repository), now}, {:ok, nil})
+
+  @doc """
+  Records that GitHub gave up on reading `repository` at `now` with `detail`. Returns
+  `{until, new?}`: when it may be read again, and whether this failure set that time
+  (rather than meeting a hold that was already there); nil while the gate is down,
+  which holds nothing back.
+  """
+  def repository_failed(host, repository, now, detail),
+    do: call({:repository_failed, lower(host), lower(repository), now, detail}, nil)
+
+  @doc "Records that `repository` was read with pages of `page` (nil: the usual size)."
+  def repository_read(host, repository, page),
+    do: call({:repository_read, lower(host), lower(repository), page}, :ok)
+
+  @doc """
+  Lets the next read of `repository` of `host` through its hold; nil for every
+  repository (of every host).
+  """
+  def release(host \\ nil, repository \\ nil),
+    do: call({:release, host && lower(host), repository && lower(repository)}, :ok)
 
   # The gate is only a saving: with it down, every call asks the host.
   defp call(message, down) do
@@ -73,6 +109,58 @@ defmodule HalC2.GitHub.Limits do
     {:reply, :ok,
      Map.reject(pauses, fn {{h, scope}, entry} ->
        h == host and scope in [bucket, :all] and entry.until <= now
+     end)}
+  end
+
+  def handle_call({:repository, host, repository, now}, _from, pauses) do
+    reply =
+      case pauses[{host, {:repository, repository}}] do
+        %{until: until} = entry when until > now -> {:held, until, entry.page, entry.detail}
+        %{page: page} -> {:ok, page}
+        nil -> {:ok, nil}
+      end
+
+    {:reply, reply, pauses}
+  end
+
+  def handle_call({:repository_failed, host, repository, now, detail}, _from, pauses) do
+    key = {host, {:repository, repository}}
+    entry = pauses[key] || %{attempt: 0, until: 0, page: nil, detail: nil}
+
+    {entry, new?} =
+      if entry.until > now,
+        do: {entry, false},
+        else:
+          {%{
+             entry
+             | attempt: entry.attempt + 1,
+               until: now + backoff(entry.attempt),
+               detail: detail
+           }, true}
+
+    {:reply, {entry.until, new?}, Map.put(pauses, key, entry)}
+  end
+
+  def handle_call({:repository_read, host, repository, page}, _from, pauses) do
+    key = {host, {:repository, repository}}
+
+    pauses =
+      if page,
+        do: Map.put(pauses, key, %{attempt: 0, until: 0, page: page, detail: nil}),
+        else: Map.delete(pauses, key)
+
+    {:reply, :ok, pauses}
+  end
+
+  def handle_call({:release, host, repository}, _from, pauses) do
+    {:reply, :ok,
+     Map.new(pauses, fn
+       {{h, {:repository, r}} = key, entry}
+       when host in [nil, h] and repository in [nil, r] ->
+         {key, %{entry | until: 0}}
+
+       other ->
+         other
      end)}
   end
 

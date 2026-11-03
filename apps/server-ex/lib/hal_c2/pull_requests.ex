@@ -17,6 +17,7 @@ defmodule HalC2.PullRequests do
 
   require Logger
 
+  alias HalC2.GitHub.Limits
   alias HalC2.PullRequests.{GitHub, Held, Refreshes}
   alias HalC2.SourceControl.ChangeRequests
 
@@ -107,6 +108,11 @@ defmodule HalC2.PullRequests do
   repository that could not be read is an entry in `errors` rather than a failure,
   unless no host the listing covers can be read at all. Repositories on a host a git
   host plugin serves (`HalC2.Plugins.GitHost`) are read through it, on the first page.
+
+  A repository GitHub gave up on (a 502 or 504, an answer cut off, no answer in time)
+  is held back from the listings that follow, which say when it is read again
+  (`HalC2.GitHub.Limits`), and read at the page size that last got through. A hand
+  refresh (`invalidate/1`) and a read under `HalC2.GitHub.asked/1` go through the hold.
   """
   def list(input) do
     with {:ok, cursors} <- decode_cursors(input["cursors"]) do
@@ -248,8 +254,23 @@ defmodule HalC2.PullRequests do
       cursor: cursor
     }
 
+    # A repository GitHub keeps giving up on is held back from background reads
+    # (`HalC2.GitHub.Limits`); what the user asked for goes through.
+    case Limits.repository(project.host, project.repository, github_now()) do
+      {:held, until, page, detail} ->
+        if HalC2.GitHub.asked?(),
+          do: read_list(project, viewer, input, cursor, Map.put(opts, :page, page)),
+          else: failed(project, held_back(project, until, detail))
+
+      {:ok, page} ->
+        read_list(project, viewer, input, cursor, Map.put(opts, :page, page))
+    end
+  end
+
+  defp read_list(project, viewer, input, cursor, opts) do
     case GitHub.list(ctx(project, nil), opts) do
       {:ok, page} ->
+        Limits.repository_read(project.host, project.repository, page.page)
         at = System.system_time(:millisecond)
 
         # The boundary instant is asked for inclusively, so the rows already sent at
@@ -277,16 +298,50 @@ defmodule HalC2.PullRequests do
             if(page.sorted and page.truncated, do: next_cursor(cursor, page.items, length(items)))
         }
 
+      {:error, {:failed, detail}} = error ->
+        case gave_up(project, detail) do
+          nil ->
+            failed(project, unreadable(project, error))
+
+          {until, new?} ->
+            # Once per hold, not on every poll that meets it.
+            if new?,
+              do:
+                Logger.warning(
+                  "#{project.repository} could not be read: #{detail}; read again at #{clock(until)}"
+                )
+
+            failed(project, held_back(project, until, detail))
+        end
+
       {:error, _} = error ->
-        %{
-          key: key(project),
-          entries: [],
-          errors: [unreadable(project, error)],
-          truncated: false,
-          next: nil
-        }
+        failed(project, unreadable(project, error))
     end
   end
+
+  # GitHub giving up on the read, or `gh` not answering in time, holds the repository
+  # back: `{until, new?}`, or nil for any other failure.
+  defp gave_up(project, detail) do
+    if GitHub.gave_up?(detail) or detail == "gh did not answer in time.",
+      do: Limits.repository_failed(project.host, project.repository, github_now(), detail)
+  end
+
+  defp failed(project, error),
+    do: %{key: key(project), entries: [], errors: [error], truncated: false, next: nil}
+
+  # A repository held back after GitHub gave up on it, said with when it is read again.
+  defp held_back(project, until, detail) do
+    reason =
+      "#{project.host} did not answer in time. #{project.repository} is read again at " <>
+        "#{clock(until)}; refresh to read it now."
+
+    error(project, reason, detail)
+  end
+
+  defp clock(ms), do: ms |> DateTime.from_unix!(:millisecond) |> Calendar.strftime("%H:%M:%S UTC")
+
+  defp github_now,
+    do: (Application.get_env(:hal_c2, :github_clock) || (&system_ms/0)).()
 
   # Says why, so a caller that only sees the message (a plugin, the list's banner) can
   # tell a host that is down from a pull request that is not there. `reason` is what a
@@ -294,9 +349,16 @@ defmodule HalC2.PullRequests do
   # Every host's failure passes here, so the wording does not depend on the provider.
   defp unreadable(project, error) do
     detail = reason(error)
-    Logger.warning("#{project.repository} could not be read: #{detail}")
-    reason = phrase(detail, project)
 
+    # A read the rate limit gate turned away never reached GitHub; the gate's pause is
+    # the news, not each poll that meets it.
+    unless detail =~ "paused until it resets at",
+      do: Logger.warning("#{project.repository} could not be read: #{detail}")
+
+    error(project, phrase(detail, project), detail)
+  end
+
+  defp error(project, reason, detail) do
     %{
       "projectId" => project.id,
       "projectTitle" => project.title,
@@ -321,7 +383,7 @@ defmodule HalC2.PullRequests do
         "#{host}'s rate limit was reached. Try again in a few minutes."
 
       detail =~
-          ~r/HTTP 5\d\d|timed? ?out|deadline exceeded|connection (reset|refused)|temporarily unavailable|could not resolve|no such host/i ->
+          ~r/HTTP 5\d\d|timed? ?out|did not answer in time|unexpected end of JSON|deadline exceeded|connection (reset|refused)|temporarily unavailable|could not resolve|no such host/i ->
         "#{host} did not answer in time. Try again."
 
       detail =~ ~r/HTTP 401|bad credentials/i ->
@@ -869,11 +931,17 @@ defmodule HalC2.PullRequests do
     {:ok, nil}
   end
 
-  defp forget(nil), do: Held.forget_all()
+  # A hand refresh also lets a repository GitHub kept giving up on be read at once.
+  defp forget(nil) do
+    Limits.release()
+    Held.forget_all()
+  end
 
   defp forget(reference) do
-    with {:ok, project} <- project_for(reference),
-         do: Held.forget(project.host, project.repository, reference["number"])
+    with {:ok, project} <- project_for(reference) do
+      Limits.release(project.host, project.repository)
+      Held.forget(project.host, project.repository, reference["number"])
+    end
   end
 
   @doc """

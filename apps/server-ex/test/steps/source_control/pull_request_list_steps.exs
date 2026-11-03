@@ -389,13 +389,22 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     context
   end
 
-  step "{string} cannot be read", %{args: [repository]} = context do
-    World.cli_rules(context, %{
+  defp bad_gateway(repository) do
+    %{
       "args" => ["api graphql"],
       "repository" => repository,
       "stderr" => "HTTP 502: Bad Gateway\n",
       "exit" => 1
-    })
+    }
+  end
+
+  # On the steps' clock, so how long the repository is held back can be followed.
+  step "{string} cannot be read", %{args: [repository]} = context do
+    context
+    |> clock()
+    |> World.capture_log()
+    |> World.cli_rules(bad_gateway(repository))
+    |> Map.put(:failing, repository)
   end
 
   step "GitHub gives up on reading more than {int} of them at once", %{args: [most]} = context do
@@ -432,15 +441,131 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     context
   end
 
-  step "{string} reports its own error with the host's reason, phrased for the user",
+  step "{string} reports its own error with the host's reason, phrased for the user, and when it is read again",
        %{args: [repository]} = context do
+    # Words a user can act on, whatever the host; what it said stays in `detail`.
+    message = held_back(context, repository, now(context) + 30_000)
+    refute message =~ "502"
+    context
+  end
+
+  # `repository`'s one error says it is read again at `until`; returns its message.
+  defp held_back(context, repository, until) do
     assert {:ok, %{"errors" => errors}} = context.reply
     assert [%{"message" => message, "reason" => reason, "detail" => detail}] = errors
-    # Words a user can act on, whatever the host; what it said stays in `detail`.
-    assert reason == "github.com did not answer in time. Try again."
+
+    assert reason ==
+             "github.com did not answer in time. #{repository} is read again at " <>
+               "#{at(until)} UTC; refresh to read it now."
+
     assert message == "#{repository} could not be read: #{reason}"
     assert detail == "HTTP 502: Bad Gateway"
-    refute message =~ "502"
+    message
+  end
+
+  # --- a repository GitHub keeps giving up on (`HalC2.GitHub.Limits`) ---------------
+
+  defp listings_of(context, repository) do
+    [owner, name] = String.split(repository, "/")
+
+    Enum.filter(World.pull_listings(context), fn %{"variables" => v} ->
+      v["q"] =~ "repo:#{repository} " or (v["owner"] == owner and v["name"] == name)
+    end)
+  end
+
+  defp gave_up_logged(context, repository) do
+    ~r/#{Regex.escape(repository)} could not be read: HTTP 502/
+    |> Regex.scan(World.logged(context))
+    |> length()
+  end
+
+  step "the pull requests are listed again without the user asking", context do
+    before = for {r, _} <- fixture(), into: %{}, do: {r, length(listings_of(context, r))}
+    context |> Map.put(:listed_before, before) |> list()
+  end
+
+  step "{string} is not asked of GitHub again", %{args: [repository]} = context do
+    assert length(listings_of(context, repository)) == context.listed_before[repository]
+    context
+  end
+
+  step "the pull requests of {string} are still read", %{args: [repository]} = context do
+    assert length(listings_of(context, repository)) > context.listed_before[repository]
+    assert Enum.any?(entries(context), &(&1["repository"] == repository))
+    context
+  end
+
+  step "{string} reports when it is read again, 30 seconds on, keeping what GitHub said",
+       %{args: [repository]} = context do
+    held_back(context, repository, now(context) + 30_000)
+    Map.put(context, :until, now(context) + 30_000)
+  end
+
+  step "GitHub giving up is logged once, not on every listing", context do
+    assert gave_up_logged(context, context.failing) == 1
+    context
+  end
+
+  # Lists in the background once the hold is over: GitHub is asked, gives up again,
+  # and the repository is held back for `hold`.
+  defp gives_up_again(context, hold) do
+    move_clock(context, context.until)
+    before = length(listings_of(context, context.failing))
+    logged = gave_up_logged(context, context.failing)
+    context = list(context)
+    assert length(listings_of(context, context.failing)) > before
+    assert gave_up_logged(context, context.failing) == logged + 1
+    until = now(context) + hold
+    held_back(context, context.failing, until)
+    Map.put(context, :until, until)
+  end
+
+  step "the hold doubles each time GitHub gives up again and never passes 15 minutes",
+       context do
+    Enum.reduce([60, 120, 240, 480, 900, 900], context, fn seconds, context ->
+      context = gives_up_again(context, seconds * 1_000)
+
+      # Not a moment early.
+      move_clock(context, context.until - 1)
+      before = length(listings_of(context, context.failing))
+      context = list(context)
+      assert length(listings_of(context, context.failing)) == before
+      context
+    end)
+  end
+
+  step "a hand refresh reads {string} at once", %{args: [repository]} = context do
+    before = length(listings_of(context, repository))
+    {{:ok, _}, context} = World.call(context, "pullRequests.invalidate", %{})
+    context = list(context)
+    assert length(listings_of(context, repository)) > before
+    # It failed again, which counts like any failure: the hold, already at its
+    # longest, starts over from now.
+    until = now(context) + 900_000
+    held_back(context, repository, until)
+    Map.put(context, :until, until)
+  end
+
+  step "the first read that succeeds ends the hold and the doubling", context do
+    move_clock(context, context.until)
+    context = context |> drop_rule(bad_gateway(context.failing)) |> list()
+    assert {:ok, %{"errors" => []}} = context.reply
+
+    context
+    |> World.cli_rules(bad_gateway(context.failing))
+    |> Map.put(:until, now(context))
+    |> gives_up_again(30_000)
+  end
+
+  step "the second listing asks for no page larger than the one that worked", context do
+    {repository, _} = context.many
+    before = context.listed_before[repository]
+    {first, again} = context |> listings_of(repository) |> Enum.split(before)
+    worked = first |> List.last() |> get_in(["variables", "first"])
+    assert worked < 50
+    assert again != []
+    assert Enum.all?(again, &(&1["variables"]["first"] <= worked))
+    assert {:ok, %{"errors" => []}} = context.reply
     context
   end
 
@@ -537,8 +662,10 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
 
   defp graphql_calls(context), do: length(World.cli_calls(context, "api graphql"))
 
-  defp unlimit(context) do
-    rules = context.cli.rules |> File.read!() |> JSON.decode!() |> List.delete(@rate_limited)
+  defp unlimit(context), do: drop_rule(context, @rate_limited)
+
+  defp drop_rule(context, rule) do
+    rules = context.cli.rules |> File.read!() |> JSON.decode!() |> List.delete(rule)
     File.write!(context.cli.rules, JSON.encode!(rules))
     context
   end
