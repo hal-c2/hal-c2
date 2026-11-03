@@ -30,7 +30,9 @@ A client that keeps a thread keeps three things with it.
   whenever trimming changes what a client stores.
 - **Window**: a long thread opens as its newest runs. The window's floor is a run ordinal; turn
   items, messages and nodes of earlier runs are not held, everything else is. Earlier runs arrive
-  as pages when the client asks.
+  as pages when the client asks. The MC does not hold them in memory either
+  ([overview](./overview.md#durable-intent-and-side-effects)), so a page, a catch-up that reaches
+  them and a whole thread are read from disk a part at a time.
 
 The view a client holds ([`view.ex`](../../apps/server-ex/lib/hal_c2/streams/view.ex)) also filters
 events, on the MC that owns the thread. A patch only means something against the entity it
@@ -115,7 +117,7 @@ sidebar and the threads the user opened in a local SQLite cache, paints from it 
 is up, and subscribes with what it holds. Its rules are in
 [desktop-qt.md](./desktop-qt.md#client-cache).
 
-The TUI (`packages/client-runtime/src/v3`) sends no handle, window, kinds or sidebar version. It is sent whole threads and the whole
-sidebar as before, and resumes a dropped socket from an in-memory offset. It does benefit from the
+The TUI (`packages/client-runtime/src/v3`) sends no handle, window, kinds or sidebar version. It is sent whole threads, in
+parts, and the whole sidebar as before, and resumes a dropped socket from an in-memory offset. It does benefit from the
 catch-up no longer falling back to a snapshot. Giving the TUI a cache means seeding its fold from
 kept entities first: a patch needs the entity it changes.

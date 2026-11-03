@@ -39,6 +39,32 @@ export interface ReconnectWorld extends World {
   connection?: ConnectionHarness;
   /** The page the host showed when the connection dropped. */
   pageBeforeDrop?: { kind: string; key?: string };
+  /** What the host asked to run later (its `after`), fired by hand. */
+  timers?: Array<{ ms: number; run: () => void; cancelled: boolean }>;
+}
+
+/** Give the host a clock the scenario moves: its `after` calls wait in `ctx.timers`. */
+export function useManualTimers(ctx: ReconnectWorld): void {
+  const timers: NonNullable<ReconnectWorld["timers"]> = (ctx.timers = []);
+  ctx.hostOptions = {
+    ...ctx.hostOptions,
+    after: (ms, run) => {
+      const timer = { ms, run, cancelled: false };
+      timers.push(timer);
+      return () => {
+        timer.cancelled = true;
+      };
+    },
+  };
+}
+
+/** Run every waiting timer due within `ms`. */
+export function elapse(ctx: ReconnectWorld, ms: number): void {
+  for (const timer of ctx.timers ?? []) {
+    if (timer.cancelled || timer.ms > ms) continue;
+    timer.cancelled = true;
+    timer.run();
+  }
 }
 
 /** Resolve when `check` passes, re-checking on every notification. */

@@ -300,7 +300,7 @@ defmodule HalC2.Orchestration.Delegation do
     with [_ | _] = runs <- StreamState.list(child, "run"),
          true <- quiet?(child),
          {status, run, ended_at} <- last_end(runs) do
-      result = result_for(child, run, status)
+      result = result_for(child_id, run, status)
       # Before the result starts the caller's turn, so a link its agent makes from the
       # report finds the child's already there, with what the child heard of it.
       hand_over_pull_requests(child_id)
@@ -352,12 +352,12 @@ defmodule HalC2.Orchestration.Delegation do
     for %{"origin" => "app_owned", "childThreadId" => child_id, "status" => status} = task <-
           StreamState.list(stream(parent_id), "subagent"),
         status not in @terminal and is_binary(child_id),
-        {ended, run, ended_at, child} <- [stopped(child_id, boot?)],
+        {ended, run, ended_at} <- [stopped(child_id, boot?)],
         settle(
           parent_id,
           task,
           ended,
-          if(run, do: result_for(child, run, ended)),
+          if(run, do: result_for(child_id, run, ended)),
           "disposed",
           :once,
           ended_at
@@ -442,9 +442,9 @@ defmodule HalC2.Orchestration.Delegation do
     runs = StreamState.list(child, "run")
 
     cond do
-      boot? and StreamState.get(child, "thread")[child_id] == nil -> {"failed", nil, nil, child}
+      boot? and StreamState.get(child, "thread")[child_id] == nil -> {"failed", nil, nil}
       runs == [] or not quiet?(child) -> nil
-      true -> with {ended, run, at} <- last_end(runs), do: {ended, run, at, child}
+      true -> last_end(runs)
     end
   end
 
@@ -928,7 +928,7 @@ defmodule HalC2.Orchestration.Delegation do
                })
              end),
              Orchestration.upsert(state, "node", task["id"], finish),
-             StreamState.get(state, "turn-item")[item_id] &&
+             StreamState.fetch(state, "turn-item", item_id) &&
                Orchestration.upsert(state, "turn-item", item_id, fn item ->
                  Map.merge(item, %{
                    "status" => status,
@@ -1420,8 +1420,9 @@ defmodule HalC2.Orchestration.Delegation do
           into: MapSet.new(),
           do: run["id"]
 
+    # Older runs' messages too: the latest runs may have said nothing.
     child
-    |> StreamState.list("message")
+    |> StreamState.all("message")
     |> Enum.filter(
       &(&1["role"] == "assistant" and MapSet.member?(kept, &1["runId"]) and
           String.trim(&1["text"] || "") != "")
@@ -1433,10 +1434,11 @@ defmodule HalC2.Orchestration.Delegation do
   # Why a child that never started ended: its worktree could not be prepared, or the
   # preparation was cancelled. Nil for any other run, a queued one cancelled included.
   defp preparation_failure(child, %{"id" => run_id}) do
-    items = StreamState.get(child, "turn-item")
-
-    case {items["turn-item:workspace-preparation-failure:#{run_id}"],
-          items["turn-item:workspace-preparation:#{run_id}"]} do
+    case {StreamState.fetch(
+            child,
+            "turn-item",
+            "turn-item:workspace-preparation-failure:#{run_id}"
+          ), StreamState.fetch(child, "turn-item", "turn-item:workspace-preparation:#{run_id}")} do
       {%{"failure" => %{"message" => message}}, _} -> "Workspace preparation failed: #{message}"
       {_, %{"status" => "cancelled"}} -> "Workspace preparation was cancelled."
       _ -> nil
@@ -1445,10 +1447,13 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp preparation_failure(_child, _run), do: nil
 
-  # What a task's result is, however its end reaches the caller.
-  defp result_for(child, run, status) do
-    preparation_failure(child, run) || failure_text(child, run, status) || answer(child) ||
-      no_answer_text(status)
+  # What a task's result is, however its end reaches the caller: read from the child's
+  # stream as one, its older runs' messages included (`HalC2.Streams.read/2`).
+  defp result_for(child_id, run, status) do
+    HalC2.Streams.read(child_id, fn child ->
+      preparation_failure(child, run) || failure_text(child, run, status) || answer(child) ||
+        no_answer_text(status)
+    end)
   end
 
   # A failed run's own word on why: its latest error item, which outranks any
@@ -1457,8 +1462,11 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp failure_text(child, %{"id" => run_id}, "failed") do
     child
-    |> StreamState.list("turn-item")
-    |> Enum.filter(&(&1["type"] == "error" and &1["runId"] == run_id))
+    |> StreamState.run_rows([run_id])
+    |> Enum.flat_map(fn
+      {"turn-item", _, %{"type" => "error"} = item} -> [item]
+      _ -> []
+    end)
     |> Enum.sort_by(&(&1["ordinal"] || 0))
     |> List.last(%{})
     |> Map.get("failure")
