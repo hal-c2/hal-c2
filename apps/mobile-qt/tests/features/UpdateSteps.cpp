@@ -224,6 +224,7 @@ const Steps steps([] {
   });
 
   step(S("the user is offered to update %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.openConnectionNotice();
     awaitText(world, S("connectionUpdate"), S("Update %1").arg(c[0]));
     world.tap(S("connectionUpdate"));
     awaitText(world, S("maintenanceUpdate-") + kOwn, S("Update to 1.4.0"));
@@ -234,6 +235,7 @@ const Steps steps([] {
     describe(world.mc, kOwn, S("1.3.0"), kService);
     appIs(world, c[0]);
     pairWithEnvironment(world);
+    world.openConnectionNotice();
     world.item(S("connectionUpdate"));
     world.tap(S("connectionDismissWarning"));
     world.waitFor([&] { return world.find(S("connectionUpdate")) == nullptr; },
@@ -251,6 +253,7 @@ const Steps steps([] {
   // The next release of the app: the notice is for it.
   step(S("a notice for %1 does appear").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     appIs(world, c[0]);
+    world.openConnectionNotice();
     awaitText(world, S("connectionUpdate"), S("Update server"));
     const QVariantMap warning = world.state(S("connection")).toMap().value(S("versionWarning")).toMap();
     expect(warning.value(S("clientVersion")).toString() == c[0], S("the notice is for %1").arg(show(warning)));

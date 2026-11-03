@@ -137,6 +137,12 @@ ConnectionHealthController::ConnectionHealthController(ShellBridge* bridge, McCl
   if (auto* shell = qobject_cast<NativeShell*>(parent)) {
     connect(shell, &NativeShell::opened, this, &ConnectionHealthController::networkChanged);
   }
+  m_grace.setSingleShot(true);
+  m_grace.setInterval(1500);
+  connect(&m_grace, &QTimer::timeout, this, [this] {
+    m_graceSpent = true;
+    update();
+  });
   update();
 }
 
@@ -260,11 +266,22 @@ QVariant ConnectionHealthController::versionWarning() const {
                                                   .arg(label(), server.trimmed(), m_clientVersion.trimmed())}};
 }
 
+namespace {
+
+// Why a connection went, in words: the client's own reason is for its log.
+QString cause(const QString& reason) {
+  if (reason == QLatin1String("timeout")) return ConnectionHealthController::tr("It stopped answering.");
+  if (reason.startsWith(QLatin1String("HTTP "))) return ConnectionHealthController::tr("It answered with an error.");
+  return ConnectionHealthController::tr("The connection was lost.");
+}
+
+}  // namespace
+
 void ConnectionHealthController::update() {
   using Phase = McClient::Phase;
   const Phase phase = m_client->phase();
   const QString reason = m_client->failure();
-  QString name, status, title, detail;
+  QString name, state, status, title, detail;
   bool canRetry = false;
   switch (phase) {
     case Phase::Closed:
@@ -273,52 +290,61 @@ void ConnectionHealthController::update() {
       // A first attempt that has not failed is connecting; anything after a failure is a reconnect.
       if (reason.isEmpty()) {
         name = QStringLiteral("connecting");
+        state = QStringLiteral("connecting");
         status = tr("Connecting");
+        title = tr("Connecting to %1").arg(label());
       } else {
         name = QStringLiteral("reconnecting");
-        status = tr("Reconnecting: %1").arg(reason);
+        state = QStringLiteral("retrying");
+        status = tr("Reconnecting");
         title = tr("Reconnecting to %1").arg(label());
-        detail = reason;
+        detail = tr("%1 HAL-C2 keeps trying.").arg(cause(reason));
         canRetry = phase == Phase::Retrying;
       }
       break;
     case Phase::Ready:
       if (!m_store->problem().isEmpty()) {
         name = QStringLiteral("problem");
-        status = tr("Could not load its data: %1").arg(m_store->problem());
+        state = QStringLiteral("blocked");
+        status = tr("Can't load data");
         title = tr("Could not load projects and threads");
-        detail = m_store->problem();
+        detail = tr("%1 is connected but did not send them. Try again, or restart it.").arg(label());
         canRetry = true;
       } else if (m_store->snapshots() > m_snapshotsAtReady) {
         name = QStringLiteral("connected");
+        state = QStringLiteral("ready");
         status = tr("Connected");
       } else {
         // The socket is open; the environment has not described itself yet.
         name = reason.isEmpty() ? QStringLiteral("connecting") : QStringLiteral("reconnecting");
+        state = QStringLiteral("connecting");
         status = tr("Connecting");
+        title = tr("Connecting to %1").arg(label());
       }
       break;
     case Phase::Offline:
       name = QStringLiteral("offline");
-      status = tr("Waiting for the network");
+      state = QStringLiteral("offline");
+      status = tr("Offline");
       title = tr("This device is offline");
       detail = tr("HAL-C2 connects again when the network is back.");
       break;
     case Phase::Refused:
       name = QStringLiteral("refused");
-      status = tr("Access refused: pair it again");
+      state = QStringLiteral("needsPairing");
+      status = tr("Needs pairing");
       title = tr("%1 no longer accepts this device").arg(label());
       detail = tr("Pair again with a fresh pairing link from the environment.");
       canRetry = true;
       break;
     case Phase::Blocked:
       name = QStringLiteral("blocked");
+      state = QStringLiteral("blocked");
+      status = tr("Update needed");
       if (m_client->blockedProtocol() > McClient::kProtocol) {
-        status = tr("This app is too old: update HAL-C2 on this device");
         title = tr("This app is too old for %1").arg(label());
         detail = tr("Update HAL-C2 on this device to connect.");
       } else {
-        status = tr("Its server is too old: update HAL-C2 on that environment");
         title = tr("%1 runs an older HAL-C2").arg(label());
         detail = tr("Update HAL-C2 on that environment to connect.");
       }
@@ -326,12 +352,26 @@ void ConnectionHealthController::update() {
       break;
   }
   const bool connected = name == QLatin1String("connected");
+  // A connection on its way up is not shown before the grace runs out: most
+  // reconnects are over by then. What needs the user is shown at once.
+  const bool comingUp = state == QLatin1String("connecting") || state == QLatin1String("retrying");
+  if (connected) {
+    m_grace.stop();
+    m_graceSpent = false;
+  } else if (!comingUp) {
+    m_grace.stop();
+    m_graceSpent = true;
+  } else if (!m_graceSpent && !m_grace.isActive()) {
+    m_grace.start();
+  }
+  const bool settling = comingUp && !m_graceSpent;
   m_bridge->publish(kKey, QVariantMap{
                               {QStringLiteral("phase"), name},
+                              {QStringLiteral("state"), state},
                               {QStringLiteral("status"), status},
                               {QStringLiteral("title"), title},
                               {QStringLiteral("detail"), detail},
-                              {QStringLiteral("reason"), connected ? QString() : reason},
+                              {QStringLiteral("settling"), settling},
                               {QStringLiteral("traceId"), connected ? QString() : m_client->failureTraceId()},
                               {QStringLiteral("canRetry"), canRetry},
                               {QStringLiteral("needsPairing"), phase == Phase::Refused},

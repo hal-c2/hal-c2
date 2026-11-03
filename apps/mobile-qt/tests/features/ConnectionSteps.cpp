@@ -35,8 +35,9 @@ void loseConnection(World& world) {
   world.mc.drop();
   world.waitFor([&] { return client->phase() == McClient::Phase::Retrying && client->retryDelay() == kLater; },
                 [&] { return QStringLiteral("the phone to give up for now; the connection is %1").arg(show(connection(world))); });
-  world.waitFor([&] { return world.find(QStringLiteral("connectionNoticeTitle")) != nullptr; },
-                [&] { return QStringLiteral("the phone to say so; the screen says: %1").arg(world.texts().join(QStringLiteral(" | "))); });
+  // Its icon, once the reconnect is past its grace; its panel says why.
+  world.openConnectionNotice();
+  world.item(QStringLiteral("connectionNoticeTitle"));
 }
 
 const Steps steps([] {
@@ -56,7 +57,7 @@ const Steps steps([] {
   step(S("the phone tries to connect again straight away"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return world.mc.connections.size() > world.mc.part<Before>().sockets; },
                   [&] { return S("the phone to try; its next try is in %1 ms").arg(world.native().client()->retryDelay()); });
-    world.waitFor([&] { return connection(world).value(S("phase")) == QLatin1String("connected") && world.find(S("connectionNoticeTitle")) == nullptr; },
+    world.waitFor([&] { return connection(world).value(S("phase")) == QLatin1String("connected") && world.find(S("connectionNotice")) == nullptr; },
                   [&] { return S("the connection; it is %1").arg(show(connection(world))); });
   });
 

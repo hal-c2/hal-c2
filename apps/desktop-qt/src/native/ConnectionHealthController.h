@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QTimer>
 #include <QVariantMap>
 
 #include <functional>
@@ -14,17 +15,22 @@ class QNetworkAccessManager;
 class ShellBridge;
 class ShellStore;
 
-// How the shell's one connection to its MC is doing, said in words: the
+// How the shell's one connection to its MC is doing, said in plain words: the
 // McClient owns the retries (its phases), and this turns them into what every
-// window shows (the ConnectionNotice brick, the first row of Connections
-// settings). One per process.
+// window shows (the ConnectionNotice brick's icon, the first row of
+// Connections settings). One per process. The McClient's own reason for a
+// drop ("timeout", "HTTP 502", a socket error) goes to its log, not here.
 //
 // Publishes `connection`:
 //   {phase: connecting | connected | reconnecting | offline | refused |
 //           blocked | problem,
-//    status,          the row's words: "Connected", "Reconnecting: timeout", ...
-//    title, detail,   the notice's words; empty while connected
-//    reason,          why the last connection ended, or ""
+//    state,           the icon: connecting | ready | retrying | offline |
+//                     needsPairing | blocked
+//    status,          a word or two: "Connected", "Reconnecting", ...
+//    title, detail,   a sentence each for the tooltip and the panel; empty
+//                     while connected
+//    settling,        a reconnect younger than the grace (setGrace), which
+//                     no surface shows yet: most are over before it ends
 //    traceId,         the failed attempt's trace id, or ""
 //    canRetry, needsPairing, pairing, pairingError,
 //    versionWarning:  null | {key, environmentId, clientVersion, serverVersion, text}}
@@ -66,6 +72,8 @@ public:
   // The network changed, or the MC the client is opened at: says again whether
   // the client is online (McClient::setOnline), and wakes it when it is.
   void networkChanged();
+  // How long a reconnect stays `settling` (1500 ms unless tests say).
+  void setGrace(int ms) { m_grace.setInterval(ms); }
 
   // Whether a server on `server` is behind a client on `client`:
   // two nightlies compare whole, anything else by its core
@@ -96,5 +104,9 @@ private:
   // Whether the client's phase was Ready when last seen.
   bool m_ready = false;
   bool m_pairing = false;
+  // Runs while a connection on its way up has not been shown: one coming up
+  // within it never is. Spent once it ran out, until the next connection.
+  QTimer m_grace;
+  bool m_graceSpent = false;
   QString m_pairingError;
 };
