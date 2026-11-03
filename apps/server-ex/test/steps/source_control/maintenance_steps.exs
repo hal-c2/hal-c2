@@ -92,10 +92,14 @@ defmodule HalC2.Steps.SourceControl.Maintenance do
 
   step "{string} has an open pull request from {string}",
        %{args: [repository, branch]} = context do
+    # The MC lists pull requests through GitHub's GraphQL (`HalC2.PullRequests.list/1`),
+    # ahead of the empty listing the project's fake GitHub answers with.
     World.cli_rules(context, [
       %{
-        "args" => ["pr list"],
-        "stdout" => [Shared.gh_pr(repository, 12, %{"headRefName" => branch})]
+        "args" => ["api graphql"],
+        "stdin" => ["PullRequestList"],
+        "repository" => repository,
+        "pulls" => [Shared.gh_pr(repository, 12, %{"headRefName" => branch})]
       }
     ])
   end

@@ -14,7 +14,9 @@ defmodule HalC2.SettingsSharedProofTest do
     model: "settings_shared.maude",
     module: "SETTINGS-SHARED",
     check: "SETTINGS-SHARED-PROPS",
-    timeout: 600_000,
+    # two(2, 2, 1, 1, 1) has run past 10 minutes on a slow runner, on a model whose whole
+    # suite passes in under 6 on a fast one.
+    timeout: 1_200_000,
     code: [
       {:exports, HalC2.Settings.Shared},
       {:messages, HalC2.Settings},

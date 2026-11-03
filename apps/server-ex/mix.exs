@@ -117,7 +117,10 @@ defmodule HalC2.MixProject do
 
     for crate <- crates do
       manifest = Path.join(root, "native/#{crate}/Cargo.toml")
-      run!("cargo", ["build", "--locked", "--release", "--manifest-path", manifest], root)
+
+      run!("cargo", ["build", "--locked", "--release", "--manifest-path", manifest], root,
+        env: cargo_env()
+      )
 
       built = Path.join(root, "native/#{crate}/target/release/hal-c2-#{crate}")
       File.cp!(built, Path.join(target, "hal-c2-#{crate}"))
@@ -125,6 +128,21 @@ defmodule HalC2.MixProject do
     end
 
     release
+  end
+
+  # Cargo runs rustc in each dependency's source directory. Where rustc is a mise shim, a
+  # crate that ships its own mise.toml (mmdflux does) fails the build as untrusted config,
+  # so mise skips the config files under cargo's sources.
+  defp cargo_env do
+    cargo_home = System.get_env("CARGO_HOME") || Path.expand("~/.cargo")
+
+    ignored = [
+      System.get_env("MISE_IGNORED_CONFIG_PATHS"),
+      Path.join(cargo_home, "registry"),
+      Path.join(cargo_home, "git")
+    ]
+
+    [{"MISE_IGNORED_CONFIG_PATHS", ignored |> Enum.reject(&(&1 in [nil, ""])) |> Enum.join(":")}]
   end
 
   # `mix features [--backlog] [glob ...] [-- mix test args]` runs the repo's `@mc`
@@ -268,7 +286,8 @@ defmodule HalC2.MixProject do
     "#{os}-#{arch}"
   end
 
-  defp run!(command, args, cd) do
-    {_, 0} = System.cmd(command, args, cd: cd, into: IO.stream(), stderr_to_stdout: true)
+  defp run!(command, args, cd, opts \\ []) do
+    {_, 0} =
+      System.cmd(command, args, [cd: cd, into: IO.stream(), stderr_to_stdout: true] ++ opts)
   end
 end
