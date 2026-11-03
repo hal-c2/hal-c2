@@ -1,6 +1,7 @@
 #include "ThreadDevices.h"
 
 #include <QJsonArray>
+#include <QQmlEngine>
 #include <QUrl>
 
 #include <algorithm>
@@ -34,8 +35,37 @@ std::pair<QString, QString> ThreadDevices::targetOf(const QString& tabId) {
   return {QUrl::fromPercentEncoding(parts[0].toLatin1()), QUrl::fromPercentEncoding(parts[1].toLatin1())};
 }
 
-ThreadDevices::ThreadDevices(McClient* client, QObject* parent)
-    : QObject(parent), m_client(client), m_stream(client), m_tools(client) {
+DeviceTab::DeviceTab(McClient* client, const QString& tabId, QObject* parent)
+    : QObject(parent), m_tabId(tabId), m_stream(client), m_tools(client) {
+  QQmlEngine::setObjectOwnership(this, QQmlEngine::CppOwnership);
+}
+
+void DeviceTab::setShow3d(bool on) {
+  if (on == m_show3d) return;
+  m_show3d = on;
+  emit choicesChanged();
+}
+
+void DeviceTab::setKeyboardAttached(bool on) {
+  if (on == m_keyboardAttached) return;
+  m_keyboardAttached = on;
+  emit choicesChanged();
+}
+
+void DeviceTab::toggleKeyboard() {
+  setKeyboardAttached(!m_keyboardAttached);
+  if (m_keyboardAttached && m_stream.orientation().startsWith(QLatin1String("portrait")))
+    m_stream.setOrientation(QStringLiteral("landscape_left"));
+}
+
+void DeviceTab::setScreen(const QVariant& screen, bool shown) {
+  if (screen == m_screen && shown == m_shown) return;
+  m_screen = screen;
+  m_shown = shown;
+  emit screenChanged();
+}
+
+ThreadDevices::ThreadDevices(McClient* client, QObject* parent) : QObject(parent), m_client(client) {
   publish();
 }
 
@@ -67,13 +97,47 @@ void ThreadDevices::setThread(const QString& environmentId, const QString& threa
   publish();
 }
 
-void ThreadDevices::setTab(const QString& tabId) {
-  if (tabId == m_tab) return;
-  const bool shown = m_tab.isEmpty() && !tabId.isEmpty();
-  if (shown) m_wizardDismissed = false;
-  m_tab = tabId;
-  // Showing the tab lists again.
-  if (shown && m_loaded && text(m_state, QLatin1String("hostStatus")) != QLatin1String("disabled")) list();
+void ThreadDevices::setTabs(const QStringList& tabIds) {
+  bool changed = false;
+  for (auto it = m_tabs.begin(); it != m_tabs.end();) {
+    if (tabIds.contains(it.key())) {
+      ++it;
+      continue;
+    }
+    // A closed tab's stream goes with it, now; the object once QML lets go.
+    it.value()->m_stream.setActive(false);
+    it.value()->m_tools.setTarget({}, {}, {}, {}, {});
+    it.value()->deleteLater();
+    it = m_tabs.erase(it);
+    changed = true;
+  }
+  for (const QString& id : tabIds) {
+    if (m_tabs.contains(id) || targetOf(id).first.isEmpty()) continue;
+    auto* tab = new DeviceTab(m_client, id, this);
+    m_tabs.insert(id, tab);
+    retarget(tab);
+    changed = true;
+  }
+  if (changed) emit tabsChanged();
+}
+
+QVariantMap ThreadDevices::tabsView() const {
+  QVariantMap tabs;
+  for (auto it = m_tabs.cbegin(); it != m_tabs.cend(); ++it) tabs.insert(it.key(), QVariant::fromValue<QObject*>(it.value()));
+  return tabs;
+}
+
+void ThreadDevices::setShown(const QStringList& tabIds) {
+  QSet<QString> shown;
+  for (const QString& id : tabIds) {
+    if (id == kPicker || id.startsWith(kDeviceTab)) shown.insert(id);
+  }
+  if (shown == m_shown) return;
+  const bool first = m_shown.isEmpty() && !shown.isEmpty();
+  if (first) m_wizardDismissed = false;
+  m_shown = shown;
+  // Showing a Device tab lists again.
+  if (first && m_loaded && text(m_state, QLatin1String("hostStatus")) != QLatin1String("disabled")) list();
   retarget();
   publish();
 }
@@ -113,7 +177,7 @@ void ThreadDevices::take(const QJsonObject& state) {
   m_retrying.clear();
   const bool first = !m_loaded;
   m_loaded = true;
-  if (first && !m_tab.isEmpty() && text(state, QLatin1String("hostStatus")) != QLatin1String("disabled")) list();
+  if (first && !m_shown.isEmpty() && text(state, QLatin1String("hostStatus")) != QLatin1String("disabled")) list();
   watchSessions();
   retarget();
   publish();
@@ -170,20 +234,41 @@ void ThreadDevices::watchSessions() {
   }
 }
 
-// The shown device tab streams its device while the thread has it open.
 void ThreadDevices::retarget() {
-  const auto [hostId, deviceId] = targetOf(m_tab);
+  for (DeviceTab* tab : std::as_const(m_tabs)) retarget(tab);
+}
+
+// A device tab shows its device while the thread has it open, and streams it
+// only while shown.
+void ThreadDevices::retarget(DeviceTab* tab) {
+  const auto [hostId, deviceId] = targetOf(tab->tabId());
   const QJsonObject device = deviceOf(hostId, deviceId);
-  if (!device.isEmpty() && hasSession(hostId, deviceId)) {
-    m_stream.setTarget(text(m_state, QLatin1String("hubBasePath")), text(device, QLatin1String("platform")), deviceId);
-    m_stream.setActive(true);
-    m_tools.setTarget(m_environment, text(m_state, QLatin1String("hubBasePath")), hostId, deviceId,
-                      text(device, QLatin1String("platform")));
+  const bool open = !device.isEmpty() && hasSession(hostId, deviceId);
+  const bool shown = m_shown.contains(tab->tabId());
+  if (open && shown) {
+    tab->m_stream.setTarget(text(m_state, QLatin1String("hubBasePath")), text(device, QLatin1String("platform")), deviceId);
+    tab->m_stream.setActive(true);
+    tab->m_tools.setTarget(m_environment, text(m_state, QLatin1String("hubBasePath")), hostId, deviceId,
+                           text(device, QLatin1String("platform")));
   } else {
-    m_stream.setActive(false);
-    m_stream.setTarget({}, {}, {});
-    m_tools.setTarget(m_environment, {}, {}, {}, {});
+    tab->m_stream.setActive(false);
+    tab->m_stream.setTarget({}, {}, {});
+    tab->m_tools.setTarget(m_environment, {}, {}, {}, {});
   }
+  QVariant screen;
+  if (open) {
+    QString label;
+    for (const QJsonValue& host : m_state.value(QLatin1String("hosts")).toArray()) {
+      if (text(host.toObject(), QLatin1String("id")) == hostId) label = text(host.toObject(), QLatin1String("label"));
+    }
+    screen = QVariantMap{{QStringLiteral("hostId"), hostId},
+                         {QStringLiteral("id"), deviceId},
+                         {QStringLiteral("name"), text(device, QLatin1String("name"))},
+                         {QStringLiteral("platform"), text(device, QLatin1String("platform"))},
+                         {QStringLiteral("description"), (label.isEmpty() ? QStringLiteral("Device host") : label) +
+                                                              QStringLiteral(" · ") + text(device, QLatin1String("version"))}};
+  }
+  tab->setScreen(screen, shown);
 }
 
 QString ThreadDevices::titleOf(const QString& tabId) const {
@@ -223,8 +308,7 @@ void ThreadDevices::open(const QString& hostId, const QString& deviceId) {
                  });
 }
 
-void ThreadDevices::powerOff() {
-  const QString tab = m_tab;
+void ThreadDevices::powerOff(const QString& tab) {
   const auto [hostId, deviceId] = targetOf(tab);
   if (!hasSession(hostId, deviceId)) return;
   m_error.clear();
@@ -249,8 +333,8 @@ void ThreadDevices::powerOff() {
                  });
 }
 
-void ThreadDevices::close() {
-  if (!m_tab.isEmpty()) emit closed(m_environment + QLatin1Char(':') + m_thread, m_tab);
+void ThreadDevices::close(const QString& tabId) {
+  if (!tabId.isEmpty()) emit closed(m_environment + QLatin1Char(':') + m_thread, tabId);
 }
 
 void ThreadDevices::refresh() {
@@ -270,8 +354,8 @@ void ThreadDevices::retryHost(const QString& hostId) {
   list({{QStringLiteral("retryHostId"), hostId}});
 }
 
-void ThreadDevices::floatDevice() {
-  if (!m_tab.isEmpty()) emit floated(m_tab);
+void ThreadDevices::floatDevice(const QString& tabId) {
+  if (!tabId.isEmpty()) emit floated(tabId);
 }
 
 void ThreadDevices::configure(const QString& pending, const QJsonObject& change) {
@@ -503,17 +587,6 @@ void ThreadDevices::publish() {
     if (text(device, QLatin1String("threadId")) == m_thread) booting.append(text(device, QLatin1String("name")));
   }
 
-  QVariant screen;
-  const auto [hostId, deviceId] = targetOf(m_tab);
-  const QJsonObject device = deviceOf(hostId, deviceId);
-  if (!device.isEmpty() && hasSession(hostId, deviceId)) {
-    screen = QVariantMap{{QStringLiteral("hostId"), hostId},
-                         {QStringLiteral("id"), deviceId},
-                         {QStringLiteral("name"), text(device, QLatin1String("name"))},
-                         {QStringLiteral("platform"), text(device, QLatin1String("platform"))},
-                         {QStringLiteral("description"), hostLabel(hostId) + QStringLiteral(" · ") + text(device, QLatin1String("version"))}};
-  }
-
   QString loading;
   if (!pendingDevice.isEmpty()) {
     loading = pendingDevice.value(QLatin1String("booted")).toBool() ? QStringLiteral("Opening device…") : QStringLiteral("Starting device…");
@@ -549,7 +622,6 @@ void ThreadDevices::publish() {
                (!m_state.value(QLatin1String("onboardingCompleted")).toBool() || hostStatus == QLatin1String("disabled"))
            ? QVariant(wizardView())
            : QVariant()},
-      {QStringLiteral("screen"), screen},
   };
   if (view == m_view) return;
   m_view = view;

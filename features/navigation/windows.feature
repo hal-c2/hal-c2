@@ -77,14 +77,14 @@ Feature: Windows, zoom and quitting
       And the window can be dragged by the band they are in
 
       Examples:
-        | page                        |
-        | a thread                    |
-        | the home page               |
-        | Pull requests               |
-        | Usage                       |
-        | Settings                    |
-        | a maximized right panel     |
-        | a plugin's page             |
+        | page                         |
+        | a thread                     |
+        | the home page                |
+        | Pull requests                |
+        | Usage                        |
+        | Settings                     |
+        | a tab in the thread's centre |
+        | a plugin's page              |
 
     @desktop
     Scenario: macOS controls show their symbols only on hover

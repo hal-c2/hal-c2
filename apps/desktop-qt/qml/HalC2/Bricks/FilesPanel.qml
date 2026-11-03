@@ -26,7 +26,7 @@ Rectangle {
     property bool explorerOpen: true
     // What the file's header takes with all its buttons out: its margins, then each
     // button and the gap before it. The path gives way to them, so it counts for nothing.
-    readonly property real headerFullWidth: 14 + [renderButton, editButton, copyButton, openInEditorButton, openPreviewButton, openInSpaceButton, wrapButton, fileExplorerToggleButton, closeButton].reduce((sum, button) => sum + (button.wanted ? button.implicitWidth + 4 : 0), 0)
+    readonly property real headerFullWidth: 14 + [renderButton, editButton, copyButton, openInEditorButton, openPreviewButton, editAsPageButton, wrapButton, fileExplorerToggleButton, closeButton].reduce((sum, button) => sum + (button.wanted ? button.implicitWidth + 4 : 0), 0)
     // The text buttons grow with the user's font scale and can outgrow any tab, while
     // the icon buttons cannot, so the text buttons move into a menu when they would
     // not fit. The toggle and Close, the way out of the file, stay on the header.
@@ -243,12 +243,12 @@ Rectangle {
                     onClicked: root.source.openInPreview()
                 }
                 ShellButton {
-                    id: openInSpaceButton
+                    id: editAsPageButton
 
                     // Only a file the project's spaces section covers (SpaceController's `files`).
                     readonly property bool wanted: Shell.state.space?.files?.[Shell.state.panel?.spaceProjectId ?? ""]?.paths?.[root.source?.openPath ?? ""] !== undefined
 
-                    objectName: "fileOpenInSpace"
+                    objectName: "fileEditAsPage"
                     subtle: true
                     visible: wanted
                     iconName: "book"
@@ -256,8 +256,8 @@ Rectangle {
                     iconTint: root.muted
                     implicitWidth: 26
                     implicitHeight: 26
-                    Accessible.name: Shell.state.panel?.onWorktree ? qsTr("Open the project's copy in a Space") : qsTr("Open in a Space")
-                    onClicked: Shell.dispatch("files.openInSpace", {path: root.source.openPath})
+                    Accessible.name: Shell.state.panel?.onWorktree ? qsTr("Edit the project's copy as a page") : qsTr("Edit as a page")
+                    onClicked: Shell.dispatch("files.editAsPage", {path: root.source.openPath})
                 }
                 ShellButton {
                     id: wrapButton
@@ -999,6 +999,8 @@ Rectangle {
                         required property bool ignored
                         required property string problem
                         required property bool selected
+                        // Set by a finger's long press on a file, whose lift still clicks.
+                        property bool held: false
 
                         objectName: "filesEntry-" + (kind === "file" || kind === "directory" ? path : kind + "-" + path)
                         width: treeView.width
@@ -1010,7 +1012,14 @@ Rectangle {
                         ToolTip.visible: hovered && nameText.truncated
                         ToolTip.delay: 400
                         ToolTip.text: path
+                        onPressed: held = false
+                        onCanceled: held = false
                         onClicked: {
+                            // One click only: a lift the menu took may never click.
+                            if (held) {
+                                held = false;
+                                return;
+                            }
                             if (kind === "directory")
                                 root.tree.toggle(path);
                             else if (kind === "file")
@@ -1018,15 +1027,20 @@ Rectangle {
                             else if (kind === "error")
                                 root.tree.retry(path);
                         }
-                        // A held press is a finger's right-click: it opens the menu
-                        // instead of the file.
-                        onPressAndHold: {
-                            if (kind === "file")
-                                menu();
-                        }
                         function menu() {
                             entryMenu.path = path;
                             entryMenu.popup(entry);
+                        }
+                        // A finger held on a file is its right-click: the menu instead of
+                        // the file. Only a finger: a slow mouse click, or a held folder or
+                        // error row, still clicks.
+                        TapHandler {
+                            acceptedDevices: PointerDevice.TouchScreen
+                            enabled: entry.kind === "file"
+                            onLongPressed: {
+                                entry.held = true;
+                                entry.menu();
+                            }
                         }
                         TapHandler {
                             acceptedButtons: Qt.RightButton

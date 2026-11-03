@@ -288,6 +288,7 @@ const Steps steps([] {
            QStringLiteral("the viewer shows %1 lines").arg(files(world).lines()->rowCount()));
   });
   step(QStringLiteral("the diagram's source is shown"), [](World& world, const Captures&, const Table&) {
+    if (mermaid::onPage(world)) return mermaid::expectPageSource(world);
     world.waitFor([&] { return !files(world).rendered() && shown(world, QStringLiteral("fileLines")) && mermaid::drawn(world).isEmpty(); },
                   [&] { return describeViewer(world); });
     expect(files(world).lines()->rowCount() == fakeFiles(world.mc).files.value(files(world).openPath()).count(QLatin1Char('\n')),

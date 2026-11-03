@@ -19,6 +19,7 @@ import {
 } from "@hal-c2/client-runtime/state/thread-execution";
 import { derivePendingBackgroundWork } from "@hal-c2/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
+import { thoughtPreview } from "./thoughtPreview.ts";
 
 import { callFailed, halC2ToolOf, type TurnItemRecord } from "./toolSummary.ts";
 
@@ -256,9 +257,15 @@ function subagentStatusLabel(status: OrchestrationV2TurnItem["status"]): string 
   }
 }
 
-/** Reasoning reads "Thinking" while it is written and "Thought" once it is done. */
+const isThinking = (item: Extract<OrchestrationV2TurnItem, { type: "reasoning" }>) =>
+  item.streaming || item.status === "running";
+
+/**
+ * Reasoning reads "Thinking" while it is written; once it is done, what was
+ * thought ("Thought" when there are no words).
+ */
 function reasoningLabel(item: Extract<OrchestrationV2TurnItem, { type: "reasoning" }>): string {
-  return item.streaming || item.status === "running" ? "Thinking" : "Thought";
+  return isThinking(item) ? "Thinking" : thoughtPreview(item.text ?? "", "Thought");
 }
 
 /** How an answered approval ended, as its row's status (a pending one carries none). */
@@ -375,7 +382,12 @@ function itemPayload(
     item.status === "completed" && callFailed(item as TurnItemRecord) ? "failed" : itemStatus(item);
   switch (item.type) {
     case "reasoning":
-      return { title: reasoningLabel(item), detail: item.text, status };
+      // Finished reasoning's label is its text, so it is not previewed twice.
+      return {
+        title: reasoningLabel(item),
+        detail: isThinking(item) ? item.text : null,
+        status,
+      };
     case "command_execution":
       return {
         title: itemSummary(item),

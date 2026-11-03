@@ -379,6 +379,8 @@ import {
   SpacePageVersionRef,
   SpacePageAskAgentInput,
   SpacePageAgentRef,
+  SpacePageAgentTarget,
+  SpacePageAgentTargetInput,
   SpacePageAgentResult,
   SpacePageDismissAgentResult,
   SpaceRenameInput,
@@ -568,7 +570,6 @@ export const WS_METHODS = {
   spacePageImportMarkdown: "space.page.importMarkdown",
   spacePageOpenFile: "space.page.openFile",
   spacePageSyncFile: "space.page.syncFile",
-  spacePageUnlinkFile: "space.page.unlinkFile",
   spaceFilesList: "space.files.list",
   spaceFilesScan: "space.files.scan",
   spacePageCreateFromThread: "space.page.createFromThread",
@@ -576,6 +577,7 @@ export const WS_METHODS = {
   spacePageVersion: "space.page.version",
   spacePageRestoreVersion: "space.page.restoreVersion",
   spacePageAskAgent: "space.page.askAgent",
+  spacePageAgentTarget: "space.page.agentTarget",
   spacePageStopAgent: "space.page.stopAgent",
   spacePageDismissAgent: "space.page.dismissAgent",
   spacePageScheduleSet: "space.page.schedule.set",
@@ -1949,13 +1951,6 @@ const WsSpacePageSyncFileRpc = Rpc.make(WS_METHODS.spacePageSyncFile, {
   error: SpaceRpcError,
 });
 
-/** Makes a file-backed page an ordinary page; the file stays as it is. */
-const WsSpacePageUnlinkFileRpc = Rpc.make(WS_METHODS.spacePageUnlinkFile, {
-  payload: SpacePageRef,
-  success: SpacePageResult,
-  error: SpaceRpcError,
-});
-
 const WsSpaceFilesListRpc = Rpc.make(WS_METHODS.spaceFilesList, {
   payload: SpaceFilesProjectInput,
   success: SpaceFilesListResult,
@@ -1989,6 +1984,12 @@ const WsSpacePageVersionRpc = Rpc.make(WS_METHODS.spacePageVersion, {
 const WsSpacePageAskAgentRpc = Rpc.make(WS_METHODS.spacePageAskAgent, {
   payload: SpacePageAskAgentInput,
   success: SpacePageAgentResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageAgentTargetRpc = Rpc.make(WS_METHODS.spacePageAgentTarget, {
+  payload: SpacePageAgentTargetInput,
+  success: SpacePageAgentTarget,
   error: SpaceRpcError,
 });
 
@@ -2291,7 +2292,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageImportMarkdownRpc,
   WsSpacePageOpenFileRpc,
   WsSpacePageSyncFileRpc,
-  WsSpacePageUnlinkFileRpc,
   WsSpaceFilesListRpc,
   WsSpaceFilesScanRpc,
   WsSpacePageCreateFromThreadRpc,
@@ -2299,6 +2299,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageVersionRpc,
   WsSpacePageRestoreVersionRpc,
   WsSpacePageAskAgentRpc,
+  WsSpacePageAgentTargetRpc,
   WsSpacePageStopAgentRpc,
   WsSpacePageDismissAgentRpc,
   WsSpacePageScheduleSetRpc,

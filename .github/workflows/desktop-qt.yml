@@ -56,12 +56,14 @@ jobs:
               - --filter=@hal-c2/cursor-acp...
               - --filter=@hal-c2/desktop-qt...
 
+      # qtwebengine (with the qtwebchannel and qtpositioning it needs) draws
+      # the in-app browser's tabs, which tst_Features loads real pages into.
       - uses: jurplel/install-qt-action@v4
         with:
           version: "6.9.*"
           host: ${{ runner.os == 'macOS' && 'mac' || 'linux' }}
           arch: ${{ runner.os == 'macOS' && 'clang_64' || 'linux_gcc_64' }}
-          modules: qtwebsockets qtquick3d qtmultimedia qtpdf
+          modules: qtwebsockets qtquick3d qtmultimedia qtpdf qtwebengine qtwebchannel qtpositioning
           cache: true
 
       # FFmpeg's headers build the Device tab's H.264 decoding

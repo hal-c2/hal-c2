@@ -7,6 +7,7 @@ import {
   SpaceBlockMoveInput,
   SpaceCreateInput,
   SpaceDeckCreateInput,
+  SpacePageAskAgentInput,
   SpaceSlideMoveInput,
 } from "./space.ts";
 
@@ -15,6 +16,7 @@ const decodeMove = Schema.decodeUnknownSync(SpaceBlockMoveInput);
 const decodeAuthor = Schema.decodeUnknownSync(SpaceAuthor);
 const decodeDeck = Schema.decodeUnknownSync(SpaceDeckCreateInput);
 const decodeSlideMove = Schema.decodeUnknownSync(SpaceSlideMoveInput);
+const decodeAsk = Schema.decodeUnknownSync(SpacePageAskAgentInput);
 const decodeInsert = Schema.decodeUnknownSync(SpaceBlockInsertInput);
 
 describe("Space contracts", () => {
@@ -64,5 +66,31 @@ describe("Space contracts", () => {
       threadId: "t1",
     });
     expect(() => decodeAuthor({ type: "agent" })).toThrow();
+  });
+
+  it("takes an older client's ask, and one that chose what a turn may", () => {
+    const ask = { spaceId: "s", pageId: "p", request: "tidy this" };
+    expect(decodeAsk(ask)).toEqual(ask);
+
+    const chosen = decodeAsk({
+      ...ask,
+      projectId: "docs",
+      modelSelection: { instanceId: "codex", model: "gpt-5.5" },
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+      attachments: [
+        {
+          type: "image",
+          name: "sketch.png",
+          mimeType: "image/png",
+          sizeBytes: 68,
+          dataUrl: "data:image/png;base64,AAAA",
+        },
+      ],
+      context: { version: 1, records: [{ contextId: "c", kind: "skill", name: "review" }] },
+    });
+    expect(chosen.interactionMode).toBe("plan");
+    expect(chosen.attachments).toHaveLength(1);
+    expect(() => decodeAsk({ ...ask, interactionMode: "steer" })).toThrow();
   });
 });

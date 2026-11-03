@@ -119,13 +119,17 @@ void ThreadPreviews::setThread(const QString& environmentId, const QString& thre
     m_closing.clear();
     m_listing = false;
     m_early.clear();
+    // Not ready before the rows go: what follows the tabs keeps them until
+    // the new thread's are listed.
+    setStatus(QStringLiteral("idle"));
     if (!m_rows.isEmpty()) {
+      const QList<QJsonObject> gone = m_rows;
       beginResetModel();
       m_rows.clear();
       endResetModel();
       emit countChanged();
+      for (const QJsonObject& row : gone) emit tabChanged(row.value(QLatin1String("tabId")).toString());
     }
-    setStatus(QStringLiteral("idle"));
   }
   if (m_active) {
     follow();
@@ -144,8 +148,37 @@ void ThreadPreviews::setActive(bool active) {
   }
 }
 
+void ThreadPreviews::setEmbedded(bool embedded) {
+  if (embedded == m_embedded) return;
+  m_embedded = embedded;
+  if (wantsServers()) {
+    followServers();
+  } else {
+    unfollowServers();
+  }
+}
+
+void ThreadPreviews::setSuggesting(bool suggesting) {
+  if (suggesting == m_suggesting) return;
+  m_suggesting = suggesting;
+  if (wantsServers()) {
+    followServers();
+  } else {
+    unfollowServers();
+  }
+}
+
 void ThreadPreviews::follow() {
+  if (wantsServers()) followServers();
   if (m_subscription >= 0 || m_mc.isEmpty()) return;
+  m_subscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("preview")}, {QStringLiteral("mc"), m_mc}},
+                                       [this](const QJsonObject& frame) {
+                                         onEvent(frame.value(QLatin1String("event")).toObject());
+                                       });
+}
+
+void ThreadPreviews::followServers() {
+  if (m_servers >= 0 || m_mc.isEmpty()) return;
   // The servers on the MC's machine, not this one's: the MC scans while someone watches.
   m_servers = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("localServers")}, {QStringLiteral("mc"), m_mc}},
                                   [this](const QJsonObject& frame) {
@@ -158,17 +191,16 @@ void ThreadPreviews::follow() {
                                     m_serverList = servers;
                                     emit suggestionsChanged();
                                   });
-  m_subscription = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("preview")}, {QStringLiteral("mc"), m_mc}},
-                                       [this](const QJsonObject& frame) {
-                                         onEvent(frame.value(QLatin1String("event")).toObject());
-                                       });
+}
+
+void ThreadPreviews::unfollowServers() {
+  if (m_servers < 0) return;
+  m_client->unsubscribe(m_servers);
+  m_servers = -1;
 }
 
 void ThreadPreviews::unfollow() {
-  if (m_servers >= 0) {
-    m_client->unsubscribe(m_servers);
-    m_servers = -1;
-  }
+  unfollowServers();
   if (m_subscription < 0) return;
   m_client->unsubscribe(m_subscription);
   m_subscription = -1;
@@ -209,14 +241,16 @@ void ThreadPreviews::newTab() {
   if (m_thread.isEmpty()) return;
   const int generation = m_generation;
   m_client->call(this, m_environment, QStringLiteral("preview.open"), QJsonObject{{QStringLiteral("threadId"), m_thread}},
-                 [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (generation != m_generation) return;
+                 [this, generation, environmentId = m_environment, threadId = m_thread](const QJsonValue& result,
+                                                                                        const std::optional<QString>& error) {
+                   if (environmentId != m_environment || threadId != m_thread) return;
                    if (error) {
                      m_notify(QStringLiteral("error"), QStringLiteral("Could not open a browser tab"), *error);
                      return;
                    }
-                   // Its `opened` event may be behind the answer.
-                   if (result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
+                   // Its `opened` event may be behind the answer; a list read since has it.
+                   if (generation == m_generation && result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
+                   if (m_embedded && result.isObject()) emit showRequested(result.toObject().value(QLatin1String("tabId")).toString());
                  });
 }
 
@@ -243,8 +277,9 @@ void ThreadPreviews::navigate(const QString& tabId, const QString& address) {
                      m_writeRecents(recents.mid(0, maxRecents));
                      emit suggestionsChanged();
                    }
-                   // The thread it was asked for, though another may show by now.
-                   openFor(url, environmentId, threadId, mc);
+                   // The thread it was asked for, though another may show by now;
+                   // embedded, the tab's own page loads it.
+                   if (!m_embedded) openFor(url, environmentId, threadId, mc);
                  });
 }
 
@@ -254,6 +289,35 @@ void ThreadPreviews::openPage(const QUrl& url) {
 
 void ThreadPreviews::openAddress(const QString& address) {
   const QUrl url(address);
+  // Embedded, a dev server on the thread's machine opens in a tab here: the
+  // one showing it, else a new one. Another MC's machine's goes through its
+  // forward to the user's browser, as below.
+  if (m_embedded && loopback(url) && !m_thread.isEmpty() && !forwards(url, m_environment, m_thread, m_mc)) {
+    // Rows being listed again (after a reconnect, say), or that a list failed
+    // to read again, may be tabs the MC no longer has.
+    const bool listed = m_status == QLatin1String("ready") && !m_listing;
+    for (const QJsonObject& snapshot : std::as_const(m_rows)) {
+      if (listed && QUrl(navOf(snapshot).value(QLatin1String("url")).toString()).matches(url, QUrl::StripTrailingSlash)) {
+        emit showRequested(snapshot.value(QLatin1String("tabId")).toString());
+        return;
+      }
+    }
+    const int generation = m_generation;
+    m_client->call(this, m_environment, QStringLiteral("preview.open"),
+                   QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("url"), url.toString()}},
+                   [this, generation, environmentId = m_environment, threadId = m_thread](const QJsonValue& result,
+                                                                                          const std::optional<QString>& error) {
+                     if (error) {
+                       m_notify(QStringLiteral("error"), QStringLiteral("Could not open the page"), *error);
+                       return;
+                     }
+                     // Shown while its thread is, though the list was read again meanwhile.
+                     if (environmentId != m_environment || threadId != m_thread || !result.isObject()) return;
+                     if (generation == m_generation && m_status == QLatin1String("ready")) upsert(result.toObject());
+                     emit showRequested(result.toObject().value(QLatin1String("tabId")).toString());
+                   });
+    return;
+  }
   if (!forwards(url, m_environment, m_thread, m_mc)) {
     m_open(url);
     return;
@@ -394,10 +458,14 @@ void ThreadPreviews::reload() {
                      for (const QJsonObject& row : std::as_const(rows)) upsert(row);
                    } else {
                      const bool counted = rows.size() != m_rows.size();
+                     QSet<QString> touched;
+                     for (const QJsonObject& row : std::as_const(m_rows)) touched.insert(row.value(QLatin1String("tabId")).toString());
+                     for (const QJsonObject& row : std::as_const(rows)) touched.insert(row.value(QLatin1String("tabId")).toString());
                      beginResetModel();
                      m_rows = rows;
                      endResetModel();
                      if (counted) emit countChanged();
+                     for (const QString& tabId : std::as_const(touched)) emit tabChanged(tabId);
                    }
                    setStatus(QStringLiteral("ready"));
                    if (restarted) reload();
@@ -426,6 +494,8 @@ void ThreadPreviews::onEvent(const QJsonObject& event) {
   } else {
     remove(tabId);
   }
+  // A tab someone opened just now (an agent, another window), not one listed.
+  if (m_embedded && next && row < 0 && event.value(QLatin1String("type")).toString() == QLatin1String("opened")) emit showRequested(tabId);
 }
 
 void ThreadPreviews::open(const QString& tabId) {
@@ -433,6 +503,46 @@ void ThreadPreviews::open(const QString& tabId) {
   if (row < 0) return;
   const QString url = navOf(m_rows.at(row)).value(QLatin1String("url")).toString();
   if (!url.isEmpty()) openAddress(url);
+}
+
+bool ThreadPreviews::opensHere(const QUrl& url) {
+  return loopback(url);
+}
+
+void ThreadPreviews::show(const QString& tabId) {
+  if (rowOf(tabId) >= 0) emit showRequested(tabId);
+}
+
+QJsonObject ThreadPreviews::tab(const QString& tabId) const {
+  const int row = rowOf(tabId);
+  return row < 0 ? QJsonObject() : m_rows.at(row);
+}
+
+void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward) {
+  if (rowOf(tabId) < 0 || m_thread.isEmpty() || m_closing.contains(tabId)) return;
+  // The MC's event says it back; nothing to do with the answer.
+  m_client->call(this, m_environment, QStringLiteral("preview.reportStatus"),
+                 QJsonObject{{QStringLiteral("threadId"), m_thread},
+                             {QStringLiteral("tabId"), tabId},
+                             {QStringLiteral("navStatus"), navStatus},
+                             {QStringLiteral("canGoBack"), canGoBack},
+                             {QStringLiteral("canGoForward"), canGoForward}},
+                 [](const QJsonValue&, const std::optional<QString>&) {});
+}
+
+void ThreadPreviews::resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const QString&)> failed) {
+  if (rowOf(tabId) < 0 || m_thread.isEmpty()) return;
+  const int generation = m_generation;
+  m_client->call(this, m_environment, QStringLiteral("preview.resize"),
+                 QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("tabId"), tabId}, {QStringLiteral("viewport"), viewport}},
+                 [this, generation, failed](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (error) {
+                     m_notify(QStringLiteral("error"), QStringLiteral("Could not resize the page"), *error);
+                     if (failed) failed(*error);
+                     return;
+                   }
+                   if (generation == m_generation && result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
+                 });
 }
 
 void ThreadPreviews::close(const QString& tabId) {
@@ -454,6 +564,7 @@ void ThreadPreviews::close(const QString& tabId) {
                      m_rows.insert(at, snapshot);
                      endInsertRows();
                      emit countChanged();
+                     emit tabChanged(tabId);
                    }
                    m_notify(QStringLiteral("error"), QStringLiteral("Could not close the browser tab"), *error);
                  });
@@ -483,12 +594,14 @@ void ThreadPreviews::upsert(const QJsonObject& snapshot) {
         std::any_of(roles.keyBegin(), roles.keyEnd(), [&](int role) { return shown(m_rows.at(row), role) != shown(snapshot, role); });
     m_rows[row] = snapshot;
     if (redraw) emit dataChanged(index(row), index(row));
+    emit tabChanged(snapshot.value(QLatin1String("tabId")).toString());
     return;
   }
   beginInsertRows({}, int(m_rows.size()), int(m_rows.size()));
   m_rows.append(snapshot);
   endInsertRows();
   emit countChanged();
+  emit tabChanged(snapshot.value(QLatin1String("tabId")).toString());
 }
 
 void ThreadPreviews::remove(const QString& tabId) {
@@ -498,6 +611,7 @@ void ThreadPreviews::remove(const QString& tabId) {
   m_rows.removeAt(row);
   endRemoveRows();
   emit countChanged();
+  emit tabChanged(tabId);
 }
 
 int ThreadPreviews::rowCount(const QModelIndex& parent) const {

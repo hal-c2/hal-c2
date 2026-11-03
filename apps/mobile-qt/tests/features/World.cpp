@@ -16,12 +16,14 @@
 #include <QThread>
 #include <qpa/qwindowsysteminterface.h>
 
+#include "ComposerController.h"
 #include "ConnectionHealthController.h"
 #include "Harness.h"
 #include "Maintenance.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "ThreadStore.h"
 
 namespace {
 
@@ -126,7 +128,10 @@ void World::open() {
   // The scenarios' seams: a dropped connection is tried again at once, and
   // nothing leaves the test for the system's browser or clipboard.
   m_app->native().client()->setRetryDelays({20});
-  m_app->bridge().setUrlOpener([this](const QUrl& url) { openedUrls.append(url); });
+  m_app->bridge().setUrlOpener([this](const QUrl& url) {
+    openedUrls.append(url);
+    return true;
+  });
   m_app->native().shared<ConnectionHealthController>()->setClipboardWriter([this](const QString& text) {
     clipboard = text;
     return true;
@@ -137,7 +142,10 @@ void World::open() {
   });
   // Releases are the environment's fake index, never GitHub's.
   m_app->maintenance().setReleaseIndex(mc.origin().toString() + QStringLiteral("/releases?page=%1"));
-  m_app->bridge().setClipboardWriter([this](const QString& text) { clipboard = text; });
+  m_app->bridge().setClipboardWriter([this](const QString& text) {
+    clipboard = text;
+    return true;
+  });
   m_app->native().controller<FileActionsController>()->setClipboardWriter([this](const QString& text) {
     clipboard = text;
     return true;
@@ -194,6 +202,12 @@ void World::resize(int width, int height) {
   window().resize(m_size);
   waitFor([&] { return window().size() == m_size; },
           [&] { return QStringLiteral("a %1x%2 window; it is %3x%4").arg(width).arg(height).arg(window().width()).arg(window().height()); });
+}
+
+void World::setTime(const QDateTime& time) {
+  const QDateTime now = time.toUTC();
+  native().controller<ThreadStore>()->setClock([now] { return now; });
+  native().controller<ComposerController>()->setClock([now] { return now; });
 }
 
 MobileApp& World::app() {

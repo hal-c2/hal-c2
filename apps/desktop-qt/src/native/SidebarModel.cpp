@@ -191,6 +191,7 @@ Thread threadFromRow(const QString& environmentId, const QJsonObject& row) {
   thread.pluginId = plugin.value(QLatin1String("id")).toString();
   thread.pluginKind = plugin.value(QLatin1String("kind")).toString();
   thread.listed = plugin.value(QLatin1String("listed")).toBool(true);
+  thread.createdBy = row.value(QLatin1String("createdBy")).toString();
 
   const QString status = row.value(QLatin1String("status")).toString(QStringLiteral("idle"));
   if (thread.latestRunId) {

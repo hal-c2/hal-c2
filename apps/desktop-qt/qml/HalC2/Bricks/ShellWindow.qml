@@ -46,6 +46,8 @@ Window {
     readonly property bool terminalFocused: hasAncestor(root.activeFocusItem, "HalC2Terminal")
     // A text field has the keyboard.
     readonly property bool editableFocused: root.activeFocusItem !== null && "cursorPosition" in root.activeFocusItem
+    // A browser tab's page has it (BrowserPanel), not its address field.
+    readonly property bool previewFocused: !editableFocused && hasAncestor(root.activeFocusItem, "browserPage")
     // The composer's own field has it.
     readonly property bool composerFocused: editableFocused && "composerInput" in root.activeFocusItem
 
@@ -178,11 +180,12 @@ Window {
             sequence: modelData.sequence
             context: Qt.WindowShortcut
             autoRepeat: modelData.autoRepeat
-            enabled: root.terminalFocused ? modelData.terminal : root.composerFocused ? modelData.composer : root.editableFocused ? modelData.editable : modelData.chrome
+            enabled: root.terminalFocused ? modelData.terminal : root.previewFocused ? modelData.preview : root.composerFocused ? modelData.composer : root.editableFocused ? modelData.editable : modelData.chrome
             onActivated: Keybindings.press(modelData.sequence, {
                 terminal: root.terminalFocused,
                 composer: root.composerFocused,
-                editable: root.editableFocused
+                editable: root.editableFocused,
+                preview: root.previewFocused
             })
         }
     }

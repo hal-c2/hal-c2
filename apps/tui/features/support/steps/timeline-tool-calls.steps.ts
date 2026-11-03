@@ -7,6 +7,7 @@ import { step } from "../../steps.ts";
 import { findObject, snapshot } from "../world.ts";
 import { project } from "../fakeClient.ts";
 import { clickText, hostState, plain, recorded, settle } from "../threadWorld.ts";
+import { readsDuration } from "./timeline-streaming.steps.ts";
 import {
   addCommand,
   addItem,
@@ -180,7 +181,8 @@ const fileRead: Call = [
   "file_search",
   { pattern: "src/cart.ts", results: [{ fileName: "src/cart.ts" }] },
 ];
-const thought: Call = ["reasoning", { text: "The tax goes on the subtotal." }];
+// A thought with no words, which a lone row labels "Thought" (streaming.feature reads one with words).
+const thought: Call = ["reasoning", { text: "" }];
 const through = (name: string, kind: string, key = name.toLowerCase()): Call => [
   "dynamic_tool",
   { toolName: "navigate", input: {}, toolSource: { key, name, kind } },
@@ -354,7 +356,8 @@ step("the user opens the activity group", async (ctx: TurnWorld) => {
   await toggleGroup(ctx);
 });
 
-step("it reads {string}", async (ctx: TurnWorld, text: string) => {
+step("it reads {string}", async (ctx: TurnWorld & { durationShown?: boolean }, text: string) => {
+  if (ctx.durationShown) return readsDuration(ctx, text);
   expect(groupLine(ctx)).toBe(text);
   expect(await snapshot(ctx)).toContain(text);
 });

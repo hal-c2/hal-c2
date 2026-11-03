@@ -12,7 +12,7 @@
 
 class McClient;
 
-// The Device tabs of a thread's right panel: the
+// The Device tabs of a thread's panel and stage: the
 // picker (`device`) lists the thread's environment's simulators and
 // emulators, and a device tab (`device:<host>:<device>`, both percent-encoded)
 // streams one the thread has open. The environment's DeviceServiceState is
@@ -41,13 +41,19 @@ class McClient;
 //    (each machine installing, starting or failed; none while support is off),
 //    wizard: null, or the first-use setup's state {hubOn, hubReady, busy,
 //    pending, hubStatus, agentOn, agentStatus, platforms: [{platform, ready,
-//    message}], error, canContinue},
-//    screen: null, or the shown tab's device {hostId, id, name, platform, description}}.
+//    message}], error, canContinue}}.
+//
+// Each device tab the thread's panel has is a DeviceTab (`tabs`, by tab id):
+// its own stream, tools and view choices, so several devices show at once
+// (the panel, the stage's panes, the floating device). A tab streams only
+// while it is shown somewhere (setShown) and its device is open for the
+// thread; a hidden tab holds no connection and decodes nothing.
+class DeviceTab;
 class ThreadDevices : public QObject {
   Q_OBJECT
   Q_PROPERTY(QVariantMap view READ view NOTIFY viewChanged)
-  Q_PROPERTY(DeviceStream* stream READ stream CONSTANT)
-  Q_PROPERTY(DeviceTools* tools READ tools CONSTANT)
+  // Tab id → DeviceTab, for every device tab the thread's panel has.
+  Q_PROPERTY(QVariantMap tabs READ tabsView NOTIFY tabsChanged)
 
 public:
   // A device tab's id, and the host and device of one ({} when not a device tab).
@@ -60,28 +66,31 @@ public:
   // The thread shown, and the MC whose events carry its environment's
   // devices (empty when none does).
   void setThread(const QString& environmentId, const QString& threadId, const QString& mc);
-  // The panel's active tab while it shows a Device tab (`device` or a
-  // device tab), else empty: a device tab streams only while shown.
-  void setTab(const QString& tabId);
+  // The thread's device tabs: each has a DeviceTab while it is listed.
+  void setTabs(const QStringList& tabIds);
+  // The Device tabs shown anywhere (`device` and device tabs): a device tab
+  // streams only while shown, and showing the picker lists again.
+  void setShown(const QStringList& tabIds);
 
   QVariantMap view() const { return m_view; }
-  DeviceStream* stream() { return &m_stream; }
-  DeviceTools* tools() { return &m_tools; }
+  QVariantMap tabsView() const;
+  // The tab's DeviceTab, or null when the panel has no such device tab.
+  DeviceTab* tab(const QString& tabId) const { return m_tabs.value(tabId); }
   // A device tab's title: its device's name, else "Device".
   QString titleOf(const QString& tabId) const;
 
   // Opens a listed device for the thread.
   Q_INVOKABLE void open(const QString& hostId, const QString& deviceId);
-  // Shuts the shown tab's device down and closes the tab.
-  Q_INVOKABLE void powerOff();
-  // Closes the shown device tab; the device stays open for the thread.
-  Q_INVOKABLE void close();
+  // Shuts the tab's device down and closes the tab.
+  Q_INVOKABLE void powerOff(const QString& tabId);
+  // Closes the device tab; the device stays open for the thread.
+  Q_INVOKABLE void close(const QString& tabId);
   Q_INVOKABLE void refresh();
   Q_INVOKABLE void dismissError();
   // Retry one machine whose tools failed (`device.list` with its host id).
   Q_INVOKABLE void retryHost(const QString& hostId);
-  // Float the shown device over the chat; the panel closes (floated()).
-  Q_INVOKABLE void floatDevice();
+  // Float the tab's device over the chat; the panel closes (floated()).
+  Q_INVOKABLE void floatDevice(const QString& tabId);
   // The setup wizard's switches and buttons (`device.configure`, `device.list`).
   Q_INVOKABLE void wizardSetHub(bool on);
   Q_INVOKABLE void wizardSetAgent(bool on);
@@ -101,6 +110,7 @@ signals:
   void namesChanged();
   // The panel floats `tabId`'s device over the chat and closes.
   void floated(const QString& tabId);
+  void tabsChanged();
 
 private:
   void follow();
@@ -111,6 +121,7 @@ private:
   bool hasSession(const QString& hostId, const QString& deviceId) const;
   void watchSessions();
   void retarget();
+  void retarget(DeviceTab* tab);
   void publish();
 
   void configure(const QString& pending, const QJsonObject& change);
@@ -118,12 +129,11 @@ private:
   QVariantList banners() const;
 
   McClient* m_client;
-  DeviceStream m_stream;
-  DeviceTools m_tools;
+  QHash<QString, DeviceTab*> m_tabs;
   QString m_environment;
   QString m_thread;
   QString m_mc;
-  QString m_tab;
+  QSet<QString> m_shown;
   int m_subscription = -1;
   // Replies for another environment are dropped.
   int m_generation = 0;
@@ -144,4 +154,53 @@ private:
   // missing there is new. Absent until the first state, the baseline.
   QHash<QString, QSet<QString>> m_sessionsSeen;
   QVariantMap m_view;
+};
+
+// One device tab (ThreadDevices' `tabs`): the device's stream and Tools
+// drawer, and the tab's own view choices, which survive the tab moving
+// between the panel and the stage. Its body (DevicePanel) binds to it.
+class DeviceTab : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(QString tabId READ tabId CONSTANT)
+  // null, or the device while the thread has it open
+  // {hostId, id, name, platform, description}: null shows the picker.
+  Q_PROPERTY(QVariant screen READ screen NOTIFY screenChanged)
+  // Shown somewhere: the panel, a stage pane or floating.
+  Q_PROPERTY(bool shown READ shown NOTIFY screenChanged)
+  Q_PROPERTY(DeviceStream* stream READ stream CONSTANT)
+  Q_PROPERTY(DeviceTools* tools READ tools CONSTANT)
+  // The 3D body view, and an iPad's Magic Keyboard.
+  Q_PROPERTY(bool show3d READ show3d WRITE setShow3d NOTIFY choicesChanged)
+  Q_PROPERTY(bool keyboardAttached READ keyboardAttached WRITE setKeyboardAttached NOTIFY choicesChanged)
+
+public:
+  DeviceTab(McClient* client, const QString& tabId, QObject* parent = nullptr);
+
+  QString tabId() const { return m_tabId; }
+  QVariant screen() const { return m_screen; }
+  bool shown() const { return m_shown; }
+  DeviceStream* stream() { return &m_stream; }
+  DeviceTools* tools() { return &m_tools; }
+  bool show3d() const { return m_show3d; }
+  void setShow3d(bool on);
+  bool keyboardAttached() const { return m_keyboardAttached; }
+  void setKeyboardAttached(bool on);
+  // A Magic Keyboard is a landscape thing: attaching one this way turns a portrait iPad.
+  Q_INVOKABLE void toggleKeyboard();
+
+signals:
+  void screenChanged();
+  void choicesChanged();
+
+private:
+  friend class ThreadDevices;
+  void setScreen(const QVariant& screen, bool shown);
+
+  QString m_tabId;
+  DeviceStream m_stream;
+  DeviceTools m_tools;
+  QVariant m_screen;
+  bool m_shown = false;
+  bool m_show3d = false;
+  bool m_keyboardAttached = false;
 };

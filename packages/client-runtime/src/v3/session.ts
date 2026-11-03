@@ -121,6 +121,7 @@ import {
   ClusterSocket,
   type Shape,
   type ShapeFrame,
+  type StreamResumePoint,
   type WindowedSubscription,
 } from "./clusterSocket.ts";
 import { ShellShapeFold, type ShellRow } from "./shellShape.ts";
@@ -285,6 +286,44 @@ const decodeAgentSessionError = Schema.decodeUnknownOption(
 // page adds as many (the Qt desktop's window).
 const THREAD_WINDOW_ITEMS = 200;
 
+/**
+ * Where the thread streams of replaced sessions stopped, so the session that replaces
+ * one (a reconnect) asks the MC only for what the thread state lacks. Outlives the
+ * sessions of one client; holds the threads closed last.
+ */
+export class ThreadResumes {
+  private readonly held = new Map<
+    string,
+    { readonly fold: ThreadShapeFold; readonly point: StreamResumePoint }
+  >();
+
+  private readonly capacity: number;
+
+  constructor(capacity = 32) {
+    this.capacity = capacity;
+  }
+
+  /** Keeps where a thread stream stopped. */
+  put(key: string, fold: ThreadShapeFold, point: StreamResumePoint): void {
+    this.held.delete(key);
+    this.held.set(key, { fold, point });
+    for (const oldest of this.held.keys()) {
+      if (this.held.size <= this.capacity) break;
+      this.held.delete(oldest);
+    }
+  }
+
+  /** Takes where a thread stream stopped, when a thread state at `sequence` holds all of it. */
+  take(
+    key: string,
+    sequence: number | undefined,
+  ): { readonly fold: ThreadShapeFold; readonly point: StreamResumePoint } | undefined {
+    const entry = this.held.get(key);
+    this.held.delete(key);
+    return entry?.fold.resumes(sequence) === true ? entry : undefined;
+  }
+}
+
 /** A thread stream's frame as the stream items the thread state consumes. */
 function foldThreadFrame(
   fold: ThreadShapeFold,
@@ -398,6 +437,7 @@ function unsupported(tag: string): RpcClientError.RpcClientError {
 export function makeV3Session(input: {
   readonly socket: ClusterSocket;
   readonly environmentId: string;
+  readonly resumes?: ThreadResumes;
 }): Effect.Effect<RpcSession, ConnectionTransientError> {
   return Effect.gen(function* () {
     const { socket } = input;
@@ -470,6 +510,7 @@ export function makeV3Session(input: {
     const thread = (request: {
       readonly threadId: string;
       readonly historyCursor?: string | null | undefined;
+      readonly afterSequence?: number | undefined;
     }) => {
       // The window the client held before this session replaced the last one.
       const floor =
@@ -478,7 +519,11 @@ export function makeV3Session(input: {
           : request.historyCursor === null
             ? null
             : Number(request.historyCursor);
-      const fold = new ThreadShapeFold(ThreadId.make(request.threadId));
+      const key = `${input.environmentId}\u0000${request.threadId}`;
+      // A thread state that holds what a replaced session's stream gave it carries on
+      // from that stream's offset instead of loading the thread again.
+      const resumed = input.resumes?.take(key, request.afterSequence);
+      const fold = resumed?.fold ?? new ThreadShapeFold(ThreadId.make(request.threadId));
       return Stream.callback<OrchestrationV2ThreadStreamItem>((queue) =>
         Effect.acquireRelease(
           Effect.sync(() => {
@@ -489,6 +534,7 @@ export function makeV3Session(input: {
                 Queue.offerAllUnsafe(queue, foldThreadFrame(fold, frame));
               },
               Number.isInteger(floor) || floor === null ? floor : undefined,
+              resumed?.point,
             );
             earlier.set(request.threadId, subscription.more);
             return subscription;
@@ -498,6 +544,8 @@ export function makeV3Session(input: {
               if (earlier.get(request.threadId) === subscription.more) {
                 earlier.delete(request.threadId);
               }
+              const point = subscription.resumePoint();
+              if (point !== null) input.resumes?.put(key, fold, point);
               subscription.unsubscribe();
             }),
         ),
@@ -1589,6 +1637,7 @@ export function makeV3Session(input: {
  */
 export const connectV3Session = (
   connection: PreparedConnection,
+  resumes?: ThreadResumes,
 ): Effect.Effect<RpcSession, ConnectionAttemptError, Scope.Scope> =>
   Effect.gen(function* () {
     const hello = yield* Deferred.make<string, ConnectionTransientError>();
@@ -1627,6 +1676,10 @@ export const connectV3Session = (
           ),
       }),
     );
-    const session = yield* makeV3Session({ socket, environmentId: connection.environmentId });
+    const session = yield* makeV3Session({
+      socket,
+      environmentId: connection.environmentId,
+      ...(resumes === undefined ? {} : { resumes }),
+    });
     return { ...session, closed: Deferred.await(closed) } satisfies RpcSession;
   });

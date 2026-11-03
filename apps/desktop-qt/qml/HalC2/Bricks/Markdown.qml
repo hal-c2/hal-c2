@@ -25,15 +25,25 @@ Item {
 
     // An assistant reply offers "Cite" on a selection (AssistantSelectionToolbar).
     property bool citable: false
+    // A reply offers "Run in terminal" on a code block that is one complete
+    // shell command (Md.shellCommand), once it is no longer streaming.
+    property bool runnable: false
     // The brick this one is a quote of, which cites for it.
     property Markdown host: null
     // The text with the selection, when one has it.
     property TextEdit selection: null
 
-    signal linkActivated(string link)
+    // A pull request link's hover card and where a click on it goes
+    // (Panel.linkPreviews, a PullRequestLinkPreviews); none shows the address.
+    property var linkPreviews: null
+
+    // external: the click held Shift as well, for the browser whatever the link.
+    signal linkActivated(string link, bool external)
     // The selection to quote in the composer: {text, start, end, prefix,
     // suffix}, an AssistantCitation's selector over the reply as drawn.
     signal cited(var selector)
+    // The user ran a code block's command (trimmed) from its Run.
+    signal runCommand(string command)
 
     readonly property color headingColor: Theme.palette.color("text", "#f5f5f5")
     readonly property color mutedColor: Theme.palette.color("textMuted", "#818181")
@@ -273,11 +283,13 @@ Item {
     component RichText: TextEdit {
         id: richText
 
-        function follow(eventPoint) {
+        function follow(eventPoint, external) {
             const link = linkAt(eventPoint.position.x, eventPoint.position.y);
             if (link.length > 0 && !link.startsWith("task:"))
-                root.linkActivated(link);
+                root.linkActivated(link, external === true);
         }
+        // The link under the pointer is a pull request the panel can read: its card shows instead.
+        readonly property bool previewed: root.linkPreviews !== null && hoveredLink.length > 0 && root.linkPreviews.address === hoveredLink
 
         textFormat: TextEdit.RichText
         // TODO(ljos#159): Qt names a TextEdit by its text already; `ljos check` wants it said.
@@ -292,7 +304,11 @@ Item {
         font.pixelSize: Math.round(14 * Theme.fontScale)
         onLinkActivated: link => {
             if (link.startsWith("task:"))
-                root.linkActivated(link);
+                root.linkActivated(link, false);
+        }
+        onHoveredLinkChanged: {
+            if (root.linkPreviews !== null)
+                root.linkPreviews.hover(hoveredLink.startsWith("task:") ? "" : hoveredLink);
         }
         onSelectedTextChanged: root.track(this)
         function texts() {
@@ -301,7 +317,7 @@ Item {
         // Shown off its own text: bound to the link instead, it could open
         // with the previous link's text.
         ToolTip.visible: ToolTip.text.length > 0
-        ToolTip.text: hoveredLink.length > 0 && !hoveredLink.startsWith("task:") ? qsTr("%1\n%2-click to open").arg(hoveredLink).arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl") : ""
+        ToolTip.text: hoveredLink.length > 0 && !hoveredLink.startsWith("task:") && !previewed ? qsTr("%1\n%2-click to open").arg(hoveredLink).arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl") : ""
         ToolTip.delay: 600
         TapHandler {
             acceptedButtons: Qt.LeftButton
@@ -309,6 +325,23 @@ Item {
             acceptedModifiers: Qt.ControlModifier
             // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
             onTapped: eventPoint => richText.follow(eventPoint)
+        }
+        // Shift as well opens it in the browser, a pull request included.
+        TapHandler {
+            acceptedButtons: Qt.LeftButton
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            acceptedModifiers: Qt.ControlModifier | Qt.ShiftModifier
+            // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
+            onTapped: eventPoint => richText.follow(eventPoint, true)
+        }
+        HoverHandler {
+            id: linkPointer
+        }
+        PullRequestLinkCard {
+            previews: root.linkPreviews
+            shown: richText.previewed
+            address: richText.hoveredLink
+            pointer: linkPointer.point.position
         }
         // Offers what can be done with the link under a point.
         function linkMenu(position, scenePosition) {
@@ -499,6 +532,8 @@ Item {
                         property bool copied: false
                         readonly property real lineHeight: Math.round(root.codeSize * 1.375 * 10) / 10
                         readonly property string code: seg.code
+                        // What its Run sends to the terminal; empty when it offers none.
+                        readonly property string command: root.runnable && !root.streaming ? Md.shellCommand(seg) : ""
                         // A Mermaid block is drawn once its fence is closed; the
                         // user can switch back to its source.
                         readonly property bool mermaid: seg.language.toLowerCase() === "mermaid" && !seg.open
@@ -574,6 +609,13 @@ Item {
                                 checked: block.wrapped
                                 label: block.wrapped ? qsTr("Disable line wrap") : qsTr("Wrap lines")
                                 onClicked: block.wrapped = !block.wrapped
+                            }
+                            IconButton {
+                                objectName: "runCode"
+                                visible: block.command.length > 0
+                                iconName: "play"
+                                label: qsTr("Run in terminal")
+                                onClicked: root.runCommand(block.command)
                             }
                             IconButton {
                                 objectName: "copyCode"
@@ -931,7 +973,10 @@ Item {
                                 brick.text = Qt.binding(() => seg.payload);
                                 // A quote reads muted; an alert's body is ordinary text.
                                 brick.textColor = Qt.binding(() => quoteBox.kindOf ? root.textColor : root.mutedColor);
+                                brick.runnable = Qt.binding(() => root.runnable && !root.streaming);
+                                brick.linkPreviews = Qt.binding(() => root.linkPreviews);
                                 brick.linkActivated.connect(root.linkActivated);
+                                brick.runCommand.connect(root.runCommand);
                                 brick.host = root;
                             }
                         }

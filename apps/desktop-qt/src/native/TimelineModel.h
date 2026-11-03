@@ -44,12 +44,13 @@ class TimelineModel : public QAbstractListModel {
   Q_PROPERTY(QDateTime workingSince READ workingSince NOTIFY workingChanged)
   Q_PROPERTY(bool hasEarlier READ hasEarlier NOTIFY earlierChanged)
   Q_PROPERTY(bool loadingEarlier READ loadingEarlier NOTIFY earlierChanged)
-  Q_PROPERTY(bool brief READ brief NOTIFY briefChanged)
+  Q_PROPERTY(QString latest READ latest NOTIFY latestChanged)
+  Q_PROPERTY(bool phone READ phone NOTIFY foldsChanged)
 
 public:
   enum Role {
     IdRole = Qt::UserRole + 1,
-    // message, work, fold, plan, subagent, error, marker, or (brief) thinking
+    // message, work, fold, plan, subagent, error, marker, or (phone) thinking
     KindRole,
     // A message's: user or assistant.
     AuthorRole,
@@ -145,9 +146,16 @@ public:
   void setStatus(const QString& status, const QString& problem = {});
   bool working() const { return m_workingSince.isValid(); }
   QDateTime workingSince() const { return m_workingSince; }
+  // The newest row in one line, for a strip standing in for the timeline: the
+  // agent's reply, what its calls did, or the user's message ("You: ...").
+  QString latest() const { return m_latest; }
   // "Working for 12s", from the clock; the brick asks once a second.
   Q_INVOKABLE QString workingLabel() const;
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+  // Where copy() writes; false when the clipboard refuses (tests).
+  void setClipboardWriter(std::function<bool(const QString& text)> write) { m_writeClipboard = std::move(write); }
+  // A duration as the thread writes one: "340ms", "4.3s", "1m 2s", "1h 5s".
+  static QString durationText(qint64 ms);
   // Names another thread of this one's environment by id, for messages its
   // agent sent here; empty when the thread is not known.
   void setThreadTitles(std::function<QString(const QString& threadId)> titleOf) { m_threadTitle = std::move(titleOf); }
@@ -155,6 +163,16 @@ public:
   // times are read in; a change redraws every row's time.
   void setTimestampFormat(const QString& format);
   void setLocale(const QLocale& locale);
+  // How the timeline reads. The desktop's folds a settled turn's work and
+  // every reply but the last. The phone's is its activity log: it leaves a
+  // failed turn open, a row per call, and keeps a turn's first reply in view
+  // too; a settled turn lists only calls that ended, a delegation its
+  // subagent's card shows and the workspace's preparation are left out, and a
+  // running turn ends in one live row ("Thinking" when no call says what the
+  // agent is doing).
+  enum class Folds { Desktop, Phone };
+  void setFolds(Folds folds);
+  bool phone() const { return m_folds == Folds::Phone; }
   // Where the thread works (its worktree, else its project's root), which a
   // changed file's label is read from; empty when it is not known.
   void setWorkspaceRoot(std::function<QString()> root) { m_workspaceRoot = std::move(root); }
@@ -167,14 +185,6 @@ public:
   // A time that may be ahead, as a usage limit's reset reads: "9:41 AM" today,
   // "tomorrow at 9:41 AM", "10/9 9:41 AM"; a past one reads as stamp().
   QString upcoming(const QDateTime& at) const;
-
-  // Whether the timeline reads as the phone's activity log: a settled turn
-  // lists only calls that ended, a delegation its subagent's card shows and
-  // the workspace's preparation are left out, and a running turn ends in one
-  // live row ("Thinking" when no call says what the agent is doing). Off, as
-  // the desktop reads it, unless set.
-  bool brief() const { return m_brief; }
-  void setBrief(bool brief);
 
   // The `kinds` a subscription to a thread's stream names: the entities the
   // model folds, so the MC sends no others.
@@ -212,6 +222,10 @@ public:
   // The thread's entities of one stream kind (run, runtime-request, plan,
   // turn-item, ...) by id, for the composer's turn state.
   QHash<QString, QJsonObject> entities(const QString& kind) const { return m_entities.value(kind); }
+  // What the agent last did to the workspace (its newest settled command or
+  // file change, and the checkpoints), or empty: a change of it after
+  // workspaceChanged means the files may differ.
+  QString workspaceMutation() const;
 
   // Opens or closes a fold ("fold:<runId>") or a work group ("work:<itemId>").
   Q_INVOKABLE void toggle(const QString& rowId);
@@ -233,8 +247,9 @@ public:
   // [{type, id, name, mimeType, sizeBytes}])}. Empty for any other row, and
   // without `checkpointId` when no checkpoint precedes the message.
   Q_INVOKABLE QVariantMap rewindPointOf(const QString& rowId) const;
-  // Puts a message's markdown on the clipboard; false for any other row.
-  Q_INVOKABLE bool copy(const QString& rowId) const;
+  // Puts a message's markdown on the clipboard: empty when it did, else
+  // why not, for the copy button to say beside itself.
+  Q_INVOKABLE QString copy(const QString& rowId) const;
   // Asks for an image's address (attachmentWanted) unless one that still
   // works is known or on its way; its row's `attachments` (or, for a call's
   // imageId "workspace-file:<path>", its `entries`) carry it once
@@ -252,6 +267,7 @@ signals:
   void countChanged();
   void statusChanged();
   void workingChanged();
+  void latestChanged();
   // After a snapshot, or events that touched runs, requests, plans or the
   // request and user message items: what entities() gives the composer.
   void turnChanged();
@@ -271,11 +287,12 @@ signals:
   // The MC answered: an image's new address, empty when it would not sign one.
   void attachmentSigned(const QString& id, const QUrl& url);
   void earlierChanged();
-  void briefChanged();
+  void foldsChanged();
   // loadEarlier(): the runs before the window holding `items` turn items are wanted.
   void earlierWanted(int items);
 
 private:
+  void refreshLatest();
   struct Row {
     QString id;
     QString kind;
@@ -349,6 +366,7 @@ private:
 
   QString m_threadKey;
   QString m_status = QStringLiteral("loading");
+  QString m_latest;
   QString m_problem;
   Entities m_entities;
   // A snapshot arriving in parts.
@@ -365,6 +383,7 @@ private:
   // run stopped here (Row::startsOpen).
   QSet<QString> m_expandedGroups;
   QSet<QString> m_keptOpen;  // run ids
+  Folds m_folds = Folds::Desktop;
   QHash<QString, AttachmentUrl> m_attachmentUrls;  // by attachment id
   // A Snap Shot's tree as JSON, by attachment id: a list reads its role on every bind.
   mutable QHash<QString, QString> m_accessJson;
@@ -377,10 +396,10 @@ private:
   QHash<QString, QJsonObject> m_agentModels;
   bool m_workspaceTouched = false;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
+  std::function<bool(const QString&)> m_writeClipboard;
   std::function<QString(const QString&)> m_threadTitle;
   std::function<QString()> m_workspaceRoot;
   QString m_timestampFormat = QStringLiteral("locale");
-  bool m_brief = false;
   QLocale m_locale;
   cache::Cursor m_cursor;
   // Between a `sub` frame and the `live` that answers it.

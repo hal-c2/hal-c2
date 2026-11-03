@@ -62,7 +62,7 @@ const latestRun = (fixture: Fixture): Fields => {
 /** The id of the run the scenario is in. */
 export const currentRun = (ctx: TurnWorld): string => String(latestRun(ctx.turns!).id);
 
-function projection(ctx: TurnWorld): OrchestrationV2ThreadProjection {
+export function projection(ctx: TurnWorld): OrchestrationV2ThreadProjection {
   const fixture = ctx.turns!;
   const base = ctx.thread!;
   const created = time(NOW_MS - 60 * 60_000);
@@ -355,6 +355,8 @@ export interface ShownItem {
   readonly align: string;
   readonly boxed: boolean;
   readonly lines: ReadonlyArray<ShownLine>;
+  /** The rows a collapsed message is cut to; null when it shows in full. */
+  readonly clip: { readonly rows: number } | null;
 }
 
 export const shownItems = (ctx: ThreadWorld): ShownItem[] => hostState(ctx, "timeline").items;

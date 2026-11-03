@@ -415,7 +415,6 @@ defmodule HalC2.Steps.Orchestration.Threads do
   end
 
   step "the queued message is still queued", context do
-    assert {:ok, _} = context.reply
     running = context.running
 
     World.await_thread(

@@ -321,6 +321,10 @@ const Steps steps([] {
            QStringLiteral("the collapsed group shows %1").arg(show(shown)));
   });
   step(QStringLiteral("it reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (const ShownDuration& duration = world.mc.part<ShownDuration>(); duration.shown) {
+      expect(duration.text == c[0], QStringLiteral("the duration reads \"%1\"").arg(duration.text));
+      return;
+    }
     expect(groupLine(world) == c[0], QStringLiteral("the group reads \"%1\"").arg(groupLine(world)));
     Brick& brick = timelineBrick(world);
     world.waitFor([&] { return brick.shows(c[0]); }, QStringLiteral("the timeline to draw \"%1\"").arg(c[0]));

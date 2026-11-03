@@ -79,10 +79,10 @@ public:
   void setClock(std::function<QDateTime()> now);
   // The locale the timelines read times in (the system's by default).
   void setLocale(const QLocale& locale);
+  // How the timelines read: the desktop's or the phone's (TimelineModel::setFolds).
+  void setFolds(TimelineModel::Folds folds);
   // A time that may be ahead (a usage limit's reset) as the timelines read it.
   QString upcoming(const QDateTime& at) const;
-  // Whether the timelines read as the phone's activity log (TimelineModel::brief).
-  void setBriefTimelines(bool brief);
 
   // The one place a thread's stream is addressed.
   static QJsonObject streamShape(const QString& environmentId, const QString& threadId);
@@ -141,5 +141,5 @@ private:
   std::function<QDateTime()> m_now;
   QString m_timestampFormat = QStringLiteral("locale");
   QLocale m_locale;
-  bool m_brief = false;
+  TimelineModel::Folds m_folds = TimelineModel::Folds::Desktop;
 };

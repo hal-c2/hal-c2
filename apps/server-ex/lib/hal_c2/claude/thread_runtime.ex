@@ -1256,39 +1256,24 @@ defmodule HalC2.Claude.ThreadRuntime do
   # Off this process, since starting the run calls back into it.
   defp wake(state, message) do
     runtime = self()
-    thread_id = state.thread_id
 
-    Task.start(fn ->
-      stream = HalC2.Streams.state(thread_id)
-      # Not a held queue's run, which waits with a higher ordinal behind the one that ran.
-      latest = HalC2.Projection.Shell.latest_run(StreamState.list(stream, "run")) || %{}
-      message_id = Entities.new_id("message")
-
-      with {:error, reason} <-
-             Orchestration.dispatch(%{
-               "type" => "message.dispatch",
-               "commandId" => "command:claude-wake:#{message_id}",
-               "threadId" => thread_id,
-               "messageId" => message_id,
-               "text" => "Background task completed.",
-               "attachments" => [],
-               "modelSelection" => latest["modelSelection"],
-               "dispatchMode" => %{"type" => "queue_after_active"},
-               "createdBy" => "agent",
-               "creationSource" => "provider",
-               "providerWake" => true,
-               # What the timeline shows for it, in place of a message nobody sent
-               # (apps/server ProviderContinuationService.ts).
-               "notification" => %{
-                 "source" => %{"kind" => "background_task"},
-                 "outcome" => "updated",
-                 "summary" => "Background activity updated"
-               }
-             }) do
-        Logger.warning("claude wake in #{thread_id} has no run: #{inspect(reason)}")
-        send(runtime, :wake_refused)
-      end
-    end)
+    HalC2.Orchestration.Wake.deliver(
+      state.thread_id,
+      %{
+        "text" => "Background task completed.",
+        # Its run replays what Claude already sent rather than sending this.
+        "providerWake" => true,
+        # What the timeline shows for it, in place of a message nobody sent
+        # (apps/server ProviderContinuationService.ts).
+        "notification" => %{
+          "source" => %{"kind" => "background_task"},
+          "outcome" => "updated",
+          "summary" => "Background activity updated"
+        }
+      },
+      instance: state.last_ids && Entities.instance(state.last_ids),
+      on_dropped: fn -> send(runtime, :wake_refused) end
+    )
 
     %{state | wake: %{open: not result?(message), buffer: [message]}}
   end

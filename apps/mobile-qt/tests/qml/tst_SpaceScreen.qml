@@ -182,6 +182,46 @@ Item {
             verify(!screen.stepBack());
         }
 
+        function sectionRow(kind, path, expanded) {
+            const name = kind === "project" ? "shop" : path.split("/").pop();
+            return { id: kind + ":shop:" + path, kind: kind, projectId: "shop", path: path, name: name, depth: path === "" ? 0 : path.split("/").length, expanded: expanded ?? false, pageId: "" };
+        }
+
+        // The project sections follow the Space's pages; the import from the pages' bar is gone.
+        function test_aTapOnAProjectsSectionExpandsOrCollapsesIt() {
+            const screen = makeScreen({ projects: [sectionRow("project", "")] });
+            screen.openSpace("s1");
+            // The sections' list builds its rows when it is drawn.
+            waitForRendering(screen);
+            verify(findChild(screen, "spaceFromProjectFiles") === null);
+            const section = findChild(screen, "spaceProject:shop");
+            verify(section !== null && section.visible);
+            compare(section.Accessible.name, "Expand shop");
+            mouseClick(section);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: true }]);
+
+            Spaces.fill(Spaces.projects, [sectionRow("project", "", true), sectionRow("folder", "docs"), sectionRow("file", "docs/guide.md")]);
+            waitForRendering(screen);
+            const expanded = findChild(screen, "spaceProject:shop");
+            compare(expanded.Accessible.name, "Collapse shop");
+            mouseClick(expanded);
+            compare(dispatched("space.project.setExpanded")[1], { projectId: "shop", expanded: false });
+        }
+
+        function test_aFileInASectionIsEditedAsAPage() {
+            const screen = makeScreen({ projects: [sectionRow("project", "", true), sectionRow("folder", "docs"), sectionRow("file", "docs/guide.md")] });
+            screen.openSpace("s1");
+            waitForRendering(screen);
+            const folder = findChild(screen, "spaceProjectFolder:shop:docs");
+            const file = findChild(screen, "spaceProjectFile:shop:docs/guide.md");
+            verify(folder.visible && file.visible);
+            compare(file.depth, folder.depth + 1);
+            // A folder only holds its files.
+            verify(!folder.enabled);
+            mouseClick(file);
+            compare(dispatched("space.openFile"), [{ projectId: "shop", relativePath: "docs/guide.md" }]);
+        }
+
         function test_theImagesAreOneStepFromThePagesAndSignedOnlyWhileOpen() {
             const screen = makeScreen();
             screen.openSpace("s1");
@@ -514,7 +554,6 @@ Item {
             const screen = openFilePage(undefined);
             verify(!findChild(screen, "spacePageFile").visible);
             verify(!sheetIdsOf(screen, "p1").includes("showFile"));
-            verify(!sheetIdsOf(screen, "p1").includes("unlinkFile"));
         }
 
         function test_aGoneFileIsNotOfferedToShow() {
@@ -523,7 +562,6 @@ Item {
             verify(!findChild(screen, "spacePageFileShow").visible);
             const ids = sheetIdsOf(screen, "p1");
             verify(!ids.includes("showFile"));
-            verify(ids.includes("unlinkFile"));
         }
 
         function test_aFileThatWonLeadsToTheHistory() {
@@ -540,16 +578,17 @@ Item {
             return ids;
         }
 
-        function test_theOpenFilePagesMenuShowsOrStopsFollowingItsFile() {
+        // A page of a project's Space is always its file: nothing stops it following it.
+        function test_theOpenFilePagesMenuShowsItsFile() {
             const screen = openFilePage(fileOf());
             const ids = sheetIdsOf(screen, "p1");
             verify(ids.includes("showFile"));
-            verify(ids.includes("unlinkFile"));
+            verify(!ids.includes("unlinkFile"));
             // Of a page only listed, its file is not known.
-            verify(!sheetIdsOf(screen, "p2").includes("unlinkFile"));
+            verify(!sheetIdsOf(screen, "p2").includes("showFile"));
             screen.pageMenu("p1", "p1", "", {});
-            sheetOf(screen).choose("unlinkFile");
-            compare(dispatched("space.page.unlinkFile")[0].pageId, "p1");
+            sheetOf(screen).choose("showFile");
+            compare(dispatched("space.page.showFile")[0].pageId, "p1");
         }
 
         function test_aVersionTheFileWroteSaysSo() {
@@ -787,26 +826,107 @@ Item {
             compare(update.text, "Final");
         }
 
-        function test_aPageMenuAsksAnAgentAndOpensThePage() {
+        // The prompt aimed at the open page, as ComposerController publishes it.
+        function aimPrompt(pageId) {
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    target: "page#" + pageId,
+                    routeKind: "page",
+                    pageId: pageId,
+                    project: { id: "shop", title: "shop" },
+                    projects: [{ id: "shop", title: "shop" }, { id: "docs", title: "docs" }],
+                    followUpBehavior: ""
+                })
+            });
+        }
+
+        // The page's menu opens the page and starts an ask in its prompt from what is
+        // typed there; the controller puts `@agent` ahead of it.
+        function test_aPageMenuStartsAnAskInThePagesPrompt() {
             const screen = makeScreen();
+            aimPrompt("p2");
             screen.openSpace("s1");
             screen.pageMenu("p2", "Q3", "p1");
             sheetOf(screen).choose("agent");
-            dialogOf(screen).then("tidy this");
-            compare(dispatched("space.agent.ask"), [{ pageId: "p2", request: "tidy this" }]);
             compare(screen.view, "page");
             compare(screen.openedPageId, "p2");
+            compare(dispatched("composer.ask").length, 1);
+            verify(!dialogOf(screen).opened);
+            const composer = findChild(screen, "spaceComposer");
+            verify(composer.visible);
+            composer.editor.text = "the plan";
+            screen.pageMenu("p2", "Q3", "p1");
+            sheetOf(screen).choose("agent");
+            compare(dispatched("composer.ask").length, 2);
+            const actions = Shell.dispatchedActions.map(entry => entry.action);
+            verify(actions.lastIndexOf("composer.text.set") < actions.lastIndexOf("composer.ask"));
         }
 
-        function test_anAskTheMcRefusesComesBackWithItsWords() {
-            const screen = makeScreen();
+        // Words the controller does not send to an agent are written as a block of
+        // the kind chosen, at the end of the page; only the open page's.
+        function test_thePromptsWordsAreWrittenAsABlock() {
+            const screen = makeScreen({ blocks: [root.block("b1", "Draft")] });
+            aimPrompt("p1");
             screen.openSpace("s1");
-            Spaces.agentAskAnswered("p2", "tidy this", true);
-            verify(!findChild(screen, "spaceTextDialog").opened);
-            Spaces.agentAskAnswered("p2", "tidy this", false);
-            tryVerify(() => findChild(screen, "spaceTextDialog").opened);
-            compare(findChild(screen, "spaceTextField").text, "tidy this");
-            findChild(screen, "spaceTextDialog").close();
+            screen.openPage("p1");
+            Shell.actionRequested("space.prompt.write", { pageId: "p1", text: "First idea" });
+            compare(dispatched("space.block.insert"), [{ pageId: "p1", checked: false, kind: "paragraph", text: "First idea" }]);
+            Shell.actionRequested("space.prompt.write", { pageId: "p9", text: "Elsewhere" });
+            compare(dispatched("space.block.insert").length, 1);
+            Shell.actionRequested("space.prompt.write", { pageId: "p1", text: "/visualize weekly turns" });
+            compare(dispatched("space.block.visualize"), [{ pageId: "p1", request: "/visualize weekly turns" }]);
+        }
+
+        // A `/` offers the kinds of block; the one picked writes the next block,
+        // and a heading goes back to text after one.
+        function test_aSlashPicksTheKindOfBlock() {
+            const screen = makeScreen();
+            aimPrompt("p1");
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const composer = findChild(screen, "spaceComposer");
+            const slash = findChild(screen, "spaceSlashMenu");
+            composer.editor.text = "/hea";
+            tryVerify(() => slash.visible);
+            compare(slash.shown.map(entry => entry.kind), ["heading"]);
+            verify(slash.choose());
+            compare(composer.editor.text, "");
+            compare(findChild(screen, "spaceNewKind").text, "Heading");
+            Shell.actionRequested("space.prompt.write", { pageId: "p1", text: "Goals" });
+            compare(dispatched("space.block.insert")[0].kind, "heading");
+            compare(findChild(screen, "spaceNewKind").text, "Text");
+            composer.editor.text = "/vis";
+            tryVerify(() => slash.visible);
+            verify(slash.choose());
+            compare(composer.editor.text, "/visualize ");
+        }
+
+        // While the prompt asks an agent it says where, and the project can be changed.
+        function test_anAskSaysWhereItRuns() {
+            const screen = makeScreen();
+            aimPrompt("p1");
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const composer = findChild(screen, "spaceComposer");
+            const project = findChild(screen, "spaceAskProject");
+            verify(!project.visible);
+            composer.editor.text = "@agent tidy this";
+            tryVerify(() => project.visible);
+            verify(!findChild(screen, "spaceNewKind").visible);
+            compare(project.text, "shop");
+            project.clicked();
+            compare(sheetIds(screen), ["shop", "docs"]);
+            sheetOf(screen).choose("docs");
+            compare(dispatched("composer.project.set"), [{ projectId: "docs" }]);
+        }
+
+        // A page in the trash has no prompt.
+        function test_aTrashedPageHasNoPrompt() {
+            const screen = makeScreen({ page: root.pageOf("p1", { trashed: true }) });
+            aimPrompt("p1");
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            verify(!findChild(screen, "spaceComposer").visible);
         }
 
         function test_aStoppingAgentCanBeStoppedAgain() {

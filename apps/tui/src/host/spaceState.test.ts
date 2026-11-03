@@ -4,9 +4,11 @@ import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-enti
 
 import type { AskSpec } from "./askState.ts";
 import type { PickRequest } from "./composerState.ts";
+import { memoryMutedThreads } from "./mutedThreads.ts";
 import {
   createSpaceController,
   imageTypeOf,
+  type SpaceControllerOptions,
   refusalText,
   type TuiSpaceRow,
   type TuiSpaceState,
@@ -67,7 +69,7 @@ const events = (
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 /** A controller on a client whose streams and replies the test drives by hand. */
-function setup(origin?: string) {
+function setup(origin?: string, extra: Partial<SpaceControllerOptions> = {}) {
   const streams = new Map<string, Array<(frame: EntityStreamFrame) => void>>();
   const replies = new Map<string, Array<(value: unknown) => void>>();
   const refusals = new Map<string, Array<(error: unknown) => void>>();
@@ -80,6 +82,8 @@ function setup(origin?: string) {
   const asks: AskSpec[] = [];
   const uploads = { fails: false, sent: 0 };
   const lists = { fails: false };
+  // What `space.files.list` answers for every project, unless a test answers it by hand.
+  const projectFiles = { byHand: false, paths: [] as string[] };
   let state: TuiSpaceState | null = null;
   const controller = createSpaceController({
     client: {
@@ -88,6 +92,15 @@ function setup(origin?: string) {
         if (method === "space.list") {
           if (lists.fails) return Promise.reject(new Error("The connection to the MC was lost."));
           return Promise.resolve({ spaces: [] } as T);
+        }
+        if (method === "space.page.agentTarget") return Promise.resolve({ projectId: "p1" } as T);
+        if (method === "space.files.list" && !projectFiles.byHand) {
+          const files = projectFiles.paths.map((relativePath) => ({
+            relativePath,
+            kind: "page",
+            page: null,
+          }));
+          return Promise.resolve({ config: "default", files, spaceId: null } as T);
         }
         return new Promise<T>((resolve, reject) => {
           const waiting = replies.get(method) ?? [];
@@ -130,6 +143,7 @@ function setup(origin?: string) {
     projects: () => [{ id: "p1", title: "shop" }],
     openThread: (threadId) => opened.push(threadId),
     ...(origin ? { origin } : {}),
+    ...extra,
   });
   /** Send a frame on `stream`; `subscription` picks an older follow of the same stream. */
   const send = (stream: string, frame: EntityStreamFrame, subscription = -1) =>
@@ -162,6 +176,7 @@ function setup(origin?: string) {
     asks,
     uploads,
     lists,
+    projectFiles,
     streams,
     opened,
     onPage,
@@ -173,8 +188,9 @@ function setup(origin?: string) {
 function inResearch(
   rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
   origin?: string,
+  extra: Partial<SpaceControllerOptions> = {},
 ) {
-  const t = setup(origin);
+  const t = setup(origin, extra);
   t.controller.dispatch("space.open", {});
   t.send("spaces", snapshot(1, [space("s1", "Research")]));
   t.select("space:s1");
@@ -914,6 +930,98 @@ describe("a page's agent", () => {
   });
 });
 
+describe("a page's prompt", () => {
+  const onRoadmap = () => {
+    const t = inResearch([page("p1", "Roadmap")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+  const words = (text: string, attachments: ReadonlyArray<never> = []) => ({
+    text,
+    attachments,
+    projectId: "p1",
+    modelSelection: null,
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+  });
+  const sent = (t: ReturnType<typeof setup>, method: string) =>
+    t.calls.filter((call) => call.method === method).map((call) => call.payload);
+
+  test("aims at the open page, and ^P moves the keys to it and back", async () => {
+    const t = onRoadmap();
+    await t.controller.settled();
+    expect(t.controller.prompt()).toMatchObject({
+      key: "page:s1:p1",
+      title: "Roadmap",
+      writes: "writes a paragraph",
+      defaultProjectId: "p1",
+    });
+    expect(t.controller.mode()).toBe("space");
+    t.controller.dispatch("space.prompt", {});
+    expect(t.controller.mode()).toBe("pagePrompt");
+    t.controller.dispatch("space.focus", {});
+    expect(t.controller.mode()).toBe("space");
+    t.controller.dispatch("space.back", {});
+    expect(t.controller.prompt()).toBeNull();
+  });
+
+  test("plain words write a block of the kind / chose, and a heading is one block", async () => {
+    const t = onRoadmap();
+    const prompt = t.controller.prompt()!;
+    expect(prompt.kinds.map((kind) => kind.label)).toContain("Visualize");
+    expect(prompt.kinds.map((kind) => kind.label)).not.toContain("Chart");
+    expect(prompt.chooseKind("heading")).toBe("");
+    expect(t.controller.prompt()!.writes).toBe("writes a heading");
+    const written = t.controller.prompt()!.submit(words("Plans"));
+    t.reply("space.block.insert", { block: block("b1", "p1", "Plans", "a0")[2] });
+    expect(await written).toBeNull();
+    expect(sent(t, "space.block.insert")).toEqual([
+      { spaceId: "s1", pageId: "p1", kind: "heading", text: "Plans" },
+    ]);
+    expect(t.controller.prompt()!.writes).toBe("writes a paragraph");
+    expect(prompt.chooseKind("chart")).toBe("/visualize ");
+  });
+
+  test("@agent asks with the prompt's choices, and a refusal comes back as words", async () => {
+    const t = onRoadmap();
+    const asked = t.controller.prompt()!.submit(words("@agent tidy this"));
+    t.refuse("space.page.askAgent", new Error("That model cannot run here."));
+    expect(await asked).toBe("That model cannot run here.");
+    expect(sent(t, "space.page.askAgent")).toEqual([
+      {
+        spaceId: "s1",
+        pageId: "p1",
+        request: "tidy this",
+        projectId: "p1",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      },
+    ]);
+  });
+
+  test("images go only with an ask", async () => {
+    const t = onRoadmap();
+    const upload = { type: "image", name: "a.png" } as never;
+    expect(await t.controller.prompt()!.submit(words("Plans", [upload]))).toBe(
+      "Images go with an ask: start the prompt with @agent.",
+    );
+  });
+
+  test("/visualize lets go of the prompt while the chart is drawn, and says why one was not", async () => {
+    const t = onRoadmap();
+    // The prompt is free before the MC answers: a model draws the chart.
+    expect(await t.controller.prompt()!.submit(words("/visualize sales by month"))).toBeNull();
+    expect(sent(t, "space.block.visualize")).toEqual([
+      { spaceId: "s1", pageId: "p1", request: "sales by month" },
+    ]);
+    expect(t.statuses.at(-1)).toBe("Drawing a chart…");
+    t.refuse("space.block.visualize", new Error("No numbers to chart."));
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toBe("No numbers to chart.");
+  });
+});
+
 describe("images", () => {
   const image = (id: string, name: string, trashedAt: string | null = null) =>
     ["image", id, { id, spaceId: "s1", name, prompt: null, trashedAt }] as const;
@@ -997,23 +1105,43 @@ describe("images", () => {
 });
 
 describe("project files", () => {
-  test("with no Space to open into, opening a file says so and asks nothing", async () => {
+  test("a file opens as a page of its project's Space, with no Space of the user's", async () => {
     const t = setup();
     t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", { spaceId: "ps1", page: page("g1", "Guide")[2], created: true });
     await t.controller.settled();
-    expect(t.statuses.at(-1)).toBe(
-      "There is no Space to open it in: make one first (^X p, then n).",
-    );
-    expect(t.calls.map((call) => call.method)).toEqual(["space.list"]);
+    // The pane it shows asks for its Spaces afterwards; nothing is asked before the file.
+    expect(t.calls[0]).toEqual({
+      method: "space.page.openFile",
+      payload: { projectId: "p1", relativePath: "docs/guide.md" },
+    });
+    expect(t.statuses.at(-1)).toBe("Opened docs/guide.md as the page “Guide”.");
   });
 
-  test("Spaces that could not be listed say why, not to make one", async () => {
+  test("the project's Space stays open once the Spaces arrive without it", async () => {
     const t = setup();
-    t.lists.fails = true;
     t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", { spaceId: "ps1", page: page("g1", "Guide")[2], created: true });
     await t.controller.settled();
-    expect(t.statuses).toEqual(["The connection to the MC was lost."]);
-    expect(t.calls.map((call) => call.method)).toEqual(["space.list"]);
+    const shop = { id: "ps1", projectId: "p1", name: "shop", createdAt: at, updatedAt: at };
+    t.send("spaces", snapshot(1, [space("s1", "Research"), ["projectSpace", "ps1", shop]]));
+    t.send("space:ps1", snapshot(10, [page("g1", "Guide")]));
+    expect(t.statuses).not.toContain("The Space was deleted.");
+    expect(t.view().title).toBe("page · Guide");
+    t.controller.dispatch("space.back", {});
+    expect(t.view().title).toBe("space · shop");
+  });
+
+  test("a file opened again is the page it already is", async () => {
+    const t = setup();
+    t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", {
+      spaceId: "ps1",
+      page: page("g1", "Guide")[2],
+      created: false,
+    });
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toBe("docs/guide.md is the page “Guide”.");
   });
 
   test("a project of another machine is not asked of this MC", async () => {
@@ -1026,6 +1154,7 @@ describe("project files", () => {
 
   test("a list the MC failed to give is asked for again", async () => {
     const t = setup();
+    t.projectFiles.byHand = true;
     expect(t.controller.isSpaceFile("p1", "docs/guide.md")).toBe(false);
     t.refuse("space.files.list", new Error("lost the connection"));
     await t.controller.settled();
@@ -1037,5 +1166,101 @@ describe("project files", () => {
     await t.controller.settled();
     expect(t.controller.isSpaceFile("p1", "docs/guide.md")).toBe(true);
     expect(t.calls.filter((call) => call.method === "space.files.list")).toHaveLength(2);
+  });
+});
+
+describe("projects in the Space's pages", () => {
+  const guide = page("g1", "Guide", {
+    spaceId: "ps1",
+    file: { projectId: "p1", path: "docs/guide.md", missing: false, conflictAt: null },
+  });
+  const shop = { id: "ps1", projectId: "p1", name: "shop", createdAt: at, updatedAt: at };
+
+  /** In Research, with shop's Space files listed. */
+  async function withShop(paths: string[], sections = memoryMutedThreads()) {
+    const t = inResearch([page("p1", "Plan")], undefined, { projectSections: sections });
+    t.projectFiles.paths = paths;
+    t.controller.dispatch("space.close", {});
+    t.controller.dispatch("space.open", {});
+    await t.controller.settled();
+    t.send("spaces", snapshot(2, [space("s1", "Research"), ["projectSpace", "ps1", shop]]));
+    t.select("space:s1");
+    t.controller.dispatch("space.activate", {});
+    t.send("space:s1", snapshot(10, [page("p1", "Plan")]), -1);
+    return t;
+  }
+
+  test("a project shows after the Space's pages, collapsed, and expands to its files by folder", async () => {
+    const t = await withShop(["docs/guide.md", "README.md"]);
+    expect(t.view().rows.map((row) => row.key)).toEqual(["page:p1", "project:p1"]);
+    expect(t.texts("project")).toEqual(["▸ shop"]);
+    t.select("project:p1");
+    t.controller.dispatch("space.activate", {});
+    expect(
+      t
+        .view()
+        .rows.slice(1)
+        .map((row) => row.text.trim()),
+    ).toEqual(["▸ ▾ shop", "docs/", "guide.md", "README.md"]);
+    t.controller.dispatch("space.activate", {});
+    expect(t.texts("file")).toEqual([]);
+  });
+
+  test("a project with no Space files has no section", async () => {
+    const t = await withShop([]);
+    expect(t.texts("project")).toEqual([]);
+  });
+
+  test("the expanded sections are remembered for the next start", async () => {
+    const sections = memoryMutedThreads();
+    // A project removed since is forgotten with the next change.
+    sections.save(["gone"]);
+    const t = await withShop(["docs/guide.md"], sections);
+    t.select("project:p1");
+    t.controller.dispatch("space.activate", {});
+    expect(sections.load()).toEqual(["p1"]);
+    const again = await withShop(["docs/guide.md"], sections);
+    expect(again.texts("project")).toEqual(["▾ shop"]);
+    expect(again.texts("file")).toEqual(["guide.md"]);
+  });
+
+  test("a file picked in its section opens from the project's Space, and back is the Space it was picked in", async () => {
+    const t = await withShop(["docs/guide.md"]);
+    t.select("project:p1");
+    t.controller.dispatch("space.activate", {});
+    t.select("file:p1|docs/guide.md");
+    t.controller.dispatch("space.activate", {});
+    t.reply("space.page.openFile", { spaceId: "ps1", page: guide[2], created: false });
+    await t.controller.settled();
+    t.send("space:ps1", snapshot(10, [guide]));
+    expect(t.view().title).toBe("page · Guide");
+    t.controller.dispatch("space.back", {});
+    expect(t.view().title).toBe("space · Research");
+    expect(t.view().rows.find((row) => row.selected)?.key).toBe("file:p1|docs/guide.md");
+  });
+
+  test("a file opened from elsewhere expands its section, and its page goes back to a Space of the user's", async () => {
+    const sections = memoryMutedThreads();
+    const t = setup(undefined, { projectSections: sections });
+    t.projectFiles.paths = ["docs/guide.md"];
+    t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", { spaceId: "ps1", page: guide[2], created: true });
+    await t.controller.settled();
+    t.send("spaces", snapshot(1, [space("s1", "Research"), ["projectSpace", "ps1", shop]]));
+    t.send("space:ps1", snapshot(10, [guide]));
+    expect(sections.load()).toEqual(["p1"]);
+    t.controller.dispatch("space.back", {});
+    expect(t.view().title).toBe("space · Research");
+    expect(t.view().rows.find((row) => row.selected)?.key).toBe("file:p1|docs/guide.md");
+  });
+
+  test("a file's page deleted for good goes back to the user's Space, not the project's", async () => {
+    const t = await withShop(["docs/guide.md"]);
+    t.controller.dispatch("space.openProjectFile", { projectId: "p1", path: "docs/guide.md" });
+    t.reply("space.page.openFile", { spaceId: "ps1", page: guide[2], created: false });
+    await t.controller.settled();
+    t.send("space:ps1", snapshot(10, [guide]));
+    t.send("space:ps1", snapshot(11, []));
+    expect(t.view().title).toBe("space · Research");
   });
 });

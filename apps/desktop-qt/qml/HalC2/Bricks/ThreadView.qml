@@ -17,6 +17,12 @@ Item {
 
     // The corner radius of layouts that round the centre.
     property real radius: 0
+    // What a thread with no conversation yet says, and the hint under it
+    // (none by default; the phone suggests what to ask).
+    property string emptyText: qsTr("Send a message to start the conversation.")
+    property string emptyHint: ""
+    // Whether messages show their time and actions without hover (touch layouts).
+    property alias alwaysShowMeta: timeline.alwaysShowMeta
     readonly property var route: Shell.state.route ?? null
     readonly property bool draft: route !== null && route.kind === "draft"
     // The user scrolled a thread's conversation away from its latest output (the composer rests then).
@@ -41,16 +47,18 @@ Item {
     readonly property color mutedColor: Theme.palette.color("textMuted", "#8b8b93")
     readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
 
-    // Where web addresses go: the system browser, a dev server on another MC's
-    // machine through the connected MC's forward (tests keep them in).
-    property var openExternally: url => Shell.dispatch("thread.openAddress", {
-            url: url
+    // Where web addresses go: a pull request beside the thread, the system
+    // browser, a dev server on another MC's machine through the connected
+    // MC's forward (tests keep them in). external: to the browser regardless.
+    property var openExternally: (url, external) => Shell.dispatch("thread.openLink", {
+            url: url,
+            external: external === true
         })
 
     // Web addresses leave the app; anything else is a path in the project.
-    function openLink(link) {
+    function openLink(link, external) {
         if (/^(https?|mailto):/i.test(link)) {
-            view.openExternally(link);
+            view.openExternally(link, external);
             return;
         }
         let path = link.replace(/^file:\/\//i, "");
@@ -117,7 +125,8 @@ Item {
         model: view.model
         sending: view.sending
         showStatus: false
-        onLinkActivated: link => view.openLink(link)
+        linkPreviews: Panel.linkPreviews
+        onLinkActivated: (link, external) => view.openLink(link, external)
         onFileActivated: (path, tab, rowId) => view.openFile(path, tab, rowId)
         // Saving a queued message's edit sends its text alone, so no quote
         // is taken while one is edited.
@@ -126,6 +135,13 @@ Item {
             messageId: messageId
         }, selector))
         onRevertRequested: rowId => view.askRevert(rowId)
+        // In the thread's terminal, the way a project action runs; offered
+        // only where the thread has one (not in the phone's layout or a build
+        // without the terminal).
+        runnable: Terminals.available
+        onRunCommand: command => Shell.dispatch("workspace.runCommand", {
+                command: command
+            })
         onEditRequested: rowId => Shell.dispatch("rewind.request", {
                 rowId: rowId
             })
@@ -261,7 +277,7 @@ Item {
                     const project = view.workspace ? view.workspace.projectTitle : "";
                     return project ? qsTr("What should we build in %1?").arg(project) : qsTr("Add a project to start");
                 }
-                return view.loading ? qsTr("Loading…") : qsTr("Send a message to start the conversation.");
+                return view.loading ? qsTr("Loading…") : view.emptyText;
             }
 
             // A draft's opening line picks its project: a click, or Enter or
@@ -312,6 +328,17 @@ Item {
                     parts.push(view.workspace.branch);
                 return parts.join(" · ");
             }
+        }
+        Label {
+            objectName: "threadPlaceholderHint"
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            visible: view.empty && text.length > 0
+            color: view.mutedColor
+            font.family: view.uiFamily
+            font.pixelSize: Math.round(13 * Theme.fontScale)
+            text: view.emptyHint
         }
         Label {
             objectName: "draftSending"

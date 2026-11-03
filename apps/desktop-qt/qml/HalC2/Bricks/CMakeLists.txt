@@ -20,6 +20,11 @@ set(hal_c2_bricks_qml_files
     GitActions.qml
     Notifications.qml
     RightPanel.qml
+    Stage.qml
+    ThreadArea.qml
+    PanelTabDrag.qml
+    PanelBodySlot.qml
+    PanelBodies.qml
     SettingsNav.qml
     ShellErrorOverlay.qml
     ConnectionNotice.qml
@@ -127,6 +132,7 @@ set(hal_c2_bricks_qml_files
     TerminalPanel.qml
     PullRequestsPanel.qml
     PullRequestReviewPanel.qml
+    PullRequestLinkCard.qml
     PreviewsPanel.qml
     ThreadDetailsPanel.qml
     CommandPalette.qml
@@ -159,6 +165,11 @@ set(hal_c2_bricks_qml_files
     Markdown.qml
     MermaidDiagram.qml
     js/markdown.js
+    BrowserPanel.qml
+    BrowserDevicesView.qml
+    DevicesPicker.qml
+    AgentCue.qml
+    js/browser.js
 )
 set(hal_c2_bricks_resources
     qmldir

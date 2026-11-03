@@ -16,36 +16,13 @@
 #include "RightPanelController.h"
 #include "SettingsController.h"
 #include "Stream.h"
+#include "Preview.h"
 #include "ThreadPreviews.h"
 #include "World.h"
 
 namespace {
 
 using namespace stream;
-
-// The MC's browser tabs of the thread, oldest change first, and how it
-// answers a close.
-struct FakePreviews {
-  QString epoch = QStringLiteral("epoch-1");
-  qint64 revision = 0;
-  QList<QJsonObject> tabs;
-  bool refuseClose = false;
-  bool holdClose = false;
-  bool holdList = false;
-  int lists = 0;
-  // The web servers listening on the MC's machine (DiscoveredLocalServer).
-  QJsonArray servers;
-  // Every preview.open and preview.navigate payload.
-  QList<QJsonObject> opens;
-  QList<QJsonObject> navigations;
-  bool looking = false;
-  // The port the connected MC forwards a dev server to, and every
-  // preview.forward with the environment it was sent to.
-  int forwardPort = 0;
-  QList<FakeMc::Rpc> forwards;
-  // The address in the agent's reply.
-  QString link;
-};
 
 QJsonObject tabAt(const QString& url, int n) {
   return {{QStringLiteral("threadId"), kThread},
@@ -605,3 +582,13 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+namespace preview {
+
+QJsonObject tabAt(const QString& url, int n) { return ::tabAt(url, n); }
+void emitEvent(FakeMc& mc, const QJsonObject& tab, const QString& type, const QJsonObject& fields) { ::emitEvent(mc, tab, type, fields); }
+ThreadPreviews& model(World& world) { return ::model(world); }
+QString describe(World& world) { return ::describe(world); }
+void showPreviews(World& world) { ::showPreviews(world); }
+
+}  // namespace preview

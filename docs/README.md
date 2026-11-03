@@ -10,6 +10,8 @@
 - [Source control](./user/source-control.md)
 - [Project settings](./user/project-settings.md)
 - [Appearance and themes](./user/appearance.md)
+- [Tabs in the centre](./user/stage.md)
+- [The browser](./user/browser.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Charts on a page](./user/charts.md)
 - [Publishing a page as a site](./user/sites.md)

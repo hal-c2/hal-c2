@@ -1106,7 +1106,7 @@ const Steps steps([] {
                   [&] { return S("the group to open at 150.5, not %1").arg(callsView(world)->property("contentY").toDouble()); });
   });
 
-  // The phone's activity log (TimelineModel::brief).
+  // The phone's activity log (TimelineModel::Folds::Phone).
 
   step(S("the activity log shows a tool call and a failed turn"), [](World& world, const Captures&, const Table&) {
     startRun(world, 30);
