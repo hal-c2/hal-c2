@@ -9,6 +9,7 @@ folder to install it, or start your own from one of them.
 | [code-review](code-review/)     | An agent reviews pull requests; you decide what reaches GitHub.                                       | pull requests, threads, agent tools                           |
 | [planner](planner/)             | A plan of tasks and milestones as a Gantt chart, board or list; agents propose changes to it.         | issues and boards, pull requests, threads, Slack, agent tools |
 | [issue-tracker](issue-tracker/) | A triage queue over GitHub issues; agents prioritise, ask for follow-up and summarise, and you apply. | issues, threads, agent tools                                  |
+| [maintenance](maintenance/)     | Scheduled maintenance by the maintain skill; you decide whether its branch becomes a pull request.    | pull requests, threads, agent tools                           |
 
 ## Writing one
 
@@ -37,7 +38,7 @@ What the MC lends a plugin, each behind a permission the user grants:
 - tools for agents, offered in HAL-C2's MCP server;
 - a data folder of its own, and topics its UI parts watch.
 
-The two packages here use all of it, and their tests show how to test a plugin:
+The packages here use all of it, and their tests show how to test a plugin:
 MC scenarios in `features/`, run from `apps/server-ex` with
 `mise exec -- mix features <globs relative to features/>`, and the desktop drawing
 the QML against a fake of the MC part in `tst_Features`.
