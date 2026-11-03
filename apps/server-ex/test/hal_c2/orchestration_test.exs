@@ -2313,7 +2313,7 @@ defmodule HalC2.OrchestrationTest do
       assert [_, %{"userMessageId" => wake}] = runs(state)
 
       assert StreamState.get(state, "message")[wake]["text"] ==
-               "The background command `npm run dev` exited with code 0."
+               "Background command completed (exit 0): npm run dev\n\nOutput tail:\nlistening on 5173\nbye"
 
       assert [%{"status" => "completed", "output" => "listening on 5173\nbye\n", "exitCode" => 0}] =
                Enum.filter(commands(thread_id), &(&1["input"] == "npm run dev"))
