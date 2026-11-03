@@ -322,7 +322,7 @@ Rectangle {
                 readonly property bool section: kind === "project"
                 readonly property bool selected: kind === "file" && pageId !== "" && pageId === Spaces.pageId && Spaces.fileSpaceId !== "" && Spaces.deckId === ""
 
-                objectName: section ? "spaceProject:" + name : "spaceProject" + (kind === "file" ? "File:" : "Folder:") + projectId + ":" + path
+                objectName: section ? "spaceProject:" + projectId : "spaceProject" + (kind === "file" ? "File:" : "Folder:") + projectId + ":" + path
                 width: ListView.view.width
                 height: section ? 28 : 26
                 radius: Math.min(Theme.radius, 6)

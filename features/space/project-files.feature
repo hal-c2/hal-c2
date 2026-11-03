@@ -859,7 +859,7 @@ Feature: Project files edited as pages
   # start collapsed, so a Space with many projects still opens on its own pages, and each
   # client remembers which the user expanded. Collapsing a section is the way out, and
   # expanding it the way back. Every other way in says "Edit as a page".
-  @shared @backlog-mobile
+  @shared
   Rule: Project files in the Space sidebar
 
     Background:
@@ -985,8 +985,9 @@ Feature: Project files edited as pages
 
     # Each client follows only its own MC's projects and Spaces (#860).
     # The desktop's Space view shows only its own MC's Spaces (#865).
+    # The phone's Space screen shows only its own MC's Spaces too (#860).
     # The TUI's Space pane lists only its own MC's projects as sections (#860).
-    @backlog-desktop @backlog-tui
+    @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: A project on another machine shows as a section from that machine
       Given the project "shop" is on another connected environment
       When the user is in the Space "Research"
