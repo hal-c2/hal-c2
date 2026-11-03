@@ -51,12 +51,18 @@ defmodule HalC2.StreamsProofTest do
       "HalC2.Streams.Server handle_cast {:unsubscribe, _, _}" => "cast-unsubscribe",
       "HalC2.Streams.Server handle_info {:DOWN, _, :process, _, _}" => "monitor-down",
       "HalC2.Streams.Server handle_info :timeout" => "timeout",
+      # Stops the server on the timeout's own condition, no subscribers and no
+      # migration, only sooner: what it does to calls queued behind it is the timeout's.
+      "HalC2.Streams.Server.release/1" => "timeout",
+      "HalC2.Streams.Server handle_call :release" => "timeout",
       "HalC2.Streams.Server handle_info {:EXIT, _, _}" => "linked-exit",
       "HalC2.Streams.Server state :stream" => "durable",
       "HalC2.Streams.Server state :subscribers" => "srv"
     },
     abstracts: %{
       "HalC2.Streams.read/2" => @read,
+      "HalC2.Streams.read_once/2" =>
+        "a read, then Server.release/1 on the server it read, when none ran before it",
       "HalC2.Streams.Server.read/1" => @read,
       "HalC2.Streams.Server handle_call :read" => @read,
       "HalC2.Streams.Server.await_cold/1" => @await,

@@ -310,7 +310,10 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   end
 
   step "only {string} is settled", %{args: [thread]} = context do
-    # The idle thread's stream was never opened at boot.
+    # The idle thread's stream is not left open at boot: the search backfill reads a
+    # thread with no hot snapshot through a stream it stops again.
+    Mc.settle_registry(HalC2.Streams.Registry)
+
     for {title, _} <- context.threads, title != thread do
       assert Registry.lookup(HalC2.Streams.Registry, World.thread_id(context, title)) == []
     end

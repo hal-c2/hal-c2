@@ -21,7 +21,9 @@ defmodule HalC2.StreamsPropTest do
   from disk (`HalC2.StreamState`, "Hot and cold"): nothing a subscriber is sent, and
   nothing a read of the stream returns, may tell. A read (`HalC2.Streams.read/2`) may
   walk the cold rows long after it took the state, while commits bring cold entities
-  back to memory and write snapshots: it still sees the stream as it took it. A stream can also be stopped and left
+  back to memory and write snapshots: it still sees the stream as it took it. A read-once
+  (`HalC2.Streams.read_once/2`) sees the stream too, and leaves it running only if it
+  was, or if someone subscribed during the read. A stream can also be stopped and left
   as an older MC left it, one whole snapshot as of some recent event, which the next
   start migrates in the background while it serves: nobody may tell that either.
 
@@ -172,7 +174,8 @@ defmodule HalC2.StreamsPropTest do
       {1, {:call, __MODULE__, :restart_streams, []}},
       {1, {:call, __MODULE__, :restart_store, []}},
       {2, {:call, __MODULE__, :bulk, [stream(), oneof([600, @max_replay + 1])]}},
-      {6, {:call, __MODULE__, :open_read, [oneof(@readers), stream()]}}
+      {6, {:call, __MODULE__, :open_read, [oneof(@readers), stream()]}},
+      {3, {:call, __MODULE__, :read_once, [stream(), oneof([nil | @names])]}}
     ]
 
     reads = Map.keys(state.reads)
@@ -524,6 +527,14 @@ defmodule HalC2.StreamsPropTest do
     end)
   end
 
+  # Whoever subscribes during a read-once subscribes as a plain subscriber would.
+  def next_state(state, _result, {:call, _, :read_once, [id, name]}),
+    do:
+      if(name,
+        do: subscribe(state, name, id, %{mode: :plain, kinds: nil, window: nil}),
+        else: state
+      )
+
   def next_state(state, _result, {:call, _, :open_read, [reader, id]}),
     do: put_in(state.reads[reader], %{id: id, fold: fold(state, id)})
 
@@ -616,6 +627,22 @@ defmodule HalC2.StreamsPropTest do
 
   def postcondition(state, {:call, _, :state, [id]}, result),
     do: result == comparable(fold(state, id))
+
+  # A read-once sees the stream, and leaves it running as it was, or running for the
+  # subscriber that came during the read, which is sent what a subscription is.
+  def postcondition(state, {:call, _, :read_once, [id, name]} = c, got) do
+    tagged(:read_once, got.read == comparable(fold(state, id))) and
+      if name do
+        tagged(:kept, got.after) and
+          postcondition(
+            next_state(state, got, c),
+            {:call, __MODULE__, :check, [{name, id}]},
+            got.held
+          )
+      else
+        tagged(:left, got.after == got.before)
+      end
+  end
 
   def postcondition(state, {:call, _, :open_read, [_, id]}, result),
     do: result == {:ok, fold(state, id).seq}
@@ -917,6 +944,27 @@ defmodule HalC2.StreamsPropTest do
   def check({name, id}), do: Collector.get(collector(name), id)
 
   def state(id), do: Streams.read(id, &comparable/1)
+
+  # Reads the stream once (`HalC2.Streams.read_once/2`), `name` subscribing during the read.
+  def read_once(id, name) do
+    before = running?(id)
+
+    {read, held} =
+      Streams.read_once(id, fn st ->
+        held = if name, do: subscribe_plain(name, id, :fresh)
+        {comparable(st), held}
+      end)
+
+    %{read: read, held: held, before: before, after: running?(id)}
+  end
+
+  # The registry can still list a stream that stopped a moment ago.
+  defp running?(id) do
+    case Registry.lookup(HalC2.Streams.Registry, id) do
+      [{pid, _}] -> Process.alive?(pid)
+      [] -> false
+    end
+  end
 
   # A reader takes the stream's state, and walks it only when `finish_read/1` says.
   def open_read(reader, id) do

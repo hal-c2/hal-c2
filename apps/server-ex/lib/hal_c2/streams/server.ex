@@ -257,6 +257,13 @@ defmodule HalC2.Streams.Server do
 
   def await_cold(pid), do: GenServer.call(pid, :await_cold, :infinity)
 
+  @doc """
+  Stops the stream now if it would stop once idle: it has no subscribers and is not
+  migrating. Returns whether it stopped; it has written its snapshot if so.
+  """
+  @spec release(GenServer.server()) :: boolean
+  def release(server), do: GenServer.call(server, :release, :infinity)
+
   @doc "Puts the stream's sidebar row now instead of after the debounce."
   @spec flush_shell(GenServer.server()) :: :ok
   def flush_shell(server), do: GenServer.call(server, :flush_shell, :infinity)
@@ -377,6 +384,12 @@ defmodule HalC2.Streams.Server do
     do: {:noreply, %{state | cold_waiters: [from | state.cold_waiters]}, timeout(state)}
 
   def handle_call(:await_cold, _from, state), do: {:reply, :ok, state, timeout(state)}
+
+  def handle_call(:release, _from, state) do
+    if timeout(state) == @idle_stop,
+      do: {:stop, :normal, true, state},
+      else: {:reply, false, state, timeout(state)}
+  end
 
   def handle_call(:sequence, _from, state),
     do: {:reply, state.stream.seq, state, timeout(state)}

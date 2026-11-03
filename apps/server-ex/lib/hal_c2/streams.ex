@@ -108,6 +108,54 @@ defmodule HalC2.Streams do
   def read(stream_id, fun),
     do: stream_id |> with_server(&Server.read/1) |> StreamState.read(fun)
 
+  @doc """
+  `read/2` for a reader that leaves the stream as it found it: a stream not running
+  is started for the read and stopped once it is done, unless something subscribed
+  to it meanwhile. It is gone when this returns, so a sweep of every thread does not
+  keep each one in memory until it idles out. One that something else starts at the
+  same time without subscribing stops too, and starts again on its next use.
+  """
+  @spec read_once(String.t(), (StreamState.t() -> result)) :: result when result: term
+  def read_once(stream_id, fun) do
+    if running?(stream_id) do
+      read(stream_id, fun)
+    else
+      {server, state} = with_server(stream_id, &{&1, Server.read(&1)})
+
+      try do
+        StreamState.read(state, fun)
+      after
+        release(server)
+      end
+    end
+  end
+
+  defp running?(stream_id) do
+    case Registry.lookup(HalC2.Streams.Registry, stream_id) do
+      [{pid, _}] -> Process.alive?(pid)
+      [] -> false
+    end
+  end
+
+  # Stops the stream if it is idle, and waits for it to be gone. One that went down
+  # on its own meanwhile is gone too.
+  defp release(pid) do
+    ref = Process.monitor(pid)
+
+    stopped? =
+      try do
+        Server.release(pid)
+      catch
+        :exit, _ -> true
+      end
+
+    if stopped?,
+      do: receive(do: ({:DOWN, ^ref, :process, ^pid, _} -> :ok)),
+      else: Process.demonitor(ref, [:flush])
+
+    :ok
+  end
+
   @doc "See `HalC2.Streams.Server.sequence/1`."
   def sequence(stream_id), do: with_server(stream_id, &Server.sequence/1)
 

@@ -74,11 +74,12 @@ defmodule HalC2.Search do
 
   # `fun` of a thread's state. A thread with no snapshot of its hot part yet (an older
   # MC's whole one, or none) is read through its stream, which writes one as it loads,
-  # a long log a page at a time; one read here would hold the whole thread.
+  # a long log a page at a time; one read here would hold the whole thread. A stream
+  # started for this stops again, so an idle thread stays closed after boot.
   defp read(path, id, fun) do
     if Store.hot_snapshot?(path, id) or Process.whereis(HalC2.Streams) == nil,
       do: StreamState.load_read(path, id, fun),
-      else: HalC2.Streams.read(id, fun)
+      else: HalC2.Streams.read_once(id, fun)
   end
 
   # The thread as `storing_thread/2` finds it. With no streams running nothing else
