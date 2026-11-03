@@ -350,6 +350,8 @@ public:
   void receiveSpace(const QJsonObject& frame);
   void receiveFileSpace(const QJsonObject& frame);
   void setUnreachable(bool unreachable);
+  // The file's project Space's stream failed; the next frame on it, or leaving the file, clears it.
+  void setFileUnreachable();
   // A `spacePresence` frame of the page `pageId`; only the open page's shows,
   // and whoever was on a page stops showing when another opens.
   void receiveViewers(const QString& pageId, const QJsonObject& frame);
@@ -455,7 +457,9 @@ private:
   SpaceStream m_index;
   SpaceStream m_space;
   SpaceStream m_file;
+  // The index's or the selected Space's stream failed, or the file's project Space's.
   bool m_unreachable = false;
+  bool m_fileUnreachable = false;
   QString m_spaceId;
   QString m_pageId;
   QString m_awaitedSpace;

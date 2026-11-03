@@ -677,7 +677,8 @@ QVariantMap SpacePages::deck() const {
 }
 
 QString SpacePages::status() const {
-  if (m_unreachable) return QStringLiteral("unreachable");
+  // The file's project Space counts only while its page is on show.
+  if (m_unreachable || (m_fileShown && m_fileUnreachable)) return QStringLiteral("unreachable");
   const SpaceStream& stream = m_spaceId.isEmpty() ? m_index : m_space;
   return stream.live() ? QStringLiteral("live") : QStringLiteral("loading");
 }
@@ -707,12 +708,17 @@ void SpacePages::receiveSpace(const QJsonObject& frame) {
 void SpacePages::receiveFileSpace(const QJsonObject& frame) {
   // A frame still on its way when the file view was left.
   if (m_fileSpaceId.isEmpty()) return;
-  const bool wasUnreachable = std::exchange(m_unreachable, false);
+  const bool wasUnreachable = std::exchange(m_fileUnreachable, false);
   if (m_file.receive(frame) || wasUnreachable) rebuild();
 }
 
 void SpacePages::setUnreachable(bool unreachable) {
   if (std::exchange(m_unreachable, unreachable) != unreachable) rebuild();
+}
+
+void SpacePages::setFileUnreachable() {
+  if (m_fileSpaceId.isEmpty()) return;
+  if (!std::exchange(m_fileUnreachable, true)) rebuild();
 }
 
 void SpacePages::selectSpace(const QString& id) {
@@ -751,6 +757,7 @@ bool SpacePages::leaveFile() {
   if (m_fileSpaceId.isEmpty()) return wasShown;
   m_fileSpaceId.clear();
   m_file.clear();
+  m_fileUnreachable = false;
   emit fileSpaceSelected({});
   return wasShown;
 }
@@ -789,6 +796,7 @@ void SpacePages::openFilePage(const QString& spaceId, const QString& pageId) {
   if (another) {
     m_fileSpaceId = spaceId;
     m_file.clear();
+    m_fileUnreachable = false;
     // The page on show was the other project's, whose copy just went.
     if (m_fileShown) m_pageId.clear();
   }
@@ -1439,7 +1447,7 @@ void SpaceController::followFileSpace() {
         if (wanted != fileSpaceFollowed()) return;
         const QString type = frame.value(QLatin1String("t")).toString();
         if (type == QLatin1String("error") || type == QLatin1String("end")) {
-          setUnreachable(true);
+          setFileUnreachable();
         } else {
           receiveFileSpace(frame);
         }

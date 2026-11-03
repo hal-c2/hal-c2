@@ -58,6 +58,10 @@ struct Shell {
                            {QStringLiteral("rows"), QJsonArray{QJsonValue(QJsonArray{QStringLiteral("space"), QStringLiteral("space-1"), research})}},
                            {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("index-1")}});
     space()->selectSpace(QStringLiteral("space-1"));
+    researchArrives();
+  }
+  // The copy of "Research" as a new snapshot of its stream brings it.
+  void researchArrives() {
     QJsonArray rows;
     for (const QString id : {QStringLiteral("page-1"), QStringLiteral("page-2")}) {
       rows.append(QJsonArray{QStringLiteral("page"), id,
@@ -176,6 +180,36 @@ private slots:
     QVERIFY(shell.space()->handle(QStringLiteral("space.selectPage"), QVariantMap{{QStringLiteral("pageId"), QStringLiteral("page-2")}}));
     QCOMPARE(shell.space()->pageId(), QStringLiteral("page-2"));
     QCOMPARE(shell.space()->fileSpaceId(), QString());
+  }
+
+  // The file's project Space's stream failing says only that file's page is
+  // unreachable, and a frame of the selected Space does not hide it (#940 review).
+  void theFileStreamFailingIsTheFilePagesAlone() {
+    Shell shell;
+    shell.answerOpens();
+    QTRY_VERIFY(shell.native.isActive() && shell.native.client()->isReady());
+    shell.showResearch();
+    shell.space()->selectPage(QStringLiteral("page-1"));
+    QVERIFY(shell.open(QStringLiteral("docs/guide.md")));
+    QTRY_COMPARE(shell.written, QStringList{QStringLiteral("page-9")});
+
+    // Still on the Space's own page while the file's Space is on its way.
+    shell.space()->setFileUnreachable();
+    QVERIFY(shell.space()->status() != QLatin1String("unreachable"));
+
+    shell.projectSpaceArrives();
+    shell.space()->setFileUnreachable();
+    QCOMPARE(shell.space()->status(), QStringLiteral("unreachable"));
+    shell.researchArrives();
+    QCOMPARE(shell.space()->pageId(), QStringLiteral("page-9"));
+    QCOMPARE(shell.space()->status(), QStringLiteral("unreachable"));
+    shell.projectSpaceArrives();
+    QVERIFY(shell.space()->status() != QLatin1String("unreachable"));
+
+    // The selected Space's stream failing is not cleared by a frame of the file's.
+    shell.space()->setUnreachable(true);
+    shell.projectSpaceArrives();
+    QCOMPARE(shell.space()->status(), QStringLiteral("unreachable"));
   }
 
   // A pick made while a file was opening stands: the answer does not take the view.

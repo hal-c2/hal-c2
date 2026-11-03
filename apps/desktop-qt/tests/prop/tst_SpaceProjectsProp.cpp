@@ -3,7 +3,7 @@
 // again, sections expanded and collapsed (here, or by another window through the
 // device's preferences), files opened with the MC answering in any order or
 // refusing, the project's Space arriving, and the user picking a page or the
-// Space itself.
+// Space itself, and either Space's stream failing and coming back.
 //
 // After each step the sections are this MC's projects with files, each a project
 // row and, when expanded, its folders and files depth first (folders before files,
@@ -12,7 +12,9 @@
 // section and shows the file's page once its project's Space has arrived, the
 // Space's own page staying on show until then. Picking a Space page, or the Space,
 // leaves the file's page in one step, and a project's Space arriving after that
-// changes nothing.
+// changes nothing. The view reads as unreachable while the selected Space's stream
+// is down, or the file's project Space's while its page is on show, until a frame
+// comes on the stream that failed.
 
 #include "Prop.h"
 
@@ -97,12 +99,17 @@ struct Model {
   // What is on show: a Space page, or a file's page (`fileShown`).
   QString page = kPages.first();
   bool fileShown = false;
+  // Which stream failed and has had no frame since.
+  bool spaceDown = false;
+  bool fileDown = false;
 
+  bool unreachable() const { return spaceDown || (fileShown && fileDown); }
   void leaveFile() {
     followed.clear();
     arrived = false;
     awaited.clear();
     fileShown = false;
+    fileDown = false;
   }
   void showAwaited() {
     if (!arrived || awaited.isEmpty()) return;
@@ -249,6 +256,7 @@ struct Shell {
     RC_ASSERT(space()->spaceId() == kSpaceId);
     RC_ASSERT(space()->pageId() == model.page);
     RC_ASSERT(space()->fileSpaceId() == (model.fileShown ? projectSpace(model.followed) : QString()));
+    RC_ASSERT((space()->status() == QLatin1String("unreachable")) == model.unreachable());
   }
 };
 
@@ -363,6 +371,7 @@ struct AnswerOpen : Command {
       if (model.fileShown) model.page.clear();
       model.followed = open.project;
       model.arrived = false;
+      model.fileDown = false;
     }
     model.awaited = pageOf(open.project, open.path);
     model.showAwaited();
@@ -395,6 +404,7 @@ struct ProjectSpaceArrives : Command {
   void apply(Model& model) const override {
     if (model.followed != project) return;
     model.arrived = true;
+    model.fileDown = false;
     model.showAwaited();
   }
   void run(const Model& model, Shell& shell) const override {
@@ -439,6 +449,36 @@ struct SelectSpace : Command {
   void show(std::ostream& os) const override { os << "SelectSpace"; }
 };
 
+// The stream of the selected Space, or of the project Space followed for a file's
+// page, errors or ends.
+struct StreamFails : Command {
+  bool file = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override {
+    if (!file) model.spaceDown = true;
+    else if (!model.followed.isEmpty()) model.fileDown = true;
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    if (file) shell.space()->setFileUnreachable();
+    else shell.space()->setUnreachable(true);
+    shell.check(expected);
+  }
+  void show(std::ostream& os) const override { os << "StreamFails(" << (file ? "file" : "space") << ")"; }
+};
+
+// The selected Space's stream comes back with the copy it had.
+struct SpaceStreamBack : Command {
+  void apply(Model& model) const override { model.spaceDown = false; }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    shell.space()->receiveSpace(shell.snapshot(kPages, QStringLiteral("log-1")));
+    shell.check(expected);
+  }
+  void show(std::ostream& os) const override { os << "SpaceStreamBack"; }
+};
+
 }  // namespace
 
 class SpaceProjectsProp : public QObject {
@@ -450,7 +490,8 @@ private slots:
       Shell shell;
       rc::state::check(Model{}, shell,
                        rc::state::gen::execOneOfWithArgs<ChangeFiles, SetExpanded, SetExpanded, OtherWindow, OpenFile, OpenFile, AnswerOpen, AnswerOpen,
-                                                         ProjectSpaceArrives, ProjectSpaceArrives, SelectPage, SelectSpace>());
+                                                         ProjectSpaceArrives, ProjectSpaceArrives, SelectPage, SelectSpace, StreamFails,
+                                                         SpaceStreamBack>());
     }));
   }
 };
