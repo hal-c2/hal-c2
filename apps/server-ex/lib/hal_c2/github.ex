@@ -74,6 +74,9 @@ defmodule HalC2.GitHub do
       {:paused, until} ->
         {:error, {:rate_limited, paused(host, until)}}
 
+      {:reserved, until} ->
+        {:error, {:rate_limited, reserved(host, until)}}
+
       :ok ->
         case answer(path, cwd, args, opts) do
           {{:error, {:rate_limited, _}}, head} ->
@@ -91,10 +94,15 @@ defmodule HalC2.GitHub do
     end
   end
 
-  defp paused(host, until) do
-    resets = DateTime.from_unix!(until, :millisecond) |> Calendar.strftime("%H:%M:%S UTC")
-    "#{host}'s API rate limit was reached; calls are paused until it resets at #{resets}."
-  end
+  defp paused(host, until),
+    do: "#{host}'s API rate limit was reached; calls are paused until it resets at #{at(until)}."
+
+  defp reserved(host, until),
+    do:
+      "#{host}'s API quota is nearly used up; background reads wait until it resets at " <>
+        "#{at(until)}, keeping the rest for what you ask for."
+
+  defp at(ms), do: DateTime.from_unix!(ms, :millisecond) |> Calendar.strftime("%H:%M:%S UTC")
 
   # What GitHub's own headers say of a limit: `{scope, when calls may resume}` from its
   # `Retry-After` (on the whole account unless the bucket is spent), else from the

@@ -314,7 +314,7 @@ defmodule HalC2.PullRequests do
 
     cond do
       # `HalC2.GitHub` already says when the pause ends.
-      detail =~ ~r/paused until it resets at/ ->
+      detail =~ ~r/until it resets at/ ->
         detail
 
       detail =~ ~r/HTTP 429|rate limit/i ->

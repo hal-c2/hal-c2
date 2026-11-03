@@ -16,7 +16,7 @@ defmodule HalC2.GitHubLimitsPropTest do
   - an answer ends the backoff of its bucket and of its account's secondary pause once
     they are over, and ends no pause that still holds;
   - while the last quota believed for a bucket has fewer than a tenth left, before its
-    reset, the bucket is paused until that reset; of quotas that arrive out of order,
+    reset, the bucket is held back until that reset, as reserved when no pause holds it; of quotas that arrive out of order,
     the one with the later reset, then the least left, is believed.
   """
 
@@ -138,24 +138,25 @@ defmodule HalC2.GitHubLimitsPropTest do
   def postcondition(state, {:call, _, :check, [account, bucket, now]}, result) do
     account = lower(account)
 
-    holding =
+    paused =
       for scope <- [bucket, :all],
           {_, until} <- [state.pauses[{account, scope}]],
           until > now,
           do: until
 
-    holding =
+    reserve =
       case state.quotas[{account, bucket}] do
         %{remaining: left, limit: limit, reset: reset} when reset > now and left * 10 < limit ->
-          [reset | holding]
+          [reset]
 
         _ ->
-          holding
+          []
       end
 
-    case holding do
-      [] -> result == :ok
-      untils -> result == {:paused, Enum.max(untils)}
+    case {paused, reserve} do
+      {[], []} -> result == :ok
+      {[], [reset]} -> result == {:reserved, reset}
+      _ -> result == {:paused, Enum.max(paused ++ reserve)}
     end
   end
 

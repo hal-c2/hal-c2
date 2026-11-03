@@ -551,7 +551,7 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
       context
       |> messages()
       |> Enum.map(fn message ->
-        assert [_, at] = Regex.run(~r/paused until it resets at (\d\d:\d\d:\d\d) UTC/, message)
+        assert [_, at] = Regex.run(~r/until it resets at (\d\d:\d\d:\d\d) UTC/, message)
         at
       end)
       |> Enum.uniq()
@@ -881,6 +881,8 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
   step "it waits until the quota resets", context do
     assert graphql_calls(context) == context.graphql_before
     assert paused_until(context) == at(context.until)
+    # Saving quota is not a limit reached.
+    for message <- messages(context), do: assert(message =~ "nearly used up", message)
     context
   end
 
@@ -906,9 +908,10 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     do: {"HTTP/2.0 403 Forbidden", %{}, "gh: Forbidden (HTTP 403)", nil}
 
   defp refusal(~s("too many requests" and a time to retry in 120 seconds), now),
+    # Its text names no limit, so the status alone must tell.
     do:
-      {"HTTP/2.0 429 Too Many Requests", %{"Retry-After" => "120"},
-       "gh: Too Many Requests (HTTP 429)", now + 120_000}
+      {"HTTP/2.0 429 Too Many Requests", %{"Retry-After" => "120"}, "gh: Too Many Requests",
+       now + 120_000}
 
   defp refusal(~s("forbidden", no quota left and a reset time 60 seconds on), now) do
     reset = div(now, 1_000) + 60

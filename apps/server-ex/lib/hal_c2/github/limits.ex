@@ -29,7 +29,11 @@ defmodule HalC2.GitHub.Limits do
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  @doc "`:ok`, or `{:paused, until}` while `bucket` of `account`, or all of it, is paused at `now`."
+  @doc """
+  `:ok`; `{:paused, until}` while `bucket` of `account`, or all of it, is paused at
+  `now`; or `{:reserved, reset}` while only the tenth of its quota kept for what the
+  user asks for holds it back.
+  """
   def check(account, bucket, now), do: call({:check, key(account), bucket, now}, :ok)
 
   @doc """
@@ -64,14 +68,19 @@ defmodule HalC2.GitHub.Limits do
         _ -> nil
       end
 
-    until =
-      [state.pauses[{account, bucket}], state.pauses[{account, :all}]]
-      |> Enum.filter(&(&1 && &1.until > now))
-      |> Enum.map(& &1.until)
-      |> Enum.concat(List.wrap(reserve))
-      |> Enum.max(fn -> nil end)
+    paused =
+      for pause <- [state.pauses[{account, bucket}], state.pauses[{account, :all}]],
+          pause && pause.until > now,
+          do: pause.until
 
-    {:reply, if(until, do: {:paused, until}, else: :ok), state}
+    reply =
+      cond do
+        paused != [] -> {:paused, Enum.max([reserve || 0 | paused])}
+        reserve -> {:reserved, reserve}
+        true -> :ok
+      end
+
+    {:reply, reply, state}
   end
 
   def handle_call({:limited, account, scope, now, reset}, _from, state) do
