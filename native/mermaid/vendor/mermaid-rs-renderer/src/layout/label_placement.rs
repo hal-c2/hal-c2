@@ -331,15 +331,18 @@ fn resolve_center_labels(
             // them to nearby clear positions.
             continue;
         }
-        // Routing seeds each label's center without seeing the others, so two edges
-        // running side by side can be seeded on top of each other. Keep a seed only
-        // while it is clear of the labels kept so far; the rest are placed below,
-        // starting from their seed. A self-loop is smaller than its label, so a
-        // label seeded on the loop covers its arrowhead and is placed too.
-        if occupied
-            .iter()
-            .any(|kept| overlap_area(kept, &occupied_rect) > 0.0)
-            || (edge.from == edge.to && polyline_rect_distance(&edge.points, &rect) <= 0.0)
+        // State routing seeds each label's center without seeing the others, so two
+        // edges running side by side can be seeded on top of each other. Keep a seed
+        // only while it is clear of the nodes, group titles and labels kept so far;
+        // the rest are placed below, starting from their seed. A self-loop is
+        // smaller than its label, so a label seeded on the loop covers its
+        // arrowhead and is placed too.
+        if kind == DiagramKind::State
+            && (occupied
+                .iter()
+                .any(|kept| overlap_area(kept, &occupied_rect) > 0.0)
+                || (edge.from == edge.to
+                    && polyline_rect_distance(&edge.points, &rect) <= 0.0))
         {
             continue;
         }

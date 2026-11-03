@@ -13,9 +13,9 @@ workspace root may set.
 Our changes on top of 0.3.1, each meant for upstream:
 
 - `src/layout/label_placement.rs`: state diagram edge labels are no longer pinned where
-  routing seeded them when that seed overlaps a label already placed, or covers its own
-  self-loop, and they may grow the canvas like flowchart labels instead of being clamped
-  into it.
+  routing seeded them when that seed overlaps a node, a group title or a label already
+  placed, or covers its own self-loop, and they may grow the canvas like flowchart labels
+  instead of being clamped into it. Other kinds keep 0.3.1's placement.
 - `src/layout/flowchart/subgraph_spacing.rs`: a node that belongs to a subgraph but not to
   a subgraph nested inside it is moved out of the nested box (before, only nodes in no
   subgraph were). The move steps past other nodes instead of landing on them, and goes
