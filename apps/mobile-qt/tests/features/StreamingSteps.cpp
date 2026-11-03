@@ -61,6 +61,7 @@ struct Turn {
   QString settlesAs = S("interrupted");
   QList<QPersistentModelIndex> kept;
   qsizetype connections = 0;
+  bool durationShown = false;
 };
 
 Turn& turn(World& world) {
@@ -411,10 +412,7 @@ const Steps steps([] {
     addCommand(world, 1);
     addReply(world, S("answer"), S("The cart now shows tax."));
     set(world, S("run"), turn(world).run, {{S("status"), S("completed")}, {S("completedAt"), iso(now())}});
-  });
-  step(S("it reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QString title = foldTitle(world);
-    expect(title == S("Worked for ") + c[0], S("the turn's fold reads \"%1\"").arg(title));
+    turn(world).durationShown = true;
   });
 
   // Folds.
@@ -818,7 +816,6 @@ const Steps steps([] {
   step(S("a notice from an automation arrived during the turn"), [](World& world, const Captures&, const Table&) {
     addItem(world, S("notification"), {{S("id"), S("notice")}, {S("summary"), S("Nightly checks finished")}, {S("outcome"), S("completed")}});
   });
-  step(S("the turn completes"), [](World& world, const Captures&, const Table&) { settleRun(world, S("completed"), 60); });
   step(S("the tool calls and the reply in the middle fold behind %1").arg(q), [](World& world, const Captures& c, const Table&) {
     TimelineModel& model = timeline(world);
     const int fold = lastRowOf(world, S("fold"));
@@ -910,3 +907,21 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+// "it reads" after "the thread shows a duration of": the turn's fold says how
+// long it worked. False when the scenario showed no duration, for
+// ToolCallSteps' activity group to read instead.
+bool expectShownDuration(World& world, const QString& shown) {
+  if (!turn(world).durationShown) return false;
+  const QString title = foldTitle(world);
+  expect(title == S("Worked for ") + shown, S("the turn's fold reads \"%1\"").arg(title));
+  return true;
+}
+
+// "the turn completes" for a turn these steps started. False when they started
+// none, for ToolCallSteps' turn to complete instead.
+bool completeStreamedTurn(World& world) {
+  if (turn(world).run.isEmpty()) return false;
+  settleRun(world, S("completed"), 60);
+  return true;
+}

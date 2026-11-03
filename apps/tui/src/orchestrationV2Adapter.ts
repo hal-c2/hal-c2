@@ -21,6 +21,8 @@ import { derivePendingBackgroundWork } from "@hal-c2/shared/orchestrationV2Pendi
 import * as DateTime from "effect/DateTime";
 import { thoughtPreview } from "./thoughtPreview.ts";
 
+import { callFailed, halC2ToolOf, type TurnItemRecord } from "./toolSummary.ts";
+
 // The TUI still uses its compact legacy-shaped presentation model. Keep that
 // compatibility at the connection boundary while the server and shared client
 // runtime expose only native orchestration-v2 projections.
@@ -346,7 +348,7 @@ function itemSummary(item: OrchestrationV2TurnItem): string {
     case "subagent":
       return "Subagent";
     case "dynamic_tool":
-      return item.toolName ?? "Used tool";
+      return halC2ToolOf(item as TurnItemRecord)?.displayName ?? item.toolName ?? "Used tool";
     case "compaction":
       return "Context compacted";
     case "handoff":
@@ -374,7 +376,10 @@ function itemPayload(
   item: OrchestrationV2TurnItem,
   projection: OrchestrationV2ThreadProjection,
 ): Record<string, unknown> {
-  const status = itemStatus(item);
+  // A command whose exit or output says it failed, or HAL-C2's tool answering with
+  // an error, failed though the provider finished it.
+  const status =
+    item.status === "completed" && callFailed(item as TurnItemRecord) ? "failed" : itemStatus(item);
   switch (item.type) {
     case "reasoning":
       // Finished reasoning's label is its text, so it is not previewed twice.
@@ -419,7 +424,7 @@ function itemPayload(
       };
     case "dynamic_tool":
       return {
-        title: item.toolName ?? "Used tool",
+        title: itemSummary(item),
         itemType: "dynamic_tool_call",
         // The web's work entries show a tool the provider did not classify as a wrench.
         icon: "mcp",
@@ -558,7 +563,8 @@ function presentActivity(
             : "tool",
     kind: kind as OrchestrationThreadActivity["kind"],
     summary: itemSummary(item) as OrchestrationThreadActivity["summary"],
-    payload: itemPayload(item, projection),
+    // The call as the MC sent it, which a settled group's summary reads.
+    payload: { ...itemPayload(item, projection), turnItem: item },
     turnId: item.runId as unknown as OrchestrationThreadActivity["turnId"],
     sequence: projected.position,
     createdAt,

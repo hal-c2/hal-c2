@@ -1,6 +1,7 @@
 #include "TimelineModel.h"
 
 #include <QCache>
+#include <QDir>
 #include <QClipboard>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -15,6 +16,7 @@
 #include <optional>
 #include <utility>
 
+#include "CommandLabel.h"
 #include "SidebarModel.h"
 #include "TimelineSummary.h"
 
@@ -133,6 +135,117 @@ QString workspacePath(const QString& path, const QString& root) {
   while (base.size() > 1 && base.endsWith(QLatin1Char('/'))) base.chop(1);
   if (base.isEmpty() || base == QLatin1String("/") || !path.startsWith(base + QLatin1Char('/'))) return path;
   return path.mid(base.size() + 1);
+}
+
+// Whether a command's output is only its own text echoed back
+// (commandDetailRepeatsCommand): equal to it, or a start of it cut off with
+// "..." or "…".
+bool repeatsCommand(const QString& output, const QStringList& commands) {
+  const QString shown = output.trimmed();
+  QString cut;
+  if (shown.endsWith(QLatin1String("..."))) cut = shown.chopped(3);
+  else if (shown.endsWith(QChar(0x2026))) cut = shown.chopped(1);
+  return std::any_of(commands.cbegin(), commands.cend(), [&](const QString& candidate) {
+    const QString command = candidate.trimmed();
+    if (command.isEmpty()) return false;
+    return command == shown || (!cut.isEmpty() && command.size() > cut.size() && command.startsWith(cut));
+  });
+}
+
+// A web address the details may link to: http(s) only, "//host" read as
+// https (resolveExternalWebLinkHref); empty for anything else.
+QString safeWebAddress(const QString& address) {
+  if (address.isEmpty()) return {};
+  const QUrl url(address.startsWith(QLatin1String("//")) ? QStringLiteral("https:") + address : address, QUrl::StrictMode);
+  const QString scheme = url.scheme().toLower();
+  if (!url.isValid() || (scheme != QLatin1String("http") && scheme != QLatin1String("https")) || url.host().isEmpty()) return {};
+  return url.toString(QUrl::FullyEncoded);
+}
+
+// An image a call viewed that the thread's workspace can serve: relative to
+// the workspace (the path as it is in it), with an image's extension; empty
+// for one outside it or any other file.
+QString workspaceImage(const QString& path, const QString& root) {
+  static const QStringList kImages{QStringLiteral("avif"), QStringLiteral("gif"), QStringLiteral("ico"), QStringLiteral("jpeg"),
+                                   QStringLiteral("jpg"), QStringLiteral("png"), QStringLiteral("svg"), QStringLiteral("webp")};
+  const QString trimmed = path.trimmed();
+  if (trimmed.isEmpty() || trimmed.contains(QLatin1Char('\n')) || trimmed.contains(QLatin1Char('\r'))) return {};
+  if (!kImages.contains(QFileInfo(trimmed).suffix().toLower())) return {};
+  const QString relative = workspacePath(trimmed, root);
+  // A full path left as it was is outside the workspace; so is one climbing out of it.
+  if (relative.startsWith(QLatin1Char('/')) || relative.contains(QLatin1String(":\\")) || relative.startsWith(QLatin1String("~"))) return {};
+  const QString clean = QDir::cleanPath(relative);
+  if (clean == QLatin1String("..") || clean.startsWith(QLatin1String("../"))) return {};
+  return clean;
+}
+
+// An icon address a provider supplied: http(s) or a data: image.
+QString explicitIconUrl(const QJsonValue& value) {
+  const QString address = value.toString();
+  if (address.isEmpty() || address.size() > 4096) return {};
+  const QUrl url(address);
+  const QString scheme = url.scheme().toLower();
+  return url.isValid() && (scheme == QLatin1String("http") || scheme == QLatin1String("https") || scheme == QLatin1String("data")) ? url.toString()
+                                                                                                                                     : QString();
+}
+
+// The site's own icon for a page, in one appearance (toolActivityFaviconUrl):
+// what the provider supplied, a site whose usual favicon is illegible in that
+// appearance, then the origin's favicon.ico.
+QString websiteIconUrl(const QJsonObject& icon, bool dark) {
+  static const QHash<QString, QPair<QString, QString>> kThemed{
+      {QStringLiteral("github.com"),
+       {QStringLiteral("https://github.githubassets.com/favicons/favicon.svg"), QStringLiteral("https://github.githubassets.com/favicons/favicon-dark.svg")}}};
+  const QString page = text(icon, QLatin1String("pageUrl"));
+  const QUrl url(page);
+  const bool web = page.size() <= 4096 && url.isValid() && (url.scheme() == QLatin1String("http") || url.scheme() == QLatin1String("https"));
+  const auto themed = kThemed.constFind(url.host().toLower());
+  const QString site = web && themed != kThemed.cend() ? (dark ? themed->second : themed->first) : QString();
+  const QString origin = web ? url.resolved(QUrl(QStringLiteral("/favicon.ico"))).toString() : QString();
+  QString chosen = dark ? explicitIconUrl(icon.value(QLatin1String("faviconUrlDark"))) : explicitIconUrl(icon.value(QLatin1String("faviconUrl")));
+  if (chosen.isEmpty()) chosen = site;
+  if (chosen.isEmpty() && dark) chosen = explicitIconUrl(icon.value(QLatin1String("faviconUrl")));
+  return chosen.isEmpty() ? origin : chosen;
+}
+
+// One answer as its preview reads (getQuestionAnswerText): text, a list's
+// items joined, an object's `answers`.
+QString answerText(const QJsonValue& value) {
+  if (value.isString()) return value.toString();
+  if (value.isArray()) {
+    QStringList parts;
+    for (const QJsonValue& part : value.toArray()) {
+      if (const QString shown = answerText(part); !shown.isEmpty()) parts.append(shown);
+    }
+    return parts.join(QStringLiteral(", "));
+  }
+  return value.isObject() ? answerText(value.toObject().value(QLatin1String("answers"))) : QString();
+}
+
+// What the user answered a question with, on one line
+// (getQuestionAnswerPreview): the answers, else the files sent, else the
+// questions themselves.
+QString answerPreview(const QJsonObject& answer) {
+  QStringList parts;
+  const QJsonObject answers = answer.value(QLatin1String("answers")).toObject();
+  for (auto it = answers.constBegin(); it != answers.constEnd(); ++it) {
+    if (const QString shown = answerText(*it); !shown.isEmpty()) parts.append(shown);
+  }
+  QString preview = parts.join(QStringLiteral(" · "));
+  if (preview.isEmpty()) {
+    const QJsonObject attachments = answer.value(QLatin1String("attachmentsByQuestionId")).toObject();
+    for (auto it = attachments.constBegin(); it != attachments.constEnd(); ++it) {
+      for (const QJsonValue& attachment : it->toArray()) parts.append(attachment.toObject().value(QLatin1String("name")).toString());
+    }
+    preview = parts.join(QStringLiteral(", "));
+  }
+  if (preview.isEmpty()) {
+    const QJsonObject questions = answer.value(QLatin1String("questionTextById")).toObject();
+    for (auto it = questions.constBegin(); it != questions.constEnd(); ++it) parts.append(it->toString());
+    preview = parts.join(QStringLiteral(" · "));
+  }
+  static const QRegularExpression space(QStringLiteral(R"(\s+)"));
+  return preview.replace(space, QStringLiteral(" ")).trimmed();
 }
 
 // A thought as its row labels it: the words
@@ -278,6 +391,7 @@ QString kindName(Kind kind) {
 QString callStatusLabel(const QString& status) {
   if (status == QLatin1String("failed")) return QStringLiteral("Failed");
   if (status == QLatin1String("cancelled") || status == QLatin1String("interrupted")) return QStringLiteral("Stopped");
+  if (status == QLatin1String("declined")) return QStringLiteral("Declined");
   if (status == QLatin1String("completed")) return {};
   return QStringLiteral("Running");
 }
@@ -428,6 +542,7 @@ void TimelineModel::setFolds(Folds folds) {
   if (folds == m_folds) return;
   m_folds = folds;
   restructure({});
+  emit foldsChanged();
 }
 
 void TimelineModel::setLocale(const QLocale& locale) {
@@ -818,6 +933,12 @@ void TimelineModel::events(const QJsonArray& events) {
   }
 }
 
+QVariantMap TimelineModel::liveEntry(const Row& row) const {
+  if (row.kind != QLatin1String("work") || row.items.isEmpty()) return {};
+  const bool live = row.live && m_expandedGroups.contains(row.id) == row.startsOpen;
+  return entry(entity(QStringLiteral("turn-item"), row.items.last()), live);
+}
+
 bool TimelineModel::shows(const Row& row, const QString& item) const {
   // A collapsed work group draws its last entries and, summarized, a summary of all of them.
   if (row.kind != QLatin1String("work") || row.summarized || m_expandedGroups.contains(row.id) != row.startsOpen) return true;
@@ -898,6 +1019,10 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
   QStringList fields = patch.value(QLatin1String("s")).toObject().keys();
   for (const QJsonValue& field : patch.value(QLatin1String("u")).toArray()) fields.append(field.toString());
   for (const QString& field : std::as_const(fields)) structural = structural || kStructural.contains(field);
+  // On the phone, how a call ends decides whether it is listed and whether the live row thinks.
+  static const QSet<QString> ending{QStringLiteral("status"), QStringLiteral("exitCode"), QStringLiteral("outputIndicatesFailure"),
+                                    QStringLiteral("output"), QStringLiteral("input")};
+  for (const QString& field : std::as_const(fields)) structural = structural || (phone() && ending.contains(field));
   // Anything but text appended to the item as it streams.
   const QJsonObject appended = patch.value(QLatin1String("a")).toObject();
   if (!existed || !next || replaced || !fields.isEmpty() || appended.size() != 1 || !appended.contains(QLatin1String("text"))) {
@@ -969,11 +1094,28 @@ QList<TimelineModel::Row> TimelineModel::project() const {
       interruptRequested.insert(text(item, QLatin1String("runId")));
     }
   }
+  // The phone (apps/mobile/src/lib/threadActivity.ts): the subagents whose cards
+  // the timeline shows, by run, stand in for the calls that delegated them.
+  QSet<QString> carded;
+  if (phone()) {
+    for (const QJsonObject& item : items) {
+      if (text(item, QLatin1String("type")) != QLatin1String("subagent") || text(item, QLatin1String("origin")) != QLatin1String("app_owned")) continue;
+      carded.insert(text(item, QLatin1String("runId")) + QLatin1Char('\n') + text(item, QLatin1String("subagentId")));
+    }
+  }
   const auto visible = [&](const QJsonObject& item) {
     const QString runId = text(item, QLatin1String("runId"));
     const QString type = text(item, QLatin1String("type"));
     const QString status = text(runs.value(runId), QLatin1String("status"));
     if (status == QLatin1String("rolled_back")) return false;
+    if (phone()) {
+      // A call that never said it ended once its turn settled, the
+      // workspace's preparation, and a delegation its subagent's card shows.
+      if (kSettled.contains(status) && classify(item) == Kind::Work && text(item, QLatin1String("status")) == QLatin1String("running")) return false;
+      if (type == QLatin1String("command_execution") && text(item, QLatin1String("input")) == QLatin1String("Preparing workspace")) return false;
+      const QString task = timeline::delegatedTask(item);
+      if (!task.isEmpty() && carded.contains(runId + QLatin1Char('\n') + task)) return false;
+    }
     if (status == QLatin1String("cancelled") && type == QLatin1String("user_message") &&
         text(item, QLatin1String("inputIntent")) == QLatin1String("queued_turn")) {
       return false;
@@ -1163,7 +1305,8 @@ QList<TimelineModel::Row> TimelineModel::project() const {
           break;
         }
       }
-      row.summarized = row.items.size() > 1 && kSettled.contains(text(runs.value(runId), QLatin1String("status")));
+      row.live = !kSettled.contains(text(runs.value(runId), QLatin1String("status")));
+      row.summarized = row.items.size() > 1 && !row.live;
       row.startsOpen = m_keptOpen.contains(runId);
       rows.append(row);
       i = next;
@@ -1177,6 +1320,26 @@ QList<TimelineModel::Row> TimelineModel::project() const {
     }
     rows.append(row);
     ++i;
+  }
+  // On the phone, a running turn ends in one live row: its latest call when that
+  // says what the agent is doing (still running, or done without failing), a
+  // reply it is writing or a compaction under way, else that it is thinking.
+  if (phone && kRunning.contains(text(runs.value(latestRun), QLatin1String("status")))) {
+    bool told = false;
+    if (!rows.isEmpty() && !rows.last().items.isEmpty()) {
+      const QJsonObject last = items.value(rows.last().items.last());
+      const QString type = text(last, QLatin1String("type"));
+      const QString status = text(last, QLatin1String("status"));
+      if (text(last, QLatin1String("runId")) != latestRun) {
+        told = false;
+      } else if (rows.last().kind == QLatin1String("work")) {
+        told = status == QLatin1String("running") || (status == QLatin1String("completed") && !timeline::callFailed(last));
+      } else {
+        told = (type == QLatin1String("assistant_message") && last.value(QLatin1String("streaming")).toBool()) ||
+               (type == QLatin1String("compaction") && status == QLatin1String("running"));
+      }
+    }
+    if (!told) rows.append({QStringLiteral("thinking:") + latestRun, QStringLiteral("thinking")});
   }
   return rows;
 }
@@ -1222,9 +1385,16 @@ void TimelineModel::applyRows(const QList<Row>& rows, const QSet<QString>& chang
       m_rows.move(from, i);
       endMoveRows();
     }
-    if (m_rows.at(i) != want || dirty(want)) {
+    // A turn settling ends its live call, which redraws only if that changes
+    // how the call reads.
+    Row unlive = want;
+    unlive.live = m_rows.at(i).live;
+    const bool relabelled = unlive.live != want.live && liveEntry(unlive) != liveEntry(want);
+    if (m_rows.at(i) != unlive || relabelled || dirty(want)) {
       m_rows[i] = want;
       emit dataChanged(index(int(i)), index(int(i)));
+    } else {
+      m_rows[i] = want;
     }
     ++i;
   }
@@ -1346,9 +1516,10 @@ QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
   const int at = indexOf(rowId);
   if (at < 0) return {};
   const Row& row = m_rows.at(at);
-  if (row.kind != QLatin1String("message") || row.items.isEmpty()) return {};
+  const bool work = row.kind == QLatin1String("work");
+  if ((row.kind != QLatin1String("message") && !work) || row.items.isEmpty()) return {};
   const QJsonObject item = entity(QStringLiteral("turn-item"), row.items.constFirst());
-  if (text(item, QLatin1String("type")) != QLatin1String("assistant_message")) return {};
+  if (!work && text(item, QLatin1String("type")) != QLatin1String("assistant_message")) return {};
   const QString runId = text(item, QLatin1String("runId"));
   const QJsonObject run = entity(QStringLiteral("run"), runId);
   if (!kSettled.contains(text(run, QLatin1String("status")))) return {};
@@ -1381,7 +1552,23 @@ void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const Q
     m_attachmentUrls.remove(id);
     return;
   }
+  const AttachmentUrl was = m_attachmentUrls.value(id);
   m_attachmentUrls.insert(id, {url, expiresAt});
+  const bool icon = id.startsWith(QLatin1String("native-app-icon:"));
+  if (icon || id.startsWith(QLatin1String("workspace-file:"))) {
+    // An app's icon or an image a call viewed: the work groups with a call on
+    // screen that shows it, unless its address is the one they already show.
+    if (was.url == url && was.expiresAt > m_now()) return;
+    const QString key = icon ? QStringLiteral("iconId") : QStringLiteral("imageId");
+    for (int row = 0; row < m_rows.size(); ++row) {
+      if (m_rows.at(row).kind != QLatin1String("work")) continue;
+      const QVariantList entries = data(index(row), EntriesRole).toList();
+      if (std::any_of(entries.cbegin(), entries.cend(), [&](const QVariant& entry) { return entry.toMap().value(key) == id; })) {
+        emit dataChanged(index(row), index(row), {EntriesRole});
+      }
+    }
+    return;
+  }
   for (int row = 0; row < m_rows.size(); ++row) {
     if (m_rows.at(row).kind != QLatin1String("message")) continue;
     const QJsonArray attachments =
@@ -1424,7 +1611,7 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
 }
 
 // One tool call of a work group (apps/tui/src/orchestrationV2Adapter.ts itemSummary).
-QVariantMap TimelineModel::entry(const QJsonObject& item) const {
+QVariantMap TimelineModel::entry(const QJsonObject& item, bool live) const {
   const QString type = text(item, QLatin1String("type"));
   const QString status = text(item, QLatin1String("status"));
   const QString title = text(item, QLatin1String("title")).trimmed();
@@ -1432,10 +1619,35 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
       {QStringLiteral("id"), text(item, QLatin1String("id"))},
       {QStringLiteral("type"), type},
       {QStringLiteral("status"), status},
-      {QStringLiteral("statusLabel"), callStatusLabel(status)},
+      // A call the provider finished whose result says it failed reads as failed.
+      {QStringLiteral("statusLabel"), status == QLatin1String("completed") && timeline::callFailed(item) ? QStringLiteral("Failed")
+                                                                                                         : callStatusLabel(status)},
       {QStringLiteral("icon"), iconOf(item)},
       {QStringLiteral("time"), stamp(itemTime(item))},
   };
+  // A website's, an integration's or an app's own icon, drawn over the kind's
+  // until it loads (ToolActivityIconView): an address for each appearance, or
+  // an app's icon the environment serves, signed like an attachment.
+  QJsonObject toolIcon = item.value(QLatin1String("toolIcon")).toObject();
+  if (toolIcon.isEmpty()) toolIcon = item.value(QLatin1String("toolSource")).toObject().value(QLatin1String("icon")).toObject();
+  const QString iconTag = text(toolIcon, QLatin1String("_tag"));
+  if (iconTag == QLatin1String("website")) {
+    entry.insert(QStringLiteral("iconUrl"), websiteIconUrl(toolIcon, false));
+    entry.insert(QStringLiteral("iconUrlDark"), websiteIconUrl(toolIcon, true));
+  } else if (iconTag == QLatin1String("themed-logo")) {
+    const QString light = explicitIconUrl(toolIcon.value(QLatin1String("logoUrl")));
+    const QString dark = explicitIconUrl(toolIcon.value(QLatin1String("logoUrlDark")));
+    entry.insert(QStringLiteral("iconUrl"), light);
+    entry.insert(QStringLiteral("iconUrlDark"), dark.isEmpty() ? light : dark);
+  } else if (iconTag == QLatin1String("native-app") && toolIcon.value(QLatin1String("app")).isObject()) {
+    const QString id = QStringLiteral("native-app-icon:") +
+                       QString::fromUtf8(QJsonDocument(toolIcon.value(QLatin1String("app")).toObject()).toJson(QJsonDocument::Compact));
+    const AttachmentUrl known = m_attachmentUrls.value(id);
+    const QString signedUrl = known.expiresAt > m_now() ? known.url.toString() : QString();
+    entry.insert(QStringLiteral("iconId"), id);
+    entry.insert(QStringLiteral("iconUrl"), signedUrl);
+    entry.insert(QStringLiteral("iconUrlDark"), signedUrl);
+  }
   QString label;
   QString detail;
   if (type == QLatin1String("reasoning")) {
@@ -1446,7 +1658,15 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
   } else if (type == QLatin1String("command_execution")) {
     const QString command = timeline::commandDisplayText(text(item, QLatin1String("input")));
     label = command.isEmpty() ? QStringLiteral("Ran command") : command;
+    if (live) {
+      // The running turn's latest command, named by its program and how it went.
+      const QString ended = entry.value(QStringLiteral("statusLabel")).toString();
+      const QString program = timeline::commandProgramName(text(item, QLatin1String("input")));
+      label = (ended.isEmpty() ? QStringLiteral("Ran") : ended) + QLatin1Char(' ') + (program.isEmpty() ? QStringLiteral("command") : program);
+    }
     detail = text(item, QLatin1String("output"));
+    // An output that only echoes the command says nothing new.
+    if (repeatsCommand(detail, {text(item, QLatin1String("input")), command})) detail.clear();
     entry.insert(QStringLiteral("command"), text(item, QLatin1String("input")));
     const QJsonValue exitCode = item.value(QLatin1String("exitCode"));
     if (exitCode.isDouble()) entry.insert(QStringLiteral("exitCode"), exitCode.toInt());
@@ -1454,23 +1674,77 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
     const QString root = m_workspaceRoot ? m_workspaceRoot() : QString();
     label = workspacePath(text(item, QLatin1String("fileName")), root);
     entry.insert(QStringLiteral("path"), text(item, QLatin1String("fileName")));
-    detail = QStringLiteral("+%1 -%2").arg(item.value(QLatin1String("additions")).toInt()).arg(item.value(QLatin1String("deletions")).toInt());
+    // The turn's diff names it as the checkpoint does: relative to the project.
+    entry.insert(QStringLiteral("diffPath"), label);
+    const QJsonValue additions = item.value(QLatin1String("additions"));
+    const QJsonValue deletions = item.value(QLatin1String("deletions"));
+    if (additions.isDouble() || deletions.isDouble()) {
+      entry.insert(QStringLiteral("additions"), additions.toInt());
+      entry.insert(QStringLiteral("deletions"), deletions.toInt());
+    }
+    // What each change did, a rename with where the file came from.
+    QStringList changes;
+    for (const QJsonValue& value : item.value(QLatin1String("changes")).toArray()) {
+      const QJsonObject change = value.toObject();
+      const QString from = text(change, QLatin1String("oldPath"));
+      changes.append(QStringLiteral("%1 %2%3").arg(text(change, QLatin1String("operation")),
+                                                   from.isEmpty() ? QString() : workspacePath(from, root) + QStringLiteral(" → "),
+                                                   workspacePath(text(change, QLatin1String("path")), root)));
+    }
+    entry.insert(QStringLiteral("changes"), changes);
   } else if (type == QLatin1String("file_search")) {
     // What it looked for; a read's file (an ACP agent's `read`).
     label = timeline::isFileRead(item) ? QStringLiteral("Read file") : QStringLiteral("Searched files");
     detail = text(item, QLatin1String("pattern"));
+    // Where each match is, as "path:line:column", with its line.
+    const QString root = m_workspaceRoot ? m_workspaceRoot() : QString();
+    QVariantList matches;
+    for (const QJsonValue& value : item.value(QLatin1String("results")).toArray()) {
+      const QJsonObject result = value.toObject();
+      QString location = workspacePath(text(result, QLatin1String("fileName")), root);
+      if (const QJsonValue line = result.value(QLatin1String("line")); line.isDouble()) {
+        location += QStringLiteral(":%1").arg(line.toInt());
+        if (const QJsonValue column = result.value(QLatin1String("column")); column.isDouble()) location += QStringLiteral(":%1").arg(column.toInt());
+      }
+      matches.append(QVariantMap{{QStringLiteral("location"), location}, {QStringLiteral("preview"), text(result, QLatin1String("preview")).trimmed()}});
+    }
+    entry.insert(QStringLiteral("matches"), matches);
   } else if (type == QLatin1String("web_search")) {
     label = QStringLiteral("Searched the web");
     QStringList patterns;
     for (const QJsonValue& pattern : item.value(QLatin1String("patterns")).toArray()) patterns.append(pattern.toString());
     detail = patterns.join(QLatin1Char('\n'));
+    // A result links to its page only at a web address; any other stays text.
+    QVariantList results;
+    for (const QJsonValue& value : item.value(QLatin1String("results")).toArray()) {
+      const QJsonObject result = value.toObject();
+      const QString title = text(result, QLatin1String("title")).trimmed();
+      const QString address = text(result, QLatin1String("url")).trimmed();
+      results.append(QVariantMap{
+          {QStringLiteral("title"), !title.isEmpty() ? title : !address.isEmpty() ? address : QStringLiteral("Search result")},
+          {QStringLiteral("url"), safeWebAddress(address)},
+      });
+    }
+    entry.insert(QStringLiteral("results"), results);
   } else if (type == QLatin1String("dynamic_tool")) {
     label = item.value(QLatin1String("toolName")).toString(QStringLiteral("Used tool"));
+    if (const QString name = timeline::halC2ToolDisplayName(label); !name.isEmpty()) label = name;
     // Its input; a result's body is not shown (docs/user/activity-log.md).
     if (const QJsonValue input = item.value(QLatin1String("input")); input.isObject() && !input.toObject().isEmpty()) {
       detail = QString::fromUtf8(QJsonDocument(input.toObject()).toJson(QJsonDocument::Indented)).trimmed();
     } else if (input.isString()) {
       detail = input.toString();
+    }
+    // An image the agent looked at: shown only from the workspace, else its path.
+    if (const QString viewed = text(item, QLatin1String("viewedImagePath")); !viewed.isEmpty()) {
+      const QString image = workspaceImage(viewed, m_workspaceRoot ? m_workspaceRoot() : QString());
+      entry.insert(QStringLiteral("viewedPath"), viewed);
+      if (!image.isEmpty()) {
+        const QString id = QStringLiteral("workspace-file:") + image;
+        const AttachmentUrl known = m_attachmentUrls.value(id);
+        entry.insert(QStringLiteral("imageId"), id);
+        entry.insert(QStringLiteral("imageUrl"), known.expiresAt > m_now() ? known.url : QUrl());
+      }
     }
   } else if (type == QLatin1String("approval_request") || type == QLatin1String("user_input_request")) {
     // Answered in the composer (ComposerController); the row records the ask.
@@ -1484,6 +1758,10 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
         questions.append(text(question.toObject(), QLatin1String("question")));
       }
       detail = questions.join(QLatin1Char('\n'));
+      // Answered: what the user said.
+      if (const QJsonValue answer = item.value(QLatin1String("questionAnswer")); answer.isObject()) {
+        entry.insert(QStringLiteral("preview"), answerPreview(answer.toObject()));
+      }
     }
     const QJsonObject request = entity(QStringLiteral("runtime-request"), text(item, QLatin1String("requestId")));
     if (text(request, QLatin1String("decision")) == QLatin1String("decline")) {
@@ -1495,7 +1773,8 @@ QVariantMap TimelineModel::entry(const QJsonObject& item) const {
     label = QStringLiteral("Updated plan");
     QStringList steps;
     for (const QJsonValue& step : item.value(QLatin1String("steps")).toArray()) {
-      steps.append(QStringLiteral("%1: %2").arg(text(step.toObject(), QLatin1String("status")), text(step.toObject(), QLatin1String("text"))));
+      const bool done = text(step.toObject(), QLatin1String("status")) == QLatin1String("completed");
+      steps.append((done ? QStringLiteral("✓ ") : QStringLiteral("○ ")) + text(step.toObject(), QLatin1String("text")));
     }
     detail = steps.join(QLatin1Char('\n'));
   } else if (type == QLatin1String("run_interrupt_request")) {
@@ -1527,6 +1806,11 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
     if (role == TimeRole) return stamp(row.at);
     return {};
   }
+  if (row.kind == QLatin1String("thinking")) {
+    if (role == TitleRole) return QStringLiteral("Thinking");
+    if (role == IconRole) return QStringLiteral("brain");
+    return {};
+  }
   if (row.kind == QLatin1String("work")) {
     const bool expanded = m_expandedGroups.contains(row.id) != row.startsOpen;
     // A summarized group collapses into its summary alone.
@@ -1536,7 +1820,9 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
     if (role == EntriesRole) {
       QVariantList entries;
       const qsizetype first = expanded ? 0 : std::max<qsizetype>(0, row.items.size() - shown);
-      for (qsizetype i = first; i < row.items.size(); ++i) entries.append(entry(entity(QStringLiteral("turn-item"), row.items.at(i))));
+      for (qsizetype i = first; i < row.items.size(); ++i) {
+        entries.append(entry(entity(QStringLiteral("turn-item"), row.items.at(i)), row.live && !expanded && i == row.items.size() - 1));
+      }
       return entries;
     }
     if (role == SummaryRole || role == SummaryFailedRole) {

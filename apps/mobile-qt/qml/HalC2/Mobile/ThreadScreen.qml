@@ -9,8 +9,9 @@ import HalC2.Bricks
 // and the composer, which carries the thread's approvals and questions. The
 // tabs the desktop draws beside the thread that a phone shows (its Files, its
 // Diff, its linked pull requests and a pull request's review) take the screen
-// under the same bar; the way back closes them (MobileShell.stepBack). A line
-// of the diff is tapped to comment on it, and the comment waits on the
+// under the same bar; the way back closes them (MobileShell.stepBack), and a
+// reply's changed files open the Diff here as there. A line of the diff is
+// tapped to comment on it, and the comment waits on the
 // composer for the next message. The pull requests are the phone's git
 // overview: where they are linked, refreshed and opened, and where a thread is
 // started on one. Files dropped anywhere on the centre or the composer join

@@ -5,13 +5,18 @@ import { expect } from "bun:test";
 import { TOOL_ICONS } from "../../../src/icons.ts";
 import { step } from "../../steps.ts";
 import { findObject, snapshot } from "../world.ts";
+import { project } from "../fakeClient.ts";
 import { clickText, hostState, plain, recorded, settle } from "../threadWorld.ts";
+import { readsDuration } from "./timeline-streaming.steps.ts";
 import {
   addCommand,
   addItem,
+  currentRun,
   itemsOf,
   lastOf,
   linesOf,
+  messageItem,
+  setItem,
   settleRun,
   startRun,
   turns,
@@ -135,6 +140,440 @@ step("the call is shown with the {string} icon", async (ctx: TurnWorld, icon: st
   const row = lastCall(ctx);
   expect(row.text.chunks[0]!.text).toBe(`${glyphs[0]!.glyph} `);
   expect(await snapshot(ctx)).toContain(plain(row.text).slice(0, 12));
+});
+
+// --- what a finished turn's group of calls did ----------------------------------------
+
+type Call = [type: string, fields: Record<string, unknown>];
+
+const halC2 = (tool: string, input: Record<string, unknown>, output: unknown = {}): Call => [
+  "dynamic_tool",
+  { toolName: `mcp__hal-c2__${tool}`, input, output: { structuredContent: output } },
+];
+
+/** A message HAL-C2's tool sent to `thread`, or the error it answered with. */
+const sendMessage = (thread: string, n: number, failed = false): Call =>
+  failed
+    ? [
+        "dynamic_tool",
+        {
+          toolName: "mcp__hal-c2__hal_c2_thread_send",
+          input: { threadId: thread, message: "Check the cart" },
+          output: { isError: true, content: [{ type: "text", text: "thread not found" }] },
+        },
+      ]
+    : halC2(
+        "hal_c2_thread_send",
+        { threadId: thread, message: "Check the cart" },
+        {
+          threadId: thread,
+          messageId: `message-${n}`,
+        },
+      );
+
+const command = (n: number, fields: Record<string, unknown> = {}): Call => [
+  "command_execution",
+  { input: `bun test cart-${n}`, output: "ok", exitCode: 0, ...fields },
+];
+const edit = (fileName: string): Call => ["file_change", { fileName }];
+const webSearch: Call = ["web_search", { patterns: ["tax rates"] }];
+const fileRead: Call = [
+  "file_search",
+  { pattern: "src/cart.ts", results: [{ fileName: "src/cart.ts" }] },
+];
+// A thought with no words, which a lone row labels "Thought" (streaming.feature reads one with words).
+const thought: Call = ["reasoning", { text: "" }];
+const through = (name: string, kind: string, key = name.toLowerCase()): Call => [
+  "dynamic_tool",
+  { toolName: "navigate", input: {}, toolSource: { key, name, kind } },
+];
+const times = <T>(count: number, make: (n: number) => T) =>
+  Array.from({ length: count }, (_, index) => make(index + 1));
+
+const GROUPS: Record<string, Call[]> = {
+  "one file read": [fileRead],
+  "edits to three different files": [edit("src/a.ts"), edit("src/b.ts"), edit("src/c.ts")],
+  "two edits to the same file": [edit("src/cart.ts"), edit("src/cart.ts")],
+  "one command": [command(1)],
+  "two web searches": [webSearch, webSearch],
+  "one search of the project's code": [["file_search", { pattern: "TODO" }]],
+  "three browser calls": times(3, () => halC2("preview_click", { selector: "#buy" })),
+  "two device controls": times(2, () => halC2("device_screenshot", {})),
+  "one tool with no more specific kind": [
+    ["dynamic_tool", { toolName: "linear.search", input: {} }],
+  ],
+  "two progress updates": times(2, (n): Call => ["system_notice", { message: `Step ${n}` }]),
+  "one thread the agent created": [["thread_created", { threadId: "thread-2" }]],
+  "two links of a pull request and one check": [
+    ...times(2, (n) => halC2("link_pull_request", { url: `https://github.com/o/r/pull/${n}` })),
+    halC2("list_thread_pull_requests", {}),
+  ],
+  "one pull request unlinked": [
+    halC2("unlink_pull_request", { url: "https://github.com/o/r/pull/1" }),
+  ],
+  "two checks of the linked pull requests": times(2, () => halC2("list_thread_pull_requests", {})),
+  "two thoughts and one command": [thought, thought, command(1)],
+  "one thought": [thought],
+  "three thoughts": [thought, thought, thought],
+  'two calls through the "Chrome" integration and one command': [
+    through("Chrome", "integration"),
+    through("Chrome", "integration"),
+    command(1),
+  ],
+  'calls through the "Chrome" and "Slack" integrations': [
+    through("Chrome", "integration"),
+    through("Slack", "integration"),
+  ],
+  'calls through the "Chrome", "Slack" and "Linear" integrations': [
+    through("Chrome", "integration"),
+    through("Slack", "integration"),
+    through("Linear", "integration"),
+  ],
+  "calls through the built-in browser and computer controls": [
+    through("Browser", "browser"),
+    through("Computer Use", "computer"),
+  ],
+  "commands, file changes and four web searches": [
+    command(1),
+    command(2),
+    edit("src/cart.ts"),
+    ...times(4, () => webSearch),
+  ],
+  "two tasks delegated to subagents": times(2, (n) =>
+    halC2("delegate_task", { prompt: "Survey the cart" }, { taskId: `task-${n}` }),
+  ),
+  "the same task cancelled twice": times(2, () => halC2("task_cancel", { taskId: "task-1" })),
+  "one thread read and the same thread read again": times(2, () =>
+    halC2("hal_c2_thread_read", { threadId: "thread-2" }),
+  ),
+  "one wait on a thread": [halC2("hal_c2_thread_wait", { threadId: "thread-2" })],
+  "one scheduled task created": [
+    halC2("schedule_task", { prompt: "Check CI" }, { scheduledTaskId: "schedule-1" }),
+  ],
+  "one scheduled task run on request": [
+    halC2("run_scheduled_task_now", { scheduledTaskId: "schedule-1" }),
+  ],
+  "a queued message edited and another reordered": [
+    halC2("hal_c2_queue_edit", { queuedRunId: "queued-1", message: "Add tax" }),
+    halC2("hal_c2_queue_reorder", { queuedRunId: "queued-2", position: 0 }),
+  ],
+  "a pending question answered": [
+    halC2("hal_c2_pending_request_respond", { requestId: "request-1", answer: "yes" }),
+  ],
+  "one handoff to a worktree": [
+    halC2("hal_c2_worktree_handoff", { worktreePath: "/workspace/project-one-tax" }),
+  ],
+  "one project registered and one cloned": [
+    halC2("hal_c2_project_create", { workspaceRoot: "/workspace/shop" }, { projectId: "p2" }),
+    halC2("hal_c2_project_clone", { url: "https://github.com/o/r", cwd: "/workspace/r" }),
+  ],
+  "two attachments sent to one thread": [
+    halC2(
+      "hal_c2_thread_send_attachments",
+      { threadId: "thread-2", attachments: ["a.png", "b.png"] },
+      { threadId: "thread-2", messageId: "message-1" },
+    ),
+  ],
+  // Sends that named no thread, refused before they reached one.
+  "two attempts to send a message that both failed": times(2, (): Call => [
+    "dynamic_tool",
+    {
+      toolName: "mcp__hal-c2__hal_c2_thread_send",
+      input: { message: "Check the cart" },
+      output: { isError: true, content: [{ type: "text", text: "threadId is required" }] },
+    },
+  ]),
+  "a command that exited with a failure": [command(1, { status: "failed", exitCode: 1 })],
+};
+
+/** A finished turn whose work is `calls`, ending with the agent's reply. */
+async function finishTurn(ctx: TurnWorld, calls: ReadonlyArray<Call>): Promise<void> {
+  await startRun(ctx);
+  for (const call of calls) await addItem(ctx, ...call);
+  await addItem(ctx, "assistant_message", { text: "Done." });
+  await settleRun(ctx, "completed", 30);
+}
+
+/** The finished turn's group of calls, its summary first. */
+const group = (ctx: TurnWorld) => linesOf(lastOf(ctx, "work"));
+const summary = (ctx: TurnWorld) => group(ctx)[0]!.slice(2).replace(/ ✗$/, "");
+/** Whether the group is one call, which reads as itself instead of a summary. */
+const lone = (ctx: TurnWorld) => !/^[▸▾] /.test(group(ctx)[0]!);
+/** What the group reads as: its summary, or a lone call's label. */
+const groupLine = (ctx: TurnWorld) =>
+  lone(ctx) ? lastOf(ctx, "work").lines[0]!.text.chunks[1]!.text : summary(ctx);
+
+step("the agent ran two commands and sent messages to three threads", (ctx: TurnWorld) =>
+  finishTurn(ctx, [command(1), command(2), ...times(3, (n) => sendMessage(`thread-${n}`, n))]),
+);
+
+step("the agent ran commands, changed files, searched the web and read files", (ctx: TurnWorld) =>
+  finishTurn(ctx, [
+    ["dynamic_tool", { toolName: "Read", input: { path: "src/cart.ts" } }],
+    webSearch,
+    command(1),
+    command(2),
+    edit("src/cart.ts"),
+  ]),
+);
+
+step("the agent sent three messages and one of them failed", (ctx: TurnWorld) =>
+  finishTurn(ctx, [
+    sendMessage("thread-2", 1),
+    sendMessage("thread-2", 2),
+    sendMessage("thread-3", 3, true),
+  ]),
+);
+
+// A thought, which a summary does not count, keeps a lone call from reading as itself.
+step(
+  /^the activity group holds (a thought and )?(.+)$/,
+  (ctx: TurnWorld, withThought: string | undefined, calls: string) => {
+    const fixture = GROUPS[calls];
+    if (!fixture) throw new Error(`unknown activity group: ${calls}`);
+    return finishTurn(ctx, withThought ? [thought, ...fixture] : fixture);
+  },
+);
+
+async function openFold(ctx: TurnWorld) {
+  const fold = linesOf(lastOf(ctx, "fold"))[0]!;
+  if (fold.startsWith("▸ ")) await clickText(ctx, fold.slice(2));
+}
+
+step("the user reads the activity group", async (ctx: TurnWorld) => {
+  await openFold(ctx);
+  // The group stays closed: one line saying what its calls did, or a lone call's own.
+  expect(group(ctx)).toHaveLength(1);
+  if (!lone(ctx)) expect(group(ctx)[0]!.startsWith("▸ ")).toBe(true);
+});
+
+async function toggleGroup(ctx: TurnWorld) {
+  await clickText(ctx, summary(ctx));
+}
+
+step("the user opens the activity group", async (ctx: TurnWorld) => {
+  await openFold(ctx);
+  await toggleGroup(ctx);
+});
+
+step("it reads {string}", async (ctx: TurnWorld & { durationShown?: boolean }, text: string) => {
+  if (ctx.durationShown) return readsDuration(ctx, text);
+  expect(groupLine(ctx)).toBe(text);
+  expect(await snapshot(ctx)).toContain(text);
+});
+
+step("it ends with {string}", (ctx: TurnWorld, text: string) => {
+  // Mid-sentence the summary lower-cases what it adds.
+  expect(summary(ctx).toLowerCase().endsWith(text.toLowerCase())).toBe(true);
+});
+
+step("the summary names commands and file changes", (ctx: TurnWorld) => {
+  expect(summary(ctx)).toStartWith("Ran 2 commands, changed 1 file, and ");
+});
+
+step("it counts the rest instead of naming them", (ctx: TurnWorld) => {
+  expect(summary(ctx)).toBe("Ran 2 commands, changed 1 file, and performed 2 other actions");
+});
+
+step("the summary counts two messages sent", async (ctx: TurnWorld) => {
+  expect(summary(ctx)).toBe("Sent 2 messages to 1 thread");
+  expect(group(ctx)[0]!.endsWith(" ✗")).toBe(true);
+});
+
+step("the group is marked as having a failure", async (ctx: TurnWorld) => {
+  // A lone call is marked on its own row.
+  if (lone(ctx)) {
+    expect(plain(lastCall(ctx).text)).toContain("✗ Failed");
+    return;
+  }
+  const head = lastOf(ctx, "work").lines[0]!.text.chunks;
+  expect(head.at(-1)!.text).toBe(" ✗");
+  expect(await snapshot(ctx)).toContain(`${summary(ctx)} ✗`);
+});
+
+/** The opened group's row for the call labelled `label`. */
+function callRow(ctx: TurnWorld, label: string): string {
+  const row = group(ctx).find((line) => line.includes(label));
+  if (!row) throw new Error(`the group shows no call "${label}": ${group(ctx).join(" | ")}`);
+  return row;
+}
+
+step("the provider reported a HAL-C2 tool call as completed", async (ctx: TurnWorld) => {
+  await startRun(ctx);
+  await addItem(ctx, ...halC2("hal_c2_thread_read", { threadId: "thread-2" }));
+});
+
+step("the tool's answer says it is an error", async (ctx: TurnWorld) => {
+  const { items } = await turns(ctx);
+  const call = items.at(-1)!;
+  call.output = { isError: true, content: [{ type: "text", text: "thread not found" }] };
+  await addItem(ctx, "assistant_message", { text: "Done." });
+  await settleRun(ctx, "completed", 30);
+});
+
+step("the call is shown as failed", (ctx: TurnWorld) => {
+  // The call is alone in its group, which reads as the call.
+  expect(callRow(ctx, "Read a HAL-C2 thread")).toContain("✗ Failed");
+});
+
+step("the provider reported a command as completed", async (ctx: TurnWorld) => {
+  await startRun(ctx);
+  await addItem(ctx, "command_execution", { input: "cat src/x.ts", status: "completed" });
+});
+
+step("the command's output says {string}", async (ctx: TurnWorld, output: string) => {
+  const { items } = await turns(ctx);
+  const call = items.at(-1)!;
+  call.output = output;
+  // The MC reads the output when the command finishes (turn_writer.ex), as legacy
+  // toolOutputIndicatesFailure did: an exit code of 0 is not a failure.
+  if (!/exit code 0\b/.test(output)) call.outputIndicatesFailure = true;
+  await addItem(ctx, "assistant_message", { text: "Done." });
+  await settleRun(ctx, "completed", 30);
+});
+
+step(/^the command is shown as (failed|succeeded)$/, async (ctx: TurnWorld, how: string) => {
+  // The command is alone in its group, which reads as the command.
+  const row = plain(lastCall(ctx).text);
+  expect(row).toContain(how === "failed" ? "✗ Failed" : "✓");
+  expect(row.includes("✗")).toBe(how === "failed");
+});
+
+// --- a call to one of HAL-C2's own tools ------------------------------------------------
+
+step("the agent called HAL-C2's {string} tool", async (ctx: TurnWorld, tool: string) => {
+  await startRun(ctx);
+  await addItem(ctx, "dynamic_tool", { toolName: `mcp__hal-c2__${tool}`, input: {} });
+});
+
+step(
+  "the agent called HAL-C2's thread-reading tool and the provider named it {string}",
+  async (ctx: TurnWorld, name: string) => {
+    await startRun(ctx);
+    await addItem(ctx, "dynamic_tool", { toolName: name, input: { threadId: "thread-2" } });
+  },
+);
+
+step("the agent called a tool named {string}", async (ctx: TurnWorld, name: string) => {
+  await startRun(ctx);
+  await addItem(ctx, "dynamic_tool", { toolName: name, input: {} });
+});
+
+step("the call reads {string}", async (ctx: TurnWorld, label: string) => {
+  // icon, then the label.
+  expect(lastCall(ctx).text.chunks[1]!.text).toBe(label);
+  expect(await snapshot(ctx)).toContain(label);
+});
+
+step("the call is shown as an ordinary tool call", (ctx: TurnWorld) => {
+  const [icon, label] = lastCall(ctx).text.chunks;
+  expect(icon!.text).toBe(`${TOOL_ICONS.mcp.glyph} `);
+  expect(label!.text).toBe("mcp__other-server__hal_c2_thread_read");
+});
+
+step("it does not carry HAL-C2's name for the tool", async (ctx: TurnWorld) => {
+  expect(plain(lastCall(ctx).text)).not.toContain("Read a HAL-C2 thread");
+  expect(await snapshot(ctx)).not.toContain("Read a HAL-C2 thread");
+});
+
+// --- opening a group --------------------------------------------------------------------
+
+step("a collapsed group of tool calls", async (ctx: TurnWorld) => {
+  await finishTurn(ctx, [
+    command(1, { input: "bun test cart", exitCode: 0 }),
+    command(2, { input: "bun lint", status: "failed", exitCode: 2 }),
+    sendMessage("thread-2", 1),
+  ]);
+  await openFold(ctx);
+  expect(group(ctx)).toEqual(["▸ Ran 2 commands and sent 1 message to 1 thread ✗"]);
+});
+
+step("the user opens the group", toggleGroup);
+step("the user closes the group", toggleGroup);
+
+step(
+  "each call shows its command or input, its status and its exit code",
+  async (ctx: TurnWorld) => {
+    expect(group(ctx)[0]!.startsWith("▾ ")).toBe(true);
+    expect(callRow(ctx, "bun test cart")).toContain("✓");
+    expect(callRow(ctx, "bun test cart")).toContain("exit 0");
+    expect(callRow(ctx, "bun lint")).toContain("✗ Failed");
+    expect(callRow(ctx, "bun lint")).toContain("exit 2");
+    expect(callRow(ctx, "Send to a HAL-C2 thread")).toContain('"threadId":"thread-2"');
+    const screen = await snapshot(ctx);
+    for (const shown of ["bun test cart", "bun lint", "exit 2"]) expect(screen).toContain(shown);
+  },
+);
+
+step("the calls collapse back into the summary", async (ctx: TurnWorld) => {
+  expect(group(ctx)).toEqual(["▸ Ran 2 commands and sent 1 message to 1 thread ✗"]);
+  expect(await snapshot(ctx)).not.toContain("bun lint");
+});
+
+step(
+  "the agent ran {string} through a shell and changed a file in the workspace",
+  (ctx: TurnWorld, script: string) =>
+    finishTurn(ctx, [
+      command(1, { input: `bash -lc '${script}'` }),
+      edit(`${project.workspaceRoot}/src/cart.ts`),
+    ]),
+);
+
+step(
+  "the command is labelled {string} and the file change {string}",
+  async (ctx: TurnWorld, script: string, file: string) => {
+    // The summary, then each call: icon, label, status.
+    const [command, change] = lastOf(ctx, "work")
+      .lines.slice(1)
+      .map((line) => line.text.chunks[1]!.text);
+    expect([command, change]).toEqual([script, file]);
+    const screen = await snapshot(ctx);
+    expect(screen).toContain(script);
+    expect(screen).not.toContain("bash -lc");
+    expect(screen).not.toContain(project.workspaceRoot);
+  },
+);
+
+// --- a command's progress inside a message ----------------------------------------------
+
+step("the agent is writing a message", async (ctx: TurnWorld) => {
+  await startRun(ctx);
+  await addItem(ctx, "assistant_message", {
+    id: "answer",
+    status: "running",
+    streaming: true,
+    text: "| Item | Price |\n| --- | --- |\n",
+  });
+});
+
+step(
+  "a command it started in the background reports progress in the middle of the message",
+  async (ctx: TurnWorld) => {
+    await addItem(ctx, "command_execution", {
+      status: "running",
+      input: "bun run watch",
+      output: "[watch] rebuilt in 40ms\n",
+    });
+    // The provider keeps writing the same message after the progress (the MC keys
+    // it by the provider's message, not by what came last).
+    await setItem(ctx, "answer", {
+      text: "| Item | Price |\n| --- | --- |\n| Apple | 1.20 |\n",
+    });
+  },
+);
+
+const assistantMessages = (ctx: TurnWorld) =>
+  itemsOf(ctx, "message").filter((item) => item.key !== `message:${currentRun(ctx)}`);
+
+step("the message stays one message", async (ctx: TurnWorld) => {
+  expect(assistantMessages(ctx).map((item) => item.key)).toEqual(["answer"]);
+});
+
+step("the text the agent writes after the progress is part of it", async (ctx: TurnWorld) => {
+  const shown = linesOf(messageItem(ctx, "answer")).join("\n");
+  expect(shown).toContain("Item");
+  expect(shown).toContain("Apple");
+  expect(await snapshot(ctx)).toContain("Apple");
 });
 
 // --- an ACP agent's read, search and fetch ----------------------------------------------

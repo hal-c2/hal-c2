@@ -58,6 +58,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
     QStringLiteral("source-control/review-diffs.feature"),
     QStringLiteral("source-control/pull-request-threads.feature"),
+    QStringLiteral("timeline/tool-calls.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

@@ -10,7 +10,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   """
 
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{Entities, TurnWatch}
+  alias HalC2.Orchestration.{CommandOutput, Entities, TurnWatch}
   alias HalC2.PullRequests.Opened
   alias HalC2.StreamState
 
@@ -273,7 +273,8 @@ defmodule HalC2.Orchestration.TurnWriter do
             "turn-item",
             item_id,
             &(fun.(&1)
-              |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at}))
+              |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at})
+              |> output_failure(item[:kind]))
           ),
           Orchestration.upsert(
             stream,
@@ -302,6 +303,15 @@ defmodule HalC2.Orchestration.TurnWriter do
     if opened != [], do: Opened.link(state.thread_id, opened)
     state
   end
+
+  # A command the provider says completed whose output says otherwise.
+  defp output_failure(%{"status" => "completed", "output" => output} = item, :command) do
+    if CommandOutput.failed?(output),
+      do: Map.put(item, "outputIndicatesFailure", true),
+      else: item
+  end
+
+  defp output_failure(item, _kind), do: item
 
   @doc """
   Opens an approval prompt: a pending runtime request, the waiting approval item,

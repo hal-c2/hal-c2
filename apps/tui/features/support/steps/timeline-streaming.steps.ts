@@ -32,6 +32,8 @@ interface StreamWorld extends TurnWorld {
   ranFor?: number;
   /** The rows on screen before the step under test. */
   rowsBefore?: string[];
+  /** The thread shows a turn's duration, which "it reads" reads. */
+  durationShown?: boolean;
 }
 
 const ANSWER = "The cart now shows tax.";
@@ -112,11 +114,9 @@ step("the user opens the folded work", async (ctx: StreamWorld) => {
 
 step("its tool calls are shown", async (ctx: StreamWorld) => {
   expect(foldRow(ctx).startsWith("▾ ")).toBe(true);
-  // The group shows its latest call and counts the three before it.
-  const group = linesOf(lastOf(ctx, "work"));
-  expect(group[0]).toContain("bun test cart-4");
-  expect(group[1]!.trim()).toBe("⌄ +3 previous tool calls");
-  expect(await snapshot(ctx)).toContain("bun test cart-4");
+  // A finished turn's calls read as what they did.
+  expect(linesOf(lastOf(ctx, "work"))).toEqual(["▸ Ran 4 commands"]);
+  expect(await snapshot(ctx)).toContain("▸ Ran 4 commands");
 });
 
 step("the user closes it again", async (ctx: StreamWorld) => {
@@ -168,9 +168,11 @@ step("its work folds behind {string}", async (ctx: StreamWorld, label: string) =
 
 step("its work stays expanded so the user can see where it stopped", async (ctx: StreamWorld) => {
   expect(foldRow(ctx)).toBe("▾ You stopped after 5.0s");
+  // Its calls are open too, the stopped one among them.
   const group = linesOf(lastOf(ctx, "work"));
-  expect(group[0]).toContain("Stopped");
-  expect(group[0]).toContain("bun test cart-2");
+  expect(group[0]!.startsWith("▾ Ran 2 commands")).toBe(true);
+  const stopped = group.find((line) => line.includes("bun test cart-2"));
+  expect(stopped).toContain("Stopped");
   const screen = await snapshot(ctx);
   expect(screen).toContain("▾ You stopped after 5.0s");
   expect(screen).toContain("bun test cart-2");
@@ -331,11 +333,12 @@ step(/^the thread shows a duration of (.+)$/, async (ctx: StreamWorld, duration:
   await addCommand(ctx, 1);
   await addItem(ctx, "assistant_message", { id: "answer", text: ANSWER });
   await settleRun(ctx, "completed", durationMs(duration) / 1000);
+  ctx.durationShown = true;
 });
 
-step("it reads {string}", async (ctx: StreamWorld, shown: string) => {
-  await expectFolded(ctx, `Worked for ${shown}`);
-});
+// "it reads" after a duration is the fold's (timeline-tool-calls.steps.ts reads a group's otherwise).
+export const readsDuration = (ctx: StreamWorld, shown: string) =>
+  expectFolded(ctx, `Worked for ${shown}`);
 
 // --- when a message the user sent is shortened -----------------------------------------
 

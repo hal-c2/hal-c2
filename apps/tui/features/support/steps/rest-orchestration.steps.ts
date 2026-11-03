@@ -481,7 +481,7 @@ step("the user looks at the change", async (ctx: TurnWorld) => {
   await settleHost(ctx);
   const row = workLines(ctx).find((line) => line.includes("src/cart.ts"))!;
   expect(row).toContain("+2 -1");
-  await clickText(ctx, "Changed src/cart.ts");
+  await clickText(ctx, "src/cart.ts ✓");
   await settleHost(ctx);
   expect(ctx.host!.state.get("mode")).toBe("diff");
 });

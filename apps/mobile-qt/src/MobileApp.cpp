@@ -67,7 +67,8 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   // drawer, the phone's one at a time on a screen of its own. And only the
   // phone's Space screen has steps, so in the desktop layout the selected page
   // is on show.
-  // The phone's timeline folds a settled turn its own way (TimelineModel::Folds).
+  // The phone layout's timeline reads as the activity log the phone has
+  // always had (TimelineModel::Folds::Phone); the desktop layout's as the desktop's.
   m_native->controller<DraftController>()->setLandsOnDraft(false);
   m_native->controller<TerminalController>()->setSingleScreen(true);
   m_native->controller<SpaceController>()->setPageShownBySteps(true);

@@ -272,6 +272,11 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
       attachments: attachments.get,
       cellPixels: cellPixels(),
       diagrams: diagrams.get,
+      workspaceRoot:
+        detail?.worktreePath ??
+        store.getState().shell?.projects.find((project) => project.id === detail?.projectId)
+          ?.workspaceRoot ??
+        null,
     });
     state.set("timeline", timeline);
   };
