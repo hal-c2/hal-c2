@@ -2,8 +2,8 @@ defmodule HalC2.PullRequestBranchesPropTest do
   @moduledoc """
   A state machine over `HalC2.PullRequests.Branches`: two checkouts with two branches
   each, GitHub's answer for a branch changing between open, merged, none and failing,
-  readers asking (some fresh, several at once), changes forgetting one checkout or
-  every one, and time passing. The model checks what every reader is promised:
+  readers asking (some fresh, several at once), changes forgetting one checkout, one
+  pull request or every one, and time passing. The model checks what every reader is promised:
 
   - GitHub is asked only when nothing is believed for the branch: an open pull request
     is believed for a minute, anything else found for five, and a fresh read asks
@@ -12,7 +12,8 @@ defmodule HalC2.PullRequestBranchesPropTest do
     failure in a row up to 15 minutes), fresh or not, and one followed by a long quiet
     starts over;
   - readers asking at once share one read and one answer;
-  - a forgotten checkout's branches are asked again, and no other's.
+  - a forgotten checkout's branches are asked again, and no other's; a forgotten pull
+    request's branches are asked again, and no other's.
   """
 
   use ExUnit.Case, async: false
@@ -27,8 +28,9 @@ defmodule HalC2.PullRequestBranchesPropTest do
   @branches ["x", "y"]
   @answers [
     {:ok, nil},
-    {:ok, %{"number" => 1, "state" => "open"}},
-    {:ok, %{"number" => 1, "state" => "merged"}},
+    {:ok, %{"number" => 1, "url" => "https://github.com/o/r/pull/1", "state" => "open"}},
+    {:ok, %{"number" => 1, "url" => "https://github.com/o/r/pull/1", "state" => "merged"}},
+    {:ok, %{"number" => 2, "url" => "https://github.com/O/R/pull/2", "state" => "open"}},
     {:error, {:failed, "offline"}}
   ]
 
@@ -79,6 +81,7 @@ defmodule HalC2.PullRequestBranchesPropTest do
       {5, {:call, __MODULE__, :lookup, [key(), boolean(), oneof([1, 1, 2, 3])]}},
       {2, {:call, __MODULE__, :answers, [key(), oneof(@answers)]}},
       {1, {:call, __MODULE__, :forget, [oneof([nil | @cwds])]}},
+      {1, {:call, __MODULE__, :forget_pull_request, [oneof([1, 2, 3])]}},
       {3,
        {:call, __MODULE__, :pass,
         [oneof([1_000, 19_999, 20_000, 40_000, 59_999, 60_000, 300_000, 900_000, 1_800_000])]}}
@@ -103,6 +106,15 @@ defmodule HalC2.PullRequestBranchesPropTest do
 
   def next_state(state, _result, {:call, _, :forget, [cwd]}),
     do: %{state | held: Map.reject(state.held, fn {{c, _}, _} -> cwd in [nil, c] end)}
+
+  def next_state(state, _result, {:call, _, :forget_pull_request, [number]}) do
+    held =
+      Map.reject(state.held, fn {_, {answer, _, _}} ->
+        match?({:ok, %{"number" => ^number}}, answer)
+      end)
+
+    %{state | held: held}
+  end
 
   def next_state(state, _result, {:call, _, :pass, [ms]}), do: %{state | now: state.now + ms}
 
@@ -185,6 +197,8 @@ defmodule HalC2.PullRequestBranchesPropTest do
   end
 
   def forget(cwd), do: Branches.forget(cwd)
+
+  def forget_pull_request(number), do: Branches.forget_pull_request("GitHub.com", "o/r", number)
 
   def pass(ms) do
     {clock, _, _} = :persistent_term.get({__MODULE__, :world})

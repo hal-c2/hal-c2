@@ -919,7 +919,8 @@ defmodule HalC2.PullRequests.GitHub do
       ~w(pr list --state all --limit 1 --json number,title,url,baseRefName,headRefName,state,isDraft,updatedAt,mergedAt,closedAt --head) ++
         [branch]
 
-    case gh_json(cwd, args) do
+    # A status read waits on it, so a hung `gh` gives up sooner than the 30 s default.
+    case gh_json(cwd, args, timeout: 10_000) do
       {:ok, [%{"number" => number, "url" => url} = pr | _]}
       when is_integer(number) and is_binary(url) ->
         {:ok,

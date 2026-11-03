@@ -12,8 +12,9 @@ defmodule HalC2.PullRequests.Branches do
   wait. Readers asking for the same branch while it is being read get that read's
   answer rather than asking again.
 
-  A change made through the MC forgets what is held (`forget/0,1`), and a read that was
-  under way then answers its callers but is not kept. A call made for something the
+  A change made through the MC forgets what is held (`forget/0,1`, or of one pull
+  request with `forget_pull_request/3`), and a read that was under way then answers its
+  callers but is not kept. A call made for something the
   user asked (`HalC2.GitHub.asked/1`) is never held nor shared. With the service down,
   every read asks the host. Times come from `:github_clock` (milliseconds), as in
   `HalC2.GitHub`.
@@ -52,6 +53,17 @@ defmodule HalC2.PullRequests.Branches do
   @doc "Forgets what is held of the branches of checkout `cwd`, or of every one."
   def forget(cwd \\ nil) do
     if GenServer.whereis(__MODULE__), do: GenServer.call(__MODULE__, {:forget, cwd})
+    :ok
+  end
+
+  @doc """
+  Forgets the branches held as having pull request `number` of `repository` on `host`,
+  and drops every read under way, whose answer could be that pull request.
+  """
+  def forget_pull_request(host, repository, number) do
+    if GenServer.whereis(__MODULE__),
+      do: GenServer.call(__MODULE__, {:forget_pull_request, host, repository, number})
+
     :ok
   end
 
@@ -101,6 +113,21 @@ defmodule HalC2.PullRequests.Branches do
        | entries: state.entries |> Enum.filter(keep) |> Map.new(),
          reading: state.reading |> Enum.filter(keep) |> Map.new()
      }}
+  end
+
+  def handle_call({:forget_pull_request, host, repository, number}, _from, state) do
+    path = String.downcase("/#{repository}/pull/#{number}")
+
+    held? = fn
+      {_, %{answer: {:ok, %{"url" => url}}}} when is_binary(url) ->
+        uri = URI.parse(String.downcase(url))
+        uri.host == String.downcase(host) and uri.path == path
+
+      _ ->
+        false
+    end
+
+    {:reply, :ok, %{state | entries: Map.reject(state.entries, held?), reading: %{}}}
   end
 
   @impl true

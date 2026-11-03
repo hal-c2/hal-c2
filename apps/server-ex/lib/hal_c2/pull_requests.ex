@@ -11,8 +11,8 @@ defmodule HalC2.PullRequests do
   repository on that host, served through a checkout there.
 
   Who is signed in to each host is cached, and link previews for a few seconds
-  (`HalC2.PullRequests.Held`). Every change made here forgets which pull request each
-  branch has (`HalC2.PullRequests.Branches`) and bumps
+  (`HalC2.PullRequests.Held`). Every change made here forgets the branches held as
+  having that pull request (`HalC2.PullRequests.Branches`) and bumps
   `HalC2.PullRequests.Refreshes`, which clients follow to read again.
   """
 
@@ -864,18 +864,22 @@ defmodule HalC2.PullRequests do
       forget(input["reference"])
       # A reader asking for fresh host state wants the thread links it feeds to follow.
       if input["reference"], do: HalC2.PullRequests.Sync.request(input["reference"])
-      Branches.forget()
       Refreshes.bump()
     end
 
     {:ok, nil}
   end
 
-  defp forget(nil), do: Held.forget_all()
+  defp forget(nil) do
+    Held.forget_all()
+    Branches.forget()
+  end
 
   defp forget(reference) do
-    with {:ok, project} <- project_for(reference),
-         do: Held.forget(project.host, project.repository, reference["number"])
+    with {:ok, project} <- project_for(reference) do
+      Held.forget(project.host, project.repository, reference["number"])
+      Branches.forget_pull_request(project.host, project.repository, reference["number"])
+    end
   end
 
   @doc """
@@ -1266,11 +1270,11 @@ defmodule HalC2.PullRequests do
         fun.(project, ctx)
       after
         Held.forget(project.host, project.repository, ctx.number)
+        Branches.forget_pull_request(project.host, project.repository, ctx.number)
       end
     end
 
     with {:ok, _} = done <- read(ref, operation, forgetting) do
-      Branches.forget()
       Refreshes.bump()
       done
     end
