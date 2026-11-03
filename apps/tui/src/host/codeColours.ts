@@ -22,6 +22,8 @@ import type { Palette } from "../theme.ts";
 export const MAX_CHARS = 512 * 1024;
 /** Readings kept at once; the one used longest ago goes first. */
 const KEPT = 256;
+/** Text kept across all readings, in UTF-16 units: 32 MB, the desktop's codereader cache. */
+const KEPT_CHARS = 16 * 1024 * 1024;
 
 /** Reads `text` as `filetype`: its scopes, or null when there is no grammar for it. */
 export type ReadCode = (text: string, filetype: string) => Promise<SimpleHighlight[] | null>;
@@ -63,6 +65,7 @@ export function fenceFiletype(info: string): string | null {
 }
 
 interface Reading {
+  readonly key: string;
   readonly filetype: string;
   readonly text: string;
   /** Undefined while it is read; null when it has no colours. */
@@ -87,27 +90,39 @@ export function createCodeColours(read: ReadCode = readWithTreeSitter): CodeColo
     for (const listener of listeners) listener();
   };
 
+  // Text held by the readings kept, against KEPT_CHARS.
+  let held = 0;
+  const forget = (reading: Reading) => {
+    if (readings.get(reading.key) !== reading) return;
+    readings.delete(reading.key);
+    held -= reading.text.length;
+  };
+
   const evict = () => {
-    for (const [key, reading] of readings) {
-      if (readings.size <= KEPT) return;
-      if (reading.scopes !== undefined) readings.delete(key);
+    for (const reading of readings.values()) {
+      if (readings.size <= KEPT && held <= KEPT_CHARS) return;
+      if (reading.scopes !== undefined) forget(reading);
     }
   };
 
   const ask = (key: string, filetype: string, text: string) => {
-    const reading: Reading = { filetype, text, scopes: undefined };
+    const reading: Reading = { key, filetype, text, scopes: undefined };
     readings.set(key, reading);
+    held += text.length;
     evict();
     // A read that fails is forgotten rather than kept as "no grammar", so the code is
     // asked for again the next time it is drawn.
     const promise = read(text, filetype).then(
       (scopes) => {
+        // A growing block's reading of fewer lines is not wanted once this one has landed,
+        // so streaming a block keeps one copy of it rather than one per step. Other code
+        // that this starts with goes too, and is read again if it is drawn again.
+        const older = before(filetype, text, true);
+        if (older) forget(older);
         reading.scopes = scopes;
         changed();
       },
-      () => {
-        if (readings.get(key) === reading) readings.delete(key);
-      },
+      () => forget(reading),
     );
     inFlight.add(promise);
     void promise.finally(() => inFlight.delete(promise));

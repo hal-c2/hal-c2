@@ -93,6 +93,38 @@ describe("createCodeColours", () => {
     expect(colours.lines("ts", grown, false, THEME)).toHaveLength(3);
   });
 
+  it("keeps one reading of a block that grew, not one per line", async () => {
+    const code = reader();
+    const colours = createCodeColours(code.read);
+    const first = "const a = 1;\n";
+    colours.lines("ts", first, false, THEME);
+    code.release();
+    await colours.settled();
+    colours.lines("ts", `${first}const b = 2;\n`, false, THEME);
+    code.release();
+    await colours.settled();
+    // The one-line reading went when the two-line one landed: drawn again, it is read again.
+    colours.lines("ts", first, true, THEME);
+    expect(code.reads.map((r) => r.text)).toEqual([first, `${first}const b = 2;\n`, first]);
+  });
+
+  it("keeps no more text than the desktop's cache, the one used longest ago going first", async () => {
+    const code = reader();
+    const colours = createCodeColours(code.read);
+    // 33 blocks at the cap: 32 of them fill the 16M characters kept.
+    const block = (n: number) => `${n}:${"x".repeat(MAX_CHARS - 8)}`;
+    for (let n = 0; n < 33; n++) {
+      colours.lines("ts", block(n), true, THEME);
+      code.release();
+      await colours.settled();
+    }
+    colours.lines("ts", block(32), true, THEME);
+    colours.lines("ts", block(1), true, THEME);
+    expect(code.reads).toHaveLength(33);
+    colours.lines("ts", block(0), true, THEME);
+    expect(code.reads).toHaveLength(34);
+  });
+
   it("keeps a language without a grammar plain without asking again as it grows", async () => {
     const code = reader();
     const colours = createCodeColours(code.read);
