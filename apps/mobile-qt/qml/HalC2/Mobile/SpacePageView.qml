@@ -200,7 +200,7 @@ ColumnLayout {
                     wrapMode: Text.Wrap
                     text: view.file.unwritten === true
                         ? qsTr("The file is gone, and edits made since are on the page only. If the file comes back, it wins, and those edits stay in the page's history.")
-                        : qsTr("The file is gone. The page keeps what it last said; stop following the file to keep it as an ordinary page.")
+                        : qsTr("The file is gone. The page keeps what it last said, and if the file comes back, it wins.")
                     color: Theme.palette.color("warning", "#f59e0b")
                     font.pixelSize: Math.round(13 * Theme.fontScale)
                 }

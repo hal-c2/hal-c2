@@ -728,7 +728,7 @@ Item {
         id: generate
     }
 
-    // Open while `space.picking` names a project: from the pages' bar or the palette.
+    // Open while `space.picking` names a project: from the palette.
     SpaceFilePicker {}
 
     // On Android the system's picker answers with a content address.
