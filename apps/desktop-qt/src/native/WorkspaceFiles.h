@@ -76,6 +76,8 @@ signals:
   void readingChanged();
 
 private:
+  bool readable() const;
+  QString key() const;
   void read();
   void setRuns(std::shared_ptr<const codereader::Runs> runs);
   void setReading(bool reading);

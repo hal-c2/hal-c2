@@ -172,9 +172,20 @@ struct Open : Command {
     Model after = before;
     apply(after);
     const quint64 reads = codereader::requested();
+    // What the rows read when the view rebuilds them at the reset.
+    QStringList atReset;
+    const QMetaObject::Connection rebuilt = QObject::connect(&viewer.lines, &QAbstractItemModel::modelReset, [&] {
+      for (int row = 0; row < viewer.lines.rowCount(); ++row) atReset.append(viewer.lines.styled(row));
+    });
+    QSignalSpy restyled(&viewer.lines, &QAbstractItemModel::dataChanged);
     viewer.lines.setText(after.text, after.path);
+    QObject::disconnect(rebuilt);
     // Read already, or the same file again, or nothing to read: no new read.
     const bool same = before.path == after.path && before.text == after.text;
+    // Rebuilt once, as they are drawn now: never in the last file's colours
+    // and then again.
+    for (int row = 0; row < int(atReset.size()); ++row) RC_ASSERT(atReset.at(row) == viewer.lines.styled(row));
+    if (!same) RC_ASSERT(restyled.isEmpty());
     if (!after.readable() || same || after.kept.contains({after.path, after.text})) RC_ASSERT(codereader::requested() == reads);
     if (after.kept.contains({after.path, after.text}) && !same) RC_ASSERT(!viewer.lines.reading());
     check(after, viewer, !viewer.lines.reading());
@@ -243,6 +254,22 @@ private slots:
       Viewer viewer;
       rc::state::check(model, viewer, rc::state::gen::execOneOfWithArgs<Open, Settle, ThemeSwitch, Limit>());
     }));
+  }
+
+  // From review: a file opened over another was rebuilt in the other's colours
+  // at the reset, then plain, then in its own.
+  void aNewFileIsBuiltInItsOwnColours() {
+    TextLinesModel lines;
+    lines.setText(QStringLiteral("const a = 1;\n"), QStringLiteral("a.ts"));
+    QTRY_VERIFY(lines.coloured());
+    QString atReset;
+    connect(&lines, &QAbstractItemModel::modelReset, this, [&] { atReset = lines.styled(0); });
+    QSignalSpy restyled(&lines, &QAbstractItemModel::dataChanged);
+    lines.setText(QStringLiteral("defmodule A do\nend\n"), QStringLiteral("a.ex"));
+    QVERIFY(atReset.isEmpty());
+    QVERIFY(restyled.isEmpty());
+    QTRY_VERIFY(lines.coloured());
+    QVERIFY(draw(lines.styled(0)).text == QStringLiteral("defmodule A do"));
   }
 
   void markupIsEscaped() {

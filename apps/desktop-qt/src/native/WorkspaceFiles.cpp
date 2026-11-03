@@ -46,6 +46,7 @@ bool hostPath(const QString& path) {
 void TextLinesModel::setText(const QString& text, const QString& path) {
   // The same file again (written back as it was) keeps its colours.
   const bool same = path == m_path && text == m_text;
+  const bool was = coloured();
   beginResetModel();
   m_text = text;
   m_path = path;
@@ -61,23 +62,30 @@ void TextLinesModel::setText(const QString& text, const QString& path) {
     m_maxColumns = std::max(m_maxColumns, int(length));
     at = end + 1;
   }
+  // The rows are built in the new file's colours, as kept from an earlier
+  // read, or plain until it is read: never in the last file's.
+  if (!same) m_runs = readable() ? codereader::cached(key()) : nullptr;
   endResetModel();
   emit textChanged();
+  if (coloured() != was) emit colouredChanged();
   if (!same) read();
+}
+
+bool TextLinesModel::readable() const {
+  // Past the cap a file stays plain, as do files with no name to know them by.
+  return !m_path.isEmpty() && !m_text.isEmpty() && m_text.size() <= codereader::kMaxChars;
+}
+
+QString TextLinesModel::key() const {
+  return codereader::cacheKey(QString(), m_path, m_text);
 }
 
 void TextLinesModel::read() {
   // A read under way is for what was before: it finishes and is let go.
   m_alive = std::make_shared<int>(0);
   setReading(false);
-  setRuns(nullptr);
-  // Past the cap a file stays plain, as do files with no name to know them by.
-  if (m_path.isEmpty() || m_text.isEmpty() || m_text.size() > codereader::kMaxChars) return;
-  const QString key = codereader::cacheKey(QString(), m_path, m_text);
-  if (auto hit = codereader::cached(key)) {
-    setRuns(std::move(hit));
-    return;
-  }
+  if (m_runs || !readable()) return;
+  const QString key = this->key();
   auto job = std::make_shared<codereader::Job>();
   job->byPath = true;
   job->language = m_path.toUtf8();
