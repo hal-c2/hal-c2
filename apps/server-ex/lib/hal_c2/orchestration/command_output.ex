@@ -7,10 +7,11 @@ defmodule HalC2.Orchestration.CommandOutput do
   """
 
   # A missing file or command counts only on a line that reads as a diagnostic: one that
-  # starts with the phrase, or with a program's name and a colon (`cat: x: No such file`,
-  # `zsh: command not found`). A file that merely mentions ENOENT is not a failure, nor
-  # is a grep match, which starts with a path or a line number.
-  @missing ~r/^(?:[a-z][\w-]*:.*)?(?:file not found|no files found|enoent|no such file|command not found)/im
+  # starts with the phrase, or with a program's name or path, a colon and a space
+  # (`cat: x: No such file`, `/bin/bash: line 1: foo: command not found`). A file that
+  # merely mentions ENOENT is not a failure, nor is a grep match, whose path or line
+  # number is followed by a colon and no space.
+  @missing ~r/^(?:[a-z.\/~][\w.\/~-]*:\s.*)?(?:file not found|no files found|enoent|no such file|command not found)/im
   @powershell ~r/commandnotfoundexception|is not recognized as the name of a cmdlet|a parameter cannot be found that matches parameter name/i
   @exit_codes [
     ~r/<exited with exit code\s+[1-9]\d*\s*>/i,

@@ -131,6 +131,9 @@ defmodule HalC2.Orchestration.TurnWriterTest do
     for output <- [
           "cat: x: No such file or directory",
           "zsh: command not found: foo",
+          "/bin/bash: line 1: foo: command not found",
+          "./run.sh: line 3: foo: command not found",
+          "/usr/bin/env: 'python': No such file or directory",
           "<exited with exit code 1>",
           "Cannot find path 'C:\\x' because it does not exist."
         ] do
@@ -148,7 +151,8 @@ defmodule HalC2.Orchestration.TurnWriterTest do
           "# handles ENOENT gracefully\n",
           "  if (!found) throw new Error(\"command not found\")\n",
           "lib/a.ex:12:  # no such file is fine here\n",
-          "12:  # no such file is fine here\n"
+          "12:  # no such file is fine here\n",
+          "Makefile:12: no such file is fine here\n"
         ] do
       test "stays a success when its output only mentions #{inspect(output)}" do
         refute Map.has_key?(finish("completed", unquote(output)), "outputIndicatesFailure")
