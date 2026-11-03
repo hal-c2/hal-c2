@@ -11,13 +11,14 @@ defmodule HalC2.PullRequests do
   repository on that host, served through a checkout there.
 
   Who is signed in to each host is cached, and link previews for a few seconds
-  (`HalC2.PullRequests.Held`). Every change made here bumps
+  (`HalC2.PullRequests.Held`). Every change made here forgets the branches held as
+  having that pull request (`HalC2.PullRequests.Branches`) and bumps
   `HalC2.PullRequests.Refreshes`, which clients follow to read again.
   """
 
   require Logger
 
-  alias HalC2.PullRequests.{GitHub, Held, Refreshes}
+  alias HalC2.PullRequests.{Branches, GitHub, Held, Refreshes}
   alias HalC2.SourceControl.ChangeRequests
 
   @default_limit 99
@@ -869,11 +870,16 @@ defmodule HalC2.PullRequests do
     {:ok, nil}
   end
 
-  defp forget(nil), do: Held.forget_all()
+  defp forget(nil) do
+    Held.forget_all()
+    Branches.forget()
+  end
 
   defp forget(reference) do
-    with {:ok, project} <- project_for(reference),
-         do: Held.forget(project.host, project.repository, reference["number"])
+    with {:ok, project} <- project_for(reference) do
+      Held.forget(project.host, project.repository, reference["number"])
+      Branches.forget_pull_request(project.repository, reference["number"])
+    end
   end
 
   @doc """
@@ -1264,6 +1270,7 @@ defmodule HalC2.PullRequests do
         fun.(project, ctx)
       after
         Held.forget(project.host, project.repository, ctx.number)
+        Branches.forget_pull_request(project.repository, ctx.number)
       end
     end
 
