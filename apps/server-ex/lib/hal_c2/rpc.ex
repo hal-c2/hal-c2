@@ -10,7 +10,7 @@ defmodule HalC2.Rpc do
     hal-c2.unregisterPush
   )
 
-  # How many rows a page of `hal-c2.threadRows` holds.
+  # How many rows a page of `hal-c2.threadRows` holds at most (`:thread_rows_page`).
   @thread_rows 1_000
 
   @doc "Methods the socket runs with its session, through `handle/3`."
@@ -49,12 +49,17 @@ defmodule HalC2.Rpc do
   # One thread's entities, for a client that needs its projection without subscribing
   # (a socket holds one subscription per stream): a page of at most `limit` at a time,
   # each as of its `offset`. `next` is the `after` to ask for the next page, nil after
-  # the last.
+  # the last. A client sends `after` (null for the first page) to page; one from before
+  # paging sends none and is answered the whole thread in one reply, as it was, rather
+  # than a first page it would take for all of it.
   def handle("hal-c2.threadRows", %{"threadId" => thread_id} = input) do
+    page = Application.get_env(:hal_c2, :thread_rows_page, @thread_rows)
+
     limit =
       case input["limit"] do
-        limit when is_integer(limit) and limit > 0 -> min(limit, @thread_rows)
-        _ -> @thread_rows
+        _ when not is_map_key(input, "after") -> nil
+        limit when is_integer(limit) and limit > 0 -> min(limit, page)
+        _ -> page
       end
 
     cursor =
@@ -67,7 +72,10 @@ defmodule HalC2.Rpc do
       end
 
     HalC2.Streams.read(thread_id, fn state ->
-      {rows, next} = HalC2.StreamState.rows_page(state, cursor, limit)
+      {rows, next} =
+        if limit,
+          do: HalC2.StreamState.rows_page(state, cursor, limit),
+          else: {HalC2.StreamState.rows(state), nil}
 
       {:ok,
        %{

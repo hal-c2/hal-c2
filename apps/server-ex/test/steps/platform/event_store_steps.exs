@@ -498,10 +498,32 @@ defmodule HalC2.Steps.Platform.EventStore do
     Map.merge(context, %{rows: rows, pages: pages, limit: limit})
   end
 
+  step "pages of {int} rows", %{args: [page]} = context do
+    Application.put_env(:hal_c2, :thread_rows_page, page)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :thread_rows_page) end)
+    Map.put(context, :page, page)
+  end
+
+  step "a client from before paging reads the thread's entities", context do
+    {reply, context} =
+      World.call!(context, "hal-c2.threadRows", %{"threadId" => World.thread_id(context, "main")})
+
+    assert reply["next"] == nil
+    Map.merge(context, %{rows: reply["rows"], pages: 1})
+  end
+
+  step "it got each entity once in the order they were created, in one reply", context do
+    assert context.pages == 1 and length(context.rows) > context.page
+    each_entity_once(context)
+  end
+
   step "it took more than one page, each entity once in the order they were created",
        context do
     assert context.pages > 1
+    each_entity_once(context)
+  end
 
+  defp each_entity_once(context) do
     whole =
       Store.reduce_stream(
         context.mc.store,

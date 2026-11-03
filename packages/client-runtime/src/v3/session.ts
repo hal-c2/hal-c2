@@ -1296,7 +1296,10 @@ export function makeV3Session(input: {
       );
 
     // A thread's projection, from its entities fetched a page at a time: a socket holds
-    // one subscription per stream, and the open thread view usually has it.
+    // one subscription per stream, and the open thread view usually has it. Each page is
+    // read as of its own offset, so a thread that changes during the walk folds rows of
+    // different moments: the projection is as of the first page's offset or later, for
+    // a one-shot read, never to resume a subscription from.
     const threadProjection = (request: { readonly threadId: ThreadId }) => {
       const failure = (message: string, cause?: unknown) =>
         new OrchestrationV2GetThreadProjectionError({ threadId: request.threadId, message, cause });

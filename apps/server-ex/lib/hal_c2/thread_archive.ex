@@ -49,17 +49,31 @@ defmodule HalC2.ThreadArchive do
   """
   @spec build(String.t(), keyword) :: {:ok, archive} | {:error, String.t()}
   def build(ref, opts \\ []) do
-    with {:ok, id} <- find_thread(ref), do: read(id, &build(&1, id, ref, opts))
-  end
-
-  defp build(state, id, ref, opts) do
-    with %{} = thread <- StreamState.get(state, "thread")[id] || {:error, "No thread #{ref}."},
-         {:ok, meta} <- describe(thread) do
-      root = meta["projectRoot"]
+    with {:ok, id} <- find_thread(ref),
+         {:ok, state, thread, archive} <- read(id, &pinned(&1, id, ref)) do
+      root = archive["thread"]["projectRoot"]
       cwd = thread["worktreePath"] || root
       have = Keyword.get(opts, :have, [])
 
+      # The checkpoints, worktree, session and scrollback do git and file work and
+      # read only what memory holds, so they run once the read has let go of the disk.
       {:ok,
+       Map.merge(archive, %{
+         "terminalLogs" =>
+           for({terminal, data} <- Terminal.saved_scrollback(id), do: file(terminal, data)),
+         "checkpoints" => checkpoints(state, root, have),
+         "worktree" => worktree(thread, have),
+         "session" => if(Keyword.get(opts, :session, true), do: session(state, thread, cwd))
+       })}
+    end
+  end
+
+  # The part of an archive that reads the thread's older runs from disk, inside the
+  # read that pins them.
+  defp pinned(state, id, ref) do
+    with %{} = thread <- StreamState.get(state, "thread")[id] || {:error, "No thread #{ref}."},
+         {:ok, meta} <- describe(thread) do
+      {:ok, state, thread,
        %{
          "format" => @format,
          "version" => @version,
@@ -67,12 +81,7 @@ defmodule HalC2.ThreadArchive do
          "thread" => meta,
          "updatedAt" => state.updated_at,
          "entities" => entities_file(state),
-         "attachments" => attachments(state),
-         "terminalLogs" =>
-           for({terminal, data} <- Terminal.saved_scrollback(id), do: file(terminal, data)),
-         "checkpoints" => checkpoints(state, root, have),
-         "worktree" => worktree(thread, have),
-         "session" => if(Keyword.get(opts, :session, true), do: session(state, thread, cwd))
+         "attachments" => attachments(state)
        }}
     end
   end

@@ -126,6 +126,14 @@ Feature: The MC's event store and projections
     When a client reads the thread's entities 5 at a time
     Then it took more than one page, each entity once in the order they were created
 
+  # One from before paging asks without `after`, and would take a first page for all of it.
+  @mc
+  Scenario: A client from before paging still reads a long thread whole
+    Given a thread has finished 8 runs of 3 items while memory holds 2
+    And pages of 5 rows
+    When a client from before paging reads the thread's entities
+    Then it got each entity once in the order they were created, in one reply
+
   @mc
   Scenario: History survives a restart
     When the MC restarts
