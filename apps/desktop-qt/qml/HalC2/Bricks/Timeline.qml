@@ -658,6 +658,25 @@ Item {
                 if (first === 0 && view.heldIndex >= 0)
                     Qt.callLater(view.release, last - first + 1);
             }
+            // Turns let go of far above (keepFrom()) leave the same way.
+            function onRowsAboutToBeRemoved(parent, first, last) {
+                if (first === 0)
+                    view.hold();
+            }
+            function onRowsRemoved(parent, first, last) {
+                if (first === 0 && view.heldIndex >= 0)
+                    Qt.callLater(view.release, -(last - first + 1));
+            }
+        }
+
+        // The model holds what is read from here on and a margin above it,
+        // and lets go of the rest; scrolling back up fetches it again.
+        function keepRead() {
+            if (moving || dragging || scrollBar.pressed || root.loadingEarlier || !root.model || typeof root.model.keepFrom !== "function")
+                return;
+            const index = indexAt(width / 2, contentY + topMargin + 1);
+            if (index >= 0)
+                root.model.keepFrom(index);
         }
 
         anchors.fill: parent
@@ -720,6 +739,8 @@ Item {
             settleAway();
             if (atYBeginning)
                 root.loadEarlier();
+            else
+                keepRead();
         }
         onContentHeightChanged: {
             if (following)
@@ -730,8 +751,10 @@ Item {
         onCountChanged: {
             // Another row list: what was held is no longer at that index.
             settlingIndex = -1;
-            if (following)
+            if (following) {
                 Qt.callLater(stick);
+                Qt.callLater(keepRead);
+            }
         }
         onHeightChanged: if (following)
             Qt.callLater(stick)

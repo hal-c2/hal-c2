@@ -225,8 +225,13 @@ defmodule HalC2.Streams.View do
   defp rolled(%{window: nil}, _stream, _before, _events, _settled), do: []
 
   defp rolled(view, stream, before, events, settled) do
-    for %{kind: "run", entity: run} = event <- Enum.uniq_by(Enum.reverse(events), & &1.entity),
-        {kind, id, entity} <- of_run(stream, run),
+    runs =
+      for %{kind: "run"} = event <- Enum.uniq_by(Enum.reverse(events), & &1.entity), do: event
+
+    items = of_runs(stream, runs)
+
+    for %{entity: run} = event <- runs,
+        {kind, id, entity} <- Map.get(items, run, []),
         not MapSet.member?(settled, {kind, id}),
         kind?(view.kinds, kind, entity),
         move =
@@ -250,10 +255,23 @@ defmodule HalC2.Streams.View do
   defp moved(kind, entity, true), do: replacement(kind, entity)
   defp moved(_kind, _entity, false), do: HalC2.Patch.delete()
 
-  defp of_run(stream, run) do
-    for kind <- @windowed,
-        {id, %{"runId" => ^run} = entity} <- StreamState.get(stream, kind),
-        do: {kind, id, entity}
+  # The windowed entities of each run that `events` touch, by run id, from one pass
+  # over the stream: a thread holds far more items than a resume touches runs, and
+  # scanning them all per run kept a long thread's stream busy past every timeout.
+  defp of_runs(stream, events) do
+    runs = MapSet.new(for %{kind: "run", entity: run} <- events, do: run)
+
+    if MapSet.size(runs) == 0 do
+      %{}
+    else
+      for kind <- @windowed,
+          {id, %{"runId" => run} = entity} <- StreamState.get(stream, kind),
+          MapSet.member?(runs, run),
+          reduce: %{} do
+        items -> Map.update(items, run, [{kind, id, entity}], &[{kind, id, entity} | &1])
+      end
+      |> Map.new(fn {run, of_run} -> {run, Enum.reverse(of_run)} end)
+    end
   end
 
   defp replacement(kind, entity), do: %{"d" => true, "s" => Wire.entity(kind, entity)}
@@ -268,6 +286,8 @@ defmodule HalC2.Streams.View do
   """
   @spec replayed(t, StreamState.t(), [HalC2.Store.event()]) :: [HalC2.Store.event()]
   def replayed(view, stream, events) do
+    items = if view.window, do: of_runs(stream, events), else: %{}
+
     Enum.flat_map(events, fn %{kind: kind, entity: id, patch: patch} = event ->
       entity = StreamState.get(stream, kind)[id]
 
@@ -285,21 +305,21 @@ defmodule HalC2.Streams.View do
         end
 
       # Whether or not the client holds runs: its items are what it is owed.
-      sent ++ rolled_since(view, stream, event)
+      sent ++ rolled_since(view, stream, items, event)
     end)
   end
 
-  defp rolled_since(%{window: window} = view, stream, %{kind: "run", entity: run} = event)
+  defp rolled_since(%{window: window} = view, stream, items, %{kind: "run", entity: run} = event)
        when window != nil do
     queued? = StreamState.get(stream, "run")[run]["status"] == "queued"
 
-    for {kind, id, entity} <- of_run(stream, run),
+    for {kind, id, entity} <- Map.get(items, run, []),
         kind?(view.kinds, kind, entity),
         queued? or not in_window?(window, stream, kind, entity),
         do: %{event | kind: kind, entity: id, patch: moved(kind, entity, queued?)}
   end
 
-  defp rolled_since(_view, _stream, _event), do: []
+  defp rolled_since(_view, _stream, _items, _event), do: []
 
   @doc """
   What a copy of the view as of `offset` lacks, as events that replace each entity
@@ -312,12 +332,17 @@ defmodule HalC2.Streams.View do
       # When each one changed is not kept; clients only need a time to show.
       at = stream.updated_at || 0
 
+      items =
+        if view.window,
+          do: of_runs(stream, for({_, "run", id, _} <- upserts, do: %{kind: "run", entity: id})),
+          else: %{}
+
       upserts =
         Enum.flat_map(upserts, fn {seq, kind, id, entity} ->
           event = %{seq: seq, kind: kind, entity: id, patch: replacement(kind, entity), at: at}
           sent = if holds?(view, stream, kind, entity), do: [event], else: []
           # Whether or not the client holds runs: its items are what it is owed.
-          sent ++ rolled_since(view, stream, event)
+          sent ++ rolled_since(view, stream, items, event)
         end)
 
       deletes =

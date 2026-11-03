@@ -76,6 +76,24 @@ describe("markdownLines", () => {
     expect(lines[1]!.chunks.find((part) => part.text === "A")!.fg).toEqual(THEME.accent);
   });
 
+  it("aligns each column as its divider says and draws the cells' inline Markdown", () => {
+    const lines = markdownLines(
+      "| L | C | R |\n|:--|:-:|--:|\n| **a** | `b` | a \\| b |",
+      THEME,
+      22,
+    );
+    expect(lines.map(plainText)).toEqual([
+      "┌──────┬──────┬──────┐",
+      "│L     │  C   │     R│",
+      "├──────┼──────┼──────┤",
+      "│a     │  b   │ a | b│",
+      "└──────┴──────┴──────┘",
+    ]);
+    const bold = lines[3]!.chunks.find((part) => part.text === "a")!;
+    expect((bold.attributes ?? 0) & TextAttributes.BOLD).toBe(TextAttributes.BOLD);
+    expect(lines[3]!.chunks.find((part) => part.text === "b")!.fg).toEqual(THEME.warning);
+  });
+
   it("links bare URLs without their trailing punctuation", () => {
     expect(links("See https://example.com/docs.")).toEqual([
       ["https://example.com/docs", "https://example.com/docs"],
