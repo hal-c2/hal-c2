@@ -16,10 +16,19 @@ defmodule HalC2.Prop.Upgrade do
   @doc """
   Version `vsn` of the counter: its state is `{shape, history}`, and `code_change/3`
   moves a state of another shape to `shape`, adding the old shape to the history.
-  `linger/1` keeps a process in this version's code until it is sent `:go`.
+  `linger/1` keeps a process in this version's code until it is sent `:go`. A
+  `raising` version's `code_change/3` raises instead.
   """
-  def counter(vsn, shape) do
+  def counter(vsn, shape, raising \\ false) do
     m = atom(@counter)
+
+    code_change =
+      if raising,
+        do: "code_change(_Old, _St, _Extra) -> erlang:error(migration_broke).",
+        else: """
+        code_change(_Old, {#{shape}, H}, _Extra) -> {ok, {#{shape}, H}};
+        code_change(_Old, {Old, H}, _Extra) -> {ok, {#{shape}, H ++ [Old]}}.
+        """
 
     beam("""
     -module(#{m}).
@@ -32,8 +41,7 @@ defmodule HalC2.Prop.Upgrade do
     init(_) -> {ok, {#{shape}, []}}.
     handle_call(state, _From, St) -> {reply, St, St}.
     handle_cast(_Msg, St) -> {noreply, St}.
-    code_change(_Old, {#{shape}, H}, _Extra) -> {ok, {#{shape}, H}};
-    code_change(_Old, {Old, H}, _Extra) -> {ok, {#{shape}, H ++ [Old]}}.
+    #{code_change}
     """)
   end
 

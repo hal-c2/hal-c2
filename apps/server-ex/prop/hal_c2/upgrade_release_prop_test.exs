@@ -13,6 +13,14 @@ defmodule HalC2.UpgradeReleasePropTest do
   runs exactly the new children, a child whose spec did not change keeps its pid, and
   no process but the one holding it runs replaced code. A restart ends the case: this
   VM cannot boot into the new release.
+
+  An update whose `code_change/3` raises fails past the point of no return, and the
+  release handler restarts the node on the release it ran (`init:restart/0`), which
+  would restart this VM. So for it the case stands in for the release handler's
+  install: it checks the generated relup marks the point of no return before the
+  raising migration, runs the mark, and replies as the release handler does. Then
+  nothing may restart the MC into the new version, the next boot must be the old one,
+  and that boot says the update rolled back. It ends the case too.
   """
 
   use ExUnit.Case, async: false
@@ -68,6 +76,7 @@ defmodule HalC2.UpgradeReleasePropTest do
     frequency([
       {6, {:call, __MODULE__, :update, [boolean(), children()]}},
       {1, {:call, __MODULE__, :update_native, []}},
+      {1, {:call, __MODULE__, :update_crash, []}},
       {2, hold}
     ])
   end
@@ -79,6 +88,8 @@ defmodule HalC2.UpgradeReleasePropTest do
   def precondition(%{done: true}, _call), do: false
   def precondition(%{holder: holder}, {:call, _, :hold, []}), do: holder == :none
   def precondition(%{holder: holder}, {:call, _, :let_go, []}), do: holder != :none
+  # Old code still running is refused before the point of no return, so never crashes.
+  def precondition(%{holder: holder}, {:call, _, :update_crash, []}), do: holder != :old
   def precondition(_state, _call), do: true
 
   def next_state(%{holder: :old} = state, _result, {:call, _, :update, _}),
@@ -100,6 +111,7 @@ defmodule HalC2.UpgradeReleasePropTest do
   end
 
   def next_state(state, _result, {:call, _, :update_native, []}), do: %{state | done: true}
+  def next_state(state, _result, {:call, _, :update_crash, []}), do: %{state | done: true}
   def next_state(state, _result, {:call, _, :version, []}), do: state
   def next_state(state, _result, {:call, _, :hold, []}), do: %{state | holder: :current}
   def next_state(state, _result, {:call, _, :let_go, []}), do: %{state | holder: :none}
@@ -145,6 +157,13 @@ defmodule HalC2.UpgradeReleasePropTest do
   def postcondition(_state, {:call, _, :update_native, []}, result),
     do:
       match?(%{reply: {:ok, _}, restarted: true, version_moved: false, nif_loaded: false}, result)
+
+  def postcondition(_state, {:call, _, :update_crash, []}, result) do
+    match?(%{reply: {:error, _}, marked: true, version_moved: false, restarted: false}, result) and
+      result.start == result.from and not result.previous? and
+      result.outcome["status"] == "rolled-back" and
+      result.rebooted["status"] == "rolled-back" and result.start_after_boot == result.from
+  end
 
   def postcondition(state, {:call, _, :version, []}, result),
     do: result == "#{Process.get(:base)}#{if state.vsn > 0, do: "-#{state.vsn}"}"
@@ -193,6 +212,59 @@ defmodule HalC2.UpgradeReleasePropTest do
       ])
 
     Map.put(result, :nif_loaded, :code.is_loaded(nif) != false)
+  end
+
+  def update_crash do
+    %{vsn: vsn, shape: shape} = Process.get(:versions)
+    test = self()
+    counter = Process.whereis(Services.counter())
+    Application.put_env(:hal_c2, :install_release, &crash(&1, &2, test, counter))
+
+    result =
+      try do
+        install(vsn + 1, [{Services.counter(), Services.counter(vsn + 1, shape, true)}])
+      after
+        Application.delete_env(:hal_c2, :install_release)
+      end
+
+    start = start_version()
+    previous? = File.exists?(previous_start())
+    # The node comes back on the release it ran, and reads how the update went.
+    :persistent_term.erase({Upgrade, :outcome})
+    HalC2.Prop.restart_service(HalC2.Upgrade)
+    _ = :sys.get_state(HalC2.Upgrade)
+
+    Map.merge(result, %{
+      marked:
+        receive do
+          {:marked, ok} -> ok
+        after
+          0 -> false
+        end,
+      start: start,
+      previous?: previous?,
+      rebooted: Upgrade.outcome(),
+      start_after_boot: start_version()
+    })
+  end
+
+  # The release handler's install of a relup whose migration raises, up to its reply:
+  # the mark this MC's relup carries right after the point of no return runs, and the
+  # migration fails after it.
+  defp crash(vsn, _opts, test, counter) do
+    path = Path.join([Upgrade.release_root(), "releases", to_string(vsn), "relup"])
+    {:ok, [{_, [{_, _, script}], _}]} = :file.consult(String.to_charlist(path))
+    {_, [:point_of_no_return | rest]} = Enum.split_while(script, &(&1 != :point_of_no_return))
+
+    with [{:apply, {:persistent_term, :put, [_, ^vsn]} = {m, f, a}} | after_mark] <- rest,
+         true <- Enum.any?(after_mark, &match?({:code_change, :up, [{_, _}]}, &1)) do
+      apply(m, f, a)
+      send(test, {:marked, true})
+    end
+
+    {:error,
+     {:code_change_failed, counter, Services.counter(), :undefined,
+      {:EXIT, {:migration_broke, []}}}}
   end
 
   def version, do: Upgrade.version()
@@ -260,6 +332,9 @@ defmodule HalC2.UpgradeReleasePropTest do
 
     vsn
   end
+
+  defp previous_start,
+    do: Path.join([Upgrade.release_root(), "releases", "start_erl.data.previous"])
 
   defp await_restart do
     receive do
@@ -344,6 +419,7 @@ defmodule HalC2.UpgradeReleasePropTest do
     System.delete_env("RELEASE_ROOT")
     System.delete_env("HAL_C2_SERVICE")
     Application.delete_env(:hal_c2, :restart_exit)
+    Application.delete_env(:hal_c2, :install_release)
     :persistent_term.erase({Upgrade, :version})
     :persistent_term.erase({Upgrade, :outcome})
     :code.set_path(Process.get(:paths))

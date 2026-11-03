@@ -336,7 +336,7 @@ defmodule HalC2.Upgrade do
             })
 
       record(outcome)
-      if root = release_root(), do: File.rm(previous_start(root))
+      if root = release_root(), do: settle_start(root, booted)
     else
       {:ok, %{} = done} -> :persistent_term.put({__MODULE__, :outcome}, done)
       _ -> :ok
@@ -446,18 +446,25 @@ defmodule HalC2.Upgrade do
 
         case HalC2.Upgrade.Release.install(spec, plan, config) do
           {:ok, report} ->
-            :persistent_term.put({__MODULE__, :version}, target)
-            HalC2.Cluster.version_changed()
-            HalC2.Shell.announce()
-            record(Map.put(outcome, "status", "committed"))
-            announce()
-            __MODULE__.after_upgrade()
+            moved(target, outcome, %{"status" => "committed"})
 
             Logger.info(
               "upgraded in place to #{target} (#{length(report.changed)} modules, #{length(report.lingering)} with old code still running)"
             )
 
             {:ok, result}
+
+          # The release handler restarts the node on `from` itself; `start_erl.data`
+          # still names it, so the next boot is `from` whichever way it comes.
+          {:error, {:crashed, why}} ->
+            why = "installing in place failed partway: #{why}"
+
+            Logger.error(
+              "#{target} did not install in place, so the MC restarts on #{from}: #{why}"
+            )
+
+            record(Map.merge(outcome, %{"status" => "rolled-back", "reason" => why}))
+            failure("Installing #{target} failed, and the MC restarts on #{from}: #{why}")
 
           {:error, reason} ->
             why = "installing in place failed: #{HalC2.Upgrade.Release.describe(reason)}"
@@ -470,6 +477,16 @@ defmodule HalC2.Upgrade do
             restart(root, target, outcome, result, why)
         end
     end
+  end
+
+  # This MC runs `target`'s code now.
+  defp moved(target, outcome, status) do
+    :persistent_term.put({__MODULE__, :version}, target)
+    HalC2.Cluster.version_changed()
+    HalC2.Shell.announce()
+    record(Map.merge(outcome, status))
+    announce()
+    __MODULE__.after_upgrade()
   end
 
   defp restart(root, target, outcome, result, why) do
@@ -556,6 +573,21 @@ defmodule HalC2.Upgrade do
   end
 
   defp start_data(root), do: Path.join([root, "releases", "start_erl.data"])
+
+  # The boot after an update restart: the release kept from before it names the one
+  # that booted when this is a rollback the service did not make (the release handler
+  # restarting a failed install in the VM, say), and goes back so the next boot is
+  # this one too.
+  defp settle_start(root, booted) do
+    previous = previous_start(root)
+
+    with {:ok, text} <- File.read(previous),
+         [_erts, ^booted] <- String.split(text) do
+      File.rename!(previous, start_data(root))
+    else
+      _ -> File.rm(previous)
+    end
+  end
 
   # The release before an update restart, for `bin/hal-c2-service` to go back to.
   defp previous_start(root), do: start_data(root) <> ".previous"

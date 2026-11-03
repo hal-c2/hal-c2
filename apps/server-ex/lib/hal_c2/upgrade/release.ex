@@ -36,6 +36,9 @@ defmodule HalC2.Upgrade.Release do
   # SASL is in the release to be started here, at the first update, not at boot.
   @compile {:no_warn_undefined, [:release_handler, :systools]}
 
+  # The relup puts the release it installs here once past its point of no return.
+  @past_no_return {__MODULE__, :past_point_of_no_return}
+
   @typedoc "An application in a release: name, version and the `<app>-<vsn>` directory."
   @type lib :: {atom(), String.t(), Path.t()}
 
@@ -104,8 +107,14 @@ defmodule HalC2.Upgrade.Release do
 
   @doc """
   Installs `spec.to` in place and makes it permanent. `config` is the environment
-  the new release's applications get (`config/2`). `{:ok, report}`, or
-  `{:error, reason}` (`describe/1`) with the MC still on `spec.from`. The report
+  the new release's applications get (`config/2`). `{:ok, report}`, or an error:
+
+    * `{:error, reason}` (`describe/1`): refused before anything changed, the MC
+      still on `spec.from`.
+    * `{:error, {:crashed, why}}`: the script failed past the point of no return, and
+      the release handler is restarting the node on the permanent release.
+
+  The report
   names the modules that `changed`, those whose old code a process still runs
   (`lingering`), what `HalC2.Upgrade.Tree` did to the `services`, and the ones of
   them that failed to start and so take a restart (`needs_restart`).
@@ -126,9 +135,11 @@ defmodule HalC2.Upgrade.Release do
       HalC2.Upgrade.Appup.write_term!(sys, literal)
       HalC2.Upgrade.Tree.snapshot()
 
+      :persistent_term.erase(@past_no_return)
+
       result =
         try do
-          :release_handler.install_release(String.to_charlist(spec.to),
+          installer().(String.to_charlist(spec.to),
             error_action: :restart,
             suspend_timeout: 30_000,
             code_change_timeout: 30_000,
@@ -141,11 +152,20 @@ defmodule HalC2.Upgrade.Release do
           end
         end
 
+      past_no_return? = :persistent_term.get(@past_no_return, nil) == String.to_charlist(spec.to)
+      :persistent_term.erase(@past_no_return)
+
       case result do
         {:ok, _from, _descr} ->
           restore(kept)
+
           :ok = :release_handler.make_permanent(String.to_charlist(spec.to))
           {:ok, report(plan)}
+
+        # The release handler replies so for a script that failed past the point of no
+        # return, and then restarts the node on the permanent release itself.
+        {:error, reason} when past_no_return? ->
+          {:error, {:crashed, describe(reason)}}
 
         {:error, {:old_processes, mod}} ->
           _ = :release_handler.set_removed(String.to_charlist(spec.to))
@@ -162,6 +182,11 @@ defmodule HalC2.Upgrade.Release do
   catch
     :exit, reason -> {:error, "the release handler stopped: #{inspect(reason)}"}
   end
+
+  # Tests stand in for the release handler's install: a script that fails past the
+  # point of no return restarts the node, which in a test is the test VM.
+  defp installer,
+    do: Application.get_env(:hal_c2, :install_release, &:release_handler.install_release/2)
 
   @doc """
   The environment the new release's applications get: what runs now, under the new
@@ -363,7 +388,9 @@ defmodule HalC2.Upgrade.Release do
           do: [{:apply, {HalC2.Upgrade.Tree, :sync, []}}],
           else: []
 
-      script = before ++ [:point_of_no_return | protocols] ++ rest ++ tree ++ purge
+      # Tells `install/3` a failure from here on is the release handler's to restart for.
+      past = {:apply, {:persistent_term, :put, [@past_no_return, c(spec.to)]}}
+      script = before ++ [:point_of_no_return, past | protocols] ++ rest ++ tree ++ purge
       HalC2.Upgrade.Appup.write_term!(path, {to, [{from, descr, script}], down})
       :ok
     end
@@ -500,6 +527,7 @@ defmodule HalC2.Upgrade.Release do
   def describe({:code_change_failed, pid, mod, _vsn, reason}),
     do: "#{inspect(mod)} could not migrate #{inspect(pid)}: #{inspect(reason)}"
 
+  def describe({tag, why}) when tag == :crashed and is_binary(why), do: why
   def describe(reason) when is_binary(reason), do: reason
   def describe(reason), do: inspect(reason)
 end
