@@ -10,8 +10,9 @@
 // paints `space` and dispatches `space.*`. A chart block draws as text (`spaceChart.ts`)
 // and is asked for in words. A Mermaid diagram (a `code` block in "mermaid", or, as the
 // fallback, a `raw` block that is one Mermaid fence the page keeps as written) shows as
-// the MC drew it in characters (`mermaidDiagrams.ts`). Any other `raw`, `table` or
-// `code` block shows as its source, line for line. An image, the Space's or one by its
+// the MC drew it in characters (`mermaidDiagrams.ts`). A table and any other code
+// block are drawn as the chat draws them (`styledText.ts`); math and any other `raw`
+// block show as their source, line for line, and are edited as it. An image, the Space's or one by its
 // address, is named in words and never fetched. A heading carries its level's `#`
 // marks and a callout a bar. A list item, an alert, a divider, a footnote, a collapsed
 // section and math show as the MC writes them (`spaceMarkdown.ts`). An entry taller
@@ -73,6 +74,7 @@ import {
   chunk,
   type ChunkStyle,
   inlineMarkdown,
+  markdownLines,
   mermaidFenceSource,
   mermaidLines,
   plainText,
@@ -295,6 +297,21 @@ const bodyFromField = (text: string) =>
 export const SITE_BEHIND_HINT = "Edited since it was published · p publishes again";
 export const SITE_LOCAL_ONLY_HINT =
   "Only this machine can open this link · P publishes over Tailscale";
+
+/** Code in a fence longer than any fence inside it, as the desktop draws a code block. */
+const fenced = (code: string, language: string) => {
+  let ticks = 3;
+  for (const line of code.split("\n")) {
+    const inner = /^ {0,3}(`{3,})/.exec(line);
+    if (inner) ticks = Math.max(ticks, inner[1]!.length + 1);
+  }
+  const fence = "`".repeat(ticks);
+  return `${fence}${language}\n${code}\n${fence}`;
+};
+
+/** Markdown the page keeps as written, a table and code are edited as their source. */
+const asSource = (block: SpaceBlock) =>
+  block.kind === "raw" || block.kind === "table" || block.kind === "code";
 
 /** What sets a raw block's source apart from the page's own blocks. */
 const RAW_GUTTER = "│ ";
@@ -688,18 +705,43 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         : null;
 
   /** A Mermaid diagram: drawn in characters by the MC, or its source. */
-  const diagramRows = (block: SpaceBlock, source: string): TuiSpaceRow[] => {
+  const diagramRows = (block: SpaceBlock, source: string): TuiSpaceRow[] =>
+    linesRows(block, mermaidLines(source, diagrams.get(source), palette, width() - 2).lines);
+
+  /**
+   * A table or a code block drawn as the chat draws them (#854): a table boxed with its
+   * cells' Markdown, code in the code colour under its language. Math is code the MC
+   * fences in `$$`, shown as its source.
+   */
+  const drawnBlock = (block: SpaceBlock) =>
+    block.kind === "table" || (block.kind === "code" && block.language !== "math");
+
+  const drawnBlockRows = (block: SpaceBlock): TuiSpaceRow[] => {
+    const room = width() - 2;
+    if (block.kind === "table") return linesRows(block, markdownLines(block.text, palette, room));
+    const language = block.language ?? "";
+    const label = language === "" ? [] : [styled(chunk(language, { fg: palette.dim }))];
+    return linesRows(block, [
+      ...label,
+      ...markdownLines(fenced(block.text, language), palette, room),
+    ]);
+  };
+
+  /** A block drawn as lines that fit the pane; a line of plain text is cut to it. */
+  const linesRows = (block: SpaceBlock, drawn: ReadonlyArray<StyledText>): TuiSpaceRow[] => {
     const key = `block:${block.id}`;
     const active = selected[view] === key;
     const bg = active ? { bg: palette.selectedBg } : {};
     const room = width() - 2;
     const agent = agentOf(block);
-    const { lines } = mermaidLines(source, diagrams.get(source), palette, room);
+    // An empty block still has its row, to select it by.
+    const lines = drawn.length > 0 ? drawn : [styled(chunk(" "))];
     return lines.map((line, index) => {
       const first = index === 0;
       const lead = first ? marker(active) : "  ";
       const by = index === lines.length - 1 && agent ? `  · ${agent}` : "";
-      // A drawing fits the pane; a line of source or a reason is cut to it, as raw text is.
+      // A drawing or a table fits the pane; a line of code or a reason is cut to it, as
+      // raw text is.
       const parts =
         line.chunks.length === 1
           ? [{ ...line.chunks[0]!, text: clip(expandTabs(line.chunks[0]!.text), room) }]
@@ -741,13 +783,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   /**
    * Markdown the page keeps as written: a row per source line behind a gutter, with
    * its leading spaces and never wrapped, so a table or code lines up as in the file.
-   * A line wider than the pane is cut short; the block's text stays whole.
+   * A line wider than the pane is cut short; the block's text stays whole. Math shows
+   * this way too.
    */
-  // Markdown the page keeps as written is its source, and so are a table and a code block
-  // until they are drawn as such (#854).
-  const asSource = (block: SpaceBlock) =>
-    block.kind === "raw" || block.kind === "table" || block.kind === "code";
-
   const rawRows = (block: SpaceBlock): TuiSpaceRow[] => {
     const key = `block:${block.id}`;
     const active = selected[view] === key;
@@ -818,7 +856,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (chart) return chartRows(block, chart);
     const diagram = mermaidSource(block);
     if (diagram !== null) return diagramRows(block, diagram);
-    if (asSource(block)) return rawRows(block);
+    if (drawnBlock(block)) return drawnBlockRows(block);
+    if (block.kind === "raw" || block.kind === "code") return rawRows(block);
     const key = `block:${block.id}`;
     const active = selected[view] === key;
     const linked = block.kind === "subpage_link" ? pageById(block.linkedPageId) : undefined;
