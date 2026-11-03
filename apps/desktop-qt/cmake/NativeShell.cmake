@@ -30,6 +30,9 @@ function(hal_c2_add_native_library)
   target_include_directories(hal_c2_native PUBLIC "${_hal_c2_src}" "${_hal_c2_src}/native")
   # The QR codes pairing links are shown as (src/native/QrCode.cpp).
   include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/QrCodeGen.cmake")
+  # Code coloured by its language (src/native/CodeHighlighter.cpp).
+  include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Syntax.cmake")
+  hal_c2_link_syntax(hal_c2_native)
   target_sources(hal_c2_native PRIVATE "${qrcodegen_SOURCE_DIR}/cpp/qrcodegen.cpp")
   target_include_directories(hal_c2_native PRIVATE "${qrcodegen_SOURCE_DIR}/cpp")
   # Android has no FFmpeg to load and pkg-config would find this machine's

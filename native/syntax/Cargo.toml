@@ -1,0 +1,32 @@
+[package]
+name = "hal-c2-syntax"
+description = "Code coloured by its language, for the HAL-C2 clients: syntect over bat's syntaxes, in the web client's Pierre themes."
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# A static library desktop-qt and the phone link (cmake/Syntax.cmake), and a
+# crate a Rust client takes as it is.
+[lib]
+name = "hal_c2_syntax"
+crate-type = ["staticlib", "rlib"]
+
+# The regex engine syntect reads syntaxes with. Oniguruma (C) is about seven
+# times faster; fancy-regex is pure Rust, so it cross-compiles without a C
+# toolchain for the target (the phone's Android build takes it).
+[features]
+default = ["onig"]
+onig = ["syntect/regex-onig", "two-face/syntect-onig"]
+fancy = ["syntect/regex-fancy", "two-face/syntect-fancy"]
+
+[dependencies]
+syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load"] }
+# bat's syntaxes, TypeScript, Elixir, QML and TOML among them, which syntect's own lack.
+two-face = { version = "0.5", default-features = false }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"

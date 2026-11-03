@@ -90,8 +90,10 @@ foreach(test_name IN ITEMS ShellRuntime ShellExamples)
     ../../src/ShellRuntime.cpp
     ../../src/ShellBridge.cpp
     ../../src/ThemeStore.cpp
-    # Composer.qml's rich text; it registers itself, as in the app.
+    # Composer.qml's rich text and Markdown.qml's code; they register
+    # themselves, as in the app.
     ../../src/native/ComposerHighlighter.cpp
+    ../../src/native/CodeHighlighter.cpp
   )
   target_include_directories(tst_${test_name} PRIVATE ../../src ../../src/native)
   target_compile_definitions(tst_${test_name} PRIVATE
@@ -101,6 +103,7 @@ foreach(test_name IN ITEMS ShellRuntime ShellExamples)
   target_link_libraries(tst_${test_name} PRIVATE
     Qt6::Core Qt6::Gui Qt6::GuiPrivate Qt6::Quick Qt6::Test qmlghosttyplugin
   )
+  hal_c2_link_syntax(tst_${test_name})
   hal_c2_target_platform_window(tst_${test_name})
   add_test(NAME ${test_name} COMMAND tst_${test_name})
   # The examples are copied over one shell.qml in turn, and a copy keeps its
