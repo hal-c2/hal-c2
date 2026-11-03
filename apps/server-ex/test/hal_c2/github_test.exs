@@ -68,7 +68,9 @@ defmodule HalC2.GitHubTest do
     test "a checkout on another host asks that host, which is not paused",
          %{calls: calls, tmp_dir: dir} do
       {_, 0} = System.cmd("git", ~w(init -q), cd: dir)
-      {_, 0} = System.cmd("git", ~w(remote add origin git@ghe.test:acme/shop.git), cd: dir)
+      {_, 0} = System.cmd("git", ~w(remote add origin git@github.com:me/shop.git), cd: dir)
+      # gh asks `upstream`'s host before `origin`'s.
+      {_, 0} = System.cmd("git", ~w(remote add upstream git@ghe.test:acme/shop.git), cd: dir)
 
       assert {:ok, _} = GitHub.gh(dir, ~w(pr view 1))
       assert File.read!(calls) == "asked\n"
