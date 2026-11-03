@@ -10,8 +10,9 @@
 // paints `space` and dispatches `space.*`. A chart block draws as text (`spaceChart.ts`)
 // and is asked for in words. A Mermaid diagram (a `code` block in "mermaid", or, as the
 // fallback, a `raw` block that is one Mermaid fence the page keeps as written) shows as
-// the MC drew it in characters (`mermaidDiagrams.ts`). Any other `raw`, `table` or
-// `code` block shows as its source, line for line. An image, the Space's or one by its
+// the MC drew it in characters (`mermaidDiagrams.ts`). A table and any other code
+// block are drawn as the chat draws them (`styledText.ts`); math and any other `raw`
+// block show as their source, line for line, and are edited as it. An image, the Space's or one by its
 // address, is named in words and never fetched. A heading carries its level's `#`
 // marks and a callout a bar. A list item, an alert, a divider, a footnote, a collapsed
 // section and math show as the MC writes them (`spaceMarkdown.ts`). An entry taller
@@ -55,7 +56,7 @@ import {
 } from "@hal-c2/client-runtime/state/stream-entities";
 
 import type { TuiClient } from "../connection.ts";
-import { buildFileTree, flattenFileTree } from "../fileTree.ts";
+import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
 import { linkifyTimelineUrls } from "../timelineLinks.ts";
 import type { StatusKind } from "../store.ts";
@@ -73,6 +74,7 @@ import {
   chunk,
   type ChunkStyle,
   inlineMarkdown,
+  markdownLines,
   mermaidFenceSource,
   mermaidLines,
   plainText,
@@ -114,6 +116,7 @@ export interface TuiSpaceRow {
     | "trashedImage"
     | "version"
     | "project"
+    | "folder"
     | "file"
     | "more"
     | "label";
@@ -294,6 +297,21 @@ const bodyFromField = (text: string) =>
 export const SITE_BEHIND_HINT = "Edited since it was published · p publishes again";
 export const SITE_LOCAL_ONLY_HINT =
   "Only this machine can open this link · P publishes over Tailscale";
+
+/** Code in a fence longer than any fence inside it, as the desktop draws a code block. */
+const fenced = (code: string, language: string) => {
+  let ticks = 3;
+  for (const line of code.split("\n")) {
+    const inner = /^ {0,3}(`{3,})/.exec(line);
+    if (inner) ticks = Math.max(ticks, inner[1]!.length + 1);
+  }
+  const fence = "`".repeat(ticks);
+  return `${fence}${language}\n${code}\n${fence}`;
+};
+
+/** Markdown the page keeps as written, a table and code are edited as their source. */
+const asSource = (block: SpaceBlock) =>
+  block.kind === "raw" || block.kind === "table" || block.kind === "code";
 
 /** What sets a raw block's source apart from the page's own blocks. */
 const RAW_GUTTER = "│ ";
@@ -480,7 +498,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   // first asked. A Space's pages end with a section for each project that has any.
   const spaceFiles = new Map<string, ReadonlySet<string> | null>();
   const sectionStore = options.projectSections ?? memoryMutedThreads();
-  // The projects whose sections the user expanded; the rest are collapsed.
+  // The projects whose sections the user expanded, and their folders as `<projectId>|<path>`;
+  // the rest are collapsed.
   const expandedSections = new Set(sectionStore.load());
   // The user's Space the pages go back to from a project file's page, which is served
   // from the project's own Space: that one is in no list.
@@ -686,18 +705,43 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         : null;
 
   /** A Mermaid diagram: drawn in characters by the MC, or its source. */
-  const diagramRows = (block: SpaceBlock, source: string): TuiSpaceRow[] => {
+  const diagramRows = (block: SpaceBlock, source: string): TuiSpaceRow[] =>
+    linesRows(block, mermaidLines(source, diagrams.get(source), palette, width() - 2).lines);
+
+  /**
+   * A table or a code block drawn as the chat draws them (#854): a table boxed with its
+   * cells' Markdown, code in the code colour under its language. Math is code the MC
+   * fences in `$$`, shown as its source.
+   */
+  const drawnBlock = (block: SpaceBlock) =>
+    block.kind === "table" || (block.kind === "code" && block.language !== "math");
+
+  const drawnBlockRows = (block: SpaceBlock): TuiSpaceRow[] => {
+    const room = width() - 2;
+    if (block.kind === "table") return linesRows(block, markdownLines(block.text, palette, room));
+    const language = block.language ?? "";
+    const label = language === "" ? [] : [styled(chunk(language, { fg: palette.dim }))];
+    return linesRows(block, [
+      ...label,
+      ...markdownLines(fenced(block.text, language), palette, room),
+    ]);
+  };
+
+  /** A block drawn as lines that fit the pane; a line of plain text is cut to it. */
+  const linesRows = (block: SpaceBlock, drawn: ReadonlyArray<StyledText>): TuiSpaceRow[] => {
     const key = `block:${block.id}`;
     const active = selected[view] === key;
     const bg = active ? { bg: palette.selectedBg } : {};
     const room = width() - 2;
     const agent = agentOf(block);
-    const { lines } = mermaidLines(source, diagrams.get(source), palette, room);
+    // An empty block still has its row, to select it by.
+    const lines = drawn.length > 0 ? drawn : [styled(chunk(" "))];
     return lines.map((line, index) => {
       const first = index === 0;
       const lead = first ? marker(active) : "  ";
       const by = index === lines.length - 1 && agent ? `  · ${agent}` : "";
-      // A drawing fits the pane; a line of source or a reason is cut to it, as raw text is.
+      // A drawing or a table fits the pane; a line of code or a reason is cut to it, as
+      // raw text is.
       const parts =
         line.chunks.length === 1
           ? [{ ...line.chunks[0]!, text: clip(expandTabs(line.chunks[0]!.text), room) }]
@@ -739,13 +783,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   /**
    * Markdown the page keeps as written: a row per source line behind a gutter, with
    * its leading spaces and never wrapped, so a table or code lines up as in the file.
-   * A line wider than the pane is cut short; the block's text stays whole.
+   * A line wider than the pane is cut short; the block's text stays whole. Math shows
+   * this way too.
    */
-  // Markdown the page keeps as written is its source, and so are a table and a code block
-  // until they are drawn as such (#854).
-  const asSource = (block: SpaceBlock) =>
-    block.kind === "raw" || block.kind === "table" || block.kind === "code";
-
   const rawRows = (block: SpaceBlock): TuiSpaceRow[] => {
     const key = `block:${block.id}`;
     const active = selected[view] === key;
@@ -816,7 +856,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (chart) return chartRows(block, chart);
     const diagram = mermaidSource(block);
     if (diagram !== null) return diagramRows(block, diagram);
-    if (asSource(block)) return rawRows(block);
+    if (drawnBlock(block)) return drawnBlockRows(block);
+    if (block.kind === "raw" || block.kind === "code") return rawRows(block);
     const key = `block:${block.id}`;
     const active = selected[view] === key;
     const linked = block.kind === "subpage_link" ? pageById(block.linkedPageId) : undefined;
@@ -1114,7 +1155,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
 
   /**
    * A section for each of this MC's projects with Space files, after the Space's own
-   * entries; an expanded one lists its files by folder.
+   * entries; an expanded one lists its files by folder, an expanded folder its own.
    */
   const projectSectionRows = (): TuiSpaceRow[] =>
     (options.projects?.() ?? []).flatMap((project) => {
@@ -1125,20 +1166,22 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       const rows = [entryRow(`project:${project.id}`, "project", head, {}, palette.accent)];
       if (!expanded) return rows;
       const tree = buildFileTree([...paths].map((path) => ({ path, additions: 0, deletions: 0 })));
-      for (const node of flattenFileTree(tree, new Set())) {
-        const indent = "  ".repeat(node.depth + 1);
+      const collapsed = new Set(
+        collectDirPaths(tree).filter((path) => !expandedSections.has(`${project.id}|${path}`)),
+      );
+      for (const node of flattenFileTree(tree, collapsed)) {
         if (node.kind === "file") {
-          rows.push(entryRow(`file:${project.id}|${node.path}`, "file", `${indent}${node.name}`));
+          rows.push(
+            entryRow(
+              `file:${project.id}|${node.path}`,
+              "file",
+              `${"  ".repeat(node.depth + 1)}${node.name}`,
+            ),
+          );
         } else {
-          const text = clip(`  ${indent}${node.name}/`, width());
-          rows.push({
-            key: `folder:${project.id}|${node.path}`,
-            kind: "label",
-            text,
-            line: styled(chunk(text, { fg: palette.dim })),
-            selected: false,
-            first: true,
-          });
+          // The arrow in the indent, so a folder's name lines up with its siblings' files.
+          const head = `${"  ".repeat(node.depth)}${node.collapsed ? "▸" : "▾"} ${node.name}/`;
+          rows.push(entryRow(`folder:${project.id}|${node.path}`, "folder", head, {}, palette.dim));
         }
       }
       return rows;
@@ -1924,7 +1967,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (!entry) return;
     if (entry.kind === "space") openSpace(entry.id);
     else if (entry.kind === "page") openPage(entry.id);
-    else if (entry.kind === "project") toggleSection(entry.id);
+    else if (entry.kind === "project" || entry.kind === "folder") toggleSection(entry.id);
     else if (entry.kind === "file") {
       const at = entry.id.indexOf("|");
       openProjectFile(entry.id.slice(0, at), entry.id.slice(at + 1));
@@ -3026,8 +3069,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
         }
         closeHistory();
         show();
-        // Back from the page lands on the file, in its project's section.
-        if (!expandedSections.has(projectId)) toggleSection(projectId);
+        // Back from the page lands on the file, in its folders in its project's section.
+        revealFile(projectId, path);
         openSpace(result.spaceId);
         openPage(result.page.id);
         options.status(
@@ -3040,13 +3083,33 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     );
   };
 
-  /** Expands or collapses a project's section, and remembers which (of projects still here). */
-  const toggleSection = (projectId: string) => {
-    if (!expandedSections.delete(projectId)) expandedSections.add(projectId);
+  /** Remembers the expanded sections and folders, of projects still here. */
+  const rememberSections = () => {
     const known = new Set((options.projects?.() ?? []).map((project) => project.id));
-    for (const id of expandedSections) if (!known.has(id)) expandedSections.delete(id);
+    for (const id of expandedSections) {
+      const at = id.indexOf("|");
+      if (!known.has(at < 0 ? id : id.slice(0, at))) expandedSections.delete(id);
+    }
     sectionStore.save([...expandedSections]);
     publish();
+  };
+
+  /** Expands or collapses a project's section, or a folder in it (`<projectId>|<path>`). */
+  const toggleSection = (id: string) => {
+    if (!expandedSections.delete(id)) expandedSections.add(id);
+    rememberSections();
+  };
+
+  /** Expands a file's section and the folders it is in, so its row shows. */
+  const revealFile = (projectId: string, path: string) => {
+    const parts = path.replace(/^\.\//, "").split("/").filter(Boolean);
+    const ids = [
+      projectId,
+      ...parts.slice(0, -1).map((_, at) => `${projectId}|${parts.slice(0, at + 1).join("/")}`),
+    ];
+    if (ids.every((id) => expandedSections.has(id))) return;
+    for (const id of ids) expandedSections.add(id);
+    rememberSections();
   };
 
   /** Picks one of this MC's projects; one alone is picked without asking. */

@@ -2683,9 +2683,21 @@ step("the user can edit it as text", async (ctx: SpaceWorld) => {
   expect(rawSource(ctx).lines).toEqual(edited);
 });
 
-// A table and a code block, which the page shows as their source until #854 draws them.
+// A table and a code block: drawn as the chat draws them while read, edited as their
+// source (#854).
 const MODELLED_TABLE = ["| Step | Owner |", "| ---- | ----- |", "| MC   | Ada   |"];
 const CODE = ["run()", "    done()"];
+const ALIGNED_TABLE = [
+  "| Step | Owner | Done |",
+  "| :--- | :---: | ---: |",
+  "| **MC** | a \\| b | 3 |",
+];
+
+/** A block's rows as the pane shows them, after the selection's marker. */
+const drawnRows = (ctx: SpaceWorld, text: string) => {
+  const key = blockKey(ctx, text);
+  return pane(ctx).rows.filter((row) => row.key === key);
+};
 
 step("the page {string} holds a table and a code block", (ctx: SpaceWorld, title: string) => {
   seedBlock(ctx, title, "table", MODELLED_TABLE.join("\n"));
@@ -2693,17 +2705,90 @@ step("the page {string} holds a table and a code block", (ctx: SpaceWorld, title
 });
 
 step(
-  "the table and the code are each shown line for line in a fixed-width face",
-  (ctx: SpaceWorld) => {
-    for (const [kind, lines] of [
-      ["table", MODELLED_TABLE],
-      ["code", CODE],
-    ] as const) {
-      const rows = pane(ctx).rows.filter((row) => row.blockKind === kind);
-      expect(rows.map((row) => row.text.slice(4))).toEqual(lines);
+  "the user edits the table and the code each as its source, exactly as written",
+  async (ctx: SpaceWorld) => {
+    for (const lines of [MODELLED_TABLE, CODE]) {
+      const source = lines.join("\n");
+      const kind = mc(ctx).blockNamed(source).kind;
+      await selectRow(ctx, blockKey(ctx, source));
+      await press(ctx, "e");
+      // The field holds the source on one line: a line break is \n.
+      const field = lines.join("\\n");
+      expect(findObject(ctx, "askInput").get("text")).toBe(field);
+      await answer(ctx, `${field}\\n`);
+      expect(mc(ctx).blockNamed(`${source}\n`).kind).toBe(kind);
     }
   },
 );
+
+step(
+  "the page {string} with a table whose columns are aligned left, centre and right",
+  (ctx: SpaceWorld, title: string) => {
+    seedBlock(ctx, title, "table", ALIGNED_TABLE.join("\n"));
+  },
+);
+
+/** The aligned table's rows: borders, the header, its rule, the row, the bottom. */
+const tableRows = (ctx: SpaceWorld) => drawnRows(ctx, ALIGNED_TABLE.join("\n"));
+/** A row's cells, between the box's bars. */
+const rowCells = (text: string) => text.slice(2).split("│").slice(1, -1);
+
+step("the table is shown as a grid of its cells, its header row apart", (ctx: SpaceWorld) => {
+  const rows = tableRows(ctx);
+  expect(rows.map((row) => row.text.slice(2)[0])).toEqual(["┌", "│", "├", "│", "└"]);
+  expect(rowCells(rows[1]!.text).map((cell) => cell.trim())).toEqual(["Step", "Owner", "Done"]);
+  // The header in the list style, the cells in the text's.
+  const step = rows[1]!.line.chunks.find((part) => part.text === "Step")!;
+  expect(step.fg).toEqual(THEME.accent);
+  expect((step.attributes ?? 0) & TextAttributes.BOLD).toBe(TextAttributes.BOLD);
+});
+
+step("each column is aligned as it was written", (ctx: SpaceWorld) => {
+  const [left, centre, right] = rowCells(tableRows(ctx)[3]!.text);
+  expect(left!.startsWith("MC")).toBe(true);
+  const before = centre!.length - centre!.trimStart().length;
+  const after = centre!.length - centre!.trimEnd().length;
+  expect(before > 0 && Math.abs(before - after) <= 1).toBe(true);
+  expect(right!.endsWith("3") && right!.startsWith(" ")).toBe(true);
+});
+
+step("a cell's formatting is shown, a {string} as a pipe", (ctx: SpaceWorld) => {
+  const row = tableRows(ctx)[3]!;
+  const bold = row.line.chunks.find((part) => part.text === "MC")!;
+  expect((bold.attributes ?? 0) & TextAttributes.BOLD).toBe(TextAttributes.BOLD);
+  expect(rowCells(row.text)[1]!.trim()).toBe("a | b");
+});
+
+step(
+  "the page {string} with a {string} code block",
+  (ctx: SpaceWorld, title: string, language: string) => {
+    mc(ctx).run("space.block.insert", {
+      spaceId: currentSpaceId(ctx),
+      pageId: seedPage(ctx, title),
+      kind: "code",
+      text: CODE.join("\n"),
+      language,
+    });
+  },
+);
+
+// A terminal draws every character a column wide, so the face is fixed-width already; the
+// code is in the code colour the chat draws it in, with no colours of its language.
+step(
+  "its text is shown in a fixed-width face, coloured for that language where the surface can",
+  (ctx: SpaceWorld) => {
+    const rows = drawnRows(ctx, CODE.join("\n")).slice(1);
+    expect(rows.map((row) => row.text.slice(2))).toEqual(CODE);
+    for (const row of rows) {
+      for (const part of row.line.chunks.slice(1)) expect(part.fg).toEqual(THEME.warning);
+    }
+  },
+);
+
+step("its language is named on it", (ctx: SpaceWorld) => {
+  const block = mc(ctx).blockNamed(CODE.join("\n"));
+  expect(drawnRows(ctx, CODE.join("\n"))[0]!.text.slice(2)).toBe(block.language);
+});
 
 // Blocks as the MC keeps them, a field per column; `-` is a field the block does not have.
 const blockSpecs = (table: string[][]) => {
@@ -3318,11 +3403,31 @@ async function toggleSection(ctx: SpaceWorld, project: string, open: boolean) {
   expect(expanded(ctx, project)).toBe(open);
 }
 
-/** Opens a file's page from its project's section, expanding it on the way. */
+const folderRow = (ctx: World, project: string, path: string) =>
+  pane(ctx).rows.find((row) => row.key === `folder:${projectId(ctx, project)}|${path}`);
+
+const folderOpen = (ctx: World, project: string, path: string) =>
+  words(folderRow(ctx, project, path)!).startsWith("▾");
+
+/** Enter on the folder's row when it is not already `open`. */
+async function toggleFolder(ctx: SpaceWorld, project: string, path: string, open: boolean) {
+  await sidebar(ctx);
+  expect(folderRow(ctx, project, path)).toBeDefined();
+  if (folderOpen(ctx, project, path) === open) return;
+  await selectRow(ctx, folderRow(ctx, project, path)!.key);
+  await press(ctx, "Enter");
+  expect(folderOpen(ctx, project, path)).toBe(open);
+}
+
+/** Opens a file's page from its project's section, expanding it and its folders on the way. */
 async function openFromSection(ctx: SpaceWorld, project: string, path: string) {
   await sidebar(ctx);
   const title = env(ctx).projects.find((candidate) => candidate.id === project)!.title;
   await toggleSection(ctx, title, true);
+  const parts = path.split("/");
+  for (let at = 1; at < parts.length; at++) {
+    await toggleFolder(ctx, title, parts.slice(0, at).join("/"), true);
+  }
   await selectRow(ctx, `file:${project}|${path}`);
   await press(ctx, "Enter");
   expect(pane(ctx).view).toBe("page");
@@ -3368,6 +3473,36 @@ for (const pattern of [
 step("the user collapses the section of {string}", (ctx: SpaceWorld, project: string) =>
   toggleSection(ctx, project, false),
 );
+
+step(
+  "the folder {string} of {string} is collapsed",
+  async (ctx: SpaceWorld, path: string, project: string) => {
+    await sidebar(ctx);
+    expect(folderOpen(ctx, project, path)).toBe(false);
+    const id = projectId(ctx, project);
+    expect(pane(ctx).rows.some((row) => row.key.startsWith(`file:${id}|${path}/`))).toBe(false);
+  },
+);
+
+// The keyboard is the TUI's only way in: Enter on the folder's row, as for a click.
+for (const pattern of [
+  "the user expands the folder {string} of {string}",
+  "the user expanded the folder {string} of {string}",
+  "the user expands the folder {string} of {string} from the keyboard",
+]) {
+  step(pattern, (ctx: SpaceWorld, path: string, project: string) =>
+    toggleFolder(ctx, project, path, true),
+  );
+}
+
+for (const pattern of [
+  "the user collapses the folder {string} of {string}",
+  "the user collapses the folder {string} of {string} from the keyboard",
+]) {
+  step(pattern, (ctx: SpaceWorld, path: string, project: string) =>
+    toggleFolder(ctx, project, path, false),
+  );
+}
 
 step(
   "the section of {string} shows {string} in the folder {string}",

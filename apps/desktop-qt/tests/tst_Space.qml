@@ -19,6 +19,13 @@ Item {
         }
     }
 
+    // Reads the clipboard back.
+    TextEdit {
+        id: pasteTarget
+        visible: false
+        textFormat: TextEdit.PlainText
+    }
+
     function block(id, text, more) {
         return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, level: 0, language: "", imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more);
     }
@@ -726,7 +733,7 @@ Item {
                 root.block("p1", "```mermaid\nflowchart LR\n  A --> B\n```"),
                 root.block("t1", "| mermaid |\n| --- |", { kind: "table" })
             ] });
-            tryVerify(() => findChild(view, "spaceBlockEditor:| mermaid |\n| --- |"), 1000, "every block is on the page");
+            tryVerify(() => findChild(view, "spaceBlockText:| mermaid |\n| --- |"), 1000, "every block is on the page");
             // A paragraph is drawn as the chat's Markdown, where a fence is code.
             compare(Object.keys(Diagrams.asked), ["dark\nflowchart LR\n  A --> B"]);
         }
@@ -764,6 +771,76 @@ Item {
             compare(root.dispatched("space.block.update").length, 0);
             keyClick(Qt.Key_Return, Qt.ControlModifier);
             compare(root.dispatched("space.block.update"), [{ blockId: "b1", text: table + "\n|" }]);
+        }
+
+        // features/space/markdown.feature, Tables and Code (#854): a table and
+        // a code block are drawn as the chat draws them until they are edited,
+        // then edited as their source.
+        function test_a_table_is_drawn_as_a_grid_and_edited_as_its_source() {
+            const table = "| Step | Owner | Done |\n| :--- | :---: | ---: |\n| **MC** | a \\| b | 3 |";
+            const view = root.research({ blocks: [root.block("b1", table, { kind: "table" })] });
+            tryVerify(() => findChild(view, "spaceBlockText:" + table) !== null);
+            const shown = findChild(view, "spaceBlock:" + table);
+            compare(shown.editor, null, "a drawn table holds no editor");
+            const grid = findChild(findChild(shown, "spaceBlockText:" + table), "markdownTable");
+            verify(grid !== null && grid.visible, "the table is a grid");
+            compare(grid.spec.header.length, 3);
+            compare(grid.spec.align, ["left", "center", "right"]);
+            verify(/<(b|strong)>MC<\/(b|strong)>/.test(grid.spec.rows[0][0]), grid.spec.rows[0][0]);
+            compare(grid.spec.rows[0][1], "a | b");
+
+            // A click on a cell edits the table's source, line for line.
+            mouseClick(grid, 20, 10);
+            const editor = shown.editor;
+            verify(editor !== null && editor.activeFocus);
+            compare(editor.text, table);
+            compare(editor.wrapMode, TextEdit.NoWrap);
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.update").length, 0, "Return starts a line");
+            keyClick(Qt.Key_Escape);
+            compare(shown.editor, null, "left, it is drawn again");
+        }
+
+        function test_a_code_block_is_drawn_as_code_and_copied_without_its_fence() {
+            const code = "const a = 1;\n```\nnot the end";
+            const view = root.research({ blocks: [root.block("b1", code, { kind: "code", language: "ts" })] });
+            tryVerify(() => findChild(view, "spaceBlockText:" + code) !== null);
+            const shown = findChild(view, "spaceBlock:" + code);
+            const drawn = findChild(shown, "spaceBlockText:" + code);
+            compare(drawn.text, "````ts\n" + code + "\n````", "a fence longer than the one it holds");
+            const box = findChild(drawn, "markdownCode");
+            verify(box !== null);
+            compare(box.code, code);
+            compare(findChild(box, "codeLabel").text, "ts");
+            compare(findChild(box, "codeText").font.family, Theme.fontMono.length > 0 ? Theme.fontMono : "monospace");
+
+            // Its copy is the brick's, and copying edits nothing.
+            tryVerify(() => box.height > 30 && drawn.height >= box.height, 1000, "the code is laid out");
+            mouseClick(findChild(box, "copyCode"));
+            compare(shown.editor, null, "copying does not edit");
+            pasteTarget.text = "";
+            pasteTarget.paste();
+            compare(pasteTarget.text, code);
+
+            // Elsewhere edits the code, as before: Ctrl+Return writes it.
+            mouseClick(findChild(box, "codeText"), 4, 4);
+            const editor = shown.editor;
+            verify(editor !== null && editor.activeFocus);
+            compare(editor.text, code);
+            compare(editor.font.family, Theme.fontMono.length > 0 ? Theme.fontMono : "monospace");
+            editor.cursorPosition = editor.length;
+            keyClick("!");
+            keyClick(Qt.Key_Return, Qt.ControlModifier);
+            compare(root.dispatched("space.block.update"), [{ blockId: "b1", text: code + "!" }]);
+        }
+
+        // Math stays the source the MC fences (a diagram its picture, above).
+        function test_math_is_not_drawn_as_code() {
+            const view = root.research({ blocks: [root.block("m1", "E = mc^2", { kind: "code", language: "math", markdownAbove: "$$", markdownBelow: "$$" })] });
+            tryVerify(() => findChild(view, "spaceBlock:E = mc^2") !== null);
+            const shown = findChild(view, "spaceBlock:E = mc^2");
+            verify(shown.editor !== null, "math is its source");
+            compare(findChild(shown, "spaceBlockText:E = mc^2"), null);
         }
 
         function test_a_scrolled_raw_block_comes_back_when_its_lines_get_shorter() {
@@ -1114,6 +1191,35 @@ Item {
             verify(findChild(view, "spaceProjectFile:shop:README.md").y > guide.y);
             mouseClick(findChild(view, "spaceProject:shop"));
             compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: false }]);
+        }
+
+        function test_a_folder_in_a_section_folds_on_a_click() {
+            const view = sections(true);
+            tryVerify(() => findChild(view, "spaceProjectFolder:shop:docs") !== null);
+            const folder = findChild(view, "spaceProjectFolder:shop:docs");
+            compare(folder.Accessible.name, "Collapse docs");
+            mouseClick(folder);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", path: "docs", expanded: false }]);
+            compare(dispatched("space.openFile"), []);
+        }
+
+        function test_a_section_and_a_folder_fold_from_the_keyboard() {
+            const view = sections(true);
+            tryVerify(() => findChild(view, "spaceProjectFolder:shop:docs") !== null);
+            const folder = findChild(view, "spaceProjectFolder:shop:docs");
+            folder.forceActiveFocus();
+            keyClick(Qt.Key_Right);
+            compare(dispatched("space.project.setExpanded"), []);
+            keyClick(Qt.Key_Left);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", path: "docs", expanded: false }]);
+            Shell.dispatchedActions = [];
+            findChild(view, "spaceProject:shop").forceActiveFocus();
+            keyClick(Qt.Key_Space);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: false }]);
+            Shell.dispatchedActions = [];
+            findChild(view, "spaceProjectFile:shop:README.md").forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(dispatched("space.openFile"), [{ projectId: "shop", relativePath: "README.md" }]);
         }
 
         function test_a_file_in_a_section_is_edited_as_a_page_and_shows_as_chosen() {

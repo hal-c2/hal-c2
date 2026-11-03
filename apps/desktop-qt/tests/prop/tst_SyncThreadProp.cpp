@@ -157,8 +157,11 @@ struct Sut {
   // sends the thread whole otherwise; then says it is live.
   void answer(int id, const QJsonObject& shape) {
     const QString thread = shape.value(QLatin1String("stream")).toString();
-    const QJsonValue offset = shape.value(QLatin1String("offset"));
-    const bool resumes = offset.isDouble() && shape.value(QLatin1String("handle")).toString() == handle && offset.toInt() <= seq;
+    // Where the follower got to rides beside the shape in its `sub` frame, the
+    // one the MC was just sent.
+    const QJsonObject frame = mc.subscriptions.last();
+    const QJsonValue offset = frame.value(QLatin1String("offset"));
+    const bool resumes = offset.isDouble() && frame.value(QLatin1String("handle")).toString() == handle && offset.toInt() <= seq;
     if (resumes) {
       QJsonArray events;
       for (const Event& change : std::as_const(log)) {

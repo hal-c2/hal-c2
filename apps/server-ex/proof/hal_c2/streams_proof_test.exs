@@ -8,6 +8,11 @@ defmodule HalC2.StreamsProofTest do
   @sidebar "writes the sidebar row; terminate/2 flushes it, which the stopping state stands for"
   @ignored "ignored: a relay's or a linked process's normal exit changes nothing"
 
+  @await "waits until an older MC's snapshot is migrated to the cold table, which only a stream loaded from one does; answered when the migration is done, or exits with the stream if it fails"
+  @migrated "a migration's end writes a snapshot and answers its waiters; changes no event or subscriber"
+  @migration "the migration of an older MC's snapshot; while it runs the stream never idles out, fewer stops than the model's timeout rule allows"
+  @pins "readers of a migrating state, sent their pin once it is done; changes no subscriber"
+  @demote "when memory moves older runs to the cold table with a snapshot; changes no event or subscriber"
   use HalC2.Proof,
     model: "streams.maude",
     module: "STREAMS",
@@ -51,6 +56,16 @@ defmodule HalC2.StreamsProofTest do
       "HalC2.Streams.Server state :subscribers" => "srv"
     },
     abstracts: %{
+      "HalC2.Streams.read/2" => @read,
+      "HalC2.Streams.Server.read/1" => @read,
+      "HalC2.Streams.Server handle_call :read" => @read,
+      "HalC2.Streams.Server.await_cold/1" => @await,
+      "HalC2.Streams.Server handle_call :await_cold" => @await,
+      "HalC2.Streams.Server handle_info {:hal_c2_cold_migrated, _}" => @migrated,
+      "HalC2.Streams.Server state :migration" => @migration,
+      "HalC2.Streams.Server state :cold_waiters" => @await,
+      "HalC2.Streams.Server state :pins" => @pins,
+      "HalC2.Streams.Server state :demote_at" => @demote,
       "HalC2.Streams.Server state :v" => "the version of the state, which no step changes",
       "HalC2.Streams.Server state :id" => "names the stream; the model has one",
       "HalC2.Streams.Server state :path" => "where the stream is stored; the model has the log",

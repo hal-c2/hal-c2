@@ -33,7 +33,8 @@ defmodule HalC2.GitHub do
 
       path ->
         bucket = if asked?(), do: nil, else: bucket(args)
-        gated(path, cwd, args, opts, opts[:host] || host(args), bucket)
+        host = bucket && (opts[:host] || named_host(args) || remote_host(cwd) || "github.com")
+        gated(path, cwd, args, opts, host, bucket)
     end
   end
 
@@ -138,20 +139,57 @@ defmodule HalC2.GitHub do
   defp endpoint([endpoint | _]), do: String.trim_leading(endpoint, "/")
   defp endpoint([]), do: nil
 
-  @doc "The host a `gh` call names (`--hostname`, `--repo host/owner/name`), else github.com."
-  def host(args) do
-    Enum.find_value(pairs(args), "github.com", fn
+  @doc """
+  The host a `gh` call names (`--hostname`, `--repo [host/]owner/name`, `repo view`'s
+  repository), else github.com.
+  """
+  def host(args), do: named_host(args) || "github.com"
+
+  # `gh repo view [host/]owner/name` names its repository without a flag.
+  defp named_host(["repo", "view", "-" <> _ | _] = args), do: flagged_host(args)
+
+  defp named_host(["repo", "view", repo | _] = args),
+    do: repo_host(repo) || flagged_host(args)
+
+  defp named_host(args), do: flagged_host(args)
+
+  defp flagged_host(args) do
+    Enum.find_value(pairs(args), fn
       {"--hostname", host} -> String.downcase(host)
       {flag, repo} when flag in ["--repo", "-R"] -> repo_host(repo)
       _ -> nil
     end)
   end
 
+  # A call that names no host asks the one gh picks from `cwd`'s remotes: `upstream`,
+  # then `github`, then `origin`, then any.
+  defp remote_host(cwd) when is_binary(cwd) do
+    with true <- File.dir?(cwd),
+         {:ok, out} <- HalC2.Git.ok(cwd, ~w(remote -v)),
+         remotes =
+           for(
+             [name, url | _] <- Enum.map(String.split(out, "\n"), &String.split/1),
+             do: {name, url}
+           ),
+         {_, url} <-
+           Enum.find_value(~w(upstream github origin), &List.keyfind(remotes, &1, 0)) ||
+             List.first(remotes),
+         %{host: host} <- HalC2.PullRequests.parse_remote(url) do
+      host
+    else
+      _ -> nil
+    end
+  end
+
+  defp remote_host(_), do: nil
+
   defp pairs(args), do: Enum.zip(args, Enum.drop(args, 1))
 
   defp repo_host(repo) do
     case String.split(repo, "/") do
       [host, _, _] -> String.downcase(host)
+      # `owner/name` alone is github.com's (or GH_HOST's), whatever the checkout's remote.
+      [_, _] -> System.get_env("GH_HOST", "github.com") |> String.downcase()
       _ -> nil
     end
   end
@@ -204,8 +242,12 @@ defmodule HalC2.GitHub do
     error -> {:error, {:failed, Exception.message(error)}}
   end
 
+  # Auth trouble is matched in both streams, but a rate limit or a missing object only on
+  # stderr: a GraphQL answer with `errors` still prints its body, user-written titles
+  # and comments included, on stdout.
   defp failure(err, out) do
     said = String.downcase(err <> "\n" <> out)
+    told = String.downcase(err)
 
     detail =
       (api_error(err) || first_line(err) || first_line(out) || "gh failed.")
@@ -222,7 +264,7 @@ defmodule HalC2.GitHub do
       ]) ->
         {:unauthenticated, detail}
 
-      String.contains?(said, [
+      String.contains?(told, [
         "api rate limit",
         "secondary rate limit",
         "rate limit exceeded",
@@ -231,7 +273,7 @@ defmodule HalC2.GitHub do
       ]) ->
         {:rate_limited, detail}
 
-      String.contains?(said, ["http 404", "could not resolve to a pullrequest", "not found"]) ->
+      String.contains?(told, ["http 404", "could not resolve to a pullrequest", "not found"]) ->
         {:not_found, detail}
 
       true ->

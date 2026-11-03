@@ -5,6 +5,7 @@
 #include <QJsonValue>
 #include <QList>
 #include <QNetworkRequest>
+#include <QElapsedTimer>
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -24,7 +25,8 @@ class QWebSocket;
 //
 // One owner of retries. Before each socket it reads the MC's descriptor
 // (`/.well-known/hal-c2/environment`) and stays blocked on a protocol it does
-// not speak. A socket that drops is retried with growing delays; without a
+// not speak. A socket that drops, or is not said hello to in time, is retried
+// with growing delays, which start over once a connection has held; without a
 // network it waits for one, and a credential the MC refuses waits for the
 // user (phase()). The MC's own access token opens the socket as `?token=`; a
 // paired session's token does not, so a handshake that fails asks the MC for a
@@ -132,6 +134,10 @@ public:
   void setPingInterval(int ms) { m_pingTimer.setInterval(ms); }
   // How long a ping may go unanswered before the connection counts as dead.
   void setPongTimeout(int ms) { m_pongTimer.setInterval(ms); }
+  // How long an open socket may go without the MC's hello before it is dropped.
+  void setSetupTimeout(int ms) { m_setupTimer.setInterval(ms); }
+  // How long a connection must hold before the retry delays start over.
+  void setSteadyAfter(int ms) { m_heldTimer.setInterval(ms); }
 
 signals:
   void readyChanged(bool ready);
@@ -181,6 +187,9 @@ private:
   QTimer m_retryTimer;
   QTimer m_pingTimer;
   QTimer m_pongTimer;
+  QTimer m_setupTimer;
+  QTimer m_heldTimer;
+  QElapsedTimer m_readySince;
   Phase m_phase = Phase::Closed;
   QString m_failure;
   QString m_traceId;

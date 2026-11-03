@@ -7,6 +7,8 @@
 // HalC2.Streams.Server does: a snapshot of the window when the copy is new or
 // of another log, else the log's events since the offset, then `live`; pages of
 // earlier runs; and every change to what the client holds while it follows.
+// The client lets go of the runs far above the row the user reads (keepFrom),
+// and follows again from the floor that raises.
 // Answers can be cut off part-way, events can come twice, and the client can
 // restart from its cache.
 //
@@ -33,6 +35,9 @@ const QString kKey = QStringLiteral("env-1:thread-1");
 // The turn items a window or page of the fake MC holds at least (it rounds up
 // to whole runs), whatever the client asks for: small, so threads page.
 constexpr int kWindow = 3;
+// The turn items the client keeps above the row read, and frees at least
+// before it lets go (TimelineModel::setKeep): one, so threads this small trim.
+constexpr int kKeep = 1;
 constexpr int kMaxRuns = 5;
 constexpr int kMaxItems = 16;
 
@@ -629,6 +634,7 @@ struct Sut {
   // Each row's roles when the step began, by id.
   QHash<QString, QHash<int, QVariant>> before;
   int earlierWanted = 0;
+  int raised = 0;
   bool phone = false;
 
   Sut() {
@@ -656,6 +662,8 @@ struct Sut {
                        }
                      });
     QObject::connect(model.get(), &TimelineModel::earlierWanted, model.get(), [this] { ++earlierWanted; });
+    QObject::connect(model.get(), &TimelineModel::windowRaised, model.get(), [this] { ++raised; });
+    model->setKeep(kKeep);
   }
 
   QHash<int, QVariant> roles(int row) const {
@@ -1422,6 +1430,78 @@ struct LoadEarlier : Command {
   void show(std::ostream& os) const override { os << "LoadEarlier(" << parts << " parts" << (cut ? ", cut off" : "") << ")"; }
 };
 
+// The user reads from row `at` on: the turns far above it are let go of and
+// the subscription is made again from the raised floor (ThreadStore), which
+// Subscribe answers; scrolling back up fetches them again (LoadEarlier).
+struct KeepFrom : Command {
+  int at = 0;
+  explicit KeepFrom(const Model& model) {
+    const int rows = std::max<int>(1, project(model).size());
+    // Mostly the last, as the view following the end and a thread left read.
+    at = *rc::gen::weightedOneOf<int>({{1, rc::gen::inRange<int>(0, rows)}, {2, rc::gen::just(rows - 1)}});
+  }
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.live && at < project(model).size()); }
+
+  // The floor the window rises to, when that frees at least kKeep turn
+  // items: kKeep of them stay above the run read (the oldest queued one,
+  // if older), the oldest of the rows from `at` on.
+  std::optional<int> raised(const Model& model) const {
+    const QList<Row> rows = project(model);
+    std::optional<int> reading;
+    for (qsizetype i = at; i < rows.size(); ++i) {
+      const Row& row = rows.at(i);
+      QString run;
+      if (row.id.startsWith(QLatin1String("fold:"))) {
+        run = row.id.mid(5);
+      } else if (model.held.items.contains(row.id)) {
+        run = model.held.items.value(row.id).run;
+      } else if (!row.entries.isEmpty()) {
+        run = model.held.items.value(row.entries.first()).run;
+      }
+      if (!run.isEmpty()) reading = std::min(reading.value_or(INT_MAX), model.held.runs.value(run).ordinal);
+    }
+    if (!reading) return std::nullopt;
+    for (const Run& run : model.held.runs) {
+      if (run.status == QLatin1String("queued")) reading = std::min(*reading, run.ordinal);
+    }
+    const std::optional<int> floor = takeRuns(model.held, reading, kKeep).second;
+    if (!floor) return std::nullopt;
+    int dropped = 0;
+    for (const Item& item : model.held.items) {
+      const Run& run = model.held.runs.value(item.run);
+      if (run.status != QLatin1String("rolled_back") && run.ordinal < *floor) ++dropped;
+    }
+    if (dropped < kKeep) return std::nullopt;
+    return floor;
+  }
+
+  void apply(Model& model) const override {
+    const std::optional<int> floor = raised(model);
+    if (!floor) return;
+    model.floor = floor;
+    model.held = window(model.mc, floor);
+    model.live = false;
+    model.lastEvents = {};
+  }
+  void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
+    sut.begin();
+    sut.raised = 0;
+    sut.model->keepFrom(at);
+    RC_ASSERT(sut.raised == (next.live ? 0 : 1));
+    RC_TAG(next.live ? "kept every turn" : "let turns go");
+    // Nothing it let go of is kept out of sight.
+    if (next.floor) {
+      for (const QJsonObject& item : sut.model->entities(QStringLiteral("turn-item"))) {
+        RC_ASSERT(next.mc.runs.value(item.value(QLatin1String("runId")).toString()).ordinal >= *next.floor);
+      }
+    }
+    sut.check(next);
+  }
+  void show(std::ostream& os) const override { os << "KeepFrom(" << at << ")"; }
+};
+
 // The user opens or closes a fold or a work group.
 struct Toggle : Command {
   QString row;
@@ -1532,7 +1612,7 @@ private slots:
       rc::state::check(model, sut,
                        rc::state::gen::execOneOfWithArgs<StartRun, Begin, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
-                                                         LoadEarlier, Toggle, Layout, Restart, AgentModel, SignIcon>());
+                                                         LoadEarlier, LoadEarlier, KeepFrom, KeepFrom, Toggle, Layout, Restart, AgentModel, SignIcon>());
     }));
   }
 

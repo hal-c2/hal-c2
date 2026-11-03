@@ -5,9 +5,11 @@
 
 #include <QAbstractItemModel>
 #include <QBuffer>
+#include <QClipboard>
 #include <QDir>
 #include <QFile>
 #include <QFont>
+#include <QGuiApplication>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -2144,15 +2146,53 @@ void setSection(World& world, const QString& project, bool expanded) {
                 [&] { return QStringLiteral("the section of %1 to be %2; %3").arg(project, expanded ? QStringLiteral("expanded") : QStringLiteral("collapsed"), describeSections(world)); });
 }
 
-// The file's page on show in the page editor, from its project's Space.
+void waitForFolder(World& world, const QString& project, const QString& path, bool expanded) {
+  world.waitFor([&] {
+    const auto row = sectionRow(world, QStringLiteral("folder"), project, path);
+    return row && row->value(QStringLiteral("expanded")).toBool() == expanded;
+  }, [&] { return QStringLiteral("the folder %1 of %2 to be %3; %4").arg(path, project, expanded ? QStringLiteral("expanded") : QStringLiteral("collapsed"), describeSections(world)); });
+}
+
+void setFolder(World& world, const QString& project, const QString& path, bool expanded) {
+  lookAtSection(world, project);
+  world.waitFor([&] { return sectionRow(world, QStringLiteral("folder"), project, path).has_value(); },
+                [&] { return QStringLiteral("the section of %1 to show the folder %2; %3").arg(project, path, describeSections(world)); });
+  act(world, QStringLiteral("space.project.setExpanded"), {{QStringLiteral("projectId"), project}, {QStringLiteral("path"), path}, {QStringLiteral("expanded"), expanded}});
+  waitForFolder(world, project, path, expanded);
+}
+
+// The sidebar drawn, the folder's row given the keyboard, and Right or Left pressed on it.
+void foldFromKeyboard(World& world, const QString& project, const QString& path, bool expanded) {
+  lookAtSection(world, project);
+  if (!world.brick || !world.brick->root() || world.brick->root()->objectName() != QLatin1String("spaceSidebar")) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nSpaceSidebar { objectName: \"spaceSidebar\"; width: 280; height: 700 }\n", QSize(280, 700));
+    expect(QTest::qWaitForWindowActive(&world.brick->window()), QStringLiteral("the sidebar's window did not come up"));
+  }
+  const QString name = QStringLiteral("spaceProjectFolder:%1:%2").arg(project, path);
+  QQuickItem* row = nullptr;
+  world.waitFor([&] {
+    world.brick->grab();
+    row = findEditor(world.brick->root(), name);
+    return row != nullptr;
+  }, [&] { return QStringLiteral("the sidebar to draw the folder %1 of %2; %3").arg(path, project, describeSections(world)); });
+  row->forceActiveFocus(Qt::TabFocusReason);
+  expect(row->hasActiveFocus(), QStringLiteral("the folder %1 of %2 took no keyboard focus").arg(path, project));
+  QTest::keyClick(&world.brick->window(), expanded ? Qt::Key_Right : Qt::Key_Left);
+  world.sync();
+  waitForFolder(world, project, path, expanded);
+}
+
+// The file's page on show in the page editor, from its project's Space, its row
+// showing in the section: its section and its folders opened for it.
 void expectFilePage(World& world, const QString& title, const QString& project) {
   expectOpened(world, title);
   expectShown(world, [&] {
     const QString space = projectSpace(world.mc, project);
     const auto row = sectionRow(world, QStringLiteral("project"), project);
+    const QString path = shownFile(world).value(QStringLiteral("path")).toString();
     return !space.isEmpty() && viewOf(world)->fileSpaceId() == space && row && row->value(QStringLiteral("expanded")).toBool() &&
-           viewOf(world)->projects()->isExpanded(project);
-  }, QStringLiteral("the page %1 to be shown from the expanded section of %2; %3").arg(title, project, describeSections(world)));
+           viewOf(world)->projects()->isExpanded(project) && !path.isEmpty() && sectionRow(world, QStringLiteral("file"), project, path).has_value();
+  }, QStringLiteral("the page %1 to be shown from its row in the section of %2; %3").arg(title, project, describeSections(world)));
 }
 
 // The user picks the page's file in its project's section, the client's way to a
@@ -2539,22 +2579,97 @@ const Steps steps([] {
   step(QStringLiteral("the page %1 holds a table the page does not model yet").arg(q), [](World& world, const Captures& c, const Table&) {
     givenBlock(world, c[0], QStringLiteral("raw"), kTable);
   });
-  // A table and a code block, which the page shows as their source until #854 draws them.
+  // A table and a code block: drawn by the chat's Markdown while read, edited as their
+  // source (#854).
   static const QString kModelledTable = QStringLiteral("| Step | Owner |\n| ---- | ----- |\n| MC   | Ada   |");
   static const QString kCode = QStringLiteral("run()\n    done()");
+  static const QString kAlignedTable = QStringLiteral("| Step | Owner | Done |\n| :--- | :---: | ---: |\n| **MC** | a \\| b | 3 |");
+  const auto monoFace = [](World& world) { return world.theme().fontMono().isEmpty() ? QStringLiteral("monospace") : world.theme().fontMono(); };
+  // The grid of a drawn table, or the box of a drawn code block, once it is laid out.
+  const auto drawnPart = [shownOf](Brick& page, World& world, const QString& said, const QString& part) {
+    QQuickItem* drawn = shownOf(page, world, QStringLiteral("spaceBlockText:"), said);
+    QQuickItem* found = nullptr;
+    world.waitFor([&] {
+      page.grab();
+      found = findEditor(drawn, part);
+      return found && found->isVisible() && found->height() > 0 && drawn->height() >= found->height();
+    }, [&] { return QStringLiteral("%1 to draw %2; %3").arg(show(said), part, describe(world)); });
+    return found;
+  };
   step(QStringLiteral("the page %1 holds a table and a code block").arg(q), [](World& world, const Captures& c, const Table&) {
     givenBlock(world, c[0], QStringLiteral("table"), kModelledTable);
     givenBlock(world, c[0], QStringLiteral("code"), kCode);
   });
-  step(QStringLiteral("the table and the code are each shown line for line in a fixed-width face"), [drawPage, editorOf](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the user edits the table and the code each as its source, exactly as written"), [drawPage, editorOf, drawnPart, monoFace](World& world, const Captures&, const Table&) {
     const std::unique_ptr<Brick> page = drawPage(world);
-    const QString mono = world.theme().fontMono().isEmpty() ? QStringLiteral("monospace") : world.theme().fontMono();
-    for (const QString& said : {kModelledTable, kCode}) {
+    for (const auto& [said, part] : {std::pair{kModelledTable, QStringLiteral("markdownTable")}, std::pair{kCode, QStringLiteral("codeText")}}) {
+      // A click on what is drawn, clear of its buttons, edits it.
+      QTest::mouseClick(&page->window(), Qt::LeftButton, Qt::NoModifier, page->at(drawnPart(*page, world, said, part), 0.05, 0.3));
       QQuickItem* editor = editorOf(*page, world, said);
-      expect(editor->property("text").toString() == said, QStringLiteral("the block reads %1").arg(show(editor->property("text"))));
+      world.waitFor([&] { return editor->hasActiveFocus(); }, QStringLiteral("%1 to take the keyboard").arg(show(said)));
+      expect(editor->property("text").toString() == said, QStringLiteral("the block's source reads %1").arg(show(editor->property("text"))));
       expect(editor->property("wrapMode").toInt() == 0, QStringLiteral("%1 wraps (wrapMode %2)").arg(said).arg(editor->property("wrapMode").toInt()));
-      expect(editor->property("font").value<QFont>().family() == mono, QStringLiteral("%1 is not in %2").arg(said, mono));
+      expect(editor->property("font").value<QFont>().family() == monoFace(world), QStringLiteral("%1 is not in %2").arg(said, monoFace(world)));
+      // Left unchanged, it is drawn again.
+      QTest::keyClick(&page->window(), Qt::Key_Escape);
+      world.waitFor([&] { page->grab(); return findEditor(page->root(), QStringLiteral("spaceBlockEditor:") + said) == nullptr; },
+                    QStringLiteral("%1 to be drawn again").arg(show(said)));
     }
+  });
+  step(QStringLiteral("the page %1 with a table whose columns are aligned left, centre and right").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], QStringLiteral("table"), kAlignedTable);
+  });
+  // The grid's cells as the Markdown brick holds them: a header, rows, and an alignment a column.
+  const auto gridSpec = [drawPage, drawnPart](World& world) {
+    const std::unique_ptr<Brick> page = drawPage(world);
+    return drawnPart(*page, world, kAlignedTable, QStringLiteral("markdownTable"))->property("spec").toMap();
+  };
+  step(QStringLiteral("the table is shown as a grid of its cells, its header row apart"), [gridSpec](World& world, const Captures&, const Table&) {
+    const QVariantMap spec = gridSpec(world);
+    expect(spec.value(QStringLiteral("header")).toStringList() == QStringList({QStringLiteral("Step"), QStringLiteral("Owner"), QStringLiteral("Done")}),
+           QStringLiteral("the header is %1").arg(show(spec.value(QStringLiteral("header")))));
+    expect(spec.value(QStringLiteral("rows")).toList().size() == 1, QStringLiteral("the rows are %1").arg(show(spec.value(QStringLiteral("rows")))));
+  });
+  step(QStringLiteral("each column is aligned as it was written"), [gridSpec](World& world, const Captures&, const Table&) {
+    const QStringList align = gridSpec(world).value(QStringLiteral("align")).toStringList();
+    expect(align == QStringList({QStringLiteral("left"), QStringLiteral("center"), QStringLiteral("right")}), QStringLiteral("the columns are aligned %1").arg(align.join(QStringLiteral(", "))));
+  });
+  step(QStringLiteral("a cell's formatting is shown, a %1 as a pipe").arg(q), [gridSpec](World& world, const Captures&, const Table&) {
+    const QStringList row = gridSpec(world).value(QStringLiteral("rows")).toList().value(0).toStringList();
+    expect(QRegularExpression(QStringLiteral("<(b|strong)>MC</(b|strong)>")).match(row.value(0)).hasMatch(), QStringLiteral("the bold cell is %1").arg(row.value(0)));
+    expect(row.value(1) == QLatin1String("a | b"), QStringLiteral("the escaped pipe's cell is %1").arg(row.value(1)));
+  });
+  // A code block, with its language when it has one.
+  const auto givenCode = [](World& world, const QString& title, const QString& language) {
+    given(world, QStringLiteral("block.insert"),
+          {{QStringLiteral("pageId"), givenPage(world, title)}, {QStringLiteral("kind"), QStringLiteral("code")}, {QStringLiteral("text"), kCode}, {QStringLiteral("language"), language}});
+  };
+  step(QStringLiteral("the page %1 with a %1 code block").arg(q), [givenCode](World& world, const Captures& c, const Table&) { givenCode(world, c[0], c[1]); });
+  step(QStringLiteral("the page %1 with a code block").arg(q), [givenCode](World& world, const Captures& c, const Table&) { givenCode(world, c[0], QString()); });
+  // Coloured as the brick colours a reply's code, which this does not hold it to.
+  step(QStringLiteral("its text is shown in a fixed-width face, coloured for that language where the surface can"), [drawPage, drawnPart, monoFace](World& world, const Captures&, const Table&) {
+    const std::unique_ptr<Brick> page = drawPage(world);
+    QQuickItem* box = drawnPart(*page, world, kCode, QStringLiteral("markdownCode"));
+    expect(box->property("code").toString() == kCode, QStringLiteral("the code reads %1").arg(show(box->property("code"))));
+    const QFont font = findEditor(box, QStringLiteral("codeText"))->property("font").value<QFont>();
+    expect(font.family() == monoFace(world), QStringLiteral("the code is in %1, not %2").arg(font.family(), monoFace(world)));
+  });
+  step(QStringLiteral("its language is named on it"), [drawPage, drawnPart](World& world, const Captures&, const Table&) {
+    const std::unique_ptr<Brick> page = drawPage(world);
+    const QString language = text(findBlock(world, kCode), QLatin1String("language"));
+    const QString label = findEditor(drawnPart(*page, world, kCode, QStringLiteral("markdownCode")), QStringLiteral("codeLabel"))->property("text").toString();
+    expect(!language.isEmpty() && label == language, QStringLiteral("the code is named %1, not %2").arg(show(label), language));
+  });
+  step(QStringLiteral("the user copies the code block on the page"), [drawPage, drawnPart](World& world, const Captures&, const Table&) {
+    const std::unique_ptr<Brick> page = drawPage(world);
+    QQuickItem* copy = findEditor(drawnPart(*page, world, kCode, QStringLiteral("markdownCode")), QStringLiteral("copyCode"));
+    QGuiApplication::clipboard()->clear();
+    QTest::mouseClick(&page->window(), Qt::LeftButton, Qt::NoModifier, page->at(copy));
+    world.waitFor([&] { return !QGuiApplication::clipboard()->text().isEmpty(); }, QStringLiteral("the code to be copied"));
+    expect(findEditor(page->root(), QStringLiteral("spaceBlockEditor:") + kCode) == nullptr, QStringLiteral("copying the code edits it"));
+  });
+  step(QStringLiteral("the code is on the clipboard without its fence"), [](World&, const Captures&, const Table&) {
+    expect(QGuiApplication::clipboard()->text() == kCode, QStringLiteral("the clipboard holds %1").arg(show(QGuiApplication::clipboard()->text())));
   });
   // Blocks as the MC keeps them, a field per column; `-` is a field the block does not have.
   step(QStringLiteral("the page %1 holds the blocks:").arg(q), [](World& world, const Captures& c, const Table& table) {
@@ -3680,6 +3795,28 @@ const Steps steps([] {
   step(QStringLiteral("the user collapses the section of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     setSection(world, c[0], false);
   });
+  step(QStringLiteral("the folder %1 of %1 is collapsed").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtSection(world, c[1]);
+    waitForFolder(world, c[1], c[0], false);
+    world.waitFor([&] {
+      const QList<QVariantMap> rows = sectionRows(world);
+      return std::none_of(rows.cbegin(), rows.cend(), [&](const QVariantMap& row) {
+        return row.value(QStringLiteral("projectId")) == c[1] && row.value(QStringLiteral("path")).toString().startsWith(c[0] + QLatin1Char('/'));
+      });
+    }, [&] { return QStringLiteral("nothing in the folder %1 of %2 to show; %3").arg(c[0], c[1], describeSections(world)); });
+  });
+  step(QStringLiteral("the user (?:expands|expanded) the folder %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], true);
+  });
+  step(QStringLiteral("the user collapses the folder %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], false);
+  });
+  step(QStringLiteral("the user expands the folder %1 of %1 from the keyboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    foldFromKeyboard(world, c[1], c[0], true);
+  });
+  step(QStringLiteral("the user collapses the folder %1 of %1 from the keyboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    foldFromKeyboard(world, c[1], c[0], false);
+  });
   step(QStringLiteral("the section of %1 shows %1 in the folder %1").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtSection(world, c[0]);
     world.waitFor([&] {
@@ -3699,6 +3836,9 @@ const Steps steps([] {
     world.connect();
   });
   step(QStringLiteral("the user picks %1 in the section of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // Through its folders, as the user opens them to reach it.
+    const QStringList parts = c[0].split(QLatin1Char('/'));
+    for (qsizetype i = 1; i < parts.size(); ++i) setFolder(world, c[1], parts.mid(0, i).join(QLatin1Char('/')), true);
     world.waitFor([&] { return sectionRow(world, QStringLiteral("file"), c[1], c[0]).has_value(); },
                   [&] { return QStringLiteral("the section of %1 to show %2; %3").arg(c[1], c[0], describeSections(world)); });
     act(world, QStringLiteral("space.openFile"), {{QStringLiteral("projectId"), c[1]}, {QStringLiteral("relativePath"), c[0]}});

@@ -189,6 +189,8 @@ mod THREAD-MOVE is
   --- release_session/1 stops the thread's provider processes if it checked, then
   --- forward/3 keeps a forwarding record if the thread is still in this move here. Under
   --- the let-go lock nothing else changes the thread here, so the two are one step.
+  --- The commits before it that delete the older runs' entities (drop_cold/3) are not
+  --- steps: each checks the move as forward/3 does, and none changes the record.
   rl [forward] :
     mover(N, S, D, freeing(P)) mc(S, true, R, Q)
     => mc(S, true, gone(N, R), Q) stop(S, N, P, R) .

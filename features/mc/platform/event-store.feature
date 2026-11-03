@@ -1,7 +1,7 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/store.ex (event log, snapshots, compression, read-only readers, WAL checkpoints)
 #   apps/server-ex/lib/hal_c2/patch.ex (set, append, unset, delete, quiet)
-#   apps/server-ex/lib/hal_c2/stream_state.ex (folded state, snapshot migration)
+#   apps/server-ex/lib/hal_c2/stream_state.ex (folded state, snapshot migration, hot and cold)
 #   apps/server-ex/lib/hal_c2/streams/server.ex (snapshot every 500 events, sidebar debounce,
 #     calls that wait for the store however long it takes)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_watch.ex (a run whose runtime exits is abandoned)
@@ -108,6 +108,31 @@ Feature: The MC's event store and projections
     Given a thread's snapshot was written by an older MC
     When the MC loads the thread
     Then the snapshot is migrated to the current format
+
+  # Memory holds the hot part of a thread: every run, and the items and messages of
+  # its latest and unfinished runs. Older runs' are read from disk when asked for.
+  @mc
+  Scenario: A long thread keeps its older runs on disk
+    Given a thread has finished 8 runs of 3 items while memory holds 2
+    Then the MC holds only the latest runs' items in memory
+    When a client subscribes to the thread
+    Then the client receives every entity of a fold of the log
+    And the thread's older runs are read from disk after a restart
+
+  # hal-c2.threadRows answers a page at a time, so a long thread's never builds whole.
+  @mc
+  Scenario: A client reads a long thread's entities a page at a time
+    Given a thread has finished 8 runs of 3 items while memory holds 2
+    When a client reads the thread's entities 5 at a time
+    Then it took more than one page, each entity once in the order they were created
+
+  # One from before paging asks without `after`, and would take a first page for all of it.
+  @mc
+  Scenario: A client from before paging still reads a long thread whole
+    Given a thread has finished 8 runs of 3 items while memory holds 2
+    And pages of 5 rows
+    When a client from before paging reads the thread's entities
+    Then it got each entity once in the order they were created, in one reply
 
   @mc
   Scenario: History survives a restart

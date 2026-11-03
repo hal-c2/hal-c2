@@ -9,6 +9,11 @@ defmodule HalC2.StreamRelayProofTest do
   @shell "the sidebar row, which no subscription is sent"
   @read "reads the stream (its sequence or one entity); changes no subscription, sends nothing"
 
+  @await "waits until an older MC's snapshot is migrated to the cold table, which only a stream loaded from one does; answered when the migration is done, or exits with the stream if it fails"
+  @migrated "a migration's end writes a snapshot and answers its waiters; changes no event or subscriber"
+  @migration "the migration of an older MC's snapshot; while it runs the stream never idles out, fewer stops than the model's timeout rule allows"
+  @pins "reads the stream's state; a reader of a migrating one is sent its pin once it is done; changes no subscription"
+  @demote "when memory moves older runs to the cold table with a snapshot; changes no event or subscriber"
   use HalC2.Proof,
     model: "stream_relay.maude",
     module: "STREAM-RELAY",
@@ -42,12 +47,24 @@ defmodule HalC2.StreamRelayProofTest do
       "HalC2.Web.Socket handle_info {:hal_c2_stream, {_, _}, _}" =>
         ~w(stream-message stream-resync stale),
       "HalC2.Web.Socket handle_info {:DOWN, _, :process, _, _}" => "stream-down",
+      "HalC2.Web.Socket handle_info {:hal_c2_followed, _, _}" =>
+        ~w(followed follow-failed stale-reply),
+      "HalC2.Web.Socket handle_info {:nodedown, _}" => "parted",
       "HalC2.Web.Socket handle_info _" => "stale-reply",
       "HalC2.Streams.Server state :stream" => "st",
       "HalC2.Streams.Server state :subscribers" => "of",
       "HalC2.Streams.Server state :relays" => "rly"
     },
     abstracts: %{
+      "HalC2.Streams.Server.read/1" => @pins,
+      "HalC2.Streams.Server handle_call :read" => @pins,
+      "HalC2.Streams.Server.await_cold/1" => @await,
+      "HalC2.Streams.Server handle_call :await_cold" => @await,
+      "HalC2.Streams.Server handle_info {:hal_c2_cold_migrated, _}" => @migrated,
+      "HalC2.Streams.Server state :migration" => @migration,
+      "HalC2.Streams.Server state :cold_waiters" => @await,
+      "HalC2.Streams.Server state :pins" => @pins,
+      "HalC2.Streams.Server state :demote_at" => @demote,
       "HalC2.Streams.Server state :v" => "the version of the state, which no step changes",
       "HalC2.Streams.Server state :id" => "names the stream; the model has one",
       "HalC2.Streams.Server state :path" => "where the stream is stored; the model has its seq",
@@ -103,7 +120,8 @@ defmodule HalC2.StreamRelayProofTest do
       "subscriber-down" => "a socket goes",
       "nodedown" => "the MCs lose each other",
       "heal" => "they reach each other again",
-      "time-out" => "an :erpc call to follow/4 gives up"
+      "time-out" =>
+        "an :erpc call to follow/4 gives up, or the client stops following before it is answered"
     },
     scenarios: %{
       "connections/cluster.feature" => [

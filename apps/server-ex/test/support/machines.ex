@@ -184,8 +184,7 @@ defmodule HalC2.Test.Machines do
 
   @doc "A stream's entities of `kind` on this MC."
   def entities(stream_id, kind) do
-    HalC2.Streams.Server.state(HalC2.Streams.ensure(stream_id))
-    |> HalC2.StreamState.list(kind)
+    HalC2.Streams.read(stream_id, &(&1 |> HalC2.StreamState.all(kind) |> Enum.to_list()))
   end
 
   @doc "The ids of this MC's streams."

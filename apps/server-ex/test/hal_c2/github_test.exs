@@ -21,6 +21,8 @@ defmodule HalC2.GitHubTest do
     assert GitHub.host(~w(api graphql --hostname GHE.test)) == "ghe.test"
     assert GitHub.host(~w(pr view 1 --repo ghe.test/acme/shop)) == "ghe.test"
     assert GitHub.host(~w(pr view 1 -R acme/shop)) == "github.com"
+    assert GitHub.host(~w(repo view GHE.test/acme/shop --json url)) == "ghe.test"
+    assert GitHub.host(~w(repo view acme/shop --json url)) == "github.com"
     assert GitHub.host(~w(api user)) == "github.com"
   end
 
@@ -61,6 +63,32 @@ defmodule HalC2.GitHubTest do
       assert File.read!(calls) == "asked\n"
       assert {:paused, ^until} = Limits.check("github.com", "graphql", until - 1)
       assert {:error, {:rate_limited, _}} = GitHub.gh(dir, ~w(pr view 1))
+    end
+
+    test "a checkout on another host asks that host, which is not paused",
+         %{calls: calls, tmp_dir: dir} do
+      {_, 0} = System.cmd("git", ~w(init -q), cd: dir)
+      {_, 0} = System.cmd("git", ~w(remote add origin git@github.com:me/shop.git), cd: dir)
+      # gh asks `upstream`'s host before `origin`'s.
+      {_, 0} = System.cmd("git", ~w(remote add upstream git@ghe.test:acme/shop.git), cd: dir)
+
+      assert {:ok, _} = GitHub.gh(dir, ~w(pr view 1))
+      assert File.read!(calls) == "asked\n"
+    end
+
+    test "a failed read whose answer quotes a rate limit is not one", %{tmp_dir: dir} do
+      # gh prints a GraphQL answer carrying `errors` on stdout, titles and all.
+      File.write!(Path.join(dir, "gh"), """
+      #!/bin/sh
+      echo '{"data":{"title":"Handle API rate limit exceeded"},"errors":[{"type":"NOT_FOUND"}]}'
+      echo 'GraphQL: Could not resolve to a User.' >&2
+      exit 1
+      """)
+
+      now = System.system_time(:millisecond)
+      assert {:error, {:failed, _}} = GitHub.gh(dir, ~w(api graphql --hostname ghe.test))
+      assert Limits.check("ghe.test", "graphql", now) == :ok
+      assert Limits.check("ghe.test", "core", now) == :ok
     end
   end
 end
