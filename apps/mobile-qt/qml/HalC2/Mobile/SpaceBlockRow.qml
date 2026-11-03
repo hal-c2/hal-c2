@@ -111,10 +111,13 @@ Rectangle {
 
     // Whether an item's text, after its marker, is Markdown that is no list
     // item: a rule of the bullet's own character (`- ---`), a quote, a fence or
-    // a table.
+    // a table, read as js/markdown.js reads one: a row with a `|` over a
+    // delimiter row of as many cells.
     function leavesItem(marker, text) {
-        const line = text.split("\n")[0];
-        return /^[ \t]{0,3}(>|```|~~~|\|)/.test(line) || /^(-{3,}|\*{3,}|_{3,})$/.test((marker + line).replace(/[ \t]/g, ""));
+        const lines = text.split("\n");
+        const cells = row => row.trim().replace(/\\\|/g, "").replace(/^\||\|$/g, "").split("|").length;
+        const table = lines.length > 1 && lines[0].includes("|") && /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/.test(lines[1]) && cells(lines[0]) === cells(lines[1]);
+        return table || /^[ \t]{0,3}(>|```|~~~)/.test(lines[0]) || /^(-{3,}|\*{3,}|_{3,})$/.test((marker + lines[0]).replace(/[ \t]/g, ""));
     }
 
     // Shows a drawn block's source to edit, the caret near (x, y) in the drawn
