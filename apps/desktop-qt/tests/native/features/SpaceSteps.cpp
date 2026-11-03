@@ -2144,15 +2144,53 @@ void setSection(World& world, const QString& project, bool expanded) {
                 [&] { return QStringLiteral("the section of %1 to be %2; %3").arg(project, expanded ? QStringLiteral("expanded") : QStringLiteral("collapsed"), describeSections(world)); });
 }
 
-// The file's page on show in the page editor, from its project's Space.
+void waitForFolder(World& world, const QString& project, const QString& path, bool expanded) {
+  world.waitFor([&] {
+    const auto row = sectionRow(world, QStringLiteral("folder"), project, path);
+    return row && row->value(QStringLiteral("expanded")).toBool() == expanded;
+  }, [&] { return QStringLiteral("the folder %1 of %2 to be %3; %4").arg(path, project, expanded ? QStringLiteral("expanded") : QStringLiteral("collapsed"), describeSections(world)); });
+}
+
+void setFolder(World& world, const QString& project, const QString& path, bool expanded) {
+  lookAtSection(world, project);
+  world.waitFor([&] { return sectionRow(world, QStringLiteral("folder"), project, path).has_value(); },
+                [&] { return QStringLiteral("the section of %1 to show the folder %2; %3").arg(project, path, describeSections(world)); });
+  act(world, QStringLiteral("space.project.setExpanded"), {{QStringLiteral("projectId"), project}, {QStringLiteral("path"), path}, {QStringLiteral("expanded"), expanded}});
+  waitForFolder(world, project, path, expanded);
+}
+
+// The sidebar drawn, the folder's row given the keyboard, and Right or Left pressed on it.
+void foldFromKeyboard(World& world, const QString& project, const QString& path, bool expanded) {
+  lookAtSection(world, project);
+  if (!world.brick || !world.brick->root() || world.brick->root()->objectName() != QLatin1String("spaceSidebar")) {
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nSpaceSidebar { objectName: \"spaceSidebar\"; width: 280; height: 700 }\n", QSize(280, 700));
+    expect(QTest::qWaitForWindowActive(&world.brick->window()), QStringLiteral("the sidebar's window did not come up"));
+  }
+  const QString name = QStringLiteral("spaceProjectFolder:%1:%2").arg(project, path);
+  QQuickItem* row = nullptr;
+  world.waitFor([&] {
+    world.brick->grab();
+    row = findEditor(world.brick->root(), name);
+    return row != nullptr;
+  }, [&] { return QStringLiteral("the sidebar to draw the folder %1 of %2; %3").arg(path, project, describeSections(world)); });
+  row->forceActiveFocus(Qt::TabFocusReason);
+  expect(row->hasActiveFocus(), QStringLiteral("the folder %1 of %2 took no keyboard focus").arg(path, project));
+  QTest::keyClick(&world.brick->window(), expanded ? Qt::Key_Right : Qt::Key_Left);
+  world.sync();
+  waitForFolder(world, project, path, expanded);
+}
+
+// The file's page on show in the page editor, from its project's Space, its row
+// showing in the section: its section and its folders opened for it.
 void expectFilePage(World& world, const QString& title, const QString& project) {
   expectOpened(world, title);
   expectShown(world, [&] {
     const QString space = projectSpace(world.mc, project);
     const auto row = sectionRow(world, QStringLiteral("project"), project);
+    const QString path = shownFile(world).value(QStringLiteral("path")).toString();
     return !space.isEmpty() && viewOf(world)->fileSpaceId() == space && row && row->value(QStringLiteral("expanded")).toBool() &&
-           viewOf(world)->projects()->isExpanded(project);
-  }, QStringLiteral("the page %1 to be shown from the expanded section of %2; %3").arg(title, project, describeSections(world)));
+           viewOf(world)->projects()->isExpanded(project) && !path.isEmpty() && sectionRow(world, QStringLiteral("file"), project, path).has_value();
+  }, QStringLiteral("the page %1 to be shown from its row in the section of %2; %3").arg(title, project, describeSections(world)));
 }
 
 // The user picks the page's file in its project's section, the client's way to a
@@ -3680,6 +3718,28 @@ const Steps steps([] {
   step(QStringLiteral("the user collapses the section of %1").arg(q), [](World& world, const Captures& c, const Table&) {
     setSection(world, c[0], false);
   });
+  step(QStringLiteral("the folder %1 of %1 is collapsed").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtSection(world, c[1]);
+    waitForFolder(world, c[1], c[0], false);
+    world.waitFor([&] {
+      const QList<QVariantMap> rows = sectionRows(world);
+      return std::none_of(rows.cbegin(), rows.cend(), [&](const QVariantMap& row) {
+        return row.value(QStringLiteral("projectId")) == c[1] && row.value(QStringLiteral("path")).toString().startsWith(c[0] + QLatin1Char('/'));
+      });
+    }, [&] { return QStringLiteral("nothing in the folder %1 of %2 to show; %3").arg(c[0], c[1], describeSections(world)); });
+  });
+  step(QStringLiteral("the user (?:expands|expanded) the folder %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], true);
+  });
+  step(QStringLiteral("the user collapses the folder %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setFolder(world, c[1], c[0], false);
+  });
+  step(QStringLiteral("the user expands the folder %1 of %1 from the keyboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    foldFromKeyboard(world, c[1], c[0], true);
+  });
+  step(QStringLiteral("the user collapses the folder %1 of %1 from the keyboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    foldFromKeyboard(world, c[1], c[0], false);
+  });
   step(QStringLiteral("the section of %1 shows %1 in the folder %1").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtSection(world, c[0]);
     world.waitFor([&] {
@@ -3699,6 +3759,9 @@ const Steps steps([] {
     world.connect();
   });
   step(QStringLiteral("the user picks %1 in the section of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // Through its folders, as the user opens them to reach it.
+    const QStringList parts = c[0].split(QLatin1Char('/'));
+    for (qsizetype i = 1; i < parts.size(); ++i) setFolder(world, c[1], parts.mid(0, i).join(QLatin1Char('/')), true);
     world.waitFor([&] { return sectionRow(world, QStringLiteral("file"), c[1], c[0]).has_value(); },
                   [&] { return QStringLiteral("the section of %1 to show %2; %3").arg(c[1], c[0], describeSections(world)); });
     act(world, QStringLiteral("space.openFile"), {{QStringLiteral("projectId"), c[1]}, {QStringLiteral("relativePath"), c[0]}});

@@ -1196,12 +1196,19 @@ describe("projects in the Space's pages", () => {
     expect(t.texts("project")).toEqual(["▸ shop"]);
     t.select("project:p1");
     t.controller.dispatch("space.activate", {});
-    expect(
+    const drawn = () =>
       t
         .view()
         .rows.slice(1)
-        .map((row) => row.text.trim()),
-    ).toEqual(["▸ ▾ shop", "docs/", "guide.md", "README.md"]);
+        .map((row) => row.text.trim());
+    // A folder starts collapsed too.
+    expect(drawn()).toEqual(["▸ ▾ shop", "▸ docs/", "README.md"]);
+    t.select("folder:p1|docs");
+    t.controller.dispatch("space.activate", {});
+    expect(drawn()).toEqual(["▾ shop", "▸ ▾ docs/", "guide.md", "README.md"]);
+    t.controller.dispatch("space.activate", {});
+    expect(t.texts("file")).toEqual(["README.md"]);
+    t.select("project:p1");
     t.controller.dispatch("space.activate", {});
     expect(t.texts("file")).toEqual([]);
   });
@@ -1213,12 +1220,15 @@ describe("projects in the Space's pages", () => {
 
   test("the expanded sections are remembered for the next start", async () => {
     const sections = memoryMutedThreads();
-    // A project removed since is forgotten with the next change.
-    sections.save(["gone"]);
+    // A project removed since is forgotten with the next change, its folders with it.
+    sections.save(["gone", "gone|docs"]);
     const t = await withShop(["docs/guide.md"], sections);
     t.select("project:p1");
     t.controller.dispatch("space.activate", {});
     expect(sections.load()).toEqual(["p1"]);
+    t.select("folder:p1|docs");
+    t.controller.dispatch("space.activate", {});
+    expect(sections.load()).toEqual(["p1", "p1|docs"]);
     const again = await withShop(["docs/guide.md"], sections);
     expect(again.texts("project")).toEqual(["▾ shop"]);
     expect(again.texts("file")).toEqual(["guide.md"]);
@@ -1227,6 +1237,8 @@ describe("projects in the Space's pages", () => {
   test("a file picked in its section opens from the project's Space, and back is the Space it was picked in", async () => {
     const t = await withShop(["docs/guide.md"]);
     t.select("project:p1");
+    t.controller.dispatch("space.activate", {});
+    t.select("folder:p1|docs");
     t.controller.dispatch("space.activate", {});
     t.select("file:p1|docs/guide.md");
     t.controller.dispatch("space.activate", {});
@@ -1239,7 +1251,7 @@ describe("projects in the Space's pages", () => {
     expect(t.view().rows.find((row) => row.selected)?.key).toBe("file:p1|docs/guide.md");
   });
 
-  test("a file opened from elsewhere expands its section, and its page goes back to a Space of the user's", async () => {
+  test("a file opened from elsewhere expands its section and folders, and its page goes back to a Space of the user's", async () => {
     const sections = memoryMutedThreads();
     const t = setup(undefined, { projectSections: sections });
     t.projectFiles.paths = ["docs/guide.md"];
@@ -1248,7 +1260,7 @@ describe("projects in the Space's pages", () => {
     await t.controller.settled();
     t.send("spaces", snapshot(1, [space("s1", "Research"), ["projectSpace", "ps1", shop]]));
     t.send("space:ps1", snapshot(10, [guide]));
-    expect(sections.load()).toEqual(["p1"]);
+    expect(sections.load()).toEqual(["p1", "p1|docs"]);
     t.controller.dispatch("space.back", {});
     expect(t.view().title).toBe("space · Research");
     expect(t.view().rows.find((row) => row.selected)?.key).toBe("file:p1|docs/guide.md");

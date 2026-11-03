@@ -224,17 +224,33 @@ Item {
         }
 
         function test_aFileInASectionIsEditedAsAPage() {
-            const screen = makeScreen({ projects: [sectionRow("project", "", true), sectionRow("folder", "docs"), sectionRow("file", "docs/guide.md")] });
+            const screen = makeScreen({ projects: [sectionRow("project", "", true), sectionRow("folder", "docs", true), sectionRow("file", "docs/guide.md")] });
             screen.openSpace("s1");
             waitForRendering(screen);
             const folder = findChild(screen, "spaceProjectFolder:shop:docs");
             const file = findChild(screen, "spaceProjectFile:shop:docs/guide.md");
             verify(folder.visible && file.visible);
             compare(file.depth, folder.depth + 1);
-            // A folder only holds its files.
-            verify(!folder.enabled);
             mouseClick(file);
             compare(dispatched("space.openFile"), [{ projectId: "shop", relativePath: "docs/guide.md" }]);
+        }
+
+        function test_aTapOnAFolderExpandsOrCollapsesIt() {
+            const screen = makeScreen({ projects: [sectionRow("project", "", true), sectionRow("folder", "docs")] });
+            screen.openSpace("s1");
+            waitForRendering(screen);
+            const folder = findChild(screen, "spaceProjectFolder:shop:docs");
+            compare(folder.Accessible.name, "Expand docs");
+            mouseClick(folder);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", path: "docs", expanded: true }]);
+
+            Spaces.fill(Spaces.projects, [sectionRow("project", "", true), sectionRow("folder", "docs", true), sectionRow("file", "docs/guide.md")]);
+            waitForRendering(screen);
+            const open = findChild(screen, "spaceProjectFolder:shop:docs");
+            compare(open.Accessible.name, "Collapse docs");
+            mouseClick(open);
+            compare(dispatched("space.project.setExpanded")[1], { projectId: "shop", path: "docs", expanded: false });
+            compare(dispatched("space.openFile"), []);
         }
 
         function test_theImagesAreOneStepFromThePagesAndSignedOnlyWhileOpen() {

@@ -3318,11 +3318,31 @@ async function toggleSection(ctx: SpaceWorld, project: string, open: boolean) {
   expect(expanded(ctx, project)).toBe(open);
 }
 
-/** Opens a file's page from its project's section, expanding it on the way. */
+const folderRow = (ctx: World, project: string, path: string) =>
+  pane(ctx).rows.find((row) => row.key === `folder:${projectId(ctx, project)}|${path}`);
+
+const folderOpen = (ctx: World, project: string, path: string) =>
+  words(folderRow(ctx, project, path)!).startsWith("▾");
+
+/** Enter on the folder's row when it is not already `open`. */
+async function toggleFolder(ctx: SpaceWorld, project: string, path: string, open: boolean) {
+  await sidebar(ctx);
+  expect(folderRow(ctx, project, path)).toBeDefined();
+  if (folderOpen(ctx, project, path) === open) return;
+  await selectRow(ctx, folderRow(ctx, project, path)!.key);
+  await press(ctx, "Enter");
+  expect(folderOpen(ctx, project, path)).toBe(open);
+}
+
+/** Opens a file's page from its project's section, expanding it and its folders on the way. */
 async function openFromSection(ctx: SpaceWorld, project: string, path: string) {
   await sidebar(ctx);
   const title = env(ctx).projects.find((candidate) => candidate.id === project)!.title;
   await toggleSection(ctx, title, true);
+  const parts = path.split("/");
+  for (let at = 1; at < parts.length; at++) {
+    await toggleFolder(ctx, title, parts.slice(0, at).join("/"), true);
+  }
   await selectRow(ctx, `file:${project}|${path}`);
   await press(ctx, "Enter");
   expect(pane(ctx).view).toBe("page");
@@ -3368,6 +3388,36 @@ for (const pattern of [
 step("the user collapses the section of {string}", (ctx: SpaceWorld, project: string) =>
   toggleSection(ctx, project, false),
 );
+
+step(
+  "the folder {string} of {string} is collapsed",
+  async (ctx: SpaceWorld, path: string, project: string) => {
+    await sidebar(ctx);
+    expect(folderOpen(ctx, project, path)).toBe(false);
+    const id = projectId(ctx, project);
+    expect(pane(ctx).rows.some((row) => row.key.startsWith(`file:${id}|${path}/`))).toBe(false);
+  },
+);
+
+// The keyboard is the TUI's only way in: Enter on the folder's row, as for a click.
+for (const pattern of [
+  "the user expands the folder {string} of {string}",
+  "the user expanded the folder {string} of {string}",
+  "the user expands the folder {string} of {string} from the keyboard",
+]) {
+  step(pattern, (ctx: SpaceWorld, path: string, project: string) =>
+    toggleFolder(ctx, project, path, true),
+  );
+}
+
+for (const pattern of [
+  "the user collapses the folder {string} of {string}",
+  "the user collapses the folder {string} of {string} from the keyboard",
+]) {
+  step(pattern, (ctx: SpaceWorld, path: string, project: string) =>
+    toggleFolder(ctx, project, path, false),
+  );
+}
 
 step(
   "the section of {string} shows {string} in the folder {string}",

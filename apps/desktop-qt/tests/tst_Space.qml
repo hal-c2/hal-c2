@@ -1116,6 +1116,35 @@ Item {
             compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: false }]);
         }
 
+        function test_a_folder_in_a_section_folds_on_a_click() {
+            const view = sections(true);
+            tryVerify(() => findChild(view, "spaceProjectFolder:shop:docs") !== null);
+            const folder = findChild(view, "spaceProjectFolder:shop:docs");
+            compare(folder.Accessible.name, "Collapse docs");
+            mouseClick(folder);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", path: "docs", expanded: false }]);
+            compare(dispatched("space.openFile"), []);
+        }
+
+        function test_a_section_and_a_folder_fold_from_the_keyboard() {
+            const view = sections(true);
+            tryVerify(() => findChild(view, "spaceProjectFolder:shop:docs") !== null);
+            const folder = findChild(view, "spaceProjectFolder:shop:docs");
+            folder.forceActiveFocus();
+            keyClick(Qt.Key_Right);
+            compare(dispatched("space.project.setExpanded"), []);
+            keyClick(Qt.Key_Left);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", path: "docs", expanded: false }]);
+            Shell.dispatchedActions = [];
+            findChild(view, "spaceProject:shop").forceActiveFocus();
+            keyClick(Qt.Key_Space);
+            compare(dispatched("space.project.setExpanded"), [{ projectId: "shop", expanded: false }]);
+            Shell.dispatchedActions = [];
+            findChild(view, "spaceProjectFile:shop:README.md").forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(dispatched("space.openFile"), [{ projectId: "shop", relativePath: "README.md" }]);
+        }
+
         function test_a_file_in_a_section_is_edited_as_a_page_and_shows_as_chosen() {
             const view = sections(true);
             tryVerify(() => findChild(view, "spaceProjectFile:shop:README.md") !== null);

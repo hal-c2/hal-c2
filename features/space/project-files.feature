@@ -5,6 +5,9 @@
 #     the approch of looking like we are importing the project files while we are looking at
 #     the them and editing them. You can create some seperation if you want like collapsing
 #     accordion moving between projects and spaces"
+#   The maintainer, 2026-11-03: folders in a project's section collapse and expand, by a click
+#     and the keyboard, remembered the way the sections are, and a file opened as a page shows
+#     its folders open
 #   apps/server-ex/lib/hal_c2/project_file.ex (hal-c2.json, read from the project's folder)
 #   apps/server-ex/lib/hal_c2/space.ex (the project's Space), apps/server-ex/lib/hal_c2/space/markdown.ex
 #   apps/server-ex/lib/hal_c2/space/files.ex (the sync)
@@ -857,8 +860,10 @@ Feature: Project files edited as pages
   # pin or set up, since a project with Markdown is what the user would look for, and one
   # without has nothing to show. A project on another MC is not shown yet (#860). Sections
   # start collapsed, so a Space with many projects still opens on its own pages, and each
-  # client remembers which the user expanded. Collapsing a section is the way out, and
-  # expanding it the way back. Every other way in says "Edit as a page".
+  # client remembers which the user expanded. Folders in a section do the same, so a
+  # project with many folders shows its top level first, except that a file opened as a
+  # page opens the folders it is in, so its row shows. Collapsing a section or a folder is
+  # the way out, and expanding it the way back. Every other way in says "Edit as a page".
   @shared
   Rule: Project files in the Space sidebar
 
@@ -874,10 +879,31 @@ Feature: Project files edited as pages
       When the user is in the Space "Research"
       Then the section of "shop" is collapsed
 
-    Scenario: Expanding a project's section shows its files by folder
+    Scenario: Expanding a project's section shows its folders collapsed
       Given the user is in the Space "Research"
       When the user expands the section of "shop"
+      Then the folder "docs" of "shop" is collapsed
+
+    Scenario: Expanding a folder shows its files
+      Given the user is in the Space "Research"
+      And the user expanded the section of "shop"
+      When the user expands the folder "docs" of "shop"
       Then the section of "shop" shows "guide.md" in the folder "docs"
+
+    Scenario: Collapsing a folder hides its files
+      Given the user is in the Space "Research"
+      And the user expanded the section of "shop"
+      And the user expanded the folder "docs" of "shop"
+      When the user collapses the folder "docs" of "shop"
+      Then the folder "docs" of "shop" is collapsed
+
+    Scenario: The user folds a folder from the keyboard
+      Given the user is in the Space "Research"
+      And the user expanded the section of "shop"
+      When the user expands the folder "docs" of "shop" from the keyboard
+      Then the section of "shop" shows "guide.md" in the folder "docs"
+      When the user collapses the folder "docs" of "shop" from the keyboard
+      Then the folder "docs" of "shop" is collapsed
 
     Scenario: Collapsing a project's section hides its files
       Given the user is in the Space "Research"
@@ -890,6 +916,18 @@ Feature: Project files edited as pages
       And the user expanded the section of "shop"
       When the client starts again
       Then the section of "shop" is expanded
+
+    Scenario: The client remembers which folders are expanded
+      Given the user is in the Space "Research"
+      And the user expanded the section of "shop"
+      And the user expanded the folder "docs" of "shop"
+      When the client starts again
+      Then the section of "shop" shows "guide.md" in the folder "docs"
+
+    Scenario: A file opened as a page opens the folders it is in
+      Given the user is in the Space "Research"
+      When the user asks the command palette to edit "docs/guide.md" of "shop" as a page
+      Then the section of "shop" shows "guide.md" in the folder "docs"
 
     Scenario: The user edits a file from its project's section
       Given the user is in the Space "Research"
