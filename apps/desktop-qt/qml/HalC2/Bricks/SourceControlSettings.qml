@@ -544,7 +544,7 @@ SettingsPage {
             enabled: page.editable
             outline: true
             implicitWidth: 240
-            model: (writer.model?.models ?? []).map(entry => entry.reason ? qsTr("%1 — %2").arg(entry.label, entry.reason) : entry.label)
+            model: (writer.model?.models ?? []).map(entry => entry.reason ? qsTr("%1 — %2").arg(entry.label).arg(entry.reason) : entry.label)
             currentIndex: (writer.model?.models ?? []).findIndex(entry => entry.key === writer.model.key)
             displayText: writer.model?.mixed ? qsTr("Mixed")
                        : currentIndex >= 0 ? writer.model.models[currentIndex].label : ""

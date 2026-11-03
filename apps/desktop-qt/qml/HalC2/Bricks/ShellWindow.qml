@@ -81,7 +81,7 @@ Window {
     minimumWidth: 640
     minimumHeight: 400
     visible: true
-    title: route !== null && route.title ? qsTr("%1 — %2").arg(route.title, appName) : appName
+    title: route !== null && route.title ? qsTr("%1 — %2").arg(route.title).arg(appName) : appName
     color: Theme.windowTransparent ? "transparent" : Theme.palette.color("chrome", "#0b0b0d")
     opacity: Theme.windowOpacity
     flags: Theme.frameless ? Qt.Window | Qt.FramelessWindowHint : Qt.Window

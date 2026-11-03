@@ -50,7 +50,7 @@ ColumnLayout {
 
             Label {
                 Layout.preferredWidth: 180
-                text: qsTr("%1 on %2").arg(row.modelData.label, row.modelData.version)
+                text: qsTr("%1 on %2").arg(row.modelData.label).arg(row.modelData.version)
                 color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 elide: Text.ElideRight
