@@ -566,6 +566,13 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     [tried | _] = context |> listings_of(repository) |> Enum.drop(before)
     assert tried["variables"]["first"] == 50
     assert {:ok, %{"errors" => []}} = context.reply
+
+    # It shrank to the same size again, which is kept afresh for the next listing.
+    worked = context |> listings_of(repository) |> List.last() |> get_in(["variables", "first"])
+    before = length(listings_of(context, repository))
+    context = list(context)
+    again = context |> listings_of(repository) |> Enum.drop(before)
+    assert again != [] and Enum.all?(again, &(&1["variables"]["first"] <= worked))
     context
   end
 

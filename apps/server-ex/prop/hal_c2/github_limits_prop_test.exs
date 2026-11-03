@@ -26,7 +26,7 @@ defmodule HalC2.GitHubLimitsPropTest do
     15 minutes, and a failure while it is held back changes nothing;
   - a release lets the next read through and keeps the doubling; a read that got
     through ends it and leaves the page size it read with as the one to start at,
-    for 15 minutes from when that size was first kept.
+    for 15 minutes, after which a read keeps it afresh.
   """
 
   use ExUnit.Case, async: false
@@ -177,7 +177,11 @@ defmodule HalC2.GitHubLimitsPropTest do
   def next_state(state, _result, {:call, _, :repository_read, [host, repository, page, now]}) do
     key = repo_key(host, repository)
     kept = state.repos[key]
-    page_at = if kept && kept.page == page, do: kept.page_at, else: now
+
+    page_at =
+      if kept && kept.page == page && now < kept.page_at + 900_000,
+        do: kept.page_at,
+        else: now
 
     repos =
       if page,

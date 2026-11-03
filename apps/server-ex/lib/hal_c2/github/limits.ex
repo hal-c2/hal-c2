@@ -64,7 +64,8 @@ defmodule HalC2.GitHub.Limits do
 
   @doc """
   Records that `repository` was read at `now` with pages of `page` (nil: the usual
-  size). A page that differs from the one kept restarts its 15 minutes.
+  size). A page that differs from the one kept, or one kept past its 15 minutes,
+  starts them again.
   """
   def repository_read(host, repository, page, now),
     do: call({:repository_read, lower(host), lower(repository), page, now}, :ok)
@@ -156,7 +157,8 @@ defmodule HalC2.GitHub.Limits do
 
     page_at =
       case pauses[key] do
-        %{page: ^page, page_at: at} -> at
+        # The same size, while it is still in force; an expired one starts over.
+        %{page: ^page, page_at: at} when at + @page_memory > now -> at
         _ -> now
       end
 
