@@ -52,6 +52,8 @@ defmodule HalC2.StreamsProofTest do
       "HalC2.Streams.Server handle_info {:DOWN, _, :process, _, _}" => "monitor-down",
       "HalC2.Streams.Server handle_info :timeout" => "timeout",
       "HalC2.Streams.Server handle_info {:EXIT, _, _}" => "linked-exit",
+      # The supervisor's :shutdown: an exit from a linked process, terminate/2 run.
+      "HalC2.Streams.stop/1" => "linked-exit",
       "HalC2.Streams.Server state :stream" => "durable",
       "HalC2.Streams.Server state :subscribers" => "srv"
     },

@@ -161,13 +161,21 @@ defmodule HalC2.Import.PreviousInstall do
       Enum.each(reading, &(:ok = Store.put_meta(mark_key(&1), @events <> target["id"])))
 
       if reading != [] do
-        {:ok, _} =
-          HalC2.Import.V2.run(database(path), Store,
-            only: reading,
-            resume: Map.new(resumed, &{&1, Store.stream_tail(Store.path(), &1)}),
-            rewrite: rewrite,
-            progress: events
-          )
+        try do
+          {:ok, _} =
+            HalC2.Import.V2.run(database(path), Store,
+              only: reading,
+              resume: Map.new(resumed, &{&1, Store.stream_tail(Store.path(), &1)}),
+              rewrite: rewrite,
+              progress: events
+            )
+        after
+          # The import wrote these streams' events to the store, not through a stream,
+          # whether it got through or not: one started meanwhile (search's backfill
+          # reads every thread at boot, a partly imported one too) holds only what was
+          # there when it loaded.
+          Enum.each(reading, &HalC2.Streams.stop/1)
+        end
 
         Enum.each(reading, &(:ok = Store.put_meta(mark_key(&1), @files <> target["id"])))
       end
