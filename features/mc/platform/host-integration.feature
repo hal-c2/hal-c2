@@ -554,7 +554,7 @@ Feature: The MC working with its host machine
       | is answered | SSH       |
       | is refused  | HTTPS     |
 
-  # Asking SSH is a network round trip, at boot and after every hot update.
+  # Asking SSH is a network round trip, at boot and after every release upgrade.
   @mc
   Scenario: The MC does not wait for SSH to answer for GitHub
     Given the GitHub CLI on the host is signed in to github.com
@@ -627,11 +627,11 @@ Feature: The MC working with its host machine
       | a pushInsteadOf | https://github.com/acme/shop.git | git@github.com:acme/shop.git     |
 
   @mc
-  Scenario Outline: A sign-in or sign-out reaches git already running at the next hot update
+  Scenario Outline: A sign-in or sign-out reaches git already running at the next upgrade in place
     Given the GitHub CLI on the host is <before>
     And the MC sets up the git it starts
     And an agent's git is already running
-    When the GitHub CLI <change> and the MC is hot-updated
+    When the GitHub CLI <change> and the MC upgrades in place
     Then the agent's git fetches "git@github.com:acme/shop.git" over <transport>
 
     Examples:

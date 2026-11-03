@@ -4,6 +4,8 @@
 #   packages/contracts/src/rpc.ts (pullRequests.list, pullRequests.listStats, pullRequests.summary, pullRequests.invalidate, pullRequests.subscribeRefreshes)
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, list_stats, summary, invalidate)
 #   apps/server-ex/lib/hal_c2/pull_requests/refreshes.ex
+#   apps/server-ex/lib/hal_c2/github.ex (gh/3: every call past one rate limit gate; asked/1)
+#   apps/server-ex/lib/hal_c2/github/limits.ex
 #   apps/server-ex/lib/hal_c2/pull_requests/github.ex (list: paged reads that shrink when GitHub gives up)
 #   apps/web/src/hooks/useLiveRefresh.ts, apps/web/src/hooks/usePullRequestChecksRefresh.ts (when an open view reads again)
 #   apps/web/src/components/pullRequest/pullRequestList.logic.ts
@@ -172,7 +174,7 @@ Feature: Browsing pull requests
     And the user can retry from the page
 
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (check, recordRateLimit, recordSuccess)
-  @mc @backlog
+  @mc
   Scenario: A host that rate limits HAL-C2 is left alone for a while
     Given GitHub answers a read with a rate limit and no time to retry
     When the user lists pull requests again straight away
@@ -180,6 +182,16 @@ Feature: Browsing pull requests
     And the projects on GitHub report they are paused until the rate limit resets and when
     And the pause is 30 seconds the first time, doubles each time the limit is hit again and never passes 15 minutes
     And the first answer that succeeds ends the pause and the doubling
+
+  # A spent budget waits for GitHub's own reset (`gh api rate_limit`); GitHub budgets
+  # GraphQL, REST and search apart.
+  @mc
+  Scenario: A spent budget is paused until GitHub resets it, and only that budget
+    Given GitHub answers a read with a rate limit and its read budget resets in 10 minutes
+    When the user lists pull requests again straight away
+    Then no request goes to GitHub
+    And the projects on GitHub report they are paused until the time GitHub gave
+    But a read from another of GitHub's budgets is still sent
 
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (retryAtFromHeader)
   @mc @backlog
@@ -204,7 +216,7 @@ Feature: Browsing pull requests
 
   # Legacy: apps/server/src/pullRequest/PullRequestService.ts (withRateLimitBackoff, interactive)
   # Legacy: apps/server/src/sourceControl/SourceControlRateLimit.ts (check allowPaused)
-  @mc @backlog
+  @mc
   Scenario: What the user asks for goes through a pause without ending it
     Given the host is paused after a rate limit
     When the user comments on a pull request or merges it

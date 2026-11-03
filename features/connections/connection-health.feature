@@ -193,6 +193,8 @@ Feature: Connection health
     And the status says the environment did not respond to a connection health check
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (CONNECTION_ESTABLISHMENT_TIMEOUT)
+  # The client both surfaces share does this, proved by tst_SyncClientRegression
+  # (aSocketWithoutHelloIsGivenUpOn) and tst_SyncClientProp; no step drives it yet.
   @backlog @desktop @mobile
   Scenario: A connection that is not set up within 15 seconds counts as failed
     Given the environment accepts the connection but never finishes introducing itself
@@ -201,6 +203,9 @@ Feature: Connection health
     And the client retries after the usual delay
 
   # Legacy: packages/client-runtime/src/connection/supervisor.ts (BACKOFF_RESET_AFTER_MS)
+  # The client both surfaces share does this, proved by tst_SyncClientRegression
+  # (aConnectionThatDropsAtOnceIsRetriedMoreSlowly, aConnectionThatHeldStartsTheDelaysOver);
+  # no step drives it yet.
   @backlog @desktop @mobile
   Scenario Outline: The retry delays start over only after a connection has held for 30 seconds
     Given the client has already failed to connect several times
@@ -240,10 +245,48 @@ Feature: Connection health
     Then the client reports the data problem
     And does not claim to be reconnecting
 
+  # The client's own reason for a drop ("timeout", "HTTP 502", a socket error) goes to its
+  # log under the attempt's trace id; the user reads a sentence.
   @desktop @mobile @backlog-mobile
-  Scenario: The environment's status names why it is reconnecting
+  Scenario: The environment's status says it is reconnecting, in plain words
     Given the connection dropped because of a timeout
-    Then the environment reads "Reconnecting: timeout"
+    Then the environment reads "Reconnecting"
+    And the notice says why: "It stopped answering. HAL-C2 keeps trying."
+    And no surface shows the client's own reason "timeout"
+
+  # The window shows its connection as an icon and a word; hovering it says what is going
+  # on, and clicking it opens a panel with the sentence and what the user can do.
+  @desktop @mobile @backlog-mobile
+  Scenario Outline: The connection's state is an icon with a word
+    Given the connection is <state>
+    Then the window shows the <icon> icon with "<word>"
+    And hovering it says what is going on
+
+    Examples:
+      | state                   | icon          | word           |
+      | connecting              | circle-dashed | Connecting     |
+      | retrying after a drop   | refresh-cw    | Reconnecting   |
+      | waiting for the network | cloud         | Offline        |
+      | refused its credential  | lock          | Needs pairing  |
+      | on another protocol     | octagon-alert | Update needed  |
+
+  # Shown only once a reconnect is a second and a half old; most are over by then. What
+  # needs the user (pairing, an update, no network) is shown at once.
+  # The terminal client holds back its "reconnecting" line the same way (tui/reconnect.feature).
+  @desktop @mobile @backlog-mobile
+  Scenario: A reconnect within a second and a half is not shown
+    Given a connected environment
+    When the connection drops and comes back at once
+    Then no surface said the connection was down
+
+  # The grace is a reconnect's. An app that has not connected since it started says so at
+  # once, in the window and in Connections settings, however long the environment takes.
+  @desktop @mobile
+  Scenario: An app that starts with its environment out of reach says so at once
+    Given the environment takes no connections
+    When the app starts and connects to it
+    Then within a second and a half the window shows it is not connected
+    And nothing said it was connected
 
   @desktop @mobile @backlog-mobile
   Scenario: The user copies a connection's trace id for a bug report

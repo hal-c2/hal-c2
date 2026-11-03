@@ -163,7 +163,7 @@ defmodule HalC2.ClusterServerTest do
     assert %{gossip: ^timer} = :sys.get_state(Cluster)
   end
 
-  # What `HalC2.Hot` does for a process whose module changed.
+  # What a release upgrade (`{update, M, {advanced, []}}`) does for a process whose module changed.
   defp update_in_place do
     :ok = :sys.suspend(Cluster)
     :ok = :sys.change_code(Cluster, Cluster, nil, :hot)

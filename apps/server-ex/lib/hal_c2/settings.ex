@@ -718,7 +718,7 @@ defmodule HalC2.Settings do
     }
   end
 
-  # A settings process updated in place (`HalC2.Hot`) does not run `init/1` again, so one
+  # A settings process updated in place by a release upgrade does not run `init/1` again, so one
   # from before shared settings takes up their records here.
   @impl true
   def code_change(_old, %{shared: _} = state, _extra) do

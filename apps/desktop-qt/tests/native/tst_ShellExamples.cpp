@@ -90,6 +90,9 @@ private slots:
   void initTestCase() {
     QVERIFY(directory.isValid());
     qmlRegisterType<LocalFolderModel>("HalC2.Shell", 1, 0, "LocalFolderModel");
+    // The side panel's Device tab draws one; the stub stands in for the native item.
+    qmlRegisterType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/DeviceScreen.qml")),
+                    "HalC2.Shell", 1, 0, "DeviceScreen");
     theme = std::make_unique<ThemeStore>(directory.path());
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Terminals.qml")),
                              "HalC2.Shell", 1, 0, "Terminals");
@@ -786,8 +789,9 @@ private slots:
     window->resize(1200, 800);
     QVERIFY(QTest::qWaitForWindowExposed(window));
     bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
-    bridge.publish("connection", QVariantMap{{"phase", "reconnecting"}, {"title", "Reconnecting to ai-beast"},
-                                             {"detail", "Connection refused"}, {"canRetry", true}, {"traceId", ""},
+    bridge.publish("connection", QVariantMap{{"phase", "reconnecting"}, {"state", "retrying"}, {"status", "Reconnecting"},
+                                             {"title", "Reconnecting to ai-beast"}, {"settling", false},
+                                             {"detail", "The connection was lost. HAL-C2 keeps trying."}, {"canRetry", true}, {"traceId", ""},
                                              {"needsPairing", false}, {"pairing", false}, {"pairingError", ""},
                                              {"versionWarning", QVariant()}});
     bridge.publish("toasts", QVariantMap{{"expanded", false},
@@ -805,11 +809,16 @@ private slots:
     QTRY_VERIFY(notice->isVisible());
     QTRY_VERIFY(toasts->height() > 0);
     const auto rect = [](QQuickItem* item) { return QRectF(item->mapToScene(QPointF()), QSizeF(item->width(), item->height())); };
-    // The one notice takes room of its own, below everything the window lays out.
-    for (const char* name : {"workspace", "routeView", "threadSidebar"}) {
-      auto* other = findVisualItem(window->contentItem(), name);
-      QVERIFY(other);
-      QVERIFY2(!rect(notice).intersects(rect(other)), name);
+    // The one notice takes room of its own, below everything the window lays
+    // out, its icon and its panel opened from it alike.
+    for (const bool open : {false, true}) {
+      notice->setProperty("open", open);
+      QTRY_COMPARE(notice->height() > 40, open);
+      for (const char* name : {"workspace", "routeView", "threadSidebar"}) {
+        auto* other = findVisualItem(window->contentItem(), name);
+        QVERIFY(other);
+        QVERIFY2(!rect(notice).intersects(rect(other)), name);
+      }
     }
     // The toasts hang under the header, inside the window.
     QVERIFY(rect(toasts).top() >= rect(workspace).bottom());
@@ -837,8 +846,9 @@ private slots:
     auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
     QVERIFY(window);
     QVERIFY(QTest::qWaitForWindowExposed(window));
-    bridge.publish("connection", QVariantMap{{"phase", "reconnecting"}, {"title", "Reconnecting to ai-beast"},
-                                             {"detail", "Connection refused"}, {"canRetry", true}, {"traceId", ""},
+    bridge.publish("connection", QVariantMap{{"phase", "reconnecting"}, {"state", "retrying"}, {"status", "Reconnecting"},
+                                             {"title", "Reconnecting to ai-beast"}, {"settling", false},
+                                             {"detail", "The connection was lost. HAL-C2 keeps trying."}, {"canRetry", true}, {"traceId", ""},
                                              {"needsPairing", false}, {"pairing", false}, {"pairingError", ""},
                                              {"versionWarning", QVariant()}});
     const std::function<int(QQuickItem*)> shown = [&shown](QQuickItem* item) {

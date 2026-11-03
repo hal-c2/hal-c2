@@ -13,7 +13,7 @@ defmodule HalC2.GitActions do
   subscriber as `{:hal_c2_git_action, action_id, event}`.
   """
 
-  alias HalC2.{Git, PullRequests, TextGeneration, Vcs}
+  alias HalC2.{Git, GitHub, PullRequests, TextGeneration, Vcs}
   alias HalC2.SourceControl.{ChangeRequests, Forgejo}
   alias HalC2.TextGeneration.Style
 
@@ -61,6 +61,8 @@ defmodule HalC2.GitActions do
 
         {:error, message}
     after
+      # A pull request it opened or pushed to is asked about again, not held.
+      HalC2.PullRequests.Branches.forget(cwd)
       Vcs.Watch.refresh(cwd)
     end
   end
@@ -457,15 +459,17 @@ defmodule HalC2.GitActions do
     end
   end
 
-  defp github_pull_request(cwd, branch) do
-    gh =
-      System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) ||
-        fail!("Creating a PR needs the GitHub CLI (gh).")
+  # The user asked for this pull request: its reads and the create go through a pause.
+  defp github_pull_request(cwd, branch),
+    do: GitHub.asked(fn -> create_github_pull_request(cwd, branch) end)
+
+  defp create_github_pull_request(cwd, branch) do
+    System.find_executable(Application.get_env(:hal_c2, :gh_command, "gh")) ||
+      fail!("Creating a PR needs the GitHub CLI (gh).")
 
     base = pr_base(cwd, branch)
 
     case gh_json(
-           gh,
            cwd,
            ~w(pr list --state open --limit 1 --json number,title,url,baseRefName,headRefName --head) ++
              [branch]
@@ -483,31 +487,13 @@ defmodule HalC2.GitActions do
       _ ->
         %{"title" => title, "body" => body} = pr_content(cwd, base, branch)
 
-        case Exile.stream(
-               [
-                 gh,
-                 "pr",
-                 "create",
-                 "--base",
-                 base,
-                 "--head",
-                 branch,
-                 "--title",
-                 title,
-                 "--body-file",
-                 "-"
-               ],
-               cd: cwd,
-               input: [body],
-               stderr: :consume
-             )
-             |> Enum.reduce({"", ""}, fn
-               {:stdout, d}, {o, e} -> {o <> IO.iodata_to_binary(d), e}
-               {:stderr, d}, {o, e} -> {o, e <> IO.iodata_to_binary(d)}
-               {:exit, _}, acc -> acc
-             end) do
-          {out, err} ->
-            case Regex.run(~r{https://\S+/pull/(\d+)}, out <> err) do
+        args =
+          ["pr", "create", "--base", base, "--head", branch, "--title", title] ++
+            ["--body-file", "-"]
+
+        case GitHub.gh(cwd, args, input: body, timeout: 120_000) do
+          {:ok, out} ->
+            case Regex.run(~r{https://\S+/pull/(\d+)}, out) do
               [url, number] ->
                 %{
                   "status" => "created",
@@ -519,12 +505,13 @@ defmodule HalC2.GitActions do
                 }
 
               nil ->
-                fail!("gh pr create failed: #{last_lines(err)}")
+                fail!("gh pr create failed: #{last_lines(out)}")
             end
+
+          {:error, {_, detail}} ->
+            fail!("gh pr create failed: #{detail}")
         end
     end
-  rescue
-    error in [Exile.Stream.AbnormalExit] -> fail!("gh failed: #{Exception.message(error)}")
   end
 
   # As the Forgejo provider's `createChangeRequest`: in the repository the primary
@@ -652,9 +639,9 @@ defmodule HalC2.GitActions do
        else: base
   end
 
-  defp gh_json(gh, cwd, args) do
-    case System.cmd(gh, args, cd: cwd, stderr_to_stdout: false) do
-      {out, 0} -> JSON.decode!(out)
+  defp gh_json(cwd, args) do
+    case GitHub.gh(cwd, args) do
+      {:ok, out} -> JSON.decode!(out)
       _ -> nil
     end
   rescue

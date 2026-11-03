@@ -60,6 +60,49 @@ defmodule HalC2.Orchestration.RecoveryTest do
     assert Recovery.settle("t1") == {0, nil}
   end
 
+  # An MC from before recovery settled runs could leave a message streaming, or a steer
+  # on it, in a run that has since gone to disk with the thread's older runs.
+  test "a message left streaming in an older run on disk is settled too" do
+    previous = Application.get_env(:hal_c2, :stream_hot_items)
+    Application.put_env(:hal_c2, :stream_hot_items, 2)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :stream_hot_items, previous),
+        else: Application.delete_env(:hal_c2, :stream_hot_items)
+    end)
+
+    {:ok, _} =
+      HalC2.Streams.commit("t9", :thread, [
+        {"thread", "t9", %{"s" => %{"id" => "t9", "title" => "Long"}}}
+      ])
+
+    for i <- 1..6 do
+      run = "r#{i}"
+      message = %{"id" => "#{run}-m", "runId" => run, "text" => "q#{i}"}
+
+      message =
+        if i == 1, do: Map.merge(message, %{"streaming" => true, "steer" => %{}}), else: message
+
+      {:ok, _} =
+        HalC2.Streams.commit("t9", :thread, [
+          {"run", run, %{"s" => %{"id" => run, "ordinal" => i, "status" => "completed"}}},
+          {"message", "#{run}-m", %{"s" => message}}
+          | for(
+              j <- 1..3,
+              do: {"turn-item", "#{run}-i#{j}", %{"s" => %{"runId" => run, "text" => "#{j}"}}}
+            )
+        ])
+    end
+
+    state = HalC2.Streams.state("t9")
+    assert state.floor != nil and StreamState.get(state, "message")["r1-m"] == nil
+
+    assert {1, nil} = Recovery.settle("t9")
+    message = StreamState.fetch(HalC2.Streams.state("t9"), "message", "r1-m")
+    assert message["streaming"] == false and not Map.has_key?(message, "steer")
+  end
+
   # A held run that a newer message passed is numbered above the run that passed it.
   test "a turn that passed a held queue can still be continued after the restart" do
     at = "2026-09-23T10:00:00.000Z"
