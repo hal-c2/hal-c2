@@ -72,9 +72,9 @@ defmodule HalC2.Mcp.Tools.Pages do
     )
   end
 
-  def run("hal_c2_page_open_file", %{"spaceId" => s, "relativePath" => path} = args, caller) do
+  def run("hal_c2_page_open_file", %{"relativePath" => path} = args, caller) do
     with {:ok, %{"spaceId" => s, "page" => page} = opened} <-
-           Space.open_file(s, project(args, caller), path) do
+           Space.open_file(project(args, caller), path) do
       touched(caller, s, page["id"])
       {:ok, opened}
     end

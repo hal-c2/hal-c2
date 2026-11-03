@@ -6,11 +6,13 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QMimeDatabase>
+#include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QUrl>
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <utility>
 
 #include "CommandRegistry.h"
@@ -99,6 +101,118 @@ QJsonObject spaceShape(const QString& environment, const QString& stream) {
 bool trashed(const QJsonObject& page) { return !page.value(QLatin1String("trashedAt")).toString().isEmpty(); }
 
 QJsonValue nullable(const QString& value) { return value.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(value); }
+
+// A list item where the MC writes it (`HalC2.Space.Markdown.list_items/1`): under the
+// open items above it, at most one deeper than the deepest, a numbered item counting on
+// from the one before it at its depth in the same list, else from its `start` or 1.
+struct ListItem {
+  qsizetype depth = 0;
+  int indent = 0;
+  QString marker;
+  qint64 number = 0;
+  int column = 0;
+  QString list;
+};
+
+QList<std::optional<ListItem>> listItems(const QList<QJsonObject>& blocks) {
+  static const QStringList lists{QStringLiteral("bullet"), QStringLiteral("numbered"), QStringLiteral("checklist")};
+  QList<std::optional<ListItem>> items;
+  QList<ListItem> open;  // deepest first
+  for (const QJsonObject& block : blocks) {
+    const QString kind = text(block, QLatin1String("kind"));
+    if (!lists.contains(kind)) {
+      items.append(std::nullopt);
+      open.clear();
+      continue;
+    }
+    const qsizetype depth = std::min<qsizetype>(qMax(0, block.value(QLatin1String("depth")).toInt()), open.size());
+    qsizetype closed = 0;
+    while (closed < open.size() && open.at(closed).depth >= depth) ++closed;
+    const std::optional<ListItem> sibling = closed > 0 ? std::optional(open.at(closed - 1)) : std::nullopt;
+    const QList<ListItem> parents = open.mid(closed);
+    const int floor = parents.isEmpty() ? 0 : parents.first().column;
+    const QString marker = text(block, QLatin1String("marker"));
+    const bool numbered = kind == QLatin1String("numbered");
+    const QString list = numbered ? (marker == QLatin1String(")") ? QStringLiteral(")") : QStringLiteral("."))
+                         : kind == QLatin1String("bullet") && (marker == QLatin1String("*") || marker == QLatin1String("+")) ? marker
+                                                                                                                          : QStringLiteral("-");
+    ListItem item{depth, floor, list, 0, 0, numbered ? QStringLiteral("numbered") + list : list};
+    if (numbered) {
+      const QJsonValue start = block.value(QLatin1String("start"));
+      const qint64 from = start.isDouble() && start.toInteger() >= 0 && start.toInteger() <= 999'999'999 ? start.toInteger() : 1;
+      item.number = sibling && sibling->list == item.list ? sibling->number + 1 : from;
+      item.marker = QString::number(item.number) + list;
+    }
+    const int ceiling = sibling ? std::min(floor + 3, sibling->column - 1) : floor + 3;
+    const QJsonValue indent = block.value(QLatin1String("indent"));
+    if (indent.isDouble() && indent.toInt() >= floor && indent.toInt() <= ceiling) item.indent = indent.toInt();
+    item.column = item.indent + int(item.marker.size()) + 1;
+    items.append(item);
+    open = QList<ListItem>{item} + parents;
+  }
+  return items;
+}
+
+// Whether `line` closes code fenced by `fence`, as the MC reads it.
+bool closesFence(const QString& line, const QString& fence) {
+  static const QRegularExpression closing(QStringLiteral("^ {0,3}(`{3,}|~{3,})\\s*$"));
+  const QRegularExpressionMatch match = closing.match(line);
+  return match.hasMatch() && match.captured(1).front() == fence.front() && match.captured(1) >= fence;
+}
+
+// What the MC writes around a block's text (`HalC2.Space.Markdown.render/2`), for the kinds
+// a page does not draw yet (#869, #877): a list item's indent and marker (a checklist item's
+// is its tick), an alert's kind, a divider and a section's end (which have no text), a
+// footnote's label, a section's summary tags, math's fences and an image's address. The
+// text between stays the block's own, edited as any block's is.
+QVariantMap markdownFrame(const QJsonObject& block, const std::optional<ListItem>& item) {
+  QString above, lead, tail, below;
+  const QString kind = text(block, QLatin1String("kind"));
+  if (item) {
+    lead = QString(item->indent, QLatin1Char(' ')) + (kind == QLatin1String("checklist") ? QString() : item->marker + QLatin1Char(' '));
+  } else if (kind == QLatin1String("callout")) {
+    static const QStringList alerts{QStringLiteral("note"), QStringLiteral("tip"), QStringLiteral("important"), QStringLiteral("warning"),
+                                    QStringLiteral("caution")};
+    const QString alert = text(block, QLatin1String("alert"));
+    if (alerts.contains(alert)) above = QStringLiteral("[!%1]").arg(alert.toUpper());
+  } else if (kind == QLatin1String("divider")) {
+    lead = block.contains(QLatin1String("marker")) ? text(block, QLatin1String("marker")) : QStringLiteral("---");
+  } else if (kind == QLatin1String("footnote")) {
+    lead = QStringLiteral("[^%1]: ").arg(text(block, QLatin1String("label")));
+  } else if (kind == QLatin1String("details")) {
+    // The opening as the page wrote it, `<details>` then `<summary>` on its own line or both on one.
+    const QString opening = block.contains(QLatin1String("marker")) ? text(block, QLatin1String("marker")) : QStringLiteral("<details>\n<summary>");
+    const qsizetype newline = opening.lastIndexOf(QLatin1Char('\n'));
+    above = opening.left(std::max<qsizetype>(newline, 0));
+    lead = opening.mid(newline + 1);
+    tail = QStringLiteral("</summary>");
+  } else if (kind == QLatin1String("details_end")) {
+    lead = QStringLiteral("</details>");
+  } else if (kind == QLatin1String("code") && text(block, QLatin1String("language")) == QLatin1String("math")) {
+    const QString code = text(block, QLatin1String("text"));
+    const QStringList lines = code.isEmpty() ? QStringList() : code.split(QLatin1Char('\n'));
+    QString fence = text(block, QLatin1String("fence"));
+    // Math holding a `$$` line or a blank one is fenced instead, as the MC writes it.
+    const bool dollars = fence == QLatin1String("$$") && std::none_of(lines.cbegin(), lines.cend(), [](const QString& line) {
+                           return line.trimmed() == QLatin1String("$$") || line.trimmed().isEmpty();
+                         });
+    if (dollars) {
+      above = below = fence;
+    } else {
+      if (fence.isEmpty() || fence == QLatin1String("$$")) fence = QStringLiteral("```");
+      while (std::any_of(lines.cbegin(), lines.cend(), [&](const QString& line) { return closesFence(line, fence); })) fence += fence.front();
+      above = fence + QStringLiteral("math") + text(block, QLatin1String("info"));
+      below = fence;
+    }
+  } else if (kind == QLatin1String("image") && block.contains(QLatin1String("url"))) {
+    lead = QStringLiteral("![");
+    tail = QStringLiteral("](%1)").arg(text(block, QLatin1String("url")));
+  }
+  return {{QStringLiteral("markdownAbove"), above},
+          {QStringLiteral("markdownLead"), lead},
+          {QStringLiteral("markdownTail"), tail},
+          {QStringLiteral("markdownBelow"), below}};
+}
 
 }  // namespace
 
@@ -267,7 +381,8 @@ SpaceHistory::SpaceHistory(std::function<QString(const QString&)> titleOf,
       m_imageFields(std::move(imageFields)),
       m_versions(new SpaceRows({"id", "version", "at", "byAgent", "byUpdate", "byFile", "threadTitle", "restoredFromAt"}, this)),
       m_blocks(new SpaceRows({"id", "kind", "text", "level", "language", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
-                              "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
+                              "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight", "markdownAbove", "markdownLead",
+                              "markdownTail", "markdownBelow"},
                              this)) {}
 
 SpaceHistory::Next SpaceHistory::open(const QString& pageId) {
@@ -413,9 +528,12 @@ QStringList SpaceHistory::imagesRead() const {
 }
 
 void SpaceHistory::repaint() {
+  QList<QJsonObject> read;
+  for (const QJsonValue& value : m_read) read.append(value.toObject());
+  const QList<std::optional<ListItem>> items = listItems(read);
   QList<QVariantMap> rows;
-  for (const QJsonValue& value : m_read) {
-    const QJsonObject block = value.toObject();
+  for (qsizetype i = 0; i < read.size(); ++i) {
+    const QJsonObject& block = read.at(i);
     const QString linked = text(block, QLatin1String("linkedPageId"));
     const bool image = text(block, QLatin1String("kind")) == QLatin1String("image");
     QVariantMap row{{QStringLiteral("id"), text(block, QLatin1String("id"))},
@@ -430,6 +548,7 @@ void SpaceHistory::repaint() {
                     {QStringLiteral("openComments"), 0},
                     {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()}};
     row.insert(m_imageFields(image ? text(block, QLatin1String("imageId")) : QString()));
+    row.insert(markdownFrame(block, items.at(i)));
     rows.append(row);
   }
   m_blocks->setRows(rows);
@@ -441,7 +560,8 @@ SpacePages::SpacePages(QObject* parent)
       m_pages(new SpaceRows({"id", "title", "depth", "parentPageId", "hasChildren", "fromThread"}, this)),
       m_trash(new SpaceRows({"id", "title", "trashedAt"}, this)),
       m_blocks(new SpaceRows({"id", "kind", "text", "level", "language", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments",
-                              "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
+                              "chart", "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight", "markdownAbove", "markdownLead",
+                              "markdownTail", "markdownBelow"},
                              this)),
       m_comments(new SpaceRows({"id", "blockId", "blockText", "blockGone", "body", "resolved", "byAgent", "createdAt"}, this)),
       m_decks(new SpaceRows({"id", "title"}, this)),
@@ -881,7 +1001,10 @@ void SpacePages::rebuild() {
   QSet<QString> wanted;
   QList<QVariantMap> blocks;
   QSet<QString> onPage;
-  for (const QJsonObject& block : sorted(pageBlocks, QLatin1String("order"))) {
+  const QList<QJsonObject> ordered = sorted(pageBlocks, QLatin1String("order"));
+  const QList<std::optional<ListItem>> items = listItems(ordered);
+  for (qsizetype i = 0; i < ordered.size(); ++i) {
+    const QJsonObject& block = ordered.at(i);
     const QString id = text(block, QLatin1String("id"));
     onPage.insert(id);
     const QString imageId = text(block, QLatin1String("kind")) == QLatin1String("image") ? text(block, QLatin1String("imageId")) : QString();
@@ -905,6 +1028,7 @@ void SpacePages::rebuild() {
                     {QStringLiteral("openComments"), open.value(id)},
                     {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()}};
     row.insert(fields);
+    row.insert(markdownFrame(block, items.at(i)));
     blocks.append(row);
   }
   m_blocks->setRows(blocks);
@@ -1217,8 +1341,39 @@ bool SpaceController::pageOnShow() const {
   return m_open && m_client->isReady() && deckId().isEmpty() && !imagesShown() && (!m_pageShownBySteps || m_pageShown);
 }
 
+QString SpaceController::promptPage() const {
+  // As pageOnShow, connected or not: the prompt keeps its words while the MC is away.
+  const bool shown = m_open && deckId().isEmpty() && !imagesShown() && (!m_pageShownBySteps || m_pageShown);
+  return shown && !page().value(QStringLiteral("trashed")).toBool() ? pageId() : QString();
+}
+
+void SpaceController::askAgent(const QString& pageId, const QJsonObject& ask, std::function<void(bool)> answered) {
+  QJsonObject payload = ask;
+  payload.insert(QStringLiteral("pageId"), pageId);
+  const QString request = ask.value(QLatin1String("request")).toString();
+  call(
+      QStringLiteral("page.askAgent"), payload,
+      [this, pageId, request, answered](const QJsonObject&) {
+        if (answered) answered(true);
+        emit agentAskAnswered(pageId, request, true);
+      },
+      [this, pageId, request, answered](const QJsonObject&) {
+        if (answered) answered(false);
+        emit agentAskAnswered(pageId, request, false);
+        return QString();
+      });
+}
+
+void SpaceController::agentTarget(std::function<void(const QString&)> done) {
+  m_client->call(this, m_client->environment(), QStringLiteral("space.page.agentTarget"), QJsonObject(),
+                 [done](const QJsonValue& result, const std::optional<QString>& error) {
+                   done(error ? QString() : result.toObject().value(QLatin1String("projectId")).toString());
+                 });
+}
+
 void SpaceController::followViewers() {
   syncShownFile();
+  emit promptPageChanged();
   const QString page = pageOnShow() ? pageId() : QString();
   if (page == m_followedViewers) return;
   if (m_viewersSubscription) m_client->unsubscribe(std::exchange(m_viewersSubscription, 0));
@@ -1911,14 +2066,7 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     m_historyRefresh->stop();
     history()->close();
   } else if (action == QLatin1String("space.agent.ask")) {
-    const QString request = field(QLatin1String("request"));
-    call(
-        QStringLiteral("page.askAgent"), {{QStringLiteral("pageId"), pageId}, {QStringLiteral("request"), request}},
-        [this, pageId, request](const QJsonObject&) { emit agentAskAnswered(pageId, request, true); },
-        [this, pageId, request](const QJsonObject&) {
-          emit agentAskAnswered(pageId, request, false);
-          return QString();
-        });
+    askAgent(pageId, {{QStringLiteral("request"), field(QLatin1String("request"))}}, {});
   } else if (action == QLatin1String("space.agent.stop")) {
     call(QStringLiteral("page.stopAgent"), {{QStringLiteral("pageId"), pageId}});
   } else if (action == QLatin1String("space.agent.dismiss")) {

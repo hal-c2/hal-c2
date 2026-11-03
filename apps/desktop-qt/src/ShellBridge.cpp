@@ -131,12 +131,10 @@ QString ShellBridge::clipboardText() const {
   return QGuiApplication::clipboard()->text();
 }
 
-void ShellBridge::setClipboardText(const QString& text) const {
-  if (m_writeClipboard) {
-    m_writeClipboard(text);
-    return;
-  }
+bool ShellBridge::setClipboardText(const QString& text) const {
+  if (m_writeClipboard) return m_writeClipboard(text);
   QGuiApplication::clipboard()->setText(text);
+  return true;
 }
 
 QVariantList ShellBridge::clipboardFiles() const {

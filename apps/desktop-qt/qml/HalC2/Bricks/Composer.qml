@@ -119,9 +119,10 @@ Rectangle {
     color: canvas
 
     // The model-picker and toolbar keybindings land here while this
-    // brick hosts those controls.
+    // brick hosts those controls: the one on show (a Space page has its own).
     Connections {
         target: Shell
+        enabled: composer.visible
         function onActionRequested(action, payload) {
             if (action === "composer.modelPicker.toggle") {
                 if (modelPicker.popup.visible) {

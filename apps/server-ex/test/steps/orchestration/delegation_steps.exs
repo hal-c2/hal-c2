@@ -299,21 +299,27 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     end)
   end
 
+  step "the agent in {string} delegated tasks {string}, {string}, {string} and {string} without waiting",
+       %{args: [caller | names]} = context do
+    named_tasks(context, caller, names)
+  end
+
   step "{string} was woken for the completion of {string}", %{args: [parent, name]} = context do
     context = complete_named(context, name)
     # The caller's own turn ends, and the result runs as its next turn.
     World.send_turn(context, parent, "say Carrying on")
     [wake] = await_wakes(context, parent, [name])
-    Map.put(context, :first_wake, wake)
+    Map.put(context, :last_wake, wake)
   end
 
   # The caller's busy turn holds the wake for `first` in its queue, so `second` joins
   # it whatever the timing. Were the caller idle, that wake could run and end before
-  # `second` lands, and the wake limit would leave `second` unwoken (#634).
+  # `second` lands, and `second` would get a wake of its own (#634).
   step "{string} and {string} complete afterwards, while {string} works on another turn",
        %{args: [first, second, parent]} = context do
+    ended = Enum.map(World.runs(context, parent), & &1["status"])
     World.send_turn(context, parent, "wait for it")
-    World.await_runs(context, parent, ["completed", "completed", "running"])
+    World.await_runs(context, parent, ended ++ ["running"])
     context = context |> complete_named(first) |> complete_named(second)
     World.send_turn(context, parent, "say Carrying on")
     Map.put(context, :later, [first, second])
@@ -321,8 +327,40 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   step "{string} is woken again for them", %{args: [parent]} = context do
     wakes = await_wakes(context, parent, context.later)
-    assert Enum.all?(wakes, &(&1["ordinal"] > context.first_wake["ordinal"]))
+    assert Enum.all?(wakes, &(&1["ordinal"] > context.last_wake["ordinal"]))
     Map.put(context, :later_wakes, wakes)
+  end
+
+  step "{string} finishes after the wake for them ended", %{args: [name]} = context do
+    await_wakes(context, context.task_parent, context.later)
+    context = complete_named(context, name)
+    await_wakes(context, context.task_parent, [name])
+    context
+  end
+
+  # Every task's result is in one wake of the caller that ran, and in no other message.
+  step "each task's result reached {string} in exactly one wake turn",
+       %{args: [parent]} = context do
+    runs = Map.new(World.runs(context, parent), &{&1["id"], &1})
+
+    for {_name, task_id} <- context.named_tasks do
+      assert [message] =
+               Enum.filter(messages(context, parent), &(&1["text"] =~ ~s(taskId="#{task_id}")))
+
+      assert task_id in message["delegatedCompletion"]["taskIds"]
+      assert runs[message["runId"]]["status"] == "completed"
+    end
+
+    context
+  end
+
+  step "every task's delivery is {string}", %{args: [delivery]} = context do
+    tasks = StreamState.get(World.state(context, context.task_parent), "subagent")
+
+    for {_name, task_id} <- context.named_tasks,
+        do: assert(tasks[task_id]["completionDelivery"]["state"] == delivery)
+
+    context
   end
 
   # Each result is delivered once, and two that land together ride one turn.
@@ -1910,16 +1948,6 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
-  step "the task's result stays readable from its status", context do
-    result =
-      World.mcp_tool(context, context.task_parent, "task_status", %{
-        "taskId" => context.named_tasks["three"]
-      })
-
-    assert {:ok, %{"summary" => "three done", "status" => "completed"}} = result
-    context
-  end
-
   step "{string} runs on a provider that can take messages mid-turn",
        %{args: [parent]} = context do
     selection = %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"}
@@ -2072,29 +2100,42 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # Four tasks; "one" and "two" each woke the caller, the second once the first wake
+  # had ended, and the caller is idle again.
   step "the tasks of one turn of {string} already woke it twice", %{args: [parent]} = context do
-    context = named_tasks(context, parent, ["one", "two", "three"])
+    context = named_tasks(context, parent, ["one", "two", "three", "four"])
     context = complete_named(context, "one")
     World.send_turn(context, parent, "say Carrying on")
     await_wakes(context, parent, ["one"])
     context = complete_named(context, "two")
-    await_wakes(context, parent, ["two"])
+    [wake] = await_wakes(context, parent, ["two"])
     assert length(wake_messages(context, parent)) == 2
-    context
+    Map.put(context, :last_wake, wake)
   end
 
-  step "another task of that turn finishes", context do
-    complete_named(context, "three")
+  # Each lands with the caller idle, once the wake before it has ended.
+  step "{string} and then {string} finish, each after the wake before it ended",
+       %{args: names} = context do
+    Enum.reduce(names, context, fn name, context ->
+      context = complete_named(context, name)
+      await_wakes(context, context.task_parent, [name])
+      context
+    end)
+  end
+
+  step "{string} is woken four times, once for each task", %{args: [parent]} = context do
+    wakes = wake_messages(context, parent)
+    assert length(wakes) == 4
+
+    assert Enum.map(wakes, & &1["delegatedCompletion"]["taskIds"]) ==
+             Enum.map(~w(one two three four), &[context.named_tasks[&1]])
+
+    context
   end
 
   step "a wake for task {string} is queued", %{args: [name]} = context do
     {_run, message} = queued_wake!(context, context.task_parent)
     assert message["delegatedCompletion"]["taskIds"] == [context.named_tasks[name]]
-    context
-  end
-
-  step "{string} is not woken a third time", %{args: [parent]} = context do
-    assert length(wake_messages(context, parent)) == 2
     context
   end
 

@@ -275,23 +275,35 @@ const listed = (rows: ReadonlyArray<TuiSpaceRow>, kind: TuiSpaceRow["kind"]) =>
 
 const list = (text: string) => (text === "" ? [] : text.split(", "));
 
-/** The rows of a page's blocks, each block once. */
+/** The rows of a page's blocks, each block once: the row of its words, under what is above them. */
 async function blockRows(ctx: SpaceWorld, title: string) {
   await openPage(ctx, title);
-  return pane(ctx).rows.filter((row) => row.kind === "block" && row.first);
+  return pane(ctx).rows.filter(
+    (row, index, rows) =>
+      row.kind === "block" && (row.first ? !row.above : rows[index - 1]?.above === true),
+  );
 }
 
-/** The mark each kind draws before a block's words: tick box, bar, arrow, `#`s or gutter. */
+/**
+ * The mark each kind draws before a block's words: `#`s, gutter, a list item's marker, a
+ * footnote's label or a section's summary tag; else a bar or an arrow.
+ */
 const BLOCK_MARK: Partial<Record<string, RegExp>> = {
   heading: /^#{1,6} /,
   raw: /^│ /,
+  bullet: /^[-*+] /,
+  numbered: /^\d+[.)] /,
+  checklist: /^[-*+] \[[ x]\] /,
+  footnote: /^\[\^[^\]]*\]: /,
+  details: /^<summary>/,
 };
 
 /** A block's words, after its mark and before the agent that wrote it. */
 const blockText = (row: TuiSpaceRow) =>
   words(row)
-    .replace((row.blockKind && BLOCK_MARK[row.blockKind]) ?? /^(\[[ x]\] |▌ |↳ )/, "")
-    .replace(/ {2}· .*$/, "");
+    .replace((row.blockKind && BLOCK_MARK[row.blockKind]) ?? /^(▌ |↳ )/, "")
+    .replace(/ {2}· .*$/, "")
+    .replace(/<\/summary>$/, "");
 
 // --- Spaces ---
 
@@ -748,13 +760,13 @@ const blockRow = (ctx: World, key: string) =>
 step("{string} is ticked", async (ctx: SpaceWorld, text: string) => {
   const row = blockRow(ctx, blockKey(ctx, text));
   expect(row?.checked).toBe(true);
-  expect(words(row!)).toBe(`[x] ${text}`);
+  expect(words(row!)).toBe(`- [x] ${text}`);
 });
 
 step("{string} is not ticked", async (ctx: SpaceWorld, text: string) => {
   const row = blockRow(ctx, blockKey(ctx, text));
   expect(row?.checked).toBe(false);
-  expect(words(row!)).toBe(`[ ] ${text}`);
+  expect(words(row!)).toBe(`- [ ] ${text}`);
 });
 
 step(
@@ -1783,6 +1795,19 @@ step("the user is offered the kinds of block, and {string}", (ctx: World, visual
   ]);
 });
 
+step(
+  "the thread {string} of the project {string} runs on another model",
+  (ctx: SpaceWorld, title: string, project: string) =>
+    change(ctx, () => {
+      // No default model of its own, so an ask there takes its last thread's.
+      (addProject(ctx, project) as { defaultModelSelection: unknown }).defaultModelSelection = null;
+      addThread(ctx, title, {
+        project,
+        modelSelection: { instanceId: "codex", model: "gpt-5-codex" },
+      });
+    }),
+);
+
 step("the user starts an ask on {string}", async (ctx: SpaceWorld, page: string) => {
   await openPage(ctx, page);
   await press(ctx, "A");
@@ -2676,6 +2701,50 @@ step(
   },
 );
 
+// Blocks as the MC keeps them, a field per column; `-` is a field the block does not have.
+const blockSpecs = (table: string[][]) => {
+  const [header = [], ...rows] = table;
+  return rows.map((row) =>
+    Object.fromEntries(
+      header.flatMap((field, index): Array<[string, unknown]> => {
+        const cell = row[index] ?? "-";
+        if (cell === "-") return field === "text" ? [[field, ""]] : [];
+        if (field === "checked") return [[field, cell === "true"]];
+        if (field === "depth" || field === "start") return [[field, Number(cell)]];
+        return [[field, cell]];
+      }),
+    ),
+  );
+};
+
+step("the page {string} holds the blocks:", (ctx: SpaceWorld, title: string, table) => {
+  for (const spec of blockSpecs(table as string[][])) {
+    mc(ctx).run("space.block.insert", {
+      spaceId: currentSpaceId(ctx),
+      pageId: seedPage(ctx, title),
+      ...spec,
+    });
+  }
+});
+
+// The page's lines as Markdown: a callout's bar stands for `> `, the gutter of what is shown
+// as source is not part of it, and an image by its address reads `[image: caption] url`.
+step("each block is shown as this Markdown, line for line:", (ctx: SpaceWorld, markdown) => {
+  const shown = pane(ctx)
+    .rows.filter((row) => row.kind === "block")
+    .map((row) => {
+      const line = row.text
+        .slice(2)
+        .replace(/ {2}· .*$/, "")
+        .trimEnd();
+      if (row.blockKind === "callout") return line.replace(/^▌ /, "> ");
+      if (row.blockKind === "code") return line.replace(/^│ /, "");
+      if (row.blockKind === "image") return line.replace(/^\[image: (.*)\] (\S+)$/, "![$1]($2)");
+      return line;
+    });
+  expect(shown).toEqual((markdown as string).split("\n").filter((line) => line.trim() !== ""));
+});
+
 step(
   "the page {string} with headings of every level from 1 to 6",
   (ctx: SpaceWorld, title: string) => {
@@ -2989,7 +3058,7 @@ step(
   async (ctx: SpaceWorld, project: string, path: string) => {
     await startWithFiles(ctx);
     await press(ctx, "f");
-    await chooseIfAsked(ctx, "Add a page from the files of which project?", project);
+    await chooseIfAsked(ctx, "Edit a file of which project as a page?", project);
     await choose(ctx, path);
   },
 );

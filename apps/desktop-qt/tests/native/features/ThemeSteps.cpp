@@ -14,6 +14,7 @@
 #include "FakeConfig.h"
 #include "CommandPaletteController.h"
 #include "DevicePanelSteps.h"
+#include "PullRequestSteps.h"
 #include "FilesIdentity.h"
 #include "FilesViewer.h"
 #include "Harness.h"
@@ -378,6 +379,8 @@ const Steps steps([] {
     if (onboardingChooses(world, c[0])) return;
     // The Device tab's Refresh devices.
     if (deviceChooses(world, c[0])) return;
+    // A thread from a pull request's thread picker.
+    if (pullRequestThreadChooses(world, c[0])) return;
     // From an open command palette (its Change theme submenu among them): its
     // entry of that title.
     if (auto* palette = world.native().controller<CommandPaletteController>(); palette && palette->isOpen()) {

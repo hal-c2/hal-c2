@@ -57,6 +57,8 @@ public:
   // instead of touching the desktop's.
   QString clipboard;
   bool clipboardFails = false;
+  // The system browser refuses what openExternal hands it.
+  bool browserFails = false;
   QList<QUrl> openedUrls;
   // Nothing on this machine can open an address.
   bool urlsRefused = false;

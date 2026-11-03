@@ -24,8 +24,9 @@ import { ScheduledTaskRunStatus, ScheduledTaskUpsertSchedule } from "./scheduled
 /**
  * Spaces hold Pages that people and agents write together, and slide decks. Clients
  * read them from streams, the same subscribe/resume path as projects and threads:
- * `SPACES_STREAM_ID` holds one `space` entity per Space, and `spaceStreamId(id)`
- * holds that Space's `page`, `block`, `comment`, `image`, `site`, `deck`, `slide` and `pageAgent`
+ * `SPACES_STREAM_ID` holds one `space` entity per Space and one `projectSpace` per project
+ * whose files were opened as pages (`SpaceProjectSpace`), and `spaceStreamId(id)` holds that
+ * Space's `page`, `block`, `comment`, `image`, `site`, `deck`, `slide` and `pageAgent`
  * entities. The RPCs below change them. An image's bytes are never on a stream: fetch them on
  * demand from the address `assets.createUrl` signs for a `space-image`.
  */
@@ -52,6 +53,21 @@ export const Space = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type Space = typeof Space.Type;
+
+/**
+ * A `projectSpace` entity: the project's own Space, which holds the pages of its files
+ * (`space.page.openFile`). It is the project's, not the user's: `space.list` leaves it out,
+ * and clients show its pages under the project in the Space sidebar, never as a Space.
+ * Its pages are read from `spaceStreamId(id)` like any Space's.
+ */
+export const SpaceProjectSpace = Schema.Struct({
+  id: SpaceId,
+  projectId: ProjectId,
+  name: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type SpaceProjectSpace = typeof SpaceProjectSpace.Type;
 
 /**
  * What a page shows of its update: the MC's scheduler keeps it and mirrors it here, so
@@ -526,19 +542,18 @@ export type SpacePageImportMarkdownInput = typeof SpacePageImportMarkdownInput.T
 // Project files as pages
 
 /**
- * The page of a project file, made in `spaceId` when the file has none, or the page it
- * already is wherever it is (brought back from the trash and read again). Only files
- * the project's `spaces` section counts open. `relativePath` is in the project's folder.
+ * The page of a project file, made in the project's Space when the file has none, or the
+ * page it already is (brought back from the trash and read again). Only files the
+ * project's `spaces` section counts open. `relativePath` is in the project's folder.
  */
 export const SpacePageOpenFileInput = Schema.Struct({
-  spaceId: SpaceId,
   projectId: ProjectId,
   relativePath: TrimmedNonEmptyString,
 });
 export type SpacePageOpenFileInput = typeof SpacePageOpenFileInput.Type;
 
 export const SpacePageOpenFileResult = Schema.Struct({
-  /** The Space the page is in, which is not `spaceId` when it was opened elsewhere. */
+  /** The project's Space, the page's: a `projectSpace`, never one `space.list` lists. */
   spaceId: SpaceId,
   page: SpacePage,
   created: Schema.Boolean,
@@ -573,6 +588,8 @@ export const SpaceFilesListResult = Schema.Struct({
       ),
     }),
   ),
+  /** The project's Space, where its files' pages are; null before one was opened. */
+  spaceId: Schema.NullOr(SpaceId),
 });
 export type SpaceFilesListResult = typeof SpaceFilesListResult.Type;
 

@@ -7,7 +7,7 @@
 #   apps/server-ex/lib/hal_c2/space/page_agent.ex
 #   apps/desktop-qt/qml/HalC2/Bricks/SpacePage.qml and Composer.qml,
 #     apps/desktop-qt/src/native/ComposerController.h (drafts, stash and their targets)
-#   apps/mobile-qt/qml/HalC2/Mobile/SpaceScreen.qml (the phone's ask)
+#   apps/mobile-qt/qml/HalC2/Mobile/SpacePageView.qml and SpaceScreen.qml (the phone's page and its menu)
 #   apps/tui/src/host/spaceState.ts (space.askAgent), apps/tui/src/host/composerState.ts
 
 Feature: A page's prompt is the timeline's prompt
@@ -91,7 +91,7 @@ Feature: A page's prompt is the timeline's prompt
       Given no project is left on this MC
       Then an ask from a page would have nowhere to run
 
-  @shared @backlog-desktop @backlog-mobile
+  @shared
   Rule: The prompt on a page
 
     Scenario: Plain words on a page's prompt write a block
@@ -110,6 +110,12 @@ Feature: A page's prompt is the timeline's prompt
       When the user starts an ask on "Roadmap"
       Then the prompt of "Roadmap" says the ask runs in the project "shop" on the model of "Work"
 
+    Scenario: An ask in another project takes the model the user last used there
+      Given the thread "Notes" of the project "docs" runs on another model
+      And the user starts an ask on "Roadmap"
+      When the user chooses the project "docs" in the prompt of "Roadmap"
+      Then the prompt of "Roadmap" says the ask runs in the project "docs" on the model of "Notes"
+
     Scenario Outline: An ask from a page's prompt takes what the user chose
       Given the user starts an ask on "Roadmap"
       And the user chooses <choice> in the prompt of "Roadmap"
@@ -127,11 +133,16 @@ Feature: A page's prompt is the timeline's prompt
         | a mention of "README.md"      |
         | the skill "review"            |
 
-      # The TUI's prompt attaches images only, and mentions files, not threads (#887).
+      # The TUI's prompt attaches images only (#887).
       @backlog-tui
       Examples:
+        | choice               |
+        | the file "notes.pdf" |
+
+      # No prompt mentions a thread yet (#895), and the TUI's mentions only files (#887).
+      @backlog-desktop @backlog-mobile @backlog-tui
+      Examples:
         | choice                         |
-        | the file "notes.pdf"           |
         | a mention of the thread "Work" |
 
     Scenario Outline: An ask can be started from anywhere the page is

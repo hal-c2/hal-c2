@@ -1414,6 +1414,7 @@ defmodule HalC2.Test.Mc.World do
     end)
 
     Mc.ensure(HalC2.PullRequests.Refreshes)
+    Mc.ensure(HalC2.PullRequests.Held)
     HalC2.PullRequests.invalidate(%{})
     %{bin: bin, rules: rules, log: log}
   end

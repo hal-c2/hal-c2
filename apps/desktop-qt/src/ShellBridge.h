@@ -50,7 +50,7 @@ public:
   // Where openExternal sends a URL; the system browser unless tests say otherwise.
   void setUrlOpener(std::function<bool(const QUrl&)> open) { m_openUrl = std::move(open); }
   // Where setClipboardText writes instead of the system clipboard (tests).
-  void setClipboardWriter(std::function<void(const QString&)> write) { m_writeClipboard = std::move(write); }
+  void setClipboardWriter(std::function<bool(const QString&)> write) { m_writeClipboard = std::move(write); }
   Q_INVOKABLE void windowCommand(const QString& command);
 
   // Called by QML bricks; handed to the interceptors (the native controllers)
@@ -75,8 +75,8 @@ public:
   Q_INVOKABLE QStringList directoryPaths(const QList<QUrl>& urls) const;
   // The clipboard's text, for the composer's own paste.
   Q_INVOKABLE QString clipboardText() const;
-  // Puts `text` on the clipboard (a link copied from a menu).
-  Q_INVOKABLE void setClipboardText(const QString& text) const;
+  // Puts `text` on the clipboard (a link copied from a menu); false when it could not.
+  Q_INVOKABLE bool setClipboardText(const QString& text) const;
   // The files the composer's own paste attaches: copied files
   // when one is a picture or the clipboard has no other text than
   // their names, else a copied picture as "image.png" ({name, mimeType,
@@ -98,7 +98,7 @@ private:
   QQmlPropertyMap* m_state;
   QList<Interceptor> m_interceptors;
   std::function<bool(const QUrl&)> m_openUrl;
-  std::function<void(const QString&)> m_writeClipboard;
+  std::function<bool(const QString&)> m_writeClipboard;
   QUrl m_mcOrigin;
   std::function<bool()> m_mcHere;
   bool m_localFolderImportEnabled = false;

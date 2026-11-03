@@ -11,8 +11,10 @@ import HalC2.Shell
 // what a page's update wrote (Markdown nobody edits by hand), Markdown the page
 // keeps as written (a raw block: its source in a fixed-width face, never
 // wrapped, scrolled sideways, and written with Ctrl+Return or by leaving it;
-// a table and a code block show so too until they are drawn as such, #854), a
-// Mermaid diagram drawn from a "mermaid" code block or a raw block's fence, and
+// a table and a code block show so too until they are drawn as such, #854),
+// what the MC writes around a block a page does not draw yet (a list item's
+// marker, an alert's kind, a divider, a footnote's label, a section's tags,
+// math's fences and an image's address, #869 and #877), a Mermaid diagram drawn from a "mermaid" code block or a raw block's fence, and
 // the block's own actions (comment, add a block below, ask again for a chart,
 // switch a diagram to its source, move up or down, delete).
 Item {
@@ -43,11 +45,17 @@ Item {
     property string language: ""
     // A chart block's description (SpaceChart in packages/contracts).
     property var chart: ({})
+    // The Markdown the MC writes above, before, after and below the text (SpaceController).
+    property string markdownAbove: ""
+    property string markdownLead: ""
+    property string markdownTail: ""
+    property string markdownBelow: ""
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color info: Theme.palette.color("info", "#3b82f6")
     readonly property bool editing: editor.activeFocus
+    readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
     readonly property bool raw: kind === "raw" || kind === "table" || kind === "code"
     // Level 2 keeps the page's usual heading; 1 is larger, 3 to 6 step down.
     readonly property int headingSize: [26, 20, 17, 16, 15, 14][Math.max(1, Math.min(6, level || 2)) - 1]
@@ -119,7 +127,8 @@ Item {
         anchors.top: parent.top
         anchors.left: parent.left
         width: Math.min(parent.width, 720)
-        visible: block.kind === "image"
+        // An image by its address is never fetched: its caption and address show instead.
+        visible: block.kind === "image" && block.imageId.length > 0
         imageId: block.imageId
         state_: block.imageState
         url: block.imageUrl
@@ -152,20 +161,6 @@ Item {
         anchors.verticalCenterOffset: (picture.visible ? (picture.height + 6) / 2 : 0) - diagramNote.height / 2
         anchors.leftMargin: block.kind === "callout" || block.raw ? 10 : 0
         spacing: 8
-
-        ShellCheckBox {
-            objectName: "spaceTick:" + block.text
-            Accessible.name: block.text
-            visible: block.kind === "checklist"
-            padding: 0
-            checked: block.checked
-            enabled: !block.readOnly
-            onToggled: {
-                Shell.dispatch("space.block.setChecked", { blockId: block.blockId, checked: checked });
-                // The pending tick, then the stream, says what it is.
-                checked = Qt.binding(() => block.checked);
-            }
-        }
 
         ShellIcon {
             visible: block.kind === "callout"
@@ -226,86 +221,163 @@ Item {
             padding: 0
         }
 
-        // The editor, which a raw block's long lines scroll sideways in: the
-        // wheel's sideways axis or shift, as code in a reply does.
-        Flickable {
-            id: scroller
-
-            objectName: "spaceBlockScroll:" + block.text
+        // The text, between what the MC writes around it.
+        ColumnLayout {
             Layout.fillWidth: true
-            implicitHeight: editor.height
             visible: block.kind !== "subpage_link" && block.kind !== "chart" && block.kind !== "generated" && !block.diagramShown
-            clip: block.raw
-            interactive: false
-            flickableDirection: Flickable.HorizontalFlick
-            boundsBehavior: Flickable.StopAtBounds
-            contentWidth: editor.width
-            contentHeight: height
+            spacing: 2
 
-            TextEdit {
-                id: editor
+            Text {
+                objectName: "spaceMarkdownAbove:" + block.text
+                visible: block.markdownAbove.length > 0
+                text: block.markdownAbove
+                color: block.muted
+                font.family: block.mono
+                font.pixelSize: Theme.fontSizeCode
+                font.features: { "liga": 0, "calt": 0 }
+            }
 
-                objectName: "spaceBlockEditor:" + block.text
-                width: block.raw ? Math.max(implicitWidth, scroller.width) : scroller.width
-                readOnly: block.readOnly
-                textFormat: TextEdit.PlainText
-                wrapMode: block.raw ? TextEdit.NoWrap : TextEdit.Wrap
-                selectByMouse: true
-                color: block.foreground
-                selectionColor: Theme.palette.color("accent", "#2563eb")
-                selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
-                font.family: block.raw ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Qt.application.font.family
-                font.pixelSize: block.raw ? Theme.fontSizeCode : Math.round((block.kind === "heading" ? block.headingSize : 15) * Theme.fontScale)
-                font.weight: block.kind === "heading" ? Font.DemiBold : Font.Normal
-                font.strikeout: block.kind === "checklist" && block.checked
-                // Source shows each character as typed, so no ligatures turn "---" or "->" into one glyph.
-                font.features: block.raw ? { "liga": 0, "calt": 0 } : ({})
-                opacity: block.kind === "checklist" && block.checked ? 0.7 : 1
-                Component.onCompleted: text = block.text
-                onActiveFocusChanged: {
-                    if (!activeFocus) {
-                        block.commit();
-                        editor.text = block.text;
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 0
+
+                // Under the line above, as the MC writes it: a section's summary under its tag.
+                Text {
+                    objectName: "spaceMarkdownLead:" + block.text
+                    visible: block.markdownLead.length > 0
+                    text: block.markdownLead
+                    color: block.muted
+                    font.family: block.mono
+                    font.pixelSize: Theme.fontSizeCode
+                    font.features: { "liga": 0, "calt": 0 }
+                    Layout.rightMargin: 6
+                }
+
+                ShellCheckBox {
+                    objectName: "spaceTick:" + block.text
+                    Accessible.name: block.text
+                    visible: block.kind === "checklist"
+                    padding: 0
+                    Layout.rightMargin: 8
+                    checked: block.checked
+                    enabled: !block.readOnly
+                    onToggled: {
+                        Shell.dispatch("space.block.setChecked", { blockId: block.blockId, checked: checked });
+                        // The pending tick, then the stream, says what it is.
+                        checked = Qt.binding(() => block.checked);
                     }
                 }
-                // The caret stays in sight on a line wider than the block.
-                onCursorRectangleChanged: {
-                    if (!block.raw)
-                        return;
-                    if (cursorRectangle.x < scroller.contentX)
-                        scroller.contentX = cursorRectangle.x;
-                    else if (cursorRectangle.x + cursorRectangle.width > scroller.contentX + scroller.width)
-                        scroller.contentX = cursorRectangle.x + cursorRectangle.width - scroller.width;
-                }
-                // Return writes the block (by leaving it); Shift+Return starts a
-                // new line in it. In a raw block, which is lines of source,
-                // Return starts a line and Ctrl+Return writes it.
-                Keys.onReturnPressed: event => {
-                    if ((event.modifiers & Qt.ShiftModifier) || (block.raw && !(event.modifiers & Qt.ControlModifier))) {
-                        event.accepted = false;
-                        return;
+
+                // The editor, which a raw block's long lines scroll sideways in: the
+                // wheel's sideways axis or shift, as code in a reply does.
+                Flickable {
+                    id: scroller
+
+                    objectName: "spaceBlockScroll:" + block.text
+                    Layout.fillWidth: true
+                    // A divider and a section's end have no text: their Markdown is all they show.
+                    visible: block.kind !== "divider" && block.kind !== "details_end"
+                    // Up to its text's width when something follows it on its line.
+                    Layout.maximumWidth: block.markdownTail.length > 0 ? Math.max(40, editor.implicitWidth + 2) : Number.POSITIVE_INFINITY
+                    implicitHeight: editor.height
+                    clip: block.raw
+                    interactive: false
+                    flickableDirection: Flickable.HorizontalFlick
+                    boundsBehavior: Flickable.StopAtBounds
+                    contentWidth: editor.width
+                    contentHeight: height
+
+                    TextEdit {
+                        id: editor
+
+                        objectName: "spaceBlockEditor:" + block.text
+                        width: block.raw ? Math.max(implicitWidth, scroller.width) : scroller.width
+                        readOnly: block.readOnly
+                        textFormat: TextEdit.PlainText
+                        wrapMode: block.raw ? TextEdit.NoWrap : TextEdit.Wrap
+                        selectByMouse: true
+                        color: block.foreground
+                        selectionColor: Theme.palette.color("accent", "#2563eb")
+                        selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
+                        font.family: block.raw ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Qt.application.font.family
+                        font.pixelSize: block.raw ? Theme.fontSizeCode : Math.round((block.kind === "heading" ? block.headingSize : 15) * Theme.fontScale)
+                        font.weight: block.kind === "heading" ? Font.DemiBold : Font.Normal
+                        font.strikeout: block.kind === "checklist" && block.checked
+                        // Source shows each character as typed, so no ligatures turn "---" or "->" into one glyph.
+                        font.features: block.raw ? { "liga": 0, "calt": 0 } : ({})
+                        opacity: block.kind === "checklist" && block.checked ? 0.7 : 1
+                        Component.onCompleted: text = block.text
+                        onActiveFocusChanged: {
+                            if (!activeFocus) {
+                                block.commit();
+                                editor.text = block.text;
+                            }
+                        }
+                        // The caret stays in sight on a line wider than the block.
+                        onCursorRectangleChanged: {
+                            if (!block.raw)
+                                return;
+                            if (cursorRectangle.x < scroller.contentX)
+                                scroller.contentX = cursorRectangle.x;
+                            else if (cursorRectangle.x + cursorRectangle.width > scroller.contentX + scroller.width)
+                                scroller.contentX = cursorRectangle.x + cursorRectangle.width - scroller.width;
+                        }
+                        // Return writes the block (by leaving it); Shift+Return starts a
+                        // new line in it. In a raw block, which is lines of source,
+                        // Return starts a line and Ctrl+Return writes it.
+                        Keys.onReturnPressed: event => {
+                            if ((event.modifiers & Qt.ShiftModifier) || (block.raw && !(event.modifiers & Qt.ControlModifier))) {
+                                event.accepted = false;
+                                return;
+                            }
+                            editor.focus = false;
+                        }
+                        Keys.onEscapePressed: {
+                            editor.text = block.text;
+                            editor.focus = false;
+                        }
                     }
-                    editor.focus = false;
+
+                    MouseArea {
+                        parent: scroller
+                        anchors.fill: parent
+                        enabled: block.raw
+                        acceptedButtons: Qt.NoButton
+                        onWheel: wheel => {
+                            const dx = wheel.angleDelta.x !== 0 ? wheel.angleDelta.x : (wheel.modifiers & Qt.ShiftModifier) ? wheel.angleDelta.y : 0;
+                            if (dx === 0 || scroller.contentWidth <= scroller.width) {
+                                wheel.accepted = false;
+                                return;
+                            }
+                            scroller.contentX = Math.max(0, Math.min(scroller.contentWidth - scroller.width, scroller.contentX - dx));
+                        }
+                    }
                 }
-                Keys.onEscapePressed: {
-                    editor.text = block.text;
-                    editor.focus = false;
+
+                Text {
+                    objectName: "spaceMarkdownTail:" + block.text
+                    visible: block.markdownTail.length > 0
+                    text: block.markdownTail
+                    color: block.muted
+                    font.family: block.mono
+                    font.pixelSize: Theme.fontSizeCode
+                    font.features: { "liga": 0, "calt": 0 }
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                    visible: block.markdownTail.length > 0 || !scroller.visible
                 }
             }
 
-            MouseArea {
-                parent: scroller
-                anchors.fill: parent
-                enabled: block.raw
-                acceptedButtons: Qt.NoButton
-                onWheel: wheel => {
-                    const dx = wheel.angleDelta.x !== 0 ? wheel.angleDelta.x : (wheel.modifiers & Qt.ShiftModifier) ? wheel.angleDelta.y : 0;
-                    if (dx === 0 || scroller.contentWidth <= scroller.width) {
-                        wheel.accepted = false;
-                        return;
-                    }
-                    scroller.contentX = Math.max(0, Math.min(scroller.contentWidth - scroller.width, scroller.contentX - dx));
-                }
+            Text {
+                objectName: "spaceMarkdownBelow:" + block.text
+                visible: block.markdownBelow.length > 0
+                text: block.markdownBelow
+                color: block.muted
+                font.family: block.mono
+                font.pixelSize: Theme.fontSizeCode
+                font.features: { "liga": 0, "calt": 0 }
             }
         }
 
