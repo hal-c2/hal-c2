@@ -1,8 +1,11 @@
 # Sources:
-#   apps/server-ex/lib/hal_c2/upgrade.ex (plan, hot load, restart with exit 75, outcome)
+#   apps/server-ex/lib/hal_c2/upgrade.ex (plan, release upgrade, restart with exit 75, outcome)
+#   apps/server-ex/lib/hal_c2/upgrade/release.ex (release_handler: unpack, relup, install, permanent, rollback, NIFs)
+#   apps/server-ex/lib/hal_c2/upgrade/appup.ex (appups from the release diff: code_change, soft purge)
+#   apps/server-ex/lib/hal_c2/upgrade/tree.ex (services a new release adds, changes or drops)
+#   apps/server-ex/lib/hal_c2/upgrade/dev.ex (a checkout's build as a release upgrade)
 #   apps/server-ex/lib/hal_c2/upgrade/source.ex (cache, cluster peer, release URL, SHA-256)
 #   apps/server-ex/lib/hal_c2/upgrade/code.ex (a code-only version's release, on the running runtime)
-#   apps/server-ex/lib/hal_c2/hot.ex (md5 skip, code_change, soft purge, lingering modules, NIFs)
 #   apps/server-ex/lib/mix/tasks/hal_c2.upgrade.ex, hal_c2.bundle.ex
 #   apps/server-ex/lib/hal_c2/web/router.ex (GET /api/upgrade/:token, POST /api/dev/reload)
 #   mise-tasks/mc/reload
@@ -18,9 +21,10 @@
 #   docs/user/updating.md
 #   docs/user/background-service.md (hal-c2 update, channels)
 
-Feature: MC self-update and hot upgrades
-  An MC moves to another version in place when the change allows, and restarts into it
-  under its service wrapper when it does not. Clients see progress and learn the outcome.
+Feature: MC self-update and release upgrades
+  An MC moves to another version in place as an OTP release upgrade, and restarts into
+  it under its service wrapper only when a release upgrade cannot take it: a new
+  emulator or native code. Clients see progress and learn the outcome.
 
   Background:
     Given an MC running from a release under the service wrapper
@@ -48,13 +52,23 @@ Feature: MC self-update and hot upgrades
     And it boots into the new version
 
     Examples:
-      | what                       |
-      | the OTP release            |
-      | a dependency               |
-      | the set of dependencies    |
-      | the platform's packages    |
-      | the configuration          |
-      | a supervisor module        |
+      | what                                |
+      | the OTP release                     |
+      | the emulator's flags                |
+      | code that loads a NIF               |
+      | a release from before release upgrades |
+
+  @mc
+  Scenario Outline: Changes a release upgrade carries go in place
+    Given a bundle that changes <what> in place
+    When a client asks the MC to update to it
+    Then the MC takes the change without restarting
+    And the MC reports the new version
+
+    Examples:
+      | what                |
+      | a supervisor module |
+      | the configuration   |
 
   @mc
   Scenario: A code-only update keeps the Erlang runtime the MC runs
@@ -89,11 +103,14 @@ Feature: MC self-update and hot upgrades
     When a client asks the MC to update
     Then the update fails saying the MC was not started by the service wrapper
 
+  # A process still in code from the update before would lose it to the next load.
   @mc
-  Scenario: A failed hot load falls back to a restart
-    Given a code-only bundle that fails to load in place
+  Scenario: An install that fails in place falls back to a restart
+    Given a process still runs code from the update before
+    And a bundle that replaces that code again
     When a client asks the MC to update to it
     Then the MC restarts into the new version instead
+    And it says the process holding the old code is why
 
   @mc
   Scenario: The outcome of the last update is reported when clients reconnect
@@ -230,14 +247,13 @@ Feature: MC self-update and hot upgrades
     # Each MC takes the bundle from whichever peer offers it first, not only the first MC.
     And the other two fetch it from a peer that already has it
 
-  # A supervisor's tree only changes at start, but the modules calling it load new code
-  # at once: left on its old code, its newer functions are missing from them.
+  # A reload is a release upgrade made from the checkout's build.
   @mc
   Scenario: A developer reloads changed modules into running MCs
     Given MCs started from a checkout
     When a developer reloads them after editing code
     Then only modules whose code changed are loaded
-    And a changed supervisor's functions load, and the report lists it to restart for
+    And a changed supervisor runs its new code without restarting
 
   @mc
   Scenario: A reload starts the services the MC's new code adds
@@ -246,21 +262,21 @@ Feature: MC self-update and hot upgrades
     Then the new service runs without a restart
     And a boot task that already ran does not run again
     And a new service that fails to start is reported as needing a restart
-    And services it changed or no longer lists are reported as needing a restart
+    And services it changed restart on their new specs, and ones it no longer lists stop
 
   @mc
   Scenario: A developer reloads the MC their checkout runs without naming it
     Given MCs started from a checkout
     When a developer reloads the local MC with its own access token
     Then only modules whose code changed are loaded
-    And a changed supervisor's functions load, and the report lists it to restart for
+    And a changed supervisor runs its new code without restarting
 
   @mc
   Scenario: A developer reloads the MC from a checkout it was not started from
     Given another checkout holds edited code the MC was not started from
     When a developer reloads the local MC from that checkout
     Then only modules whose code changed are loaded
-    And a changed supervisor's functions load, and the report lists it to restart for
+    And a changed supervisor runs its new code without restarting
 
   @mc
   Scenario: A reload from a directory without a build is refused
@@ -323,23 +339,16 @@ Feature: MC self-update and hot upgrades
   @mc
   Scenario: Modules still in use are left for later rather than killed
     Given a process is blocked inside a module being replaced
-    When new code loads
-    Then that module is reported as lingering
+    When an update replaces that module in place
+    Then the module's old code stays for the process still in it
     And the process is not killed
 
   @mc
-  Scenario: A reload that cannot free the version before last names who holds it
-    Given a process is blocked inside a module being replaced
-    And new code loads
-    When newer code loads
-    Then the reload is refused naming the blocked process
-    And the process is not killed
-
-  @mc
-  Scenario: A module that loads native code is never loaded in place
-    Given a changed module that loads a NIF
-    When new code loads
-    Then it is reported as native and left unloaded
+  Scenario: A process's state changes shape in an update
+    Given a service whose state the new version keeps in another shape
+    When an update replaces that service's module in place
+    Then the service migrated its state without restarting
+    And no process runs the old code
 
   @mc
   Scenario: Socket state from an older version is migrated at its next message

@@ -810,7 +810,7 @@ defmodule HalC2.Store do
     __MODULE__.checkpoint_loop(db, ref)
   end
 
-  # Loops by name, so a hot reload (`HalC2.Hot`) moves the checkpointer to new code at
+  # Loops by name, so a release upgrade moves the checkpointer to new code at
   # its next tick: a local call would keep it on the version it started with, and that
   # version could never be purged.
   @doc false
@@ -1110,7 +1110,7 @@ defmodule HalC2.Store do
   @impl true
   def terminate(_reason, state), do: Sqlite3.close(state.db)
 
-  # A store updated in place (`HalC2.Hot`) does not run `init/1` again, and one from
+  # A store updated in place by a release upgrade does not run `init/1` again, and one from
   # before it trapped exits does not trap them yet: callers already retry a
   # `:shutdown` on the assumption that a taken call always finishes first. Only the
   # trap arrives this way: the supervisor keeps the child spec it started the store

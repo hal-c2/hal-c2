@@ -1234,6 +1234,14 @@ describe("projects in the Space's pages", () => {
     expect(again.texts("file")).toEqual(["guide.md"]);
   });
 
+  test("a remembered folder the project's files are no longer in is forgotten", async () => {
+    const sections = memoryMutedThreads();
+    sections.save(["p1", "p1|docs", "p1|notes", "p1|docs/api"]);
+    const t = await withShop(["docs/guide.md", "README.md"], sections);
+    expect(sections.load()).toEqual(["p1", "p1|docs"]);
+    expect(t.texts("file")).toEqual(["guide.md", "README.md"]);
+  });
+
   test("a file picked in its section opens from the project's Space, and back is the Space it was picked in", async () => {
     const t = await withShop(["docs/guide.md"]);
     t.select("project:p1");

@@ -168,7 +168,7 @@ defmodule HalC2.ScheduledTasksRunsTest do
       state
     end)
 
-    # What `HalC2.Hot` does for a process whose module changed.
+    # What a release upgrade (`{update, M, {advanced, []}}`) does for a process whose module changed.
     :ok = :sys.suspend(scheduler)
     :ok = :sys.change_code(scheduler, ScheduledTasks, nil, :hot)
     :ok = :sys.resume(scheduler)

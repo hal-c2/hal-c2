@@ -4,7 +4,7 @@ defmodule HalC2.McpPropTest do
   until it is revoked or the server restarts; `initialize` always answers 200
   for a live credential and opens a session; a session lives until it ends,
   its credential is revoked, or the server restarts. Code loaded over the
-  running server (`reload`, a `code_change` as `HalC2.Hot` runs) and a server
+  running server (`reload`, a `code_change` as a release upgrade runs) and a server
   whose sessions table was never made (`lose_sessions_table`, as one started
   before sessions were kept) must not break the handshake: sessions are lost,
   never the connect.
@@ -114,7 +114,7 @@ defmodule HalC2.McpPropTest do
     :ok
   end
 
-  # Code loaded over the running server, as `HalC2.Hot.reload/1` migrates it.
+  # Code loaded over the running server, as a release upgrade migrates it.
   def reload do
     pid = Process.whereis(HalC2.Mcp)
     :sys.suspend(pid)

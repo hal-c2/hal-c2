@@ -447,6 +447,10 @@ defmodule HalC2.PullRequests.GitHub do
   the index holds nothing for, is read again from the repository's own list, narrowed
   here, and cannot be continued. Reading that list is costly on a busy repository, so
   an empty answer from an indexed one stands.
+
+  Pages start at `opts.page` (nil: the usual size) and shrink when GitHub gives up on
+  one (`gave_up?/1`); the answer's `page` is the size the read ended at, nil while that
+  is the usual one.
   """
   def list(ctx, opts) do
     case list_read(ctx, opts, true) do
@@ -475,11 +479,13 @@ defmodule HalC2.PullRequests.GitHub do
   defp list_read(ctx, opts, true) do
     variables = %{"q" => Enum.join(search_terms(ctx, opts), " ")}
 
-    with {:ok, raw, _more} <-
-           list_pages(ctx, @list_search_query, variables, ["search"], opts.limit + 1) do
+    with {:ok, raw, _more, page} <-
+           list_pages(ctx, opts, @list_search_query, variables, ["search"], opts.limit + 1) do
       items = Enum.flat_map(raw, &list_node/1)
       truncated = length(raw) > opts.limit
-      {:ok, %{items: Enum.take(items, opts.limit), truncated: truncated, sorted: true}}
+
+      {:ok,
+       %{items: Enum.take(items, opts.limit), truncated: truncated, sorted: true, page: page}}
     end
   end
 
@@ -500,9 +506,10 @@ defmodule HalC2.PullRequests.GitHub do
     enough? = &(length(kept.(&1)) > opts.limit)
     path = ["repository", "pullRequests"]
 
-    with {:ok, raw, more} <-
+    with {:ok, raw, more, page} <-
            list_pages(
              ctx,
+             opts,
              @list_repository_query,
              variables,
              path,
@@ -511,16 +518,18 @@ defmodule HalC2.PullRequests.GitHub do
            ) do
       kept = kept.(raw)
       truncated = length(kept) > opts.limit or more
-      {:ok, %{items: Enum.take(kept, opts.limit), truncated: truncated, sorted: false}}
+
+      {:ok,
+       %{items: Enum.take(kept, opts.limit), truncated: truncated, sorted: false, page: page}}
     end
   end
 
   # Up to `most` nodes of the connection at `path`, a page at a time, until `enough?`
-  # holds for what was read; `{:ok, nodes, more?}`. GitHub gives up on a query it
+  # holds for what was read; `{:ok, nodes, more?, page}`. GitHub gives up on a query it
   # cannot answer in about ten seconds, which a page of a busy repository's pull
   # requests can take: a page it gave up on is asked for again at half the size,
   # down to `@list_least_page`, and the rest are read at that size.
-  defp list_pages(ctx, query, variables, path, most, enough? \\ fn _ -> false end) do
+  defp list_pages(ctx, opts, query, variables, path, most, enough? \\ fn _ -> false end) do
     read = fn first, cursor ->
       with {:ok, data} <-
              graphql(ctx, query, Map.merge(variables, %{"first" => first, "after" => cursor})),
@@ -532,7 +541,11 @@ defmodule HalC2.PullRequests.GitHub do
       end
     end
 
-    read_pages(read, most, enough?, @list_page, nil, [])
+    page = Map.get(opts, :page) || @list_page
+    page = page |> min(@list_page) |> max(@list_least_page)
+
+    with {:ok, nodes, more, page} <- read_pages(read, most, enough?, page, nil, []),
+         do: {:ok, nodes, more, if(page < @list_page, do: page)}
   end
 
   defp read_pages(read, most, enough?, page, cursor, acc) do
@@ -543,8 +556,8 @@ defmodule HalC2.PullRequests.GitHub do
         acc = acc ++ nodes
 
         if next == nil or nodes == [] or length(acc) >= most or enough?.(acc),
-          do: {:ok, acc, next != nil},
-          else: read_pages(read, most, enough?, first, next, acc)
+          do: {:ok, acc, next != nil, page},
+          else: read_pages(read, most, enough?, page, next, acc)
 
       {:error, {:failed, detail}} = error ->
         if first > @list_least_page and gave_up?(detail),
@@ -556,11 +569,16 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
-  # What GitHub says when a query took too long: a gateway's 502 or 504, a body cut
-  # short, or GraphQL's own timeout. `gh` itself not answering is not among them: a
-  # stalled network or prompt would stall every smaller page as long.
-  defp gave_up?(detail),
+  @doc """
+  Whether `detail` is GitHub giving up on a query that took too long: a gateway's 502,
+  503 or 504, an answer cut off ("unexpected end of JSON input"), or GraphQL's own
+  timeout. `gh` itself not answering is not among them: a stalled network or prompt
+  would stall every smaller page as long.
+  """
+  def gave_up?(detail) when is_binary(detail),
     do: detail =~ ~r/HTTP 50[234]|unexpected end of JSON|timeout|something went wrong/i
+
+  def gave_up?(_detail), do: false
 
   # A listed pull request as `list_item/1` reads it. The row needs only GitHub's own
   # summary of its checks, not each of them, which keeps a page cheap to answer.
@@ -910,15 +928,17 @@ defmodule HalC2.PullRequests.GitHub do
 
   @doc """
   The newest pull request whose head is `branch`, in whichever repository `gh` reads
-  the checkout at `cwd` against: `%{"number", "url", "state", "mergedAt", "closedAt"}`,
-  or nil.
+  the checkout at `cwd` against: `%{"number", "url", "state", "title", "baseRef",
+  "headRef", "isDraft", "updatedAt", "mergedAt", "closedAt"}`, or nil. Every reader of
+  this answer asks it through `HalC2.PullRequests.Branches`.
   """
   def branch_pull_request(cwd, branch) do
     args =
-      ~w(pr list --state all --limit 1 --json number,url,state,mergedAt,closedAt --head) ++
+      ~w(pr list --state all --limit 1 --json number,title,url,baseRefName,headRefName,state,isDraft,updatedAt,mergedAt,closedAt --head) ++
         [branch]
 
-    case gh_json(cwd, args) do
+    # A status read waits on it, so a hung `gh` gives up sooner than the 30 s default.
+    case gh_json(cwd, args, timeout: 10_000) do
       {:ok, [%{"number" => number, "url" => url} = pr | _]}
       when is_integer(number) and is_binary(url) ->
         {:ok,
@@ -926,6 +946,11 @@ defmodule HalC2.PullRequests.GitHub do
            "number" => number,
            "url" => url,
            "state" => state(pr),
+           "title" => pr["title"],
+           "baseRef" => pr["baseRefName"],
+           "headRef" => pr["headRefName"],
+           "isDraft" => pr["isDraft"] == true,
+           "updatedAt" => pr["updatedAt"],
            "mergedAt" => trimmed(pr["mergedAt"]),
            "closedAt" => trimmed(pr["closedAt"])
          }}

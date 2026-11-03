@@ -20,6 +20,16 @@ bool treeOrder(const QStringList& a, const QStringList& b) {
   return a.size() < b.size();
 }
 
+// Every folder a project's files are in, as "docs" and "docs/api".
+QSet<QString> foldersOf(const QHash<QString, QString>& files) {
+  QSet<QString> folders;
+  for (auto it = files.cbegin(); it != files.cend(); ++it) {
+    const QStringList parts = it.key().split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    for (qsizetype i = 1; i < parts.size(); ++i) folders.insert(parts.mid(0, i).join(QLatin1Char('/')));
+  }
+  return folders;
+}
+
 }  // namespace
 
 SpaceProjects::SpaceProjects(QObject* parent)
@@ -41,7 +51,21 @@ void SpaceProjects::setProjects(QList<Project> projects) {
 void SpaceProjects::setFiles(const QString& projectId, const QHash<QString, QString>& pages) {
   if (m_files.contains(projectId) && m_files.value(projectId) == pages) return;
   m_files.insert(projectId, pages);
+  const bool forgot = forgetGoneFolders(projectId);
   build();
+  if (forgot) emit expandedChanged();
+}
+
+bool SpaceProjects::forgetGoneFolders(const QString& projectId) {
+  const auto it = m_folders.find(projectId);
+  // An empty list (no section, or a scan still to come) forgets nothing.
+  if (it == m_folders.end() || m_files.value(projectId).isEmpty()) return false;
+  const QSet<QString> folders = foldersOf(m_files.value(projectId));
+  const qsizetype before = it->size();
+  it->removeIf([&](const QString& path) { return !folders.contains(path); });
+  const bool forgot = it->size() != before;
+  if (it->isEmpty()) m_folders.erase(it);
+  return forgot;
 }
 
 void SpaceProjects::setExpanded(const QString& projectId, bool expanded) {
@@ -58,6 +82,8 @@ void SpaceProjects::setExpanded(const QString& projectId, bool expanded) {
 void SpaceProjects::setFolderExpanded(const QString& projectId, const QString& path, bool expanded) {
   if (projectId.isEmpty() || path.isEmpty() || m_folders.value(projectId).contains(path) == expanded) return;
   if (expanded) {
+    // A folder none of the listed files is in is not one to remember.
+    if (!m_files.value(projectId).isEmpty() && !foldersOf(m_files.value(projectId)).contains(path)) return;
     m_folders[projectId].insert(path);
   } else if (auto it = m_folders.find(projectId); it != m_folders.end()) {
     it->remove(path);
@@ -113,10 +139,16 @@ void SpaceProjects::restoreExpanded(const QStringList& projectIds, const QVarian
     set.remove(QString());
     if (!it.key().isEmpty() && !set.isEmpty()) paths.insert(it.key(), set);
   }
-  if (expanded == m_expanded && paths == m_folders) return;
-  m_expanded = expanded;
-  m_folders = std::move(paths);
-  build();
+  const QStringList listed = paths.keys();
+  std::swap(m_folders, paths);
+  bool forgot = false;
+  for (const QString& projectId : listed) forgot |= forgetGoneFolders(projectId);
+  if (expanded != m_expanded || paths != m_folders) {
+    m_expanded = expanded;
+    build();
+  }
+  // What was forgotten is saved, so the stored set does not keep it until the next toggle.
+  if (forgot) emit expandedChanged();
 }
 
 void SpaceProjects::build() {

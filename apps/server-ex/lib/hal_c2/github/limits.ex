@@ -20,11 +20,21 @@ defmodule HalC2.GitHub.Limits do
   to what the user asks for (which never checks here). Of answers that arrive out of
   order, the one with the later reset, or the least left, is believed.
   Hosts are compared in lowercase; times are milliseconds from the caller's clock.
+
+  A repository GitHub keeps giving up on (a gateway's 502 or 504, an answer cut off)
+  is held back from background reads the same way, keyed by host and repository: 30
+  seconds after its first failure, doubling up to 15 minutes, a failure while it is
+  held back changing nothing. `release/2` lets the next read through without ending
+  the doubling (a hand refresh); the first read that succeeds ends it. Each repository
+  also keeps the page size its last read shrank to, so the reads that follow start
+  there rather than at a size GitHub already gave up on; 15 minutes after it shrank,
+  a read tries the usual size again.
   """
 
   use GenServer
 
   @cooldown 30_000
+  @page_memory 900_000
   @max_cooldown 900_000
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -49,6 +59,38 @@ defmodule HalC2.GitHub.Limits do
   """
   def answered(account, bucket, now, quota \\ nil),
     do: call({:answered, key(account), bucket, now, quota}, :ok)
+
+  @doc """
+  How `repository` of `host` may be read at `now`: `{:ok, page}`, with the page size
+  that last got through or nil, or `{:held, until, page, detail}` while it is held
+  back after failing with `detail`.
+  """
+  def repository(host, repository, now),
+    do: call({:repository, lower(host), lower(repository), now}, {:ok, nil})
+
+  @doc """
+  Records that GitHub gave up on reading `repository` at `now` with `detail`. Returns
+  `{until, new?}`: when it may be read again, and whether this failure set that time
+  (rather than meeting a hold that was already there); nil while the gate is down,
+  which holds nothing back.
+  """
+  def repository_failed(host, repository, now, detail),
+    do: call({:repository_failed, lower(host), lower(repository), now, detail}, nil)
+
+  @doc """
+  Records that `repository` was read at `now` with pages of `page` (nil: the usual
+  size). A page that differs from the one kept, or one kept past its 15 minutes,
+  starts them again.
+  """
+  def repository_read(host, repository, page, now),
+    do: call({:repository_read, lower(host), lower(repository), page, now}, :ok)
+
+  @doc """
+  Lets the next read of `repository` of `host` through its hold; nil for every
+  repository (of every host).
+  """
+  def release(host \\ nil, repository \\ nil),
+    do: call({:release, host && lower(host), repository && lower(repository)}, :ok)
 
   # The gate is only a saving: with it down, every call asks the host.
   defp call(message, down) do
@@ -110,10 +152,93 @@ defmodule HalC2.GitHub.Limits do
     {:reply, :ok, %{state | pauses: pauses, quotas: quotas}}
   end
 
+  def handle_call({:repository, host, repository, now}, _from, %{pauses: pauses} = state) do
+    reply =
+      case pauses[{host, {:repository, repository}}] do
+        %{until: until} = entry when until > now ->
+          {:held, until, page(entry, now), entry.detail}
+
+        %{} = entry ->
+          {:ok, page(entry, now)}
+
+        nil ->
+          {:ok, nil}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call(
+        {:repository_failed, host, repository, now, detail},
+        _from,
+        %{pauses: pauses} = state
+      ) do
+    key = {host, {:repository, repository}}
+    entry = pauses[key] || %{attempt: 0, until: 0, page: nil, page_at: 0, detail: nil}
+
+    {entry, new?} =
+      if entry.until > now,
+        do: {entry, false},
+        else:
+          {%{
+             entry
+             | attempt: entry.attempt + 1,
+               until: now + backoff(entry.attempt),
+               detail: detail
+           }, true}
+
+    {:reply, {entry.until, new?}, %{state | pauses: Map.put(pauses, key, entry)}}
+  end
+
+  def handle_call(
+        {:repository_read, host, repository, page, now},
+        _from,
+        %{pauses: pauses} = state
+      ) do
+    key = {host, {:repository, repository}}
+
+    page_at =
+      case pauses[key] do
+        # The same size, while it is still in force; an expired one starts over.
+        %{page: ^page, page_at: at} when at + @page_memory > now -> at
+        _ -> now
+      end
+
+    pauses =
+      if page,
+        do:
+          Map.put(pauses, key, %{attempt: 0, until: 0, page: page, page_at: page_at, detail: nil}),
+        else: Map.delete(pauses, key)
+
+    {:reply, :ok, %{state | pauses: pauses}}
+  end
+
+  def handle_call({:release, host, repository}, _from, %{pauses: pauses} = state) do
+    pauses =
+      Map.new(pauses, fn
+        {{h, {:repository, r}} = key, entry}
+        when host in [nil, h] and repository in [nil, r] ->
+          {key, %{entry | until: 0}}
+
+        other ->
+          other
+      end)
+
+    {:reply, :ok, %{state | pauses: pauses}}
+  end
+
   defp believed?(_new, nil), do: true
   defp believed?(new, old), do: {new.reset, -new.remaining} >= {old.reset, -old.remaining}
 
+  defp page(%{page: page, page_at: at}, now) when page != nil and at + @page_memory > now,
+    do: page
+
+  defp page(_entry, _now), do: nil
+
   defp backoff(attempt), do: min(@cooldown * 2 ** attempt, @max_cooldown)
 
-  defp key({host, who}), do: {String.downcase(host || ""), who}
+  defp key({host, who}), do: {lower(host), who}
+
+  defp lower(nil), do: ""
+  defp lower(text), do: String.downcase(text)
 end
