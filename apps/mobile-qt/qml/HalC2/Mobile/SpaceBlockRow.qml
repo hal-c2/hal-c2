@@ -99,6 +99,12 @@ Rectangle {
             Shell.dispatch("space.block.update", { blockId: blockId, text: editor.text });
     }
 
+    // The link a drawn block opens: the web, mail and the app's own, which
+    // Shell.openExternal opens. A path or an in-page anchor is text to edit.
+    function openable(link) {
+        return /^(https?|mailto|hal-c2):/i.test(link) ? link : "";
+    }
+
     // Shows a drawn block's source to edit, the caret near (x, y) in the drawn
     // text, or at its end with no point.
     function edit(x, y) {
@@ -261,7 +267,7 @@ Rectangle {
 
                             TapHandler {
                                 onTapped: eventPoint => {
-                                    const link = drawnText.linkAt(eventPoint.position.x, eventPoint.position.y);
+                                    const link = row.openable(drawnText.linkAt(eventPoint.position.x, eventPoint.position.y));
                                     if (link.length > 0)
                                         Shell.openExternal(link);
                                     else

@@ -888,6 +888,22 @@ Item {
             verify(root.showing(shown, "spaceBlockText:" + source));
         }
 
+        // A link to a path or an anchor, which nothing opens, edits like any text.
+        function test_aTapOnALinkNothingOpensEditsTheSource() {
+            const source = "[spec](./spec.md) and more words after it";
+            const screen = openWith([root.block("b1", source)]);
+            tryVerify(() => findChild(screen, "spaceBlockText:" + source) !== null);
+            const shown = findChild(screen, "spaceBlock:" + source);
+            const drawn = findChild(shown, "spaceBlockText:" + source);
+            const prose = findChild(drawn, "markdownProse");
+            const link = drawn.mapFromItem(prose, 4, prose.height / 2);
+            compare(drawn.linkAt(link.x, link.y), "./spec.md");
+            mouseClick(drawn, link.x, link.y);
+            compare(Shell.openedExternally, []);
+            verify(shown.editor !== null && shown.editor.activeFocus);
+            compare(shown.editor.text, source);
+        }
+
         // A ticked item is drawn struck out, a heading at its weight.
         function test_aTickedItemIsDrawnStruckOut() {
             const screen = openWith([root.block("b1", "Ship *it*", { kind: "checklist", checked: true }), root.block("b2", "Plan", { kind: "heading", level: 1 })]);
