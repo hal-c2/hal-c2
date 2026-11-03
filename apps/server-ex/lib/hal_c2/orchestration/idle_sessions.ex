@@ -106,11 +106,14 @@ defmodule HalC2.Orchestration.IdleSessions do
 
   defp waiting?(row), do: row["activeRunId"] != nil or (row["pendingBackgroundTasks"] || []) != []
 
+  @doc false
   # A provider process of the thread is still up: its run is its own to end.
-  defp live?(thread_id) do
+  def live?(thread_id) do
     Enum.any?(
       @registries,
-      &(Process.whereis(&1) != nil and Registry.lookup(&1, thread_id) != [])
+      # A registry forgets a process that ended a moment after it ends.
+      &(Process.whereis(&1) != nil and
+          Enum.any?(Registry.lookup(&1, thread_id), fn {pid, _} -> Process.alive?(pid) end))
     )
   end
 

@@ -211,6 +211,7 @@ Item {
             property bool linking: false
             property bool refreshing: false
             property string problem: ""
+            property string reference: ""
             property int openCount: 1
             property var calls: []
             function link(text) { calls.push("link " + text); }
@@ -223,6 +224,7 @@ Item {
                 state: "open"; stateLabel: "Open"; checks: "passing"; checksLabel: "Checks passing"
                 review: "review-required"; reviewLabel: "Review required"; conflicting: false
                 branches: "tax-fix → main"; sourceLabel: "Linked by you"; unlinkLabel: "Unlink"
+                host: "github.com"; linkedNote: "Linked by you · 1h ago"; depth: 0; stackSize: 0; stackNote: ""
             }
         }
     }

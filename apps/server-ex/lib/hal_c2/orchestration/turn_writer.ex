@@ -596,6 +596,10 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     baselines = if checkpoint, do: baselines(state.turn, at), else: []
 
+    # The turn may have pushed or changed its repository's pull requests; forgotten
+    # before the run ends, so whoever sees it end reads them fresh.
+    if cwd = state.turn.cwd, do: HalC2.PullRequests.turn_finished(cwd)
+
     ended =
       HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
         if active?(stream, state.turn.ids.run) do
@@ -632,6 +636,7 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   # The changes that end the run.
   defp ended(stream, ids, status, failure, checkpoint, at) do
+    failure = queued_start_failure(stream, ids, status, failure)
     done = %{"status" => status, "completedAt" => at}
     run_done = if checkpoint, do: Map.put(done, "checkpointId", checkpoint["id"]), else: done
 
@@ -657,6 +662,25 @@ defmodule HalC2.Orchestration.TurnWriter do
       is_map(failure) && status == "failed" && failure_item(stream, ids, failure, at)
     ] ++ held_queue(stream, status, failure)
   end
+
+  # A run that left the queue and failed before its provider turn began (the runtime's
+  # `start_failure/2`): the timeline says the queued message's provider could not start.
+  defp queued_start_failure(stream, ids, "failed", failure) when is_binary(failure) do
+    began = StreamState.get(stream, "provider-turn")[Map.get(ids, :provider_turn)] != nil
+    message = Map.get(ids, :message)
+    item = message && StreamState.get(stream, "turn-item")["turn-item:user:#{message}"]
+
+    if not began and is_map(item) and item["inputIntent"] == "queued_turn",
+      do: %{
+        "class" => "provider_error",
+        "code" => "queued_start_failed",
+        "message" => failure,
+        "retryable" => false
+      },
+      else: failure
+  end
+
+  defp queued_start_failure(_stream, _ids, _status, failure), do: failure
 
   # A run stopped by a usage limit leaves the queue as it is: the messages behind it
   # would only hit the same limit, so they wait, in order, until the user resumes the
@@ -746,6 +770,41 @@ defmodule HalC2.Orchestration.TurnWriter do
 
       nil ->
         :ok
+    end
+  end
+
+  @doc """
+  Completes run `run_id` of `thread_id` with the checkpoint a capture replayed after a
+  restart took (`args` are the capture's): the MC stopped after its provider turn ended
+  and before the capture did, so the restart left the run to it.
+  """
+  def checkpointed(thread_id, run_id, args, checkpoint) do
+    at = Entities.now()
+
+    completed =
+      HalC2.Streams.transact(thread_id, :thread, fn stream ->
+        case StreamState.get(stream, "run")[run_id] do
+          %{"status" => active} = run when active in @active_runs ->
+            state = abandoned_turn(stream, thread_id, run)
+            turn = Map.put(state.turn, :scope_id, args["scopeId"])
+            baselines = if checkpoint, do: baselines(%{turn | cwd: args["cwd"]}, at), else: []
+
+            changes =
+              baseline_changes(stream, baselines) ++
+                checkpoint_changes(stream, turn, checkpoint, at) ++
+                left_open(stream, run, "completed", at) ++
+                ended(stream, turn.ids, "completed", nil, checkpoint, at)
+
+            {Enum.filter(changes, &is_tuple/1), {state, queue_starts?(stream, thread_id)}}
+
+          _ ->
+            {[], nil}
+        end
+      end)
+
+    case completed do
+      {state, queue?} -> finished(state, "completed", nil, queue?)
+      nil -> :ok
     end
   end
 
@@ -858,10 +917,11 @@ defmodule HalC2.Orchestration.TurnWriter do
         at,
         %{
           "title" =>
-            if(failure["class"] == "usage_limit",
-              do: "Usage limit reached",
-              else: "Provider error"
-            ),
+            cond do
+              failure["class"] == "usage_limit" -> "Usage limit reached"
+              failure["code"] == "queued_start_failed" -> "Queued provider could not start"
+              true -> "Provider error"
+            end,
           "failure" => failure
         }
       )
@@ -906,7 +966,7 @@ defmodule HalC2.Orchestration.TurnWriter do
              "rootNodeId" => turn.ids.root_node,
              "at" => at
            },
-           nil,
+           :turn,
            "checkpoint"
          ) do
       {:ok, checkpoint} -> checkpoint

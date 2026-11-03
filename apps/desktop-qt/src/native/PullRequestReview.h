@@ -11,6 +11,7 @@
 #include <functional>
 
 #include "DiffModel.h"
+#include "PullRequestThreadLinks.h"
 
 class McClient;
 
@@ -69,6 +70,8 @@ class PullRequestReview : public QObject {
   Q_PROPERTY(bool busy READ busy NOTIFY stateChanged)
   // Why the last comment or review was not sent.
   Q_PROPERTY(QString problem READ problem NOTIFY stateChanged)
+  // The threads working on it (PullRequestThreadLinks), when its owner gave one.
+  Q_PROPERTY(PullRequestThreadLinks* threads READ threads CONSTANT)
 
 public:
   using Notify = std::function<void(const QString& type, const QString& title, const QString& description)>;
@@ -86,6 +89,8 @@ public:
   // Only a shown tab reads; one shown again reads what changed since.
   void setActive(bool active);
   void setClipboardWriter(Copy copy) { m_copy = std::move(copy); }
+  void setThreads(PullRequestThreadLinks* threads) { m_threadLinks = threads; }
+  PullRequestThreadLinks* threads() const { return m_threadLinks; }
 
   DiffModel* model() { return &m_model; }
   QString key() const;
@@ -157,6 +162,7 @@ private:
   Notify m_notify;
   Open m_open;
   Copy m_copy;
+  PullRequestThreadLinks* m_threadLinks = nullptr;
   DiffModel m_model;
   QString m_environment;
   QString m_project;
