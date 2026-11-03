@@ -567,6 +567,22 @@ defmodule HalC2.SpaceMarkdownTest do
       end
     end
 
+    # Found by the gap property: a line of only a tab or four spaces under indented code
+    # read as more code, so the heading below it took that line as its gap no longer.
+    test "a line of only spaces or a tab under indented code is not code" do
+      for space <- ["\t", "    ", "\t "] do
+        assert [
+                 %{"kind" => "raw", "text" => "    1. deeper"},
+                 %{"kind" => "heading", "text" => "Title", "gap" => gap}
+               ] = Markdown.blocks("    1. deeper\n#{space}\n# Title")
+
+        assert gap == "\n#{space}\n"
+      end
+
+      assert [%{"kind" => "raw", "text" => "    a\n\t\n    b"}] =
+               Markdown.blocks("    a\n\t\n    b")
+    end
+
     test "front matter, comments, and details and math written another way are kept whole" do
       markdown = """
       ---
