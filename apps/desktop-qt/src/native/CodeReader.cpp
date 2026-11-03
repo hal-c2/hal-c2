@@ -33,6 +33,7 @@ QCache<QString, Cached>& cache() {
   return cache;
 }
 
+std::atomic<quint64> requests{0};
 std::atomic<quint64> starts{0};
 
 void collect(void* context, const HalC2SyntaxSpan* span) {
@@ -77,14 +78,23 @@ void Job::run() {
 }
 
 void start(const std::shared_ptr<Job>& job, std::weak_ptr<int> alive, std::function<void(const std::shared_ptr<Job>&)> done) {
-  ++starts;
+  ++requests;
   QThreadPool* pool = readers();
   pool->start([job, alive = std::move(alive), done = std::move(done), pool] {
+    // Its reader went while it waited, as a code block scrolled past does.
+    if (alive.expired()) return;
+    ++starts;
     job->run();
     QMetaObject::invokeMethod(pool, [job, alive, done] {
       if (alive.lock()) done(job);
+      // Gone while it was read: what it read is kept for when it is back.
+      else if (job->known && !job->key.isEmpty()) keep(job->key, job->runs);
     }, Qt::QueuedConnection);
   });
+}
+
+quint64 requested() {
+  return requests.load();
 }
 
 quint64 started() {

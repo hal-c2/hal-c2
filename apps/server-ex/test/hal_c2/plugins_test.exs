@@ -402,7 +402,7 @@ defmodule HalC2.PluginsTest do
       }
     end)
 
-    # What `HalC2.Hot` does for a process whose module changed.
+    # What a release upgrade (`{update, M, {advanced, []}}`) does for a process whose module changed.
     :ok = :sys.suspend(Plugins)
     :ok = :sys.change_code(Plugins, Plugins, nil, :hot)
     :ok = :sys.resume(Plugins)

@@ -30,6 +30,10 @@ void CodeHighlighter::clearCache() {
   codereader::clearCache();
 }
 
+int CodeHighlighter::readsStarted() {
+  return int(codereader::started());
+}
+
 void CodeHighlighter::setQuickDocument(QQuickTextDocument* document) {
   if (document == m_quickDocument) return;
   m_quickDocument = document;
@@ -157,6 +161,7 @@ void CodeHighlighter::schedule() {
   } else {
     m_syntax.reset();
     job->delta = text;
+    if (!m_streaming) job->key = cacheKey(text);
   }
 
   setRunning(true);

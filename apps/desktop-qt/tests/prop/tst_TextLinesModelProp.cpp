@@ -171,11 +171,11 @@ struct Open : Command {
   void run(const Model& before, Viewer& viewer) const override {
     Model after = before;
     apply(after);
-    const quint64 reads = codereader::started();
+    const quint64 reads = codereader::requested();
     viewer.lines.setText(after.text, after.path);
     // Read already, or the same file again, or nothing to read: no new read.
     const bool same = before.path == after.path && before.text == after.text;
-    if (!after.readable() || same || after.kept.contains({after.path, after.text})) RC_ASSERT(codereader::started() == reads);
+    if (!after.readable() || same || after.kept.contains({after.path, after.text})) RC_ASSERT(codereader::requested() == reads);
     if (after.kept.contains({after.path, after.text}) && !same) RC_ASSERT(!viewer.lines.reading());
     check(after, viewer, !viewer.lines.reading());
   }
@@ -200,14 +200,14 @@ struct ThemeSwitch : Command {
   void run(const Model& before, Viewer& viewer) const override {
     Model after = before;
     apply(after);
-    const quint64 reads = codereader::started();
+    const quint64 reads = codereader::requested();
     const bool reading = viewer.lines.reading();
     QSignalSpy changed(&viewer.lines, &QAbstractItemModel::dataChanged);
     QSignalSpy reset(&viewer.lines, &QAbstractItemModel::modelReset);
     viewer.lines.setBackground(after.dark ? kDark : kLight);
     // Shown from what was read: nothing is read again, and only the styled
     // role changes.
-    RC_ASSERT(codereader::started() == reads && viewer.lines.reading() == reading && reset.isEmpty());
+    RC_ASSERT(codereader::requested() == reads && viewer.lines.reading() == reading && reset.isEmpty());
     for (const QList<QVariant>& signal : changed) RC_ASSERT(signal.at(2).value<QList<int>>() == QList<int>{TextLinesModel::StyledRole});
     check(after, viewer, !reading);
   }
@@ -220,10 +220,10 @@ struct Limit : Command {
   void run(const Model& before, Viewer& viewer) const override {
     Model after = before;
     apply(after);
-    const quint64 reads = codereader::started();
+    const quint64 reads = codereader::requested();
     const bool reading = viewer.lines.reading();
     viewer.lines.setColumnLimit(limit);
-    RC_ASSERT(codereader::started() == reads);
+    RC_ASSERT(codereader::requested() == reads);
     check(after, viewer, !reading);
   }
   void show(std::ostream& os) const override { os << "Limit(" << limit << ")"; }

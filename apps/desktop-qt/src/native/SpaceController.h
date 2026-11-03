@@ -179,14 +179,16 @@ private:
 
 // The project sections of the Space sidebar (features/space/project-files.feature): one
 // for each project of the MC with Space files, in the order its projects are given, each
-// holding its files as a tree by folder. A section starts collapsed; which the user
-// expanded is `expandedProjects`, for the client to remember across restarts. A project
-// with no files, or not answered for yet, has no section.
+// holding its files as a tree by folder. A section and each folder start collapsed; which
+// the user expanded are `expandedProjects` and `expandedFolders`, for the client to
+// remember across restarts. A project with no files, or not answered for yet, has no
+// section.
 //
 // Rows {id, kind (project, folder, file), projectId, path, name, depth, expanded, pageId}:
 // a project's row, then, while it is expanded, its folders and files depth first, a
-// folder's folders before its files, each by name. `path` is a folder's or a file's
-// path in the project, `pageId` a file's page ("" before it is opened).
+// folder's folders before its files, each by name, and a folder's own only while it is
+// expanded too. `path` is a folder's or a file's path in the project, `pageId` a file's
+// page ("" before it is opened).
 class SpaceProjects : public SpaceRows {
   Q_OBJECT
 
@@ -204,10 +206,16 @@ public:
   void setFiles(const QString& projectId, const QHash<QString, QString>& pages);
   void setExpanded(const QString& projectId, bool expanded);
   bool isExpanded(const QString& projectId) const { return m_expanded.contains(projectId); }
+  // A folder by its path in the project, as its row says it.
+  void setFolderExpanded(const QString& projectId, const QString& path, bool expanded);
+  // The section and the folders a file is in, opened so its row shows.
+  void reveal(const QString& projectId, const QString& path);
   // Sorted, sections not shown included: a project out of reach keeps its choice.
   QStringList expandedProjects() const;
+  // Project id to its expanded folders' paths, sorted; a collapsed section keeps its own.
+  QVariantMap expandedFolders() const;
   // What was remembered; says nothing back.
-  void restoreExpanded(const QStringList& projectIds);
+  void restoreExpanded(const QStringList& projectIds, const QVariantMap& folders);
 
 signals:
   // The user expanded or collapsed a section.
@@ -219,6 +227,7 @@ private:
   QList<Project> m_projects;
   QHash<QString, QHash<QString, QString>> m_files;
   QSet<QString> m_expanded;
+  QHash<QString, QSet<QString>> m_folders;
 };
 
 // What the Space view shows of the MC's Space streams: the Spaces, the
@@ -589,6 +598,10 @@ public:
   static inline const QString kScanFiles = QStringLiteral("space.files.scanProject");
   // The device setting keeping the expanded sections, as "environment:project".
   static inline const QString kExpandedKey = QStringLiteral("spaceExpandedProjects");
+  // {environment: {project: [folder paths]}}: a project id may hold ':' itself.
+  static inline const QString kExpandedFoldersKey = QStringLiteral("spaceExpandedFolders");
+  // Set while this writes both: the first write must not restore the other's old value.
+  bool m_rememberingExpanded = false;
 
   SpaceController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 

@@ -11,9 +11,10 @@ defmodule HalC2.PullRequests.Held do
   takes a token first (`lookup/2`, `token/0`) and passes it to the put, which is
   dropped if anything was forgotten since.
 
-  A host that answered "rate limit" is paused for 30 seconds, doubling with each limit
-  hit in a row up to 15 minutes; held previews are still answered while it is. Times
-  are milliseconds from the caller's clock.
+  A host other than GitHub that answered "rate limit" is paused for 30 seconds,
+  doubling with each limit hit in a row up to 15 minutes; held previews are still
+  answered while it is. GitHub's limits are kept for every call in
+  `HalC2.GitHub.Limits`. Times are milliseconds from the caller's clock.
   """
 
   use GenServer

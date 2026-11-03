@@ -1095,12 +1095,14 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
-  step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out) and the MC is hot-updated$/,
+  step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out) and the MC upgrades in place$/,
        %{args: [change]} = context do
     sign_in_or_out(context, change)
 
     # As an MC that runs as one: a test MC leaves its host alone otherwise.
     World.put_app_env(:start_mc, true)
+    # The reload moves the MC's code path into the scenario's home.
+    HalC2.Test.Mc.put_back_on_exit()
     assert {:ok, _report} = HalC2.Upgrade.reload_checkout()
     context
   end

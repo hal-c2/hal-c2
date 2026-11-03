@@ -1,12 +1,15 @@
 defmodule HalC2.Steps.Platform.Upgrades do
   @moduledoc """
   Steps for `features/mc/platform/upgrades.feature`. The MC runs from a release
-  laid out in its home (`HalC2.Test.Mc.release/2`); bundles are built from variants of
-  loaded modules (`HalC2.Test.Mc.bundle/4`), and a restart arrives as
-  `{:hal_c2_restart, status}` instead of stopping the VM.
+  laid out in its home (`HalC2.Test.Mc.release/2`); bundles are real releases built
+  from variants of loaded modules (`HalC2.Test.Mc.bundle/4`), which the release
+  handler installs into this VM, and a restart arrives as `{:hal_c2_restart, status}`
+  instead of stopping the VM. A checkout's build is a copy of this one's with
+  variants over it.
   """
   use Cucumber.StepDefinition
   import ExUnit.Assertions
+  import ExUnit.CaptureLog, only: [with_log: 1]
 
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
@@ -42,8 +45,11 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
   step ~r/^a client asks the MC to update(?: to (?:that version|it))?$/, context do
     input = Map.get_lazy(context, :input, fn -> %{"targetVersion" => context.target} end)
-    {reply, context} = World.call(context, "server.updateServer", input)
-    Map.put(context, :reply, reply)
+
+    {{reply, context}, log} =
+      with_log(fn -> World.call(context, "server.updateServer", input) end)
+
+    Map.merge(context, %{reply: reply, log: log})
   end
 
   step "the MC loads the changed modules in place", context do
@@ -112,25 +118,54 @@ defmodule HalC2.Steps.Platform.Upgrades do
 
   # --- restarts -----------------------------------------------------------------------
 
-  step ~r/^a bundle that changes (?<what>.+)$/, %{args: [what]} = context do
+  step ~r/^a bundle that changes (?<what>.+) in place$/, %{args: [what]} = context do
+    context = Map.put(context, :what, what)
+
+    case what do
+      "a supervisor module" ->
+        context
+        |> Map.put(:streams, Process.whereis(HalC2.Streams))
+        |> bundle(%{}, [Mc.variant(HalC2.Streams)])
+
+      # The release handler sets the environment of the applications in the release,
+      # which here holds the MC's code as another application: an OTP one stands in.
+      "the configuration" ->
+        ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:stdlib, :upgrade_probe) end)
+        bundle(context, %{"config" => "d", "sys.config" => [stdlib: [upgrade_probe: :changed]]})
+    end
+  end
+
+  step "the MC takes the change without restarting", context do
+    assert {:ok, %{"method" => "hot-upgrade", "targetVersion" => target}} = context.reply
+    assert target == context.target
+    refute_received {:hal_c2_restart, _}
+
+    case context.what do
+      "a supervisor module" ->
+        assert function_exported?(HalC2.Streams, :__hal_c2_variant__, 0)
+        assert Process.whereis(HalC2.Streams) == context.streams
+
+      "the configuration" ->
+        assert Application.get_env(:stdlib, :upgrade_probe) == :changed
+    end
+
+    context
+  end
+
+  step ~r/^a bundle that changes (?<what>(?!.* in place$).+)$/, %{args: [what]} = context do
     case what do
       "the OTP release" ->
         bundle(context, %{"otpRelease" => "30"})
 
-      "a dependency" ->
-        bundle(context, %{"dependencies" => %{"exqlite" => "0.42.0"}})
+      "the emulator's flags" ->
+        bundle(context, %{"vmArgs" => "+S 1"})
 
-      "the set of dependencies" ->
-        bundle(context, %{"dependencies" => %{"exqlite" => "0.41.0", "more" => "1"}})
+      "code that loads a NIF" ->
+        {mod, _beam} = nif = Mc.nif_module(context.mc)
+        context |> Map.put(:native, mod) |> bundle(%{}, [nif])
 
-      "the platform's packages" ->
-        bundle(context, %{"packages" => "q"})
-
-      "the configuration" ->
-        bundle(context, %{"config" => "d"})
-
-      "a supervisor module" ->
-        bundle(context, %{}, [Mc.variant(HalC2.Streams)])
+      "a release from before release upgrades" ->
+        bundle(context, %{"releaseUpgrades" => false})
     end
   end
 
@@ -145,7 +180,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
   step "exits asking its service wrapper to start it again", context do
     assert_receive {:hal_c2_restart, 75}, 3_000
     # Nothing was loaded in place.
-    refute function_exported?(HalC2.Streams, :__hal_c2_variant__, 0)
+    if mod = context[:native], do: refute(:code.is_loaded(mod))
+    assert Upgrade.version() != context.target
     context
   end
 
@@ -174,9 +210,21 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step "a code-only bundle that fails to load in place", context do
-    {mod, _pid} = blocker(context, :old)
-    bundle(context, %{}, [{mod, blocker_beam(context, mod, 3)}])
+  step "a process still runs code from the update before", context do
+    {mod, pid} = blocker(context, :old)
+    Map.merge(context, %{blocker: mod, blocked: pid})
+  end
+
+  step "a bundle that replaces that code again", context do
+    mod = context.blocker
+    bundle(context, %{}, [{mod, blocker_beam(context, mod, 3), blocker_beam(context, mod, 2)}])
+  end
+
+  step "it says the process holding the old code is why", context do
+    assert context.log =~ "did not install in place"
+    assert context.log =~ inspect(context.blocked)
+    assert Process.alive?(context.blocked)
+    context
   end
 
   step "the MC restarts into the new version instead", context do
@@ -448,113 +496,83 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
+  # The MC's own build: `mix compile` changed a plain module and a supervisor.
   step "MCs started from a checkout", context do
     System.delete_env("RELEASE_ROOT")
     assert Upgrade.release_root() == nil
-    # A build directory holding a recompiled plain module and a recompiled supervisor.
-    ebin =
-      Path.join([Mc.tmp_dir(context.mc, "_build"), "_build", "dev", "lib", "hal_c2", "ebin"])
-
-    File.mkdir_p!(ebin)
-
     Code.ensure_loaded!(HalC2.Patch)
-
-    for {mod, beam} <- [Mc.variant(HalC2.Patch), Mc.variant(HalC2.Streams)] do
-      Mc.remember_module(mod)
-      File.write!(Path.join(ebin, "#{mod}.beam"), beam)
-    end
-
-    true = :code.add_patha(String.to_charlist(ebin))
-    ExUnit.Callbacks.on_exit(fn -> :code.del_path(String.to_charlist(ebin)) end)
-    context
+    build = checkout(context, "checkout", [Mc.variant(HalC2.Patch), Mc.variant(HalC2.Streams)])
+    own_build(build)
+    Map.put(context, :streams, Process.whereis(HalC2.Streams))
   end
 
   step "MCs started from a checkout whose new code adds services", context do
     System.delete_env("RELEASE_ROOT")
-    ebin = Path.join([Mc.tmp_dir(context.mc, "_build"), "_build", "dev", "lib", "hal_c2", "ebin"])
-    File.mkdir_p!(ebin)
-    Mc.remember_module(HalC2.Application)
-    {HalC2.Application, original, _} = :code.get_object_code(HalC2.Application)
-
-    # The new code's beam, compiled and then the running code put back.
-    Code.put_compiler_option(:ignore_module_conflict, true)
-
-    [{HalC2.Application, beam}] =
-      Code.compile_string("""
-      defmodule HalC2.Application do
-        def children,
-          do: [
-            Supervisor.child_spec({Task, fn -> Process.sleep(:infinity) end},
-              id: :search_backfill
-            ),
-            {Registry, keys: :unique, name: HalC2.Test.NewService},
-            %{id: :broken_service, start: {:erlang, :apply, [fn -> {:error, :boom} end, []]}}
-          ]
-      end
-      """)
-
-    Code.put_compiler_option(:ignore_module_conflict, false)
-    {:module, _} = :code.load_binary(HalC2.Application, ~c"application.beam", original)
-    File.write!(Path.join(ebin, "Elixir.HalC2.Application.beam"), beam)
-    true = :code.add_patha(String.to_charlist(ebin))
+    alias HalC2.Test.Services
+    {:ok, _} = Supervisor.start_child(HalC2.Supervisor, Services)
+    # Its boot task has run.
+    assert Supervisor.which_children(Services) |> Enum.all?(&(elem(&1, 0) != :search_backfill))
 
     ExUnit.Callbacks.on_exit(fn ->
-      :code.del_path(String.to_charlist(ebin))
-      Supervisor.terminate_child(HalC2.Supervisor, :search_backfill)
-      Supervisor.terminate_child(HalC2.Supervisor, HalC2.Test.NewService)
-      Supervisor.delete_child(HalC2.Supervisor, HalC2.Test.NewService)
+      Supervisor.terminate_child(HalC2.Supervisor, Services)
+      Supervisor.delete_child(HalC2.Supervisor, Services)
     end)
 
-    context
+    old = Process.whereis(HalC2.Test.OldService)
+
+    build =
+      checkout(context, "checkout", [
+        {Services, HalC2.Test.Compile.beam(Services, Services.next())}
+      ])
+
+    own_build(build)
+    Map.put(context, :old_service, old)
   end
 
   step "the new service runs without a restart", context do
-    assert {:ok, %{changed: changed, needs_restart: needs_restart}} = context.report
-    assert HalC2.Application in changed
-    refute HalC2.Test.NewService in needs_restart
+    assert {:ok, %{changed: changed, services: services}} = context.report
+    assert HalC2.Test.Services in changed
+    assert {:started, HalC2.Test.NewService} in services
     assert Process.whereis(HalC2.Test.NewService)
     context
   end
 
-  # Its id was in the old application, so the reload never started it, though its spec
-  # changed; started, it would still be running.
+  # It ran and ended before the reload, and its spec is back after it.
   step "a boot task that already ran does not run again", context do
     refute Enum.any?(
-             Supervisor.which_children(HalC2.Supervisor),
+             Supervisor.which_children(HalC2.Test.Services),
              &(elem(&1, 0) == :search_backfill)
            )
 
+    assert {:ok, %{services: services}} = context.report
+    refute Enum.any?(services, &(elem(&1, 1) == :search_backfill))
     context
   end
 
   step "a new service that fails to start is reported as needing a restart", context do
-    assert {:ok, %{needs_restart: needs_restart}} = context.report
-    assert :broken_service in needs_restart
+    assert {:ok, %{needs_restart: [:broken_service]}} = context.report
     context
   end
 
-  # The new code's backfill task is another function, and it lists no store.
-  step "services it changed or no longer lists are reported as needing a restart", context do
-    assert {:ok, %{needs_restart: needs_restart}} = context.report
-    assert :search_backfill in needs_restart
-    assert HalC2.Store in needs_restart
+  step "services it changed restart on their new specs, and ones it no longer lists stop",
+       context do
+    assert {:ok, %{services: services}} = context.report
+    assert {:restarted, :changed_service} in services
+    assert {:stopped, HalC2.Test.OldService} in services
+
+    {_, agent, _, _} =
+      List.keyfind(Supervisor.which_children(HalC2.Test.Services), :changed_service, 0)
+
+    assert Agent.get(agent, & &1) == 2
+    refute Process.alive?(context.old_service)
     context
   end
 
   step "another checkout holds edited code the MC was not started from", context do
     System.delete_env("RELEASE_ROOT")
-    build = Path.join([Mc.tmp_dir(context.mc, "worktree"), "_build", "dev"])
-    ebin = Path.join([build, "lib", "hal_c2", "ebin"])
-    File.mkdir_p!(ebin)
     Code.ensure_loaded!(HalC2.Patch)
-
-    for {mod, beam} <- [Mc.variant(HalC2.Patch), Mc.variant(HalC2.Streams)] do
-      Mc.remember_module(mod)
-      File.write!(Path.join(ebin, "#{mod}.beam"), beam)
-    end
-
-    ExUnit.Callbacks.on_exit(fn -> :code.del_path(String.to_charlist(ebin)) end)
-    Map.put(context, :other_build, build)
+    build = checkout(context, "worktree", [Mc.variant(HalC2.Patch), Mc.variant(HalC2.Streams)])
+    context |> Map.put(:other_build, build) |> Map.put(:streams, Process.whereis(HalC2.Streams))
   end
 
   step "a developer reloads the local MC from that checkout", context do
@@ -634,14 +652,16 @@ defmodule HalC2.Steps.Platform.Upgrades do
   # --- code alone -------------------------------------------------------------------------
 
   step "a code-only bundle built with another patch of the Erlang runtime", context do
-    bundle(context, %{"erts" => "17.0.6"}, [Mc.variant(HalC2.JsonRpc.Connection)])
+    other = HalC2.Test.Release.erts() <> ".1"
+    bundle(context, %{"erts" => other}, [Mc.variant(HalC2.JsonRpc.Connection)])
   end
 
   # The bundle's own runtime is neither installed nor named for the next start.
   step "its next start uses the Erlang runtime it already has", context do
+    erts = HalC2.Test.Release.erts()
     data = Path.join([context.root, "releases", "start_erl.data"])
-    assert File.read!(data) == "17.0.5 #{context.target}\n"
-    assert %{"erts" => "17.0.5", "version" => version} = installed_manifest(context)
+    assert String.trim(File.read!(data)) == "#{erts} #{context.target}"
+    assert %{"erts" => ^erts, "version" => version} = installed_manifest(context)
     assert version == context.target
     context
   end
@@ -764,66 +784,67 @@ defmodule HalC2.Steps.Platform.Upgrades do
     context
   end
 
-  step "a changed supervisor's functions load, and the report lists it to restart for",
-       context do
-    assert {:ok, %{needs_restart: [HalC2.Streams]}} = context.report
+  step "a changed supervisor runs its new code without restarting", context do
+    assert {:ok, %{needs_restart: []}} = context.report
     assert function_exported?(HalC2.Streams, :__hal_c2_variant__, 0)
-    assert Process.whereis(HalC2.Streams)
+    assert Process.whereis(HalC2.Streams) == context.streams
     context
   end
 
   step "a process is blocked inside a module being replaced", context do
     {mod, pid} = blocker(context, :current)
-    Map.merge(context, %{blocker: mod, blocked: pid, next: {mod, blocker_beam(context, mod, 2)}})
+    Map.merge(context, %{blocker: mod, blocked: pid})
   end
 
-  step "new code loads", context do
-    Map.put(context, :report, HalC2.Hot.reload([context.next]))
-  end
-
-  step "that module is reported as lingering", context do
+  step "an update replaces that module in place", context do
     mod = context.blocker
-    assert {:ok, %{changed: [^mod], lingering: [^mod]}} = context.report
-    assert mod.version() == 2
+
+    context =
+      bundle(context, %{}, [{mod, blocker_beam(context, mod, 2), blocker_beam(context, mod, 1)}])
+
+    Map.put(context, :reply, Upgrade.update(%{"targetVersion" => context.target}))
+  end
+
+  step "the module's old code stays for the process still in it", context do
+    assert {:ok, %{"targetVersion" => target}} = context.reply
+    assert target == context.target
+    refute_received {:hal_c2_restart, _}
+    assert context.blocker.version() == 2
+    assert :erlang.check_process_code(context.blocked, context.blocker)
     context
   end
 
-  step "newer code loads", context do
-    mod = context.blocker
-    Map.put(context, :report, HalC2.Hot.reload([{mod, blocker_beam(context, mod, 3)}]))
+  step "a service whose state the new version keeps in another shape", context do
+    Mc.remember_module(HalC2.Test.Shaped)
+    {:ok, pid} = Supervisor.start_child(HalC2.Supervisor, {HalC2.Test.Shaped, 1})
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Supervisor.terminate_child(HalC2.Supervisor, HalC2.Test.Shaped)
+      Supervisor.delete_child(HalC2.Supervisor, HalC2.Test.Shaped)
+    end)
+
+    assert HalC2.Test.Shaped.state() == {:v1, 1}
+    Map.put(context, :shaped, pid)
   end
 
-  step "the reload is refused naming the blocked process", context do
-    {mod, pid} = {context.blocker, context.blocked}
+  step "an update replaces that service's module in place", context do
+    beam = HalC2.Test.Compile.beam(HalC2.Test.Shaped, HalC2.Test.Shaped.next())
+    context = bundle(context, %{}, [{HalC2.Test.Shaped, beam}])
+    Map.put(context, :reply, Upgrade.update(%{"targetVersion" => context.target}))
+  end
 
-    assert {:error, {:previous_version_still_running, [{^mod, [{^pid, _current}]}]} = reason} =
-             context.report
-
-    assert HalC2.Hot.describe_error(reason) =~ inspect(pid)
-    assert mod.version() == 2
+  step "the service migrated its state without restarting", context do
+    assert {:ok, %{"targetVersion" => target}} = context.reply
+    assert target == context.target
+    refute_received {:hal_c2_restart, _}
+    assert Process.whereis(HalC2.Test.Shaped) == context.shaped
+    assert HalC2.Test.Shaped.state() == {:v2, 1, [:migrated]}
     context
   end
 
-  step "a changed module that loads a NIF", context do
-    mod = :"hal_c2_steps_nif_#{System.unique_integer([:positive])}"
-    path = Path.join(Mc.tmp_dir(context.mc, "nif"), "#{mod}.erl")
-
-    # Its NIF library does not exist: loading the module at all would fail.
-    File.write!(path, """
-    -module(#{mod}).
-    -export([init/0]).
-    -on_load(init/0).
-    init() -> erlang:load_nif("#{Path.rootname(path)}", 0).
-    """)
-
-    {:ok, ^mod, beam} = :compile.file(String.to_charlist(path), [:binary, :return_errors])
-    Map.merge(context, %{native: mod, next: {mod, beam}})
-  end
-
-  step "it is reported as native and left unloaded", context do
-    mod = context.native
-    assert {:ok, %{changed: [], native: [^mod]}} = context.report
-    refute :code.is_loaded(mod)
+  step "no process runs the old code", context do
+    refute :erlang.check_old_code(HalC2.Test.Shaped)
+    refute Enum.any?(Process.list(), &:erlang.check_process_code(&1, HalC2.Test.Shaped))
     context
   end
 
@@ -854,7 +875,8 @@ defmodule HalC2.Steps.Platform.Upgrades do
     assert JSON.decode!(IO.iodata_to_binary(pong)) == %{"t" => "pong"}
 
     assert %{
-             v: 10,
+             v: 11,
+             following: %{},
              scopes: :all,
              monitors: %{},
              shell: %{},
@@ -895,6 +917,39 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   # --- helpers ---------------------------------------------------------------------------
+
+  # A checkout's `_build/dev`: a copy of the MC's compiled application, `modules`
+  # (`{module, beam}`) over it, whose beams the scenario's end loads back.
+  # A reload moves the MC's code path into the checkout, which goes with the scenario.
+  defp checkout(context, name, modules) do
+    Mc.put_back_on_exit()
+    source = Application.app_dir(:hal_c2)
+    build = Path.join([Mc.tmp_dir(context.mc, name), "_build", "dev"])
+    app = Path.join([build, "lib", "hal_c2"])
+    File.mkdir_p!(app)
+    File.cp_r!(Path.join(source, "ebin"), Path.join(app, "ebin"))
+    File.cp_r!(Path.join(source, "consolidated"), Path.join(app, "consolidated"))
+    File.ln_s!(Path.join(source, "priv"), Path.join(app, "priv"))
+
+    for {mod, beam} <- modules do
+      Mc.remember_module(mod)
+      File.write!(Path.join([app, "ebin", "#{mod}.beam"]), beam)
+    end
+
+    build
+  end
+
+  # The build the MC started from (`Mix.Project.build_path/0`).
+  defp own_build(build) do
+    previous = System.get_env("MIX_BUILD_PATH")
+    System.put_env("MIX_BUILD_PATH", build)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous,
+        do: System.put_env("MIX_BUILD_PATH", previous),
+        else: System.delete_env("MIX_BUILD_PATH")
+    end)
+  end
 
   defp reload(context, token),
     do: Mc.request(context.mc, :post, "/api/dev/reload", bearer: token)
@@ -1049,16 +1104,7 @@ defmodule HalC2.Steps.Platform.Upgrades do
   defp peer_release(%{name: name, home: home}) do
     root = Path.join(home, "release")
     version = :erpc.call(name, Upgrade, :version, [])
-    File.mkdir_p!(Path.join([root, "releases", version]))
-    File.mkdir_p!(Path.join(root, "lib"))
-    File.mkdir_p!(Path.join(root, "bin"))
-
-    File.write!(
-      Path.join([root, "releases", version, "upgrade.json"]),
-      JSON.encode!(Mc.manifest(version))
-    )
-
-    File.write!(Path.join([root, "releases", "start_erl.data"]), "17.0.5 #{version}\n")
+    HalC2.Test.Release.root(root, version, Mc.manifest(version))
 
     for {key, value} <- [{"RELEASE_ROOT", root}, {"HAL_C2_UPGRADE_URL", @unreachable}],
         do: :ok = :erpc.call(name, System, :put_env, [key, value])

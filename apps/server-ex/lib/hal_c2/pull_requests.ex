@@ -11,13 +11,14 @@ defmodule HalC2.PullRequests do
   repository on that host, served through a checkout there.
 
   Who is signed in to each host is cached, and link previews for a few seconds
-  (`HalC2.PullRequests.Held`). Every change made here bumps
+  (`HalC2.PullRequests.Held`). Every change made here forgets the branches held as
+  having that pull request (`HalC2.PullRequests.Branches`) and bumps
   `HalC2.PullRequests.Refreshes`, which clients follow to read again.
   """
 
   require Logger
 
-  alias HalC2.PullRequests.{GitHub, Held, Refreshes}
+  alias HalC2.PullRequests.{Branches, GitHub, Held, Refreshes}
   alias HalC2.SourceControl.ChangeRequests
 
   @default_limit 99
@@ -87,10 +88,15 @@ defmodule HalC2.PullRequests do
     "setLabels" => :set_labels
   }
 
+  # What the user did, rather than a view reading: these go through a rate-limit pause.
+  @asked ~w(setFilesViewed runAction update comment updateComment submitReview replyToThread
+            setThreadResolution setReaction requestReviewers setLabels)
+
   @doc "Serves `pullRequests.<method>` (`HalC2.Rpc`)."
   def handle(method, input) do
     case @methods[method] do
       nil -> {:error, "pullRequests.#{method} is not served by this MC yet"}
+      fun when method in @asked -> HalC2.GitHub.asked(fn -> apply(__MODULE__, fun, [input]) end)
       fun -> apply(__MODULE__, fun, [input])
     end
   end
@@ -308,6 +314,10 @@ defmodule HalC2.PullRequests do
     host = project.host || "The host"
 
     cond do
+      # `HalC2.GitHub` already says when the pause ends.
+      detail =~ ~r/paused until it resets at/ ->
+        detail
+
       detail =~ ~r/HTTP 429|rate limit/i ->
         "#{host}'s rate limit was reached. Try again in a few minutes."
 
@@ -482,8 +492,9 @@ defmodule HalC2.PullRequests do
   `pullRequests.preview`: the hover card of a pull request, from the host's narrow
   read. One read in the last 15 seconds answers it, a preview or one cut from a full
   details read (`HalC2.PullRequests.Held`); a details read still in flight is never
-  waited on. While the host's rate limit pauses reads, held previews are still
-  answered and the rest refused until it resets.
+  waited on. While the host's rate limit pauses reads (GitHub's, every call to it:
+  `HalC2.GitHub.Limits`), held previews are still answered and the rest refused until
+  it resets.
   """
   def preview(ref) do
     read(
@@ -550,15 +561,17 @@ defmodule HalC2.PullRequests do
     read
   end
 
-  defp held_detail(error, project, _ctx, _read_at, _token) do
-    if rate_limited?(error), do: Held.rate_limited(lower(project.host), now())
-    error
-  end
+  # GitHub's rate limit is kept in `HalC2.GitHub.Limits`, which every `gh` call passes.
+  defp held_detail(error, _project, _ctx, _read_at, _token), do: error
 
   defp held_key(project, number),
     do: {lower(project.host), lower(project.repository), number, project.id}
 
-  # A host's rate limit pauses its previews until it resets.
+  # A host's rate limit pauses its previews until it resets: GitHub's every call, in
+  # `HalC2.GitHub.Limits`; another host's previews, in `Held`.
+  defp limited({:error, {:rate_limited, detail}}, %{kind: "github"}),
+    do: refuse("preview", detail)
+
   defp limited(error, project) do
     if rate_limited?(error),
       do: paused(project, Held.rate_limited(lower(project.host), now())),
@@ -857,11 +870,16 @@ defmodule HalC2.PullRequests do
     {:ok, nil}
   end
 
-  defp forget(nil), do: Held.forget_all()
+  defp forget(nil) do
+    Held.forget_all()
+    Branches.forget()
+  end
 
   defp forget(reference) do
-    with {:ok, project} <- project_for(reference),
-         do: Held.forget(project.host, project.repository, reference["number"])
+    with {:ok, project} <- project_for(reference) do
+      Held.forget(project.host, project.repository, reference["number"])
+      Branches.forget_pull_request(project.repository, reference["number"])
+    end
   end
 
   @doc """
@@ -1252,6 +1270,7 @@ defmodule HalC2.PullRequests do
         fun.(project, ctx)
       after
         Held.forget(project.host, project.repository, ctx.number)
+        Branches.forget_pull_request(project.repository, ctx.number)
       end
     end
 

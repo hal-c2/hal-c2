@@ -569,7 +569,7 @@ defmodule HalC2.Cluster do
         Application.get_env(:hal_c2, :cluster_gossip, @gossip_every)
       )
 
-  # A cluster process updated in place (`HalC2.Hot`) does not run `init/1` again. One
+  # A cluster process updated in place by a release upgrade does not run `init/1` again. One
   # from before the port outlived it keeps it in the table, where `Epmd` no longer
   # looks (distribution names it only once), and has no gossip going.
   @impl true

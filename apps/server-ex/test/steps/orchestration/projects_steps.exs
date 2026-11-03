@@ -407,7 +407,7 @@ defmodule HalC2.Steps.Orchestration.Projects do
     context
   end
 
-  # What `HalC2.Hot.reload/2` does to a process whose module changed.
+  # What a release upgrade does to a process whose module changed.
   step "the MC loads new code in place", context do
     :ok = :sys.suspend(HalC2.Shell)
     :ok = :sys.change_code(HalC2.Shell, HalC2.Shell, nil, :hot)

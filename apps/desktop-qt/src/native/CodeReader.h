@@ -55,15 +55,22 @@ struct Job {
   std::shared_ptr<const Runs> runs;
   // Whether the language or path has a syntax at all.
   bool known = true;
+  // Where a whole read of text not being written is kept, else empty. Kept
+  // by `start` when its reader went while it was read (the reader keeps it
+  // itself otherwise), so it is coloured at once when it is back.
+  QString key;
 
   void run();
 };
 
 // Runs `job` on the readers (two threads for the whole app), then `done` on
-// the GUI thread, unless `alive` has expired by then.
+// the GUI thread, unless `alive` has expired by then. A job whose `alive`
+// expired before a reader took it up is not read at all: what is still shown
+// is read first.
 void start(const std::shared_ptr<Job>& job, std::weak_ptr<int> alive, std::function<void(const std::shared_ptr<Job>&)> done);
-// How many reads have started since the app did: the tests' way to see that
-// none did.
+// How many reads were asked for (`start`), and how many a reader took up,
+// since the app started: the tests' ways to see that none was.
+quint64 requested();
 quint64 started();
 
 // The key `text` is kept by: a language, or a file's path.

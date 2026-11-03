@@ -9,8 +9,10 @@ defmodule HalC2.PullRequests.Discovery do
   unarchived, and with a fresh answer when it is unsettled or a run ends. Unsettled
   threads are swept every minute; at start, settled threads that never found theirs
   get a few sweeps to. Only GitHub checkouts are asked, through `gh`. A branch's
-  answer is believed for a minute while its pull request is open and five otherwise,
-  and failures back off. `sweep/0` runs a sweep now and returns when it is done.
+  answer is the one every reader of it shares (`HalC2.PullRequests.Branches`); a
+  commit's is believed for a minute while it heads an open pull request and five
+  otherwise, and failures back off. `sweep/0` runs a sweep now and returns when it is
+  done.
 
   A thread in its own worktree whose branch shows no open pull request may have pushed
   its commit under another name (`git push origin HEAD:fix/x`). The open pull requests
@@ -26,7 +28,7 @@ defmodule HalC2.PullRequests.Discovery do
 
   alias HalC2.Orchestration
   alias HalC2.Projection.PullRequests, as: Links
-  alias HalC2.PullRequests.{GitHub, Opened}
+  alias HalC2.PullRequests.{Branches, GitHub, Opened}
 
   @interval 60_000
   @backfill_attempts 5
@@ -180,19 +182,12 @@ defmodule HalC2.PullRequests.Discovery do
         end
       end)
 
-    wanted =
-      for %{group: [%{"branch" => branch} | _]} = p <- placed,
-          branch != nil,
-          wanted?(state.lookups[{p.cwd, branch}], p.fresh?, now),
-          uniq: true,
-          do: {p.cwd, branch}
-
-    state = fetch(state, wanted, &GitHub.branch_pull_request/2)
+    branches = branches(placed)
 
     placed =
       Enum.map(placed, fn p ->
-        fetched? = {p.cwd, hd(p.group)["branch"]} in wanted
-        p = Map.merge(p, %{detected: detected(state, p), fetched?: fetched?})
+        {answer, fetched?} = branches[{p.cwd, hd(p.group)["branch"]}] || {nil, false}
+        p = Map.merge(p, %{detected: detected(p, answer), fetched?: fetched?})
         Map.put(p, :head, head(p))
       end)
 
@@ -209,13 +204,29 @@ defmodule HalC2.PullRequests.Discovery do
     state
   end
 
+  # Each branch's answer, asked fresh when any thread on it wants it fresh, a few at a
+  # time: `%{{cwd, branch} => {answer, read?}}`. The branch's answer is held for every
+  # reader (`HalC2.PullRequests.Branches`).
+  defp branches(placed) do
+    placed
+    |> Enum.filter(&(hd(&1.group)["branch"] != nil))
+    |> Enum.group_by(&{&1.cwd, hd(&1.group)["branch"]}, & &1.fresh?)
+    |> Task.async_stream(
+      fn {{cwd, branch} = key, fresh} ->
+        {key, Branches.lookup(cwd, branch, fresh: Enum.any?(fresh))}
+      end,
+      max_concurrency: 8,
+      timeout: :infinity
+    )
+    |> Map.new(fn {:ok, pair} -> pair end)
+  end
+
   # A fresh answer replaces a cached one, but a failing look-up keeps backing off.
   defp wanted?(nil, _fresh?, _now), do: true
   defp wanted?(%{answer: :error} = failed, _fresh?, now), do: failed.expires <= now
   defp wanted?(_cached, fresh?, _now), do: fresh?
 
-  # Asks `gh` about each wanted branch or commit, a few at a time, and remembers the
-  # answers.
+  # Asks `gh` about each wanted commit, a few at a time, and remembers the answers.
   defp fetch(state, wanted, lookup) do
     wanted
     |> Task.async_stream(
@@ -299,11 +310,11 @@ defmodule HalC2.PullRequests.Discovery do
   # repository, `:mismatch` when it does not, `:error` when there is none. A default
   # branch counts only while its pull request is open: merged ones there are reverse
   # merges.
-  defp detected(_state, %{group: [%{"branch" => nil} | _]}), do: {:ok, nil}
+  defp detected(%{group: [%{"branch" => nil} | _]}, _answer), do: {:ok, nil}
 
-  defp detected(state, %{group: [%{"branch" => branch} | _]} = p) do
-    case state.lookups[{p.cwd, branch}] do
-      %{answer: %{} = pr} ->
+  defp detected(%{group: [%{"branch" => branch} | _]} = p, answer) do
+    case answer do
+      {:ok, %{} = pr} ->
         cond do
           not own?(p, pr["url"]) ->
             :mismatch
@@ -322,7 +333,7 @@ defmodule HalC2.PullRequests.Discovery do
              }}
         end
 
-      %{answer: nil} ->
+      {:ok, nil} ->
         {:ok, nil}
 
       _ ->
@@ -408,7 +419,7 @@ defmodule HalC2.PullRequests.Discovery do
   defp confirmed?(%{fetched?: true}), do: true
 
   defp confirmed?(%{group: [%{"branch" => branch} | _], detected: {:ok, found}} = p) do
-    case GitHub.branch_pull_request(p.cwd, branch) do
+    case Branches.pull_request(p.cwd, branch, fresh: true) do
       {:ok, %{} = fresh} ->
         Map.take(fresh, ~w(number url state)) == Map.take(found, ~w(number url state))
 

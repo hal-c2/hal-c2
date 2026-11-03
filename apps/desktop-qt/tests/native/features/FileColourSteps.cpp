@@ -179,7 +179,7 @@ const Steps steps([] {
   });
 
   step(QStringLiteral("the app turns dark while the file is open"), [](World& world, const Captures&, const Table&) {
-    seen(world).reads = codereader::started();
+    seen(world).reads = codereader::requested();
     seen(world).fileReads = fileReads(world);
     auto* themes = world.native().controller<ThemeController>();
     expect(themes->setMode(QStringLiteral("dark")), world.native().controller<SettingsController>()->deviceError());
@@ -195,8 +195,8 @@ const Steps steps([] {
     }, [&] { return QStringLiteral("\"%1\" in another colour than %2; it is %3").arg(keyword, seen(world).keywordColour, colour); });
   });
   step(QStringLiteral("the file was not read again"), [](World& world, const Captures&, const Table&) {
-    expect(codereader::started() == seen(world).reads && !files(world).lines()->reading(),
-           QStringLiteral("the code was read %1 more times").arg(codereader::started() - seen(world).reads));
+    expect(codereader::requested() == seen(world).reads && !files(world).lines()->reading(),
+           QStringLiteral("the code was read %1 more times").arg(codereader::requested() - seen(world).reads));
     expect(fileReads(world) == seen(world).fileReads, QStringLiteral("the MC was asked for the file %1 more times").arg(fileReads(world) - seen(world).fileReads));
   });
 

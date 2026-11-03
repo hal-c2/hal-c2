@@ -82,6 +82,7 @@ void TextLinesModel::read() {
   job->byPath = true;
   job->language = m_path.toUtf8();
   job->delta = m_text;
+  job->key = key;
   setReading(true);
   codereader::start(job, m_alive, [this, key](const std::shared_ptr<codereader::Job>& job) {
     setReading(false);

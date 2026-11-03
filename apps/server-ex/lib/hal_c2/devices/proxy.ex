@@ -123,7 +123,7 @@ defmodule HalC2.Devices.Proxy do
   end
 
   # The relay loops here and in `http_loop/5` and `ws_loop/5` call themselves by name, so
-  # a stream open across hot reloads (`HalC2.Hot`) moves to new code at its next
+  # a stream open across release upgrades moves to new code at its next
   # message instead of pinning the version it started on.
   @doc false
   def stream(conn, relay, ref) do

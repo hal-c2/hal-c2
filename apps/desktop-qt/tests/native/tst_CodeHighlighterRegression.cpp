@@ -9,6 +9,22 @@
 
 #include "CodeHighlighter.h"
 
+namespace {
+
+// Waits, without handling events, until `count` reads have started: a read
+// heard of meanwhile would come back to a highlighter still there. False
+// once it has waited too long.
+bool readsReach(int count) {
+  QDeadlineTimer deadline(30000);
+  while (CodeHighlighter::readsStarted() < count) {
+    if (deadline.hasExpired()) return false;
+    QThread::yieldCurrentThread();
+  }
+  return true;
+}
+
+}  // namespace
+
 class CodeHighlighterRegression : public QObject {
   Q_OBJECT
 private slots:
@@ -93,6 +109,57 @@ private slots:
     QCoreApplication::processEvents();
     QVERIFY(!highlighter.coloured());
     QCOMPARE(document.firstBlock().layout()->formats().size(), 0);
+  }
+
+  // A block gone while its read waited, as one scrolled past is, was still
+  // read, and the blocks left on screen waited behind it.
+  void aBlockGoneBeforeItsTurnIsNotRead() {
+    // Both readers busy, so what comes next waits.
+    const QString busy = QStringLiteral("const x = 1;\n").repeated(15000);
+    const int idle = CodeHighlighter::readsStarted();
+    QTextDocument shown[2];
+    CodeHighlighter kept[2];
+    for (int i = 0; i < 2; ++i) {
+      shown[i].setPlainText(busy + QString::number(i));
+      kept[i].setLanguage(QStringLiteral("ts"));
+      kept[i].setTextDocument(&shown[i]);
+    }
+    QVERIFY2(readsReach(idle + 2), "the busy reads never started");
+    const int before = CodeHighlighter::readsStarted();
+    {
+      QTextDocument document(QStringLiteral("let gone = 1;\n"));
+      CodeHighlighter gone;
+      gone.setLanguage(QStringLiteral("ts"));
+      gone.setTextDocument(&document);
+      QVERIFY(gone.reading());
+    }
+    QTextDocument document(QStringLiteral("let next = 2;\n"));
+    CodeHighlighter next;
+    next.setLanguage(QStringLiteral("ts"));
+    next.setTextDocument(&document);
+    QTRY_VERIFY_WITH_TIMEOUT(next.coloured() && kept[0].coloured() && kept[1].coloured(), 30000);
+    QCOMPARE(CodeHighlighter::readsStarted() - before, 1);
+  }
+
+  // One gone while it was being read leaves what it read for when it is back.
+  void aBlockGoneWhileReadIsKept() {
+    const QString code = QStringLiteral("const x = 1;\n").repeated(15000);
+    const int before = CodeHighlighter::readsStarted();
+    {
+      QTextDocument document(code);
+      CodeHighlighter gone;
+      gone.setLanguage(QStringLiteral("ts"));
+      gone.setTextDocument(&document);
+      // Gone once its read has started, before that read can be heard of.
+      QVERIFY2(readsReach(before + 1), "its read never started");
+    }
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+      QTextDocument document(code);
+      CodeHighlighter back;
+      back.setLanguage(QStringLiteral("ts"));
+      back.setTextDocument(&document);
+      return back.coloured();
+    }(), 30000);
   }
 };
 
