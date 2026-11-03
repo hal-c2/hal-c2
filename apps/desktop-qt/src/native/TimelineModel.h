@@ -145,6 +145,10 @@ public:
   // "Working for 12s", from the clock; the brick asks once a second.
   Q_INVOKABLE QString workingLabel() const;
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+  // Where copy() writes; false when the clipboard refuses (tests).
+  void setClipboardWriter(std::function<bool(const QString& text)> write) { m_writeClipboard = std::move(write); }
+  // A duration as the thread writes one: "340ms", "4.3s", "1m 2s", "1h 5s".
+  static QString durationText(qint64 ms);
   // Names another thread of this one's environment by id, for messages its
   // agent sent here; empty when the thread is not known.
   void setThreadTitles(std::function<QString(const QString& threadId)> titleOf) { m_threadTitle = std::move(titleOf); }
@@ -152,6 +156,11 @@ public:
   // times are read in; a change redraws every row's time.
   void setTimestampFormat(const QString& format);
   void setLocale(const QLocale& locale);
+  // How a settled turn folds. The desktop's folds all its work and every reply
+  // but the last; the phone's leaves a failed turn open, a row per call, and
+  // keeps the turn's first reply in view too.
+  enum class Folds { Desktop, Phone };
+  void setFolds(Folds folds);
   // Where the thread works (its worktree, else its project's root), which a
   // changed file's label is read from; empty when it is not known.
   void setWorkspaceRoot(std::function<QString()> root) { m_workspaceRoot = std::move(root); }
@@ -225,8 +234,9 @@ public:
   // [{type, id, name, mimeType, sizeBytes}])}. Empty for any other row, and
   // without `checkpointId` when no checkpoint precedes the message.
   Q_INVOKABLE QVariantMap rewindPointOf(const QString& rowId) const;
-  // Puts a message's markdown on the clipboard; false for any other row.
-  Q_INVOKABLE bool copy(const QString& rowId) const;
+  // Puts a message's markdown on the clipboard: empty when it did, else
+  // why not, for the copy button to say beside itself.
+  Q_INVOKABLE QString copy(const QString& rowId) const;
   // Asks for an image's address (attachmentWanted) unless one that still
   // works is known or on its way; its row's `attachments` carry it once
   // setAttachmentUrl lands.
@@ -352,6 +362,7 @@ private:
   // run stopped here (Row::startsOpen).
   QSet<QString> m_expandedGroups;
   QSet<QString> m_keptOpen;  // run ids
+  Folds m_folds = Folds::Desktop;
   QHash<QString, AttachmentUrl> m_attachmentUrls;  // by attachment id
   // A Snap Shot's tree as JSON, by attachment id: a list reads its role on every bind.
   mutable QHash<QString, QString> m_accessJson;
@@ -364,6 +375,7 @@ private:
   QHash<QString, QJsonObject> m_agentModels;
   bool m_workspaceTouched = false;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
+  std::function<bool(const QString&)> m_writeClipboard;
   std::function<QString(const QString&)> m_threadTitle;
   std::function<QString()> m_workspaceRoot;
   QString m_timestampFormat = QStringLiteral("locale");

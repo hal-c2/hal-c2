@@ -199,6 +199,9 @@ struct Run {
   QString status;
   // A queued run held for the user, numbered above the run that passed it.
   bool held = false;
+  // How long before clock() the message asking for it was sent; -1 when the
+  // MC says nothing of it.
+  int requestedAgo = -1;
   bool operator==(const Run&) const = default;
 };
 
@@ -263,6 +266,8 @@ struct Model {
   // What the user opened, by run and by work group row.
   QSet<QString> foldsOpen;
   QSet<QString> groupsToggled;
+  // Folded as the phone folds (TimelineModel::Folds::Phone).
+  bool phone = false;
 };
 
 bool settled(const Run& run) {
@@ -280,7 +285,10 @@ QString field(const QString& type) {
 QJsonObject json(const Run& run) {
   QJsonObject entity{{QStringLiteral("id"), run.id}, {QStringLiteral("ordinal"), run.ordinal}, {QStringLiteral("status"), run.status}};
   if (run.held) entity.insert(QStringLiteral("queueHeld"), true);
-  if (run.status != QLatin1String("queued") && run.status != QLatin1String("cancelled")) entity.insert(QStringLiteral("startedAt"), clock().toString(Qt::ISODate));
+  if (run.requestedAgo >= 0) entity.insert(QStringLiteral("requestedAt"), clock().addSecs(-run.requestedAgo).toString(Qt::ISODate));
+  if (run.status != QLatin1String("queued") && run.status != QLatin1String("cancelled") && run.status != QLatin1String("starting")) {
+    entity.insert(QStringLiteral("startedAt"), clock().toString(Qt::ISODate));
+  }
   return entity;
 }
 
@@ -407,6 +415,8 @@ QString kindOf(const Item& item) {
 // call still running in view; while one of its replies streams it stays open.
 // Consecutive calls of a turn make one group, which a settled turn with
 // several calls summarizes; a group shows its latest call until opened.
+// The phone's fold also keeps a turn's first reply in view, and leaves a
+// failed turn open with a row per call.
 QList<Row> project(const Model& model) {
   const Thread& thread = model.held;
   QList<Item> shown;
@@ -431,10 +441,12 @@ QList<Row> project(const Model& model) {
   QHash<QString, QString> terminal;  // run -> its last reply
   QSet<QString> streaming;           // runs with a reply streaming
   QHash<QString, QString> first;     // run -> its first item after the user's message
+  QHash<QString, QString> firstReply;
   for (const Item& item : std::as_const(shown)) {
     if (item.opener) continue;
     if (!first.contains(item.run)) first.insert(item.run, item.id);
     if (item.type == QLatin1String("assistant_message")) {
+      if (!firstReply.contains(item.run)) firstReply.insert(item.run, item.id);
       terminal.insert(item.run, item.id);
       if (item.streaming) streaming.insert(item.run);
     }
@@ -445,11 +457,13 @@ QList<Row> project(const Model& model) {
   };
   QHash<QString, Fold> foldBefore;  // by the item it goes above
   QSet<QString> folded;
+  const auto failed = [&](const QString& run) { return model.phone && thread.runs.value(run).status == QLatin1String("failed"); };
   for (const Run& run : thread.runs) {
-    if (!settled(run) || streaming.contains(run.id) || !first.contains(run.id)) continue;
+    if (!settled(run) || streaming.contains(run.id) || !first.contains(run.id) || failed(run.id)) continue;
     QStringList hidden;
     for (const Item& item : std::as_const(shown)) {
       if (item.run != run.id || item.opener || item.id == terminal.value(run.id)) continue;
+      if (model.phone && item.id == firstReply.value(run.id)) continue;
       const QString kind = kindOf(item);
       if ((kind == QLatin1String("work") && item.status != QLatin1String("running")) || kind == QLatin1String("message")) {
         hidden.append(item.id);
@@ -487,6 +501,10 @@ QList<Row> project(const Model& model) {
         if (!calls.isEmpty() && foldBefore.contains(call.id)) break;
         if (kindOf(call) != QLatin1String("work") || folded.contains(call.id) || call.run != item.run) break;
         calls.append(call.id);
+        if (failed(item.run)) {
+          ++i;
+          break;
+        }
       }
       row.summarized = calls.size() > 1 && settled(thread.runs.value(item.run));
       if (row.summarized) {
@@ -557,6 +575,7 @@ struct Sut {
   // Each row's roles when the step began, by id.
   QHash<QString, QHash<int, QVariant>> before;
   int earlierWanted = 0;
+  bool phone = false;
 
   Sut() {
     cache.open(dir.path());
@@ -574,6 +593,7 @@ struct Sut {
     model = std::make_unique<TimelineModel>(kKey);
     model->setClock(clock);
     model->setCache(&cache);
+    model->setFolds(phone ? TimelineModel::Folds::Phone : TimelineModel::Folds::Desktop);
     tester = std::make_unique<QAbstractItemModelTester>(model.get(), QAbstractItemModelTester::FailureReportingMode::Warning);
     QObject::connect(model.get(), &QAbstractItemModel::dataChanged, model.get(),
                      [this](const QModelIndex& top, const QModelIndex& bottom, const QList<int>& roles) {
@@ -634,9 +654,17 @@ struct Sut {
     RC_ASSERT(modelTestFailures == 0);
     RC_ASSERT(model->hasEarlier() == expected.floor.has_value());
     RC_ASSERT(!model->loadingEarlier());
-    bool working = false;
-    for (const Run& run : expected.held.runs) working = working || run.status == QLatin1String("running");
-    RC_ASSERT(model->working() == working);
+    // The timer counts from the earliest run still working: from when it began,
+    // or from its message while its session starts.
+    QDateTime since;
+    for (const Run& run : expected.held.runs) {
+      if (run.status != QLatin1String("running") && run.status != QLatin1String("starting")) continue;
+      const bool begun = run.status == QLatin1String("running");
+      const QDateTime asked = !begun && run.requestedAgo >= 0 ? clock().addSecs(-run.requestedAgo) : clock();
+      if (!since.isValid() || asked < since) since = asked;
+    }
+    RC_ASSERT(model->working() == since.isValid());
+    RC_ASSERT(model->workingSince() == since);
     for (const Row& row : want) {
       const Item item = expected.held.items.value(row.id);
       if (item.type != QLatin1String("user_message") || !item.legacy.isEmpty()) continue;
@@ -790,6 +818,9 @@ QList<Event> renumberWaiting(Model& model, int after) {
 // thread stored of one before the MC recorded them so.
 struct StartRun : Change {
   QString how;
+  // The agent's session is still starting: the run is requested, not begun (Begin).
+  bool starting = *rc::gen::weightedElement<bool>({{3, false}, {1, true}});
+  int requestedAgo = *rc::gen::inRange(-1, 120);
   explicit StartRun(const Model&)
       : how(*rc::gen::weightedElement<QString>(
             {{4, QStringLiteral("user")}, {2, QStringLiteral("notification")}, {1, QStringLiteral("envelope")}, {1, QStringLiteral("wake")}})) {}
@@ -797,7 +828,8 @@ struct StartRun : Change {
   void apply(Model& model) const override {
     // A run that passes a held queue is numbered below it: the held runs are
     // renumbered up behind it in the same commit, as the MC does.
-    const Run run{QStringLiteral("run-%1").arg(model.mc.runs.size() + 1), startOrdinal(model), QStringLiteral("running")};
+    Run run{QStringLiteral("run-%1").arg(model.mc.runs.size() + 1), startOrdinal(model), starting ? QStringLiteral("starting") : QStringLiteral("running")};
+    run.requestedAgo = requestedAgo;
     model.mc.runs.insert(run.id, run);
     QList<Event> events{event(model, QStringLiteral("run"), run.id, {{QStringLiteral("s"), json(run)}})};
     events.append(renumberWaiting(model, run.ordinal));
@@ -810,7 +842,30 @@ struct StartRun : Change {
     events.append(event(model, QStringLiteral("turn-item"), message.id, {{QStringLiteral("s"), json(message)}}, run.id));
     commit(model, events);
   }
-  void show(std::ostream& os) const override { os << "StartRun(" << how.toStdString() << ")"; }
+  void show(std::ostream& os) const override {
+    os << "StartRun(" << how.toStdString() << (starting ? ", starting" : "") << ", requested " << requestedAgo << "s ago)";
+  }
+};
+
+// The agent's session starts and it begins a run that was waiting for it.
+struct Begin : Change {
+  QString run;
+  explicit Begin(const Model& model) {
+    QStringList runs;
+    for (const Run& found : model.mc.runs) {
+      if (found.status == QLatin1String("starting")) runs.append(found.id);
+    }
+    RC_PRE(!runs.isEmpty());
+    run = pick(runs);
+  }
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.runs.value(run).status == QLatin1String("starting")); }
+  void apply(Model& model) const override {
+    model.mc.runs[run].status = QStringLiteral("running");
+    commit(model, {event(model, QStringLiteral("run"), run,
+                         {{QStringLiteral("s"), QJsonObject{{QStringLiteral("status"), QStringLiteral("running")},
+                                                            {QStringLiteral("startedAt"), clock().toString(Qt::ISODate)}}}})});
+  }
+  void show(std::ostream& os) const override { os << "Begin(" << run.toStdString() << ")"; }
 };
 
 // A queued message held for the user (it waited behind a stop) that a newer run
@@ -1330,6 +1385,21 @@ struct Toggle : Command {
   void show(std::ostream& os) const override { os << "Toggle(" << row.toStdString() << ")"; }
 };
 
+// The window crosses the phone layout's width, and the timeline folds as the
+// phone or the desktop does.
+struct Layout : Command {
+  void apply(Model& model) const override { model.phone = !model.phone; }
+  void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
+    sut.begin();
+    sut.phone = next.phone;
+    sut.model->setFolds(next.phone ? TimelineModel::Folds::Phone : TimelineModel::Folds::Desktop);
+    sut.check(next);
+  }
+  void show(std::ostream& os) const override { os << "Layout"; }
+};
+
 // The app restarts (or the thread was evicted and opened again): the thread
 // parks into the cache, and a new model restores it from there.
 struct Restart : Command {
@@ -1370,9 +1440,9 @@ private slots:
       Model model;
       Sut sut;
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<StartRun, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
+                       rc::state::gen::execOneOfWithArgs<StartRun, Begin, Hold, Enqueue, CancelHeld, CancelQueued, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
-                                                         LoadEarlier, Toggle, Restart, AgentModel>());
+                                                         LoadEarlier, Toggle, Layout, Restart, AgentModel>());
     }));
   }
 

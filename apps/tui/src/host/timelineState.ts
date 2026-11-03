@@ -2,6 +2,7 @@ import type {
   MermaidRenderResult,
   OrchestrationCheckpointSummary,
   OrchestrationThread,
+  TimestampFormat,
 } from "@hal-c2/contracts";
 
 import type { TuiQueuedMessage, TuiThreadExtras } from "../orchestrationV2Adapter.ts";
@@ -11,6 +12,8 @@ import { CHAT_CONTENT_MAX_WIDTH } from "../layout.ts";
 import { deriveContextWindow, formatContextWindow } from "../contextWindow.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";
+import { runnableShellCommand } from "../shellRun.ts";
+import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../timestampFormat.ts";
 import { fileGlyph, fileTypeColor, STATUS_ICONS, TOOL_ICONS } from "../icons.ts";
 import { latestActionableProposedPlan } from "../proposedPlan.ts";
 import { ansi, type Palette, relativeTime, sessionStatusColor } from "../theme.ts";
@@ -19,6 +22,7 @@ import {
   deriveTimelineEntries,
   diffStat,
   type FoldableRow,
+  formatWorkingTimer,
   isWorking,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
   type TimelineRow,
@@ -37,7 +41,14 @@ import {
 import type { AttachmentPreview } from "./attachmentPreviews.ts";
 import { tableToCsv, tableToMarkdown } from "../markdownTable.ts";
 import { threadKey } from "./sidebarState.ts";
-import { chunk, markdownBlockLines, markdownLines, styled, type StyledText } from "./styledText.ts";
+import {
+  chunk,
+  markdownBlockLines,
+  markdownLines,
+  plainText,
+  styled,
+  type StyledText,
+} from "./styledText.ts";
 
 // The conversation as published under `timeline` (port of MessagesTimeline):
 // every row pre-styled, with the action a click dispatches, so the Timeline
@@ -124,7 +135,16 @@ export const FALLBACK_CELL_PIXELS: CellPixels = { width: 18, height: 35 };
 
 export interface TimelineItem {
   readonly key: string;
-  readonly kind: "pager" | "lineage" | "message" | "work" | "fold" | "files" | "background";
+  readonly kind:
+    | "notice"
+    | "pager"
+    | "lineage"
+    | "message"
+    | "work"
+    | "fold"
+    | "files"
+    | "stamp"
+    | "background";
   readonly align: "left" | "right";
   readonly boxed: boolean;
   /** Width of the item's box (the column width unless boxed). */
@@ -151,7 +171,12 @@ export interface TimelineState {
   readonly rowCount: number;
   readonly windowStart: number;
   readonly windowEnd: number;
-  readonly working: { readonly text: StyledText; readonly elapsedSeconds: number | null } | null;
+  /** The working row; `refreshInMs` is when its time next changes (`timeline.tick`). */
+  readonly working: {
+    readonly text: StyledText;
+    readonly elapsedSeconds: number | null;
+    readonly refreshInMs: number;
+  } | null;
   readonly plan: {
     readonly id: string;
     readonly title: StyledText;
@@ -164,6 +189,8 @@ export interface TimelineInput {
   readonly detail: OrchestrationThread | null;
   readonly hasOlderTurns: boolean;
   readonly loadingOlderTurns: boolean;
+  /** Why the thread's MC cannot be reached (it left the cluster); null while it can. */
+  readonly unreachable?: string | null;
   readonly approvalCount: number;
   readonly view: TimelineView;
   /** Turns whose fold starts open: the ones the user stopped in this session. */
@@ -185,6 +212,8 @@ export interface TimelineInput {
   readonly cellPixels?: CellPixels | null;
   /** What the MC drew of a reply's Mermaid diagram (`mermaidDiagrams.ts`); without it they are code. */
   readonly diagrams?: (source: string) => MermaidRenderResult | undefined;
+  /** How this device writes times (default: the locale's). */
+  readonly timestampFormat?: TimestampFormat;
 }
 
 const line = (
@@ -258,9 +287,23 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     attachments: input.attachments ?? (() => UNAVAILABLE_ATTACHMENT),
     cellPixels: input.cellPixels ?? FALLBACK_CELL_PIXELS,
     diagrams: input.diagrams ?? null,
+    nowMs: input.nowMs,
+    timestampFormat: input.timestampFormat ?? "locale",
+    withMeta: repliesWithMeta(detail),
   };
 
   const items: TimelineItem[] = [];
+  if (input.unreachable) {
+    items.push(
+      item(
+        "notice:unreachable",
+        "notice",
+        width,
+        [line(styled(chunk(input.unreachable, { fg: palette.warning })))],
+        { marginBottom: 1 },
+      ),
+    );
+  }
   if (input.parent) {
     items.push(
       item(
@@ -348,7 +391,8 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
 
   const plan = showingLatest ? latestActionableProposedPlan(detail) : null;
   const working = showingLatest && isWorking(detail);
-  const elapsed = working ? workingElapsedSeconds(workingStartedAt(detail), input.nowMs) : null;
+  const workingFrom = working ? workingStartedAt(detail) : null;
+  const elapsed = working ? workingElapsedSeconds(workingFrom, input.nowMs) : null;
   const contextWindow = deriveContextWindow(detail.activities);
 
   return {
@@ -379,10 +423,16 @@ export function buildTimelineState(input: TimelineInput): TimelineState {
     working: working
       ? {
           elapsedSeconds: elapsed,
+          // The time moves once a second, not on every frame.
+          refreshInMs:
+            elapsed === null
+              ? 0
+              : 1000 - ((((input.nowMs - Date.parse(workingFrom!)) % 1000) + 1000) % 1000),
           text: styled(
             chunk("● ", { fg: palette.accent }),
-            chunk("Working…", { fg: palette.dim }),
-            elapsed !== null && chunk(` ${elapsed}s`, { fg: palette.faint }),
+            elapsed === null
+              ? chunk("Working…", { fg: palette.dim })
+              : chunk(`Working for ${formatWorkingTimer(elapsed)}`, { fg: palette.dim }),
           ),
         }
       : null,
@@ -445,6 +495,10 @@ interface RowContext {
   readonly attachments: (attachmentId: string) => AttachmentPreview;
   readonly cellPixels: CellPixels;
   readonly diagrams: ((source: string) => MermaidRenderResult | undefined) | null;
+  readonly nowMs: number;
+  readonly timestampFormat: TimestampFormat;
+  /** The replies that end a settled turn, which carry its time and actions. */
+  readonly withMeta: ReadonlySet<string>;
 }
 
 const UNAVAILABLE_ATTACHMENT: AttachmentPreview = {
@@ -603,6 +657,9 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
     const waiting = queued
       ? `⏸ queued${queued.position === null ? "" : ` · ${queued.position}`}${queued.held ? " · held" : ""}`
       : null;
+    const canCollapse = shouldCollapseUserMessage(rawBody);
+    const expanded = ctx.view.expandedMessages.has(message.id);
+    const toggle = expanded ? "⌃ Show less" : "⌄ Show full message";
     const bubbleWidth = Math.max(
       attachmentMinWidth,
       Math.min(
@@ -631,8 +688,6 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
         : []),
       ...(imageLines.length > 0 ? [...imageLines, line(styled(chunk("")))] : []),
     ];
-    const canCollapse = shouldCollapseUserMessage(rawBody);
-    const expanded = ctx.view.expandedMessages.has(message.id);
     const collapsed = canCollapse && !expanded;
     const shown = collapsed ? clipRows(bodyLines, innerWidth) : bodyLines;
     items.push(
@@ -645,13 +700,9 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
           ...shown.map((text) => line(text)),
           ...(canCollapse
             ? [
-                line(
-                  styled(
-                    chunk(expanded ? "⌃ Show less" : "⌄ Show full message", { fg: palette.dim }),
-                  ),
-                  "timeline.message.toggle",
-                  { id: message.id },
-                ),
+                line(styled(chunk(toggle, { fg: palette.dim })), "timeline.message.toggle", {
+                  id: message.id,
+                }),
               ]
             : []),
         ],
@@ -659,7 +710,6 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
           align: "right",
           boxed: true,
           marginTop: 1,
-          marginBottom: 1,
           clip: collapsed
             ? {
                 from: head.length,
@@ -670,10 +720,18 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
         },
       ),
     );
+    const stamp = stampLine(message.createdAt, ctx);
+    items.push(
+      item(`stamp:${message.id}`, "stamp", Bun.stringWidth(plainText(stamp.text)), [stamp], {
+        align: "right",
+        marginBottom: 1,
+      }),
+    );
     return;
   }
 
   const imageLines = images.flatMap((attachment) => attachmentLines(attachment, width, ctx));
+  const meta = ctx.withMeta.has(message.id) && !message.streaming;
   const checkpoint = ctx.checkpointByMessage.get(message.id);
   items.push(
     item(
@@ -681,8 +739,9 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
       "message",
       width,
       [
-        ...replyLines(message.id, body, ctx),
+        ...replyLines(message.id, body, message.streaming, ctx),
         ...(imageLines.length > 0 ? [line(styled(chunk(""))), ...imageLines] : []),
+        ...(meta ? [replyMetaLine(message, ctx)] : []),
       ],
       { marginTop: 1, marginBottom: checkpoint ? 0 : 1 },
     ),
@@ -698,13 +757,81 @@ function pushFoldable(items: TimelineItem[], row: FoldableRow, ctx: RowContext):
 }
 
 /**
+ * The replies that carry their turn's time and actions: each turn's last one, once
+ * the turn is no longer running (commentary would otherwise flash a time mid-work).
+ * Replies outside any turn count as one turn until the user's next message.
+ */
+function repliesWithMeta(detail: OrchestrationThread): Set<string> {
+  const last = new Map<string, string>();
+  let asked = 0;
+  for (const message of detail.messages) {
+    if (message.role === "user") asked += 1;
+    if (message.role === "assistant") last.set(message.turnId ?? `asked:${asked}`, message.id);
+  }
+  const running = isWorking(detail) ? (detail.latestTurn?.turnId ?? null) : null;
+  return new Set([...last].filter(([turn]) => turn !== running).map(([, id]) => id));
+}
+
+/** When a message was sent; a click shows its full time. */
+function stampLine(sentAt: string, ctx: RowContext): TimelineLine {
+  return line(
+    styled(
+      chunk(formatDayAwareTimestamp(sentAt, ctx.timestampFormat, ctx.nowMs), {
+        fg: ctx.palette.dim,
+      }),
+    ),
+    "timeline.stamp",
+    { full: formatChatTimestampTooltip(sentAt, ctx.timestampFormat) },
+  );
+}
+
+/** Under a turn's last reply: copy it, and when it was written. */
+function replyMetaLine(
+  message: OrchestrationThread["messages"][number],
+  ctx: RowContext,
+): TimelineLine {
+  const key = `${message.id}:reply`;
+  const copied = ctx.copied === key;
+  return {
+    ...line(styled(chunk(""))),
+    parts: [
+      {
+        text: styled(
+          chunk(copied ? "✓ Copied" : "⧉ Copy", {
+            fg: copied ? ctx.palette.success : ctx.palette.dim,
+          }),
+        ),
+        action: "timeline.copy",
+        payload: { key, text: message.text, label: "Reply" },
+      },
+      { text: styled(chunk(" · ", { fg: ctx.palette.dim })), action: "", payload: null },
+      {
+        text: styled(
+          chunk(formatDayAwareTimestamp(message.updatedAt, ctx.timestampFormat, ctx.nowMs), {
+            fg: ctx.palette.dim,
+          }),
+        ),
+        action: "timeline.stamp",
+        payload: { full: formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat) },
+      },
+    ],
+  };
+}
+
+/**
  * A reply's Markdown as lines. A click on a code block copies its source; a
  * table is followed by a row that copies it as Markdown or CSV and cuts its
  * cells to one line or wraps them again. A Mermaid diagram is drawn in
  * characters when the MC can, its title switching to its source and back; a
- * click on it copies its source. What was just copied shows it.
+ * click on it copies its source. What was just copied shows it. A finished one-line
+ * shell block offers to run its command in the thread's terminal (shellRun.ts).
  */
-function replyLines(messageId: string, body: string, ctx: RowContext): TimelineLine[] {
+function replyLines(
+  messageId: string,
+  body: string,
+  streaming: boolean,
+  ctx: RowContext,
+): TimelineLine[] {
   const { palette, width } = ctx;
   const tableKey = (index: number) => `${messageId}:table:${index}`;
   const diagramKey = (index: number) => `${messageId}:diagram:${index}`;
@@ -729,8 +856,14 @@ function replyLines(messageId: string, body: string, ctx: RowContext): TimelineL
           ? { chunks: block.text.chunks.map((part) => ({ ...part, fg: palette.success })) }
           : block.text;
       const label = block.diagram ? "Diagram source" : "Code block";
-      const toggle =
-        block.diagram?.title && block.diagram.drawable
+      const command = runnableShellCommand(block.code, streaming);
+      const toggle = command
+        ? {
+            text: styled(chunk("▶ Run", { fg: palette.dim })),
+            action: "timeline.code.run",
+            payload: { command },
+          }
+        : block.diagram?.title && block.diagram.drawable
           ? {
               text: styled(
                 chunk(
@@ -849,7 +982,7 @@ function toolRow(entry: WorkLogEntry, ctx: RowContext): StyledText {
     chunk(`${workLogIcon(entry)} `, {
       fg: entry.tone === "error" ? palette.error : palette.accent,
     }),
-    chunk(label, { fg: palette.text }),
+    chunk(clip(label, Math.max(8, width - mark.length - 4)), { fg: palette.text }),
     mark.length > 0 &&
       chunk(` ${mark}`, {
         fg:

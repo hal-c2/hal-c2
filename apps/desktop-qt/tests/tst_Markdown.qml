@@ -220,6 +220,35 @@ Item {
             tryCompare(button, "iconName", "copy", 3000);
         }
 
+        // A code block runs only as one complete shell command (t3code#13060).
+        function test_onlyOneCompleteShellCommandRuns() {
+            const command = text => Md.shellCommand(Md.segments(text, {}).find(seg => seg.kind === "code"));
+            compare(command("```bash\n  bun test cart  \n```"), "bun test cart");
+            compare(command("```pwsh\nGet-ChildItem\n```"), "Get-ChildItem");
+            compare(command("```sh\nbun install\nbun test\n```"), "", "several lines");
+            compare(command("```sh\nbun test \\\n```"), "", "continued on a line that is not there");
+            compare(command("```zsh\n\n```"), "", "empty");
+            compare(command("```python\nprint(1)\n```"), "", "not a shell");
+            compare(command("```bash\nbun test cart"), "", "its fence is still open");
+            compare(command("```bash\nrm -rf ‮/tmp\n```"), "", "a hidden direction mark");
+            compare(command("```bash\necho 󠁁\n```"), "", "a hidden tag character");
+            compare(command("```bash\necho café\n```"), "echo café");
+        }
+
+        function test_aShellBlockOffersRunOnlyWhereTheHostRunsIt() {
+            const plain = make("```bash\nbun test cart\n```");
+            verify(!findChild(plain, "runCode").visible, "a message that cannot run commands offers none");
+            const md = make("```bash\nbun test cart\n```", { runnable: true });
+            const run = findChild(md, "runCode");
+            verify(run.visible);
+            const ran = [];
+            md.runCommand.connect(command => ran.push(command));
+            mouseClick(run);
+            compare(ran, ["bun test cart"]);
+            md.streaming = true;
+            verify(!run.visible, "not while the reply is written");
+        }
+
         // What the MC draws for a small flowchart, as MermaidController keeps it.
         function drawnFlowchart() {
             const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" fill="#336699"/></svg>';

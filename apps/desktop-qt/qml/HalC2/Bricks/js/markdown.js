@@ -1306,6 +1306,26 @@ function state() {
     return { text: null, live: null, kept: null, stable: 0 };
 }
 
+// The shells a reply's code block may name to offer "Run in terminal".
+var SHELL_LANGUAGE = /^(?:sh|bash|zsh|fish|shell|powershell|pwsh)$/;
+// Control and invisible format characters (Unicode Cc and Cf, spelled out:
+// the engine has no \p{}), a line break among them: any of them can make the
+// command drawn differ from what the terminal would get.
+var HIDDEN = /[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890\u0891\u08e2\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb]|\ud804[\udcbd\udccd]|\ud80d[\udc30-\udc3f]|\ud82f[\udca0-\udca3]|\ud834[\udd73-\udd7a]|\udb40[\udc01\udc20-\udc7f]/;
+
+// The command a closed shell code block runs, trimmed, or "" when it is not
+// one complete command: another language, empty, several lines, a trailing
+// backslash, or a hidden character (pingdotgg/t3code#13060). A segment that is
+// still `open` (its fence unclosed, or the reply still streaming) runs nothing.
+function shellCommand(seg) {
+    if (!seg || seg.kind !== "code" || seg.open || !SHELL_LANGUAGE.test(seg.language || ""))
+        return "";
+    var command = (seg.code || "").trim();
+    if (command.length === 0 || command.charAt(command.length - 1) === "\\" || HIDDEN.test(seg.code))
+        return "";
+    return command;
+}
+
 // The segments of a reply, each { kind, html, code, language, title, open,
 // indent, gap, payload, alert }: `gap` is the space above it (the larger of the
 // two margins that meet, zero for the first). While streaming, every top-level
