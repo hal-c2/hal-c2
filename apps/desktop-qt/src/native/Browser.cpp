@@ -277,10 +277,11 @@ void BrowserPage::setView(QQuickItem* view) {
 
 void BrowserPage::report(const QString& phase, const QString& url, const QString& title, int code, const QString& description,
                          bool canGoBack, bool canGoForward) {
-  // The MC keeps web addresses of a bounded length; the start page and
-  // engine-internal pages are not news to it.
+  // The MC keeps web addresses of a bounded length; the start page,
+  // engine-internal pages and a page's source are not news to it.
   if (!m_previews || m_tabId.isEmpty() || url.isEmpty() || url.size() > kMaxUrl || url.startsWith(QLatin1String("about:")) ||
-      url.startsWith(QLatin1String("data:")) || url.startsWith(QLatin1String("chrome"))) {
+      url.startsWith(QLatin1String("data:")) || url.startsWith(QLatin1String("chrome")) ||
+      url.startsWith(QLatin1String("view-source:"))) {
     return;
   }
   QJsonObject navStatus{{QStringLiteral("url"), url}, {QStringLiteral("title"), title.left(kMaxTitle)}};

@@ -31,8 +31,11 @@ Rectangle {
     readonly property var viewport: page.viewport
     readonly property bool framed: viewport._tag === "preset" || viewport._tag === "freeform"
     readonly property var device: viewport._tag === "preset" ? BrowserJs.preset(viewport.presetId) : null
-    // Where the page is, as the view has it; empty for the start page.
-    readonly property string address: webView.url.toString().startsWith("http") ? webView.url.toString() : ""
+    // Where the page is, as the view has it; empty for the start page. A
+    // page's source (view-source:) shows here only: the MC's tab stays on the page.
+    readonly property string address: /^(view-source:)?https?:/.test(webView.url.toString()) ? webView.url.toString() : ""
+    // The page itself, with or without its source showing.
+    readonly property string webAddress: address.replace(/^view-source:/, "")
     // Why the last load failed ({name, message}), until the next one starts.
     property var failure: null
     property url failedUrl
@@ -89,13 +92,17 @@ Rectangle {
     }
 
     function openTyped(text) {
-        const normalized = BrowserJs.normalizeAddress(text);
+        const source = /^\s*view-source:/i.test(text);
+        const normalized = BrowserJs.normalizeAddress(source ? text.trim().slice(12) : text);
         if (normalized.error) {
             addressProblem = normalized.error;
             return;
         }
         addressProblem = "";
-        go(normalized.url, true);
+        if (source)
+            go("view-source:" + normalized.url, false);
+        else
+            go(normalized.url, true);
         webView.forceActiveFocus();
     }
 
@@ -118,19 +125,12 @@ Rectangle {
         page.report(phase, webView.url.toString(), webView.title, code, description, webView.canGoBack, webView.canGoForward);
     }
 
-    // The page's prefers-color-scheme, when the user picked one: matchMedia
-    // and the page's own style sheets read the scheme picked as the one the
-    // screen has. Runs before the page's scripts in every frame.
-    function appearanceScript(scheme) {
-        return "(function () {\n" + "var scheme = '" + scheme + "';\n" + "var query = /\\(\\s*prefers-color-scheme\\s*:\\s*(light|dark)\\s*\\)/gi;\n" + "function rewrite(text) { return String(text).replace(query, function (_, s) { return s.toLowerCase() === scheme ? '(min-width: 0px)' : '(max-width: -1px)'; }); }\n" + "function names(text) { return /prefers-color-scheme/i.test(text); }\n" + "var match = window.matchMedia;\n" + "window.matchMedia = function (text) { return match.call(window, rewrite(text)); };\n" + "function fix(list) { for (var i = 0; i < list.length; ++i) { var rule = list[i];\n" + "  if (rule.media && names(rule.media.mediaText)) rule.media.mediaText = rewrite(rule.media.mediaText);\n" + "  if (rule.cssRules) fix(rule.cssRules); } }\n" + "function sweep() { for (var i = 0; i < document.styleSheets.length; ++i) { var sheet = document.styleSheets[i];\n" + "  try { if (sheet.media && names(sheet.media.mediaText)) sheet.media.mediaText = rewrite(sheet.media.mediaText); fix(sheet.cssRules); } catch (e) {} } }\n" + "document.addEventListener('DOMContentLoaded', function () { sweep(); new MutationObserver(sweep).observe(document.head, { childList: true }); });\n" + "document.addEventListener('load', sweep, true);\n" + "})();";
-    }
-
     function applyAppearance() {
         webView.userScripts.clear();
         if (page.appearance !== "system") {
             const script = WebEngine.script();
             script.name = "hal-c2-appearance";
-            script.sourceCode = appearanceScript(page.appearance);
+            script.sourceCode = BrowserJs.appearanceScript(page.appearance);
             script.injectionPoint = WebEngineScript.DocumentCreation;
             script.worldId = WebEngineScript.MainWorld;
             script.runsOnSubFrames = true;
@@ -171,9 +171,11 @@ Rectangle {
                 objectName: "browserBack"
                 subtle: true
                 iconName: "arrow-left"
-                enabled: webView.canGoBack
+                // Chromium shows a page's source in place of the page, so
+                // back from it is the page again.
+                enabled: webView.canGoBack || root.address !== root.webAddress
                 Accessible.name: qsTr("Back")
-                onClicked: webView.goBack()
+                onClicked: root.address !== root.webAddress ? root.go(root.webAddress, false) : webView.goBack()
             }
 
             ShellButton {
@@ -468,7 +470,7 @@ Rectangle {
             text: qsTr("Open in system browser")
             iconName: "external-link"
             enabled: root.address.length > 0
-            onTriggered: Shell.openExternal(root.address)
+            onTriggered: Shell.openExternal(root.webAddress)
         }
     }
 
@@ -541,7 +543,6 @@ Rectangle {
                     transformOrigin: Item.TopLeft
                     profile: Browser.profile ? Browser.profile : WebEngine.defaultProfile
                     audioMuted: page.muted
-                    backgroundColor: root.color
                     settings.errorPageEnabled: false
                     settings.focusOnNavigationEnabled: false
 
@@ -573,7 +574,11 @@ Rectangle {
                     onNewWindowRequested: request => {
                         // A sign-in popup is a real window, so it can answer
                         // the page; a link to a new window stays in the tab.
-                        if (request.destination === WebEngineNewWindowRequest.InNewDialog) {
+                        const requested = request.requestedUrl.toString();
+                        if (requested.startsWith("view-source:")) {
+                            // The page's source: in this view, and the MC's tab stays on the page.
+                            root.go(requested, false);
+                        } else if (request.destination === WebEngineNewWindowRequest.InNewDialog) {
                             const popup = popupWindow.createObject(root, {
                                 width: Math.max(320, request.requestedGeometry.width || 500),
                                 height: Math.max(240, request.requestedGeometry.height || 600)
@@ -581,7 +586,7 @@ Rectangle {
                             request.openIn(popup.view);
                             popup.show();
                         } else {
-                            root.go(request.requestedUrl.toString(), true);
+                            root.go(requested, true);
                         }
                     }
                     Component.onCompleted: {
@@ -816,9 +821,9 @@ Rectangle {
         active: Browser.devicesView
         visible: Browser.devicesView
         sourceComponent: BrowserDevicesView {
-            pageUrl: root.address
+            pageUrl: root.webAddress
             profile: webView.profile
-            pageBackground: root.color
+            appearance: page.appearance
             presetIds: Browser.devicesPresetIds
             show3d: Browser.devices3d
         }
