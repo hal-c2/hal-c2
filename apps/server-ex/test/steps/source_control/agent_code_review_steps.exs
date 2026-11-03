@@ -577,6 +577,18 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     end_turns(context)
   end
 
+  step "the agent's turn fails with {string}", %{args: [error]} = context do
+    event = %{
+      "type" => "turn.finished",
+      "threadId" => context.thread,
+      "status" => "failed",
+      "error" => error
+    }
+
+    apply(HalC2Plugins.CodeReview, :handle_event, [event, %{}])
+    context
+  end
+
   step "the agent's turn ends because its usage limit is reached", context do
     reset = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
 
@@ -724,6 +736,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
        %{args: [number]} = context do
     {review, context} = await_review(context, number, &(&1["status"] == "failed"))
     assert review["error"] =~ "without reporting its findings"
+    context
+  end
+
+  step "the review of \#{int} is failed saying {string}", %{args: [number, why]} = context do
+    {review, context} = await_review(context, number, &(&1["status"] == "failed"))
+    assert String.ends_with?(review["error"], why), "the review says #{inspect(review["error"])}"
     context
   end
 

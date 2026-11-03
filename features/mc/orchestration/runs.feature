@@ -214,6 +214,11 @@ Feature: Runs and turns
     And "t1" can take its next message
 
   @mc
+  Scenario: A provider that dies while starting the turn says why
+    Given the provider process exits saying "Config files in mise.toml are not trusted." while "t1" starts a turn
+    Then the run is failed, and its error ends with "It said:\nConfig files in mise.toml are not trusted."
+
+  @mc
   Scenario: A provider session that cannot be opened fails the run
     Given the provider's session cannot be opened while "t1" starts a turn
     Then the run is failed
