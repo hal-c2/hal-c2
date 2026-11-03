@@ -383,7 +383,7 @@ defmodule HalC2.StoreTest do
         end,
         [
           :monitor,
-          min_heap_size: 50_000_000
+          min_heap_size: 2_000_000
         ]
       )
 
