@@ -1,10 +1,9 @@
 pragma Singleton
 import QtQuick
 
-// The in-app browser (src/native/Browser.h) in a build without QtWebEngine:
-// tests open pages in the system browser.
+// The in-app browser (src/native/Browser.h) as the QML tests see it: no
+// shared profile (pages use the engine's off-the-record default).
 QtObject {
-    readonly property bool supported: false
     readonly property var profile: null
     property string devToolsDock: "bottom"
     property real devToolsShare: 0.4

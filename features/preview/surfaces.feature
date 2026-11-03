@@ -450,10 +450,8 @@ Feature: In-app preview browser
 
   Rule: The desktop shows the page beside the thread
 
-    # The desktop draws pages with QtWebEngine (BrowserPanel), one per MC tab,
-    # when the build has it; a build without it lists the tabs in the
-    # Previews tab and opens them in the user's browser. The phone and the
-    # TUI have no in-app browser: they open pages in the system's browser.
+    # The desktop draws pages with QtWebEngine (BrowserPanel), one per MC tab.
+    # The phone and the TUI have no in-app browser: they open pages in the system's browser.
 
     @desktop
     Scenario: The user opens a local dev server in a browser tab beside the thread
@@ -564,10 +562,8 @@ Feature: In-app preview browser
       When the user removes the "Desktop" device from the view
       Then the view no longer shows a "Desktop" frame
 
-    # DeviceBody3D needs QtQuick3D, which this build does not have
-    # (tst_Browser.qml's test_deviceBody3dFailsToLoadWithoutQtQuick3D proves
-    # it is absent here); no step here can show a device on its 3D body
-    # until a build with QtQuick3D runs this feature.
+    # No step here shows a device on its 3D body yet; DeviceSteps.cpp draws
+    # DeviceBody3D in the device panel, not in this view's frames.
     @desktop @backlog-desktop
     Scenario: The user views devices on their 3D bodies
       Given a browser tab showing the Devices view

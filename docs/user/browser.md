@@ -38,6 +38,3 @@ Closing a browser tab closes it for the agent too.
   system's browser.
 
 A page that cannot load says why, with a button to try again.
-
-The browser is part of HAL-C2 builds made with QtWebEngine; without it, links
-open in the system's browser and Previews lists the tabs.
