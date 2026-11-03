@@ -7,8 +7,9 @@ import HalC2.Bricks
 // A thread, or a new thread's draft: the way back and its title, the route's
 // centre (the timeline, or the draft's opening line that picks its project),
 // and the composer, which carries the thread's approvals and questions. The
-// Files tab, which the desktop draws beside the thread, takes the screen under
-// the same bar; the way back closes it (MobileShell.stepBack). Files dropped
+// Files and Diff tabs, which the desktop draws beside the thread, take the
+// screen under the same bar; the way back closes them (MobileShell.stepBack),
+// and a reply's changed files open the Diff tab here as there. Files dropped
 // anywhere on the centre or the composer join the draft.
 Item {
     id: screen
@@ -18,6 +19,8 @@ Item {
     readonly property string threadKey: route !== null && route.kind === "thread" ? (route.threadKey ?? "") : ""
     readonly property var panel: Shell.state.panel ?? null
     readonly property bool filesOpen: panel !== null && panel.isOpen && panel.activeId === "files"
+    readonly property bool diffOpen: panel !== null && panel.isOpen && panel.activeId === "diff"
+    readonly property bool tabOpen: filesOpen || diffOpen
     readonly property bool muted: notifications !== null && (notifications.muted ?? []).indexOf(threadKey) >= 0
 
     signal backRequested
@@ -71,7 +74,7 @@ Item {
             objectName: "centreHost"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: !screen.filesOpen
+            visible: !screen.tabOpen
             kind: screen.route?.kind ?? ""
         }
 
@@ -86,13 +89,24 @@ Item {
             }
         }
 
+        Loader {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            active: screen.diffOpen
+            visible: active
+            sourceComponent: DiffPanel {
+                objectName: "diffPanel"
+                source: Panel.diff
+            }
+        }
+
         Composer {
             id: composerView
 
             objectName: "composer"
             takesDrops: false
             Layout.fillWidth: true
-            visible: ready && !screen.filesOpen
+            visible: ready && !screen.tabOpen
             conversationScrolled: centre.conversationScrolled
         }
     }

@@ -11,6 +11,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLocale>
+#include <QMap>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRegularExpression>
@@ -22,7 +23,10 @@
 #include "FakeThreads.h"
 #include "Harness.h"
 #include "NativeShell.h"
+#include "DiffModel.h"
 #include "Phone.h"
+#include "RightPanelController.h"
+#include "ThreadDiff.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
 #include "World.h"
@@ -249,6 +253,49 @@ void addCalls(World& world, const S& calls) {
   const auto thought = [&] { addItem(world, S("reasoning"), {{S("text"), S()}}); };
   const auto integration = [&](const S& name) { tool(sourcedCall(name.toLower(), name, S("integration"))); };
   const QHash<S, std::function<void()>> known{
+      {S("one file read"), [&] {
+         addItem(world, S("file_search"), {{S("pattern"), S("cart.ts")},
+                                                       {S("results"), QJsonArray{QJsonObject{{S("fileName"), S("cart.ts")}}}}});
+       }},
+      {S("edits to three different files"), [&] {
+         for (const char* file : {"src/a.ts", "src/b.ts", "src/c.ts"}) edit(QLatin1String(file));
+       }},
+      {S("two edits to the same file"), [&] {
+         edit(S("src/cart.ts"));
+         edit(S("src/cart.ts"));
+       }},
+      {S("one command"), [&] { addCommand(world, 1); }},
+      {S("two web searches"), [&] {
+         web();
+         web();
+       }},
+      {S("one search of the project's code"), [&] {
+         addItem(world, S("file_search"), {{S("pattern"), S("taxLine")}, {S("results"), QJsonArray{}}});
+       }},
+      {S("three browser calls"), [&] {
+         for (int n = 0; n < 3; ++n) tool(halC2Call(S("preview_open"), {{S("url"), S("http://localhost:3000")}}));
+       }},
+      {S("two device controls"), [&] {
+         for (int n = 0; n < 2; ++n) tool(halC2Call(S("device_screenshot"), {}));
+       }},
+      {S("one tool with no more specific kind"), [&] { tool({{S("toolName"), S("lookup_rates")}}); }},
+      {S("two progress updates"), [&] {
+         addItem(world, S("system_notice"), {{S("message"), S("Indexing")}});
+         addItem(world, S("system_notice"), {{S("message"), S("Indexed")}});
+       }},
+      {S("one thread the agent created"), [&] {
+         tool(halC2Call(S("create_threads"), {}, {{S("threads"), QJsonArray{QJsonObject{{S("threadId"), S("thread-9")}}}}}));
+       }},
+      {S("two links of a pull request and one check"), [&] {
+         for (int n = 1; n <= 2; ++n) tool(halC2Call(S("link_pull_request"), {{S("url"), S("https://github.com/o/r/pull/%1").arg(n)}}));
+         tool(halC2Call(S("list_thread_pull_requests"), {}));
+       }},
+      {S("one pull request unlinked"), [&] {
+         tool(halC2Call(S("unlink_pull_request"), {{S("url"), S("https://github.com/o/r/pull/1")}}));
+       }},
+      {S("two checks of the linked pull requests"), [&] {
+         for (int n = 0; n < 2; ++n) tool(halC2Call(S("list_thread_pull_requests"), {}));
+       }},
       {S("two thoughts and one command"), [&] {
          thought();
          thought();
@@ -282,6 +329,43 @@ void addCalls(World& world, const S& calls) {
          edit(S("src/cart.ts"));
          for (int n = 0; n < 4; ++n) web();
        }},
+      {S("two tasks delegated to subagents"), [&] {
+         for (int n = 1; n <= 2; ++n) tool(halC2Call(S("delegate_task"), {}, {{S("taskId"), S("task-%1").arg(n)}}));
+       }},
+      {S("the same task cancelled twice"), [&] {
+         for (int n = 0; n < 2; ++n) tool(halC2Call(S("task_cancel"), {{S("taskId"), S("task-1")}}));
+       }},
+      {S("one thread read and the same thread read again"), [&] {
+         for (int n = 0; n < 2; ++n) tool(halC2Call(S("hal_c2_thread_read"), {{S("threadId"), S("thread-2")}}));
+       }},
+      {S("one wait on a thread"), [&] {
+         tool(halC2Call(S("hal_c2_thread_wait"), {{S("threadId"), S("thread-2")}}));
+       }},
+      {S("one scheduled task created"), [&] {
+         tool(halC2Call(S("schedule_task"), {}, {{S("scheduledTaskId"), S("schedule-1")}}));
+       }},
+      {S("one scheduled task run on request"), [&] {
+         tool(halC2Call(S("run_scheduled_task_now"), {{S("scheduledTaskId"), S("schedule-1")}}));
+       }},
+      {S("a queued message edited and another reordered"), [&] {
+         tool(halC2Call(S("hal_c2_queue_edit"), {{S("queuedRunId"), S("queued-1")}}));
+         tool(halC2Call(S("hal_c2_queue_reorder"), {{S("queuedRunId"), S("queued-2")}}));
+       }},
+      {S("a pending question answered"), [&] {
+         tool(halC2Call(S("hal_c2_pending_request_respond"), {{S("requestId"), S("request-1")}}));
+       }},
+      {S("one handoff to a worktree"), [&] {
+         tool(halC2Call(S("hal_c2_worktree_handoff"), {{S("worktreePath"), S("/work/shop-tax")}}));
+       }},
+      {S("one project registered and one cloned"), [&] {
+         tool(halC2Call(S("hal_c2_project_create"), {}, {{S("id"), S("project-2")}}));
+         tool(halC2Call(S("hal_c2_project_clone"), {{S("cwd"), S("/work/rates")}}));
+       }},
+      {S("two attachments sent to one thread"), [&] {
+         tool(halC2Call(S("hal_c2_thread_send_attachments"),
+                        {{S("threadId"), S("thread-2")}, {S("attachments"), QJsonArray{S("a.png"), S("b.png")}}},
+                        {{S("messageId"), S("message-1")}}));
+       }},
       {S("two attempts to send a message that both failed"), [&] {
          // Neither said which thread it was for.
          for (int n = 0; n < 2; ++n) {
@@ -293,8 +377,12 @@ void addCalls(World& world, const S& calls) {
          addItem(world, S("command_execution"), {{S("input"), S("bun lint")}, {S("exitCode"), 2}});
        }},
   };
-  const auto found = known.constFind(calls);
+  // A thought, which a summary does not count, keeps a lone call from reading as itself.
+  const QLatin1String withThought("a thought and ");
+  const bool thinks = calls.startsWith(withThought);
+  const auto found = known.constFind(thinks ? calls.mid(withThought.size()) : calls);
   if (found == known.cend()) fail(S("no calls described as \"%1\"").arg(calls));
+  if (thinks) thought();
   (*found)();
 }
 
@@ -369,6 +457,69 @@ QList<int> workRows(World& world) {
 // The phone's error row drawn for the turn's failure.
 QQuickItem* failureRow(World& world) {
   return drawn(world, S("errorLine"));
+}
+
+
+// The MC's checkpoints: each finished turn's patch, and the diffs asked of them.
+struct FakeDiffs {
+  QMap<int, S> patches;
+  QList<QJsonObject> asked;
+};
+
+const FakeMc::Extension diffs([](FakeMc& mc) {
+  // A turn's diff is the patches of the turns in its range.
+  const auto diff = [&mc](const FakeMc::Rpc& rpc, int from) {
+    FakeDiffs& fake = mc.part<FakeDiffs>();
+    fake.asked.append(QJsonObject{{S("method"), rpc.method}, {S("payload"), rpc.payload}});
+    S patch;
+    for (int turn = from + 1; turn <= rpc.payload.value(QLatin1String("toTurnCount")).toInt(); ++turn) patch += fake.patches.value(turn);
+    mc.reply(rpc, QJsonObject{{S("diff"), patch}});
+  };
+  mc.onRpc(S("orchestration.getTurnDiff"), [diff](const FakeMc::Rpc& rpc) { diff(rpc, rpc.payload.value(QLatin1String("fromTurnCount")).toInt()); });
+  mc.onRpc(S("orchestration.getFullThreadDiff"), [diff](const FakeMc::Rpc& rpc) { diff(rpc, 0); });
+});
+
+// A finished turn that changed `paths`, as its reply lists them, and the checkpoint it left.
+void finishTurnChanging(World& world, int turn, const QStringList& paths) {
+  const S run = startRun(world, 60);
+  QJsonArray files;
+  S patch;
+  for (const S& path : paths) {
+    addItem(world, S("file_change"), {{S("fileName"), path}});
+    files.append(QJsonObject{{S("path"), path}, {S("kind"), S("modified")}, {S("additions"), 2}, {S("deletions"), 0}});
+    patch += S("diff --git a/%1 b/%1\nnew file mode 100644\n--- /dev/null\n+++ b/%1\n@@ -0,0 +1,2 @@\n+export const turn = %2;\n+export const done = true;\n")
+                 .arg(path)
+                 .arg(turn);
+  }
+  addItem(world, S("assistant_message"), {{S("text"), S("Answer %1").arg(turn)}});
+  addItem(world, S("checkpoint"), {{S("checkpointId"), S("cp-%1").arg(turn)}, {S("scopeId"), S("scope-1")}, {S("files"), files}});
+  settleRun(world, S("completed"), 60);
+  set(world, S("checkpoint"), S("cp-%1").arg(turn),
+      {{S("id"), S("cp-%1").arg(turn)}, {S("scopeId"), S("scope-1")}, {S("runId"), run}, {S("appRunOrdinal"), turn}, {S("status"), S("ready")}});
+  world.mc.part<FakeDiffs>().patches.insert(turn, patch);
+}
+
+// An earlier turn changed another file, so "only that turn" can be told apart.
+void twoTurns(World& world, const QStringList& paths) {
+  finishTurnChanging(world, 1, {S("src/tax.ts")});
+  finishTurnChanging(world, 2, paths);
+  world.mc.part<FakeDiffs>().asked.clear();
+}
+
+ThreadDiff& threadDiff(World& world) {
+  return *world.native().controller<RightPanelController>()->diff();
+}
+
+S describeDiff(World& world) {
+  return S("the diff (%1) shows %2").arg(threadDiff(world).status(), threadDiff(world).model()->paths().join(S(", ")));
+}
+
+// The Diff tab in the phone's screen, done loading `paths`.
+void expectDiffOf(World& world, const QStringList& paths) {
+  drawn(world, S("diffPanel"));
+  world.waitFor([&] { return threadDiff(world).status() == QLatin1String("ready") && threadDiff(world).model()->paths() == paths; },
+                [&] { return describeDiff(world); });
+  for (const S& path : paths) expectDrawn(world, path);
 }
 
 }  // namespace
@@ -714,6 +865,36 @@ const Steps steps([] {
              S("the reply lists %1").arg(show(files)));
     }
     expectDrawn(world, S("2 changed files"));
+  });
+
+  // A turn's diff from its reply, in the Diff tab that takes the phone's screen.
+  step(S("a turn changed two files"), [](World& world, const Captures&, const Table&) { twoTurns(world, {S("src/cart.ts"), S("src/checkout.ts")}); });
+  step(S("a turn changed %1 and %1").arg(q, q), [](World& world, const Captures& c, const Table&) { twoTurns(world, {c[0], c[1]}); });
+  step(S("the user opens that turn's changes"), [](World& world, const Captures&, const Table&) { world.tap(drawn(world, S("openTurnDiff"))); });
+  step(S("the diff shows only what that turn changed, split per file"), [](World& world, const Captures&, const Table&) {
+    expectDiffOf(world, {S("src/cart.ts"), S("src/checkout.ts")});
+    const QList<QJsonObject> asked = world.mc.part<FakeDiffs>().asked;
+    const QJsonObject payload = asked.value(0).value(QLatin1String("payload")).toObject();
+    expect(asked.size() == 1 && asked.first().value(QLatin1String("method")) == QLatin1String("orchestration.getTurnDiff") &&
+               payload.value(QLatin1String("fromTurnCount")).toInt() == 1 && payload.value(QLatin1String("toTurnCount")).toInt() == 2,
+           S("the diff asked %1 times").arg(asked.size()));
+    expect(threadDiff(world).shownTurn() == 2 && threadDiff(world).focusPath().isEmpty(), S("the diff is of turn %1").arg(threadDiff(world).shownTurn()));
+    DiffModel& model = *threadDiff(world).model();
+    // Each file has a header of its own.
+    for (const S& path : model.paths()) {
+      const int file = model.fileOf(path);
+      expect(file >= 0 && model.data(model.index(model.rowOfFile(file)), DiffModel::KindRole) == QLatin1String("file"), S("%1 has no header; %2").arg(path, describeDiff(world)));
+    }
+  });
+  step(S("the user opens %1 from the list of changed files").arg(q), [](World& world, const Captures& c, const Table&) {
+    // Its folder is closed until opened.
+    world.tap(drawn(world, S("changedFoldersToggle")));
+    world.tap(drawn(world, S("changedFile"), [&](QQuickItem* item) { return item->property("modelData").toMap().value(S("path")) == c[0]; }));
+  });
+  step(S("the diff shows only %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectDiffOf(world, {c[0]});
+    expect(threadDiff(world).shownTurn() == 2 && threadDiff(world).focusPath() == c[0] && threadDiff(world).fileTotal() == 2,
+           S("the diff is of turn %1, on %2 of %3 files").arg(threadDiff(world).shownTurn()).arg(threadDiff(world).focusPath()).arg(threadDiff(world).fileTotal()));
   });
 
   // The running turn's latest command, named by its program.

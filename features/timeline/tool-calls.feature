@@ -76,7 +76,7 @@ Feature: Tool calls and file changes
     Then the summary counts two messages sent
 
   # A lone call reads as itself; the thought, which is not counted, makes each group a summary.
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui
   Scenario Outline: A summary says what kind of work the calls were
     Given the activity group holds a thought and <calls>
     When the user reads the activity group
@@ -142,7 +142,7 @@ Feature: Tool calls and file changes
     And it ends with "Performed 4 other actions"
 
   # Legacy: packages/client-runtime/src/halC2ToolSummary.ts (summarizeHalC2ToolCalls)
-  @desktop @mobile @tui @backlog-mobile
+  @desktop @mobile @tui
   Scenario Outline: A summary says what the agent did through HAL-C2's own tools
     Given the activity group holds a thought and <calls>
     When the user reads the activity group
@@ -457,14 +457,14 @@ Feature: Tool calls and file changes
     Then the reply lists both files with their added and removed lines
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-mobile
+  @shared
   Scenario: The user opens the diff of one turn
     Given a turn changed two files
     When the user opens that turn's changes
     Then the diff shows only what that turn changed, split per file
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
-  @shared @backlog-mobile
+  @shared
   Scenario: The user opens the diff of a single changed file
     Given a turn changed "src/cart.ts" and "src/checkout.ts"
     When the user opens "src/cart.ts" from the list of changed files

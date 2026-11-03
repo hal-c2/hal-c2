@@ -97,7 +97,7 @@ ShellWindow {
             Shell.dispatch("composer.modelPicker.toggle");
         else if (layout === "phone" && openSection.length > 0)
             Shell.dispatch("settings.navigate", { to: "/settings" });
-        else if (layout === "phone" && screen === "thread" && Shell.state.panel?.isOpen && Shell.state.panel.activeId === "files")
+        else if (layout === "phone" && screen === "thread" && Shell.state.panel?.isOpen && ["files", "diff"].includes(Shell.state.panel.activeId))
             Shell.dispatch("rightPanel.close");
         else if (layout === "phone" && spaceScreen !== null && spaceScreen.stepBack())
             return;
