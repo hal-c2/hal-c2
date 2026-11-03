@@ -785,6 +785,7 @@ defmodule HalC2.UpgradeTest do
       })
 
     assert {:ok, got} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
+    assert is_integer(got.opened_at)
     assert Map.delete(got, :opened_at) == migrated
 
     assert {:push, [{:text, frame}], _} =
