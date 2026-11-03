@@ -11,7 +11,10 @@ defmodule HalC2.Orchestration.CommandOutput do
   # file`); or with a program's path, as a shell or `env` names what it ran
   # (`/bin/bash: line 1: foo: command not found`, `/usr/bin/env: 'python': No such file`).
   # A file that merely mentions ENOENT is not a failure, nor is a search match, which
-  # starts with a path, a line number, or both.
+  # starts with a path, a line number, or both. Accepted at the edges: a match in an
+  # extensionless file at the search's root (`Makefile:    # no such file`) still reads as
+  # one, and a path-named program reporting a plain name (`/bin/bash: foo: command not
+  # found`, bash before 5.1) does not.
   @missing ~r/^(?:(?:[a-z][\w-]*:\s|[\w.\/~-]+:\s(?:line \d+:|'[^'\n]*':|"[^"\n]*":)).*)?(?:file not found|no files found|enoent|no such file|command not found)/im
   @powershell ~r/commandnotfoundexception|is not recognized as the name of a cmdlet|a parameter cannot be found that matches parameter name/i
   @exit_codes [
