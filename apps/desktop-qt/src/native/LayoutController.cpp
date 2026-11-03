@@ -35,10 +35,6 @@ void LayoutController::setSystemReducedMotion(bool reduced) {
   g_systemReducedMotion = reduced;
 }
 
-bool LayoutController::systemReducedMotion() {
-  return g_systemReducedMotion;
-}
-
 int LayoutController::panelAnimationMs() const {
   auto* settings = NativeShell::of(this)->controller<SettingsController>();
   if (!settings || g_systemReducedMotion || settings->setting(QStringLiteral("reduceMotion")).toBool()) return 0;
