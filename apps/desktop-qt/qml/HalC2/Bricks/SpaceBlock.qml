@@ -13,8 +13,9 @@ import HalC2.Shell
 // the page, an image above its caption, a chart drawn from its description,
 // what a page's update wrote (Markdown nobody edits by hand), Markdown the page
 // keeps as written (a raw block: its source in a fixed-width face, never
-// wrapped, scrolled sideways, and written with Ctrl+Return or by leaving it;
-// a table and a code block show so too until they are drawn as such, #854),
+// wrapped, scrolled sideways, and written with Ctrl+Return or by leaving it),
+// a table and a code block drawn as the chat draws them and edited as such a
+// source (#854),
 // a list item drawn with its marker (#869), what the MC writes around a block
 // a page does not draw yet (a list item's indent, an alert's kind, a divider, a footnote's label, a section's tags,
 // math's fences and an image's address, #869 and #877), a Mermaid diagram drawn from a "mermaid" code block or a raw block's fence, and
@@ -65,7 +66,10 @@ Item {
     readonly property TextEdit editor: editorLoader.item as TextEdit
     readonly property bool editing: editor !== null && editor.activeFocus
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-    readonly property bool raw: kind === "raw" || kind === "table" || kind === "code"
+    // Edited as lines of source: Markdown kept as written, a table and code.
+    readonly property bool sourceKind: kind === "raw" || kind === "table" || kind === "code"
+    // Shown as its source now: a raw block always, a table or code while edited.
+    readonly property bool raw: sourceKind && editor !== null
     // Level 2 keeps the page's usual heading; 1 is larger, 3 to 6 step down.
     readonly property int headingSize: [26, 20, 17, 16, 15, 14][Math.max(1, Math.min(6, level || 2)) - 1]
     // A "mermaid" code block, or a raw block that is one "mermaid" fence, is
@@ -78,10 +82,11 @@ Item {
     // The block shows text: a link, a chart, what an update wrote, a divider,
     // a section's end and a drawn diagram show something else.
     readonly property bool textShown: !diagramShown && ["subpage_link", "chart", "generated", "divider", "details_end"].indexOf(kind) < 0
-    // Text drawn as Markdown while it is not edited. Raw, table and code blocks
-    // are their source, and an image's caption and a section's summary sit
-    // between Markdown the MC writes around them on their line.
-    readonly property bool drawn: textShown && !raw && kind !== "details" && kind !== "image"
+    // Text drawn as Markdown while it is not edited. A raw block is its source,
+    // a diagram's or math's code is drawn otherwise (or is its source), and an
+    // image's caption and a section's summary sit between Markdown the MC
+    // writes around them on their line.
+    readonly property bool drawn: textShown && kind !== "raw" && !(kind === "code" && (diagramCode.length > 0 || language === "math")) && kind !== "details" && kind !== "image"
     // The user is writing in a drawn block: its source shows.
     property bool sourceShown: false
     // A drawn bullet or numbered item has its marker drawn with its text, as
@@ -90,7 +95,9 @@ Item {
     readonly property string marker: drawn && editor === null && (kind === "bullet" || kind === "numbered") && !leavesItem(markdownLead.replace(/^ +/, ""), text) ? markdownLead.replace(/^ +/, "") : ""
     // What the brick draws: an item's further lines are indented under its
     // marker, so a second paragraph stays in the item.
-    readonly property string drawnSource: marker === "" ? text : marker + text.replace(/\n/g, "\n" + " ".repeat(marker.length))
+    // Code is drawn inside a fence longer than any it holds.
+    readonly property string drawnSource: kind === "code" ? fenced(text, language)
+                                        : marker === "" ? text : marker + text.replace(/\n/g, "\n" + " ".repeat(marker.length))
 
     signal commentRequested(string blockId)
     signal addBelowRequested(string blockId)
@@ -100,6 +107,18 @@ Item {
     function mermaidOf(text) {
         const fence = /^ {0,3}(`{3,}|~{3,})[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)\r?\n {0,3}\1[`~]*[ \t]*(?:\r?\n)?$/i.exec(text);
         return fence ? fence[2] : "";
+    }
+
+    // `code` in a backtick fence naming `language`, longer than any fence in it.
+    function fenced(code, language) {
+        let ticks = 3;
+        for (const line of code.split("\n")) {
+            const fence = /^ {0,3}(`{3,})/.exec(line);
+            if (fence)
+                ticks = Math.max(ticks, fence[1].length + 1);
+        }
+        const fence = "`".repeat(ticks);
+        return fence + language + "\n" + code + "\n" + fence;
     }
 
     // Writes what the user typed, if it differs from the block's text.
@@ -388,12 +407,21 @@ Item {
                                 objectName: "spaceBlockPointer"
 
                                 property string link: ""
+                                property bool control: false
 
                                 anchors.fill: parent
                                 hoverEnabled: true
-                                cursorShape: drawnMouse.link.length > 0 ? Qt.PointingHandCursor : Qt.IBeamCursor
-                                onPositionChanged: mouse => drawnMouse.link = block.openable(drawnText.linkAt(mouse.x, mouse.y))
-                                onExited: drawnMouse.link = ""
+                                cursorShape: drawnMouse.link.length > 0 || drawnMouse.control ? Qt.PointingHandCursor : Qt.IBeamCursor
+                                // The brick's own controls (a code block's copy, a table's) take their press.
+                                onPressed: mouse => mouse.accepted = !drawnText.controlAt(mouse.x, mouse.y)
+                                onPositionChanged: mouse => {
+                                    drawnMouse.link = block.openable(drawnText.linkAt(mouse.x, mouse.y));
+                                    drawnMouse.control = drawnText.controlAt(mouse.x, mouse.y);
+                                }
+                                onExited: {
+                                    drawnMouse.link = "";
+                                    drawnMouse.control = false;
+                                }
                                 onClicked: mouse => {
                                     const target = block.openable(drawnText.linkAt(mouse.x, mouse.y));
                                     if (target.length > 0)
@@ -423,20 +451,20 @@ Item {
                             id: sourceEditor
 
                             objectName: "spaceBlockEditor:" + block.text
-                            width: block.raw ? Math.max(implicitWidth, scroller.width) : scroller.width
+                            width: block.sourceKind ? Math.max(implicitWidth, scroller.width) : scroller.width
                             readOnly: block.readOnly
                             textFormat: TextEdit.PlainText
-                            wrapMode: block.raw ? TextEdit.NoWrap : TextEdit.Wrap
+                            wrapMode: block.sourceKind ? TextEdit.NoWrap : TextEdit.Wrap
                             selectByMouse: true
                             color: block.foreground
                             selectionColor: Theme.palette.color("accent", "#2563eb")
                             selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
-                            font.family: block.raw ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Qt.application.font.family
-                            font.pixelSize: block.raw ? Theme.fontSizeCode : Math.round((block.kind === "heading" ? block.headingSize : 15) * Theme.fontScale)
+                            font.family: block.sourceKind ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Qt.application.font.family
+                            font.pixelSize: block.sourceKind ? Theme.fontSizeCode : Math.round((block.kind === "heading" ? block.headingSize : 15) * Theme.fontScale)
                             font.weight: block.kind === "heading" ? Font.DemiBold : Font.Normal
                             font.strikeout: block.kind === "checklist" && block.checked
                             // Source shows each character as typed, so no ligatures turn "---" or "->" into one glyph.
-                            font.features: block.raw ? { "liga": 0, "calt": 0 } : ({})
+                            font.features: block.sourceKind ? { "liga": 0, "calt": 0 } : ({})
                             opacity: block.kind === "checklist" && block.checked ? 0.7 : 1
                             Component.onCompleted: text = block.text
                             // Leaving it writes it, and a drawn block is drawn again.
@@ -449,7 +477,7 @@ Item {
                             }
                             // The caret stays in sight on a line wider than the block.
                             onCursorRectangleChanged: {
-                                if (!block.raw)
+                                if (!block.sourceKind)
                                     return;
                                 if (cursorRectangle.x < scroller.contentX)
                                     scroller.contentX = cursorRectangle.x;
@@ -460,7 +488,7 @@ Item {
                             // new line in it. In a raw block, which is lines of source,
                             // Return starts a line and Ctrl+Return writes it.
                             Keys.onReturnPressed: event => {
-                                if ((event.modifiers & Qt.ShiftModifier) || (block.raw && !(event.modifiers & Qt.ControlModifier))) {
+                                if ((event.modifiers & Qt.ShiftModifier) || (block.sourceKind && !(event.modifiers & Qt.ControlModifier))) {
                                     event.accepted = false;
                                     return;
                                 }
