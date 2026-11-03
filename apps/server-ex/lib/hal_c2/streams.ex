@@ -41,6 +41,22 @@ defmodule HalC2.Streams do
     end
   end
 
+  @doc """
+  Stops the stream's server if one runs, so its next use loads the stream from the
+  store. For a writer that appended to the store behind it (an import): a server that
+  held the stream from before would apply its next commit over the events it never
+  saw, and snapshot that.
+  """
+  @spec stop(String.t()) :: :ok
+  def stop(stream_id) do
+    if Process.whereis(HalC2.Streams.Registry) do
+      for {pid, _} <- Registry.lookup(HalC2.Streams.Registry, stream_id),
+          do: DynamicSupervisor.terminate_child(HalC2.Streams.Supervisor, pid)
+    end
+
+    :ok
+  end
+
   @tries 3
 
   @doc """

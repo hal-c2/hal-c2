@@ -25,6 +25,10 @@ defmodule HalC2.StreamsPropTest do
   as an older MC left it, one whole snapshot as of some recent event, which the next
   start migrates in the background while it serves: nobody may tell that either.
 
+  A writer may append to the store behind a stream, as an import does, and then stop
+  it (`HalC2.Streams.stop/1`): whatever the stream held, and whatever it wrote on the
+  way out, the next start holds what was written too.
+
   A client's subscription may carry a tag, a new one each time it follows, as a
   socket mints them. Its messages come under that tag, and the subscription it
   replaced is told so once under the old one, and is sent nothing else. Its own tag
@@ -149,6 +153,7 @@ defmodule HalC2.StreamsPropTest do
     base = [
       {8, changes_call(state, :commit)},
       {3, changes_call(state, :transact)},
+      {2, changes_call(state, :write_behind)},
       {3, {:call, __MODULE__, :subscribe_plain, [name(), stream(), oneof([:fresh, :bogus])]}},
       {2, {:call, __MODULE__, :watch, [name(), stream()]}},
       {4,
@@ -452,6 +457,10 @@ defmodule HalC2.StreamsPropTest do
   def next_state(state, _result, {:call, _, call, [id, changes]})
       when call in [:commit, :transact],
       do: append(state, id, changes)
+
+  # Its subscribers were sent none of what was written behind it, and are ended.
+  def next_state(state, _result, {:call, _, :write_behind, [id, changes]}),
+    do: state |> stop_subs(fn {_, s} -> s == id end) |> append(id, changes)
 
   def next_state(state, _result, {:call, _, :bulk, [id, n]}),
     do: append(state, id, bulk_changes(n))
@@ -808,6 +817,13 @@ defmodule HalC2.StreamsPropTest do
     rescue
       ArgumentError -> if Streams.ensure(id) == pid, do: :ok, else: :restarted
     end
+  end
+
+  # Appends to the store, not through the stream, as an import does, then stops the
+  # stream as the import then does.
+  def write_behind(id, changes) do
+    if changes != [], do: {:ok, _} = Store.append([{:thread, id, changes}])
+    Streams.stop(id)
   end
 
   def bulk(id, n), do: Streams.commit(id, :thread, bulk_changes(n))

@@ -169,6 +169,11 @@ defmodule HalC2.Import.PreviousInstall do
             progress: events
           )
 
+        # The import wrote these streams' events to the store, not through a stream:
+        # one started meanwhile (search's backfill reads every thread at boot, a
+        # partly imported one too) holds only what was there when it loaded.
+        Enum.each(reading, &HalC2.Streams.stop/1)
+
         Enum.each(reading, &(:ok = Store.put_meta(mark_key(&1), @files <> target["id"])))
       end
 
