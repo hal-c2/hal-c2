@@ -320,6 +320,12 @@ Rectangle {
             model: Spaces.projects
             boundsBehavior: Flickable.StopAtBounds
 
+            // An expanded project can take more than the room: a thin
+            // scrollbar says the sections go on.
+            ShellScrollEdge {
+                target: projectSections
+            }
+
             delegate: Rectangle {
                 id: entry
 

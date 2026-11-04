@@ -1744,5 +1744,20 @@ Item {
             verify(findChild(view, "spacePageTree").mapToItem(view, 0, 0).y > Theme.headerHeight,
                    "the pages start under the line");
         }
+
+        // features/space/pages.feature: a project list taller than its room
+        // shows the thin scrollbar, and a short one none.
+        function test_an_overflowing_project_list_shows_a_scrollbar() {
+            const rows = [{ id: "project:shop", kind: "project", projectId: "shop", path: "", name: "shop", depth: 0, expanded: true, pageId: "" }];
+            for (let n = 0; n < 60; ++n)
+                rows.push({ id: "file:shop:f" + n + ".md", kind: "file", projectId: "shop", path: "f" + n + ".md", name: "f" + n + ".md", depth: 1, expanded: false, pageId: "" });
+            const view = root.research({ projects: rows });
+            const list = findChild(view, "spaceProjects");
+            tryVerify(() => list.height > 0 && list.contentHeight > list.height);
+            tryVerify(() => findChild(list, "scrollThumb").visible);
+            Spaces.load(Object.assign({}, { projects: rows.slice(0, 1) }));
+            tryVerify(() => list.contentHeight > 0 && list.contentHeight <= list.height);
+            verify(!findChild(list, "scrollThumb").visible);
+        }
     }
 }
