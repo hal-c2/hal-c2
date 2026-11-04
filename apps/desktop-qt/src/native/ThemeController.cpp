@@ -901,6 +901,20 @@ QVariantMap ThemeController::derive(const QString& canvasValue, const QString& a
   colors.insert(QStringLiteral("destructive"), colors.value(QLatin1String("errorForeground")));
   colors.insert(QStringLiteral("sidebarActiveIndicator"), QStringLiteral("#00000000"));
   colors.insert(QStringLiteral("scrim"), QStringLiteral("#00000052"));  // black at 32%, as CSS writes it
+  // The ink and surface roles, as ThemeStore::color derives them from the rest.
+  const auto mix = [](const QColor& a, const QColor& b, double t) {
+    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t, a.greenF() + (b.greenF() - a.greenF()) * t, a.blueF() + (b.blueF() - a.blueF()) * t);
+  };
+  set("ink", text);
+  set("inkTertiary", textMuted);
+  set("inkSecondary", mix(text, textMuted, 0.5));
+  set("borderStrong", mix(border, text, 0.12));
+  colors.insert(QStringLiteral("inset"), colors.value(QLatin1String("codeBackground")));
+  colors.insert(QStringLiteral("inputSurface"), colors.value(QLatin1String("surface")));
+  set("accentText", accent);
+  set("diffAddedSurface", mix(canvas, QColor(QStringLiteral("#22c55e")), 0.14));
+  set("diffRemovedSurface", mix(canvas, QColor(QStringLiteral("#ef4444")), 0.14));
+  colors.insert(QStringLiteral("success"), builtIns().fixed.value(dark ? kDark : kLight).toObject().value(QLatin1String("success")));
   return colors.toVariantMap();
 }
 
