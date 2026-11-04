@@ -100,7 +100,9 @@ export const THEME_COLOR_ROLES = [
  * Roles added after themes were written, so a theme may leave them out: the
  * shell reads each from the older role it renames (ink is text, inkTertiary
  * textMuted, destructive error, popover surfaceOverlay) or derives it from the
- * ones the theme has (ThemeStore::color). Identity colours (projectForeground,
+ * ones the theme has (ThemeStore::color). destructiveFill is what a destructive
+ * button is filled with under white text; without it the shell deepens error
+ * until white reads at 4.5:1. Identity colours (projectForeground,
  * branchForeground, sidebarActiveIndicator) are neutral unless a theme opts in.
  */
 export const THEME_OPTIONAL_COLOR_ROLES = [
@@ -113,6 +115,7 @@ export const THEME_OPTIONAL_COLOR_ROLES = [
   "accentText",
   "popover",
   "destructive",
+  "destructiveFill",
   "scrim",
   "success",
   "diffAdded",
@@ -215,6 +218,7 @@ export const HAL_C2_LIGHT_THEME_COLORS: StandardThemeColors = {
   inset: "#f1f1ee",
   inputSurface: "#ffffff",
   accentText: "#1d4ed8",
+  destructiveFill: "#c81e1e",
   scrim: "#14161a52",
   success: "#15803d",
   diffAdded: "#166534",
@@ -286,6 +290,7 @@ export const HAL_C2_DARK_THEME_COLORS: StandardThemeColors = {
   inset: "#0a0b0d",
   inputSurface: "#121317",
   accentText: "#5b8cff",
+  destructiveFill: "#b91c1c",
   scrim: "#0000008f",
   success: "#4ade80",
   diffAdded: "#4ade80",

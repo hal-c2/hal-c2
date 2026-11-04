@@ -3,8 +3,10 @@
 #     ShellTextField.qml, ShellComboBox.qml, ShellMenu.qml, ContextMenuHost.qml (the shared controls)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellToolTip.qml (every attached tooltip's look)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellPopoverSurface.qml (menus, the palette, pickers, dialogs)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellButton.qml, src/ThemeStore.cpp (the destructive fill)
 #   apps/web/src/components/ui/switch.tsx, checkbox.tsx, number-field.tsx, input.tsx, select.tsx
-#   Proved today by apps/desktop-qt/tests/tst_Shell*.qml; no Gherkin step runs QML yet.
+#   Proved today by apps/desktop-qt/tests/tst_Shell*.qml and tests/native/tst_ShellRuntime.cpp;
+#   no Gherkin step runs QML yet.
 
 @desktop @backlog-desktop
 Feature: Shared controls follow the theme
@@ -51,6 +53,15 @@ Feature: Shared controls follow the theme
     When a menu, the command palette, a picker or a dialog opens over the timeline
     Then it is drawn on the solid overlay colour, so nothing behind it shows through
     And the glass opacity still thins the composer
+
+  Scenario: A destructive confirm is a deep error fill under white text
+    Given the dark base theme is applied, whose error red is light enough for text
+    When a confirmation asks to delete a thread
+    Then Delete is filled with the theme's destructive fill, a deep red
+    And its white label reads at 4.5:1 or better
+    And Cancel stays a quiet outline button
+    When a custom theme names an error colour but no destructive fill
+    Then Delete is filled with that error, deepened until its white label reads at 4.5:1
 
   # Opaque popovers have nothing behind them to blur.
   @desktop @dropped
