@@ -76,8 +76,9 @@ Window {
     width: 1280
     height: 820
     onWidthChanged: reportWidth()
-    // A zoom changes the room as a resize does.
-    onZoomChanged: reportWidth()
+    // A zoom changes the room as a resize does. Later, as the layout's answer
+    // republishes the zoom while it is still changing.
+    onZoomChanged: Qt.callLater(reportWidth)
     // Again once the layout is there: the shell may start after the window.
     // Later, as the answer republishes sidebarWidth while it is still changing.
     onSidebarWidthChanged: Qt.callLater(reportWidth)

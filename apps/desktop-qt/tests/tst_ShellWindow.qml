@@ -160,9 +160,29 @@ Item {
             };
             compare(reported(), window.width);
             Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1.5 } });
-            compare(reported(), Math.round(window.width / 1.5));
+            tryCompare({ get value() { return reported(); } }, "value", Math.round(window.width / 1.5));
             Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1 } });
-            compare(reported(), window.width);
+            tryCompare({ get value() { return reported(); } }, "value", window.width);
+        }
+
+        // The layout answers a report at once, as LayoutController does, and
+        // that answer republishes the zoom: no binding loop.
+        function test_zoomAnswerIsNoBindingLoop() {
+            failOnWarning(/Binding loop/);
+            const window = createTemporaryObject(windowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            const answer = action => {
+                if (action === "layout.window") {
+                    Shell.state = Object.assign({}, Shell.state, { layout: Object.assign({}, Shell.state.layout) });
+                }
+            };
+            Shell.actionRequested.connect(answer);
+            Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1.5 } });
+            wait(0);
+            Shell.state = Object.assign({}, Shell.state, { layout: { sidebarCollapsed: false, zoom: 1 } });
+            wait(0);
+            Shell.actionRequested.disconnect(answer);
+            compare(window.zoom, 1);
         }
 
         // Scenario: Context menus follow the zoomed app (features/navigation/windows.feature)
