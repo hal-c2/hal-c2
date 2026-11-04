@@ -102,6 +102,67 @@ Rectangle {
         }
     }
 
+    // An action: a row the column's whole width whose label wraps onto a
+    // second line rather than being cut, with its shortcut (`meta`) in a
+    // right column in tertiary ink.
+    component ActionRow: AbstractButton {
+        id: actionRow
+
+        property string iconName: ""
+        property string meta: ""
+
+        Layout.fillWidth: true
+        implicitHeight: Math.max(Theme.control.md, contentItem.implicitHeight + topPadding + bottomPadding)
+        leftPadding: Theme.space.sm
+        rightPadding: Theme.space.sm
+        topPadding: Theme.space.xs
+        bottomPadding: Theme.space.xs
+        hoverEnabled: true
+        font.pixelSize: Theme.type.meta.size
+        Accessible.role: Accessible.Button
+        Accessible.name: text
+        background: Rectangle {
+            radius: Theme.radiusMd
+            color: actionRow.hovered || actionRow.down ? Theme.palette.color("surfaceRaised", "#1c1f24") : "transparent"
+            // Keyboard focus draws a ring; pointer focus stays quiet.
+            border.color: Theme.palette.color("focus", "#5b8cff")
+            border.width: actionRow.visualFocus ? 1 : 0
+        }
+        contentItem: RowLayout {
+            spacing: Theme.space.sm
+
+            ShellIcon {
+                visible: actionRow.iconName.length > 0
+                name: actionRow.iconName
+                size: Theme.icon.md
+                color: root.muted
+                // Beside the first line when the label wraps.
+                Layout.alignment: Qt.AlignTop
+                Layout.topMargin: Math.max(0, (label.implicitHeight / Math.max(1, label.lineCount) - Theme.icon.md) / 2)
+            }
+            Text {
+                id: label
+                objectName: "actionRowLabel"
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                text: actionRow.text
+                font: actionRow.font
+                color: root.foreground
+                wrapMode: Text.Wrap
+            }
+            Text {
+                visible: actionRow.meta.length > 0
+                text: actionRow.meta
+                color: root.muted
+                font.pixelSize: Theme.type.meta.size
+                font.features: {
+                    "tnum": 1
+                }
+                Layout.alignment: Qt.AlignTop
+            }
+        }
+    }
+
     // A section's name: sentence case, meta, tertiary ink.
     component Heading: Text {
         Layout.topMargin: Theme.space.sm
@@ -210,7 +271,7 @@ Rectangle {
                 value: root.details?.branch ?? ""
             }
 
-            ShellButton {
+            ActionRow {
                 id: openWorkspace
 
                 readonly property var editor: (Shell.state.workspace?.editors ?? []).find(candidate => candidate.id === Shell.state.workspace?.preferredEditorId) ?? null
@@ -219,7 +280,6 @@ Rectangle {
                 readonly property string noRoute: Shell.state.workspace?.noSshRoute ?? ""
 
                 visible: root.details !== null && (editor !== null || noRoute !== "")
-                subtle: true
                 iconName: "external-link"
                 text: noRoute !== "" ? noRoute : qsTr("Open in %1").arg(editor?.label ?? "")
                 onClicked: Shell.dispatch("workspace.openInEditor", {})
@@ -238,26 +298,20 @@ Rectangle {
                     required property var modelData
 
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: Theme.space.xxs
 
-                    ShellButton {
+                    ActionRow {
                         objectName: "threadDetailsAction-" + action.modelData.id
-                        Layout.fillWidth: true
-                        subtle: true
                         iconName: "play"
                         text: action.modelData.setup ? qsTr("%1 (setup)").arg(action.modelData.name) : action.modelData.name
+                        meta: action.modelData.shortcut ?? ""
                         Accessible.name: qsTr("Run %1").arg(action.modelData.name)
                         onClicked: Shell.dispatch("workspace.runScript", {
                             scriptId: action.modelData.id
                         })
                     }
-                    Text {
-                        visible: text.length > 0
-                        text: action.modelData.shortcut
-                        color: root.muted
-                        font.pixelSize: Theme.type.caption.size
-                    }
                     ShellButton {
+                        Layout.alignment: Qt.AlignTop
                         objectName: "threadDetailsActionEdit-" + action.modelData.id
                         subtle: true
                         iconName: "settings"
@@ -280,12 +334,10 @@ Rectangle {
             Repeater {
                 model: root.actions?.imports ?? []
 
-                delegate: ShellButton {
+                delegate: ActionRow {
                     required property var modelData
 
                     objectName: "threadDetailsImport-" + modelData.name
-                    Layout.fillWidth: true
-                    subtle: true
                     iconName: "plus"
                     text: qsTr("Import %1 from hal-c2.json").arg(modelData.name)
                     onClicked: Shell.dispatch("projectActions.import", {
@@ -293,10 +345,9 @@ Rectangle {
                     })
                 }
             }
-            ShellButton {
+            ActionRow {
                 objectName: "threadDetailsAddAction"
                 visible: root.actions !== null
-                subtle: true
                 iconName: "plus"
                 text: qsTr("Add action")
                 onClicked: Shell.dispatch("projectActions.add")

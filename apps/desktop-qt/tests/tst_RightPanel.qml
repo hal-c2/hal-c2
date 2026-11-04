@@ -570,6 +570,31 @@ Item {
             verify(!findChild(details, "threadDetailsShowMore").visible);
         }
 
+        // An action whose name is longer than the column wraps onto a
+        // second line rather than being cut, and its row grows to hold it.
+        function test_detailsActionsWrapInsteadOfCutting() {
+            Shell.reset();
+            Shell.state = { projectActions: { projectKey: "p", file: "ok",
+                scripts: [{ id: "s1", name: "Run the whole release build for every target", setup: false, shortcut: "Ctrl+Shift+R" }],
+                imports: [{ name: "Setup Worktree" }] } };
+            const details = createTemporaryObject(detailsComponent, root, { details: { environment: "e", online: true, project: "p", folder: "", checkout: "Local", branch: "", relations: [] } });
+            const imported = findChild(details, "threadDetailsImport-Setup Worktree");
+            const script = findChild(details, "threadDetailsAction-s1");
+            verify(imported && script);
+            for (const row of [imported, script]) {
+                const label = findChild(row, "actionRowLabel");
+                tryVerify(() => label.width > 0 && label.contentWidth <= label.width, 2000, row.text + " fits its row");
+                verify(!label.truncated, "and is never cut");
+                tryVerify(() => label.height >= label.implicitHeight && row.height >= label.implicitHeight + row.topPadding + row.bottomPadding, 2000, "inside its row");
+                verify(row.mapToItem(details, row.width, 0).x <= details.width, "inside the column");
+            }
+            compare(imported.text, "Import Setup Worktree from hal-c2.json");
+            const scriptLabel = findChild(script, "actionRowLabel");
+            verify(scriptLabel.lineCount >= 2, "the long name takes a second line");
+            tryVerify(() => script.height > Theme.control.md, 2000, "and its row grows to hold it");
+            Shell.reset();
+        }
+
         function test_relationRowsCentreTheirLabels() {
             const details = createTemporaryObject(detailsComponent, root, { details: { environment: "e", online: true, project: "p", folder: "", checkout: "Local", branch: "",
                 relations: [{ threadKey: "e:fork", title: "A fork", relation: "Fork", status: "running" }] } });
