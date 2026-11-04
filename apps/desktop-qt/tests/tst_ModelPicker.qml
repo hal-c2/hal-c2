@@ -323,6 +323,26 @@ Item {
 
         // The web row's parts: the short name, the provider line with its
         // sub-provider, the legacy fold and the empty search.
+        // A provider with more models than fit stops on a whole row, with a
+        // fade at the bottom edge saying there is more.
+        function test_a_long_model_list_stops_on_a_whole_row() {
+            const many = [];
+            for (let index = 1; index <= 12; ++index)
+                many.push(model("m" + index, "Model " + index));
+            const picker = createPicker([codex(many)]);
+            openPicker(picker);
+            const list = inPicker(picker, "modelPickerList");
+            tryVerify(() => list.count === 12);
+            const first = list.itemAtIndex(0);
+            const pitch = first.height + list.spacing;
+            compare((list.height + list.spacing) % pitch, 0);
+            verify(findChild(list, "scrollEdgeBottom").visible);
+            verify(!findChild(list, "scrollEdgeTop").visible);
+            list.positionViewAtEnd();
+            tryVerify(() => !findChild(list, "scrollEdgeBottom").visible);
+            verify(findChild(list, "scrollEdgeTop").visible);
+        }
+
         function test_rows_follow_the_web_list() {
             const opencode = instance("opencode", "opencode", "OpenCode", [model("anthropic/claude-sonnet-4", "Anthropic: Claude Sonnet 4", {
                     shortName: "Claude Sonnet 4",

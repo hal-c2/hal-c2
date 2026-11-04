@@ -53,6 +53,19 @@ TestCase {
         }
     }
 
+    Component {
+        id: tallMenu
+        ShellMenu {
+            Repeater {
+                model: 40
+                ShellMenuItem {
+                    required property int index
+                    text: "Project " + index
+                }
+            }
+        }
+    }
+
     function findNamed(item, name) {
         if (item.objectName === name)
             return item;
@@ -139,5 +152,32 @@ TestCase {
         compare(fill.a, 1);
         compare(fill, Qt.color("#101820"));
         Theme.colors = {};
+    }
+
+    // A menu longer than the window stops on a whole row and scrolls, with a
+    // fade at the edge that has more past it.
+    function test_a_menu_longer_than_the_window_stops_on_a_whole_row() {
+        const menu = createTemporaryObject(tallMenu, testCase);
+        menu.popup(20, 0);
+        tryVerify(() => menu.opened);
+        const rows = menu.contentItem;
+        const room = rows.Window.height;
+        verify(menu.height <= room, menu.height + " > " + room);
+        verify(menu.height + Theme.control.md > room);
+        compare((menu.height - menu.topPadding - menu.bottomPadding) % Theme.control.md, 0);
+        verify(rows.interactive);
+        verify(findNamed(rows, "scrollEdgeBottom").visible);
+        verify(!findNamed(rows, "scrollEdgeTop").visible);
+        rows.positionViewAtEnd();
+        tryVerify(() => !findNamed(rows, "scrollEdgeBottom").visible);
+        verify(findNamed(rows, "scrollEdgeTop").visible);
+    }
+
+    // A menu that fits shows all its rows and no edge.
+    function test_a_menu_that_fits_shows_no_edge() {
+        const menu = openMenu(richMenu);
+        compare(menu.height, menu.implicitHeight);
+        verify(!findNamed(menu.contentItem, "scrollEdgeBottom").visible);
+        verify(!findNamed(menu.contentItem, "scrollEdgeTop").visible);
     }
 }

@@ -193,6 +193,12 @@ Popup {
 
             boundsBehavior: Flickable.StopAtBounds
 
+            // Headers and rows differ in height, so the list cannot stop on a
+            // whole row at its cap; the edge says there is more instead.
+            ShellScrollEdge {
+                target: list
+            }
+
             // Only a pointer that moves takes the highlight: rows that load or
             // scroll under a resting one leave Enter on what was typed. It is
             // tracked over the whole list, headers and gaps included, so a row

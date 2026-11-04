@@ -4,6 +4,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellToolTip.qml (every attached tooltip's look)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellPopoverSurface.qml (menus, the palette, pickers, dialogs)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellButton.qml, src/ThemeStore.cpp (the destructive fill)
+#   apps/desktop-qt/qml/HalC2/Bricks/ShellScrollEdge.qml (the edge of a list that goes on)
 #   apps/web/src/components/ui/switch.tsx, checkbox.tsx, number-field.tsx, input.tsx, select.tsx
 #   Proved today by apps/desktop-qt/tests/tst_Shell*.qml and tests/native/tst_ShellRuntime.cpp;
 #   no Gherkin step runs QML yet.
@@ -79,6 +80,15 @@ Feature: Shared controls follow the theme
     Then the "Medium" row shows a check mark
     When I press Down
     Then the row under the keyboard is highlighted and "Medium" keeps its check mark
+
+  Scenario: A list too long for its menu, picker or palette shows that it goes on
+    Given the diff's turn picker lists 30 turns
+    When the user opens it
+    Then it stops on a whole row, never a sliced one
+    And a fade at its bottom edge says there is more
+    When the user scrolls to the end
+    Then the fade moves to the top edge
+    And a menu longer than the window, the model picker and the command palette do the same
 
   Scenario: A select popup opens upward when there is no room below
     Given a select near the bottom of the window

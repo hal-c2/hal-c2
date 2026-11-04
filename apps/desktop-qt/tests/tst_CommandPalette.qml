@@ -55,12 +55,19 @@ Item {
             const three = popup.height;
             verify(three < 300, "three rows make a short palette, not " + three);
             compare(list.height, list.contentHeight, "the list is as tall as its rows");
+            verify(!findChild(list, "scrollEdgeBottom").visible, "no edge when every row shows");
             PaletteModel.clear();
             tryVerify(() => popup.height < three, 2000, "no rows make it shorter still");
             verify(list.height > 0, "with room for the empty text");
             for (let n = 1; n <= 40; ++n)
                 PaletteModel.append({ title: "Entry " + n, description: "", group: "Actions", shortcut: "", kind: "action", runnable: true, current: false });
             tryCompare(popup, "height", 480);
+            // The rows past the cap are hinted at by a fade at the edge.
+            verify(findChild(list, "scrollEdgeBottom").visible);
+            verify(!findChild(list, "scrollEdgeTop").visible);
+            list.positionViewAtEnd();
+            tryVerify(() => !findChild(list, "scrollEdgeBottom").visible);
+            verify(findChild(list, "scrollEdgeTop").visible);
         }
 
         // Rows are list items named by their title, for assistive technology.

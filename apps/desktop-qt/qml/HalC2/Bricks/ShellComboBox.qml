@@ -146,7 +146,9 @@ ComboBox {
         y: upward ? -implicitHeight * scale - Theme.space.xs : control.height + Theme.space.xs
         onAboutToShow: upward = control.mapToItem(null, 0, control.height).y + implicitHeight * scale + Theme.space.xs > control.Window.height
         width: Math.max(control.width, 160)
-        implicitHeight: Math.min(contentItem.implicitHeight + 2 * padding, 320)
+        // Whole rows, up to 320: a long list ends on a full row, with the
+        // edge hint saying there is more.
+        implicitHeight: Math.min(control.count, Math.floor((320 - 2 * padding) / Theme.control.md)) * Theme.control.md + 2 * padding
         padding: Theme.space.xs
 
         enter: Transition {
@@ -163,6 +165,9 @@ ComboBox {
         exit: null
 
         contentItem: ListView {
+            id: rows
+
+            objectName: "comboRows"
             clip: true
             // Counted, not measured: the rows exist only once the popup shows,
             // after `onAboutToShow` has chosen which way it opens.
@@ -170,6 +175,10 @@ ComboBox {
             model: control.popup.visible ? control.delegateModel : null
             currentIndex: control.highlightedIndex
             boundsBehavior: Flickable.StopAtBounds
+
+            ShellScrollEdge {
+                target: rows
+            }
         }
 
         background: ShellPopoverSurface {}
