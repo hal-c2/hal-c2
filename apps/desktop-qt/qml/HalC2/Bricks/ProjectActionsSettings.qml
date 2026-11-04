@@ -26,13 +26,13 @@ ColumnLayout {
     component Note: Label {
         Layout.fillWidth: true
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
     component Tag: Label {
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(11 * Theme.fontScale)
+        font.pixelSize: Theme.type.caption.size
     }
 
     RowLayout {
@@ -44,7 +44,7 @@ ColumnLayout {
             Layout.fillWidth: true
             text: qsTr("Actions")
             color: section.foreground
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
         }
 
@@ -93,12 +93,12 @@ ColumnLayout {
                 spacing: 2
 
                 RowLayout {
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     Label {
                         text: action.modelData.name
                         color: section.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
 
                     Tag {
@@ -119,7 +119,7 @@ ColumnLayout {
                     text: action.modelData.command
                     color: section.muted
                     font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     elide: Text.ElideRight
                 }
             }

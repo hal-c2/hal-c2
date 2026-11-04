@@ -50,7 +50,7 @@ ShellButton {
                 Layout.fillWidth: true
                 text: button.update?.label ?? ""
                 color: button.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
                 wrapMode: Text.Wrap
             }
@@ -69,7 +69,7 @@ ShellButton {
                     Label {
                         text: group.modelData.title
                         color: button.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.weight: Font.DemiBold
                     }
 
@@ -82,7 +82,7 @@ ShellButton {
                             Layout.fillWidth: true
                             text: "• " + modelData
                             color: button.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.Wrap
                         }
                     }

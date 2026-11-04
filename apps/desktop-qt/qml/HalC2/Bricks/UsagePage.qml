@@ -98,7 +98,7 @@ Rectangle {
     component Section: Label {
         Layout.topMargin: 12
         color: page.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         font.weight: Font.DemiBold
     }
 
@@ -114,7 +114,7 @@ Rectangle {
             Label {
                 text: qsTr("Usage")
                 color: page.foreground
-                font.pixelSize: Math.round(18 * Theme.fontScale)
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
             }
 
@@ -129,7 +129,7 @@ Rectangle {
                 visible: !page.limitsShown
                 text: page.model ? page.model.windowLabel : ""
                 color: page.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 elide: Text.ElideRight
             }
 
@@ -216,7 +216,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: modelData
                 color: page.warning
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
         }
@@ -228,7 +228,7 @@ Rectangle {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             color: page.muted
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             visible: text.length > 0
             text: page.model ? page.model.message : ""
         }
@@ -241,7 +241,7 @@ Rectangle {
 
             ColumnLayout {
                 width: parent.width
-                spacing: 6
+                spacing: Theme.space.sm
 
                 // Limits: one section per provider, one line per window.
                 Repeater {
@@ -253,11 +253,11 @@ Rectangle {
                         required property var modelData
 
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         RowLayout {
                             Layout.topMargin: 8
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             ProviderIcon {
                                 driverKind: pool.modelData.driver
@@ -266,7 +266,7 @@ Rectangle {
                             Label {
                                 text: pool.modelData.label
                                 color: page.foreground
-                                font.pixelSize: Math.round(14 * Theme.fontScale)
+                                font.pixelSize: Theme.type.body.size
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -286,8 +286,8 @@ Rectangle {
                                     id: cardColumn
 
                                     anchors.fill: parent
-                                    anchors.margins: 10
-                                    spacing: 6
+                                    anchors.margins: Theme.space.sm
+                                    spacing: Theme.space.sm
 
                                     RowLayout {
                                         Layout.fillWidth: true
@@ -297,20 +297,20 @@ Rectangle {
                                             text: card.modelData.label
                                             wrapMode: Text.Wrap
                                             color: page.muted
-                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.meta.size
                                         }
 
                                         Label {
                                             text: page.resetsIn(card.modelData.resetsAt)
                                             color: page.muted
-                                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.caption.size
                                         }
                                     }
 
                                     Label {
                                         text: qsTr("%1% left").arg(card.modelData.remainingPercent)
                                         color: page.foreground
-                                        font.pixelSize: Math.round(20 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.display.size
                                         font.weight: Font.DemiBold
                                     }
 
@@ -334,13 +334,13 @@ Rectangle {
                                                 Rectangle {
                                                     Layout.fillWidth: true
                                                     implicitHeight: 6
-                                                    radius: 3
+                                                    radius: Theme.radiusPill
                                                     color: Theme.palette.color("accentSurface", "#27272a")
 
                                                     Rectangle {
                                                         width: parent.width * Math.max(0, 100 - account.modelData.usedPercent) / 100
                                                         height: parent.height
-                                                        radius: 3
+                                                        radius: Theme.radiusPill
                                                         color: Theme.palette.color("accent", "#3b82f6")
                                                     }
                                                 }
@@ -349,7 +349,7 @@ Rectangle {
                                                     Layout.fillWidth: true
                                                     text: qsTr("%1 · %2%").arg(account.modelData.name).arg(Math.round(100 - account.modelData.usedPercent))
                                                     color: page.muted
-                                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    font.pixelSize: Theme.type.caption.size
                                                     elide: Text.ElideRight
                                                 }
                                             }
@@ -375,7 +375,7 @@ Rectangle {
                                 Label {
                                     text: pool.modelData.credits.length > 1 ? qsTr("%1: %2").arg(credit.modelData.name).arg(page.credits(credit.modelData)) : page.credits(credit.modelData)
                                     color: page.muted
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                 }
 
                                 ShellButton {
@@ -396,7 +396,7 @@ Rectangle {
                                     visible: text.length > 0
                                     text: credit.modelData.status
                                     color: page.foreground
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                     wrapMode: Text.Wrap
                                 }
                             }
@@ -414,7 +414,7 @@ Rectangle {
                         objectName: "usageTotal"
                         text: page.summary ? page.amount(page.summary) : ""
                         color: page.foreground
-                        font.pixelSize: Math.round(28 * Theme.fontScale)
+                        font.pixelSize: Theme.type.display.size
                         font.weight: Font.DemiBold
                     }
 
@@ -430,7 +430,7 @@ Rectangle {
                             return qsTr("%1 · API estimate").arg(count);
                         }
                         color: page.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     Repeater {
@@ -442,13 +442,13 @@ Rectangle {
                             required property var modelData
 
                             Layout.fillWidth: true
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             // The provider's colour in the chart.
                             Rectangle {
                                 implicitWidth: 8
                                 implicitHeight: 8
-                                radius: 4
+                                radius: Theme.radiusPill
                                 color: page.providerColor(providerRow.modelData.id)
                                 Accessible.ignored: true
                             }
@@ -461,14 +461,14 @@ Rectangle {
                                 Layout.fillWidth: true
                                 text: qsTr("%1  %2").arg(providerRow.modelData.label).arg(page.sessions(providerRow.modelData.sessions))
                                 color: page.foreground
-                                font.pixelSize: Math.round(13 * Theme.fontScale)
+                                font.pixelSize: Theme.type.body.size
                                 elide: Text.ElideRight
                             }
 
                             Label {
                                 text: page.amount(providerRow.modelData)
                                 color: page.foreground
-                                font.pixelSize: Math.round(13 * Theme.fontScale)
+                                font.pixelSize: Theme.type.body.size
                             }
                         }
                     }
@@ -519,13 +519,13 @@ Rectangle {
                                 text: total.modelData[0]
                                 wrapMode: Text.Wrap
                                 color: page.muted
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                             }
 
                             Label {
                                 text: total.modelData[1]
                                 color: page.foreground
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                             }
                         }
                     }
@@ -548,14 +548,14 @@ Rectangle {
                                 Layout.fillWidth: true
                                 text: modelRow.modelData.model
                                 color: page.foreground
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                                 elide: Text.ElideRight
                             }
 
                             Label {
                                 text: page.metric === "cost" && modelRow.modelData.unpriced ? qsTr("Unpriced") : page.amount(modelRow.modelData)
                                 color: page.foreground
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                             }
                         }
                     }
@@ -590,7 +590,7 @@ Rectangle {
                                 text: periodRow.modelData.label
                                 elide: Text.ElideRight
                                 color: page.muted
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                             }
 
                             Item {
@@ -611,7 +611,7 @@ Rectangle {
                                 text: page.amount(periodRow.modelData)
                                 elide: Text.ElideRight
                                 color: page.foreground
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                             }
                         }
                     }
@@ -645,7 +645,7 @@ Rectangle {
             text: resetDialog.title
             padding: 20
             bottomPadding: 4
-            font.pixelSize: Math.round(17 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
             color: page.foreground
         }
@@ -656,7 +656,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.")
                 color: page.muted
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 wrapMode: Text.Wrap
             }
 

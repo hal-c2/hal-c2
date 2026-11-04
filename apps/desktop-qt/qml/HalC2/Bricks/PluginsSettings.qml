@@ -46,7 +46,7 @@ SettingsPage {
                 objectName: "pluginName"
                 text: row.pluginId
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -56,7 +56,7 @@ SettingsPage {
                 text: row.detail
                 color: Theme.palette.color("textMuted", "#a1a1aa")
                 elide: Text.ElideMiddle
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
         }
 
@@ -87,7 +87,7 @@ SettingsPage {
 
         objectName: "mcPlugin:" + plugin.environment + "/" + plugin.id
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
@@ -112,7 +112,7 @@ SettingsPage {
                     objectName: "mcPluginName"
                     text: card.plugin.name || card.plugin.id
                     color: page.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -122,7 +122,7 @@ SettingsPage {
                     text: [card.plugin.version, card.plugin.author?.name ?? ""].filter(part => part.length > 0).join(" · ")
                     color: page.muted
                     elide: Text.ElideRight
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
 
@@ -165,7 +165,7 @@ SettingsPage {
             text: card.plugin.description
             color: page.foreground
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Label {
@@ -187,7 +187,7 @@ SettingsPage {
             }
             color: card.failed || card.plugin.status === "incompatible" ? page.errorColor : page.muted
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Label {
@@ -197,7 +197,7 @@ SettingsPage {
             text: card.plugin.compileCheck?.ok ? qsTr("Its code compiles.") : qsTr("Its code does not compile: %1").arg(card.plugin.compileCheck?.error ?? "")
             color: card.plugin.compileCheck?.ok ? page.muted : page.errorColor
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Flow {
@@ -244,7 +244,7 @@ SettingsPage {
                     Layout.fillWidth: true
                     text: qsTr("On %1").arg(environment.modelData.label)
                     color: page.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     wrapMode: Text.Wrap
                     font.weight: Font.DemiBold
                 }
@@ -274,7 +274,7 @@ SettingsPage {
         text: qsTr("QML files in %1 that add to the sidebar footer, the composer's actions and the status bar.").arg(page.settings?.dir ?? "")
         color: page.muted
         wrapMode: Text.Wrap
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     Label {
@@ -282,7 +282,7 @@ SettingsPage {
         visible: page.items.length + page.disabled.length === 0
         text: qsTr("No plugins are installed.")
         color: page.muted
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
     }
 
     Repeater {
@@ -314,7 +314,7 @@ SettingsPage {
         Layout.topMargin: 8
         text: qsTr("Failed")
         color: page.foreground
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
         font.weight: Font.DemiBold
     }
 
@@ -329,7 +329,7 @@ SettingsPage {
             text: qsTr("%1: %2").arg(modelData.id).arg(modelData.message)
             color: page.errorColor
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
     }
 

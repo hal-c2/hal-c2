@@ -21,9 +21,9 @@ Item {
     // Files viewer makes of its checklists (`task:<n>` links) are kept, to be
     // ticked. A reply must never have them, or it could tick a box in a file.
     property bool trusted: false
-    property color textColor: Qt.alpha(Theme.palette.color("text", "#f5f5f5"), 0.8)
+    property color textColor: Theme.palette.color("inkSecondary", "#b8bdc7")
     // The prose's font: a page's heading is larger, a ticked item struck out.
-    property int fontSize: Math.round(14 * Theme.fontScale)
+    property int fontSize: Theme.type.prose.size
     property int fontWeight: Font.Normal
     property bool struck: false
     // Off, prose is drawn as plain Text with no selection, menu or link
@@ -316,7 +316,7 @@ Item {
         implicitWidth: 24
         implicitHeight: 24
         iconSize: 12
-        radius: 6
+        radius: Theme.radiusSm
         tint: iconButton.checked ? root.headingColor : root.mutedColor
         focusPolicy: Qt.TabFocus
         Accessible.name: iconButton.label
@@ -477,7 +477,7 @@ Item {
             policy: flick.contentWidth > flick.width + 0.5 ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
             contentItem: Rectangle {
                 implicitHeight: 7
-                radius: 3.5
+                radius: Theme.radiusPill
                 color: Qt.alpha(root.borderColor, 0.78)
             }
             background: Item {}
@@ -528,7 +528,7 @@ Item {
                 implicitHeight: 24
                 iconName: "quote"
                 iconSize: 12
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 focusPolicy: Qt.NoFocus
                 enabled: !tooLong
                 text: tooLong ? qsTr("Shorten selection") : qsTr("Cite")
@@ -657,7 +657,7 @@ Item {
 
                         implicitWidth: picture ? diagram.implicitWidth : codeText.implicitWidth + 28.8
                         implicitHeight: 30 + content.height
-                        radius: Theme.radius
+                        radius: Theme.radiusMd
                         color: Theme.palette.color("codeBackground", "#111111")
                         border.color: root.borderColor
                         border.width: 1
@@ -689,15 +689,15 @@ Item {
                                 text: seg.title.length > 0 ? seg.title : seg.language.length > 0 ? seg.language : "text"
                                 elide: Text.ElideRight
                                 font.family: root.monoFamily
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
-                                color: Qt.alpha(Theme.palette.color("codeForeground", "#f5f5f5"), 0.72)
+                                font.pixelSize: Theme.type.caption.size
+                                color: Theme.palette.color("inkSecondary", "#b8bdc7")
                             }
                         }
 
                         Row {
                             id: actions
                             anchors.right: parent.right
-                            anchors.rightMargin: 6
+                            anchors.rightMargin: Theme.space.sm
                             y: 6
                             spacing: 2
                             IconButton {
@@ -943,7 +943,7 @@ Item {
                                                         y: line.head ? 8.8 : 7.2
                                                         width: parent.width - 24
                                                         wrapMode: grid.expanded && !line.head ? TextEdit.WrapAtWordBoundaryOrAnywhere : TextEdit.NoWrap
-                                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.meta.size
                                                         font.weight: line.head ? Font.DemiBold : Font.Normal
                                                         text: root.rich("<p align=\"" + (grid.spec.align[cellBox.index] ?? "left") + "\" style=\"margin:0;line-height:19.5px;-qt-line-height-type:minimum\">" + cellBox.html + "</p>")
                                                         onImplicitWidthChanged: measureCells.restart()
@@ -1044,7 +1044,7 @@ Item {
                             visible: quoteBox.kindOf !== null
                             x: 12
                             height: visible ? 23 : 0
-                            spacing: 6
+                            spacing: Theme.space.sm
                             ShellIcon {
                                 anchors.verticalCenter: parent.verticalCenter
                                 name: quoteBox.kindOf ? quoteBox.kindOf[1] : ""
@@ -1057,7 +1057,7 @@ Item {
                                 text: quoteBox.kindOf ? quoteBox.kindOf[0] : ""
                                 color: quoteBox.titleColor
                                 font.family: root.uiFamily
-                                font.pixelSize: Math.round(14 * Theme.fontScale)
+                                font.pixelSize: Theme.type.prose.size
                                 font.weight: Font.Medium
                             }
                         }

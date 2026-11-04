@@ -68,12 +68,12 @@ Rectangle {
         x: 12
         width: root.width - 24
         height: visible ? implicitHeight + 12 : 0
-        topPadding: 6
-        bottomPadding: 6
+        topPadding: Theme.space.sm
+        bottomPadding: Theme.space.sm
         visible: text.length > 0
         wrapMode: Text.Wrap
         color: root.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     // The hub is off or was never set up: that happens in Settings.
@@ -90,7 +90,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("Device support is off for this environment. Turn it on in Settings to stream simulators and emulators here.")
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         ShellButton {
@@ -126,19 +126,19 @@ Rectangle {
                 anchors.left: parent.left
                 anchors.leftMargin: 12
                 anchors.right: headerTools.left
-                anchors.rightMargin: 6
+                anchors.rightMargin: Theme.space.sm
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.screen ? root.screen.description : qsTr("Choose a device")
                 elide: Text.ElideRight
                 color: root.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Row {
                 id: headerTools
 
                 anchors.right: parent.right
-                anchors.rightMargin: 6
+                anchors.rightMargin: Theme.space.sm
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 2
                 visible: root.screen !== null
@@ -284,13 +284,13 @@ Rectangle {
                 wrapMode: Text.Wrap
                 text: root.view ? root.view.error : ""
                 color: root.errorColor
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ShellButton {
                 objectName: "deviceDismissError"
                 anchors.right: parent.right
-                anchors.rightMargin: 6
+                anchors.rightMargin: Theme.space.sm
                 y: 2
                 subtle: true
                 iconName: "x"
@@ -396,7 +396,7 @@ Rectangle {
                                 anchors.bottom: parent.top
                                 text: modelData.label
                                 color: Theme.palette.color("accent", "#2563eb")
-                                font.pixelSize: Math.round(10 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                             }
                         }
                     }
@@ -484,7 +484,7 @@ Rectangle {
                 objectName: "deviceStatus"
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 32, 320)
-                spacing: 10
+                spacing: Theme.space.sm
                 visible: root.stream !== null && root.stream.status !== "streaming"
 
                 Text {
@@ -493,7 +493,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: !root.stream ? "" : root.stream.status === "error" ? root.stream.detail : qsTr("Connecting to the device…")
                     color: root.stream && root.stream.status === "error" ? root.errorColor : root.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellButton {
@@ -510,7 +510,7 @@ Rectangle {
                     visible: root.stream !== null && root.stream.status === "connecting"
                     text: qsTr("Step 2 of 2: connect video")
                     color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
             }
 
@@ -523,7 +523,7 @@ Rectangle {
                 visible: root.stream !== null && root.stream.status === "streaming" && !root.stream.inputConnected
                 text: root.stream && root.stream.inputDetail ? qsTr("Input disconnected (%1), reconnecting…").arg(root.stream.inputDetail) : qsTr("Input disconnected, reconnecting…")
                 color: root.errorColor
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
         }
 
@@ -555,7 +555,7 @@ Rectangle {
                 wrapMode: Text.Wrap
                 text: root.view ? root.view.loading : ""
                 color: root.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
             Text {
                 objectName: "deviceOpeningProgress"
@@ -563,7 +563,7 @@ Rectangle {
                 visible: root.view !== null && root.view.pendingKey.length > 0
                 text: qsTr("Step 1 of 2: open device")
                 color: root.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
         }
 
@@ -595,7 +595,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: root.view ? root.view.empty : ""
                     color: root.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 Repeater {
@@ -607,7 +607,7 @@ Rectangle {
                         required property var modelData
 
                         width: list.width
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         Row {
                             spacing: 8
@@ -621,7 +621,7 @@ Rectangle {
                             Text {
                                 text: group.modelData.title
                                 color: root.muted
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                                 font.weight: Font.Medium
                             }
                         }
@@ -644,7 +644,7 @@ Rectangle {
                                 Accessible.name: modelData.action + " " + modelData.name
                                 onClicked: root.source.open(modelData.hostId, modelData.id)
                                 background: Rectangle {
-                                    radius: 6
+                                    radius: Theme.radiusSm
                                     border.color: root.borderColor
                                     color: row.hovered || row.visualFocus ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
                                 }
@@ -656,7 +656,7 @@ Rectangle {
                                     text: row.modelData.name
                                     elide: Text.ElideRight
                                     color: root.foreground
-                                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.body.size
                                 }
                                 Text {
                                     x: 12
@@ -665,7 +665,7 @@ Rectangle {
                                     text: row.modelData.detail
                                     elide: Text.ElideRight
                                     color: root.muted
-                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.caption.size
                                 }
                                 Text {
                                     anchors.right: parent.right
@@ -673,7 +673,7 @@ Rectangle {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: row.pending ? qsTr("…") : row.modelData.action
                                     color: root.muted
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                 }
                             }
                         }
@@ -686,7 +686,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: qsTr("No Android virtual devices found. Create one in Android Studio's Device Manager, then refresh.")
                     color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
 
                 ShellButton {

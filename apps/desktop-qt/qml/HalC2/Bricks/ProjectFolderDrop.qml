@@ -32,7 +32,7 @@ DropArea {
         color: Qt.alpha(Theme.palette.color("canvas", "#0f0f12"), 0.95)
         border.color: Theme.palette.color("accent", "#3b82f6")
         border.width: 2
-        radius: 14
+        radius: Theme.radiusLg
         Accessible.ignored: true
         Text {
             anchors.centerIn: parent
@@ -41,7 +41,7 @@ DropArea {
             wrapMode: Text.Wrap
             text: qsTr("Open folder as a project\n%1\nNo files will be moved or deleted.").arg(root.directoryPath)
             color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: Math.round(18 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
         }
     }
 }

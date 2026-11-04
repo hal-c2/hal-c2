@@ -21,7 +21,7 @@ RowLayout {
         Layout.fillWidth: true
         text: qsTr("Connection")
         color: Theme.palette.color("text", "#e4e4e7")
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
         elide: Text.ElideRight
     }
 
@@ -34,7 +34,7 @@ RowLayout {
                 needsPairing: "lock",
                 blocked: "octagon-alert"
             })[row.shown] ?? "circle-dashed"
-        size: Math.round(14 * Theme.fontScale)
+        size: Theme.icon.md
         color: row.shown === "ready" ? Theme.palette.color("success", "#22c55e") : row.shown === "retrying" ? Theme.palette.color("warning", "#f59e0b") : row.shown === "needsPairing" || row.shown === "blocked" ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("textMuted", "#a1a1aa")
     }
 
@@ -42,7 +42,7 @@ RowLayout {
         objectName: "connectionStatus"
         text: row.model === null ? "" : row.model.settling ? qsTr("Connected") : row.model.status
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
 
         HoverHandler {
             id: statusHover

@@ -26,7 +26,7 @@ Rectangle {
     property bool explorerOpen: true
     // What the file's header takes with all its buttons out: its margins, then each
     // button and the gap before it. The path gives way to them, so it counts for nothing.
-    readonly property real headerFullWidth: 14 + [renderButton, editButton, copyButton, openInEditorButton, openPreviewButton, editAsPageButton, wrapButton, fileExplorerToggleButton, closeButton].reduce((sum, button) => sum + (button.wanted ? button.implicitWidth + 4 : 0), 0)
+    readonly property real headerFullWidth: Theme.space.sm + Theme.space.xs + [renderButton, editButton, copyButton, openInEditorButton, openPreviewButton, editAsPageButton, wrapButton, fileExplorerToggleButton, closeButton].reduce((sum, button) => sum + (button.wanted ? button.implicitWidth + 4 : 0), 0)
     // The text buttons grow with the user's font scale and can outgrow any tab, while
     // the icon buttons cannot, so the text buttons move into a menu when they would
     // not fit. The toggle and Close, the way out of the file, stay on the header.
@@ -111,7 +111,7 @@ Rectangle {
     TextMetrics {
         id: rowSample
 
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         text: "abcdefghij"
     }
 
@@ -155,8 +155,8 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.leftMargin: 10
-                Layout.rightMargin: 4
+                Layout.leftMargin: Theme.space.sm
+                Layout.rightMargin: Theme.space.xs
                 Layout.preferredHeight: 30
                 spacing: 4
 
@@ -384,27 +384,27 @@ Rectangle {
             Text {
                 objectName: "fileTruncated"
                 Layout.fillWidth: true
-                Layout.leftMargin: 10
-                Layout.rightMargin: 10
+                Layout.leftMargin: Theme.space.sm
+                Layout.rightMargin: Theme.space.sm
                 Layout.bottomMargin: 4
                 visible: text.length > 0
                 text: root.source?.truncatedNotice ?? ""
                 color: Theme.palette.color("warningForeground", "#f59e0b")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
             Text {
                 objectName: "fileNote"
                 Layout.fillWidth: true
-                Layout.leftMargin: 10
-                Layout.rightMargin: 10
+                Layout.leftMargin: Theme.space.sm
+                Layout.rightMargin: Theme.space.sm
                 Layout.bottomMargin: 4
                 visible: text.length > 0
                 // A failed save first; else why the file cannot be edited.
                 text: (root.source?.saveProblem ?? "").length > 0 ? qsTr("Not saved: %1").arg(root.source.saveProblem) : (root.source?.unsaved ?? false) ? qsTr("Saving…") : root.source?.readOnlyReason ?? ""
                 color: (root.source?.saveProblem ?? "").length > 0 ? root.errorColor : root.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -418,7 +418,7 @@ Rectangle {
 
                     objectName: "fileRendered"
                     anchors.fill: parent
-                    anchors.margins: 10
+                    anchors.margins: Theme.space.sm
                     visible: (root.source?.rendered ?? false) && !root.source.fileEmpty
                     clip: true
                     contentHeight: (renderedBody.item as Item)?.implicitHeight ?? 0
@@ -468,7 +468,7 @@ Rectangle {
                             text: root.source?.renderedText ?? ""
                             textFormat: Text.RichText
                             color: root.foreground
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                             wrapMode: Text.Wrap
 
                             TapHandler {
@@ -538,7 +538,7 @@ Rectangle {
                 Loader {
                     objectName: "fileMedia"
                     anchors.fill: parent
-                    anchors.margins: 10
+                    anchors.margins: Theme.space.sm
                     active: root.visible && root.source?.fileStatus === "ready" && root.mediaKind.length > 0
                     sourceComponent: root.mediaKind === "image" ? mediaImage : mediaPlayer
                 }
@@ -569,7 +569,7 @@ Rectangle {
                             visible: image.status === Image.Loading
                             text: qsTr("Loading...")
                             color: root.muted
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                         }
                     }
                 }
@@ -610,7 +610,7 @@ Rectangle {
                     id: mediaElsewhere
 
                     ColumnLayout {
-                        spacing: 10
+                        spacing: Theme.space.sm
 
                         Item {
                             Layout.fillHeight: true
@@ -621,7 +621,7 @@ Rectangle {
                             horizontalAlignment: Text.AlignHCenter
                             text: root.mediaKind === "pdf" ? qsTr("This document can't be previewed here.") : root.mediaKind === "video" ? qsTr("This video can't be played here.") : qsTr("This audio can't be played here.")
                             color: root.muted
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                             wrapMode: Text.Wrap
                         }
                         ShellButton {
@@ -641,7 +641,7 @@ Rectangle {
                     anchors.centerIn: parent
                     width: parent.width - 32
                     visible: messageText.text.length > 0
-                    spacing: 10
+                    spacing: Theme.space.sm
 
                     Text {
                         id: messageText
@@ -659,7 +659,7 @@ Rectangle {
                             return "";
                         }
                         color: root.source?.fileStatus === "error" ? root.errorColor : root.muted
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         wrapMode: Text.Wrap
                     }
                     ShellButton {
@@ -824,7 +824,7 @@ Rectangle {
 
                         anchors.fill: parent
                         anchors.margins: 8
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ShellTextField {
                             id: fileCommentText
@@ -914,8 +914,8 @@ Rectangle {
             Text {
                 objectName: "filesSearchNote"
                 Layout.fillWidth: true
-                Layout.leftMargin: 10
-                Layout.rightMargin: 10
+                Layout.leftMargin: Theme.space.sm
+                Layout.rightMargin: Theme.space.sm
                 Layout.bottomMargin: 4
                 visible: text.length > 0
                 text: {
@@ -930,7 +930,7 @@ Rectangle {
                     return root.source.searchTruncated ? qsTr("Showing the first matches; refine the search for more.") : "";
                 }
                 color: root.source?.searchProblem.length > 0 ? root.errorColor : root.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -946,14 +946,14 @@ Rectangle {
                     anchors.centerIn: parent
                     width: parent.width - 32
                     visible: root.rootStatus === "error" || (root.source?.root ?? "").length === 0
-                    spacing: 10
+                    spacing: Theme.space.sm
 
                     Text {
                         Layout.fillWidth: true
                         horizontalAlignment: Text.AlignHCenter
                         text: (root.source?.root ?? "").length === 0 ? qsTr("This thread has no workspace.") : root.tree?.rootProblem ?? ""
                         color: root.rootStatus === "error" ? root.errorColor : root.muted
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         wrapMode: Text.Wrap
                     }
                     ShellButton {
@@ -1006,7 +1006,7 @@ Rectangle {
                         width: treeView.width
                         height: 24
                         hoverEnabled: true
-                        leftPadding: 8 + depth * 14
+                        leftPadding: Theme.space.sm + depth * Theme.space.md
                         Accessible.name: name
                         Accessible.description: path
                         ToolTip.visible: hovered && nameText.truncated
@@ -1053,7 +1053,7 @@ Rectangle {
                             border.color: Theme.palette.color("focus", "#3b82f6")
                         }
                         contentItem: RowLayout {
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             ShellIcon {
                                 visible: entry.kind === "directory" || entry.kind === "file"
@@ -1067,7 +1067,7 @@ Rectangle {
                                 Layout.fillWidth: true
                                 text: entry.kind === "loading" ? qsTr("Loading...") : entry.kind === "error" ? qsTr("%1 Click to retry.").arg(entry.problem) : entry.name
                                 color: entry.kind === "error" ? root.errorColor : entry.ignored || entry.kind === "loading" ? root.muted : root.foreground
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                                 elide: Text.ElideMiddle
                             }
                         }

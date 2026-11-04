@@ -52,7 +52,7 @@ Dialog {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: Math.round(17 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
         color: Theme.palette.color("text", "#e4e4e7")
     }
@@ -117,7 +117,7 @@ Dialog {
 
                 // A list reads from the left, where a button centres its label.
                 contentItem: RowLayout {
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: "file-text"
@@ -152,7 +152,7 @@ Dialog {
                     ? qsTr("The spaces section of %1's hal-c2.json cannot be read.").arg(dialog.projectTitle)
                     : qsTr("%1 has no files to edit as pages. A scan writes a spaces section for its Markdown files.").arg(dialog.projectTitle)
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
         }
 
         RowLayout {

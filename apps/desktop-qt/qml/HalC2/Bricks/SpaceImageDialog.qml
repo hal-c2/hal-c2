@@ -57,7 +57,7 @@ Dialog {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: Math.round(17 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
         color: Theme.palette.color("text", "#e4e4e7")
     }
@@ -101,7 +101,7 @@ Dialog {
             wrapMode: Text.Wrap
             text: qsTr("No provider that can make an image is ready. Set up Codex or Grok in Settings.")
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
         }
 
         Text {
@@ -111,7 +111,7 @@ Dialog {
             wrapMode: Text.Wrap
             text: qsTr("Not supported here: %1").arg(dialog.notHere.join(", "))
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         RowLayout {

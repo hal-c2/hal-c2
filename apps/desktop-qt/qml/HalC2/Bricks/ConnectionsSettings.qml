@@ -64,14 +64,14 @@ SettingsPage {
         Layout.fillWidth: true
         Layout.topMargin: 12
         color: page.foreground
-        font.pixelSize: Math.round(14 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
     }
 
     component Note: Label {
         Layout.fillWidth: true
         color: page.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
@@ -92,7 +92,7 @@ SettingsPage {
             Layout.fillWidth: true
             text: row.label
             color: page.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             elide: Text.ElideRight
         }
 
@@ -100,7 +100,7 @@ SettingsPage {
             Layout.maximumWidth: 320
             text: row.detail
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             elide: Text.ElideRight
         }
 
@@ -125,7 +125,7 @@ SettingsPage {
             visible: page.notice !== null
             text: page.notice ? page.notice.text : ""
             color: page.notice && page.notice.kind === "error" ? page.danger : Theme.palette.color("success", "#22c55e")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -201,7 +201,7 @@ SettingsPage {
                     Layout.fillWidth: true
                     text: qsTr("Pair with")
                     color: page.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     elide: Text.ElideRight
                 }
 

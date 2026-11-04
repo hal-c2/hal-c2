@@ -71,7 +71,7 @@ Item {
             text: diagram.note
             wrapMode: Text.Wrap
             color: diagram.textColor
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         ShellButton {

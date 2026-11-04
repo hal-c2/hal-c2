@@ -163,7 +163,7 @@ Rectangle {
             id: navigation
 
             anchors.left: parent.left
-            anchors.leftMargin: 6
+            anchors.leftMargin: Theme.space.sm
             anchors.verticalCenter: parent.verticalCenter
             spacing: 2
 
@@ -203,9 +203,9 @@ Rectangle {
 
             objectName: "browserAddress"
             anchors.left: navigation.right
-            anchors.leftMargin: 6
+            anchors.leftMargin: Theme.space.sm
             anchors.right: tools.left
-            anchors.rightMargin: 6
+            anchors.rightMargin: Theme.space.sm
             anchors.verticalCenter: parent.verticalCenter
             implicitHeight: 28
             leftPadding: 30
@@ -258,7 +258,7 @@ Rectangle {
             id: tools
 
             anchors.right: parent.right
-            anchors.rightMargin: 6
+            anchors.rightMargin: Theme.space.sm
             anchors.verticalCenter: parent.verticalCenter
             spacing: 2
 
@@ -616,7 +616,7 @@ Rectangle {
                     y: webView.y + webView.height * webView.scale + 6
                     text: (root.device ? root.device.label : qsTr("Custom")) + " · " + root.viewport.width + " × " + root.viewport.height + (webView.scale < 0.995 ? " · " + Math.round(webView.scale * 100) + "%" : "")
                     color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale * root.appZoom)
+                    font.pixelSize: Math.round(Theme.type.caption.size * root.appZoom)
                 }
             }
 
@@ -677,12 +677,12 @@ Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: Math.min(parent.height * 0.18, 96)
                 width: Math.min(parent.width - 48, 420)
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Text {
                     text: qsTr("Open a page")
                     color: root.foreground
-                    font.pixelSize: Math.round(15 * Theme.fontScale)
+                    font.pixelSize: Theme.type.title.size
                     font.weight: Font.DemiBold
                 }
 
@@ -691,7 +691,7 @@ Rectangle {
                     text: qsTr("Type an address above, or pick a server running on this machine.")
                     wrapMode: Text.Wrap
                     color: root.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     bottomPadding: 8
                 }
 
@@ -714,7 +714,7 @@ Rectangle {
                         Accessible.name: modelData.url
 
                         background: Rectangle {
-                            radius: Math.min(Theme.radius, 8)
+                            radius: Theme.radiusMd
                             color: suggestion.hovered || suggestion.visualFocus ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
                         }
 
@@ -732,14 +732,14 @@ Rectangle {
                                 text: suggestion.modelData.url
                                 elide: Text.ElideMiddle
                                 color: root.foreground
-                                font.pixelSize: Math.round(13 * Theme.fontScale)
+                                font.pixelSize: Theme.type.body.size
                             }
 
                             Text {
                                 visible: text.length > 0
                                 text: suggestion.modelData.label || ""
                                 color: root.muted
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                             }
                         }
 
@@ -751,7 +751,7 @@ Rectangle {
                     visible: root.source === null || root.source.suggestions.length === 0
                     text: qsTr("No servers are running on this machine yet.")
                     color: root.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
         }
@@ -778,7 +778,7 @@ Rectangle {
                 Text {
                     text: qsTr("This site can't be reached")
                     color: root.foreground
-                    font.pixelSize: Math.round(16 * Theme.fontScale)
+                    font.pixelSize: Theme.type.title.size
                     font.weight: Font.DemiBold
                 }
 
@@ -788,7 +788,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: root.failure ? root.failure.message : ""
                     color: root.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
 
                 Text {
@@ -797,8 +797,8 @@ Rectangle {
                     text: BrowserJs.hostOf(root.failedUrl.toString()) + (root.failure ? "  ·  " + root.failure.name : "")
                     color: root.muted
                     font.family: "monospace"
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
-                    bottomPadding: 6
+                    font.pixelSize: Theme.type.caption.size
+                    bottomPadding: Theme.space.sm
                 }
 
                 ShellButton {

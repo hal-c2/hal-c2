@@ -544,7 +544,7 @@ Item {
             }, 1000, "the active tab and its close button are in view");
             verify(findChild(panel, "panelScrollLeft").enabled);
             const title = findChild(panel, "panelTab-t4");
-            verify(title.width <= 112 + 13 + 20 + 12 + 16, "a long title is capped");
+            verify(title.width <= 112 + 13 + 20 + 2 * Theme.space.sm + 16, "a long title is capped");
         }
 
         function test_finishedSubagentsFoldUnderPreviousAgentsWithAFailedCount() {

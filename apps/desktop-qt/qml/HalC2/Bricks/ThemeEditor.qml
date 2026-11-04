@@ -108,7 +108,7 @@ Popup {
         Rectangle {
             implicitWidth: 18
             implicitHeight: 18
-            radius: 4
+            radius: Theme.radiusXs
             color: colorField.colors[colorField.role] ?? "transparent"
             border.color: Theme.palette.color("border", "#27272a")
         }
@@ -117,7 +117,7 @@ Popup {
             Layout.fillWidth: true
             text: colorField.label
             color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             elide: Text.ElideRight
         }
 
@@ -131,13 +131,13 @@ Popup {
     }
 
     contentItem: ColumnLayout {
-        spacing: 10
+        spacing: Theme.space.sm
         Keys.onEscapePressed: Themes.editorOpen = false
 
         Label {
             text: editor.draft.id ? qsTr("Edit theme") : qsTr("New theme")
             color: editor.foreground
-            font.pixelSize: Math.round(16 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
         }
 
@@ -207,7 +207,7 @@ Popup {
                     return picked.count > 0 ? qsTr("%1 · %2 · used in %3 places").arg(picked.role).arg(picked.color).arg(picked.count) : qsTr("%1 is not one of the theme's colors").arg(picked.color);
                 }
                 color: editor.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 elide: Text.ElideRight
             }
         }
@@ -253,7 +253,7 @@ Popup {
                     visible: roleRow.modelData.role === ""
                     text: roleRow.modelData.heading
                     color: editor.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                     font.weight: Font.DemiBold
                 }
 

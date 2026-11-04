@@ -62,7 +62,7 @@ Item {
         y: bar.maxOffset > 0 ? bar.travel * Math.min(bar.terminal.scrollOffset, bar.maxOffset) / bar.maxOffset : 0
         width: 6
         height: bar.thumbHeight
-        radius: 3
+        radius: Theme.radiusPill
         color: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), pointer.containsMouse || pointer.pressed || bar.activeFocus ? 0.5 : 0.25)
     }
 }

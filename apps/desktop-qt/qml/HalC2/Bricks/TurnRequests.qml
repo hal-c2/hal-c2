@@ -110,7 +110,7 @@ Item {
         anchors.top: parent.top
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(parent.width - requests.gutter * 2, requests.maximumCardWidth)
-        spacing: 6
+        spacing: Theme.space.sm
 
         // The pending approval.
         ShellCard {
@@ -134,7 +134,7 @@ Item {
                         wrapMode: Text.Wrap
                         color: requests.foreground
                         font.family: requests.uiFont
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.DemiBold
                     }
 
@@ -156,7 +156,7 @@ Item {
                         text: qsTr("%1/%2").arg(Math.min(requests.approvalIndex, requests.approvals.length - 1) + 1).arg(requests.approvals.length)
                         color: requests.muted
                         font.family: requests.uiFont
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellButton {
@@ -178,7 +178,7 @@ Item {
                     text: requests.approval?.detail ?? ""
                     color: requests.foreground
                     font.family: Theme.fontMono.length > 0 ? Theme.fontMono : requests.uiFont
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.WrapAnywhere
                     maximumLineCount: 6
                     elide: Text.ElideRight
@@ -191,13 +191,13 @@ Item {
                     text: requests.approval?.problem ?? ""
                     color: requests.warning
                     font.family: requests.uiFont
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
                 Flow {
                     Layout.fillWidth: true
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     Repeater {
                         model: requests.approval?.options ?? []
@@ -232,7 +232,7 @@ Item {
                         text: qsTr("%1: %2").arg(modelData.label).arg(modelData.warning)
                         color: requests.warning
                         font.family: requests.uiFont
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         wrapMode: Text.Wrap
                     }
                 }
@@ -261,21 +261,21 @@ Item {
                         required property var modelData
 
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         Text {
                             Layout.fillWidth: true
                             text: questionItem.modelData.question
                             color: requests.foreground
                             font.family: requests.uiFont
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                             font.weight: Font.DemiBold
                             wrapMode: Text.Wrap
                         }
 
                         Flow {
                             Layout.fillWidth: true
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             Repeater {
                                 model: questionItem.modelData.options
@@ -301,7 +301,7 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             visible: questionItem.modelData.allowCustomAnswer !== false
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             ShellTextField {
                                 objectName: "questionAnswer-" + questionItem.modelData.id
@@ -333,7 +333,7 @@ Item {
                         Flow {
                             Layout.fillWidth: true
                             visible: (questionItem.modelData.attachments ?? []).length > 0
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             Repeater {
                                 model: questionItem.modelData.attachments ?? []
@@ -360,7 +360,7 @@ Item {
                     text: requests.question?.problem ?? ""
                     color: requests.warning
                     font.family: requests.uiFont
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
@@ -407,7 +407,7 @@ Item {
                 id: planRow
 
                 anchors.fill: parent
-                anchors.margins: 10
+                anchors.margins: Theme.space.sm
                 spacing: 8
 
                 ColumnLayout {
@@ -419,7 +419,7 @@ Item {
                         text: requests.plan?.title ?? ""
                         color: requests.foreground
                         font.family: requests.uiFont
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
                     }
@@ -429,7 +429,7 @@ Item {
                         text: qsTr("Implement the plan, or send a message to refine it.")
                         color: requests.muted
                         font.family: requests.uiFont
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideRight
                     }
                 }
@@ -519,8 +519,8 @@ Item {
                     RowLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 12
-                        anchors.rightMargin: 10
-                        spacing: 6
+                        anchors.rightMargin: Theme.space.sm
+                        spacing: Theme.space.sm
 
                         ShellIcon {
                             name: "clock"
@@ -533,14 +533,14 @@ Item {
                             elide: Text.ElideRight
                             color: requests.muted
                             font.family: requests.uiFont
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
                         Text {
                             objectName: "queueCount"
                             text: queueCard.count
                             color: requests.muted
                             font.family: requests.uiFont
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
                         ShellChevron {
                             direction: queueCard.expanded ? "down" : "right"
@@ -557,8 +557,8 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 32
                     Layout.leftMargin: 12
-                    Layout.rightMargin: 6
-                    spacing: 6
+                    Layout.rightMargin: Theme.space.sm
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: "pause"
@@ -570,7 +570,7 @@ Item {
                         text: qsTr("Messages stay saved until you resume.")
                         color: requests.foreground
                         font.family: requests.uiFont
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideRight
                         maximumLineCount: 1
                     }
@@ -635,8 +635,8 @@ Item {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 32
                                     Layout.leftMargin: 12
-                                    Layout.rightMargin: 6
-                                    spacing: 6
+                                    Layout.rightMargin: Theme.space.sm
+                                    spacing: Theme.space.sm
 
                                     Text {
                                         objectName: "queueText-" + queued.modelData.runId
@@ -646,7 +646,7 @@ Item {
                                         textFormat: Text.PlainText
                                         color: queued.modelData.text.length > 0 ? requests.foreground : requests.muted
                                         font.family: requests.uiFont
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.meta.size
                                         elide: Text.ElideRight
                                         maximumLineCount: 1
                                     }
@@ -693,9 +693,9 @@ Item {
                                     visible: queued.attachments.length > 0
                                     Layout.fillWidth: true
                                     Layout.leftMargin: 12
-                                    Layout.rightMargin: 6
-                                    Layout.bottomMargin: 6
-                                    spacing: 6
+                                    Layout.rightMargin: Theme.space.sm
+                                    Layout.bottomMargin: Theme.space.sm
+                                    spacing: Theme.space.sm
 
                                     Repeater {
                                         model: queued.attachments
@@ -758,7 +758,7 @@ Item {
                                                 textFormat: Text.PlainText
                                                 color: requests.foreground
                                                 font.family: requests.uiFont
-                                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                font.pixelSize: Theme.type.caption.size
                                                 elide: Text.ElideMiddle
                                             }
                                             HoverHandler {
@@ -802,7 +802,7 @@ Item {
                                 textFormat: Text.PlainText
                                 color: modelData.outcome === "failed" ? requests.warning : requests.muted
                                 font.family: requests.uiFont
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                                 elide: Text.ElideRight
                                 maximumLineCount: 1
                                 font.underline: notice.worker.length > 0 && waitingHover.hovered
@@ -849,14 +849,14 @@ Item {
         background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
-            spacing: 10
+            spacing: Theme.space.sm
 
             Text {
                 text: qsTr("Save plan to workspace")
                 color: requests.foreground
                 font.family: requests.uiFont
-                font.pixelSize: Math.round(15 * Theme.fontScale)
-                font.bold: true
+                font.pixelSize: Theme.type.title.size
+                font.weight: Font.DemiBold
             }
             ShellTextField {
                 id: planSavePath
@@ -869,7 +869,7 @@ Item {
             }
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Item {
                     Layout.fillWidth: true

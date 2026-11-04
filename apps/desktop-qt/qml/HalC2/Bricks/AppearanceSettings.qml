@@ -46,7 +46,7 @@ SettingsPage {
         default property alias actions: actions.data
 
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
@@ -58,7 +58,7 @@ SettingsPage {
 
                 Layout.fillWidth: true
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
             }
 
@@ -89,11 +89,11 @@ SettingsPage {
         leftPadding: 8
         rightPadding: 8
         hoverEnabled: true
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
         font.weight: Font.Medium
 
         background: Rectangle {
-            radius: Math.min(Theme.radius, 8)
+            radius: Theme.radiusMd
             color: choice.checked || choice.hovered || choice.down ? choice.accentSurface : Qt.alpha(choice.accentSurface, 0)
             border.width: choice.visualFocus ? 2 : choice.checked ? 1 : 0
             border.color: choice.visualFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("accent", "#2563eb")
@@ -114,7 +114,7 @@ SettingsPage {
                         objectName: "swatch"
                         width: 14
                         height: 14
-                        radius: 7
+                        radius: Theme.radiusPill
                         color: modelData
                         border.color: Theme.palette.color("border", "#27272a")
                     }
@@ -150,7 +150,7 @@ SettingsPage {
         Layout.fillWidth: true
         visible: Theme.loaded || Theme.lastError.length > 0
         implicitHeight: shellThemeText.implicitHeight + 20
-        radius: Math.min(Theme.radius, 8)
+        radius: Theme.radiusMd
         color: Theme.palette.color("surfaceRaised", "#18181b")
         border.color: Theme.palette.color("info", "#3b82f6")
 
@@ -169,7 +169,7 @@ SettingsPage {
                 visible: Theme.loaded
                 text: qsTr("The shell theme file “%1” is in use").arg(shellTheme.name)
                 color: page.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.DemiBold
                 wrapMode: Text.Wrap
             }
@@ -180,7 +180,7 @@ SettingsPage {
                 visible: Theme.loaded
                 text: (Theme.followsSystemAppearance ? qsTr("Its colors are drawn over the theme chosen below, and it follows the color scheme chosen here.") : qsTr("Its colors are drawn over the theme chosen below, and it keeps the app %1 whatever the color scheme.").arg(Theme.appearance === "dark" ? qsTr("dark") : qsTr("light"))) + " " + qsTr("Your choices are still saved, and show in full once the file is removed.")
                 color: page.foreground
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -190,7 +190,7 @@ SettingsPage {
                 visible: text.length > 0
                 text: Theme.lastError
                 color: Theme.palette.color("errorForeground", "#f87171")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -200,7 +200,7 @@ SettingsPage {
                 text: Theme.path
                 color: page.muted
                 font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 wrapMode: Text.WrapAnywhere
             }
         }
@@ -261,7 +261,7 @@ SettingsPage {
     // be copied to start a theme of one's own, but not edited or removed.
     RowLayout {
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         ThemeChoice {
             objectName: "theme:hal-c2"
@@ -295,7 +295,7 @@ SettingsPage {
 
             objectName: "theme:" + modelData.id
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             // A collection's variants are picked to remove several at once.
             ShellCheckBox {
@@ -319,14 +319,14 @@ SettingsPage {
                 text: themeRow.modelData.source === "environment" ? qsTr("From this environment") : themeRow.modelData.appearances.length === 1 ? (themeRow.modelData.appearances[0] === "dark" ? qsTr("Dark only") : qsTr("Light only")) : ""
                 visible: text.length > 0
                 color: page.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Label {
                 text: themeRow.modelData.collection ?? ""
                 visible: text.length > 0
                 color: page.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ShellButton {
@@ -412,7 +412,7 @@ SettingsPage {
                 text: halfRow.modelData.label
                 wrapMode: Text.Wrap
                 color: page.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             ShellComboBox {

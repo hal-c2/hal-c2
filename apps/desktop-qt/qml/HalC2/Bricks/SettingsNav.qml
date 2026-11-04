@@ -98,7 +98,7 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 10
+            Layout.margins: Theme.space.sm
             Layout.bottomMargin: 4
             spacing: 8
 
@@ -113,7 +113,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("Settings")
                 color: nav.foreground
-                font.bold: true
+                font.weight: Font.DemiBold
             }
         }
 
@@ -122,9 +122,9 @@ Rectangle {
             objectName: "search"
 
             Layout.fillWidth: true
-            Layout.leftMargin: 10
-            Layout.rightMargin: 10
-            Layout.bottomMargin: 6
+            Layout.leftMargin: Theme.space.sm
+            Layout.rightMargin: Theme.space.sm
+            Layout.bottomMargin: Theme.space.sm
             placeholderText: qsTr("Search settings")
             Accessible.name: qsTr("Search settings")
             text: nav.route !== null ? (nav.route.search ?? "") : ""
@@ -139,8 +139,8 @@ Rectangle {
 
         ShellButton {
             objectName: "restoreDefaults"
-            Layout.leftMargin: 10
-            Layout.bottomMargin: 6
+            Layout.leftMargin: Theme.space.sm
+            Layout.bottomMargin: Theme.space.sm
             subtle: true
             enabled: nav.changedLabels.length > 0
             text: qsTr("Restore device defaults")
@@ -201,9 +201,9 @@ Rectangle {
 
                 background: Rectangle {
                     anchors.fill: parent
-                    anchors.leftMargin: 6
-                    anchors.rightMargin: 6
-                    radius: 6
+                    anchors.leftMargin: Theme.space.sm
+                    anchors.rightMargin: Theme.space.sm
+                    radius: Theme.radiusSm
                     color: row.current ? Theme.palette.color("sidebarRowSelected", "#2a2a30") : row.hovered || row.visualFocus || row.cursor ? Theme.palette.color("sidebarRowHover", "#1c1c21") : "transparent"
                     border.color: Theme.palette.color("focus", "#3b82f6")
                     border.width: row.cursor ? 1 : 0
@@ -219,7 +219,7 @@ Rectangle {
                         Layout.fillWidth: true
                         text: row.isResult ? row.modelData.title : row.modelData.label
                         color: nav.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         elide: Text.ElideRight
                     }
 
@@ -228,7 +228,7 @@ Rectangle {
                         visible: row.isResult
                         text: row.isResult ? row.modelData.sectionLabel : ""
                         color: nav.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         elide: Text.ElideRight
                     }
                 }
@@ -240,7 +240,7 @@ Rectangle {
                 visible: list.searching && list.count === 0
                 text: qsTr("No matching settings")
                 color: nav.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
         }
     }
@@ -265,7 +265,7 @@ Rectangle {
             text: restoreDialog.title
             padding: 20
             bottomPadding: 4
-            font.pixelSize: Math.round(17 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
             color: Theme.palette.color("text", "#e4e4e7")
         }
@@ -277,7 +277,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("This will reset: %1.").arg(nav.changedLabels.join(", "))
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 wrapMode: Text.Wrap
             }
 

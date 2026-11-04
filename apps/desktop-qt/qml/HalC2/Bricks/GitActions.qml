@@ -47,7 +47,7 @@ RowLayout {
         visible: git.unavailableReason !== ""
         text: git.compact ? qsTr("No git") : qsTr("Git unavailable")
         color: git.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
 
         HoverHandler {
             id: unavailableHover
@@ -59,7 +59,7 @@ RowLayout {
 
     ShellButton {
         implicitHeight: 24
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         iconName: "git-branch"
         visible: git.ready && !git.model.isRepo
         enabled: git.ready && !git.model.initPending
@@ -187,20 +187,20 @@ RowLayout {
         background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
-            spacing: 10
+            spacing: Theme.space.sm
 
             Text {
                 text: qsTr("Commit changes")
                 color: git.foreground
-                font.pixelSize: Math.round(15 * Theme.fontScale)
-                font.bold: true
+                font.pixelSize: Theme.type.title.size
+                font.weight: Font.DemiBold
             }
 
             Text {
                 Layout.fillWidth: true
                 text: qsTr("Review and confirm your commit. Leave the message blank to auto-generate one.")
                 color: git.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -208,7 +208,7 @@ RowLayout {
                 visible: git.ready && git.model.isDefaultRef
                 text: qsTr("Warning: committing on the default branch %1").arg(git.ready ? (git.model.branch ?? "") : "")
                 color: Theme.palette.color("warningForeground", "#e0af68")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ListView {
@@ -247,7 +247,7 @@ RowLayout {
                         Layout.fillWidth: true
                         text: fileRow.modelData.path
                         color: git.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideMiddle
                     }
 
@@ -270,13 +270,13 @@ RowLayout {
                     Text {
                         text: "+" + fileRow.modelData.insertions
                         color: Theme.palette.color("update", "#22c55e")
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
 
                     Text {
                         text: "−" + fileRow.modelData.deletions
                         color: Theme.palette.color("errorForeground", "#ef4444")
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
                 }
             }
@@ -284,7 +284,7 @@ RowLayout {
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: 84
-                radius: Theme.radius
+                radius: Theme.radiusMd
                 color: Theme.palette.color("input", "#141416")
                 border.color: message.activeFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("border", "#27272a")
 
@@ -301,14 +301,14 @@ RowLayout {
                         color: git.foreground
                         wrapMode: TextEdit.Wrap
                         background: null
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
                 }
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Item {
                     Layout.fillWidth: true
@@ -362,14 +362,14 @@ RowLayout {
         background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
-            spacing: 10
+            spacing: Theme.space.sm
 
             Text {
                 Layout.fillWidth: true
                 text: confirmDialog.pending ? confirmDialog.pending.title : ""
                 color: git.foreground
-                font.pixelSize: Math.round(15 * Theme.fontScale)
-                font.bold: true
+                font.pixelSize: Theme.type.title.size
+                font.weight: Font.DemiBold
                 wrapMode: Text.Wrap
             }
 
@@ -377,13 +377,13 @@ RowLayout {
                 Layout.fillWidth: true
                 text: confirmDialog.pending ? confirmDialog.pending.description : ""
                 color: git.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Item {
                     Layout.fillWidth: true
@@ -462,13 +462,13 @@ RowLayout {
         background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
-            spacing: 10
+            spacing: Theme.space.sm
 
             Text {
                 text: qsTr("Publish repository")
                 color: git.foreground
-                font.pixelSize: Math.round(15 * Theme.fontScale)
-                font.bold: true
+                font.pixelSize: Theme.type.title.size
+                font.weight: Font.DemiBold
             }
 
             Text {
@@ -477,7 +477,7 @@ RowLayout {
                 text: [qsTr("Step 1 of 3 · Host"), qsTr("Step 2 of 3 · Repository"), qsTr("Step 3 of 3 · Summary")][publishDialog.step]
                 wrapMode: Text.Wrap
                 color: git.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             // The host.
@@ -499,7 +499,7 @@ RowLayout {
                 visible: publishDialog.step === 0 && text.length > 0
                 text: publishDialog.host?.hint ?? ""
                 color: Theme.palette.color("warningForeground", "#e0af68")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -513,7 +513,7 @@ RowLayout {
                 placeholderText: qsTr("owner/repository")
                 placeholderTextColor: git.muted
                 color: git.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 onAccepted: nextButton.clicked()
             }
             ComboBox {
@@ -544,7 +544,7 @@ RowLayout {
                 visible: publishDialog.step === 2
                 text: qsTr("Create the %1 repository %2 on %3, add it as the remote origin and push %4.").arg(visibility.currentValue === "public" ? qsTr("public") : qsTr("private")).arg(repository.text.trim()).arg(publishDialog.host?.label ?? "").arg(git.ready && git.model.branch ? git.model.branch : qsTr("this branch"))
                 color: git.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 wrapMode: Text.Wrap
             }
 
@@ -554,13 +554,13 @@ RowLayout {
                 visible: text !== ""
                 text: publishDialog.form?.error ?? ""
                 color: Theme.palette.color("errorForeground", "#ef4444")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Item {
                     Layout.fillWidth: true

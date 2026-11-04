@@ -437,7 +437,7 @@ Item {
         anchors.bottom: parent.bottom
         anchors.rightMargin: 16
         anchors.bottomMargin: 16
-        radius: 8
+        radius: Theme.radiusMd
         color: Theme.palette.color("surface", "#0f0f11")
         border.color: Theme.palette.color("border", "#27272a")
         z: 3
@@ -471,7 +471,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: qsTr("Device")
                 color: Theme.palette.color("textMuted", "#8b8b93")
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
             ShellButton {
                 objectName: "floatingDeviceOpen"

@@ -98,7 +98,7 @@ Rectangle {
         // Breadcrumb: project / title.
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellIcon {
                 visible: strip.ready && strip.model.projectTitle !== null
@@ -118,7 +118,7 @@ Rectangle {
                 visible: strip.ready && strip.model.projectTitle !== null
                 text: strip.ready ? (strip.model.projectTitle ?? "") : ""
                 color: projectHover.hovered ? strip.foreground : strip.projectColor
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
                 elide: Text.ElideRight
                 activeFocusOnTab: true
@@ -148,7 +148,7 @@ Rectangle {
                     anchors.margins: -3
                     visible: projectLabel.activeFocus
                     color: "transparent"
-                    radius: 4
+                    radius: Theme.radiusXs
                     border.width: 1
                     border.color: Theme.palette.color("focus", "#3b82f6")
                 }
@@ -162,7 +162,7 @@ Rectangle {
                 visible: strip.ready && strip.model.projectTitle !== null
                 text: "/"
                 color: strip.iconMuted
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             Item {
@@ -253,7 +253,7 @@ Rectangle {
                     height: parent.height
                     visible: titleSlot.activeFocus
                     color: "transparent"
-                    radius: 4
+                    radius: Theme.radiusXs
                     border.width: 1
                     border.color: Theme.palette.color("focus", "#3b82f6")
                 }
@@ -276,7 +276,7 @@ Rectangle {
                         Layout.maximumWidth: Math.ceil(implicitWidth)
                         text: strip.ready ? strip.model.threadTitle : qsTr("No thread")
                         color: strip.foreground
-                        font.pixelSize: Math.round(14 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.Medium
                         elide: Text.ElideRight
                     }
@@ -302,7 +302,7 @@ Rectangle {
 
                     anchors.fill: parent
                     visible: titleSlot.editing
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                     onAccepted: {
                         titleSlot.editing = false;
@@ -324,7 +324,7 @@ Rectangle {
                 visible: strip.ready && strip.model.offline === true
                 text: qsTr("Offline")
                 color: strip.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.weight: Font.Medium
                 Layout.alignment: Qt.AlignVCenter
             }

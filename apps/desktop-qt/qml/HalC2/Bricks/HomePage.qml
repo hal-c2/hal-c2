@@ -23,7 +23,7 @@ Rectangle {
     ColumnLayout {
         anchors.centerIn: parent
         width: Math.min(parent.width - 48, 480)
-        spacing: 10
+        spacing: Theme.space.sm
 
         Label {
             objectName: "homeTitle"
@@ -32,7 +32,7 @@ Rectangle {
             wrapMode: Text.Wrap
             color: Theme.palette.color("text", "#e4e4e7")
             visible: !home.opening
-            font.pixelSize: home.sidebar ? 24 : 13
+            font.pixelSize: home.sidebar ? Theme.type.display.size : Theme.type.body.size
             text: home.failed ? qsTr("Couldn’t start a new thread")
                 : home.sidebar ? qsTr("What should we work on?") : qsTr("Waiting for the app…")
         }
@@ -44,7 +44,7 @@ Rectangle {
             wrapMode: Text.Wrap
             visible: home.failed || (home.sidebar !== null && !home.hasProjects)
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             text: home.failed ? qsTr("The project is still available. Try opening the draft again.")
                 : qsTr("Add a project to start your first thread.")
         }

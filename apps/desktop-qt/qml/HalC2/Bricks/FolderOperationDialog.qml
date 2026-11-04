@@ -52,7 +52,7 @@ Dialog {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: Math.round(17 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
         color: Theme.palette.color("text", "#e4e4e7")
     }
@@ -62,7 +62,7 @@ Dialog {
             Layout.fillWidth: true
             text: dialog.targetPath
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             color: Theme.palette.color("textMuted", "#a1a1aa")
             wrapMode: Text.WrapAnywhere
         }
@@ -70,7 +70,7 @@ Dialog {
             Layout.fillWidth: true
             text: dialog.operation === "trash" ? qsTr("This moves the folder and everything inside it to your system Trash. It does not remove a project or its conversations from HAL-C2. Type the folder name to confirm.") : dialog.operation === "move" ? qsTr("Enter an existing destination folder inside the open folder tree. Existing folders will never be overwritten.") : qsTr("Choose a folder name. Existing folders will never be overwritten.")
             color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
         ShellTextField {
@@ -88,7 +88,7 @@ Dialog {
             visible: text.length > 0
             color: Theme.palette.color("errorForeground", "#ef4444")
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
         RowLayout {
             Layout.fillWidth: true

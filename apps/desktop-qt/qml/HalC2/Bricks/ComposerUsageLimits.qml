@@ -15,7 +15,7 @@ Rectangle {
     objectName: "composerUsageLimits"
     visible: limits !== null
     implicitHeight: visible ? column.implicitHeight + 16 : 0
-    radius: Math.min(Theme.radius, 8)
+    radius: Theme.radiusMd
     color: Theme.palette.color("surfaceOverlay", "#18181b")
     border.color: Theme.palette.color("border", "#27272a")
     border.width: 1
@@ -40,7 +40,7 @@ Rectangle {
                 text: card.limits ? qsTr("%1 limits").arg(card.limits.provider) : ""
                 elide: Text.ElideRight
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.DemiBold
             }
 
@@ -58,7 +58,7 @@ Rectangle {
             visible: text.length > 0
             text: card.limits ? card.limits.message : ""
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -78,19 +78,19 @@ Rectangle {
                     text: row.modelData.label
                     elide: Text.ElideRight
                     color: Theme.palette.color("text", "#e4e4e7")
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 Label {
                     text: qsTr("%1% left").arg(Math.round(row.modelData.remainingPercent))
                     color: Theme.palette.color("text", "#e4e4e7")
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 Label {
                     text: card.resets(row.modelData.resetsAt)
                     color: Theme.palette.color("textMuted", "#a1a1aa")
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
         }

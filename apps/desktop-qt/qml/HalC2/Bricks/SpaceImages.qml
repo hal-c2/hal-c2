@@ -30,7 +30,7 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellButton {
                 objectName: "spaceImagesClose"
@@ -45,7 +45,7 @@ Rectangle {
                 text: browser.trashShown ? qsTr("Images in the trash") : qsTr("Images")
                 elide: Text.ElideRight
                 color: browser.foreground
-                font.pixelSize: Math.round(20 * Theme.fontScale)
+                font.pixelSize: Theme.type.display.size
                 font.weight: Font.DemiBold
             }
 
@@ -82,7 +82,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: browser.trashShown ? qsTr("The trash is empty.") : qsTr("%1 has no images yet. Add one from a file or generate one from a prompt.").arg(Spaces.spaceName)
             color: browser.muted
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
         }
 
         GridView {
@@ -118,7 +118,7 @@ Rectangle {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 130
-                        radius: Math.min(Theme.radius, 8)
+                        radius: Theme.radiusMd
                         color: Theme.palette.color("muted", "#27272a")
                         clip: true
 
@@ -140,7 +140,7 @@ Rectangle {
                             visible: thumbnail.status === Image.Error
                             text: qsTr("Could not be shown")
                             color: browser.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
                     }
 
@@ -154,7 +154,7 @@ Rectangle {
                             text: card.name
                             elide: Text.ElideMiddle
                             color: browser.foreground
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                         }
 
                         ShellButton {
@@ -198,7 +198,7 @@ Rectangle {
                         text: card.prompt
                         elide: Text.ElideRight
                         color: browser.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     // Holds a card's top, with or without a prompt, level with the others.

@@ -100,7 +100,7 @@ Rectangle {
                     })
                     background: Rectangle {
                         color: tab.focused ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered || tab.visualFocus ? Theme.palette.color("surface", "#141416") : "transparent"
-                        radius: 6
+                        radius: Theme.radiusSm
                     }
 
                     PanelTabDrag {
@@ -115,7 +115,7 @@ Rectangle {
                         id: tabRow
 
                         anchors.centerIn: parent
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ShellIcon {
                             visible: tab.iconName.length > 0
@@ -130,7 +130,7 @@ Rectangle {
                             width: Math.min(implicitWidth, 112)
                             elide: Text.ElideRight
                             color: tab.inPane ? stage.foreground : stage.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
@@ -211,7 +211,7 @@ Rectangle {
                         Rectangle {
                             z: -1
                             anchors.fill: parent
-                            radius: 6
+                            radius: Theme.radiusSm
                             visible: layoutButton.current
                             color: Theme.palette.color("surfaceRaised", "#1f1f24")
                         }
@@ -319,9 +319,9 @@ Rectangle {
 
                             RowLayout {
                                 anchors.fill: parent
-                                anchors.leftMargin: 10
+                                anchors.leftMargin: Theme.space.sm
                                 anchors.rightMargin: 4
-                                spacing: 6
+                                spacing: Theme.space.sm
 
                                 ShellIcon {
                                     name: PanelTabs.tabs[pane.tab?.kind ?? ""]?.icon ?? ""
@@ -334,7 +334,7 @@ Rectangle {
                                     text: pane.tab?.title ?? ""
                                     elide: Text.ElideRight
                                     color: pane.focused ? stage.foreground : stage.muted
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                 }
 
                                 ShellButton {
@@ -386,7 +386,7 @@ Rectangle {
                             Column {
                                 anchors.centerIn: parent
                                 width: Math.min(parent.width - 32, 260)
-                                spacing: 6
+                                spacing: Theme.space.sm
 
                                 Text {
                                     width: parent.width
@@ -394,7 +394,7 @@ Rectangle {
                                     wrapMode: Text.Wrap
                                     text: qsTr("Drag a tab here, or show one:")
                                     color: stage.muted
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                 }
 
                                 Repeater {

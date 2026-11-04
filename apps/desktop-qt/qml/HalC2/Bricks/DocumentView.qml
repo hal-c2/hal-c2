@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Pdf
 import HalC2.Bricks
+import HalC2.Shell
 
 // A PDF the user can page through. `source` is a local file, which is all Qt PDF
 // opens. Loaded by a Loader, so a machine without Qt PDF only loses this view.
@@ -65,7 +66,7 @@ FocusScope {
                 objectName: "documentPage"
                 text: qsTr("Page %1 of %2").arg(root.currentPage + 1).arg(root.pageCount)
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
             ShellButton {
                 objectName: "documentNext"

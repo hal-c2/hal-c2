@@ -42,12 +42,12 @@ Popup {
     background: ShellPopoverSurface {}
 
     contentItem: ColumnLayout {
-        spacing: 10
+        spacing: Theme.space.sm
 
         Label {
             text: qsTr("Import theme")
             color: dialog.foreground
-            font.pixelSize: Math.round(16 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
         }
 
@@ -72,9 +72,9 @@ Popup {
             Keys.onTabPressed: nextItemInFocusChain().forceActiveFocus(Qt.TabFocusReason)
             Keys.onBacktabPressed: nextItemInFocusChain(false).forceActiveFocus(Qt.BacktabFocusReason)
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             background: Rectangle {
-                radius: Math.min(Theme.radius, 8)
+                radius: Theme.radiusMd
                 color: Theme.palette.color("input", "#18181b")
                 border.color: Theme.palette.color("border", "#27272a")
             }
@@ -87,7 +87,7 @@ Popup {
             text: Themes.importError
             color: Theme.palette.color("errorForeground", "#f87171")
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Label {
@@ -97,7 +97,7 @@ Popup {
             text: qsTr("%1 is already installed.").arg(Themes.importConflicts.join(", "))
             color: dialog.foreground
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         RowLayout {

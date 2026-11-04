@@ -92,6 +92,15 @@ QtObject {
         })
 
     function color(role, fallback) {
-        return colors[role] ?? colors[renames[role]] ?? fallback;
+        const set = colors[role] ?? colors[renames[role]];
+        if (set !== undefined)
+            return set;
+        // Derived as ThemeStore derives it, when the theme names its sources.
+        if (role === "inkSecondary") {
+            const ink = colors.ink ?? colors.text, tertiary = colors.inkTertiary ?? colors.textMuted;
+            if (ink !== undefined && tertiary !== undefined)
+                return Qt.tint(ink, Qt.alpha(tertiary, 0.5));
+        }
+        return fallback;
     }
 }

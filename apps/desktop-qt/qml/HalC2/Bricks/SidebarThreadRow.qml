@@ -210,7 +210,7 @@ Item {
         id: rowBackground
         objectName: "rowBackground"
         anchors.fill: parent
-        radius: 8
+        radius: Theme.radiusMd
         // Fade alpha without interpolating through black on light themes.
         readonly property color hoverColor: Theme.palette.color("sidebarRowHover", "#1c1c21")
         color: row.active || row.selected ? Theme.palette.color("sidebarRowActive", "#2a2a30") : Qt.alpha(hoverColor, hover.hovered ? hoverColor.a : 0)
@@ -225,7 +225,7 @@ Item {
         anchors.topMargin: 8
         anchors.bottomMargin: 8
         width: 3
-        radius: 1.5
+        radius: Theme.radiusPill
         color: row.indicatorColor
         visible: row.active && row.indicatorColor.a > 0
     }
@@ -381,7 +381,7 @@ Item {
             Layout.alignment: Qt.AlignVCenter
             implicitWidth: jumpText.implicitWidth + 12
             implicitHeight: 20
-            radius: 10
+            radius: Theme.radiusPill
             color: Theme.palette.color("surfaceOverlay", "#18181b")
             border.width: 1
             border.color: Theme.palette.color("border", "#27272a")
@@ -392,7 +392,7 @@ Item {
                 anchors.centerIn: parent
                 text: row.jumpLabel
                 color: row.textColor
-                font.pixelSize: Math.round(10 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 font.weight: Font.Medium
             }
         }
@@ -407,7 +407,7 @@ Item {
             sourceComponent: RowAction {
                 objectName: "unpinAction"
                 iconName: "pin"
-                iconTint: hovered || row.showActions ? row.textColor : Qt.alpha(row.secondaryColor, 0.7)
+                iconTint: hovered || row.showActions ? row.textColor : Theme.palette.color("inkTertiary", "#8b919e")
                 Accessible.name: qsTr("Unpin thread")
                 onClicked: row.unpinRequested()
             }
@@ -453,11 +453,11 @@ Item {
             subtle: true
             focusPolicy: Qt.NoFocus
             implicitHeight: 22
-            leftPadding: 6
-            rightPadding: 6
+            leftPadding: Theme.space.sm
+            rightPadding: Theme.space.sm
             iconName: "alarm-clock"
             iconSize: 12
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             text: qsTr("Woke")
             tint: row.statusColor
             iconTint: row.statusColor
@@ -478,7 +478,7 @@ Item {
             visible: !row.showActions && !row.woke && row.jumpLabel.length === 0
             text: row.showStatus ? row.statusWord : row.ageLabel
             color: row.showStatus ? row.statusColor : row.secondaryColor
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             font.weight: Font.Medium
         }
     }
@@ -486,9 +486,9 @@ Item {
     // Slim line: dimmed folder, title, status or age.
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 10
+        anchors.leftMargin: Theme.space.sm
         anchors.rightMargin: 8
-        spacing: 10
+        spacing: Theme.space.sm
         visible: row.slim
 
         ProjectMark {
@@ -507,7 +507,7 @@ Item {
             Layout.fillWidth: true
             text: row.oneLineTitle
             color: row.secondaryColor
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             elide: Text.ElideRight
         }
 
@@ -521,7 +521,7 @@ Item {
     // Card: project line, title, branch.
     ColumnLayout {
         anchors.fill: parent
-        anchors.leftMargin: 10
+        anchors.leftMargin: Theme.space.sm
         anchors.rightMargin: 8
         anchors.topMargin: 8
         anchors.bottomMargin: 8
@@ -531,7 +531,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             Layout.preferredHeight: 22
-            spacing: 6
+            spacing: Theme.space.sm
 
             ProjectMark {
                 objectName: "cardProjectMark"
@@ -542,7 +542,7 @@ Item {
                 Layout.fillWidth: true
                 text: row.projectName
                 color: row.projectColor
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.weight: Font.Medium
                 elide: Text.ElideRight
             }
@@ -559,8 +559,8 @@ Item {
             Layout.topMargin: 2
             objectName: "cardTitle"
             text: row.oneLineTitle
-            color: row.recedes ? Qt.alpha(row.textColor, 0.72) : row.textColor
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            color: row.recedes ? Theme.palette.color("inkSecondary", "#b8bdc7") : row.textColor
+            font.pixelSize: Theme.type.body.size
             font.weight: Font.Medium
             elide: Text.ElideRight
         }
@@ -568,7 +568,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             Layout.topMargin: 2
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellIcon {
                 visible: row.item.branch !== null && row.item.branch !== undefined
@@ -582,7 +582,7 @@ Item {
                 Layout.fillWidth: true
                 text: row.item.branch ?? ""
                 color: row.branchColor
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 elide: Text.ElideRight
             }
         }

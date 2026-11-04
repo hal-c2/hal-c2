@@ -67,7 +67,7 @@ Popup {
             visible: PaletteModel.submenu.length > 0
             text: PaletteModel.submenu
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             font.weight: Font.DemiBold
             leftPadding: 4
         }
@@ -132,7 +132,7 @@ Popup {
             Layout.fillWidth: true
             text: PaletteModel.status
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             leftPadding: 4
             elide: Text.ElideRight
         }
@@ -147,7 +147,7 @@ Popup {
                 Layout.fillWidth: true
                 text: PaletteModel.status
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 leftPadding: 4
                 elide: Text.ElideRight
             }
@@ -167,7 +167,7 @@ Popup {
                     focusPolicy: Qt.NoFocus
                     implicitHeight: 24
                     implicitWidth: 32
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                     ToolTip.visible: hovered
                     ToolTip.text: modelData.tip
                     Accessible.name: modelData.tip
@@ -218,7 +218,7 @@ Popup {
                 text: section
                 elide: Text.ElideRight
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 font.weight: Font.DemiBold
             }
 
@@ -243,7 +243,7 @@ Popup {
                 // A row that cannot run here is faded and read as unavailable.
                 enabled: row.runnable
                 opacity: row.runnable ? 1 : 0.5
-                radius: Math.min(Theme.radius, 8)
+                radius: Theme.radiusMd
                 color: index === PaletteModel.highlighted ? Theme.palette.color("accentSurface", "#2a2a30") : "transparent"
 
                 RowLayout {
@@ -255,7 +255,7 @@ Popup {
                     Text {
                         text: row.title
                         color: Theme.palette.color("text", "#e4e4e7")
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         elide: Text.ElideRight
                         Layout.maximumWidth: row.width * 0.6
                     }
@@ -265,20 +265,20 @@ Popup {
                         Layout.fillWidth: true
                         text: row.description
                         color: Theme.palette.color("textMuted", "#a1a1aa")
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideRight
                     }
                     Text {
                         visible: row.current
                         text: qsTr("Current")
                         color: Theme.palette.color("textMuted", "#a1a1aa")
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
                     Text {
                         visible: text.length > 0
                         text: row.shortcut
                         color: Theme.palette.color("textMuted", "#a1a1aa")
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
                 }
 
@@ -301,7 +301,7 @@ Popup {
                 visible: list.count === 0
                 text: PaletteModel.emptyText
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
         }
     }

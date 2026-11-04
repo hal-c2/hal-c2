@@ -11,14 +11,14 @@ RowLayout {
     readonly property string text: qsTr("Settings / %1").arg(section)
 
     objectName: "settingsBreadcrumb"
-    spacing: 6
+    spacing: Theme.space.sm
     Accessible.role: Accessible.Heading
     Accessible.name: text
 
     Label {
         text: qsTr("Settings /")
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(18 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         Accessible.ignored: true
     }
 
@@ -26,7 +26,7 @@ RowLayout {
         Layout.fillWidth: true
         text: crumb.section
         color: Theme.palette.color("text", "#e4e4e7")
-        font.pixelSize: Math.round(18 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
         elide: Text.ElideRight
         Accessible.ignored: true

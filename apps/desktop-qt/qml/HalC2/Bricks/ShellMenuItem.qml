@@ -144,7 +144,7 @@ MenuItem {
     // The highlight nests inside the menu's corner, 4px in.
     background: Rectangle {
         objectName: "menuItemHighlight"
-        radius: Math.max(0, Theme.radiusLg - 4)
+        radius: Math.max(0, Theme.radiusLg - Theme.space.xs)
         color: control.highlighted || control.hovered || control.visualFocus ? Theme.palette.color("accentSurface", "#f2f3f514") : "transparent"
     }
 }

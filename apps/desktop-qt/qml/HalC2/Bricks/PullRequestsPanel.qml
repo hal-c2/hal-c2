@@ -77,7 +77,7 @@ Rectangle {
             text: root.source && root.source.count > 0 ? [qsTr("%1 open · %2 linked").arg(root.source.openCount).arg(root.source.count), root.source.syncedLabel ?? ""].filter(part => part.length > 0).join(" · ") : qsTr("Pull requests")
             elide: Text.ElideRight
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Row {
@@ -120,7 +120,7 @@ Rectangle {
 
         anchors.top: header.bottom
         width: parent.width
-        spacing: 6
+        spacing: Theme.space.sm
 
         Text {
             objectName: "pullRequestsOffline"
@@ -130,7 +130,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("This environment is unreachable. Pull requests show as last synced.")
             color: root.warningColor
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         // LinkPullRequestDialog, in place: what the reference links, or why it cannot.
@@ -146,7 +146,7 @@ Rectangle {
                 objectName: "pullRequestsLinkField"
                 anchors.left: parent.left
                 anchors.right: linkButton.left
-                anchors.rightMargin: 6
+                anchors.rightMargin: Theme.space.sm
                 placeholderText: qsTr("Pull request URL or #123")
                 text: root.source?.reference ?? ""
                 enabled: !root.source || !root.source.linking
@@ -182,7 +182,7 @@ Rectangle {
             text: root.source?.preview ?? ""
             color: root.muted
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
         }
 
         Text {
@@ -193,7 +193,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: root.source?.notice ?? ""
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Text {
@@ -204,7 +204,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: root.source ? root.source.problem : ""
             color: root.errorColor
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
     }
 
@@ -221,7 +221,7 @@ Rectangle {
             horizontalAlignment: Text.AlignHCenter
             text: qsTr("Linked pull requests unavailable")
             color: root.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             font.weight: Font.Medium
         }
         Text {
@@ -230,7 +230,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("This environment does not support multiple linked pull requests.")
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
     }
 
@@ -248,7 +248,7 @@ Rectangle {
             horizontalAlignment: Text.AlignHCenter
             text: qsTr("No linked pull requests")
             color: root.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             font.weight: Font.Medium
         }
         Text {
@@ -257,7 +257,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("Pull requests the agent opens from this thread land here. Link one yourself from a URL or a number.")
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
         ShellButton {
             objectName: "pullRequestsEmptyLink"
@@ -278,8 +278,8 @@ Rectangle {
         anchors.topMargin: 4
         anchors.bottom: parent.bottom
         width: parent.width
-        leftMargin: 6
-        rightMargin: 6
+        leftMargin: Theme.space.sm
+        rightMargin: Theme.space.sm
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         visible: root.available
@@ -291,7 +291,7 @@ Rectangle {
             width: list.width - 12
             visible: root.dismissed.length > 0 || root.projectOpen.length > 0 || (root.source?.projectProblem ?? "").length > 0
             height: visible ? implicitHeight : 0
-            topPadding: 10
+            topPadding: Theme.space.sm
 
             Repeater {
                 model: root.dismissed
@@ -311,7 +311,7 @@ Rectangle {
                         width: parent.width - x - relinkButton.width - 12
                         text: [qsTr("#%1").arg(dismissedRow.modelData.number), dismissedRow.modelData.title.length > 0 ? dismissedRow.modelData.title : dismissedRow.modelData.repository, dismissedRow.modelData.sourceLabel].join(" · ")
                         color: root.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         elide: Text.ElideRight
                     }
                     ShellButton {
@@ -338,7 +338,7 @@ Rectangle {
                 verticalAlignment: Text.AlignVCenter
                 text: qsTr("Open in this project")
                 color: root.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 font.weight: Font.Medium
             }
             Text {
@@ -347,7 +347,7 @@ Rectangle {
                 visible: text.length > 0
                 text: root.source?.projectProblem ?? ""
                 color: root.errorColor
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
             Repeater {
@@ -367,7 +367,7 @@ Rectangle {
                         key: projectRow.modelData.key
                     })
                     background: Rectangle {
-                        radius: 6
+                        radius: Theme.radiusSm
                         color: projectRow.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
                     }
                     contentItem: Item {
@@ -384,7 +384,7 @@ Rectangle {
                             width: parent.width - x - openLinkButton.width - 12
                             text: projectRow.modelData.title
                             color: root.foreground
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                             elide: Text.ElideRight
                         }
                         Text {
@@ -393,7 +393,7 @@ Rectangle {
                             width: parent.width - x - openLinkButton.width - 12
                             text: [qsTr("#%1").arg(projectRow.modelData.number), projectRow.modelData.author, projectRow.modelData.branches].filter(part => part.length > 0).join(" · ")
                             color: root.muted
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                             elide: Text.ElideRight
                         }
                         ShellButton {
@@ -449,7 +449,7 @@ Rectangle {
             Accessible.name: qsTr("%1 #%2, %3").arg(row.repository).arg(row.number).arg(row.stateLabel)
             onClicked: root.source.open(row.linkKey)
             background: Rectangle {
-                radius: 6
+                radius: Theme.radiusSm
                 color: row.hovered || row.visualFocus ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
             }
 
@@ -494,7 +494,7 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -508,7 +508,7 @@ Rectangle {
                 anchors.right: menuButton.left
                 anchors.rightMargin: 4
                 y: 25
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Text {
                     id: numberText
@@ -516,7 +516,7 @@ Rectangle {
                     objectName: "pullRequestNumber"
                     text: qsTr("#%1").arg(row.number)
                     color: root.foreground
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                     ToolTip.visible: numberArea.containsMouse
                     ToolTip.text: row.linkedNote
 
@@ -556,7 +556,7 @@ Rectangle {
                     Text {
                         text: row.stackSize
                         color: root.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
 
                     // A handler, not a MouseArea: the Row would lay one out by its own width.
@@ -571,7 +571,7 @@ Rectangle {
                     elide: Text.ElideMiddle
                     maximumLineCount: 1
                     color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                     ToolTip.visible: repositoryArea.containsMouse && truncated
                     ToolTip.text: text
 
@@ -594,32 +594,32 @@ Rectangle {
                     objectName: "pullRequestState"
                     text: row.stateLabel
                     color: root.stateColor(row.model.state)
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
                 Text {
                     objectName: "pullRequestChecks"
                     visible: text.length > 0
                     text: row.checksLabel
                     color: root.checksColor(row.checks)
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
                 Text {
                     objectName: "pullRequestReview"
                     visible: text.length > 0
                     text: row.reviewLabel
                     color: root.reviewColor(row.review)
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
                 Text {
                     visible: row.conflicting
                     text: qsTr("Conflicts")
                     color: root.errorColor
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
                 Text {
                     text: row.sourceLabel
                     color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
             }
 

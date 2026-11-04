@@ -245,7 +245,7 @@ Item {
                 opacity: hidden || !entered ? 0 : 1
                 visible: opacity > 0
                 enabled: !behind
-                radius: Theme.radius
+                radius: Theme.radiusMd
                 color: host.opaque ? Qt.tint(Theme.palette.color("canvas", "#0b0b0d"), Theme.palette.color("surfaceOverlay", "#18181b")) : Theme.palette.color("surfaceOverlay", "#18181b")
                 border.color: Theme.palette.color("border", "#27272a")
                 border.width: 1
@@ -305,9 +305,9 @@ Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    anchors.margins: 14
+                    anchors.margins: Theme.space.md
                     anchors.leftMargin: 18
-                    spacing: 6
+                    spacing: Theme.space.sm
                     // Behind the front card only its edge shows.
                     opacity: card.behind ? 0 : 1
 
@@ -320,14 +320,14 @@ Item {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 10
+                        spacing: Theme.space.sm
 
                         Text {
                             Layout.fillWidth: true
                             text: card.toast ? card.toast.title : ""
                             color: Theme.palette.color("text", "#e4e4e7")
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
-                            font.bold: true
+                            font.pixelSize: Theme.type.body.size
+                            font.weight: Font.DemiBold
                             wrapMode: Text.Wrap
                         }
 
@@ -342,7 +342,7 @@ Item {
                             rightPadding: 0
                             text: "✕"
                             tint: Theme.palette.color("textMuted", "#8b8b93")
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                             objectName: "notificationDismiss-" + card.toastId
                             Accessible.name: qsTr("Dismiss")
                             onClicked: Shell.dispatch("notification.dismiss", {
@@ -356,7 +356,7 @@ Item {
                         visible: !!card.toast && (card.toast.description ?? "").length > 0
                         text: card.toast ? card.toast.description ?? "" : ""
                         color: Theme.palette.color("textMuted", "#8b8b93")
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         lineHeight: 1.2
                         wrapMode: Text.Wrap
                     }
@@ -383,7 +383,7 @@ Item {
                                     Layout.fillWidth: true
                                     text: toastRow.modelData.label
                                     color: Theme.palette.color("text", "#e4e4e7")
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                     font.weight: Font.Medium
                                     elide: Text.ElideRight
                                 }
@@ -391,7 +391,7 @@ Item {
                                     Layout.fillWidth: true
                                     text: toastRow.modelData.text
                                     color: toastRow.modelData.kind === "failed" ? host.typeColor("error") : toastRow.modelData.kind === "unchanged" ? host.typeColor("warning") : toastRow.modelData.kind === "success" ? host.typeColor("success") : Theme.palette.color("textMuted", "#8b8b93")
-                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.caption.size
                                     wrapMode: Text.Wrap
                                 }
                             }

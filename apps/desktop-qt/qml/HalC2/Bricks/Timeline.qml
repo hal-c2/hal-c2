@@ -269,7 +269,7 @@ Item {
     component RowText: Text {
         color: root.textColor
         font.family: root.uiFamily
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
         wrapMode: Text.Wrap
     }
 
@@ -282,7 +282,7 @@ Item {
         Accessible.onPressAction: action.clicked()
         color: actionHover.hovered ? root.textColor : root.mutedColor
         font.family: root.uiFamily
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         HoverHandler {
             id: actionHover
             cursorShape: Qt.PointingHandCursor
@@ -300,7 +300,7 @@ Item {
         visible: text.length > 0
         color: root.mutedColor
         font.family: root.uiFamily
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         font.features: {
             "tnum": 1
         }
@@ -323,7 +323,7 @@ Item {
         signal clicked
         implicitWidth: 24
         implicitHeight: 24
-        radius: 6
+        radius: Theme.radiusSm
         color: button.hovered ? root.hoverColor : "transparent"
         Accessible.role: Accessible.Button
         Accessible.name: button.tip
@@ -383,7 +383,7 @@ Item {
             y: -height - 6
             width: Math.min(noticeColumn.implicitWidth, 280) + 16
             height: noticeColumn.implicitHeight + 10
-            radius: 6
+            radius: Theme.radiusSm
             color: Theme.palette.color("popover", "#18181b")
             border.color: root.borderColor
             border.width: 1
@@ -396,7 +396,7 @@ Item {
                     objectName: "copyNoticeTitle"
                     text: notice.title
                     color: root.textColor
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.NoWrap
                 }
                 RowText {
@@ -405,7 +405,7 @@ Item {
                     width: Math.min(implicitWidth, 280)
                     text: copyButton.failure
                     color: root.mutedColor
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
             }
@@ -425,7 +425,7 @@ Item {
             id: pillText
             anchors.centerIn: parent
             font.family: root.uiFamily
-            font.pixelSize: Math.round(10 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
         }
     }
 
@@ -457,7 +457,7 @@ Item {
         Accessible.onPressAction: if (line.interactive)
             line.clicked(Qt.point(0, 0))
         implicitHeight: 28
-        radius: 6
+        radius: Theme.radiusSm
         color: line.interactive && line.hovered ? Qt.alpha(root.hoverColor, 0.2) : "transparent"
         ShellIcon {
             objectName: "workLineIcon"
@@ -492,7 +492,7 @@ Item {
             textFormat: Text.PlainText
             color: line.labelColor
             font.family: root.uiFamily
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             font.weight: line.labelWeight
             elide: line.labelElide
             maximumLineCount: 1
@@ -507,7 +507,7 @@ Item {
             textFormat: Text.PlainText
             color: root.textColor
             font.family: root.uiFamily
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             elide: Text.ElideRight
             maximumLineCount: 1
         }
@@ -516,14 +516,14 @@ Item {
             anchors.right: parent.right
             anchors.rightMargin: 2
             height: parent.height
-            spacing: 6
+            spacing: Theme.space.sm
             RowText {
                 objectName: "workLineCopied"
                 visible: line.copied
                 anchors.verticalCenter: parent.verticalCenter
                 text: qsTr("Copied")
                 wrapMode: Text.NoWrap
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 color: root.accentColor
             }
         }
@@ -880,7 +880,7 @@ Item {
                         anchors.rightMargin: 4
                         text: row.attribution ?? ""
                         color: attribution.thread.length > 0 && attributionHover.hovered ? root.textColor : root.mutedColor
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         HoverHandler {
                             id: attributionHover
                             enabled: attribution.thread.length > 0
@@ -907,7 +907,7 @@ Item {
                         RowText {
                             text: row.intent === "queued_turn" ? qsTr("Queued") : qsTr("Steer")
                             color: root.mutedColor
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.NoWrap
                             HoverHandler {
                                 id: intentHover
@@ -977,7 +977,7 @@ Item {
                                     visible: !attachment.pictured
                                     anchors.centerIn: parent
                                     width: parent.width - 16
-                                    spacing: 6
+                                    spacing: Theme.space.sm
                                     ShellIcon {
                                         anchors.horizontalCenter: parent.horizontalCenter
                                         name: "image"
@@ -989,7 +989,7 @@ Item {
                                         horizontalAlignment: Text.AlignHCenter
                                         text: attachment.modelData.name ?? ""
                                         color: root.mutedColor
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.meta.size
                                         wrapMode: Text.NoWrap
                                         elide: Text.ElideMiddle
                                     }
@@ -1018,7 +1018,7 @@ Item {
                                 Accessible.name: (modelData.detail ?? "").length > 0 ? qsTr("%1, %2").arg(modelData.name).arg(modelData.detail) : (modelData.name ?? "")
                                 width: Math.min(sentFiles.width, fileRow.implicitWidth + 20)
                                 height: 32
-                                radius: 8
+                                radius: Theme.radiusMd
                                 color: root.messageColor
                                 border.color: activeFocus ? root.iconColor : root.borderColor
                                 activeFocusOnTab: true
@@ -1040,7 +1040,7 @@ Item {
                                     id: fileRow
                                     x: 10
                                     anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 6
+                                    spacing: Theme.space.sm
                                     ShellIcon {
                                         anchors.verticalCenter: parent.verticalCenter
                                         name: "file"
@@ -1053,7 +1053,7 @@ Item {
                                         width: Math.max(0, Math.min(implicitWidth, sentFiles.width - 40 - (fileDetail.visible ? fileDetail.implicitWidth + fileRow.spacing : 0)))
                                         text: sentFile.modelData.name ?? ""
                                         color: root.messageTextColor
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.meta.size
                                         wrapMode: Text.NoWrap
                                         elide: Text.ElideMiddle
                                     }
@@ -1063,7 +1063,7 @@ Item {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: sentFile.modelData.detail ?? ""
                                         color: root.mutedColor
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.meta.size
                                         wrapMode: Text.NoWrap
                                     }
                                 }
@@ -1081,7 +1081,7 @@ Item {
                         width: Math.min(parent.width * 0.8, userText.implicitWidth + 24)
                         // A collapsed message shows at most 176px.
                         height: (collapsed ? Math.min(176, userText.implicitHeight) : userText.implicitHeight) + 24
-                        radius: 16
+                        radius: Theme.radiusXl
                         color: root.messageColor
                         clip: collapsed
                         Markdown {
@@ -1190,7 +1190,7 @@ Item {
                             y: 16
                             width: parent.width
                             height: filesColumn.implicitHeight
-                            radius: 8
+                            radius: Theme.radiusMd
                             color: root.secondaryColor
                             Column {
                                 id: filesColumn
@@ -1206,7 +1206,7 @@ Item {
                                         spacing: 12
                                         RowText {
                                             text: changedFiles.changed.length === 1 ? qsTr("1 changed file") : qsTr("%1 changed files").arg(changedFiles.changed.length)
-                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.meta.size
                                             font.weight: Font.Medium
                                             wrapMode: Text.NoWrap
                                         }
@@ -1218,14 +1218,14 @@ Item {
                                                 text: "+" + parent.totals[0]
                                                 color: root.successColor
                                                 font.family: root.monoFamily
-                                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                font.pixelSize: Theme.type.meta.size
                                             }
                                             RowText {
                                                 visible: parent.totals[1] > 0
                                                 text: "-" + parent.totals[1]
                                                 color: root.errorColor
                                                 font.family: root.monoFamily
-                                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                font.pixelSize: Theme.type.meta.size
                                             }
                                         }
                                     }
@@ -1248,14 +1248,14 @@ Item {
                                         anchors.verticalCenter: parent.verticalCenter
                                         width: openDiffRow.implicitWidth + 14
                                         height: 24
-                                        radius: 6
+                                        radius: Theme.radiusSm
                                         color: openDiffHover.hovered ? root.hoverColor : "transparent"
                                         Accessible.role: Accessible.Button
                                         Accessible.name: qsTr("Open diff")
                                         Row {
                                             id: openDiffRow
                                             anchors.centerIn: parent
-                                            spacing: 6
+                                            spacing: Theme.space.sm
                                             ShellIcon {
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 name: "file-diff"
@@ -1267,7 +1267,7 @@ Item {
                                                 visible: filesCard.width >= 384
                                                 text: qsTr("Open diff")
                                                 color: openDiffHover.hovered ? root.textColor : root.mutedColor
-                                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                font.pixelSize: Theme.type.meta.size
                                                 wrapMode: Text.NoWrap
                                             }
                                         }
@@ -1296,7 +1296,7 @@ Item {
                                             objectName: folder ? "changedFolder" : "changedFile"
                                             width: parent.width
                                             height: 28
-                                            radius: 6
+                                            radius: Theme.radiusSm
                                             color: changedFileHover.hovered ? Qt.alpha(root.hoverColor, 0.6) : "transparent"
                                             Accessible.role: Accessible.Button
                                             Accessible.name: modelData.path
@@ -1315,7 +1315,7 @@ Item {
                                                 direction: "right"
                                                 size: Theme.icon.sm
                                                 rotation: changedFile.modelData.expanded ? 90 : 0
-                                                color: Qt.alpha(root.mutedColor, 0.7)
+                                                color: Theme.palette.color("inkTertiary", "#8b919e")
                                             }
                                             ShellIcon {
                                                 id: fileIcon
@@ -1324,16 +1324,16 @@ Item {
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 name: !changedFile.folder ? "file" : changedFile.modelData.expanded ? "folder" : "folder-closed"
                                                 size: 14
-                                                color: Qt.alpha(root.mutedColor, 0.7)
+                                                color: Theme.palette.color("inkTertiary", "#8b919e")
                                             }
                                             RowText {
                                                 x: fileIcon.x + 22
                                                 width: Math.max(0, fileStat.x - x - 8)
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 text: changedFile.modelData.name
-                                                color: changedFile.folder ? (changedFileHover.hovered ? Qt.alpha(root.textColor, 0.9) : root.mutedColor) : changedFileHover.hovered ? root.textColor : Qt.alpha(root.textColor, 0.85)
+                                                color: changedFile.folder ? (changedFileHover.hovered ? Theme.palette.color("inkSecondary", "#b8bdc7") : root.mutedColor) : changedFileHover.hovered ? root.textColor : Theme.palette.color("inkSecondary", "#b8bdc7")
                                                 font.family: root.monoFamily
-                                                font.pixelSize: Math.round((changedFile.folder ? 11 : 12) * Theme.fontScale)
+                                                font.pixelSize: changedFile.folder ? Theme.type.caption.size : Theme.type.meta.size
                                                 wrapMode: Text.NoWrap
                                                 elide: Text.ElideMiddle
                                             }
@@ -1348,14 +1348,14 @@ Item {
                                                     text: "+" + changedFile.modelData.additions
                                                     color: root.successColor
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: Math.round(10 * Theme.fontScale)
+                                                    font.pixelSize: Theme.type.caption.size
                                                 }
                                                 RowText {
                                                     visible: changedFile.modelData.deletions > 0
                                                     text: "-" + changedFile.modelData.deletions
                                                     color: root.errorColor
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: Math.round(10 * Theme.fontScale)
+                                                    font.pixelSize: Theme.type.caption.size
                                                 }
                                             }
                                             HoverHandler {
@@ -1383,7 +1383,7 @@ Item {
                     // Its actions and time, on its settled turn's last reply.
                     Row {
                         visible: row.meta === true && row.streaming !== true
-                        topPadding: 6
+                        topPadding: Theme.space.sm
                         height: 30
                         spacing: 8
                         opacity: row.showMeta ? 1 : 0
@@ -1539,7 +1539,7 @@ Item {
                                 anchors.centerIn: parent
                                 direction: "right"
                                 size: Theme.icon.sm
-                                color: Qt.alpha(root.iconColor, 0.7)
+                                color: Theme.palette.color("inkTertiary", "#8b919e")
                                 rotation: row.expanded ? 90 : 0
                             }
                         }
@@ -1687,7 +1687,7 @@ Item {
                                             visible: text.length > 0
                                             text: call.modelData.statusLabel ?? ""
                                             wrapMode: Text.NoWrap
-                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.meta.size
                                             color: call.failed ? root.toolErrorColor : root.mutedColor
                                         }
                                         Stamp {
@@ -1707,7 +1707,7 @@ Item {
                                                 visible: call.hasDetails
                                                 direction: "right"
                                                 size: Theme.icon.sm
-                                                color: Qt.alpha(root.iconColor, 0.7)
+                                                color: Theme.palette.color("inkTertiary", "#8b919e")
                                                 rotation: call.open ? 90 : 0
                                             }
                                         }
@@ -1722,7 +1722,7 @@ Item {
                                             y: call.panel ? 4 : 0
                                             width: parent.width
                                             height: details.implicitHeight + details.y * 2
-                                            radius: 6
+                                            radius: Theme.radiusSm
                                             color: call.panel ? Qt.alpha(root.mutedSurfaceColor, 0.4) : "transparent"
                                             Column {
                                                 id: details
@@ -1737,7 +1737,7 @@ Item {
                                                     textFormat: Text.PlainText
                                                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    font.pixelSize: Theme.type.caption.size
                                                 }
                                                 RowText {
                                                     visible: text.length > 0
@@ -1748,7 +1748,7 @@ Item {
                                                     textFormat: Text.PlainText
                                                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                                     font.family: call.panel ? root.monoFamily : root.uiFamily
-                                                    font.pixelSize: call.panel ? 11 : 14
+                                                    font.pixelSize: call.panel ? Theme.type.caption.size : Theme.type.body.size
                                                     lineHeight: 1.15
                                                     color: call.panel ? root.labelColor : root.textColor
                                                     maximumLineCount: 40
@@ -1757,26 +1757,26 @@ Item {
                                                 // A changed file: where, how much, its diff, and each change.
                                                 Row {
                                                     visible: call.modelData.type === "file_change"
-                                                    spacing: 6
+                                                    spacing: Theme.space.sm
                                                     RowText {
                                                         text: call.modelData.label ?? ""
                                                         wrapMode: Text.NoWrap
                                                         font.family: root.monoFamily
-                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.caption.size
                                                     }
                                                     RowText {
                                                         visible: call.extra.additions !== undefined
                                                         text: "+" + (call.extra.additions ?? 0)
                                                         color: root.successColor
                                                         font.family: root.monoFamily
-                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.caption.size
                                                     }
                                                     RowText {
                                                         visible: call.extra.deletions !== undefined
                                                         text: "-" + (call.extra.deletions ?? 0)
                                                         color: root.errorColor
                                                         font.family: root.monoFamily
-                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.caption.size
                                                     }
                                                     ActionLink {
                                                         objectName: "openCallDiff"
@@ -1794,7 +1794,7 @@ Item {
                                                         textFormat: Text.PlainText
                                                         wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                                         font.family: root.monoFamily
-                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.caption.size
                                                         color: root.mutedColor
                                                     }
                                                 }
@@ -1812,7 +1812,7 @@ Item {
                                                             elide: Text.ElideMiddle
                                                             wrapMode: Text.NoWrap
                                                             font.family: root.monoFamily
-                                                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                            font.pixelSize: Theme.type.caption.size
                                                         }
                                                         RowText {
                                                             visible: text.length > 0
@@ -1822,7 +1822,7 @@ Item {
                                                             elide: Text.ElideRight
                                                             wrapMode: Text.NoWrap
                                                             font.family: root.monoFamily
-                                                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                            font.pixelSize: Theme.type.caption.size
                                                             color: root.mutedColor
                                                         }
                                                     }
@@ -1840,7 +1840,7 @@ Item {
                                                         textFormat: Text.PlainText
                                                         elide: Text.ElideRight
                                                         font.family: root.uiFamily
-                                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.meta.size
                                                         font.underline: link.length > 0
                                                         color: link.length > 0 ? root.textColor : root.labelColor
                                                         Accessible.role: link.length > 0 ? Accessible.Link : Accessible.StaticText
@@ -1879,14 +1879,14 @@ Item {
                                                     textFormat: Text.PlainText
                                                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    font.pixelSize: Theme.type.caption.size
                                                     color: root.mutedColor
                                                 }
                                                 RowText {
                                                     objectName: "exitStatus"
                                                     visible: call.modelData.exited
                                                     text: qsTr("Process exited with code %1").arg(call.modelData.exitCode)
-                                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    font.pixelSize: Theme.type.caption.size
                                                     color: call.modelData.exitCode === 0 ? root.successColor : root.errorColor
                                                 }
                                             }
@@ -1918,7 +1918,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             text: row.title ?? ""
                             color: foldHover.hovered ? root.textColor : root.mutedColor
-                            font.pixelSize: Math.round(14 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                             wrapMode: Text.NoWrap
                         }
                         ShellChevron {
@@ -1937,7 +1937,7 @@ Item {
                     }
                     Stamp {
                         anchors.right: parent.right
-                        anchors.rightMargin: 6
+                        anchors.rightMargin: Theme.space.sm
                         anchors.verticalCenter: foldButton.verticalCenter
                         visible: text.length > 0 && row.showMeta
                         rowId: row.rowId
@@ -1965,7 +1965,7 @@ Item {
                         y: 2
                         width: parent.width - 8
                         height: parent.height - 4
-                        radius: 24
+                        radius: Theme.radiusXl
                         color: Qt.alpha(root.surfaceColor, 0.7)
                         border.color: Qt.alpha(root.borderColor, 0.8)
                     }
@@ -1983,14 +1983,14 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: planBadgeText.implicitWidth + 12
                                 height: 22
-                                radius: 6
+                                radius: Theme.radiusSm
                                 color: root.secondaryColor
                                 RowText {
                                     id: planBadgeText
                                     anchors.centerIn: parent
                                     text: qsTr("Plan")
                                     color: root.secondaryTextColor
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                     font.weight: Font.Medium
                                     wrapMode: Text.NoWrap
                                 }
@@ -1999,7 +1999,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: parent.width - planBadge.width - 8
                                 text: row.title ?? ""
-                                font.pixelSize: Math.round(14 * Theme.fontScale)
+                                font.pixelSize: Theme.type.body.size
                                 font.weight: Font.Medium
                                 wrapMode: Text.NoWrap
                                 elide: Text.ElideRight
@@ -2061,7 +2061,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         width: 24
                         height: 24
-                        radius: 12
+                        radius: Theme.radiusPill
                         color: root.mutedSurfaceColor
                         border.color: Qt.alpha(root.borderColor, 0.7)
                         ShellIcon {
@@ -2076,7 +2076,7 @@ Item {
                             y: 15
                             width: 12
                             height: 12
-                            radius: 6
+                            radius: Theme.radiusPill
                             color: subagentRow.dot
                             border.width: 2
                             border.color: root.canvasColor
@@ -2094,7 +2094,7 @@ Item {
                                 id: subagentTitle
                                 width: Math.min(implicitWidth, parent.width - (subagentStatus.visible ? subagentStatus.width + 8 : 0))
                                 text: row.title ?? ""
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                                 font.weight: Font.Medium
                                 wrapMode: Text.NoWrap
                                 elide: Text.ElideRight
@@ -2105,7 +2105,7 @@ Item {
                                 visible: subagentRow.hasDetail && row.status !== "completed" && text.length > 0
                                 text: row.statusLabel ?? ""
                                 color: subagentRow.failed ? root.errorColor : root.mutedColor
-                                font.pixelSize: Math.round(10 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                                 wrapMode: Text.NoWrap
                             }
                         }
@@ -2114,7 +2114,7 @@ Item {
                             objectName: "subagentDetail"
                             text: (subagentRow.agentModel.length > 0 ? subagentRow.agentModel + " · " : "") + (subagentRow.hasDetail ? row.text : (row.statusLabel ?? ""))
                             color: subagentRow.failed ? root.errorColor : root.mutedColor
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
                         }
@@ -2163,8 +2163,8 @@ Item {
                         bottomPadding: 4
                         text: row.text ?? ""
                         textFormat: Text.PlainText
-                        color: Qt.alpha(root.textColor, 0.8)
-                        font.pixelSize: Math.round(14 * Theme.fontScale)
+                        color: Theme.palette.color("inkSecondary", "#b8bdc7")
+                        font.pixelSize: Theme.type.prose.size
                     }
                 }
             }
@@ -2184,7 +2184,7 @@ Item {
                         width: 2
                         height: parent.height - 16
                         y: 8
-                        radius: 1
+                        radius: Theme.radiusPill
                         color: workerCard.failed ? root.errorColor : Qt.alpha(root.mutedColor, 0.6)
                     }
                     Column {
@@ -2194,7 +2194,7 @@ Item {
                         width: parent.width - 14
                         spacing: 4
                         Row {
-                            spacing: 6
+                            spacing: Theme.space.sm
                             height: 18
                             ShellIcon {
                                 anchors.verticalCenter: parent.verticalCenter
@@ -2209,7 +2209,7 @@ Item {
                                 width: Math.min(implicitWidth, Math.max(0, root.columnWidth - 100))
                                 text: row.title ?? ""
                                 color: workerLink.hovered ? root.textColor : root.mutedColor
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                                 font.weight: Font.Medium
                                 font.underline: workerLink.hovered
                                 wrapMode: Text.NoWrap
@@ -2230,7 +2230,7 @@ Item {
                                 text: workerCard.open ? qsTr("Hide result") : qsTr("Show result")
                                 color: root.mutedColor
                                 opacity: 0.8
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                                 Accessible.role: Accessible.Button
                                 TapHandler {
                                     onTapped: workerCard.open = !workerCard.open
@@ -2243,8 +2243,8 @@ Item {
                             width: parent.width
                             text: row.text ?? ""
                             textFormat: Text.PlainText
-                            color: Qt.alpha(root.textColor, 0.8)
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            color: Theme.palette.color("inkSecondary", "#b8bdc7")
+                            font.pixelSize: Theme.type.body.size
                         }
                     }
                 }
@@ -2266,7 +2266,7 @@ Item {
                         id: markerContent
                         anchors.centerIn: parent
                         height: 16
-                        spacing: 6
+                        spacing: Theme.space.sm
                         ShellIcon {
                             anchors.verticalCenter: parent.verticalCenter
                             visible: name.length > 0
@@ -2281,7 +2281,7 @@ Item {
                             width: Math.min(implicitWidth, Math.max(0, root.columnWidth - 80))
                             text: row.title ?? ""
                             color: root.mutedColor
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                             font.weight: Font.Medium
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
@@ -2293,7 +2293,7 @@ Item {
                             text: "· " + (row.text ?? "")
                             color: root.mutedColor
                             opacity: 0.7
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
                             // One line on the rule: a detail of several would hang over the rows around it.
@@ -2334,7 +2334,7 @@ Item {
         anchors.fill: view
         visible: view.activeFocus && !view.tapped && view.Window.activeFocusItem?.selectByMouse === undefined
         color: "transparent"
-        radius: 6
+        radius: Theme.radiusSm
         border.width: 1
         border.color: Theme.palette.color("focus", "#3b82f6")
     }
@@ -2367,7 +2367,7 @@ Item {
                 height: 24
                 verticalAlignment: Text.AlignVCenter
                 color: root.mutedColor
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.features: {
                     "tnum": 1
                 }
@@ -2398,7 +2398,7 @@ Item {
         anchors.topMargin: 12
         width: earlierText.implicitWidth + 16
         height: 24
-        radius: 12
+        radius: Theme.radiusPill
         color: root.canvasColor
         border.color: Qt.alpha(root.borderColor, 0.6)
         RowText {
@@ -2406,7 +2406,7 @@ Item {
             anchors.centerIn: parent
             text: qsTr("Loading earlier turns…")
             color: root.mutedColor
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.NoWrap
         }
     }
@@ -2432,11 +2432,11 @@ Item {
         anchors.bottom: view.bottom
         anchors.bottomMargin: 12
         height: 24
-        radius: 12
+        radius: Theme.radiusPill
         iconName: "chevron-down"
         iconSize: 14
         text: qsTr("Scroll to end")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         Accessible.role: Accessible.Button
         Accessible.name: text
         Accessible.onPressAction: clicked()

@@ -19,7 +19,7 @@ ColumnLayout {
 
     objectName: "settingsRow:" + spec.id
     Layout.fillWidth: true
-    spacing: 6
+    spacing: Theme.space.sm
 
     RowLayout {
         Layout.fillWidth: true
@@ -32,7 +32,7 @@ ColumnLayout {
             Label {
                 text: row.spec.title
                 color: row.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -40,7 +40,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 text: row.spec.description
                 color: row.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
         }
@@ -69,7 +69,7 @@ ColumnLayout {
             Layout.fillWidth: true
             text: qsTr("Git fetch interval, in seconds (0 never fetches in the background)")
             color: row.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
 
@@ -95,7 +95,7 @@ ColumnLayout {
             Layout.fillWidth: true
             text: qsTr("Pause background work while the host is locked")
             color: row.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
 

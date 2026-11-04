@@ -250,7 +250,7 @@ Rectangle {
                         y: modelData[1] + 8
                         width: 2
                         height: 2
-                        radius: 1
+                        radius: Theme.radiusPill
                         color: Qt.rgba(1, 1, 1, modelData[2])
                     }
                 }
@@ -320,15 +320,15 @@ Rectangle {
                     subtle: true
                     iconName: "search"
                     iconSize: 16
-                    iconTint: Qt.alpha(sidebar.muted, 0.8)
+                    iconTint: sidebar.muted
                     tint: sidebar.foreground
                     objectName: "search"
                     text: qsTr("Search")
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     onClicked: PaletteModel.show()
 
                     background: Rectangle {
-                        radius: 8
+                        radius: Theme.radiusMd
                         color: parent.hovered || parent.down ? Theme.palette.color("sidebarRowHover", "#1c1c21") : Theme.palette.color("sidebarControlSurface", "#141416")
                         border.width: parent.visualFocus ? 1 : 0
                         border.color: Theme.palette.color("focus", "#3b82f6")
@@ -364,11 +364,11 @@ Rectangle {
                     chevronSize: 16
                     iconName: "folder"
                     iconSize: 16
-                    iconTint: Qt.alpha(sidebar.muted, 0.8)
+                    iconTint: sidebar.muted
                     // Muted at full strength: dimmer, it falls below 4.5:1 on the sidebar.
                     tint: sidebar.muted
                     text: sidebar.scopeLabel
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     // Begins with what it shows, so speech control reaches it by that.
                     Accessible.name: qsTr("%1, project scope").arg(sidebar.scopeLabel)
                     onClicked: scopeMenu.open()
@@ -621,7 +621,7 @@ Rectangle {
                 y: list.dropLineY - 1
                 width: list.width - 12
                 height: 2
-                radius: 1
+                radius: Theme.radiusPill
                 color: Theme.palette.color("focus", "#3b82f6")
             }
 
@@ -732,7 +732,7 @@ Rectangle {
 
                     Rectangle {
                         anchors.fill: parent
-                        radius: 8
+                        radius: Theme.radiusMd
                         color: "transparent"
                         border.width: 1
                         border.color: Theme.palette.color("focus", "#3b82f6")
@@ -751,8 +751,8 @@ Rectangle {
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.bottom: parent.bottom
-                        anchors.leftMargin: 10
-                        anchors.rightMargin: 10
+                        anchors.leftMargin: Theme.space.sm
+                        anchors.rightMargin: Theme.space.sm
                         anchors.bottomMargin: 4
                         height: 20
                         spacing: 8
@@ -760,7 +760,7 @@ Rectangle {
                         Text {
                             text: entry.kind === "header" ? entry.modelData.label : ""
                             color: entry.kind === "header" && entry.modelData.key === "snoozed" ? Theme.palette.color("info", "#60a5fa") : headerHover.hovered ? sidebar.foreground : sidebar.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             font.weight: Font.Medium
                         }
 
@@ -781,13 +781,13 @@ Rectangle {
                             visible: entry.kind === "header" && !entry.modelData.open
                             text: entry.kind === "header" ? entry.modelData.count : ""
                             color: sidebar.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         ShellChevron {
                             direction: "down"
                             size: Theme.icon.sm
-                            color: Qt.alpha(sidebar.muted, 0.5)
+                            color: Theme.palette.color("inkTertiary", "#8b919e")
                             rotation: entry.kind === "header" && entry.modelData.open ? 0 : -90
                             Layout.alignment: Qt.AlignVCenter
 
@@ -805,8 +805,8 @@ Rectangle {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
+                    anchors.leftMargin: Theme.space.sm
+                    anchors.rightMargin: Theme.space.sm
                     height: 1
                     visible: entry.kind === "divider"
                     color: Qt.alpha(sidebar.hairline, 0.6)
@@ -824,7 +824,7 @@ Rectangle {
                         anchors.fill: parent
                         anchors.topMargin: 2
                         anchors.bottomMargin: 2
-                        radius: 8
+                        radius: Theme.radiusMd
                         color: moreHover.hovered ? Qt.alpha(sidebar.muted, 0.08) : "transparent"
                         border.width: entry.focused ? 1 : 0
                         border.color: Theme.palette.color("focus", "#3b82f6")
@@ -846,8 +846,8 @@ Rectangle {
                         id: moreLabel
                         anchors.centerIn: parent
                         text: entry.kind === "more" ? entry.modelData.label : ""
-                        color: Qt.alpha(sidebar.muted, moreHover.hovered ? 0.8 : 0.6)
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        color: moreHover.hovered ? Theme.palette.color("inkSecondary", "#b8bdc7") : Theme.palette.color("inkTertiary", "#8b919e")
+                        font.pixelSize: Theme.type.meta.size
                     }
                 }
 
@@ -949,7 +949,7 @@ Rectangle {
                 visible: list.count === 0
                 text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : qsTr("No threads yet")
                 color: sidebar.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
         }
 
@@ -983,7 +983,7 @@ Rectangle {
             visible: sidebar.showFooter && warning !== null
             text: warning !== null ? warning.title + ". " + warning.description : ""
             color: Theme.palette.color("warning", "#fbbf24")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 

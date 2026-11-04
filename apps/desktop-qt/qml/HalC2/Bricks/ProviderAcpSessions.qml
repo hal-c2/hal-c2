@@ -23,18 +23,18 @@ ColumnLayout {
 
     objectName: "acpSessions"
     visible: acp !== null
-    spacing: 6
+    spacing: Theme.space.sm
 
     component Hint: Label {
         Layout.fillWidth: true
         color: section.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
     RowLayout {
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         ColumnLayout {
             Layout.fillWidth: true
@@ -43,7 +43,7 @@ ColumnLayout {
             Label {
                 text: qsTr("Native sessions")
                 color: section.foreground
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.weight: Font.Medium
             }
 
@@ -97,7 +97,7 @@ ColumnLayout {
             required property var modelData
             objectName: "acpSession_" + modelData.sessionId
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             ColumnLayout {
                 Layout.fillWidth: true
@@ -107,7 +107,7 @@ ColumnLayout {
                     Layout.fillWidth: true
                     text: sessionRow.modelData.title
                     color: section.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     elide: Text.ElideRight
                 }
 
@@ -151,7 +151,7 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         visible: section.acp?.canConfigure ?? false
-        spacing: 6
+        spacing: Theme.space.sm
 
         ColumnLayout {
             Layout.fillWidth: true
@@ -160,7 +160,7 @@ ColumnLayout {
             Label {
                 text: qsTr("Model providers")
                 color: section.foreground
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.weight: Font.Medium
             }
 
@@ -191,14 +191,14 @@ ColumnLayout {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Label {
                     Layout.fillWidth: true
                     text: providerRow.modelData.providerId + " · " + (providerRow.modelData.configured ? qsTr("Configured") : qsTr("Disabled"))
                           + (providerRow.modelData.required ? qsTr(" · Required") : "")
                     color: section.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     elide: Text.ElideRight
                 }
 
@@ -226,7 +226,7 @@ ColumnLayout {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 ShellComboBox {
                     id: apiType

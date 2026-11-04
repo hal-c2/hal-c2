@@ -65,14 +65,14 @@ Dialog {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: Math.round(17 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
         color: dialog.foreground
     }
 
     component Caption: Label {
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     contentItem: ColumnLayout {
@@ -87,12 +87,12 @@ Dialog {
             Layout.preferredHeight: 96
             wrapMode: TextEdit.Wrap
             color: dialog.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             placeholderText: qsTr("Summarise yesterday's threads")
             placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
             Accessible.name: qsTr("Instruction")
             background: Rectangle {
-                radius: Math.min(Theme.radius, 8)
+                radius: Theme.radiusMd
                 color: Theme.palette.color("input", "#18181b")
                 border.color: Theme.palette.color("border", "#27272a")
             }

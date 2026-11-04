@@ -27,7 +27,7 @@ SettingsPage {
             Layout.topMargin: 12
             text: page.pairing !== null && page.pairing.label ? page.pairing.label : qsTr("This environment")
             color: page.foreground
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
             wrapMode: Text.Wrap
         }
@@ -37,7 +37,7 @@ SettingsPage {
             Layout.fillWidth: true
             text: page.pairing !== null ? (page.pairing.origin ?? "") : ""
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.WrapAnywhere
         }
 
@@ -52,7 +52,7 @@ SettingsPage {
             visible: text.length > 0
             text: page.pairing !== null ? (page.pairing.error ?? "") : ""
             color: Theme.palette.color("errorForeground", "#f87171")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 

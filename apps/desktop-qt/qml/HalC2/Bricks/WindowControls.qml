@@ -59,7 +59,7 @@ Row {
             }
 
             background: Rectangle {
-                radius: controls.trafficLights ? height / 2 : 6
+                radius: controls.trafficLights ? height / 2 : Theme.radiusSm
                 readonly property color hoverColor: button.isClose ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("accentSurface", "#27272a")
                 color: controls.trafficLights ? button.light : Qt.alpha(hoverColor, button.hovered ? hoverColor.a : 0)
                 border.width: controls.trafficLights || button.visualFocus ? 1 : 0
