@@ -436,6 +436,11 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
     # The sidebar row Discovery reads is written behind the command.
     HalC2.Streams.flush_shell(World.thread_id(context, thread))
     :ok = HalC2.PullRequests.Discovery.sweep()
+    # The branch change also queued a run of Discovery's own behind the sweep, which may
+    # read the row from before the sweep's write and ask GitHub to confirm it: it ends
+    # before the count, with the sweep's row in the shell, rather than during the status.
+    HalC2.Streams.flush_shell(World.thread_id(context, thread))
+    for _ <- 1..2, do: :sys.get_state(HalC2.PullRequests.Discovery)
     assert %{"number" => 42} = World.thread(context, thread)["branchPullRequest"]
     Map.put(context, :asked_before, asked(context, branch))
   end
