@@ -102,12 +102,12 @@ Rectangle {
         }
     }
 
+    // A section's name: sentence case, meta, tertiary ink.
     component Heading: Text {
         Layout.topMargin: Theme.space.sm
         color: root.muted
-        font.pixelSize: Theme.type.caption.size
+        font.pixelSize: Theme.type.meta.size
         font.weight: Font.Medium
-        font.capitalization: Font.AllUppercase
     }
 
     component Fact: RowLayout {

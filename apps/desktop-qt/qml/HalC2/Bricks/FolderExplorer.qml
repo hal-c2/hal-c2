@@ -161,7 +161,7 @@ Pane {
             Layout.fillWidth: true
             ShellButton { objectName: "newFolderButton"; text: qsTr("New folder"); iconName: "folder-plus"; enabled: explorer.directorySelected; onClicked: explorer.beginOperation("create") }
             Item { Layout.fillWidth: true }
-            Label { text: qsTr("LOCAL"); color: Theme.palette.color("textMuted", "#a1a1aa"); font.pixelSize: Theme.type.caption.size; font.letterSpacing: 1 }
+            Label { text: qsTr("Local"); color: Theme.palette.color("inkTertiary", "#a1a1aa"); font.pixelSize: Theme.type.meta.size }
         }
         TreeView {
             id: tree

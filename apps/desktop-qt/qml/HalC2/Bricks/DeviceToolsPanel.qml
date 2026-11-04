@@ -82,9 +82,8 @@ Rectangle {
         Text {
             text: section.title
             color: root.muted
-            font.pixelSize: Theme.type.caption.size
+            font.pixelSize: Theme.type.meta.size
             font.weight: Font.Medium
-            font.capitalization: Font.AllUppercase
         }
     }
 
