@@ -70,8 +70,8 @@ Rectangle {
     // Characters drawn of one line; the rest of a minified line is cut.
     readonly property int maxLineColumns: 2000
 
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
+    readonly property color foreground: Theme.palette.color("ink", "#f2f3f5")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#8b919e")
     readonly property color borderColor: Theme.palette.color("border", "#27272a")
     readonly property color added: Theme.palette.color("diffAdded", "#22c55e")
     readonly property color removed: Theme.palette.color("diffRemoved", "#ef4444")
@@ -101,7 +101,7 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 8
+            Layout.margins: Theme.space.sm
             spacing: Theme.space.sm
 
             ShellComboBox {
@@ -109,7 +109,7 @@ Rectangle {
 
                 objectName: "diffTurnPicker"
                 Accessible.name: qsTr("Turn to show")
-                Layout.preferredWidth: 150
+                Layout.preferredWidth: 6 * Theme.space.xl
                 visible: root.source?.hasTurns ?? true
                 outline: true
                 model: root.source?.choices ?? []
@@ -141,22 +141,22 @@ Rectangle {
                 visible: root.status === "ready"
                 text: "+" + (root.model?.additions ?? 0)
                 color: root.added
-                font.pixelSize: Theme.fontSizeCode
-                font.family: root.mono
+                font.pixelSize: Theme.type.meta.size
+                font.features: { "tnum": 1 }
             }
             Text {
                 visible: root.status === "ready"
                 text: "−" + (root.model?.deletions ?? 0)
                 color: root.removed
-                font.pixelSize: Theme.fontSizeCode
-                font.family: root.mono
+                font.pixelSize: Theme.type.meta.size
+                font.features: { "tnum": 1 }
             }
 
             ShellButton {
                 objectName: "diffShowAllFiles"
                 visible: root.focused && root.status === "ready"
                 subtle: true
-                implicitHeight: 28
+                implicitHeight: Theme.control.md
                 text: qsTr("Show all files")
                 onClicked: root.source.showAllFiles()
             }
@@ -165,10 +165,10 @@ Rectangle {
                 objectName: "diffRevert"
                 subtle: true
                 iconName: "undo-2"
-                iconSize: 14
+                iconSize: Theme.icon.md
                 iconTint: root.muted
-                implicitWidth: 28
-                implicitHeight: 28
+                implicitWidth: Theme.control.md
+                implicitHeight: Theme.control.md
                 enabled: root.source?.canRevert ?? false
                 visible: (root.source?.latestTurn ?? 0) > 0
                 Accessible.name: qsTr("Revert to this turn")
@@ -181,10 +181,10 @@ Rectangle {
                 objectName: "diffOptions"
                 subtle: true
                 iconName: "ellipsis"
-                iconSize: 14
+                iconSize: Theme.icon.md
                 iconTint: root.muted
-                implicitWidth: 28
-                implicitHeight: 28
+                implicitWidth: Theme.control.md
+                implicitHeight: Theme.control.md
                 Accessible.name: qsTr("Diff options")
                 onClicked: options.open()
 
@@ -233,9 +233,9 @@ Rectangle {
         // What the branch is compared against, and a way to name another ref.
         RowLayout {
             Layout.fillWidth: true
-            Layout.leftMargin: 8
-            Layout.rightMargin: 8
-            Layout.bottomMargin: 8
+            Layout.leftMargin: Theme.space.sm
+            Layout.rightMargin: Theme.space.sm
+            Layout.bottomMargin: Theme.space.sm
             visible: root.comparing
             spacing: Theme.space.sm
 
@@ -250,7 +250,7 @@ Rectangle {
 
                 objectName: "diffBasePicker"
                 Layout.fillWidth: true
-                implicitHeight: 26
+                implicitHeight: Theme.control.md
                 chevron: true
                 text: (root.source?.baseRef ?? "").length > 0 ? root.source.baseRef : qsTr("Automatic")
                 Accessible.name: qsTr("Compare against")
@@ -262,8 +262,8 @@ Rectangle {
                     id: bases
 
                     objectName: "diffBases"
-                    y: parent.height + 4
-                    width: Math.max(parent.width, 260)
+                    y: parent.height + Theme.space.xs
+                    width: Math.max(parent.width, 8 * Theme.space.xl)
                     padding: Theme.space.sm
                     onOpened: {
                         root.source.baseQuery = "";
@@ -274,14 +274,14 @@ Rectangle {
                     background: ShellPopoverSurface {}
 
                     contentItem: ColumnLayout {
-                        spacing: 4
+                        spacing: Theme.space.xs
 
                         ShellTextField {
                             id: baseSearch
 
                             objectName: "diffBaseRef"
                             Layout.fillWidth: true
-                            implicitHeight: 26
+                            implicitHeight: Theme.control.md
                             placeholderText: qsTr("Search or type a ref")
                             Accessible.name: qsTr("Search refs to compare against")
                             onTextEdited: root.source.baseQuery = text
@@ -295,7 +295,7 @@ Rectangle {
 
                             objectName: "diffBaseChoices"
                             Layout.fillWidth: true
-                            Layout.preferredHeight: Math.min(contentHeight, 240)
+                            Layout.preferredHeight: Math.min(contentHeight, 10 * Theme.control.sm)
                             clip: true
                             model: root.source?.baseChoices ?? []
                             boundsBehavior: Flickable.StopAtBounds
@@ -306,9 +306,9 @@ Rectangle {
 
                                 objectName: "diffBaseChoice-" + choice.modelData.label
                                 width: baseList.width
-                                height: 26
+                                height: Theme.control.md
                                 padding: 0
-                                leftPadding: 8
+                                leftPadding: Theme.space.sm
                                 Accessible.name: choice.modelData.label
                                 onClicked: {
                                     root.source.chooseBase(choice.modelData.id);
@@ -355,9 +355,9 @@ Rectangle {
         Text {
             objectName: "diffTruncated"
             Layout.fillWidth: true
-            Layout.leftMargin: 8
-            Layout.rightMargin: 8
-            Layout.bottomMargin: 8
+            Layout.leftMargin: Theme.space.sm
+            Layout.rightMargin: Theme.space.sm
+            Layout.bottomMargin: Theme.space.sm
             visible: (root.source?.truncated ?? false) && root.status === "ready"
             text: qsTr("This preview exceeds the size limit. Changes shown are incomplete. Totals include all changes.")
             color: root.muted
@@ -380,7 +380,7 @@ Rectangle {
                 id: treeView
 
                 objectName: "diffTreeRows"
-                Layout.preferredWidth: Math.min(240, root.width * 0.35)
+                Layout.preferredWidth: Math.min(10 * Theme.control.sm, root.width * 0.35)
                 Layout.fillHeight: true
                 visible: root.tree.length > 0
                 clip: true
@@ -393,9 +393,9 @@ Rectangle {
 
                     objectName: "diffTreeNode"
                     width: treeView.width
-                    height: 24
+                    height: Theme.control.sm
                     padding: 0
-                    leftPadding: 8 + node.modelData.depth * 12
+                    leftPadding: Theme.space.sm + node.modelData.depth * Theme.space.md
                     Accessible.name: node.modelData.path
                     onClicked: node.modelData.kind === "folder" ? root.model.toggleFolder(node.modelData.path) : root.jumpTo(node.modelData.file)
                     background: Rectangle {
@@ -406,7 +406,7 @@ Rectangle {
 
                         ShellIcon {
                             name: node.modelData.kind === "file" ? "file" : node.modelData.open ? "folder-open" : "folder"
-                            size: 13
+                            size: Theme.icon.sm
                             color: root.muted
                         }
                         Text {
@@ -430,28 +430,18 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
 
-                ColumnLayout {
+                // Loading, nothing to show or a failure share one geometry;
+                // the description is the source's own reason.
+                ShellEmptyState {
                     objectName: "diffMessage"
                     anchors.centerIn: parent
-                    width: parent.width - 32
-                    visible: root.status !== "ready"
-                    spacing: Theme.space.sm
-
-                    Text {
-                        Layout.fillWidth: true
-                        horizontalAlignment: Text.AlignHCenter
-                        text: root.status === "idle" ? "" : root.source?.message ?? ""
-                        color: root.status === "error" ? root.removed : root.muted
-                        font.pixelSize: Theme.type.body.size
-                        wrapMode: Text.Wrap
-                    }
-                    ShellButton {
-                        objectName: "diffRetry"
-                        Layout.alignment: Qt.AlignHCenter
-                        visible: root.status === "error"
-                        text: qsTr("Try again")
-                        onClicked: root.source.reload()
-                    }
+                    width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xl)
+                    visible: root.status !== "ready" && root.status !== "idle"
+                    iconName: root.status === "error" ? "circle-alert" : root.status === "loading" ? "circle-dashed" : "file-diff"
+                    title: root.status === "error" ? qsTr("Couldn't load the diff") : root.status === "loading" ? qsTr("Loading changes") : qsTr("No changes")
+                    description: root.status === "loading" ? "" : root.source?.message ?? ""
+                    actionText: root.status === "error" ? qsTr("Try again") : ""
+                    onActionTriggered: root.source.reload()
                 }
 
                 ListView {
@@ -468,10 +458,10 @@ Rectangle {
                     // Unwrapped rows are as wide as the longest line, and scroll sideways together.
                     contentWidth: root.wrap ? width : Math.max(width, rowWidth)
                     // A stacked line: the comment button, both line numbers, the sign, the text.
-                    readonly property real commentInset: root.canComment ? 20 : 0
-                    readonly property real numbersWidth: glyph.advanceWidth * 10 + 6
-                    readonly property real gutter: commentInset + numbersWidth + 6 + glyph.advanceWidth * 2
-                    readonly property real rowWidth: gutter + glyph.advanceWidth * Math.min(root.model?.maxColumns ?? 0, root.maxLineColumns) * (root.split ? 2 : 1) + 24
+                    readonly property real commentInset: root.canComment ? Theme.icon.md + Theme.space.xs : 0
+                    readonly property real numbersWidth: glyph.advanceWidth * 10 + Theme.space.sm
+                    readonly property real gutter: commentInset + numbersWidth + Theme.space.sm + glyph.advanceWidth * 2
+                    readonly property real rowWidth: gutter + glyph.advanceWidth * Math.min(root.model?.maxColumns ?? 0, root.maxLineColumns) * (root.split ? 2 : 1) + Theme.space.xl
                     ScrollBar.vertical: ScrollBar {
                         Accessible.name: qsTr("Scroll diff")
                     }
@@ -528,7 +518,7 @@ Rectangle {
             readonly property bool waiting: row.expanded && row.state.length > 0
             readonly property string inWorkspace: root.workspacePath(row.path)
             objectName: "diffFile-" + row.path
-            height: waiting ? 58 : 32
+            height: waiting ? 2 * Theme.control.lg - Theme.space.xs : Theme.control.lg
             hoverEnabled: true
             // The header's text stays in view while the lines scroll sideways.
             leftPadding: Math.max(0, view.contentX - view.originX)
@@ -536,7 +526,7 @@ Rectangle {
             Accessible.name: row.path
             onClicked: root.model.toggle(row.file)
             background: Rectangle {
-                color: header.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : Theme.palette.color("chrome", "#0b0b0d")
+                color: header.hovered ? Theme.palette.color("surfaceOverlay", "#1f1f24") : Theme.palette.color("surfaceRaised", "#16181c")
                 Rectangle {
                     anchors.bottom: parent.bottom
                     width: parent.width
@@ -549,11 +539,11 @@ Rectangle {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 32
+                    Layout.preferredHeight: Theme.control.lg
                     spacing: Theme.space.sm
 
                     ShellChevron {
-                        Layout.leftMargin: 8
+                        Layout.leftMargin: Theme.space.sm
                         direction: header.row.expanded ? "down" : "right"
                         size: Theme.icon.sm
                         color: root.muted
@@ -584,10 +574,10 @@ Rectangle {
                         objectName: "diffCopyPath"
                         subtle: true
                         iconName: "copy"
-                        iconSize: 13
+                        iconSize: Theme.icon.sm
                         iconTint: root.muted
-                        implicitWidth: 24
-                        implicitHeight: 24
+                        implicitWidth: Theme.control.sm
+                        implicitHeight: Theme.control.sm
                         Accessible.name: qsTr("Copy the path of %1").arg(header.row.path)
                         ToolTip.visible: hovered
                         ToolTip.text: qsTr("Copy path")
@@ -603,10 +593,10 @@ Rectangle {
                         enabled: header.inWorkspace.length > 0
                         subtle: true
                         iconName: "square-arrow-out-up-right"
-                        iconSize: 13
+                        iconSize: Theme.icon.sm
                         iconTint: root.muted
-                        implicitWidth: 24
-                        implicitHeight: 24
+                        implicitWidth: Theme.control.sm
+                        implicitHeight: Theme.control.sm
                         Accessible.name: qsTr("Open %1 in the editor").arg(header.row.path)
                         ToolTip.visible: hovered
                         ToolTip.text: enabled ? qsTr("Open in editor") : qsTr("Not in this thread's folder")
@@ -620,10 +610,10 @@ Rectangle {
                         enabled: header.inWorkspace.length > 0
                         subtle: true
                         iconName: "ellipsis"
-                        iconSize: 13
+                        iconSize: Theme.icon.sm
                         iconTint: root.muted
-                        implicitWidth: 24
-                        implicitHeight: 24
+                        implicitWidth: Theme.control.sm
+                        implicitHeight: Theme.control.sm
                         Accessible.name: qsTr("Actions for %1").arg(header.row.path)
                         onClicked: fileMenu.show(this, header.inWorkspace)
                     }
@@ -634,10 +624,10 @@ Rectangle {
                         visible: typeof root.source?.setViewed === "function"
                         subtle: true
                         iconName: viewed ? "square-check" : "square"
-                        iconSize: 13
+                        iconSize: Theme.icon.sm
                         iconTint: viewed ? root.added : root.muted
-                        implicitWidth: 24
-                        implicitHeight: 24
+                        implicitWidth: Theme.control.sm
+                        implicitHeight: Theme.control.sm
                         Accessible.name: viewed ? qsTr("Mark %1 not viewed").arg(header.row.path) : qsTr("Mark %1 viewed").arg(header.row.path)
                         ToolTip.visible: hovered
                         ToolTip.text: viewed ? qsTr("Viewed") : qsTr("Mark viewed")
@@ -652,23 +642,23 @@ Rectangle {
                     Text {
                         text: "+" + header.row.additions
                         color: root.added
-                        font.family: root.mono
-                        font.pixelSize: Theme.fontSizeCode
+                        font.pixelSize: Theme.type.meta.size
+                        font.features: { "tnum": 1 }
                     }
                     Text {
                         Layout.rightMargin: Theme.space.sm
                         text: "−" + header.row.deletions
                         color: root.removed
-                        font.family: root.mono
-                        font.pixelSize: Theme.fontSizeCode
+                        font.pixelSize: Theme.type.meta.size
+                        font.features: { "tnum": 1 }
                     }
                 }
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 26
-                    Layout.leftMargin: 27
+                    Layout.preferredHeight: Theme.control.lg - Theme.space.xs
+                    Layout.leftMargin: 2 * Theme.space.sm + Theme.icon.sm
                     visible: header.waiting
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     Text {
                         objectName: "diffFileNote"
@@ -676,13 +666,13 @@ Rectangle {
                         color: header.row.state === "error" ? root.removed : root.muted
                         font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideRight
-                        Layout.maximumWidth: view.width - 200
+                        Layout.maximumWidth: view.width - 6 * Theme.space.xl
                     }
                     ShellButton {
                         objectName: "diffFileRetry"
                         visible: header.row.state === "error"
                         subtle: true
-                        implicitHeight: 22
+                        implicitHeight: Theme.control.sm
                         text: qsTr("Retry loading diff")
                         onClicked: root.source.retryFile(header.row.path)
                     }
@@ -699,20 +689,21 @@ Rectangle {
 
         Rectangle {
             readonly property var row: parent
-            height: 22
-            color: Qt.alpha(Theme.palette.color("accent", "#3b82f6"), 0.08)
+            height: Theme.control.sm
+            color: Theme.palette.color("inset", "#0a0b0d")
 
             // Kept in view while the lines scroll sideways, like the file header.
             Text {
                 objectName: "diffHunkHeader"
                 x: view.gutter + Math.max(0, view.contentX - view.originX)
-                width: Math.max(0, view.width - view.gutter - 8)
+                width: Math.max(0, view.width - view.gutter - Theme.space.sm)
                 anchors.verticalCenter: parent.verticalCenter
                 elide: Text.ElideRight
                 text: parent.row.path
                 color: root.muted
                 font.family: root.mono
-                font.pixelSize: Theme.fontSizeCode
+                font.pixelSize: Theme.type.meta.size
+                font.features: { "tnum": 1 }
             }
         }
     }
@@ -723,7 +714,8 @@ Rectangle {
         color: root.muted
         font.family: root.mono
         font.pixelSize: Theme.fontSizeCode
-        topPadding: 2
+        font.features: { "tnum": 1 }
+        topPadding: Theme.space.xxs
     }
 
     component LineText: Text {
@@ -753,7 +745,7 @@ Rectangle {
             id: stackedRow
             readonly property var row: parent
             objectName: "diffLine"
-            implicitHeight: Math.max(18, lineText.implicitHeight)
+            implicitHeight: Math.max(Theme.icon.md + Theme.space.xxs, lineText.implicitHeight)
             height: implicitHeight
             color: root.tint(row.sign)
 
@@ -771,7 +763,7 @@ Rectangle {
                 }
             }
             Text {
-                x: view.commentInset + view.numbersWidth + 6
+                x: view.commentInset + view.numbersWidth + Theme.space.sm
                 text: parent.row.sign === "\\" ? "" : parent.row.sign
                 color: parent.row.sign === "+" ? root.added : root.removed
                 font.family: root.mono
@@ -781,7 +773,7 @@ Rectangle {
             LineText {
                 id: lineText
                 x: view.gutter
-                width: root.wrap ? parent.width - x - 8 : implicitWidth
+                width: root.wrap ? parent.width - x - Theme.space.sm : implicitWidth
                 sign: parent.row.sign
                 text: root.lineText(parent.row.text)
             }
@@ -796,13 +788,13 @@ Rectangle {
             ShellButton {
                 readonly property var row: parent.row
                 objectName: "diffLineComment"
-                x: 2
-                width: 16
-                height: Math.min(parent.height, 18)
+                x: Theme.space.xxs
+                width: Theme.icon.md
+                height: Math.min(parent.height, Theme.icon.md + Theme.space.xxs)
                 visible: root.canComment && row.sign !== "\\" && (lineHover.hovered || hovered)
                 subtle: true
                 iconName: "message-square-plus"
-                iconSize: 11
+                iconSize: Theme.icon.sm
                 iconTint: root.muted
                 Accessible.name: qsTr("Comment on this line")
                 onClicked: commentPopup.ask(root.model.path(row.file), row.sign === "-" ? "old" : "new", row.sign === "-" ? row.oldLine : row.newLine)
@@ -818,20 +810,20 @@ Rectangle {
 
             readonly property var row: parent
             readonly property real half: (width - glyph.advanceWidth * 12) / 2
-            implicitHeight: Math.max(18, left.implicitHeight, right.implicitHeight)
+            implicitHeight: Math.max(Theme.icon.md + Theme.space.xxs, left.implicitHeight, right.implicitHeight)
             height: implicitHeight
 
             Rectangle {
                 width: pair.width / 2
                 height: pair.height
-                color: pair.row.sign.length > 0 ? root.tint(pair.row.sign) : Qt.alpha(root.muted, 0.06)
+                color: pair.row.sign.length > 0 ? root.tint(pair.row.sign) : Theme.palette.color("inset", "#0a0b0d")
                 LineNumber {
                     text: pair.row.sign.length > 0 ? root.lineNumber(pair.row.oldLine) : ""
                 }
                 LineText {
                     id: left
                     x: glyph.advanceWidth * 6
-                    width: pair.half - 8
+                    width: pair.half - Theme.space.sm
                     clip: !root.wrap
                     sign: pair.row.sign
                     text: root.lineText(pair.row.text)
@@ -841,14 +833,14 @@ Rectangle {
                 x: pair.width / 2
                 width: pair.width / 2
                 height: pair.height
-                color: pair.row.rightSign.length > 0 ? root.tint(pair.row.rightSign) : Qt.alpha(root.muted, 0.06)
+                color: pair.row.rightSign.length > 0 ? root.tint(pair.row.rightSign) : Theme.palette.color("inset", "#0a0b0d")
                 LineNumber {
                     text: pair.row.rightSign.length > 0 ? root.lineNumber(pair.row.newLine) : ""
                 }
                 LineText {
                     id: right
                     x: glyph.advanceWidth * 6
-                    width: pair.half - 8
+                    width: pair.half - Theme.space.sm
                     clip: !root.wrap
                     sign: pair.row.rightSign
                     text: root.lineText(pair.row.rightText)
@@ -877,7 +869,7 @@ Rectangle {
         }
 
         objectName: "diffFileActions"
-        implicitWidth: 230
+        implicitWidth: 7 * Theme.space.xl
 
         ShellMenuItem {
             objectName: "diffFileOpen"
@@ -943,7 +935,7 @@ Rectangle {
         transformOrigin: Item.TopLeft
         x: Math.round((parent.width - width * scale) / 2)
         y: Math.round((parent.height - height * scale) / 2)
-        width: Math.min(380, parent.width / scale - 24)
+        width: Math.min(12 * Theme.space.xl, parent.width / scale - Theme.space.xl)
         modal: true
         padding: Theme.space.md
 
@@ -951,7 +943,7 @@ Rectangle {
         background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
-            spacing: 8
+            spacing: Theme.space.sm
 
             Text {
                 Layout.fillWidth: true
@@ -974,8 +966,8 @@ Rectangle {
                     id: commentLast
 
                     objectName: "diffCommentLast"
-                    Layout.preferredWidth: 70
-                    implicitHeight: 26
+                    Layout.preferredWidth: 2 * Theme.space.xl
+                    implicitHeight: Theme.control.md
                     inputMethodHints: Qt.ImhDigitsOnly
                     Accessible.name: qsTr("Last line")
                 }
@@ -985,7 +977,7 @@ Rectangle {
             }
             Rectangle {
                 Layout.fillWidth: true
-                implicitHeight: 84
+                implicitHeight: 3 * Theme.control.md
                 radius: Theme.radiusMd
                 color: Theme.palette.color("input", "#141416")
                 border.color: commentNote.activeFocus ? Theme.palette.color("focus", "#3b82f6") : root.borderColor
