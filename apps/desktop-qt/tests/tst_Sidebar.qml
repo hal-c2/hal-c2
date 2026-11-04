@@ -597,5 +597,26 @@ Item {
             keyClick(Qt.Key_Up);
             compare(list.cursorKey, "s2");
         }
+
+        // A monospace list is 296 wide for a shell that sizes it by its
+        // implicit width, and 272 in a window under 1100, where a 296 list,
+        // the thread's 360 and a right panel's 360 overflow a 1000 window.
+        function test_aMonospaceListGivesWayInANarrowWindow() {
+            const window = root.Window.window;
+            const width = window.width;
+            Theme.monospace = true;
+            try {
+                const sidebar = createTemporaryObject(sidebarComponent, root);
+                window.width = 1280;
+                tryCompare(sidebar, "implicitWidth", 296);
+                window.width = 1000;
+                tryCompare(sidebar, "implicitWidth", 272);
+                Theme.monospace = false;
+                compare(sidebar.implicitWidth, 256);
+            } finally {
+                Theme.monospace = false;
+                window.width = width;
+            }
+        }
     }
 }

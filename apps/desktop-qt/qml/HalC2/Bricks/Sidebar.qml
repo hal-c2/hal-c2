@@ -139,8 +139,11 @@ Rectangle {
 
     // LayoutController's default, 256 or 296 in a monospace interface, and
     // the rail's 48, for a shell that sizes the list by its implicit width.
-    // Settings keep the full width: a shell sizes its sections by it.
-    implicitWidth: rail && Shell.state.route?.kind !== "settings" ? Theme.control.lg + Theme.space.lg : Theme.monospace ? 296 : 256
+    // Settings keep the full width: a shell sizes its sections by it. Under
+    // 1100 (LayoutController's kSlimBelow) a monospace list keeps 272: such a
+    // shell has no sheet to put a right panel in, and at 1000 a 296 list
+    // leaves no room for the thread's 360 and the panel's beside it.
+    implicitWidth: rail && Shell.state.route?.kind !== "settings" ? Theme.control.lg + Theme.space.lg : !Theme.monospace ? 256 : Window.width > 0 && Window.width < 1100 ? 272 : 296
     // The narrowest a layout shows it (LayoutController's kSidebarMinWidth).
     readonly property int minimumWidth: 208
     color: Theme.palette.color("sidebar", "#0a0a0a")
