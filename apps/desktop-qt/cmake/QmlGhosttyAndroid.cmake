@@ -84,6 +84,7 @@ if(NOT EXISTS "${GHOSTTY_VT_LIBRARY}" OR NOT _ghostty_android_built STREQUAL _gh
     # Not fatal: only what it fetched is needed, which is checked below.
     execute_process(
       COMMAND "${CMAKE_COMMAND}" -E env "GHOSTTY_REVISION=${_hal_c2_vt_revision}"
+        bash "${CMAKE_CURRENT_LIST_DIR}/zig-macos-sdk.sh"
         bash "${qml_ghostty_SOURCE_DIR}/scripts/build-libghostty-vt.sh"
     )
     _ghostty_android_find_zig(_ghostty_android_zig)
@@ -107,7 +108,9 @@ if(NOT EXISTS "${GHOSTTY_VT_LIBRARY}" OR NOT _ghostty_android_built STREQUAL _gh
   # build tree and are dropped: only the installed library is kept.
   set(_ghostty_android_work "${CMAKE_CURRENT_BINARY_DIR}/libghostty-vt-zig-cache")
   execute_process(
+    # Zig's build runner links for this machine, so a Mac needs the SDK fix too.
     COMMAND "${CMAKE_COMMAND}" -E env "ANDROID_NDK_HOME=${ANDROID_NDK}"
+      bash "${CMAKE_CURRENT_LIST_DIR}/zig-macos-sdk.sh"
       "${_ghostty_android_zig}" build -Demit-lib-vt -Demit-xcframework=false -Doptimize=ReleaseFast
       "-Dtarget=${_ghostty_android_target}" -p "${_ghostty_android_prefix}" --cache-dir "${_ghostty_android_work}"
     WORKING_DIRECTORY "${_ghostty_android_source}"
