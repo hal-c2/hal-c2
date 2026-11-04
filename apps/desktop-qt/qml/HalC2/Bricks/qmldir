@@ -46,6 +46,9 @@ ShellIcon 1.0 ShellIcon.qml
 QrCode 1.0 QrCode.qml
 ShellSplitButton 1.0 ShellSplitButton.qml
 ShellChevron 1.0 ShellChevron.qml
+ShellPopover 1.0 ShellPopover.qml
+ShellPopoverSurface 1.0 ShellPopoverSurface.qml
+ShellEmptyState 1.0 ShellEmptyState.qml
 Sidebar 1.0 Sidebar.qml
 SidebarThreadRow 1.0 SidebarThreadRow.qml
 HalC2Wordmark 1.0 HalC2Wordmark.qml

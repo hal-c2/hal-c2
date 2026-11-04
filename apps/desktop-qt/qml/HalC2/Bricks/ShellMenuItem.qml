@@ -18,13 +18,19 @@ MenuItem {
     // Why the item is disabled, drawn as a muted second line under the label.
     // A disabled row gets no hover, so a tooltip could never show it.
     property string reason: ""
+    // The keys that run it, as the user reads them ("Ctrl+N"), in the right
+    // column where a submenu's chevron would be.
+    property string shortcut: ""
 
     readonly property bool hasIcon: badge !== null || iconName.length > 0
 
-    implicitHeight: reason.length > 0 ? 28 + reasonText.contentHeight + 4 : 28
-    leftPadding: 8
-    rightPadding: 8
-    font.pixelSize: Math.round(14 * Theme.fontScale)
+    readonly property bool menuHasIcons: menu !== null && menu.hasIcons === true
+
+    implicitHeight: reason.length > 0 ? Theme.control.md + reasonText.contentHeight + Theme.space.xs : Theme.control.md
+    leftPadding: Theme.space.sm
+    rightPadding: Theme.space.sm
+    font.pixelSize: Theme.type.body.size
+    font.weight: Theme.type.body.weight
     hoverEnabled: true
     Accessible.description: [detail, reason].filter(part => part.length > 0).join(". ")
 
@@ -33,36 +39,36 @@ MenuItem {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            spacing: 8
+            Layout.preferredHeight: Theme.control.md
+            spacing: Theme.space.sm
 
             ProjectIcon {
                 visible: control.badge !== null
                 icon: control.badge
-                size: 16
+                size: Theme.icon.md
                 Layout.alignment: Qt.AlignVCenter
             }
 
             ShellIcon {
                 visible: control.iconName.length > 0 && control.badge === null
                 name: control.iconName
-                size: 16
-                color: Qt.alpha(Theme.palette.color("textMuted", "#8b8b93"), 0.8)
+                size: Theme.icon.md
+                color: control.destructive ? Theme.palette.color("destructive", "#f87171") : Theme.palette.color("inkSecondary", "#b8bdc7")
                 Layout.alignment: Qt.AlignVCenter
             }
 
             // The icon column, kept when other rows of the menu have icons.
             Item {
-                visible: !control.hasIcon && control.menu !== null && control.menu.hasIcons === true
-                Layout.preferredWidth: 16
-                Layout.preferredHeight: 16
+                visible: !control.hasIcon && control.menuHasIcons
+                Layout.preferredWidth: Theme.icon.md
+                Layout.preferredHeight: Theme.icon.md
             }
 
             Text {
                 objectName: "menuItemLabel"
                 text: control.text
                 font: control.font
-                color: control.destructive ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("text", "#e4e4e7")
+                color: control.destructive ? Theme.palette.color("destructive", "#f87171") : Theme.palette.color("text", "#f2f3f5")
                 opacity: control.enabled ? 1 : 0.5
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
@@ -75,26 +81,46 @@ MenuItem {
                 visible: control.detail.length > 0
                 text: control.detail
                 font: control.font
-                color: Theme.palette.color("textMuted", "#8b8b93")
+                color: Theme.palette.color("textMuted", "#8b919e")
                 opacity: control.enabled ? 1 : 0.5
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
                 Layout.fillWidth: true
             }
 
+            // The right column: the shortcut, a submenu's chevron, or a
+            // picker's check on the current choice.
+            Text {
+                objectName: "menuItemShortcut"
+                visible: control.shortcut.length > 0 && control.subMenu === null
+                text: control.shortcut
+                font.family: control.font.family
+                font.pixelSize: Theme.type.meta.size
+                font.features: {
+                    "tnum": 1
+                }
+                color: Theme.palette.color("textMuted", "#8b919e")
+                opacity: control.enabled ? 1 : 0.5
+                verticalAlignment: Text.AlignVCenter
+                Layout.leftMargin: Theme.space.sm
+                Layout.alignment: Qt.AlignVCenter
+            }
+
             ShellChevron {
+                objectName: "menuItemChevron"
                 visible: control.subMenu !== null
                 direction: "right"
                 size: Theme.icon.sm
-                color: Qt.alpha(Theme.palette.color("textMuted", "#8b8b93"), 0.8)
+                color: Theme.palette.color("textMuted", "#8b919e")
                 Layout.alignment: Qt.AlignVCenter
             }
 
             ShellIcon {
+                objectName: "menuItemCheck"
                 visible: control.current
                 name: "check"
-                size: 14
-                color: Theme.palette.color("text", "#e4e4e7")
+                size: Theme.icon.md
+                color: Theme.palette.color("accentText", "#5b8cff")
                 Layout.alignment: Qt.AlignVCenter
             }
         }
@@ -105,18 +131,20 @@ MenuItem {
             objectName: "menuItemReason"
             visible: control.reason.length > 0
             Layout.fillWidth: true
-            Layout.leftMargin: control.hasIcon || control.menu !== null && control.menu.hasIcons === true ? 24 : 0
-            Layout.bottomMargin: 4
+            Layout.leftMargin: control.hasIcon || control.menuHasIcons ? Theme.icon.md + Theme.space.sm : 0
+            Layout.bottomMargin: Theme.space.xs
             text: control.reason
             font.family: control.font.family
-            font.pixelSize: Math.round(12 * Theme.fontScale)
-            color: Theme.palette.color("textMuted", "#8b8b93")
+            font.pixelSize: Theme.type.meta.size
+            color: Theme.palette.color("textMuted", "#8b919e")
             wrapMode: Text.Wrap
         }
     }
 
+    // The highlight nests inside the menu's corner, 4px in.
     background: Rectangle {
-        radius: 6
-        color: control.highlighted || control.hovered || control.visualFocus ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
+        objectName: "menuItemHighlight"
+        radius: Math.max(0, Theme.radiusLg - 4)
+        color: control.highlighted || control.hovered || control.visualFocus ? Theme.palette.color("accentSurface", "#f2f3f514") : "transparent"
     }
 }
