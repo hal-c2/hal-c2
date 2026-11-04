@@ -14,6 +14,10 @@ Loader {
     property real radius: 0
     // Whether the loaded view is a conversation scrolled away from its latest output.
     readonly property bool conversationScrolled: status === Loader.Ready && (item as ThreadView)?.scrolledAway === true
+    // Whether the loaded view draws its own header line at its top (a view's
+    // `titleBar`), which is then the window's title bar: a layout draws no
+    // band of its own above it.
+    readonly property bool titleBar: status === Loader.Ready && item?.titleBar === true
 
     active: brick.length > 0
     source: active ? Qt.resolvedUrl(brick + ".qml") : ""

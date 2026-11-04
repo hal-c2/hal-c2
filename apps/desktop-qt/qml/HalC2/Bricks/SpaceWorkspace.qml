@@ -58,6 +58,33 @@ Rectangle {
 
     color: Theme.palette.color("canvas", "#09090b")
 
+    // The Space draws its own header line, the sidebar's Space picker on it,
+    // so the layout draws no band above it (RouteView.titleBar): the line is
+    // the window's title bar, as a thread's header is.
+    readonly property bool titleBar: true
+    readonly property bool movesWindow: Theme.frameless && Qt.platform.os !== "android" && Qt.platform.os !== "ios"
+
+    // Under the columns, so their buttons take their own clicks.
+    Item {
+        objectName: "spaceTitleBar"
+        width: parent.width
+        height: Theme.headerHeight
+
+        DragHandler {
+            enabled: workspace.movesWindow
+            target: null
+            grabPermissions: PointerHandler.CanTakeOverFromAnything
+            onActiveChanged: if (active)
+                workspace.Window.window.startSystemMove()
+        }
+
+        TapHandler {
+            enabled: workspace.movesWindow
+            // ljos-allow(focus-pointer-only): a double click on the title bar is the pointer's shortcut for the window controls' Maximize button, which the keyboard reaches
+            onDoubleTapped: workspace.Window.window.visibility === Window.Maximized ? workspace.Window.window.showNormal() : workspace.Window.window.showMaximized()
+        }
+    }
+
     // Another page's comments are not this one's.
     readonly property string pageId: Spaces.pageId
     onPageIdChanged: comments.blockId = ""
@@ -101,6 +128,7 @@ Rectangle {
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.topMargin: Theme.headerHeight + 1
 
             SpacePage {
                 anchors.fill: parent
@@ -149,6 +177,7 @@ Rectangle {
         Rectangle {
             Layout.preferredWidth: 1
             Layout.fillHeight: true
+            Layout.topMargin: Theme.headerHeight + 1
             visible: comments.visible || historyPanel.visible
             color: workspace.lineColor
         }
@@ -158,6 +187,7 @@ Rectangle {
 
             Layout.preferredWidth: 300
             Layout.fillHeight: true
+            Layout.topMargin: Theme.headerHeight + 1
             visible: workspace.commentsShown && Spaces.pageId !== "" && Spaces.deckId === "" && !workspace.imagesShown
             readOnly: Spaces.page.trashed === true
             onCloseRequested: workspace.commentsShown = false
@@ -168,8 +198,18 @@ Rectangle {
 
             Layout.preferredWidth: 300
             Layout.fillHeight: true
+            Layout.topMargin: Theme.headerHeight + 1
             visible: Spaces.history.shown && !workspace.imagesShown
         }
+    }
+
+    // The header line's hairline, level with a thread header's, over the columns.
+    Rectangle {
+        objectName: "spaceHeaderLine"
+        y: Theme.headerHeight
+        width: parent.width
+        height: 1
+        color: workspace.lineColor
     }
 
     SpacePresenter {

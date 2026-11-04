@@ -1725,5 +1725,24 @@ Item {
             verify(viewers.visible);
             compare(viewers.text, "Also here: HAL-C2 on SM-F741B, the agent of “Work”");
         }
+
+        // features/space/pages.feature: the Space picker is on the header line a
+        // thread's header shares, its hairline level with the thread's, and the
+        // view tells the layout it draws that line (no band above it).
+        function test_the_space_header_is_on_the_thread_headers_line() {
+            const view = root.research({});
+            verify(view.titleBar, "the view draws its own header line");
+            const header = findChild(view, "spaceHeader");
+            const line = findChild(view, "spaceHeaderLine");
+            tryVerify(() => header.height > 0);
+            compare(header.height, Theme.headerHeight);
+            compare(header.mapToItem(view, 0, 0).y, 0);
+            compare(line.mapToItem(view, 0, 0).y, Theme.headerHeight);
+            const picker = findChild(view, "spacePicker");
+            const pickerCentre = picker.mapToItem(view, 0, picker.height / 2).y;
+            verify(Math.abs(pickerCentre - Theme.headerHeight / 2) <= 1, "the picker centres on the line: " + pickerCentre);
+            verify(findChild(view, "spacePageTree").mapToItem(view, 0, 0).y > Theme.headerHeight,
+                   "the pages start under the line");
+        }
     }
 }

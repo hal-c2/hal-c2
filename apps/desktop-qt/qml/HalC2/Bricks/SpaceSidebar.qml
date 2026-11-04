@@ -68,8 +68,13 @@ Rectangle {
         anchors.margins: Theme.space.sm
         spacing: Theme.space.sm
 
+        // On the header line a thread's header shares (Theme.headerHeight),
+        // from the window's top to the hairline under it.
         RowLayout {
+            objectName: "spaceHeader"
             Layout.fillWidth: true
+            Layout.topMargin: -Theme.space.sm
+            Layout.preferredHeight: Theme.headerHeight
             spacing: 4
 
             ShellButton {
