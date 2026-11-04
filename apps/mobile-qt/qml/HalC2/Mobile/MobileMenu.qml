@@ -41,8 +41,11 @@ Popup {
             open();
         }
     }
+    // Dismissed without a choice: answers only for the request it showed. A
+    // request that arrives while the sheet is on its way out reopens it, which
+    // cancels the way out, so no late `closed` answers for the new one.
     onClosed: {
-        if (!chosen)
+        if (!chosen && request !== null && request.requestId === shownRequestId)
             choose(null);
     }
 
