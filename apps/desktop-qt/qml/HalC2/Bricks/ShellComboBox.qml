@@ -27,8 +27,9 @@ ComboBox {
     // Rings only when the keyboard reaches it, never after a click.
     readonly property bool showFocusRing: control.visualFocus
     readonly property color accentSurface: Theme.palette.color("accentSurface", "#27272a")
-    readonly property color hoverFill: Qt.alpha(accentSurface, accentSurface.a * (outline ? 0.5 : 1))
-    readonly property color labelColor: control.hovered || control.down || control.popup.visible ? Theme.palette.color("text", "#e4e4e7") : Theme.palette.color("secondaryLabel", "#a1a1aa")
+    // The fill under the pointer and the label's colour; the composer's chips set their own.
+    property color hoverFill: Qt.alpha(accentSurface, accentSurface.a * (outline ? 0.5 : 1))
+    property color labelColor: control.hovered || control.down || control.popup.visible ? Theme.palette.color("text", "#e4e4e7") : Theme.palette.color("secondaryLabel", "#a1a1aa")
 
     implicitHeight: Theme.control.md
     leftPadding: iconName.length > 0 ? Theme.space.sm + iconSize + Theme.space.sm : Theme.space.sm

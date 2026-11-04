@@ -416,7 +416,9 @@ const Steps steps([] {
 
   // Build and plan.
   const auto buildMode = [](World& world, const Captures&, const Table&) {
-    shellThread(world);
+    openTurnThread(world);
+    publishProviders(world.mc, {provider(QStringLiteral("codex"), QStringLiteral("Codex"), {model(QStringLiteral("gpt-5.4"), QStringLiteral("GPT-5.4"))})});
+    updateThread(world, {{QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5.4")}}}});
     expect(world.native().controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), true), QStringLiteral("plan mode could not be turned on"));
     composerBrick(world);
     world.waitFor([&] { return composer(world).value(QStringLiteral("showInteractionModeToggle")).toBool() && part(world, QStringLiteral("planToggle"))->isVisible(); },
@@ -477,6 +479,101 @@ const Steps steps([] {
   step(QStringLiteral("the native (.+ picker) opens"), [controls, popup](World& world, const Captures& c, const Table&) {
     QObject* control = popup(world, controls.value(c[0]).second);
     world.waitFor([&] { return control->property("opened").toBool(); }, [&] { return QStringLiteral("the %1 to open").arg(c[0]); });
+  });
+
+  // A narrow composer: the chips that do not fit fold into its overflow
+  // chip's menu (composerOverflow) instead of wrapping the toolbar.
+  const auto shownChips = [](World& world) {
+    QList<QQuickItem*> shown;
+    for (QQuickItem* chip : part(world, QStringLiteral("toolbarChips"))->childItems()) {
+      if (chip->isVisible() && !chip->objectName().isEmpty()) shown.append(chip);
+    }
+    return shown;
+  };
+  const auto overflowRows = [](World& world) {
+    QObject* menu = composerItem(world)->property("overflowMenu").value<QObject*>();
+    QStringList rows;
+    if (!menu) return rows;
+    for (int i = 0; i < menu->property("count").toInt(); ++i) {
+      QQuickItem* row = nullptr;
+      QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, row), Q_ARG(int, i));
+      QObject* sub = row ? row->property("subMenu").value<QObject*>() : nullptr;
+      rows.append(sub ? sub->objectName() : row ? row->objectName() : QString());
+    }
+    return rows;
+  };
+  step(QStringLiteral("the composer offers its reasoning effort, plan and access controls"), [](World& world, const Captures&, const Table&) {
+    openTurnThread(world);
+    publishProviders(world.mc, {provider(QStringLiteral("codex"), QStringLiteral("Codex"), {model(QStringLiteral("gpt-5.4"), QStringLiteral("GPT-5.4"))})});
+    updateThread(world, {{QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5.4")}}}});
+    expect(world.native().controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), true), QStringLiteral("plan mode could not be turned on"));
+    composerBrick(world);
+    world.waitFor([&] {
+      return part(world, QStringLiteral("effortPicker"))->isVisible() && part(world, QStringLiteral("planToggle"))->isVisible() &&
+             part(world, QStringLiteral("runtimeModePicker"))->isVisible();
+    }, [&] { return QStringLiteral("the effort, plan and access on the toolbar; the composer shows %1").arg(show(composer(world))); });
+  });
+  step(QStringLiteral("the composer is too narrow to show all its controls"), [](World& world, const Captures&, const Table&) {
+    Brick& brick = composerBrick(world);
+    const QSize narrow(380, brick.window().height());
+    brick.window().resize(narrow);
+    brick.root()->setSize(narrow);
+    world.waitFor([&] { return part(world, QStringLiteral("composerOverflow"))->isVisible(); }, QStringLiteral("the composer to fold a control"));
+  });
+  step(QStringLiteral("its toolbar is still one line"), [shownChips](World& world, const Captures&, const Table&) {
+    QQuickItem* toolbar = part(world, QStringLiteral("toolbar"));
+    QList<QQuickItem*> line = shownChips(world);
+    line << part(world, QStringLiteral("modelPicker")) << part(world, QStringLiteral("primaryAction"));
+    const qreal right = part(world, QStringLiteral("primaryAction"))->mapToItem(toolbar, QPointF()).x();
+    for (QQuickItem* item : line) {
+      const QPointF middle = item->mapToItem(toolbar, QPointF(item->width(), item->height() / 2));
+      expect(qAbs(middle.y() - toolbar->height() / 2) < 1, QStringLiteral("%1 is off the toolbar's line").arg(item->objectName()));
+      if (item->objectName() != QLatin1String("primaryAction")) expect(middle.x() <= right, QStringLiteral("%1 runs under Send").arg(item->objectName()));
+    }
+  });
+  step(QStringLiteral("the reasoning effort is offered in its menu of further controls"), [shownChips, overflowRows](World& world, const Captures&, const Table&) {
+    expect(!shownChips(world).contains(part(world, QStringLiteral("effortPicker"))), QStringLiteral("the effort is still on the toolbar"));
+    click(world, part(world, QStringLiteral("composerOverflow")));
+    world.waitFor([&] { return overflowRows(world).contains(QStringLiteral("composerOverflow:effortPicker")); },
+                  [&] { return QStringLiteral("the effort in the menu; it offers %1").arg(overflowRows(world).join(u", ")); });
+  });
+  step(QStringLiteral("the model can still be chosen beside it"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* picker = part(world, QStringLiteral("modelPicker"));
+    expect(picker->isVisible() && picker->isEnabled(), QStringLiteral("the model picker is not on the toolbar"));
+  });
+  step(QStringLiteral("the user chooses %1 in that menu").arg(q), [overflowRows](World& world, const Captures& c, const Table&) {
+    const QString row = QStringLiteral("composerOverflow:planToggle");
+    expect(c[0] == QLatin1String("Plan"), QStringLiteral("the menu has no %1 for this step").arg(c[0]));
+    world.waitFor([&] { return overflowRows(world).contains(row); }, [&] { return QStringLiteral("Plan in the menu; it offers %1").arg(overflowRows(world).join(u", ")); });
+    QQuickItem* item = part(world, row);
+    expect(item->property("text") == c[0], QStringLiteral("the row reads %1").arg(item->property("text").toString()));
+    click(world, item);
+  });
+
+  // Send stands out only with something to send, and is Stop while a turn
+  // runs with nothing to send.
+  const auto primary = [](World& world) {
+    composerBrick(world);
+    return part(world, QStringLiteral("primaryAction"));
+  };
+  step(QStringLiteral("the send control cannot be used"), [primary](World& world, const Captures&, const Table&) {
+    QQuickItem* action = primary(world);
+    world.waitFor([&] { return !action->isEnabled() && !action->property("sendable").toBool(); }, QStringLiteral("Send to be off"));
+  });
+  step(QStringLiteral("the send control can be used and is the composer's accent"), [primary](World& world, const Captures&, const Table&) {
+    QQuickItem* action = primary(world);
+    world.waitFor([&] { return action->isEnabled() && action->property("sendable").toBool(); }, QStringLiteral("Send to be on"));
+    const QColor fill = action->property("background").value<QObject*>()->property("color").value<QColor>();
+    expect(fill == action->property("accent").value<QColor>(), QStringLiteral("Send is filled %1").arg(fill.name()));
+  });
+  step(QStringLiteral("the send control is replaced by a control that stops the turn"), [primary](World& world, const Captures&, const Table&) {
+    QQuickItem* action = primary(world);
+    world.waitFor([&] { return action->property("stopMode").toBool() && action->isEnabled(); }, QStringLiteral("the composer to offer Stop"));
+    expect(part(world, QStringLiteral("stopGlyph"))->isVisible(), QStringLiteral("Stop does not show its square"));
+  });
+  step(QStringLiteral("the send control is back"), [primary](World& world, const Captures&, const Table&) {
+    QQuickItem* action = primary(world);
+    world.waitFor([&] { return !action->property("stopMode").toBool() && action->property("sendable").toBool(); }, QStringLiteral("the composer to offer Send again"));
   });
 });
 

@@ -4,6 +4,7 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QFontMetricsF>
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QTextBlock>
@@ -150,7 +151,9 @@ const Steps steps([] {
   step(QStringLiteral("the composer of an existing thread shrinks to one line while scrolling"), [](World& world, const Captures&, const Table&) {
     const Heights heights = scrollConversation(world);
     QQuickItem* item = composerItem(world);
-    expect(item->property("resting").toBool() && heights.scrolled < heights.before - 20,
+    // At rest the prompt is two lines; scrolled away, one.
+    const qreal line = QFontMetricsF(composerEditor(world)->property("font").value<QFont>()).lineSpacing();
+    expect(item->property("resting").toBool() && heights.scrolled <= heights.before - line + 1,
            QStringLiteral("the composer is %1 tall, %2 before scrolling").arg(heights.scrolled).arg(heights.before));
     // Typing brings it back.
     typeInComposer(world, QStringLiteral("a"));

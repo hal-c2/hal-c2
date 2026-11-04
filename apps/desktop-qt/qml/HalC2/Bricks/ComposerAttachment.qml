@@ -20,7 +20,7 @@ Row {
     // The attachment opened to look at.
     signal openRequested
 
-    spacing: 2
+    spacing: Theme.space.xxs
 
     Rectangle {
         id: tile
@@ -29,9 +29,9 @@ Row {
 
         objectName: "attachment-" + chip.attachment.id
         visible: chip.attachment.kind !== "file" && chip.attachment.preview !== undefined
-        width: 64
-        height: 64
-        radius: 2
+        width: Theme.control.lg * 2
+        height: Theme.control.lg * 2
+        radius: Theme.radiusXs
         color: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.04)
         border.color: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.12)
 
@@ -49,7 +49,7 @@ Row {
             visible: !tile.pictured
             anchors.centerIn: parent
             name: "image"
-            size: 20
+            size: Theme.icon.lg
             color: Theme.palette.color("iconMuted", "#8b8b93")
         }
         HoverHandler {
@@ -62,11 +62,11 @@ Row {
             id: removeTile
             anchors.top: parent.top
             anchors.right: parent.right
-            anchors.margins: 2
-            implicitWidth: 18
-            implicitHeight: 18
+            anchors.margins: Theme.space.xxs
+            implicitWidth: Theme.icon.lg
+            implicitHeight: Theme.icon.lg
             iconName: "x"
-            iconSize: 12
+            iconSize: Theme.icon.sm
             Accessible.name: qsTr("Remove %1").arg(chip.label)
             background: Rectangle {
                 radius: Theme.radiusPill
@@ -80,7 +80,7 @@ Row {
 
     ShellButton {
         objectName: "attachment:" + chip.attachment.name
-        implicitHeight: 24
+        implicitHeight: Theme.control.sm
         iconName: chip.attachment.kind === "file" ? "file-text" : "image"
         text: chip.failed ? qsTr("%1 (upload failed)").arg(chip.label) : chip.attachment.status === "uploading" ? qsTr("%1 (uploading…)").arg(chip.label) : chip.label
         tint: chip.failed ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("text", "#e4e4e7")
@@ -93,10 +93,10 @@ Row {
 
     ShellButton {
         objectName: "attachmentOpen:" + chip.attachment.name
-        implicitHeight: 24
+        implicitHeight: Theme.control.sm
         subtle: true
         iconName: "maximize-2"
-        iconSize: 12
+        iconSize: Theme.icon.sm
         Accessible.name: qsTr("Open %1").arg(chip.label)
         onClicked: chip.openRequested()
     }
@@ -104,10 +104,10 @@ Row {
     ShellButton {
         objectName: "attachmentRetry:" + chip.attachment.name
         visible: chip.failed
-        implicitHeight: 24
+        implicitHeight: Theme.control.sm
         subtle: true
         iconName: "refresh-cw"
-        iconSize: 12
+        iconSize: Theme.icon.sm
         Accessible.name: qsTr("Retry uploading %1").arg(chip.label)
         onClicked: chip.retryRequested()
     }
@@ -115,10 +115,10 @@ Row {
     ShellButton {
         objectName: "attachmentAccessibility:" + chip.attachment.name
         visible: chip.source !== null
-        implicitHeight: 24
+        implicitHeight: Theme.control.sm
         subtle: true
         iconName: "eye"
-        iconSize: 12
+        iconSize: Theme.icon.sm
         Accessible.name: qsTr("Accessibility data")
         onClicked: details.open()
 
@@ -126,7 +126,7 @@ Row {
             id: details
             objectName: "attachmentAccessibilityData"
 
-            y: -height - 4
+            y: -height - Theme.space.xs
             width: 320
             padding: Theme.space.sm
 
