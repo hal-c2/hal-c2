@@ -1098,7 +1098,8 @@ const Steps steps([] {
     world.waitFor([&] { return callCount(world) < 30; }, S("the group to close"));
     world.waitFor([&] {
       const QList<QQuickItem*> views = drawnAll(world, S("workCalls"));
-      return views.size() == 1 && !views.first()->property("interactive").toBool();
+      // A running turn's closed group folds into its live row, which draws no calls of its own.
+      return views.isEmpty() || (views.size() == 1 && !views.first()->property("interactive").toBool());
     }, S("the group to stop scrolling"));
     openGroup(world, 30);
   });
