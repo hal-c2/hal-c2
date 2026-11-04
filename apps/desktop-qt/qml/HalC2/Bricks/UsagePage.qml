@@ -88,11 +88,15 @@ Rectangle {
 
     color: Theme.palette.color("canvas", "#0b0b0d")
 
+    // The one chosen: a raised fill and the accent's ink, as every settings
+    // choice is; the accent's fill is the primary action's.
     component Toggle: ShellButton {
         required property bool selected
 
-        primary: selected
-        subtle: !selected
+        subtle: true
+        checked: selected
+        hoverFill: selected ? Theme.palette.color("surfaceRaised", "#1f1f24") : accentSurface
+        tint: selected ? Theme.palette.color("accentText", "#60a5fa") : Theme.palette.color("text", "#e4e4e7")
     }
 
     component Section: Label {
@@ -336,13 +340,18 @@ Rectangle {
                                                     Layout.fillWidth: true
                                                     implicitHeight: 6
                                                     radius: Theme.radiusPill
-                                                    color: Theme.palette.color("accentSurface", "#27272a")
+                                                    color: Theme.palette.color("surfaceRaised", "#1f1f24")
 
+                                                    // Quiet until little is left: a warning at a
+                                                    // quarter, an error at a tenth.
                                                     Rectangle {
-                                                        width: parent.width * Math.max(0, 100 - account.modelData.usedPercent) / 100
+                                                        readonly property real remaining: Math.max(0, 100 - account.modelData.usedPercent)
+
+                                                        objectName: "limitLeft"
+                                                        width: parent.width * remaining / 100
                                                         height: parent.height
                                                         radius: Theme.radiusPill
-                                                        color: Theme.palette.color("accent", "#3b82f6")
+                                                        color: remaining <= 10 ? Theme.palette.color("error", "#ef4444") : remaining <= 25 ? Theme.palette.color("warning", "#f59e0b") : Theme.palette.color("inkTertiary", "#a1a1aa")
                                                     }
                                                 }
 
@@ -602,7 +611,7 @@ Rectangle {
                                     height: parent.height
                                     radius: 2
                                     width: periods.peak > 0 ? parent.width * (page.metric === "tokens" ? periodRow.modelData.totalTokens : periodRow.modelData.costUsd) / periods.peak : 0
-                                    color: Theme.palette.color("accent", "#3b82f6")
+                                    color: Theme.palette.color("inkTertiary", "#a1a1aa")
                                 }
                             }
 

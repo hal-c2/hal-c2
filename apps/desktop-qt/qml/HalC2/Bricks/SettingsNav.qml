@@ -142,6 +142,9 @@ Rectangle {
             Layout.leftMargin: Theme.space.sm
             Layout.bottomMargin: Theme.space.sm
             subtle: true
+            // A quiet way back, not a call to action.
+            font.weight: Font.Normal
+            tint: Theme.palette.color("inkSecondary", "#b8bdc7")
             enabled: nav.changedLabels.length > 0
             text: qsTr("Restore device defaults")
             onClicked: restoreDialog.open()

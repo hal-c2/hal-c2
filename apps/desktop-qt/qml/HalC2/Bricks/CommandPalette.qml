@@ -58,6 +58,8 @@ Popup {
 
     // A Popup is no Item, so its name is on its content.
     contentItem: ColumnLayout {
+        // Its keys stay the window's (ShellWindow.popupHoldsKeys).
+        objectName: "commandPaletteContent"
         spacing: 8
         Accessible.role: Accessible.Pane
         Accessible.name: qsTr("Command palette")

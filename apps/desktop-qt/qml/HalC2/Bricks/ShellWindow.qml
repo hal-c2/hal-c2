@@ -101,6 +101,9 @@ Window {
     Item {
         id: body
 
+        // The window's popups (popupHoldsKeys).
+        readonly property Item overlay: T.Overlay.overlay
+
         objectName: "shellBody"
         width: root.width / root.zoom
         height: root.height / root.zoom
@@ -195,8 +198,14 @@ Window {
     // with no command in the current focus stands down and stays with the
     // focused control. A focused terminal keeps every key except the shell's
     // own terminal-context commands (Ctrl+J and co), and a text field every
-    // key whose command stands down for it (mod+z).
-    Instantiator {
+    // key whose command stands down for it (mod+z). So does every key while a
+    // popup holds the keyboard (popupHoldsKeys).
+    //
+    // A property, not a child: a shortcut under an item is one Qt stands down
+    // while any popup that closes on Escape is open, wherever the keyboard is,
+    // and the keys then went into the field under it (a page's `/` menu, the
+    // release notes a hover opens).
+    property Instantiator keyShortcuts: Instantiator {
         model: Keybindings.shortcuts
 
         delegate: Shortcut {
@@ -205,7 +214,7 @@ Window {
             sequence: modelData.sequence
             context: Qt.WindowShortcut
             autoRepeat: modelData.autoRepeat
-            enabled: root.terminalFocused ? modelData.terminal : root.previewFocused ? modelData.preview : root.composerFocused ? modelData.composer : root.editableFocused ? modelData.editable : modelData.chrome
+            enabled: !root.popupHoldsKeys && (root.terminalFocused ? modelData.terminal : root.previewFocused ? modelData.preview : root.composerFocused ? modelData.composer : root.editableFocused ? modelData.editable : modelData.chrome)
             onActivated: Keybindings.press(modelData.sequence, {
                 terminal: root.terminalFocused,
                 composer: root.composerFocused,
@@ -213,6 +222,23 @@ Window {
                 preview: root.previewFocused
             })
         }
+    }
+
+    // A popup holds the window's keys while it has the keyboard (a menu, a
+    // picker, a dialog's field), the command palette aside, which takes its own
+    // toggle, or while it is modal and shows its scrim (ShellScrim). One that
+    // leaves the keyboard where it was holds none.
+    readonly property bool popupHoldsKeys: {
+        const overlay = body.overlay;
+        if (!overlay)
+            return false;
+        for (let node = root.activeFocusItem; node; node = node.parent) {
+            if (node.objectName === "commandPaletteContent")
+                return false;
+            if (node === overlay)
+                return true;
+        }
+        return overlay.children.some(child => child.visible && child.objectName === "shellScrim");
     }
 
     Connections {

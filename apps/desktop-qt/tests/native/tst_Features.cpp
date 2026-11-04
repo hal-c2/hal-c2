@@ -214,6 +214,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("providers/provider-instances.feature:Provider settings follow the chosen device"),
     QStringLiteral("providers/provider-instances.feature:Provider settings for a disconnected device*"),
     QStringLiteral("providers/provider-instances.feature:Provider status headlines*"),
+    QStringLiteral("providers/provider-instances.feature:A disabled provider says so once*"),
     QStringLiteral("providers/usage.feature:Usage can be filtered by environment"),
     QStringLiteral("providers/usage.feature:Environments still scanning*"),
     QStringLiteral("providers/usage-limits.feature:Automatic checks wait*"),

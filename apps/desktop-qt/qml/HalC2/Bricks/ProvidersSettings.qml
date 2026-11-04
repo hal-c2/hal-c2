@@ -607,7 +607,7 @@ Rectangle {
                     text: card.provider.name
                     color: page.foreground
                     font.pixelSize: Theme.type.body.size
-                    font.weight: Font.DemiBold
+                    font.weight: Font.Medium
                     elide: Text.ElideRight
                 }
 
@@ -854,7 +854,7 @@ Rectangle {
                 objectName: "headline"
                 Layout.fillWidth: true
                 text: card.provider.headline
-                color: card.provider.status === "error" || card.provider.status === "warning" ? page.warning : page.foreground
+                color: card.provider.status === "error" || card.provider.status === "warning" ? page.warning : page.muted
                 font.pixelSize: Theme.type.meta.size
                 elide: Text.ElideRight
             }
@@ -1396,13 +1396,9 @@ Rectangle {
             width: Pages.columnWidth(pageScroll.width, Theme.space.xl)
             spacing: Theme.space.sm
 
-            RowLayout {
+            SettingsBreadcrumb {
                 Layout.fillWidth: true
-
-                SettingsBreadcrumb {
-                    Layout.fillWidth: true
-                    section: qsTr("Providers")
-                }
+                section: qsTr("Providers")
 
                 ShellButton {
                     objectName: "addInstance"

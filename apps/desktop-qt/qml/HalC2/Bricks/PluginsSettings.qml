@@ -271,10 +271,32 @@ SettingsPage {
 
     Label {
         Layout.fillWidth: true
-        text: qsTr("QML files in %1 that add to the sidebar footer, the composer's actions and the status bar.").arg(page.settings?.dir ?? "")
+        text: qsTr("QML files that add to the sidebar footer, the composer's actions and the status bar.")
         color: page.muted
         wrapMode: Text.Wrap
         font.pixelSize: Theme.type.meta.size
+    }
+
+    // Where they live, on one line: a long path loses its middle, and shows
+    // in full on hover.
+    Label {
+        objectName: "pluginsDir"
+        Layout.fillWidth: true
+        Layout.topMargin: -Theme.space.sm
+        visible: text.length > 0
+        text: page.settings?.dir ?? ""
+        color: page.muted
+        elide: Text.ElideMiddle
+        font.pixelSize: Theme.type.meta.size
+        font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
+
+        HoverHandler {
+            id: dirHover
+        }
+
+        ToolTip.visible: dirHover.hovered && truncated
+        ToolTip.text: text
+        ToolTip.delay: 400
     }
 
     Label {
