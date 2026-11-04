@@ -37,8 +37,10 @@ Rectangle {
     property bool resizable: true
     readonly property color foreground: Theme.palette.color("ink", "#f2f3f5")
     readonly property color muted: Theme.palette.color("inkTertiary", "#8b919e")
-    // The tab strip's height, and the width of the closed panel's toggle.
+    // The tab strip's controls, and the width of the closed panel's toggle.
     readonly property int stripHeight: Theme.control.xl
+    // The strip's own height: the thread header's, so their hairlines meet.
+    readonly property int headerHeight: Theme.headerHeight
 
     // The tab being renamed in place (double-click its title), else "".
     property string editingId: ""
@@ -90,17 +92,32 @@ Rectangle {
         Item {
             id: header
 
+            objectName: "panelHeader"
+            // Over the body, which its hairline overlaps.
+            z: 1
             Layout.fillWidth: true
-            Layout.preferredHeight: panel.stripHeight
-            Layout.minimumHeight: panel.stripHeight
-            Layout.maximumHeight: panel.stripHeight
+            Layout.preferredHeight: panel.headerHeight
+            Layout.minimumHeight: panel.headerHeight
+            Layout.maximumHeight: panel.headerHeight
+
+            // The header's hairline, level with the thread's: the first row
+            // under the header, as the timeline's cut edge is.
+            Rectangle {
+                objectName: "panelHeaderEdge"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.bottom
+                height: 1
+                visible: panel.open
+                color: Theme.palette.color("border", "#27272a")
+            }
 
             ShellButton {
                 id: toggleButton
                 subtle: true
 
                 anchors.left: parent.left
-                anchors.top: parent.top
+                anchors.verticalCenter: parent.verticalCenter
                 width: panel.stripHeight
                 height: panel.stripHeight
                 visible: panel.ownToggle
@@ -139,7 +156,7 @@ Rectangle {
                 anchors.left: parent.left
                 anchors.leftMargin: panel.ownToggle ? panel.stripHeight : Theme.space.sm
                 anchors.right: scrollButtons.visible ? scrollButtons.left : maximizeButton.visible ? maximizeButton.left : addButton.left
-                anchors.top: parent.top
+                anchors.verticalCenter: parent.verticalCenter
                 height: panel.stripHeight
                 visible: panel.open
                 onCountChanged: showActive()
@@ -294,7 +311,7 @@ Rectangle {
 
                 objectName: "panelScrollTabs"
                 anchors.right: maximizeButton.visible ? maximizeButton.left : addButton.left
-                anchors.top: parent.top
+                anchors.verticalCenter: parent.verticalCenter
                 visible: panel.open && tabs.overflowing
 
                 ShellButton {
@@ -331,7 +348,7 @@ Rectangle {
                 subtle: true
 
                 anchors.right: addButton.left
-                anchors.top: parent.top
+                anchors.verticalCenter: parent.verticalCenter
                 width: panel.stripHeight
                 height: panel.stripHeight
                 iconName: "panel-left-open"
@@ -352,7 +369,7 @@ Rectangle {
 
                 anchors.right: parent.right
                 anchors.rightMargin: panel.trailingInset
-                anchors.top: parent.top
+                anchors.verticalCenter: parent.verticalCenter
                 width: panel.stripHeight
                 height: panel.stripHeight
                 leftPadding: Theme.space.sm

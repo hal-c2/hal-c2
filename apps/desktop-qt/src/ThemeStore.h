@@ -133,6 +133,9 @@ class ThemeStore : public QObject {
   Q_PROPERTY(ThemeSpace* space READ space CONSTANT)
   Q_PROPERTY(ThemeSizes* control READ control CONSTANT)
   Q_PROPERTY(ThemeSizes* icon READ icon CONSTANT)
+  // The header line a thread, its right panel and a Space page share: each
+  // header is this tall, so their hairlines meet.
+  Q_PROPERTY(int headerHeight READ headerHeight CONSTANT)
   // Whether the interface font is monospaced, where weight barely separates
   // and hierarchy is size and ink.
   Q_PROPERTY(bool monospace READ monospace NOTIFY themeChanged)
@@ -178,6 +181,7 @@ public:
   ThemeSpace* space() { return &m_space; }
   ThemeSizes* control() { return &m_control; }
   ThemeSizes* icon() { return &m_icon; }
+  int headerHeight() const { return 52; }
   bool monospace() const { return m_monospace; }
   QString fontUi() const;
   QString fontMono() const;

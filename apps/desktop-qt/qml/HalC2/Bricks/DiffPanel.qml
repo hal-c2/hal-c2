@@ -34,6 +34,9 @@ Rectangle {
     readonly property real wrapFloor: glyph.advanceWidth * 40
     // The room one line of code has.
     readonly property real codeWidth: split ? (view.width - glyph.advanceWidth * 12) / 2 - Theme.space.sm : view.width - view.gutter - Theme.space.sm
+    // Whether the lines scroll sideways: then a thin bar along the bottom
+    // shows it, and each row keeps an end padding pinned to the right edge.
+    readonly property bool sideways: !wrap && view.contentWidth > view.width + 0.5
     readonly property bool split: model?.split ?? false
     // One file of the selection is shown alone (ThreadDiff.focusPath).
     readonly property bool focused: (source?.focusPath ?? "").length > 0
@@ -489,8 +492,21 @@ Rectangle {
                     ScrollBar.vertical: ScrollBar {
                         Accessible.name: qsTr("Scroll diff")
                     }
+                    // Still and always there while the lines scroll sideways,
+                    // under the last row rather than over it.
+                    bottomMargin: root.sideways ? sidewaysBar.height : 0
                     ScrollBar.horizontal: ScrollBar {
+                        id: sidewaysBar
+                        objectName: "diffSidewaysBar"
                         Accessible.name: qsTr("Scroll diff sideways")
+                        policy: root.sideways ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                        padding: Theme.space.xxs
+                        contentItem: Rectangle {
+                            implicitHeight: Theme.space.xs
+                            radius: Theme.radiusPill
+                            color: Theme.palette.color("borderStrong", "#343a44")
+                        }
+                        background: Item {}
                     }
 
                     Connections {
@@ -740,6 +756,23 @@ Rectangle {
         }
     }
 
+    // A row's end padding while the lines scroll sideways: pinned to the
+    // view's right edge in the row's own tint, so code is cut short of the
+    // panel's edge rather than running into it.
+    component EndPad: Rectangle {
+        property color tint: "transparent"
+        objectName: "diffLineEnd"
+        x: Math.max(0, view.contentX - view.originX) + view.width - width
+        width: Theme.space.sm
+        height: parent.height
+        visible: root.sideways
+        color: root.color
+        Rectangle {
+            anchors.fill: parent
+            color: parent.tint
+        }
+    }
+
     component LineNumber: Text {
         width: glyph.advanceWidth * 5
         horizontalAlignment: Text.AlignRight
@@ -853,6 +886,9 @@ Rectangle {
                     onClicked: commentPopup.ask(root.model.path(row.file), row.sign === "-" ? "old" : "new", row.sign === "-" ? row.oldLine : row.newLine)
                 }
             }
+            EndPad {
+                tint: root.tint(stackedRow.row.sign)
+            }
         }
     }
 
@@ -899,6 +935,11 @@ Rectangle {
                     sign: pair.row.rightSign
                     line: pair.row.rightText
                 }
+            }
+            EndPad {
+                // In the tint of the side under the view's right edge.
+                readonly property bool onRight: x >= pair.width / 2
+                tint: onRight ? (pair.row.rightSign.length > 0 ? root.tint(pair.row.rightSign) : Theme.palette.color("inset", "#0a0b0d")) : (pair.row.sign.length > 0 ? root.tint(pair.row.sign) : Theme.palette.color("inset", "#0a0b0d"))
             }
         }
     }

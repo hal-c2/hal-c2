@@ -65,6 +65,7 @@ QtObject {
             return size <= 12 ? 2 : size <= 16 ? 1.75 : 1.5;
         }
     }
+    readonly property int headerHeight: 52
     readonly property string fontUi: ""
     property string fontMono: ""
     readonly property string fontPrompt: ""
