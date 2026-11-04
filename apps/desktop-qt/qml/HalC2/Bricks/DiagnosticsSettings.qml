@@ -27,7 +27,7 @@ SettingsPage {
 
         Layout.fillWidth: true
         Layout.topMargin: 12
-        spacing: 6
+        spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
@@ -36,13 +36,13 @@ SettingsPage {
                 id: label
                 Layout.fillWidth: true
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
             }
 
             RowLayout {
                 id: extra
-                spacing: 6
+                spacing: Theme.space.sm
             }
         }
 
@@ -74,14 +74,14 @@ SettingsPage {
                 Label {
                     text: figure.modelData[0]
                     color: Theme.palette.color("textMuted", "#a1a1aa")
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
 
                 Label {
                     objectName: "stat:" + figure.modelData[0]
                     text: figure.modelData[1]
                     color: Theme.palette.color("text", "#e4e4e7")
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
             }
@@ -95,7 +95,7 @@ SettingsPage {
         visible: message.length > 0
         text: message
         color: Theme.palette.color("errorForeground", "#ef4444")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
@@ -121,7 +121,7 @@ SettingsPage {
                 text: modelData
                 elide: Text.ElideRight
                 color: row.header ? Theme.palette.color("textMuted", "#a1a1aa") : Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
         }
     }
@@ -182,7 +182,7 @@ SettingsPage {
                     objectName: "label"
                     text: qsTr("%1 (%2)").arg(group.modelData.label).arg(group.modelData.count)
                     color: diagnostics.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     font.weight: Font.DemiBold
                 }
             }
@@ -205,7 +205,7 @@ SettingsPage {
                         text: process.modelData.name
                         elide: Text.ElideRight
                         color: diagnostics.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         ToolTip.visible: hover.hovered
                         ToolTip.text: process.modelData.command
 
@@ -223,7 +223,7 @@ SettingsPage {
                             text: modelData
                             elide: Text.ElideRight
                             color: diagnostics.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
                     }
 

@@ -65,8 +65,8 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 10
-        spacing: 6
+        anchors.margins: Theme.space.sm
+        spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
@@ -191,7 +191,7 @@ Rectangle {
                 objectName: "spacePage:" + title
                 width: ListView.view.width
                 height: 30
-                radius: Math.min(Theme.radius, 6)
+                radius: Theme.radiusSm
                 color: selected ? sidebar.selectedFill : rowMouse.containsMouse ? sidebar.hoverFill : "transparent"
 
                 MouseArea {
@@ -212,9 +212,9 @@ Rectangle {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 8 + row.depth * 14
+                    anchors.leftMargin: Theme.space.sm + row.depth * Theme.space.md
                     anchors.rightMargin: 2
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: row.fromThread ? "message-square" : "file-text"
@@ -227,7 +227,7 @@ Rectangle {
                         text: row.title
                         elide: Text.ElideRight
                         color: sidebar.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: row.selected ? Font.Medium : Font.Normal
                     }
 
@@ -325,7 +325,7 @@ Rectangle {
                 objectName: section ? "spaceProject:" + projectId : "spaceProject" + (kind === "file" ? "File:" : "Folder:") + projectId + ":" + path
                 width: ListView.view.width
                 height: section ? 28 : 26
-                radius: Math.min(Theme.radius, 6)
+                radius: Theme.radiusSm
                 color: selected ? sidebar.selectedFill : entryMouse.containsMouse ? sidebar.hoverFill : "transparent"
                 border.width: activeFocus ? 1 : 0
                 border.color: Theme.palette.color("focus", "#3b82f6")
@@ -371,9 +371,9 @@ Rectangle {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 8 + entry.depth * 14
-                    anchors.rightMargin: 6
-                    spacing: 6
+                    anchors.leftMargin: Theme.space.sm + entry.depth * Theme.space.md
+                    anchors.rightMargin: Theme.space.sm
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: entry.section ? (entry.expanded ? "chevron-down" : "chevron-right") : entry.kind === "folder" ? (entry.expanded ? "folder-open" : "folder") : "file-text"
@@ -386,7 +386,7 @@ Rectangle {
                         text: entry.name
                         elide: entry.section ? Text.ElideRight : Text.ElideMiddle
                         color: entry.section || entry.kind === "folder" ? sidebar.muted : sidebar.foreground
-                        font.pixelSize: Math.round((entry.section ? 12 : 13) * Theme.fontScale)
+                        font.pixelSize: entry.section ? Theme.type.meta.size : Theme.type.body.size
                         font.weight: entry.selected || entry.section ? Font.Medium : Font.Normal
                     }
                 }
@@ -402,7 +402,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("Decks")
                 color: sidebar.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ShellButton {
@@ -437,7 +437,7 @@ Rectangle {
                 objectName: "spaceDeckRow:" + title
                 width: ListView.view.width
                 height: 30
-                radius: Math.min(Theme.radius, 6)
+                radius: Theme.radiusSm
                 color: selected ? sidebar.selectedFill : deckMouse.containsMouse ? sidebar.hoverFill : "transparent"
 
                 MouseArea {
@@ -460,7 +460,7 @@ Rectangle {
                     anchors.fill: parent
                     anchors.leftMargin: 8
                     anchors.rightMargin: 2
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: "monitor"
@@ -473,7 +473,7 @@ Rectangle {
                         text: deckRow.title
                         elide: Text.ElideRight
                         color: sidebar.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: deckRow.selected ? Font.Medium : Font.Normal
                     }
 
@@ -538,7 +538,7 @@ Rectangle {
             visible: sidebar.trashShown && sidebar.trashCount === 0
             text: qsTr("The trash is empty.")
             color: sidebar.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Repeater {
@@ -560,7 +560,7 @@ Rectangle {
                     text: trashed.title
                     elide: Text.ElideRight
                     color: sidebar.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
 
                     MouseArea {
                         anchors.fill: parent
@@ -619,7 +619,7 @@ Rectangle {
                     text: trashedDeck.title
                     elide: Text.ElideRight
                     color: sidebar.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
 
                     MouseArea {
                         anchors.fill: parent

@@ -38,7 +38,7 @@ SettingsPage {
                   ? qsTr("This app is %1. An environment behind it can be updated to match.").arg(page.model.appVersion)
                   : qsTr("This app does not know its own version.")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -48,7 +48,7 @@ SettingsPage {
             visible: page.model !== null && page.model.message !== null
             text: visible ? page.model.message.text : ""
             color: visible && page.model.message.ok ? page.success : page.error
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -58,7 +58,7 @@ SettingsPage {
             Layout.fillWidth: true
             visible: page.model !== null && page.model.confirm !== null
             implicitHeight: confirmColumn.implicitHeight + 24
-            radius: 8
+            radius: Theme.radiusMd
             color: "transparent"
             border.color: Theme.palette.color("warning", "#f59e0b")
             border.width: 1
@@ -75,7 +75,7 @@ SettingsPage {
                     Layout.fillWidth: true
                     text: page.model !== null && page.model.confirm !== null ? page.model.confirm.text : ""
                     color: page.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     wrapMode: Text.Wrap
                 }
 
@@ -131,13 +131,13 @@ SettingsPage {
                 objectName: "maintenanceMachine-" + environmentId
                 Layout.fillWidth: true
                 Layout.topMargin: 8
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Label {
                     Layout.fillWidth: true
                     text: machine.modelData.label
                     color: page.foreground
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.DemiBold
                     wrapMode: Text.Wrap
                 }
@@ -149,7 +149,7 @@ SettingsPage {
                           : machine.modelData.version ? qsTr("Version %1").arg(machine.modelData.version)
                           : qsTr("Unknown version")
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 Label {
@@ -158,7 +158,7 @@ SettingsPage {
                     visible: !machine.may
                     text: machine.modelData.blocked
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
@@ -168,7 +168,7 @@ SettingsPage {
                     visible: machine.modelData.release !== null
                     text: !visible ? "" : machine.modelData.release.checking ? qsTr("Checking for updates…") : machine.modelData.release.text
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
@@ -178,7 +178,7 @@ SettingsPage {
                     visible: machine.modelData.outcome !== null
                     text: visible ? machine.modelData.outcome.text : ""
                     color: visible && machine.modelData.outcome.ok ? page.success : page.error
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
@@ -188,7 +188,7 @@ SettingsPage {
                     visible: machine.may && machine.modelData.target.length > 0 && machine.modelData.path === "desktop-manual"
                     text: qsTr("Update the desktop app on that machine to update this server.")
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
@@ -234,7 +234,7 @@ SettingsPage {
                     visible: machine.modelData.providersError.length > 0
                     text: machine.modelData.providersError
                     color: page.error
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
@@ -256,7 +256,7 @@ SettingsPage {
                             Layout.fillWidth: true
                             text: provider.modelData.name
                             color: page.foreground
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                         }
 
                         Label {
@@ -265,7 +265,7 @@ SettingsPage {
                             text: [provider.modelData.version, provider.modelData.latest ? qsTr("Latest %1").arg(provider.modelData.latest) : ""]
                                   .filter(part => part.length > 0).join(" · ")
                             color: page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
 
                         Label {
@@ -277,7 +277,7 @@ SettingsPage {
                                   : ""
                             color: provider.modelData.failed ? page.error
                                    : provider.modelData.outcome.length > 0 ? page.success : page.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.Wrap
                         }
 

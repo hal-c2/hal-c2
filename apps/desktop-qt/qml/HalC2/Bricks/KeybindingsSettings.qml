@@ -48,7 +48,7 @@ Rectangle {
 
         implicitWidth: 150
         implicitHeight: 28
-        radius: Math.min(Theme.radius, 8)
+        radius: Theme.radiusMd
         color: Theme.palette.color("input", "#18181b")
         border.width: 1
         border.color: recording || activeFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("border", "#27272a")
@@ -66,7 +66,7 @@ Rectangle {
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             font.family: "monospace"
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             color: recorder.recording || recorder.key.length === 0 ? Theme.palette.color("textMuted", "#a1a1aa") : Theme.palette.color("text", "#e4e4e7")
             text: recorder.recording ? qsTr("Press shortcut") : recorder.key.length > 0 ? recorder.label : qsTr("Unassigned")
         }
@@ -120,7 +120,7 @@ Rectangle {
             Layout.fillWidth: true
             placeholderText: qsTr("Always")
             font.family: "monospace"
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             Accessible.name: qsTr("When expression")
             onAccepted: whenField.accepted()
         }
@@ -131,7 +131,7 @@ Rectangle {
             visible: whenField.problem.length > 0
             text: whenField.problem
             color: Theme.palette.color("errorForeground", "#f87171")
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             wrapMode: Text.Wrap
         }
 
@@ -141,7 +141,7 @@ Rectangle {
             visible: whenField.unknown.length > 0
             text: qsTr("Unknown: %1").arg(whenField.unknown.join(", "))
             color: Theme.palette.color("warningForeground", "#f59e0b")
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             wrapMode: Text.Wrap
         }
     }
@@ -165,7 +165,7 @@ Rectangle {
                 objectName: "keybindingCount"
                 text: page.count === 1 ? qsTr("1 binding") : qsTr("%1 bindings").arg(page.count)
                 color: page.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
 
             ShellButton {
@@ -234,13 +234,13 @@ Rectangle {
                 id: draftColumn
 
                 anchors.fill: parent
-                anchors.margins: 10
-                spacing: 6
+                anchors.margins: Theme.space.sm
+                spacing: Theme.space.sm
 
                 Label {
                     text: qsTr("New keybinding")
                     color: page.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -253,7 +253,7 @@ Rectangle {
                         objectName: "command"
                         Layout.fillWidth: true
                         outline: true
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         model: page.adding ? Keybindings.commandOptions() : []
                         currentIndex: -1
                         displayText: currentIndex < 0 ? qsTr("Command") : Keybindings.commandLabel(currentValue)
@@ -287,7 +287,7 @@ Rectangle {
                     visible: labels.length > 0
                     text: page.conflictText(labels)
                     color: page.warning
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                     wrapMode: Text.Wrap
                 }
 
@@ -323,7 +323,7 @@ Rectangle {
             visible: page.rows.length === 0 && !page.adding
             text: qsTr("No keybindings match your search.")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         ListView {
@@ -352,7 +352,7 @@ Rectangle {
                 width: ListView.view.width
                 implicitHeight: rowColumn.implicitHeight + 12
                 height: implicitHeight
-                radius: Math.min(Theme.radius, 8)
+                radius: Theme.radiusMd
                 color: hover.hovered ? Qt.alpha(Theme.palette.color("accentSurface", "#27272a"), 0.4) : "transparent"
 
                 HoverHandler {
@@ -376,13 +376,13 @@ Rectangle {
                             spacing: 0
 
                             RowLayout {
-                                spacing: 6
+                                spacing: Theme.space.sm
 
                                 Label {
                                     objectName: "label"
                                     text: row.modelData.label
                                     color: page.foreground
-                                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.body.size
                                     elide: Text.ElideRight
                                 }
 
@@ -391,11 +391,11 @@ Rectangle {
                                     visible: row.modelData.source !== "Default"
                                     text: row.modelData.source
                                     color: page.muted
-                                    font.pixelSize: Math.round(10 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.caption.size
                                     leftPadding: 5
                                     rightPadding: 5
                                     background: Rectangle {
-                                        radius: 4
+                                        radius: Theme.radiusXs
                                         color: "transparent"
                                         border.width: 1
                                         border.color: Theme.palette.color("border", "#27272a")
@@ -407,7 +407,7 @@ Rectangle {
                                 text: row.modelData.command
                                 color: page.muted
                                 font.family: "monospace"
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                             }
@@ -453,12 +453,12 @@ Rectangle {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         Label {
                             text: qsTr("When")
                             color: page.muted
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                         }
 
                         WhenField {
@@ -476,7 +476,7 @@ Rectangle {
                         visible: row.conflicts.length > 0
                         text: page.conflictText(row.conflicts)
                         color: page.warning
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         wrapMode: Text.Wrap
                     }
                 }

@@ -41,7 +41,7 @@ SettingsPage {
             Label {
                 text: row.heading
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -50,7 +50,7 @@ SettingsPage {
                 visible: text.length > 0
                 text: row.description
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -60,14 +60,14 @@ SettingsPage {
                 visible: text.length > 0
                 text: row.status
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
         }
 
         RowLayout {
             id: slot
-            spacing: 6
+            spacing: Theme.space.sm
         }
     }
 
@@ -184,7 +184,7 @@ SettingsPage {
         // Nothing is left or stepped through while the desktop answers.
         enabled: !(snap.wizard?.busy ?? false)
         implicitHeight: setup.implicitHeight + 32
-        radius: Math.min(Theme.radius, 10)
+        radius: Theme.radiusLg
         color: Theme.palette.color("surface", "#18181b")
         border.color: Theme.palette.color("border", "#27272a")
 
@@ -194,12 +194,12 @@ SettingsPage {
             x: 16
             y: 16
             width: parent.width - 32
-            spacing: 10
+            spacing: Theme.space.sm
 
             Label {
                 text: snap.wizard?.title ?? ""
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
             }
 
@@ -213,7 +213,7 @@ SettingsPage {
                         required property var modelData
                         text: modelData.label
                         color: snap.wizard?.step === modelData.step ? Theme.palette.color("text", "#e4e4e7") : snap.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.weight: snap.wizard?.step === modelData.step ? Font.DemiBold : Font.Normal
                     }
                 }
@@ -223,7 +223,7 @@ SettingsPage {
                 objectName: "heading"
                 text: snap.wizard?.heading ?? ""
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -231,7 +231,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: snap.wizard?.body ?? ""
                 color: snap.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -253,7 +253,7 @@ SettingsPage {
                         Label {
                             text: modelData.title
                             color: Theme.palette.color("text", "#e4e4e7")
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             font.weight: Font.Medium
                         }
 
@@ -261,7 +261,7 @@ SettingsPage {
                             Layout.fillWidth: true
                             text: modelData.description
                             color: snap.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.Wrap
                         }
                     }
@@ -271,7 +271,7 @@ SettingsPage {
                         visible: modelData.granted
                         text: qsTr("Allowed")
                         color: snap.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellButton {
@@ -290,7 +290,7 @@ SettingsPage {
                 visible: text.length > 0
                 text: snap.wizard?.permissionsError ?? ""
                 color: snap.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -299,7 +299,7 @@ SettingsPage {
                 visible: text.length > 0
                 text: snap.wizard?.details ?? ""
                 color: Theme.palette.color("warningForeground", "#fbbf24")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -309,7 +309,7 @@ SettingsPage {
                 visible: snap.wizard?.step === "access" && text.length > 0
                 text: snap.wizard?.checkMessage ?? ""
                 color: snap.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -317,7 +317,7 @@ SettingsPage {
             ColumnLayout {
                 Layout.fillWidth: true
                 visible: snap.wizard?.step === "access" && (snap.wizard?.advanced ?? []).length > 0
-                spacing: 6
+                spacing: Theme.space.sm
 
                 ShellButton {
                     id: advancedToggle
@@ -348,7 +348,7 @@ SettingsPage {
                             visible: text.length > 0
                             text: modelData.note ?? ""
                             color: snap.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.Wrap
                         }
                     }
@@ -375,7 +375,7 @@ SettingsPage {
                 visible: snap.wizard?.step === "shortcut" && text.length > 0
                 text: snap.wizard?.attention || (snap.shortcut?.status ?? "")
                 color: snap.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -398,7 +398,7 @@ SettingsPage {
                     Layout.fillWidth: true
                     text: configPanel.config?.intro ?? ""
                     color: snap.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
@@ -408,7 +408,7 @@ SettingsPage {
                     visible: text.length > 0
                     text: configPanel.config?.connecting ?? ""
                     color: snap.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
@@ -418,7 +418,7 @@ SettingsPage {
                     visible: text.length > 0
                     text: configPanel.config?.error ?? ""
                     color: Theme.palette.color("warning", "#fbbf24")
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
@@ -436,7 +436,7 @@ SettingsPage {
                     visible: text.length > 0
                     text: configPanel.review?.note ?? ""
                     color: snap.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
 
@@ -455,7 +455,7 @@ SettingsPage {
                             color: modelData.kind === "added" ? Theme.palette.color("success", "#34d399")
                                  : modelData.kind === "removed" ? Theme.palette.color("destructive", "#f87171") : snap.muted
                             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.WrapAnywhere
                         }
                     }
@@ -500,7 +500,7 @@ SettingsPage {
                         visible: text.length > 0
                         text: configPanel.config?.details ?? ""
                         color: Theme.palette.color("warning", "#fbbf24")
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         wrapMode: Text.Wrap
                     }
 
@@ -520,7 +520,7 @@ SettingsPage {
                             visible: text.length > 0
                             text: modelData.text
                             color: snap.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.WrapAnywhere
                         }
                     }
@@ -550,7 +550,7 @@ SettingsPage {
                         Layout.fillWidth: true
                         text: configPanel.config?.manual ?? ""
                         color: snap.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         wrapMode: Text.Wrap
                     }
 
@@ -560,7 +560,7 @@ SettingsPage {
                         text: configPanel.config?.binding ?? ""
                         color: snap.muted
                         font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         wrapMode: Text.WrapAnywhere
                     }
 
@@ -588,7 +588,7 @@ SettingsPage {
                         Layout.fillWidth: true
                         text: configPanel.config?.removeNote ?? ""
                         color: snap.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         wrapMode: Text.Wrap
                     }
                 }
@@ -643,7 +643,7 @@ SettingsPage {
     ColumnLayout {
         Layout.fillWidth: true
         visible: (snap.settings?.rows ?? false) && snap.wizard === null
-        spacing: 14
+        spacing: Theme.space.md
 
         Row {
             objectName: "snapShot:shortcut"

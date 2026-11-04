@@ -83,7 +83,7 @@ TestCase {
 
     function test_a_short_menu_keeps_the_usual_width() {
         const host = open([{id: "a", label: "Pin"}]);
-        compare(host.menu.implicitWidth, 200);
+        compare(host.menu.implicitWidth, 220);
     }
 
     function test_the_menu_fits_a_long_label_up_to_a_limit() {

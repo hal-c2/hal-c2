@@ -23,7 +23,7 @@ Rectangle {
     objectName: "spaceAgentStrip"
     visible: status !== ""
     implicitHeight: content.implicitHeight + 16
-    radius: Math.min(Theme.radius, 8)
+    radius: Theme.radiusMd
     color: Qt.alpha(tone, 0.12)
     border.color: Qt.alpha(tone, 0.4)
 
@@ -32,7 +32,7 @@ Rectangle {
 
         anchors.fill: parent
         anchors.margins: 8
-        spacing: 6
+        spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
@@ -67,13 +67,13 @@ Rectangle {
                 }
                 color: Theme.palette.color("text", "#e4e4e7")
                 wrapMode: Text.Wrap
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
         }
 
         Flow {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellButton {
                 objectName: "spaceAgentOpenThread"

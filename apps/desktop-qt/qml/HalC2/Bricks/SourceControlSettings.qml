@@ -43,14 +43,14 @@ SettingsPage {
     // Inline components cannot see `page`; the ones that need it are handed it.
     component Heading: Label {
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         font.weight: Font.DemiBold
     }
 
     component Caption: Label {
         Layout.fillWidth: true
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
@@ -76,12 +76,12 @@ SettingsPage {
             spacing: 2
 
             RowLayout {
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Label {
                     text: row.title
                     color: row.sourceControl.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -99,7 +99,7 @@ SettingsPage {
                 visible: row.mixed
                 text: qsTr("Mixed across selected machines")
                 color: row.sourceControl.warning
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Caption {
@@ -120,7 +120,7 @@ SettingsPage {
         required property var modelData
         objectName: "sourceControlTool:" + modelData.kind
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         // Git's fetch interval is behind a details toggle, opened by a search that targets it.
         property bool detailsOpen: false
@@ -133,7 +133,7 @@ SettingsPage {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -142,7 +142,7 @@ SettingsPage {
                     Rectangle {
                         implicitWidth: 8
                         implicitHeight: 8
-                        radius: 4
+                        radius: Theme.radiusPill
                         color: tool.modelData.comingSoon ? tool.sourceControl.muted
                              : tool.modelData.enabled ? Theme.palette.color("success", "#22c55e") : tool.sourceControl.warning
                     }
@@ -150,7 +150,7 @@ SettingsPage {
                     Label {
                         text: tool.modelData.label
                         color: tool.sourceControl.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.Medium
                     }
 
@@ -159,7 +159,7 @@ SettingsPage {
                         visible: text.length > 0
                         text: tool.modelData.version
                         color: tool.sourceControl.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.family: "monospace"
                     }
 
@@ -168,7 +168,7 @@ SettingsPage {
                         visible: tool.modelData.comingSoon || tool.modelData.authWarning
                         text: tool.modelData.comingSoon ? qsTr("Coming Soon") : tool.modelData.authLabel
                         color: tool.sourceControl.warning
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         font.weight: Font.DemiBold
                     }
 
@@ -390,7 +390,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: page.discovery?.title ?? ""
                 color: page.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 wrapMode: Text.Wrap
             }
 
@@ -466,13 +466,13 @@ SettingsPage {
         text: forAll ? "" : (page.settings?.writingStyle?.instructions ?? "")
         wrapMode: TextEdit.Wrap
         color: page.foreground
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
         placeholderText: forAll ? qsTr("Write the instructions each selected environment should use.")
                                 : qsTr("Keep titles concise. Use short bullet points in descriptions.")
         placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
         Accessible.name: qsTr("Custom source control writing instructions")
         background: Rectangle {
-            radius: Math.min(Theme.radius, 8)
+            radius: Theme.radiusMd
             color: Theme.palette.color("input", "#18181b")
             border.color: Theme.palette.color("border", "#27272a")
         }
@@ -533,7 +533,7 @@ SettingsPage {
             visible: (writer.model?.on ?? false) && !(writer.model?.canEnable ?? false)
             text: qsTr("No text generation providers available.")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         ShellComboBox {

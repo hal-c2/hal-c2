@@ -22,7 +22,7 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.margins: 6
+        anchors.margins: Theme.space.sm
         anchors.leftMargin: 16
         anchors.rightMargin: 16
         spacing: 8
@@ -33,7 +33,7 @@ Rectangle {
             verticalAlignment: Text.AlignVCenter
             text: bar.lineage?.title ?? ""
             color: bar.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             font.weight: Font.Medium
         }
 

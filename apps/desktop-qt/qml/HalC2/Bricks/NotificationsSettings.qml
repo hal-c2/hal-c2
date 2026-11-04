@@ -42,7 +42,7 @@ SettingsPage {
             visible: !page.supported
             text: qsTr("This build of HAL-C2 cannot receive notifications. Install a newer build to get them.")
             color: page.muted
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
 
@@ -56,7 +56,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: qsTr("Alerts on this device")
                 color: page.foreground
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
                 wrapMode: Text.Wrap
             }
@@ -78,7 +78,7 @@ SettingsPage {
             visible: page.supported
             text: page.notifications?.enabled ? qsTr("Notifications are enabled.") : qsTr("Notifications are disabled.")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -93,7 +93,7 @@ SettingsPage {
                 return qsTr("System permission: Not asked yet");
             }
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -103,7 +103,7 @@ SettingsPage {
             visible: text.length > 0
             text: page.notifications?.message ?? ""
             color: Theme.palette.color("warning", "#fbbf24")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -123,7 +123,7 @@ SettingsPage {
             text: page.notifications?.choosing ? qsTr("Pick the app that delivers notifications")
                                                : qsTr("Delivered by")
             color: page.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             font.weight: Font.DemiBold
         }
 
@@ -152,7 +152,7 @@ SettingsPage {
                     Layout.fillWidth: true
                     text: qsTr("Ongoing agent activity")
                     color: page.foreground
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                    font.pixelSize: Theme.type.title.size
                     font.weight: Font.DemiBold
                     wrapMode: Text.Wrap
                 }
@@ -160,7 +160,7 @@ SettingsPage {
                     Layout.fillWidth: true
                     text: qsTr("A card that follows the agents' work, on the lock screen too.")
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
             }
@@ -190,7 +190,7 @@ SettingsPage {
             visible: page.supported
             text: qsTr("Quiet hours")
             color: page.foreground
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
         }
 
@@ -202,7 +202,7 @@ SettingsPage {
                   ? qsTr("Alerts wait from %1 to %2.").arg(page.clock(page.quietHours.start)).arg(page.clock(page.quietHours.end))
                   : qsTr("Off")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 

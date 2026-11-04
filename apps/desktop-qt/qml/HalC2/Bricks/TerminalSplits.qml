@@ -158,7 +158,7 @@ FocusScope {
                 // Coming back into the window draws it in full.
                 parent: cell.visible ? cell : null
                 focus: true
-                padding: 6
+                padding: Theme.space.sm
                 // A whole font: the Terminal's default carries a point size,
                 // which a pixel size set over it warns about.
                 font: Terminals.terminalFont(Theme.fontTerminal, Theme.fontSizeTerminal, splits.fontPointSize)

@@ -208,7 +208,7 @@ const Steps steps([] {
   // What is drawn.
   step(QStringLiteral("the app uses the standard theme"), [](World& world, const Captures&, const Table&) {
     usesTheme(world, QStringLiteral("hal-c2"));
-    const QColor standard(themes(world)->appearance() == QLatin1String("dark") ? QStringLiteral("#0a0a0a") : QStringLiteral("#fcfcfc"));
+    const QColor standard(themes(world)->appearance() == QLatin1String("dark") ? QStringLiteral("#0d0e11") : QStringLiteral("#f7f7f5"));
     expect(drawnCanvas(world) == standard, describe(world));
   });
   step(QStringLiteral("the app uses %1").arg(q), [](World& world, const Captures& c, const Table&) { usesTheme(world, c[0]); });

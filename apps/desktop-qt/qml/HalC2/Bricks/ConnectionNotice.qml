@@ -76,19 +76,19 @@ Item {
                 id: chipRow
 
                 anchors.centerIn: parent
-                spacing: 6
+                spacing: Theme.space.sm
 
                 ShellIcon {
                     objectName: "connectionNoticeIcon"
                     name: notice.icon
-                    size: Math.round(14 * Theme.fontScale)
+                    size: Theme.icon.md
                     color: notice.tint
                 }
 
                 Label {
                     objectName: "connectionNoticeStatus"
                     text: notice.troubled ? notice.model.status : qsTr("Server behind")
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     color: Theme.palette.color("text", "#e4e4e7")
                 }
             }
@@ -103,7 +103,7 @@ Item {
         width: parent.width
         height: content.implicitHeight + 24
         visible: notice.open
-        radius: 8
+        radius: Theme.radiusMd
         color: Theme.palette.color("surfaceOverlay", "#18181b")
         border.color: Theme.palette.color(notice.troubled ? "warning" : "border", notice.troubled ? "#f59e0b" : "#27272a")
         border.width: 1
@@ -120,8 +120,8 @@ Item {
                 Layout.fillWidth: true
                 visible: notice.troubled
                 text: notice.model ? notice.model.title : ""
-                font.bold: true
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.weight: Font.DemiBold
+                font.pixelSize: Theme.type.body.size
                 color: Theme.palette.color("text", "#e4e4e7")
                 wrapMode: Text.Wrap
             }
@@ -131,7 +131,7 @@ Item {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 text: notice.troubled ? notice.model.detail : notice.warning ? notice.warning.text : ""
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 color: Theme.palette.color("textMuted", "#a1a1aa")
                 wrapMode: Text.Wrap
             }
@@ -175,7 +175,7 @@ Item {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 text: notice.model ? notice.model.pairingError : ""
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 color: Theme.palette.color("errorForeground", "#f87171")
                 wrapMode: Text.Wrap
             }

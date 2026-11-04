@@ -17,18 +17,18 @@ ColumnLayout {
     objectName: "settingsScope"
     Layout.fillWidth: true
     visible: scope !== null
-    spacing: 6
+    spacing: Theme.space.sm
 
     Flow {
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         Label {
             height: projectPicker.height
             verticalAlignment: Text.AlignVCenter
             text: qsTr("Applying settings for")
             color: sentence.muted
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
         }
 
         ShellComboBox {
@@ -53,7 +53,7 @@ ColumnLayout {
             verticalAlignment: Text.AlignVCenter
             text: sentence.scope?.connective === "on" ? qsTr("on") : qsTr("across")
             color: sentence.muted
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
         }
 
         ShellComboBox {
@@ -84,7 +84,7 @@ ColumnLayout {
             objectName: "scopeNoticeStripe"
             Layout.fillHeight: true
             implicitWidth: 3
-            radius: 1.5
+            radius: Theme.radiusPill
             color: sentence.warning
         }
 
@@ -95,7 +95,7 @@ ColumnLayout {
             Layout.fillWidth: true
             text: sentence.scope?.disabledReason ?? ""
             color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
     }

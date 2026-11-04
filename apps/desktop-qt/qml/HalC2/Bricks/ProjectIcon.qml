@@ -31,7 +31,7 @@ Item {
             color: root.tint
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
             font.pixelSize: Math.round(root.size * 0.5)
-            font.weight: Font.Bold
+            font.weight: Font.DemiBold
         }
     }
     Text {

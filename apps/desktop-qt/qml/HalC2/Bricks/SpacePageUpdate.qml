@@ -38,7 +38,7 @@ Rectangle {
     objectName: "spacePageUpdate"
     visible: (schedule.instruction ?? "") !== ""
     implicitHeight: content.implicitHeight + 16
-    radius: Math.min(Theme.radius, 8)
+    radius: Theme.radiusMd
     color: Qt.alpha(Theme.palette.color("accent", "#3b82f6"), 0.08)
     border.color: Qt.alpha(Theme.palette.color("accent", "#3b82f6"), 0.3)
 
@@ -55,7 +55,7 @@ Rectangle {
             text: card.schedule.instruction ?? ""
             color: card.foreground
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
         }
 
         Text {
@@ -64,7 +64,7 @@ Rectangle {
             text: card.whenText()
             color: card.muted
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Text {
@@ -75,7 +75,7 @@ Rectangle {
                 : qsTr("Not written yet")
             color: card.muted
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Text {
@@ -85,7 +85,7 @@ Rectangle {
             text: qsTr("Last run failed: %1").arg(card.schedule.lastRunError || qsTr("unknown error"))
             color: Theme.palette.color("error", "#ef4444")
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Flow {

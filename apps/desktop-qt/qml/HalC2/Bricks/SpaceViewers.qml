@@ -13,6 +13,6 @@ Text {
     visible: names.length > 0
     text: qsTr("Also here: %1").arg(names.join(", "))
     color: Theme.palette.color("textMuted", "#a1a1aa")
-    font.pixelSize: Math.round(12 * Theme.fontScale)
+    font.pixelSize: Theme.type.meta.size
     elide: Text.ElideRight
 }

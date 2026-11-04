@@ -108,7 +108,7 @@ Item {
                 Rectangle {
                     Layout.preferredWidth: 6
                     Layout.preferredHeight: 6
-                    radius: 3
+                    radius: Theme.radiusPill
                     visible: threadArea.focusMode
                     color: Threads.timeline?.working === true ? Theme.palette.color("accent", "#2563eb") : Theme.palette.color("textMuted", "#8b8b93")
                 }
@@ -127,14 +127,14 @@ Item {
                         return latest.length > 0 ? latest : qsTr("Nothing in this thread yet");
                     }
                     color: Theme.palette.color("text", "#e4e4e7")
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 Text {
                     id: activityAction
                     text: threadArea.focusMode ? qsTr("Show the timeline") : qsTr("Show the tabs")
                     color: Theme.palette.color("textMuted", "#8b8b93")
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
 
@@ -246,7 +246,7 @@ Item {
             anchors.fill: parent
             anchors.margins: 8
             visible: centreDrop.enabled
-            radius: 8
+            radius: Theme.radiusMd
             color: Qt.alpha(Theme.palette.color("accent", "#2563eb"), centreDrop.containsDrag ? 0.18 : 0.06)
             border.color: Theme.palette.color("accent", "#2563eb")
 
@@ -254,7 +254,7 @@ Item {
                 anchors.centerIn: parent
                 text: qsTr("Show in the centre")
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
         }
     }

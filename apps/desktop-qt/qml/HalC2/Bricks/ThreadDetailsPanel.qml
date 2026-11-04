@@ -65,7 +65,7 @@ Rectangle {
             threadKey: modelData.threadKey
         })
         background: Rectangle {
-            radius: 6
+            radius: Theme.radiusSm
             color: relation.hovered || relation.visualFocus ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
         }
         contentItem: RowLayout {
@@ -76,7 +76,7 @@ Rectangle {
                 visible: (relation.modelData.status ?? "").length > 0
                 implicitWidth: 8
                 implicitHeight: 8
-                radius: 4
+                radius: Theme.radiusPill
                 color: relation.modelData.status === "running" ? Theme.palette.color("info", "#38bdf8") : relation.modelData.status === "failed" ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("success", "#22c55e")
                 Layout.alignment: Qt.AlignVCenter
             }
@@ -89,23 +89,23 @@ Rectangle {
                     text: relation.modelData.relation
                     elide: Text.ElideRight
                     color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
                 Text {
                     Layout.fillWidth: true
                     text: relation.modelData.title
                     elide: Text.ElideRight
                     color: root.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
         }
     }
 
     component Heading: Text {
-        Layout.topMargin: 10
+        Layout.topMargin: Theme.space.sm
         color: root.muted
-        font.pixelSize: Math.round(11 * Theme.fontScale)
+        font.pixelSize: Theme.type.caption.size
         font.weight: Font.Medium
         font.capitalization: Font.AllUppercase
     }
@@ -129,7 +129,7 @@ Rectangle {
             text: parent.value
             elide: Text.ElideMiddle
             color: parent.tint
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
     }
 
@@ -144,7 +144,7 @@ Rectangle {
             Layout.fillWidth: true
             text: qsTr("Thread details")
             color: root.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             font.weight: Font.Medium
         }
         ShellButton {
@@ -170,7 +170,7 @@ Rectangle {
 
             x: 12
             width: parent.width - 24
-            spacing: 6
+            spacing: Theme.space.sm
 
             Heading {
                 text: qsTr("Workspace")
@@ -196,7 +196,7 @@ Rectangle {
                     text: root.details?.project ?? ""
                     elide: Text.ElideMiddle
                     color: root.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
             Fact {
@@ -255,7 +255,7 @@ Rectangle {
                         visible: text.length > 0
                         text: action.modelData.shortcut
                         color: root.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
                     ShellButton {
                         objectName: "threadDetailsActionEdit-" + action.modelData.id
@@ -274,7 +274,7 @@ Rectangle {
                 visible: root.actions?.file === "invalid"
                 text: qsTr("hal-c2.json is invalid, so its actions are not offered.")
                 color: Theme.palette.color("warningForeground", "#f59e0b")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
             Repeater {
@@ -327,7 +327,7 @@ Rectangle {
                 visible: root.failedCount > 0
                 text: qsTr("%1 failed").arg(root.failedCount)
                 color: Theme.palette.color("errorForeground", "#ef4444")
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 Layout.leftMargin: 8
             }
             Repeater {

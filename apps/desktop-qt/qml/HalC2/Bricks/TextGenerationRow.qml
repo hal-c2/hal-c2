@@ -28,7 +28,7 @@ RowLayout {
             Label {
                 text: row.spec.title
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
 
@@ -49,7 +49,7 @@ RowLayout {
             Layout.fillWidth: true
             text: row.spec.description
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
     }
@@ -59,7 +59,7 @@ RowLayout {
         visible: row.unavailable.length > 0
         text: row.unavailable
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     ShellComboBox {

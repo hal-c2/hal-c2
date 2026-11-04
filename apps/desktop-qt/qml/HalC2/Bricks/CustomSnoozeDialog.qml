@@ -47,16 +47,13 @@ Dialog {
     }
     onRejected: Shell.dispatch("snooze.custom.cancel", {})
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     header: Label {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: Math.round(17 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
         color: Theme.palette.color("text", "#e4e4e7")
     }
@@ -67,13 +64,13 @@ Dialog {
             Layout.fillWidth: true
             text: qsTr("Choose when snoozed threads return to your inbox.")
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellButton {
                 objectName: "customSnoozeDateMode"
@@ -147,7 +144,7 @@ Dialog {
             visible: text.length > 0
             text: dialog.request?.error ?? ""
             color: Theme.palette.color("errorForeground", "#ef4444")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
 

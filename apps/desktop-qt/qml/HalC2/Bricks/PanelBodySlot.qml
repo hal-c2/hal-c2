@@ -27,6 +27,6 @@ Item {
         wrapMode: Text.Wrap
         text: qsTr("%1 is showing in another pane.").arg(PanelTabs.tabs[PanelTabs.kindOf(slot.tabId)]?.label ?? "")
         color: Theme.palette.color("textMuted", "#8b8b93")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 }

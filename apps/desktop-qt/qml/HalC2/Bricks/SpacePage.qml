@@ -225,7 +225,7 @@ Rectangle {
                 objectName: "spaceTrailSpace"
                 text: page.fileBacked ? page.file.projectTitle ?? "" : Spaces.spaceName
                 color: page.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Repeater {
@@ -238,7 +238,7 @@ Rectangle {
 
                     text: "/  " + modelData.title
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
 
                     MouseArea {
                         anchors.fill: parent
@@ -275,7 +275,7 @@ Rectangle {
                 selectByMouse: true
                 selectionColor: Theme.palette.color("accent", "#2563eb")
                 selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
-                font.pixelSize: Math.round(28 * Theme.fontScale)
+                font.pixelSize: Theme.type.display.size
                 font.weight: Font.Bold
                 clip: true
 
@@ -426,7 +426,7 @@ Rectangle {
             visible: (page.current.sourceThreadId ?? "") !== ""
             text: qsTr("Made from the thread “%1”").arg(page.current.sourceThreadTitle ?? "")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         // The project file the page is: where it is, and that it is gone or won over an edit.
@@ -436,7 +436,7 @@ Rectangle {
             visible: page.fileBacked
             readonly property bool warn: (page.file.missing ?? false) || (page.file.conflictAt ?? "") !== ""
             implicitHeight: fileColumn.implicitHeight + 12
-            radius: Math.min(Theme.radius, 8)
+            radius: Theme.radiusMd
             color: warn ? Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.12) : Qt.alpha(page.foreground, 0.05)
             border.color: warn ? Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.4) : Qt.alpha(page.foreground, 0.15)
 
@@ -444,7 +444,7 @@ Rectangle {
                 id: fileColumn
 
                 anchors.fill: parent
-                anchors.margins: 6
+                anchors.margins: Theme.space.sm
                 spacing: 4
 
                 RowLayout {
@@ -463,7 +463,7 @@ Rectangle {
                         text: qsTr("The file %1 of %2").arg(page.file.path ?? "").arg(page.file.projectTitle ?? "")
                         color: page.foreground
                         elide: Text.ElideMiddle
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellButton {
@@ -483,7 +483,7 @@ Rectangle {
                         : qsTr("The file is gone. The page keeps what it last said, and if the file comes back, it wins.")
                     color: page.foreground
                     wrapMode: Text.Wrap
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 RowLayout {
@@ -497,7 +497,7 @@ Rectangle {
                         text: qsTr("The file changed while you were editing, and the page now shows the file. Your edit is in the page's history.")
                         color: page.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellButton {
@@ -522,7 +522,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: page.siteUrl !== ""
             implicitHeight: siteColumn.implicitHeight + 16
-            radius: Math.min(Theme.radius, 8)
+            radius: Theme.radiusMd
             color: Qt.alpha(page.foreground, 0.05)
             border.color: Qt.alpha(page.foreground, 0.15)
 
@@ -531,7 +531,7 @@ Rectangle {
 
                 anchors.fill: parent
                 anchors.margins: 8
-                spacing: 6
+                spacing: Theme.space.sm
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -551,7 +551,7 @@ Rectangle {
                             : qsTr("Published. The site shows this page as it is now.")
                         color: page.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
 
                     ShellButton {
@@ -580,7 +580,7 @@ Rectangle {
                     text: page.siteUrl
                     color: page.muted
                     elide: Text.ElideMiddle
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 RowLayout {
@@ -594,7 +594,7 @@ Rectangle {
                         text: qsTr("Only this machine can open this link: the MC listens on loopback.")
                         color: page.foreground
                         wrapMode: Text.Wrap
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellButton {
@@ -611,7 +611,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: page.trashed
             implicitHeight: trashedRow.implicitHeight + 16
-            radius: Math.min(Theme.radius, 8)
+            radius: Theme.radiusMd
             color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.12)
             border.color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.4)
 
@@ -633,7 +633,7 @@ Rectangle {
                     text: qsTr("This page is in the trash, so it cannot be changed.")
                     color: page.foreground
                     wrapMode: Text.Wrap
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
 
                 ShellButton {
@@ -704,7 +704,7 @@ Rectangle {
                 visible: Spaces.blocks.count === 0
                 text: page.trashed ? qsTr("This page has no blocks.") : qsTr("This page is empty. Write below, or type / to pick a kind of block.")
                 color: page.muted
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
         }
 
@@ -713,7 +713,7 @@ Rectangle {
             visible: Shell.state.space?.drawing === true
             text: qsTr("Drawing a chart…")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Text {
@@ -721,7 +721,7 @@ Rectangle {
             visible: page.replacing !== "" && !page.trashed
             text: qsTr("Replacing this chart. Click here to keep it.")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
 
             MouseArea {
                 anchors.fill: parent
@@ -738,7 +738,7 @@ Rectangle {
             visible: page.insertAfter !== "" && !page.trashed
             text: qsTr("Adding after “%1”").arg(page.insertAfterText)
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
 
             MouseArea {
                 anchors.fill: parent

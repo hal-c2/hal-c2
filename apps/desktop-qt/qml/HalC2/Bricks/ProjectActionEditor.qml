@@ -36,20 +36,17 @@ Dialog {
 
     component Caption: Label {
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     header: Label {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: Math.round(17 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
         color: dialog.foreground
     }
@@ -187,7 +184,7 @@ Dialog {
             visible: text.length > 0
             text: dialog.editor?.error ?? ""
             color: Theme.palette.color("errorForeground", "#ef4444")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
         RowLayout {

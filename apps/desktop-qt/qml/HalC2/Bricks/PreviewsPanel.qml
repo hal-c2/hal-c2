@@ -37,7 +37,7 @@ Rectangle {
             text: qsTr("Browser tabs open in your browser")
             elide: Text.ElideRight
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         ShellButton {
@@ -68,7 +68,7 @@ Rectangle {
         wrapMode: Text.Wrap
         text: root.source ? qsTr("Could not list browser tabs: %1").arg(root.source.message) : ""
         color: root.errorColor
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     Text {
@@ -80,7 +80,7 @@ Rectangle {
         wrapMode: Text.Wrap
         text: qsTr("No browser tabs in this thread. Tabs the agent opens show here.")
         color: root.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
     }
 
     readonly property string emptyTab: root.source?.emptyTab ?? ""
@@ -92,8 +92,8 @@ Rectangle {
         anchors.top: failure.bottom
         anchors.bottom: suggestions.top
         width: parent.width
-        leftMargin: 6
-        rightMargin: 6
+        leftMargin: Theme.space.sm
+        rightMargin: Theme.space.sm
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         model: root.source
@@ -116,7 +116,7 @@ Rectangle {
             Accessible.name: row.title
             onClicked: root.source.open(row.tabId)
             background: Rectangle {
-                radius: 6
+                radius: Theme.radiusSm
                 color: row.hovered || row.visualFocus ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
             }
 
@@ -142,7 +142,7 @@ Rectangle {
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 color: root.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             Text {
@@ -154,7 +154,7 @@ Rectangle {
                 elide: Text.ElideMiddle
                 maximumLineCount: 1
                 color: row.problem.length > 0 ? root.errorColor : root.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
 
             ShellButton {
@@ -187,7 +187,7 @@ Rectangle {
         Text {
             text: qsTr("Open in the new tab")
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         ShellTextField {

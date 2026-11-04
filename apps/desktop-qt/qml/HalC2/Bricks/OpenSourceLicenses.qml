@@ -44,7 +44,7 @@ Rectangle {
         header: ColumnLayout {
             x: 24
             width: Math.min(720, list.width - 48)
-            spacing: 10
+            spacing: Theme.space.sm
 
             SettingsBreadcrumb {
                 Layout.fillWidth: true
@@ -62,7 +62,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: qsTr("Third-party notices")
                     color: page.foreground
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                    font.pixelSize: Theme.type.title.size
                     font.weight: Font.DemiBold
                 }
 
@@ -72,7 +72,7 @@ Rectangle {
                     text: page.entries.length === page.total ? qsTr("%1 notices").arg(page.total)
                                                              : qsTr("%1 of %2").arg(page.entries.length).arg(page.total)
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellTextField {
@@ -100,7 +100,7 @@ Rectangle {
                 visible: page.status === "loading"
                 text: qsTr("Loading open-source notices…")
                 color: page.muted
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             Label {
@@ -111,18 +111,18 @@ Rectangle {
                 horizontalAlignment: Text.AlignHCenter
                 text: qsTr("No licenses match that search.")
                 color: page.muted
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             ColumnLayout {
                 objectName: "licensesError"
                 visible: page.status === "error"
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Label {
                     text: qsTr("Open-source notices are unavailable")
                     color: page.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -130,7 +130,7 @@ Rectangle {
                     Layout.maximumWidth: 560
                     text: page.settings?.message ?? ""
                     color: page.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     wrapMode: Text.Wrap
                 }
 
@@ -178,12 +178,12 @@ Rectangle {
                     Layout.columnSpan: page.narrow ? 2 : 1
                     Layout.fillWidth: page.narrow
                     Layout.leftMargin: page.narrow ? 28 : 0
-                    Layout.bottomMargin: page.narrow ? 6 : 0
+                    Layout.bottomMargin: page.narrow ? Theme.space.sm : 0
                     Layout.maximumWidth: page.narrow ? -1 : 300
                     text: notice.modelData.license + " · " + notice.modelData.where
                     elide: Text.ElideRight
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellButton {
@@ -214,7 +214,7 @@ Rectangle {
                 wrapMode: TextEdit.Wrap
                 color: page.foreground
                 font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
         }
     }

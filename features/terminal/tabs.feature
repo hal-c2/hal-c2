@@ -171,7 +171,7 @@ Feature: Terminal tabs and splits
     @desktop
     Scenario: A single terminal shows its actions without a terminal list
       Given the thread has one terminal
-      Then the terminal offers split, new and close actions over its own corner
+      Then the terminal offers split, new and close actions above its own corner
       And no terminal list is shown
       When the user opens a second terminal
       Then the terminal list appears beside the terminals with the same actions

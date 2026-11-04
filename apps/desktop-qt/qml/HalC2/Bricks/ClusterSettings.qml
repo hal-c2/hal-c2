@@ -31,14 +31,14 @@ Rectangle {
         Layout.fillWidth: true
         Layout.topMargin: 12
         color: page.foreground
-        font.pixelSize: Math.round(14 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
     }
 
     component Note: Label {
         Layout.fillWidth: true
         color: page.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
@@ -56,14 +56,14 @@ Rectangle {
             Layout.fillWidth: true
             text: memberRow.label
             color: page.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             elide: Text.ElideRight
         }
 
         Label {
             text: memberRow.detail
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         ShellButton {
@@ -108,7 +108,7 @@ Rectangle {
                 visible: page.notice !== null
                 text: page.notice ? page.notice.text : ""
                 color: page.notice && page.notice.kind === "error" ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("success", "#22c55e")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 

@@ -44,6 +44,10 @@ set(hal_c2_bricks_qml_files
     ShellMenu.qml
     ShellMenuItem.qml
     ShellMenuSeparator.qml
+    ShellPopover.qml
+    ShellPopoverSurface.qml
+    ShellScrim.qml
+    ShellEmptyState.qml
     ShellTextField.qml
     ShellSwitch.qml
     ShellSpinBox.qml

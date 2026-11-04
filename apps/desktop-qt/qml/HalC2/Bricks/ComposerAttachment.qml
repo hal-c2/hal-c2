@@ -69,7 +69,7 @@ Row {
             iconSize: 12
             Accessible.name: qsTr("Remove %1").arg(chip.label)
             background: Rectangle {
-                radius: 9
+                radius: Theme.radiusPill
                 color: Qt.alpha(Theme.palette.color("canvas", "#0f0f12"), 0.8)
                 border.color: removeTile.focusRing
                 border.width: removeTile.visualFocus ? 1 : 0
@@ -84,7 +84,7 @@ Row {
         iconName: chip.attachment.kind === "file" ? "file-text" : "image"
         text: chip.failed ? qsTr("%1 (upload failed)").arg(chip.label) : chip.attachment.status === "uploading" ? qsTr("%1 (uploading…)").arg(chip.label) : chip.label
         tint: chip.failed ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("text", "#e4e4e7")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         Accessible.name: qsTr("Remove %1").arg(chip.label)
         ToolTip.visible: hovered && chip.failed && ToolTip.text.length > 0
         ToolTip.text: chip.attachment.error ?? ""
@@ -128,19 +128,15 @@ Row {
 
             y: -height - 4
             width: 320
-            padding: 10
+            padding: Theme.space.sm
 
-            background: Rectangle {
-                color: Theme.palette.color("surfaceOverlay", "#18181b")
-                border.color: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.1)
-                radius: 10
-            }
+            background: ShellPopoverSurface {}
 
             contentItem: Text {
                 objectName: "attachmentAccessibilityText"
                 text: chip.source ? chip.source.accessibility : ""
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
         }

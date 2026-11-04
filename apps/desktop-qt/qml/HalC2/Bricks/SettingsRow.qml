@@ -47,7 +47,7 @@ ColumnLayout {
 
     objectName: "settingsRow:" + spec.key
     Layout.fillWidth: true
-    spacing: 6
+    spacing: Theme.space.sm
 
     function set(next) {
         Settings.set(spec.key, next);
@@ -67,7 +67,7 @@ ColumnLayout {
                 Label {
                     text: row.spec.title
                     color: row.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -76,7 +76,7 @@ ColumnLayout {
                     visible: row.mixed
                     text: qsTr("Mixed")
                     color: row.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellButton {
@@ -99,7 +99,7 @@ ColumnLayout {
                 text: row.mixed && row.spec.mixedDescription ? row.spec.mixedDescription : Rows.describe(row.spec, row.value)
                 visible: text.length > 0
                 color: row.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -109,7 +109,7 @@ ColumnLayout {
                 text: row.blocked
                 visible: text.length > 0
                 color: Theme.palette.color("warningForeground", "#fbbf24")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
         }
@@ -151,14 +151,14 @@ ColumnLayout {
             Label {
                 text: row.spec.daysTitle ?? ""
                 color: row.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             Label {
                 Layout.fillWidth: true
                 text: row.spec.daysDescription ?? ""
                 color: row.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
         }

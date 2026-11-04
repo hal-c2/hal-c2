@@ -336,7 +336,7 @@ Popup {
                 }
                 color: viewer.foreground
                 elide: Text.ElideMiddle
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
             Row {
                 id: actions
@@ -349,7 +349,7 @@ Popup {
                     visible: viewer.zoom > 1
                     text: viewer.announcement
                     color: viewer.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
                 ShellButton {
                     objectName: "imageViewerAccess"

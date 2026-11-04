@@ -28,14 +28,14 @@ SettingsPage {
     // Inline components cannot see `page`; the ones that need it are handed it.
     component Heading: Label {
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         font.weight: Font.DemiBold
     }
 
     component Caption: Label {
         Layout.fillWidth: true
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
@@ -59,12 +59,12 @@ SettingsPage {
             spacing: 2
 
             RowLayout {
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Label {
                     text: row.title
                     color: row.project.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -82,7 +82,7 @@ SettingsPage {
                 visible: row.mixed
                 text: qsTr("Mixed across selected machines")
                 color: row.project.warning
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Caption {
@@ -210,7 +210,7 @@ SettingsPage {
             objectName: "checkouts"
             visible: (page.settings?.checkouts ?? []).length > 1
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             Heading { text: qsTr("Checkouts") }
 
@@ -228,7 +228,7 @@ SettingsPage {
                     Label {
                         text: checkout.modelData.environment
                         color: page.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.Medium
                     }
 

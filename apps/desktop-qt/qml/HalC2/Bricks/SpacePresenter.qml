@@ -139,7 +139,7 @@ Item {
                         Layout.fillWidth: true
                         text: qsTr("%1 / %2").arg(Spaces.slideNumber).arg(Spaces.slideCount)
                         color: presenter.muted
-                        font.pixelSize: Math.round(14 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
 
                     ShellButton {

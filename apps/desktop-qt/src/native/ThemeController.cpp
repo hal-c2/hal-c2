@@ -134,7 +134,7 @@ struct BuiltIns {
   QJsonObject standard;
   QJsonObject defaults;
   QJsonObject fixed;
-  double radius = 10;
+  double radius = 8;
   QString fontUi;
   QString fontMono;
   QStringList reserved;
@@ -155,7 +155,7 @@ const BuiltIns& builtIns() {
     result.standard = perAppearance(root.value(QLatin1String("standard")).toObject());
     result.defaults = perAppearance(root.value(QLatin1String("defaults")).toObject());
     result.fixed = perAppearance(root.value(QLatin1String("fixed")).toObject());
-    result.radius = root.value(QLatin1String("radius")).toDouble(10);
+    result.radius = root.value(QLatin1String("radius")).toDouble(8);
     result.fontUi = root.value(QLatin1String("fonts")).toObject().value(QLatin1String("ui")).toString();
     result.fontMono = root.value(QLatin1String("fonts")).toObject().value(QLatin1String("mono")).toString();
     for (const QJsonValue& id : root.value(QLatin1String("reserved")).toArray()) result.reserved.append(id.toString());
@@ -677,14 +677,19 @@ void ThemeController::resolve() {
     if (!colors.contains(QLatin1String(role)) && colors.contains(QLatin1String(like))) colors.insert(QLatin1String(role), colors.value(QLatin1String(like)));
   }
   // The interface rows of Settings → Appearance that are colours: what diffs
-  // draw additions and deletions in (a theme's own unless blue and orange are
-  // chosen), and how solid menus, dialogs and the composer are.
+  // draw additions and deletions in, and how solid menus, dialogs and the
+  // composer are.
+  // A theme's own diff colours stand unless blue and orange are asked for;
+  // their line backgrounds then derive from the new pair (ThemeStore::color).
   const bool blueOrange = m_settings->setting(QStringLiteral("diffColorScheme")).toString() == QLatin1String("blue-orange");
-  if (blueOrange || !colors.contains(QLatin1String("diffAdded"))) {
-    colors.insert(QStringLiteral("diffAdded"), blueOrange ? QStringLiteral("#3b82f6") : QStringLiteral("#22c55e"));
-  }
-  if (blueOrange || !colors.contains(QLatin1String("diffRemoved"))) {
-    colors.insert(QStringLiteral("diffRemoved"), blueOrange ? QStringLiteral("#f97316") : QStringLiteral("#ef4444"));
+  if (blueOrange) {
+    colors.insert(QStringLiteral("diffAdded"), QStringLiteral("#3b82f6"));
+    colors.insert(QStringLiteral("diffRemoved"), QStringLiteral("#f97316"));
+    colors.remove(QStringLiteral("diffAddedSurface"));
+    colors.remove(QStringLiteral("diffRemovedSurface"));
+  } else {
+    if (!colors.contains(QStringLiteral("diffAdded"))) colors.insert(QStringLiteral("diffAdded"), QStringLiteral("#22c55e"));
+    if (!colors.contains(QStringLiteral("diffRemoved"))) colors.insert(QStringLiteral("diffRemoved"), QStringLiteral("#ef4444"));
   }
   const int glass = qBound(40, m_settings->setting(QStringLiteral("glassOpacity")).toInt(), 100);
   if (glass < 100) {
@@ -896,6 +901,20 @@ QVariantMap ThemeController::derive(const QString& canvasValue, const QString& a
   colors.insert(QStringLiteral("destructive"), colors.value(QLatin1String("errorForeground")));
   colors.insert(QStringLiteral("sidebarActiveIndicator"), QStringLiteral("#00000000"));
   colors.insert(QStringLiteral("scrim"), QStringLiteral("#00000052"));  // black at 32%, as CSS writes it
+  // The ink and surface roles, as ThemeStore::color derives them from the rest.
+  const auto mix = [](const QColor& a, const QColor& b, double t) {
+    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t, a.greenF() + (b.greenF() - a.greenF()) * t, a.blueF() + (b.blueF() - a.blueF()) * t);
+  };
+  set("ink", text);
+  set("inkTertiary", textMuted);
+  set("inkSecondary", mix(text, textMuted, 0.5));
+  set("borderStrong", mix(border, text, 0.12));
+  colors.insert(QStringLiteral("inset"), colors.value(QLatin1String("codeBackground")));
+  colors.insert(QStringLiteral("inputSurface"), colors.value(QLatin1String("surface")));
+  set("accentText", accent);
+  set("diffAddedSurface", mix(canvas, QColor(QStringLiteral("#22c55e")), 0.14));
+  set("diffRemovedSurface", mix(canvas, QColor(QStringLiteral("#ef4444")), 0.14));
+  colors.insert(QStringLiteral("success"), builtIns().fixed.value(dark ? kDark : kLight).toObject().value(QLatin1String("success")));
   return colors.toVariantMap();
 }
 

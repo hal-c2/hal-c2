@@ -1,12 +1,102 @@
 #pragma once
 
 #include <QColor>
+#include <cmath>
 #include <QFileSystemWatcher>
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <QTimer>
 #include <QVariantMap>
+
+// One step of the type ramp (`Theme.type.body`): pixel size and line height,
+// already scaled by the interface size, and a weight for `font.weight`.
+class ThemeTypeStep : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(int size READ size NOTIFY changed)
+  Q_PROPERTY(int lineHeight READ lineHeight NOTIFY changed)
+  Q_PROPERTY(int weight READ weight NOTIFY changed)
+
+public:
+  using QObject::QObject;
+  int size() const { return m_size; }
+  int lineHeight() const { return m_lineHeight; }
+  int weight() const { return m_weight; }
+  void set(int size, int lineHeight, int weight);
+
+signals:
+  void changed();
+
+private:
+  int m_size = 13;
+  int m_lineHeight = 18;
+  int m_weight = 400;
+};
+
+// The six text sizes, and nothing between them: caption (badges, counts,
+// keys), meta (secondary lines, times), body (controls, rows, menus), prose
+// (messages), title (dialog and section titles) and display (page titles).
+class ThemeTypeRamp : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(ThemeTypeStep* caption READ caption CONSTANT)
+  Q_PROPERTY(ThemeTypeStep* meta READ meta CONSTANT)
+  Q_PROPERTY(ThemeTypeStep* body READ body CONSTANT)
+  Q_PROPERTY(ThemeTypeStep* prose READ prose CONSTANT)
+  Q_PROPERTY(ThemeTypeStep* title READ title CONSTANT)
+  Q_PROPERTY(ThemeTypeStep* display READ display CONSTANT)
+
+public:
+  using QObject::QObject;
+  ThemeTypeStep* caption() { return &m_caption; }
+  ThemeTypeStep* meta() { return &m_meta; }
+  ThemeTypeStep* body() { return &m_body; }
+  ThemeTypeStep* prose() { return &m_prose; }
+  ThemeTypeStep* title() { return &m_title; }
+  ThemeTypeStep* display() { return &m_display; }
+  // Scales the ramp; a monospace interface gets more leading and a smaller display.
+  void apply(qreal scale, bool monospace);
+
+private:
+  ThemeTypeStep m_caption, m_meta, m_body, m_prose, m_title, m_display;
+};
+
+// The spacing scale (`Theme.space.md`): 2 4 8 12 16 24 32, nothing between.
+class ThemeSpace : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(int xxs MEMBER m_xxs CONSTANT)
+  Q_PROPERTY(int xs MEMBER m_xs CONSTANT)
+  Q_PROPERTY(int sm MEMBER m_sm CONSTANT)
+  Q_PROPERTY(int md MEMBER m_md CONSTANT)
+  Q_PROPERTY(int lg MEMBER m_lg CONSTANT)
+  Q_PROPERTY(int xl MEMBER m_xl CONSTANT)
+  Q_PROPERTY(int xxl MEMBER m_xxl CONSTANT)
+
+public:
+  using QObject::QObject;
+
+private:
+  int m_xxs = 2, m_xs = 4, m_sm = 8, m_md = 12, m_lg = 16, m_xl = 24, m_xxl = 32;
+};
+
+// Control heights (`Theme.control.md`, the default; a text field is md) and
+// icon sizes (`Theme.icon.md`), with the stroke each size draws at.
+class ThemeSizes : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(int sm MEMBER m_sm CONSTANT)
+  Q_PROPERTY(int md MEMBER m_md CONSTANT)
+  Q_PROPERTY(int lg MEMBER m_lg CONSTANT)
+  Q_PROPERTY(int xl MEMBER m_xl CONSTANT)
+
+public:
+  ThemeSizes(int sm, int md, int lg, int xl, QObject* parent = nullptr)
+      : QObject(parent), m_sm(sm), m_md(md), m_lg(lg), m_xl(xl) {}
+  // The lucide stroke (in its 24-unit box) for an icon `size` pixels wide:
+  // small icons draw heavier so every size reads at about the same weight.
+  Q_INVOKABLE qreal stroke(qreal size) const { return size <= 12 ? 2.0 : size <= 16 ? 1.75 : 1.5; }
+
+private:
+  int m_sm, m_md, m_lg, m_xl;
+};
 
 // The shell's palette for QML (the `Theme` singleton): the theme
 // ThemeController resolves (the base), with `<configDir>/theme.json`, watched,
@@ -30,6 +120,22 @@ class ThemeStore : public QObject {
   // What a link in prose reads in: the info foreground.
   Q_PROPERTY(QColor link READ link NOTIFY themeChanged)
   Q_PROPERTY(qreal radius READ radius NOTIFY themeChanged)
+  // The radius scale from `radius` (R): xs R/2, sm 3R/4, md R, lg 3R/2, xl 2R.
+  // Popovers and dialogs are lg; a radius nested in padding p is the outer one less p.
+  Q_PROPERTY(qreal radiusXs READ radiusXs NOTIFY themeChanged)
+  Q_PROPERTY(qreal radiusSm READ radiusSm NOTIFY themeChanged)
+  Q_PROPERTY(qreal radiusMd READ radius NOTIFY themeChanged)
+  Q_PROPERTY(qreal radiusLg READ radiusLg NOTIFY themeChanged)
+  Q_PROPERTY(qreal radiusXl READ radiusXl NOTIFY themeChanged)
+  // Fully round: a Rectangle clamps its radius to half its shorter side.
+  Q_PROPERTY(qreal radiusPill READ radiusPill CONSTANT)
+  Q_PROPERTY(ThemeTypeRamp* type READ type CONSTANT)
+  Q_PROPERTY(ThemeSpace* space READ space CONSTANT)
+  Q_PROPERTY(ThemeSizes* control READ control CONSTANT)
+  Q_PROPERTY(ThemeSizes* icon READ icon CONSTANT)
+  // Whether the interface font is monospaced, where weight barely separates
+  // and hierarchy is size and ink.
+  Q_PROPERTY(bool monospace READ monospace NOTIFY themeChanged)
   Q_PROPERTY(QString fontUi READ fontUi NOTIFY themeChanged)
   Q_PROPERTY(QString fontMono READ fontMono NOTIFY themeChanged)
   // The composer's and the terminal's families (the interface's and the code
@@ -63,6 +169,16 @@ public:
   ThemeStore* palette() { return this; }
   QColor link() const;
   qreal radius() const;
+  qreal radiusXs() const { return std::round(radius() * 0.5); }
+  qreal radiusSm() const { return std::round(radius() * 0.75); }
+  qreal radiusLg() const { return std::round(radius() * 1.5); }
+  qreal radiusXl() const { return std::round(radius() * 2); }
+  qreal radiusPill() const { return 9999; }
+  ThemeTypeRamp* type() { return &m_type; }
+  ThemeSpace* space() { return &m_space; }
+  ThemeSizes* control() { return &m_control; }
+  ThemeSizes* icon() { return &m_icon; }
+  bool monospace() const { return m_monospace; }
   QString fontUi() const;
   QString fontMono() const;
   QString fontPrompt() const;
@@ -80,8 +196,11 @@ public:
   bool frameless() const { return m_frameless; }
   QString lastError() const { return m_lastError; }
 
-  // Resolved colour for a role (`canvas`, `text`, ...): theme.json first, then
-  // the base theme, then `fallback`.
+  // Resolved colour for a role (`canvas`, `ink`, ...): theme.json first, then
+  // the base theme, then `fallback`. In each, a role it lacks is read from the
+  // older role it renames (`ink` is `text`) or derived from the ones it has
+  // (`inkSecondary` between `ink` and `inkTertiary`), so themes written before
+  // a role existed still draw it in their own colours.
   Q_INVOKABLE QColor color(const QString& role, const QColor& fallback) const;
   Q_INVOKABLE void reload();
 
@@ -102,6 +221,8 @@ private:
   // it, and the ones already drawn are rewritten once, when the family changes.
   void applyInterfaceFont();
   int fontSize(const char* part, int fallback) const;
+  // Rescales the type ramp after the fonts or sizes changed.
+  void applyType();
 
   QString m_configDir;
   QString m_path;
@@ -134,4 +255,10 @@ private:
   bool m_windowLiquidGlass = false;
   bool m_frameless = true;
   QString m_lastError;
+  bool m_monospace = false;
+  ThemeTypeRamp m_type;
+  ThemeSpace m_space;
+  // xl is a tab strip.
+  ThemeSizes m_control{24, 28, 32, 36};
+  ThemeSizes m_icon{12, 16, 20, 24};
 };

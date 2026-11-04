@@ -151,8 +151,8 @@ Window {
             anchors.centerIn: parent
             text: parent.hint ? parent.hint.message : ""
             color: "white"
-            font.pixelSize: Math.round(24 * Theme.fontScale)
-            font.bold: true
+            font.pixelSize: Theme.type.display.size
+            font.weight: Font.DemiBold
         }
     }
 

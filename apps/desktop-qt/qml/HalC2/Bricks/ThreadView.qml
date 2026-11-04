@@ -191,7 +191,7 @@ Item {
                 text: qsTr("This thread's MC cannot be reached: %1").arg(view.model ? view.model.problem : "")
                 color: Theme.palette.color("text", "#e4e4e7")
                 font.family: view.uiFamily
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 wrapMode: Text.Wrap
             }
             ShellButton {
@@ -271,7 +271,7 @@ Item {
             wrapMode: Text.Wrap
             color: view.draft ? view.textColor : view.mutedColor
             font.family: view.uiFamily
-            font.pixelSize: view.draft ? 24 : 13
+            font.pixelSize: view.draft ? Theme.type.display.size : Theme.type.body.size
             text: {
                 if (view.draft) {
                     const project = view.workspace ? view.workspace.projectTitle : "";
@@ -316,7 +316,7 @@ Item {
             visible: view.draft && text.length > 0
             color: view.mutedColor
             font.family: view.uiFamily
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             elide: Text.ElideMiddle
             text: {
                 if (!view.workspace)
@@ -337,7 +337,7 @@ Item {
             visible: view.empty && text.length > 0
             color: view.mutedColor
             font.family: view.uiFamily
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             text: view.emptyHint
         }
         Label {
@@ -347,7 +347,7 @@ Item {
             visible: view.draft && view.sending
             color: view.mutedColor
             font.family: view.uiFamily
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             text: qsTr("Sending…")
         }
     }

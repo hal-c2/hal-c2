@@ -232,12 +232,13 @@ Item {
             openPicker(picker);
             const row = inPicker(picker, "modelPickerRow:codex:gpt-5.5");
             compare(row.disabledReason, reason);
+            // Its star cannot be pressed.
+            compare(inPicker(picker, "modelPickerFavorite:codex:gpt-5.5").enabled, false);
             mouseClick(row);
             // The keyboard skips it too: Down from the chosen model wraps
-            // nowhere past it, and its star cannot be pressed.
+            // nowhere past it.
             keyClick(Qt.Key_Down);
             keyClick(Qt.Key_Return);
-            compare(inPicker(picker, "modelPickerFavorite:codex:gpt-5.5").enabled, false);
             compare(selections().includes("codex:gpt-5.5"), false);
         }
 

@@ -26,7 +26,7 @@ Rectangle {
     objectName: "providerUpdateNotice"
     visible: current !== null
     implicitHeight: visible ? row.implicitHeight + 12 : 0
-    radius: 6
+    radius: Theme.radiusSm
     color: area.containsMouse ? Qt.alpha(tone, 0.16) : Qt.alpha(tone, 0.1)
     Accessible.role: Accessible.Button
     Accessible.name: current?.title ?? ""
@@ -69,7 +69,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: notice.current?.title ?? ""
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.weight: Font.Medium
                 elide: Text.ElideRight
             }
@@ -78,7 +78,7 @@ Rectangle {
                 visible: text.length > 0
                 text: notice.current?.description ?? ""
                 color: Theme.palette.color("textMuted", "#8b8b93")
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 wrapMode: Text.Wrap
                 maximumLineCount: 2
                 elide: Text.ElideRight
@@ -96,7 +96,7 @@ Rectangle {
             rightPadding: 0
             text: "✕"
             tint: Theme.palette.color("textMuted", "#8b8b93")
-            font.pixelSize: Math.round(10 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             Accessible.name: qsTr("Dismiss")
             onClicked: Shell.dispatch("providerUpdates.dismissNotice", {})
         }

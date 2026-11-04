@@ -31,7 +31,7 @@ SettingsPage {
     component Caption: Label {
         Layout.fillWidth: true
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
@@ -71,7 +71,7 @@ SettingsPage {
                 Label {
                     text: toggle.title
                     color: toggle.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -80,7 +80,7 @@ SettingsPage {
                     visible: toggle.entry?.mixed ?? false
                     text: qsTr("Mixed across selected machines")
                     color: toggle.warning
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 Caption {
@@ -92,7 +92,7 @@ SettingsPage {
                 objectName: "version"
                 text: toggle.entry?.version ?? ""
                 color: toggle.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.family: "monospace"
             }
 
@@ -101,7 +101,7 @@ SettingsPage {
                 visible: text.length > 0
                 text: toggle.entry?.status ?? ""
                 color: toggle.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ShellSwitch {
@@ -145,7 +145,7 @@ SettingsPage {
             Layout.fillWidth: true
             text: toggle.settings?.updateError?.message ?? ""
             color: toggle.danger
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
     }
@@ -155,7 +155,7 @@ SettingsPage {
     Label {
         text: qsTr("Devices")
         color: page.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         font.weight: Font.DemiBold
     }
 
@@ -174,7 +174,7 @@ SettingsPage {
         objectName: "platforms"
         visible: (page.settings?.platforms ?? []).length > 0
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
@@ -212,7 +212,7 @@ SettingsPage {
                 Label {
                     text: platform.modelData.platform
                     color: page.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -253,7 +253,7 @@ SettingsPage {
                 Label {
                     text: host.modelData.label
                     color: page.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     font.weight: Font.Medium
                 }
 
@@ -281,7 +281,7 @@ SettingsPage {
         Layout.topMargin: 12
         text: qsTr("Slack")
         color: page.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         font.weight: Font.DemiBold
     }
 
@@ -319,7 +319,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 color: page.slack?.state === "failed" || (page.slack?.failed ?? false) ? page.danger : page.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 text: {
                     if (page.slack?.failed ?? false)
                         return qsTr("Could not load Slack");
@@ -368,7 +368,7 @@ SettingsPage {
             Layout.fillWidth: true
             text: page.slack?.error ?? ""
             color: page.danger
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 

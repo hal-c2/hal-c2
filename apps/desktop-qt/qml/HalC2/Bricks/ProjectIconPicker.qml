@@ -40,25 +40,22 @@ Dialog {
 
     component Caption: Label {
         color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     header: Label {
         text: dialog.title
         padding: 20
         bottomPadding: 4
-        font.pixelSize: Math.round(17 * Theme.fontScale)
+        font.pixelSize: Theme.type.title.size
         font.weight: Font.DemiBold
         color: dialog.foreground
     }
     contentItem: ColumnLayout {
-        spacing: 10
+        spacing: Theme.space.sm
 
         Caption {
             Layout.fillWidth: true
@@ -88,7 +85,7 @@ Dialog {
         Flow {
             Layout.fillWidth: true
             visible: dialog.mode === "lucide" || dialog.mode === "monogram"
-            spacing: 6
+            spacing: Theme.space.sm
 
             Repeater {
                 model: dialog.picker?.colors ?? []
@@ -147,7 +144,7 @@ Dialog {
         RowLayout {
             Layout.fillWidth: true
             visible: dialog.mode === "monogram"
-            spacing: 10
+            spacing: Theme.space.sm
 
             ShellTextField {
                 objectName: "projectIconLetters"
@@ -170,7 +167,7 @@ Dialog {
         ColumnLayout {
             Layout.fillWidth: true
             visible: dialog.mode === "image"
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellTextField {
                 objectName: "projectIconSearch"
@@ -207,13 +204,13 @@ Dialog {
                     implicitHeight: 28
                     onClicked: Shell.dispatch("projectIcon.image", {path: modelData})
                     background: Rectangle {
-                        radius: 6
+                        radius: Theme.radiusSm
                         color: image.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
                     }
                     contentItem: Text {
                         text: image.modelData
                         color: dialog.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideMiddle
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -227,7 +224,7 @@ Dialog {
             visible: text.length > 0
             text: dialog.picker?.error ?? ""
             color: Theme.palette.color("errorForeground", "#ef4444")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
         RowLayout {

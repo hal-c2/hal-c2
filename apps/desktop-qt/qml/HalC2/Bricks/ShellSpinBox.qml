@@ -11,10 +11,10 @@ SpinBox {
     readonly property color border: Theme.palette.color("input", "#27272a")
     readonly property color accentSurface: Theme.palette.color("accentSurface", "#27272a")
 
-    implicitHeight: 30
+    implicitHeight: Theme.control.md
     implicitWidth: 120
     padding: 0
-    font.pixelSize: Math.round(13 * Theme.fontScale)
+    font.pixelSize: Theme.type.body.size
     hoverEnabled: true
     opacity: enabled ? 1 : 0.64
 
@@ -72,8 +72,8 @@ SpinBox {
     }
 
     background: Rectangle {
-        radius: Math.min(Theme.radius, 8)
-        color: Theme.appearance === "dark" ? Qt.alpha(control.border, 0.32) : Theme.palette.color("canvas", "#ffffff")
+        radius: Theme.radiusMd
+        color: Theme.palette.color("inputSurface", "#121317")
         border.color: control.activeFocus ? Theme.palette.color("focus", "#3b82f6") : control.border
         border.width: 1
     }

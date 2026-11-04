@@ -39,7 +39,7 @@ Rectangle {
             Label {
                 text: banner.recovery?.title ?? ""
                 color: banner.warning
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
             }
             Label {
@@ -47,7 +47,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: banner.recovery?.description ?? ""
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 elide: Text.ElideRight
             }
             ShellButton {
@@ -72,7 +72,7 @@ Rectangle {
             visible: text.length > 0
             text: banner.recovery?.error ?? ""
             color: Theme.palette.color("errorForeground", "#ef4444")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
     }

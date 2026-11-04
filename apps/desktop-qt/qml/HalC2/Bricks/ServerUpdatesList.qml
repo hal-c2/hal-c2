@@ -25,7 +25,7 @@ ColumnLayout {
             Layout.fillWidth: true
             text: qsTr("Servers behind this app (%1)").arg(list.model ? list.model.appVersion : "")
             color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
 
@@ -52,7 +52,7 @@ ColumnLayout {
                 Layout.preferredWidth: 180
                 text: qsTr("%1 on %2").arg(row.modelData.label, row.modelData.version)
                 color: Theme.palette.color("textMuted", "#a1a1aa")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 elide: Text.ElideRight
             }
 

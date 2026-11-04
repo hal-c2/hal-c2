@@ -186,7 +186,7 @@ Rectangle {
                     onClicked: Shell.dispatch("rightPanel.activate", { id: tab.modelData.id })
                     background: Rectangle {
                         color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered ? Theme.palette.color("surface", "#141416") : "transparent"
-                        radius: 6
+                        radius: Theme.radiusSm
                         border.width: tab.visualFocus ? 1 : 0
                         border.color: Theme.palette.color("focus", "#3b82f6")
                     }
@@ -203,7 +203,7 @@ Rectangle {
                         id: tabRow
 
                         anchors.centerIn: parent
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ShellIcon {
                             visible: tab.iconName.length > 0
@@ -221,7 +221,7 @@ Rectangle {
                             width: Math.min(implicitWidth, 112)
                             elide: Text.ElideRight
                             color: tab.active ? panel.foreground : panel.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             anchors.verticalCenter: parent.verticalCenter
 
                             TapHandler {
@@ -349,8 +349,8 @@ Rectangle {
                 anchors.top: parent.top
                 width: 36
                 height: 36
-                leftPadding: 10
-                rightPadding: 10
+                leftPadding: Theme.space.sm
+                rightPadding: Theme.space.sm
                 iconName: "plus"
                 iconSize: 16
                 iconTint: panel.muted

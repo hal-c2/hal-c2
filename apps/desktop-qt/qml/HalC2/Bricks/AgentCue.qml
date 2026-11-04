@@ -48,7 +48,7 @@ Item {
             anchors.centerIn: parent
             text: root.entry && root.entry.label ? root.entry.label : ""
             color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: 11 * Theme.fontScale
+            font.pixelSize: Theme.type.caption.size
         }
     }
 
@@ -57,7 +57,7 @@ Item {
         visible: root.pointer !== null
         width: 14
         height: 14
-        radius: 7
+        radius: Theme.radiusPill
         x: root.pointer ? root.pointer.x * root.pageScale - width / 2 : 0
         y: root.pointer ? root.pointer.y * root.pageScale - height / 2 : 0
         color: root.accent
@@ -85,7 +85,7 @@ Item {
         objectName: "agentCueRipple"
         width: 36
         height: 36
-        radius: 18
+        radius: Theme.radiusPill
         color: "transparent"
         border.color: root.accent
         border.width: 2

@@ -424,8 +424,8 @@ Rectangle {
         // caret it was last told about; they sit on the card's top edge.
         Rectangle {
             Layout.fillWidth: true
-            Layout.leftMargin: 22
-            Layout.rightMargin: 22
+            Layout.leftMargin: Theme.space.xl
+            Layout.rightMargin: Theme.space.xl
             visible: composer.suggesting
             implicitHeight: !visible ? 0 : suggestionList.count > 0 ? Math.min(suggestionList.contentHeight, 240) + 8 : suggestionsEmpty.implicitHeight + 32
             topLeftRadius: 16
@@ -462,7 +462,7 @@ Rectangle {
                     }
                     width: ListView.view.width
                     height: 34
-                    radius: 10
+                    radius: Math.max(0, Theme.radiusLg - Theme.space.xs)
                     color: ListView.isCurrentItem ? Theme.palette.color("accentSurface", "#2a2a30") : suggestionHover.hovered ? Theme.palette.color("sidebarRowHover", "#1c1c21") : "transparent"
 
                     HoverHandler {
@@ -485,7 +485,7 @@ Rectangle {
                         Text {
                             text: suggestion.modelData.label
                             color: composer.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             font.weight: Font.Medium
                             elide: Text.ElideMiddle
                             Layout.maximumWidth: parent.width * 0.5
@@ -495,7 +495,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: suggestion.modelData.description
                             color: composer.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             elide: Text.ElideMiddle
                         }
                     }
@@ -517,14 +517,14 @@ Rectangle {
                 wrapMode: Text.Wrap
                 text: composer.ready && composer.model.suggestionsEmptyText ? composer.model.suggestionsEmptyText : ""
                 color: composer.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
         }
 
         ComposerUsageLimits {
             Layout.fillWidth: true
-            Layout.leftMargin: 22
-            Layout.rightMargin: 22
+            Layout.leftMargin: Theme.space.xl
+            Layout.rightMargin: Theme.space.xl
         }
 
         // The stash (composer.stash), on the card's top edge like the
@@ -532,8 +532,8 @@ Rectangle {
         Rectangle {
             objectName: "stashList"
             Layout.fillWidth: true
-            Layout.leftMargin: 22
-            Layout.rightMargin: 22
+            Layout.leftMargin: Theme.space.xl
+            Layout.rightMargin: Theme.space.xl
             visible: composer.stashOpen && !composer.suggesting
             implicitHeight: visible ? stashHeader.height + Math.min(Math.max(stashList.contentHeight, 34), 240) + 8 : 0
             topLeftRadius: 16
@@ -563,13 +563,13 @@ Rectangle {
                     Layout.fillWidth: true
                     text: qsTr("Stash")
                     color: composer.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 Text {
                     text: composer.stashEntries.length
                     color: composer.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellButton {
@@ -612,7 +612,7 @@ Rectangle {
                     Accessible.onPressAction: composer.restoreStash(stashRow.modelData.id)
                     width: ListView.view.width
                     height: 34
-                    radius: 10
+                    radius: Math.max(0, Theme.radiusLg - Theme.space.xs)
                     color: ListView.isCurrentItem ? Theme.palette.color("accentSurface", "#2a2a30") : "transparent"
 
                     HoverHandler {
@@ -639,7 +639,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: stashRow.modelData.snippet
                             color: composer.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             elide: Text.ElideRight
                             Accessible.name: qsTr("Restore stashed prompt: %1").arg(text)
                         }
@@ -666,7 +666,7 @@ Rectangle {
                         ? qsTr("Nothing stashed yet. Press %1 with a prompt in the composer to stash it.").arg(Shell.state.composerStash.shortcut)
                         : qsTr("Nothing stashed yet.")
                     color: composer.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
         }
@@ -678,7 +678,7 @@ Rectangle {
             Layout.fillWidth: true
             implicitHeight: cardColumn.implicitHeight
             z: 1
-            radius: 22
+            radius: Theme.radiusXl
             color: Theme.palette.color("surface", "#141416")
             border.color: composer.outline
             border.width: 1
@@ -712,16 +712,16 @@ Rectangle {
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
-                    Layout.rightMargin: 10
+                    Layout.rightMargin: Theme.space.sm
                     Layout.topMargin: 8
                     visible: composer.ready && (composer.model.editingQueuedRunId ?? null) !== null
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     Text {
                         Layout.fillWidth: true
                         text: qsTr("Editing a queued message")
                         color: composer.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     ShellButton {
@@ -740,7 +740,7 @@ Rectangle {
                     Layout.rightMargin: 16
                     Layout.topMargin: 12
                     visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || composer.citations.length > 0)
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     Repeater {
                         model: composer.attachments
@@ -777,7 +777,7 @@ Rectangle {
                             implicitHeight: 24
                             iconName: "message-square"
                             text: modelData.label
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             Accessible.name: qsTr("Remove the comment on %1").arg(text)
                             ToolTip.visible: hovered
                             ToolTip.text: modelData.text
@@ -797,7 +797,7 @@ Rectangle {
                             implicitHeight: 24
                             iconName: "terminal"
                             text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             Accessible.name: qsTr("Remove terminal selection %1").arg(text)
                             onClicked: Shell.dispatch("composer.terminalContext.remove", {
                                 id: modelData.id
@@ -829,7 +829,7 @@ Rectangle {
                             implicitHeight: 24
                             iconName: modelData.comment === null ? "quote" : "pencil"
                             text: preview.length > 40 ? preview.slice(0, 40) + "\u2026" : preview
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             Accessible.name: qsTr("Assistant quote: %1").arg(preview)
                             onClicked: citationEditor.open()
 
@@ -841,17 +841,13 @@ Rectangle {
                                 transformOrigin: Item.BottomLeft
                                 y: -height - 4
                                 width: 360
-                                padding: 10
+                                padding: Theme.space.sm
                                 onOpened: {
                                     citationComment.text = citationChip.modelData.comment ?? "";
                                     citationComment.forceActiveFocus();
                                 }
 
-                                background: Rectangle {
-                                    color: Theme.palette.color("surfaceOverlay", "#18181b")
-                                    border.color: Qt.alpha(composer.foreground, 0.1)
-                                    radius: 10
-                                }
+                                background: ShellPopoverSurface {}
 
                                 contentItem: ColumnLayout {
                                     spacing: 8
@@ -864,7 +860,7 @@ Rectangle {
                                         maximumLineCount: 6
                                         elide: Text.ElideRight
                                         color: composer.muted
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.meta.size
                                     }
 
                                     ShellTextField {
@@ -881,14 +877,14 @@ Rectangle {
 
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: 6
+                                        spacing: Theme.space.sm
 
                                         ShellButton {
                                             objectName: "citationRemove"
                                             implicitHeight: 24
                                             subtle: true
                                             text: qsTr("Remove quote")
-                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.meta.size
                                             onClicked: {
                                                 const id = citationChip.modelData.id;
                                                 citationEditor.close();
@@ -907,7 +903,7 @@ Rectangle {
                                             implicitHeight: 24
                                             primary: true
                                             text: qsTr("Save")
-                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.meta.size
                                             onClicked: citationChip.saveComment()
                                         }
                                     }
@@ -1193,9 +1189,9 @@ Rectangle {
                                     Accessible.name: qsTr("%1, %2").arg(optionItem.modelData.label).arg(checked ? qsTr("on") : qsTr("off"))
                                     Accessible.checkable: true
                                     Accessible.checked: checked
-                                    font.pixelSize: Math.round(14 * Theme.fontScale)
-                                    leftPadding: 10
-                                    rightPadding: 10
+                                    font.pixelSize: Theme.type.body.size
+                                    leftPadding: Theme.space.sm
+                                    rightPadding: Theme.space.sm
                                     onClicked: Shell.dispatch("composer.option.set", {
                                         id: optionItem.modelData.id,
                                         value: checked
@@ -1242,9 +1238,9 @@ Rectangle {
                                 iconTint: checked ? composer.foreground : composer.secondary
                                 tint: checked ? composer.foreground : composer.secondary
                                 text: checked ? qsTr("Plan") : qsTr("Build")
-                                font.pixelSize: Math.round(14 * Theme.fontScale)
-                                leftPadding: 10
-                                rightPadding: 10
+                                font.pixelSize: Theme.type.body.size
+                                leftPadding: Theme.space.sm
+                                rightPadding: Theme.space.sm
                                 onClicked: Shell.dispatch("composer.interactionMode.set", {
                                     mode: checked ? "plan" : "default"
                                 })
@@ -1257,7 +1253,7 @@ Rectangle {
                         visible: composer.vimKeys
                         text: vim.modeLabel
                         color: composer.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         Accessible.name: qsTr("Vim mode: %1").arg(text)
                     }
 
@@ -1270,7 +1266,7 @@ Rectangle {
                         iconSize: 14
                         iconTint: composer.iconMuted
                         text: composer.stashEntries.length
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         Accessible.name: qsTr("Stashed prompts: %1. Open stash.").arg(composer.stashEntries.length)
                         onClicked: Shell.dispatch("composer.stash.menu")
                     }
@@ -1293,7 +1289,7 @@ Rectangle {
                         enabled: composer.ready && (stopMode || composer.model?.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
                         hoverEnabled: true
                         opacity: enabled ? 1 : 0.3
-                        scale: down ? 0.97 : hovered ? 1.05 : 1
+                        scale: down ? 0.97 : 1
                         Accessible.role: Accessible.Button
                         Accessible.name: stopMode ? qsTr("Stop") : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue") : qsTr("Send")
                         ToolTip.visible: hovered && followUp.length > 0
@@ -1311,7 +1307,7 @@ Rectangle {
                         }
 
                         background: Rectangle {
-                            radius: 16
+                            radius: Theme.radiusPill
                             color: primaryAction.stopMode ? Qt.alpha(Theme.palette.color("error", "#ef4444"), 0.9) : Theme.palette.color("messageAction", "#2563eb")
 
                             // The keyboard's ring, just outside the round button.
@@ -1324,12 +1320,6 @@ Rectangle {
                                 border.width: 2
                                 border.color: Theme.palette.color("focus", "#3b82f6")
                             }
-
-                            Behavior on color {
-                                ColorAnimation {
-                                    duration: 120
-                                }
-                            }
                         }
 
                         contentItem: Item {
@@ -1338,7 +1328,6 @@ Rectangle {
                                 visible: !primaryAction.stopMode
                                 name: primaryAction.followUp === "steer" ? "corner-down-right" : primaryAction.followUp === "queue" ? "list-plus" : "arrow-up"
                                 size: 16
-                                strokeWidth: 2.5
                                 color: Theme.palette.color("messageActionForeground", "#ffffff")
                             }
 
@@ -1365,7 +1354,7 @@ Rectangle {
                     Layout.bottomMargin: visible ? 16 : 0
                     // A layout's own controls, or a plugin's.
                     visible: children.length > 1 || actionsSlot.shown.length > 0
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     PluginSlot {
                         id: actionsSlot
@@ -1389,8 +1378,8 @@ Rectangle {
             readonly property string envModeIcon: !wsReady ? "folder" : ws.envMode === "worktree" ? "folder-git-2" : "folder-git"
 
             Layout.fillWidth: true
-            Layout.leftMargin: 22
-            Layout.rightMargin: 22
+            Layout.leftMargin: Theme.space.xl
+            Layout.rightMargin: Theme.space.xl
             Layout.topMargin: -16
             implicitHeight: 16 + 4 + 24 + 4
             visible: wsReady && (composer.model?.showContextStrip ?? true) && !composer.resting
@@ -1418,11 +1407,11 @@ Rectangle {
 
                     visible: contextStrip.wsReady && contextStrip.ws.environments.length > 1
                     implicitHeight: 24
-                    leftPadding: 7 + iconSize + 6
-                    rightPadding: 7 + chevronSize + 4
+                    leftPadding: Theme.space.sm + iconSize + Theme.space.sm
+                    rightPadding: Theme.space.sm + chevronSize + Theme.space.xs
                     iconSize: 12
                     chevronSize: 12
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     iconName: "monitor"
                     enabled: contextStrip.wsReady && contextStrip.ws.environmentChangeable
                     model: contextStrip.wsReady ? contextStrip.ws.environments.map(env => env.label) : []
@@ -1442,11 +1431,11 @@ Rectangle {
                 ShellComboBox {
                     visible: contextStrip.wsReady && contextStrip.ws.envModeChangeable
                     implicitHeight: 24
-                    leftPadding: 7 + iconSize + 6
-                    rightPadding: 7 + chevronSize + 4
+                    leftPadding: Theme.space.sm + iconSize + Theme.space.sm
+                    rightPadding: Theme.space.sm + chevronSize + Theme.space.xs
                     iconSize: 12
                     chevronSize: 12
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     iconName: contextStrip.envModeIcon
                     id: envModePicker
                     objectName: "envModePicker"
@@ -1473,8 +1462,8 @@ Rectangle {
                     readonly property string hint: contextStrip.wsReady ? contextStrip.ws.envModeHint ?? "" : ""
 
                     visible: contextStrip.wsReady && !contextStrip.ws.envModeChangeable
-                    spacing: 6
-                    Layout.leftMargin: 7
+                    spacing: Theme.space.sm
+                    Layout.leftMargin: Theme.space.sm
                     Accessible.description: hint
 
                     HoverHandler {
@@ -1495,7 +1484,7 @@ Rectangle {
                         objectName: "envModeLockedLabel"
                         text: contextStrip.wsReady ? contextStrip.ws.envModeLabel : ""
                         color: composer.secondary
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.weight: Font.Medium
                     }
                 }
@@ -1525,7 +1514,7 @@ Rectangle {
                     }
 
                     background: Rectangle {
-                        radius: 4
+                        radius: Theme.radiusXs
                         color: Qt.alpha(prBadge.prColor, 0.15)
                         border.color: Theme.palette.color("focus", "#3b82f6")
                         border.width: prBadge.visualFocus ? 1 : 0
@@ -1538,7 +1527,7 @@ Rectangle {
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                         color: prBadge.prColor
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         font.weight: Font.Medium
                     }
                 }
@@ -1551,16 +1540,16 @@ Rectangle {
                     enabled: contextStrip.wsReady && contextStrip.ws.branchChangeable && !contextStrip.ws.branchSwitchPending
                     subtle: true
                     implicitHeight: 24
-                    leftPadding: 7
-                    rightPadding: 7
+                    leftPadding: Theme.space.sm
+                    rightPadding: Theme.space.sm
                     Layout.maximumWidth: 240
                     iconName: "git-branch"
                     iconSize: 12
-                    iconTint: Qt.alpha(composer.iconMuted, 0.7)
-                    tint: branchButton.hovered ? Qt.alpha(composer.foreground, 0.8) : composer.branchColor
+                    iconTint: Theme.palette.color("inkTertiary", "#8b919e")
+                    tint: branchButton.hovered ? Theme.palette.color("inkSecondary", "#b8bdc7") : composer.branchColor
                     chevron: contextStrip.wsReady && contextStrip.ws.branchChangeable
                     chevronSize: 12
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     text: contextStrip.wsReady ? (contextStrip.ws.branch ?? qsTr("Pick branch")) : ""
                     Accessible.name: qsTr("Switch branch")
                     onClicked: branchPicker.open()
@@ -1616,21 +1605,10 @@ Rectangle {
                             }
                         }
 
-                        exit: Transition {
-                            NumberAnimation {
-                                property: "opacity"
-                                from: 1
-                                to: 0
-                                duration: 90
-                                easing.type: Easing.InCubic
-                            }
-                        }
+                        // Closing is instant: a fade could swallow the next open.
+                        exit: null
 
-                        background: Rectangle {
-                            color: Theme.palette.color("surfaceOverlay", "#18181b")
-                            border.color: Qt.alpha(composer.foreground, 0.1)
-                            radius: 10
-                        }
+                        background: ShellPopoverSurface {}
 
                         ColumnLayout {
                             id: branchColumn
@@ -1720,7 +1698,7 @@ Rectangle {
                                     }
                                     width: ListView.view.width
                                     height: 28
-                                    radius: 6
+                                    radius: Theme.radiusSm
                                     color: rowHover.hovered ? Theme.palette.color("accentSurface", "#1c1c21") : "transparent"
 
                                     HoverHandler {
@@ -1746,7 +1724,7 @@ Rectangle {
                                             Layout.fillWidth: true
                                             text: branchRow.modelData.name
                                             color: branchRow.modelData.isRemote ? composer.muted : composer.foreground
-                                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.body.size
                                             elide: Text.ElideMiddle
                                         }
 
@@ -1754,7 +1732,7 @@ Rectangle {
                                             visible: branchRow.badge.length > 0
                                             text: branchRow.badge
                                             color: composer.muted
-                                            font.pixelSize: Math.round(10 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.caption.size
                                         }
                                     }
                                 }
@@ -1764,7 +1742,7 @@ Rectangle {
                                     visible: branchList.count === 0
                                     text: contextStrip.wsReady && contextStrip.ws.branchesLoading ? qsTr("Loading refs…") : qsTr("No matching refs — Enter creates one")
                                     color: composer.muted
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                 }
                             }
 
@@ -1776,7 +1754,7 @@ Rectangle {
                                 text: contextStrip.wsReady ? qsTr("Showing %1 of %2 refs — type to narrow").arg(contextStrip.ws.branches.length).arg(contextStrip.ws.branchesTotal) : ""
                                 wrapMode: Text.Wrap
                                 color: composer.muted
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                             }
 
                             // Only when picking the base of a new thread's new
@@ -1797,7 +1775,7 @@ Rectangle {
                                         Layout.fillWidth: true
                                         text: qsTr("Start from origin")
                                         color: composer.foreground
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.meta.size
                                     }
 
                                     ShellSwitch {
@@ -1821,7 +1799,7 @@ Rectangle {
                                     text: qsTr("Creates the worktree from the latest matching branch on origin instead of your local branch.")
                                     color: composer.muted
                                     wrapMode: Text.Wrap
-                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.caption.size
                                 }
                             }
                         }

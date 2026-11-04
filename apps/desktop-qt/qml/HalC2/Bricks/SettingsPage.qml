@@ -114,7 +114,7 @@ Rectangle {
             x: 24
             y: 24
             width: Math.min(720, flick.width - 48)
-            spacing: 14
+            spacing: Theme.space.md
 
             SettingsBreadcrumb {
                 Layout.fillWidth: true
@@ -125,7 +125,7 @@ Rectangle {
                 id: lead
 
                 Layout.fillWidth: true
-                spacing: 14
+                spacing: Theme.space.md
             }
 
             Repeater {
@@ -154,16 +154,16 @@ Rectangle {
                             readonly property bool open: page.openFolds[entry.modelData.section] === true
 
                             objectName: "settingsSection:" + entry.modelData.section
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             RowLayout {
                                 Layout.topMargin: 12
-                                spacing: 6
+                                spacing: Theme.space.sm
 
                                 Label {
                                     text: entry.modelData.section
                                     color: page.foreground
-                                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.title.size
                                     font.weight: Font.DemiBold
                                 }
 
@@ -200,7 +200,7 @@ Rectangle {
                                 Label {
                                     text: entry.modelData.title
                                     color: page.foreground
-                                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.body.size
                                     font.weight: Font.Medium
                                 }
 
@@ -208,7 +208,7 @@ Rectangle {
                                     Layout.fillWidth: true
                                     text: entry.modelData.description ?? ""
                                     color: Theme.palette.color("textMuted", "#a1a1aa")
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                     wrapMode: Text.Wrap
                                 }
                             }

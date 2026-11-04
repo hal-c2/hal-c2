@@ -133,7 +133,7 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: workspace.emptyText
                     color: workspace.foreground
-                    font.pixelSize: Math.round(15 * Theme.fontScale)
+                    font.pixelSize: Theme.type.title.size
                 }
 
                 Text {
@@ -142,7 +142,7 @@ Rectangle {
                     horizontalAlignment: Text.AlignHCenter
                     text: qsTr("Writing a page from the thread…")
                     color: workspace.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
 
                 RowLayout {

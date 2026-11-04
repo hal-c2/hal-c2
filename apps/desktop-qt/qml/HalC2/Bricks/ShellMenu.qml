@@ -2,13 +2,14 @@ import QtQuick
 import QtQuick.Controls.Basic
 import HalC2.Shell
 
-// A popup menu; use ShellMenuItem for entries.
+// A popup menu on the popover surface; use ShellMenuItem for entries. It
+// fades in like ShellPopover and is gone the moment it closes.
 Menu {
     id: control
 
-    padding: 4
-    // Wide enough for its longest row, between the usual 200 and 360.
-    implicitWidth: Math.max(200, Math.min(360, widest() + leftPadding + rightPadding))
+    padding: Theme.space.xs
+    // Wide enough for its longest row, between 220 and 360.
+    implicitWidth: Math.max(220, Math.min(360, widest() + leftPadding + rightPadding))
 
     // Whether any row has an icon: then rows without one keep its column
     // empty, so every label starts at the same place.
@@ -43,20 +44,7 @@ Menu {
         }
     }
 
-    exit: Transition {
-        NumberAnimation {
-            property: "opacity"
-            from: 1
-            to: 0
-            duration: 90
-            easing.type: Easing.InCubic
-        }
-    }
+    exit: null
 
-    background: Rectangle {
-        radius: Math.min(Theme.radius, 10)
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.1)
-        border.width: 1
-    }
+    background: ShellPopoverSurface {}
 }

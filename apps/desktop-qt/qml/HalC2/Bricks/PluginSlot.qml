@@ -1,4 +1,5 @@
 import QtQuick
+import HalC2.Shell
 
 // A named place in the shell that plugins contribute to (Contribution.slot).
 // Its children are the built-in content: shown alone when no plugin
@@ -14,7 +15,7 @@ Item {
     // Handed to contributions that declare `property var slotData`.
     property var slotData: ({})
     property bool vertical: false
-    property real spacing: 6
+    property real spacing: Theme.space.sm
     default property alias builtIn: fallback.data
     // The plugins shown here, in order.
     property var shown: []

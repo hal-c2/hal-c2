@@ -75,6 +75,9 @@ Rectangle {
     readonly property color borderColor: Theme.palette.color("border", "#27272a")
     readonly property color added: Theme.palette.color("diffAdded", "#22c55e")
     readonly property color removed: Theme.palette.color("diffRemoved", "#ef4444")
+    // Line backgrounds: opaque, so a selection or hover over them reads the same in every theme.
+    readonly property color addedSurface: Theme.palette.color("diffAddedSurface", Qt.alpha(added, 0.12))
+    readonly property color removedSurface: Theme.palette.color("diffRemovedSurface", Qt.alpha(removed, 0.12))
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
 
     objectName: "diffPanel"
@@ -99,7 +102,7 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             Layout.margins: 8
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellComboBox {
                 id: picker
@@ -127,7 +130,7 @@ Rectangle {
                     return count === 1 ? qsTr("%n file", "", count) : qsTr("%n files", "", count);
                 }
                 color: root.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 elide: Text.ElideRight
             }
             Item {
@@ -234,12 +237,12 @@ Rectangle {
             Layout.rightMargin: 8
             Layout.bottomMargin: 8
             visible: root.comparing
-            spacing: 6
+            spacing: Theme.space.sm
 
             Text {
                 text: qsTr("%1 against").arg(root.source?.comparedHead || qsTr("HEAD"))
                 color: root.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 elide: Text.ElideMiddle
             }
             ShellButton {
@@ -261,19 +264,14 @@ Rectangle {
                     objectName: "diffBases"
                     y: parent.height + 4
                     width: Math.max(parent.width, 260)
-                    padding: 6
+                    padding: Theme.space.sm
                     onOpened: {
                         root.source.baseQuery = "";
                         root.source.loadBases();
                         baseSearch.text = "";
                         baseSearch.forceActiveFocus();
                     }
-                    background: Rectangle {
-                        radius: Theme.radius
-                        color: Theme.palette.color("surfaceOverlay", "#18181b")
-                        border.color: root.borderColor
-                        border.width: 1
-                    }
+                    background: ShellPopoverSurface {}
 
                     contentItem: ColumnLayout {
                         spacing: 4
@@ -320,13 +318,13 @@ Rectangle {
                                     color: choice.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
                                 }
                                 contentItem: RowLayout {
-                                    spacing: 6
+                                    spacing: Theme.space.sm
 
                                     Text {
                                         Layout.fillWidth: true
                                         text: choice.modelData.label
                                         color: root.foreground
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.meta.size
                                         elide: Text.ElideMiddle
                                     }
                                     Text {
@@ -334,7 +332,7 @@ Rectangle {
                                         visible: choice.modelData.remoteOnly
                                         text: qsTr("Remote only")
                                         color: root.muted
-                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                        font.pixelSize: Theme.type.caption.size
                                     }
                                 }
                             }
@@ -342,11 +340,11 @@ Rectangle {
                         Text {
                             objectName: "diffBaseEmpty"
                             Layout.fillWidth: true
-                            Layout.margins: 6
+                            Layout.margins: Theme.space.sm
                             visible: baseList.count === 0
                             text: root.source?.basesLoading ? qsTr("Loading refs…") : qsTr("No matching refs.")
                             color: root.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                         }
                     }
                 }
@@ -363,7 +361,7 @@ Rectangle {
             visible: (root.source?.truncated ?? false) && root.status === "ready"
             text: qsTr("This preview exceeds the size limit. Changes shown are incomplete. Totals include all changes.")
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -404,7 +402,7 @@ Rectangle {
                         color: node.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
                     }
                     contentItem: RowLayout {
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ShellIcon {
                             name: node.modelData.kind === "file" ? "file" : node.modelData.open ? "folder-open" : "folder"
@@ -415,7 +413,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: node.modelData.name
                             color: node.modelData.kind === "folder" ? root.muted : root.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             elide: Text.ElideMiddle
                         }
                     }
@@ -437,14 +435,14 @@ Rectangle {
                     anchors.centerIn: parent
                     width: parent.width - 32
                     visible: root.status !== "ready"
-                    spacing: 10
+                    spacing: Theme.space.sm
 
                     Text {
                         Layout.fillWidth: true
                         horizontalAlignment: Text.AlignHCenter
                         text: root.status === "idle" ? "" : root.source?.message ?? ""
                         color: root.status === "error" ? root.removed : root.muted
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         wrapMode: Text.Wrap
                     }
                     ShellButton {
@@ -552,12 +550,12 @@ Rectangle {
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 32
-                    spacing: 6
+                    spacing: Theme.space.sm
 
-                    ShellIcon {
+                    ShellChevron {
                         Layout.leftMargin: 8
-                        name: header.row.expanded ? "chevron-down" : "chevron-right"
-                        size: 13
+                        direction: header.row.expanded ? "down" : "right"
+                        size: Theme.icon.sm
                         color: root.muted
                     }
                     Text {
@@ -574,7 +572,7 @@ Rectangle {
                         visible: header.row.partial
                         text: qsTr("Partial diff preview")
                         color: root.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         ToolTip.text: qsTr("This file is too large to show in full. Counts include all changes.")
                         ToolTip.visible: partialHover.hovered
 
@@ -649,7 +647,7 @@ Rectangle {
                         visible: header.row.binary
                         text: qsTr("binary")
                         color: root.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
                     Text {
                         text: "+" + header.row.additions
@@ -658,7 +656,7 @@ Rectangle {
                         font.pixelSize: Theme.fontSizeCode
                     }
                     Text {
-                        Layout.rightMargin: 10
+                        Layout.rightMargin: Theme.space.sm
                         text: "−" + header.row.deletions
                         color: root.removed
                         font.family: root.mono
@@ -676,7 +674,7 @@ Rectangle {
                         objectName: "diffFileNote"
                         text: header.row.note.length > 0 ? header.row.note : qsTr("Loading…")
                         color: header.row.state === "error" ? root.removed : root.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideRight
                         Layout.maximumWidth: view.width - 200
                     }
@@ -745,7 +743,7 @@ Rectangle {
     }
 
     function tint(sign) {
-        return sign === "+" ? Qt.alpha(root.added, 0.12) : sign === "-" ? Qt.alpha(root.removed, 0.12) : "transparent";
+        return sign === "+" ? root.addedSurface : sign === "-" ? root.removedSurface : "transparent";
     }
 
     Component {
@@ -762,7 +760,7 @@ Rectangle {
             Row {
                 id: numbers
                 x: view.commentInset
-                spacing: 6
+                spacing: Theme.space.sm
                 LineNumber {
                     objectName: "diffOldLine"
                     text: root.lineNumber(stackedRow.row.oldLine)
@@ -947,14 +945,10 @@ Rectangle {
         y: Math.round((parent.height - height * scale) / 2)
         width: Math.min(380, parent.width / scale - 24)
         modal: true
-        padding: 14
+        padding: Theme.space.md
 
-        background: Rectangle {
-            radius: Theme.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: root.borderColor
-            border.width: 1
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
             spacing: 8
@@ -963,18 +957,18 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("Comment on %1").arg(commentPopup.path)
                 color: root.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.DemiBold
                 elide: Text.ElideMiddle
             }
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Text {
                     text: qsTr("From line %1 to").arg(commentPopup.first)
                     color: root.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
                 ShellTextField {
                     id: commentLast
@@ -992,13 +986,13 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: 84
-                radius: Theme.radius
+                radius: Theme.radiusMd
                 color: Theme.palette.color("input", "#141416")
                 border.color: commentNote.activeFocus ? Theme.palette.color("focus", "#3b82f6") : root.borderColor
 
                 ScrollView {
                     anchors.fill: parent
-                    anchors.margins: 6
+                    anchors.margins: Theme.space.sm
 
                     // Enter starts a new line; mod+enter adds the comment.
                     TextArea {
@@ -1011,7 +1005,7 @@ Rectangle {
                         color: root.foreground
                         wrapMode: TextEdit.Wrap
                         background: null
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         // Before the window's shortcuts take it.
                         Keys.onShortcutOverride: event => {
                             if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)))
@@ -1029,7 +1023,7 @@ Rectangle {
             }
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Item {
                     Layout.fillWidth: true
