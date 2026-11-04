@@ -1135,6 +1135,23 @@ Item {
             verify(text.mapToItem(view, 0, 0).x < view.gutter - 100, "while the line scrolls under them");
         }
 
+        // A turn with nothing to show names the turn and offers every change.
+        function test_anEmptyTurnNamesItselfAndOffersAllChanges() {
+            const source = createTemporaryObject(fakeDiff, root);
+            const diff = createTemporaryObject(diffComponent, root, { source: source });
+            const message = findChild(diff, "diffMessage");
+            tryVerify(() => message.visible);
+            compare(message.title, "No changes in the latest turn");
+            compare(message.description, "No net changes in this selection.");
+            compare(message.actionText, "Show all changes");
+            message.actionTriggered();
+            compare(source.selection, 0, "all changes are shown");
+            compare(message.title, "No changes", "all of them have no turn to name");
+            compare(message.actionText, "", "nor anything wider to offer");
+            source.selection = 2;
+            compare(message.title, "No changes in turn 2");
+        }
+
         function test_pullRequestsOpenInTheBrowserAndLinkFromTheField() {
             const source = createTemporaryObject(fakePullRequests, root);
             const panel = createTemporaryObject(pullRequestsComponent, root, { source: source });

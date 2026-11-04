@@ -447,10 +447,15 @@ Rectangle {
                     width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xl)
                     visible: root.status !== "ready" && root.status !== "idle"
                     iconName: root.status === "error" ? "circle-alert" : root.status === "loading" ? "circle-dashed" : "file-diff"
-                    title: root.status === "error" ? qsTr("Couldn't load the diff") : root.status === "loading" ? qsTr("Loading changes") : qsTr("No changes")
+                    // A turn with nothing to show names the turn, and offers the
+                    // whole thread's changes.
+                    readonly property int selection: root.source?.selection ?? 0
+                    readonly property string scope: selection === -1 ? qsTr("the latest turn") : selection > 0 ? qsTr("turn %1").arg(selection) : ""
+                    readonly property bool offersAll: root.status === "empty" && (selection === -1 || selection > 0)
+                    title: root.status === "error" ? qsTr("Couldn't load the diff") : root.status === "loading" ? qsTr("Loading changes") : scope.length > 0 ? qsTr("No changes in %1").arg(scope) : qsTr("No changes")
                     description: root.status === "loading" ? "" : root.source?.message ?? ""
-                    actionText: root.status === "error" ? qsTr("Try again") : ""
-                    onActionTriggered: root.source.reload()
+                    actionText: root.status === "error" ? qsTr("Try again") : offersAll ? qsTr("Show all changes") : ""
+                    onActionTriggered: root.status === "error" ? root.source.reload() : root.source.select(0)
                 }
 
                 ListView {
