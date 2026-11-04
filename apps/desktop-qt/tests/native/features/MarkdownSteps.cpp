@@ -158,10 +158,10 @@ QString readable(QString text) {
 // The link under the middle of `needle` in a rich text segment, and the point
 // the user would click in the window.
 QString linkAt(QQuickItem* edit, const QString& needle, QPoint* point = nullptr) {
-  const int at = plain(edit).indexOf(needle);
-  expect(at >= 0, QStringLiteral("\"%1\" is not shown in \"%2\"").arg(needle, plain(edit)));
+  const auto [start, end] = drawnRange(plain(edit), needle);
+  expect(start >= 0, QStringLiteral("\"%1\" is not shown in \"%2\"").arg(needle, readable(plain(edit))));
   QRectF rect;
-  QMetaObject::invokeMethod(edit, "positionToRectangle", Q_RETURN_ARG(QRectF, rect), Q_ARG(int, at + int(needle.size() / 2)));
+  QMetaObject::invokeMethod(edit, "positionToRectangle", Q_RETURN_ARG(QRectF, rect), Q_ARG(int, (start + end) / 2));
   const QPointF local(rect.x() + 1, rect.y() + rect.height() / 2);
   QString link;
   QMetaObject::invokeMethod(edit, "linkAt", Q_RETURN_ARG(QString, link), Q_ARG(qreal, local.x()), Q_ARG(qreal, local.y()));
