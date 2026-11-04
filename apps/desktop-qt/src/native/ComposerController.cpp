@@ -760,9 +760,12 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
     });
   }
   // Another provider takes the thread over, handed its conversation by the MC.
+  // A thread that names no provider is not leaving one: the message's model
+  // selection is what the MC runs it on.
   const QJsonObject modelSelection = selection(target);
   const QString instanceId = str(modelSelection, QLatin1String("instanceId"));
-  if (!instanceId.isEmpty() && instanceId != str(thread->modelSelection, QLatin1String("instanceId"))) {
+  const QString current = str(thread->modelSelection, QLatin1String("instanceId"));
+  if (!instanceId.isEmpty() && !current.isEmpty() && instanceId != current) {
     commands.append({
         {QStringLiteral("type"), QStringLiteral("provider.switch")},
         {QStringLiteral("threadId"), thread->id},

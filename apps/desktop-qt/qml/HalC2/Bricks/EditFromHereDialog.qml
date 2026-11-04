@@ -23,11 +23,8 @@ Dialog {
     onQuestionChanged: question !== null ? open() : close()
     onRejected: Shell.dispatch("rewind.cancel", {})
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     contentItem: ColumnLayout {
         spacing: 12
 
@@ -35,7 +32,7 @@ Dialog {
             Layout.fillWidth: true
             text: qsTr("Edit from here?")
             color: Theme.palette.color("text", "#e4e4e7")
-            font.pixelSize: Math.round(17 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
             wrapMode: Text.Wrap
         }
@@ -43,12 +40,12 @@ Dialog {
             Layout.fillWidth: true
             text: qsTr("Rewind chat to before this message. Your prompt and attachments return to the composer.")
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
         RowLayout {
             Layout.fillWidth: true
-            Layout.topMargin: 6
+            Layout.topMargin: Theme.space.sm
             spacing: 8
 
             ShellButton {

@@ -44,7 +44,7 @@ Item {
     // goes over the thread as a sheet (at 980, or sooner when what else is
     // open leaves it no room), then the thread details do, then the thread
     // list (above).
-    readonly property int threadMinimumWidth: 360
+    readonly property int threadMinimumWidth: Shell.state.layout?.contentMinimumWidth ?? 480
     readonly property real besideList: width - (navigation.visible && !sidebarOverlay ? navigation.width : 0) - (folderExplorer.visible ? folderExplorer.width : 0)
     readonly property bool detailsSheet: besideList - detailsView.implicitWidth < threadMinimumWidth
     readonly property real besidePanel: besideList - (detailsView.visible && !detailsSheet ? detailsView.implicitWidth : 0) - threadMinimumWidth
@@ -52,8 +52,14 @@ Item {
     readonly property bool panelSheet: panelNarrow
     // The sheet: 42% of the window up to 448, 88% up to 384 under 760.
     readonly property real panelSheetWidth: width < 760 ? Math.min(0.88 * width, 384) : Math.max(320, Math.min(0.42 * width, 448))
+    // The sheet never covers the thread details: it lies over the thread,
+    // left of them, unless the room beside the list is too short for both.
+    readonly property real detailsShown: detailsView.visible ? detailsView.implicitWidth : 0
+    readonly property real panelSheetShift: Math.max(0, Math.min(detailsShown, besideList - panelView.implicitWidth))
     // A sheet starts under the header, whose toggle puts it away again.
-    readonly property real headerHeight: workspaceView.visible ? workspaceView.height : chromeBand.visible ? chromeBand.height : 0
+    readonly property real headerHeight: workspaceView.visible ? workspaceView.height : centreTitleBar ? Theme.headerHeight : chromeBand.visible ? chromeBand.height : 0
+    // The route's view draws its own header line (RouteView.titleBar).
+    readonly property bool centreTitleBar: threadArea.visible && threadArea.centreView.titleBar
     // Where the window is, less what changes while it stays there (the title).
     readonly property string place: [window.route?.kind, window.route?.threadKey, window.route?.draftId, window.route?.section].join("|")
 
@@ -150,6 +156,8 @@ Item {
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         width: 6
+                        // The rail keeps its width.
+                        visible: !sidebarView.rail
                         cursorShape: Qt.SplitHCursor
                         preventStealing: true
                         activeFocusOnTab: true
@@ -226,13 +234,14 @@ Item {
 
                 // Away from a thread (home, pull requests, usage, settings)
                 // there is no header: a band in its place, for a frameless
-                // window to be dragged by and for its buttons to lie over.
+                // window to be dragged by and for its buttons to lie over,
+                // unless the route's view draws its own header line (a Space).
                 Rectangle {
                     id: chromeBand
                     objectName: "chromeBand"
                     Layout.fillWidth: true
                     Layout.preferredHeight: 36
-                    visible: layout.framesWindow && Theme.frameless && !workspaceView.visible && !tabsView.visible
+                    visible: layout.framesWindow && Theme.frameless && !workspaceView.visible && !tabsView.visible && !layout.centreTitleBar
                     color: Theme.palette.color("canvas", "#0f0f12")
                     Accessible.role: Accessible.TitleBar
                     Accessible.name: qsTr("Title bar")
@@ -333,7 +342,8 @@ Item {
 
                 Layout.fillHeight: true
                 // A sheet takes no room from the thread either.
-                Layout.leftMargin: layout.panelSheet ? -implicitWidth : 0
+                Layout.leftMargin: layout.panelSheet ? -implicitWidth - layout.panelSheetShift : 0
+                Layout.rightMargin: layout.panelSheet ? layout.panelSheetShift : 0
                 Layout.topMargin: layout.panelSheet ? layout.headerHeight : 0
                 z: layout.panelSheet ? 2 : 0
                 ownToggle: false
@@ -342,7 +352,7 @@ Item {
                 trailingInset: layout.corner === "panel" ? layout.windowButtonsInset : 0
                 Layout.preferredWidth: implicitWidth
                 // The thread keeps room of its own.
-                maximumWidth: layout.panelSheet ? layout.panelSheetWidth : layout.besidePanel
+                maximumWidth: layout.panelSheet ? Math.min(layout.panelSheetWidth, layout.besideList - layout.detailsShown) : layout.besidePanel
                 visible: available && !layout.pluginTab
             }
         }
@@ -407,7 +417,7 @@ Item {
         visible: layout.panelSheet && panelView.visible && panelView.open
         x: sidebarScrim.visible ? sidebarScrim.x : 0
         y: panelView.parent.y + layout.headerHeight
-        width: parent.width - panelView.width - x
+        width: parent.width - panelView.width - layout.panelSheetShift - x
         height: panelView.height
         color: Theme.palette.color("scrim", "#52000000")
         Accessible.role: Accessible.Button
@@ -437,7 +447,7 @@ Item {
         anchors.bottom: parent.bottom
         anchors.rightMargin: 16
         anchors.bottomMargin: 16
-        radius: 8
+        radius: Theme.radiusMd
         color: Theme.palette.color("surface", "#0f0f11")
         border.color: Theme.palette.color("border", "#27272a")
         z: 3
@@ -471,7 +481,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: qsTr("Device")
                 color: Theme.palette.color("textMuted", "#8b8b93")
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
             ShellButton {
                 objectName: "floatingDeviceOpen"
@@ -496,7 +506,7 @@ Item {
         buttonHeight: 28
         anchors.right: parent.right
         anchors.rightMargin: 4
-        y: layout.corner === "centre" && workspaceView.visible ? 12 : layout.corner === "details" ? 8 : 4
+        y: layout.corner === "centre" && (workspaceView.visible || layout.centreTitleBar) || layout.corner === "panel" ? (Theme.headerHeight - buttonHeight) / 2 : layout.corner === "details" ? 8 : 4
     }
 
     ProjectFolderDrop {

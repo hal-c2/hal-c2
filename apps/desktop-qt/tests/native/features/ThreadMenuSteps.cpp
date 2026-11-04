@@ -9,6 +9,7 @@
 
 #include "FilesViewer.h"
 #include "Harness.h"
+#include "KeybindingController.h"
 #include "MenuController.h"
 #include "Move.h"
 #include "NavigationController.h"
@@ -295,6 +296,18 @@ const Steps steps([] {
   });
   step(QStringLiteral("the menu (offers|does not offer) %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(item(world, c[1]).has_value() == (c[0] == QLatin1String("offers")), QStringLiteral("the menu is %1").arg(show(items(world))));
+  });
+  // The right column's keys come from where the palette's do.
+  step(QStringLiteral("the menu shows the keys of (\\S+) beside %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString keys = world.native().controller<KeybindingController>()->shortcutLabel(c[0]);
+    const auto entry = item(world, c[1]);
+    expect(!keys.isEmpty() && entry && entry->value(QStringLiteral("shortcut")).toString() == keys,
+           QStringLiteral("%1 has the keys %2 and the menu is %3").arg(c[0], keys, show(items(world))));
+  });
+  step(QStringLiteral("the menu shows no keys"), [](World& world, const Captures&, const Table&) {
+    for (const QVariant& entry : items(world)) {
+      expect(!entry.toMap().contains(QStringLiteral("shortcut")), QStringLiteral("the menu is %1").arg(show(items(world))));
+    }
   });
   step(QStringLiteral("only these of the menu's actions can be chosen: %1").arg(q), [](World& world, const Captures& c, const Table&) {
     QStringList enabled;

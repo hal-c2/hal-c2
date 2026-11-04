@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QQuickItem>
 
+#include <functional>
 #include <utility>
 
 #include "FakeThreads.h"
@@ -241,6 +242,55 @@ void offerProviders(FakeMc& mc, const QJsonArray& providers) {
 
 namespace {
 
+// The composer's control `name`, shown or folded away into its menu.
+QQuickItem* composerControl(World& world, const QString& name) {
+  const std::function<QQuickItem*(QQuickItem*)> within = [&](QQuickItem* item) -> QQuickItem* {
+    if (item->objectName() == name) return item;
+    for (QQuickItem* child : item->childItems())
+      if (QQuickItem* found = within(child)) return found;
+    return nullptr;
+  };
+  QQuickItem* found = nullptr;
+  world.waitFor([&] { return (found = within(world.item(QStringLiteral("composer")))) != nullptr; },
+                [&] { return QStringLiteral("the composer to hold %1").arg(name); });
+  return found;
+}
+
+// Opens the composer's chip `name`, or, on a toolbar too narrow for it,
+// the row standing for it in the composer's menu of further controls.
+void openChip(World& world, const QString& name) {
+  using S = QString;
+  QQuickItem* chip = composerControl(world, name);
+  if (chip->isVisible()) {
+    world.tap(chip);
+    return;
+  }
+  QObject* composerView = world.item(S("composer"));
+  world.tap(S("composerOverflow"));
+  QQuickItem* row = nullptr;
+  world.waitFor(
+      [&] {
+        QObject* menu = composerView->property("overflowMenu").value<QObject*>();
+        if (!menu || !menu->property("opened").toBool()) return false;
+        for (int i = 0; i < menu->property("count").toInt(); ++i) {
+          QQuickItem* candidate = nullptr;
+          QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, candidate), Q_ARG(int, i));
+          QObject* sub = candidate ? candidate->property("subMenu").value<QObject*>() : nullptr;
+          if (candidate && (sub ? sub->objectName() : candidate->objectName()) == S("composerOverflow:") + name) row = candidate;
+        }
+        return row != nullptr;
+      },
+      [&] { return S("%1 in the composer's menu; the screen says: %2").arg(name, screenTexts(world)); });
+  world.tap(row);
+}
+
+// A choice an open picker lists, as a list row or, folded, a menu row.
+bool offers(QQuickItem* candidate, const QString& label) {
+  if (candidate->inherits("QQuickMenuItem")) return candidate->isVisible() && candidate->property("text").toString().compare(label, Qt::CaseInsensitive) == 0;
+  const auto* text = candidate->inherits("QQuickItemDelegate") ? candidate->property("contentItem").value<QQuickItem*>() : nullptr;
+  return text && text->property("text").toString().compare(label, Qt::CaseInsensitive) == 0;
+}
+
 // Claude offers Sonnet and Opus, and the thread runs on Sonnet: the user picks
 // `name` from the model picker.
 void pickModel(World& world, const QString& name) {
@@ -395,20 +445,17 @@ const Steps steps([] {
   step(S("the user picks the model %1 with (low|medium|high) reasoning").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     pickModel(world, c[0]);
     // The level, among the ones the reasoning picker lists once it is open.
-    world.tap(S("effortPicker"));
+    openChip(world, S("effortPicker"));
     QQuickItem* level = nullptr;
     world.waitFor(
         [&] {
-          level = world.findWhere([&](QQuickItem* candidate) {
-            const auto* label = candidate->inherits("QQuickItemDelegate") ? candidate->property("contentItem").value<QQuickItem*>() : nullptr;
-            return label && label->property("text").toString().compare(c[1], Qt::CaseInsensitive) == 0;
-          });
+          level = world.findWhere([&](QQuickItem* candidate) { return offers(candidate, c[1]); });
           return level != nullptr;
         },
         [&] { return S("the %1 level to be offered; the screen says: %2").arg(c[1], screenTexts(world)); });
     world.tap(level);
     // The list closes and the picker shows the level chosen.
-    QQuickItem* picker = world.item(S("effortPicker"));
+    QQuickItem* picker = composerControl(world, S("effortPicker"));
     world.waitFor(
         [&] {
           return !picker->property("popup").value<QObject*>()->property("visible").toBool() &&
@@ -436,24 +483,21 @@ const Steps steps([] {
   // Opus's other options, from the toolbar beside its reasoning picker.
   step(S("the user picks the model %1 with the 1M context window and fast mode on").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     pickModel(world, c[0]);
-    world.tap(S("optionPicker:contextWindow"));
+    openChip(world, S("optionPicker:contextWindow"));
     QQuickItem* choice = nullptr;
     world.waitFor(
         [&] {
-          choice = world.findWhere([&](QQuickItem* candidate) {
-            const auto* label = candidate->inherits("QQuickItemDelegate") ? candidate->property("contentItem").value<QQuickItem*>() : nullptr;
-            return label && label->property("text").toString() == QLatin1String("1M");
-          });
+          choice = world.findWhere([&](QQuickItem* candidate) { return offers(candidate, S("1M")); });
           return choice != nullptr;
         },
         [&] { return S("the 1M context window to be offered; the screen says: %1").arg(screenTexts(world)); });
     world.tap(choice);
-    QQuickItem* picker = world.item(S("optionPicker:contextWindow"));
+    QQuickItem* picker = composerControl(world, S("optionPicker:contextWindow"));
     world.waitFor([&] { return picker->property("displayText").toString() == QLatin1String("1M"); },
                   [&] { return S("the composer to show the 1M context window; it shows %1").arg(picker->property("displayText").toString()); });
 
-    world.tap(S("optionToggle:fastMode"));
-    world.waitFor([&] { return world.item(S("optionToggle:fastMode"))->property("checked").toBool(); }, S("fast mode to be on"));
+    openChip(world, S("optionToggle:fastMode"));
+    world.waitFor([&] { return composerControl(world, S("optionToggle:fastMode"))->property("checked").toBool(); }, S("fast mode to be on"));
   });
 
   step(S("the next message is sent to %1 with the 1M context window and fast mode on").arg(kQuoted), [](World& world, const Captures& c, const Table&) {

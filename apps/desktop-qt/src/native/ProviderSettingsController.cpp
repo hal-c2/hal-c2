@@ -120,7 +120,10 @@ QPair<QString, QString> summary(const QJsonObject& provider) {
                                                                                   : text(auth.value(QLatin1String("type")));
   const auto or_ = [&message](const QString& fallback) { return message.isEmpty() ? fallback : message; };
   if (!provider.value(QLatin1String("enabled")).toBool() || status == QLatin1String("disabled")) {
-    return {QStringLiteral("Disabled"), or_(QStringLiteral("This provider is installed but disabled for new sessions in HAL-C2."))};
+    // Said once: the headline, and only what the message adds to its own
+    // "X is disabled in HAL-C2 settings." (an OpenCode server URL kept).
+    static const QRegularExpression saysDisabled(QStringLiteral("^[^.]*\\bdisabled\\b[^.]*\\.\\s*"));
+    return {QStringLiteral("Disabled"), QString(message).remove(saysDisabled)};
   }
   if (!provider.value(QLatin1String("installed")).toBool()) {
     return {QStringLiteral("Not found"), or_(QStringLiteral("CLI not detected on PATH."))};

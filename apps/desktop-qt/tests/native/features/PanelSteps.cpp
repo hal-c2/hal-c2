@@ -412,6 +412,31 @@ const Steps steps([] {
     expect(world.mc.part<FakeDiffs>().asked.last().value(QLatin1String("method")) == QLatin1String("orchestration.getFullThreadDiff"),
            QStringLiteral("all changes were not asked of the whole thread"));
   });
+  // The earlier turns' checkpoints list the files they changed; the last one lists none.
+  step(QStringLiteral("turn (\\d+) only answered a question after turns that changed files"), [](World& world, const Captures& c, const Table&) {
+    const int last = c[0].toInt();
+    for (int turn = 1; turn < last; ++turn) {
+      const QJsonObject file{{QStringLiteral("path"), QStringLiteral("src/turn%1.ts").arg(turn)}, {QStringLiteral("kind"), QStringLiteral("added")},
+                             {QStringLiteral("additions"), 2}, {QStringLiteral("deletions"), 0}};
+      set(world, QStringLiteral("checkpoint"), QStringLiteral("cp-%1").arg(turn), {{QStringLiteral("files"), QJsonArray{file}}});
+    }
+    finishTurn(world, last, QString());
+  });
+  step(QStringLiteral("the diff shows all changes"), [](World& world, const Captures&, const Table&) {
+    expectDiffOf(world, turnFiles(1, diff(world).latestTurn() - 1));
+    expect(diff(world).selection() == 0, QStringLiteral("the picker shows selection %1").arg(diff(world).selection()));
+    expect(world.mc.part<FakeDiffs>().asked.last().value(QLatin1String("method")) == QLatin1String("orchestration.getFullThreadDiff"),
+           QStringLiteral("all changes were not asked of the whole thread"));
+  });
+  step(QStringLiteral("the user picks the latest turn"), [](World& world, const Captures&, const Table&) {
+    diff(world).select(-1);
+    waitForDiff(world);
+  });
+  step(QStringLiteral("the user is told there are no changes"), [](World& world, const Captures&, const Table&) {
+    waitForDiff(world);
+    expect(diff(world).status() == QLatin1String("empty") && diff(world).message() == QLatin1String("No net changes in this selection."), describeDiff(world));
+    expect(diff(world).selection() == -1 && diff(world).shownTurn() == diff(world).latestTurn(), QStringLiteral("the picker shows selection %1").arg(diff(world).selection()));
+  });
   // A turn's diff from its reply (timeline/tool-calls.feature).
   step(QStringLiteral("a turn changed two files"), [](World& world, const Captures&, const Table&) {
     twoTurns(world, {QStringLiteral("src/cart.ts"), QStringLiteral("src/checkout.ts")});

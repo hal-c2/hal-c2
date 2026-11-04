@@ -11,9 +11,9 @@ Switch {
     readonly property color trackOn: Theme.palette.color("accent", "#2563eb")
     readonly property color trackOff: Theme.palette.color("input", "#27272a")
 
-    padding: 4
-    spacing: 8
-    font.pixelSize: Math.round(13 * Theme.fontScale)
+    padding: Theme.space.xs
+    spacing: Theme.space.sm
+    font.pixelSize: Theme.type.body.size
     hoverEnabled: true
     opacity: enabled ? 1 : 0.64
 

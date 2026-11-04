@@ -192,16 +192,16 @@ AbstractButton {
         return target !== null;
     }
 
-    implicitHeight: Math.max(28, topPadding + contentItem.implicitHeight + bottomPadding)
+    implicitHeight: Math.max(Theme.control.md, topPadding + contentItem.implicitHeight + bottomPadding)
     implicitWidth: leftPadding + contentItem.implicitWidth + rightPadding
-    leftPadding: 10
-    rightPadding: 10 + 14 + 4
+    leftPadding: Theme.space.sm
+    rightPadding: Theme.space.sm + Theme.icon.sm + Theme.space.xs
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : 0.64
     font.family: fontFamily
-    font.pixelSize: Math.round(14 * Theme.fontScale)
-    font.weight: Font.Medium
+    font.pixelSize: Theme.type.body.size
+    font.weight: Theme.type.body.weight
     Accessible.role: Accessible.ComboBox
     Accessible.name: triggerLabel
 
@@ -214,38 +214,33 @@ AbstractButton {
     background: Rectangle {
         id: triggerBackground
 
-        readonly property color labelColor: control.hovered || control.pressed || popup.visible ? control.foreground : Theme.palette.color("secondaryLabel", "#a1a1aa")
+        readonly property color labelColor: control.hovered || control.pressed || popup.visible ? control.foreground : Theme.palette.color("inkSecondary", "#b8bdc7")
+        readonly property color fill: Theme.palette.color("surfaceRaised", "#1c1f24")
 
-        radius: Math.min(Theme.radius, 8)
-        color: control.pressed || control.hovered || popup.visible ? control.highlight : Qt.alpha(control.highlight, 0)
+        // The composer's ghost chip: no fill at rest, the raised surface under the pointer.
+        radius: Theme.radiusMd
+        color: control.pressed || control.hovered || popup.visible ? fill : "transparent"
         // Borderless like the composer's other pickers, so the keyboard's
         // arrival is the ring; pointer focus stays quiet.
         border.color: control.visualFocus ? Theme.palette.color("focus", "#3b82f6") : "transparent"
         border.width: control.visualFocus ? 1 : 0
 
-        Behavior on color {
-            ColorAnimation {
-                duration: 120
-            }
-        }
-
-        ShellIcon {
-            x: parent.width - width - 10
+        ShellChevron {
+            x: parent.width - width - Theme.space.sm
             y: (parent.height - height) / 2
-            name: "chevron-down"
-            size: 14
-            strokeWidth: 2.25
+            direction: "down"
+            size: Theme.icon.sm
             color: Theme.palette.color("iconMuted", "#8b8b93")
         }
     }
 
     contentItem: RowLayout {
-        spacing: 6
+        spacing: Theme.space.sm
 
         ProviderIcon {
             objectName: "modelPickerIcon"
             visible: control.activeInstance !== null
-            size: 16
+            size: Theme.icon.md
             driverKind: control.activeInstance ? control.activeInstance.driverKind : ""
             initials: control.activeInstance ? control.activeInstance.initials : ""
             accentColor: control.activeInstance ? control.activeInstance.accentColor : null
@@ -283,7 +278,9 @@ AbstractButton {
         y: below ? control.height + 4 : -height - 4
         // ljos-allow(layout-fixed-size): the rail and the list scroll inside it, and a size that followed the search's results would move the rows under the pointer as one types
         width: 360
-        height: 346
+        // The search row, then six whole rows (46 tall, 2 apart) between the
+        // list's margins: the list never stops on a sliced row.
+        height: 40 + 2 * Theme.space.sm + 6 * 46 + 5 * 2
         padding: 0
         margins: 8
         focus: true
@@ -318,22 +315,10 @@ AbstractButton {
             }
         }
 
-        exit: Transition {
-            NumberAnimation {
-                property: "opacity"
-                from: 1
-                to: 0
-                duration: 90
-                easing.type: Easing.InCubic
-            }
-        }
+        // Closing is instant: a fade could swallow the next open.
+        exit: null
 
-        background: Rectangle {
-            radius: Math.min(Theme.radius, 10)
-            color: control.overlay
-            border.color: control.fade(control.foreground, 0.1)
-            border.width: 1
-        }
+        background: ShellPopoverSurface {}
 
         contentItem: Item {
             clip: true
@@ -382,7 +367,7 @@ AbstractButton {
                 width: 44
                 height: parent.height
                 color: control.fade(control.mutedSurface, 0.3)
-                radius: Math.min(Theme.radius, 10)
+                radius: Theme.radiusLg
 
                 Flickable {
                     anchors.fill: parent
@@ -443,35 +428,6 @@ AbstractButton {
                             }
                         }
                     }
-
-                    // The selected-provider marker on the rail's edge.
-                    Rectangle {
-                        readonly property var target: control.showRail ? rail.buttonForAny(control.view) : null
-
-                        visible: target !== null
-                        x: railButtons.width - width
-                        y: target ? target.y + (target.height - height) / 2 : 0
-                        width: 3
-                        height: 20
-                        radius: 1.5
-                        color: Theme.palette.color("accent", "#2563eb")
-
-                        Behavior on y {
-                            NumberAnimation {
-                                duration: 200
-                                easing.type: Easing.OutCubic
-                            }
-                        }
-                    }
-                }
-
-                function buttonForAny(id) {
-                    for (let index = 0; index < railButtons.children.length; index += 1) {
-                        const child = railButtons.children[index];
-                        if (child.railId === id)
-                            return child;
-                    }
-                    return null;
                 }
             }
 
@@ -483,7 +439,7 @@ AbstractButton {
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 color: control.fade(control.mutedSurface, 0.4)
-                radius: rail.visible ? 0 : Math.min(Theme.radius, 10)
+                radius: rail.visible ? 0 : Theme.radiusLg
 
                 Rectangle {
                     visible: rail.visible
@@ -506,7 +462,7 @@ AbstractButton {
                             y: 14
                             name: "search"
                             size: 16
-                            color: control.fade(control.muted, 0.55)
+                            color: Theme.palette.color("inkTertiary", "#8b919e")
                         }
 
                         TextField {
@@ -526,7 +482,7 @@ AbstractButton {
                             placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
                             color: control.foreground
                             font.family: control.fontFamily
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                             selectionColor: Theme.palette.color("accent", "#2563eb")
                             selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
                             text: control.query
@@ -589,8 +545,9 @@ AbstractButton {
                         Layout.fillHeight: true
                         leftMargin: 8
                         rightMargin: 4
-                        topMargin: 6
-                        bottomMargin: 6
+                        // Outside the list, so its edges fall between rows.
+                        Layout.topMargin: Theme.space.sm
+                        Layout.bottomMargin: Theme.space.sm
                         spacing: 2
                         clip: true
                         boundsBehavior: Flickable.StopAtBounds
@@ -601,13 +558,17 @@ AbstractButton {
                             sourceComponent: modelData.kind === "legacy" ? legacyRow : modelRow
                         }
 
+                        ShellScrollEdge {
+                            target: list
+                        }
+
                         Text {
                             anchors.centerIn: parent
                             visible: list.count === 0
                             text: qsTr("No models found")
                             color: control.muted
                             font.family: control.fontFamily
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                         }
                     }
                 }
@@ -645,7 +606,7 @@ AbstractButton {
 
             objectName: instance && model ? "modelPickerRow:" + instance.instanceId + ":" + model.slug : ""
             implicitHeight: 46
-            radius: 4
+            radius: Theme.radiusXs
             opacity: disabledReason.length > 0 ? 0.64 : 1
             color: highlighted || (rowHover.hovered && disabledReason.length === 0) ? control.highlight : isSelected ? control.fade(control.foreground, 0.08) : "transparent"
             Accessible.role: Accessible.ListItem
@@ -682,7 +643,7 @@ AbstractButton {
                 anchors.fill: parent
                 anchors.leftMargin: 8
                 anchors.rightMargin: 4
-                spacing: 6
+                spacing: Theme.space.sm
 
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -699,7 +660,7 @@ AbstractButton {
                             text: row.model ? Picker.displayName(row.model, true) : ""
                             color: control.foreground
                             font.family: control.fontFamily
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             font.weight: Font.Medium
                             elide: Text.ElideRight
                         }
@@ -708,7 +669,7 @@ AbstractButton {
                             visible: row.model !== null && row.model.isNew
                             implicitWidth: newText.implicitWidth + 6
                             implicitHeight: newText.implicitHeight + 2
-                            radius: 3
+                            radius: Theme.radiusXs
                             color: control.fade(Theme.palette.color("update", "#3b82f6"), 0.15)
                             border.color: control.fade(Theme.palette.color("update", "#3b82f6"), 0.35)
 
@@ -719,8 +680,8 @@ AbstractButton {
                                 text: qsTr("NEW")
                                 color: Theme.palette.color("updateForeground", "#60a5fa")
                                 font.family: control.fontFamily
-                                font.pixelSize: Math.round(10 * Theme.fontScale)
-                                font.bold: true
+                                font.pixelSize: Theme.type.caption.size
+                                font.weight: Font.DemiBold
                                 font.letterSpacing: 0.4
                             }
                         }
@@ -737,7 +698,7 @@ AbstractButton {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ProviderIcon {
                             size: 12
@@ -751,7 +712,7 @@ AbstractButton {
                             text: row.model && row.instance ? Picker.providerLabel(row.model, row.instance) : ""
                             color: control.muted
                             font.family: control.fontFamily
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             elide: Text.ElideRight
                         }
                     }
@@ -762,7 +723,7 @@ AbstractButton {
                     visible: row.jumpText.length > 0
                     implicitWidth: Math.max(20, kbdText.implicitWidth + 8)
                     implicitHeight: 20
-                    radius: 4
+                    radius: Theme.radiusXs
                     color: control.mutedSurface
 
                     Text {
@@ -772,7 +733,7 @@ AbstractButton {
                         text: row.jumpText
                         color: control.muted
                         font.family: control.fontFamily
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.weight: Font.Medium
                     }
                 }
@@ -800,7 +761,7 @@ AbstractButton {
                     })
 
                     background: Rectangle {
-                        radius: 4
+                        radius: Theme.radiusXs
                         color: also.hovered ? control.highlight : "transparent"
                     }
 
@@ -809,7 +770,7 @@ AbstractButton {
                             anchors.centerIn: parent
                             name: also.chosen ? "check" : "plus"
                             size: 12
-                            color: also.chosen ? Theme.palette.color("accent", "#2563eb") : control.fade(control.muted, also.hovered ? 1 : 0.72)
+                            color: also.chosen ? Theme.palette.color("accent", "#2563eb") : also.hovered ? Theme.palette.color("inkSecondary", "#b8bdc7") : Theme.palette.color("inkTertiary", "#8b919e")
                         }
                     }
                 }
@@ -832,7 +793,7 @@ AbstractButton {
                     onClicked: control.toggleFavorite(row.instance.instanceId, row.model.slug)
 
                     background: Rectangle {
-                        radius: 4
+                        radius: Theme.radiusXs
                         color: star.hovered ? control.highlight : "transparent"
                     }
 
@@ -842,7 +803,7 @@ AbstractButton {
                             name: "star"
                             filled: star.favorite
                             size: 12
-                            color: star.favorite ? "#eab308" : control.fade(control.muted, star.hovered ? 1 : 0.72)
+                            color: star.favorite ? "#eab308" : star.hovered ? Theme.palette.color("inkSecondary", "#b8bdc7") : Theme.palette.color("inkTertiary", "#8b919e")
                         }
                     }
                 }
@@ -861,7 +822,7 @@ AbstractButton {
 
             objectName: entry ? "modelPickerLegacy:" + entry.instanceId : ""
             implicitHeight: 46
-            radius: 4
+            radius: Theme.radiusXs
             color: control.highlightedIndex === rowIndex || legacyHover.hovered ? control.highlight : "transparent"
             Accessible.role: Accessible.Button
             Accessible.name: qsTr("Legacy models")
@@ -880,7 +841,7 @@ AbstractButton {
                 anchors.fill: parent
                 anchors.leftMargin: 8
                 anchors.rightMargin: 8
-                spacing: 6
+                spacing: Theme.space.sm
 
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -890,7 +851,7 @@ AbstractButton {
                         text: qsTr("Legacy models")
                         color: control.foreground
                         font.family: control.fontFamily
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.weight: Font.Medium
                     }
 
@@ -898,13 +859,13 @@ AbstractButton {
                         text: legacy.entry ? qsTr("%1 models").arg(legacy.entry.count) : ""
                         color: control.muted
                         font.family: control.fontFamily
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                 }
 
-                ShellIcon {
-                    name: "chevron-right"
-                    size: 16
+                ShellChevron {
+                    direction: "right"
+                    size: Theme.icon.md
                     color: control.muted
                     rotation: legacy.entry && legacy.entry.expanded ? 90 : 0
 
@@ -952,9 +913,10 @@ AbstractButton {
             id: face
 
             anchors.fill: parent
-            radius: 6
+            radius: Theme.radiusSm
             opacity: railButton.available ? 1 : 0.5
-            color: railButton.available && (railHover.hovered || railButton.activeFocus) ? Qt.tint(control.overlay, control.fade(control.foreground, 0.1)) : "transparent"
+            // The chosen provider is filled; hover and focus tint the rest.
+            color: railButton.selected ? Theme.palette.color("surfaceRaised", "#1c1f24") : railButton.available && (railHover.hovered || railButton.activeFocus) ? Qt.tint(control.overlay, control.fade(control.foreground, 0.1)) : "transparent"
         }
 
         TapHandler {
@@ -1005,7 +967,7 @@ AbstractButton {
 
         implicitWidth: badgeLabel.implicitWidth + 8
         implicitHeight: badgeLabel.implicitHeight + 2
-        radius: 4
+        radius: Theme.radiusXs
         color: "transparent"
         border.color: Theme.palette.color("border", "#27272a")
 
@@ -1015,7 +977,7 @@ AbstractButton {
             anchors.centerIn: parent
             color: control.muted
             font.family: control.fontFamily
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             font.weight: Font.Medium
         }
     }

@@ -316,7 +316,7 @@ const Steps steps([] {
   });
   step(S("each row names its pull request's repository"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return model(world).count() == 2; }, [&] { return describe(world); });
-    expect(world.shows(S("acme/shop #42"), false) && world.shows(S("acme/api #42"), false), describe(world));
+    expect(world.shows(S("acme/shop · feature/tax → main")) && world.shows(S("acme/api · tax → main")), describe(world));
   });
   step(S("pull request (\\d+) is listed with its stack"), [](World& world, const Captures& c, const Table&) {
     waitForRow(world, c[0].toInt(), true);
@@ -344,7 +344,7 @@ const Steps steps([] {
     world.sync();
   });
   step(S("the user sees the pull request's title and branches before choosing local or worktree"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return world.shows(S("#42 Add tax to the cart")) && world.shows(S("feature/tax → main")); },
+    world.waitFor([&] { return world.shows(S("Add tax to the cart")) && world.shows(S("#42 · feature/tax to main")); },
                   [&] { return S("the pull request to be shown; the dialog is %1").arg(show(world.state(S("pullRequestThread")))); });
     const QList<QJsonObject> resolved = asked(world, S("git.resolvePullRequest"));
     expect(resolved.size() == 1 && resolved.first().value(QLatin1String("cwd")) == QLatin1String("/work/shop") &&

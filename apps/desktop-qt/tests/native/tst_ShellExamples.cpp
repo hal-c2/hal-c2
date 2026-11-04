@@ -36,6 +36,13 @@ static QQuickItem* findVisualItemOfType(QQuickItem* parent, const char* type) {
   return nullptr;
 }
 
+// The route's centre: a layout of a shell's own draws it with CentreHost,
+// DefaultLayout (a DefaultShell's, as the folders example is) with ThreadArea.
+static QQuickItem* findCentre(QQuickItem* parent) {
+  auto* centre = findVisualItemOfType(parent, "CentreHost");
+  return centre ? centre : findVisualItemOfType(parent, "ThreadArea");
+}
+
 class ShellExamplesTest : public QObject {
   Q_OBJECT
 
@@ -110,6 +117,11 @@ private slots:
                              "HalC2.Shell", 1, 0, "Panel");
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/PaletteModel.qml")),
                              "HalC2.Shell", 1, 0, "PaletteModel");
+    // A Space route shows the Space view, which reads these.
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Spaces.qml")),
+                             "HalC2.Shell", 1, 0, "Spaces");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/tests/imports/HalC2/Shell/Diagrams.qml")),
+                             "HalC2.Shell", 1, 0, "Diagrams");
     runtime = std::make_unique<ShellRuntime>(
         ShellRuntime::Options{directory.path(), QStringLiteral(HAL_C2_TEST_SOURCE_DIR "/qml")},
         &bridge, theme.get());
@@ -139,7 +151,7 @@ private slots:
   // A thread or draft route draws its view in the centre (js/centreViews.js);
   // settings take the centre's place until they close.
   void threadRoutesDrawTheCentre(QQuickWindow* window) {
-    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    auto* centre = findCentre(window->contentItem());
     QVERIFY(centre);
     QVERIFY(centre->isVisible());
     bridge.publish("route", QVariantMap{{"kind", "thread"}, {"threadKey", "env-a:thread-1"}, {"title", "Tax line"}});
@@ -169,7 +181,7 @@ private slots:
   void rightPanelLeavesTheThreadRoom(QQuickWindow* window) {
     auto* panel = findVisualItemOfType(window->contentItem(), "RightPanel");
     QVERIFY(panel);
-    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    auto* centre = findCentre(window->contentItem());
     QVERIFY(centre);
     auto open = QJsonDocument::fromJson(R"({
       "isOpen":true,"tabs":[],"activeId":"","width":900,
@@ -184,13 +196,18 @@ private slots:
     // The thread's 360, less a card's border round the centre, once a
     // sidebar that folds for it has.
     QTRY_VERIFY2(centre->width() >= 356, qPrintable(QString::number(centre->width())));
-    QTRY_VERIFY(panel->mapToScene(QPointF(panel->width(), 0)).x() <= window->width());
+    const auto where = [&] {
+      return QString("centre %1+%2, panel %3+%4, window %5")
+          .arg(centre->mapToScene(QPointF()).x()).arg(centre->width())
+          .arg(panel->mapToScene(QPointF()).x()).arg(panel->width()).arg(window->width());
+    };
+    QTRY_VERIFY2(panel->mapToScene(QPointF(panel->width(), 0)).x() <= window->width(), qPrintable(where()));
   }
 
   // The usage route draws its chart inside the centre, and the day under the
   // pointer is read out without leaving the plot.
   void usageRouteDrawsTheChart(QQuickWindow* window) {
-    auto* centre = findVisualItemOfType(window->contentItem(), "CentreHost");
+    auto* centre = findCentre(window->contentItem());
     QVERIFY(centre);
     QVariantList days;
     for (int day = 0; day < 7; ++day) {
@@ -247,7 +264,7 @@ private slots:
   // the thread; back on Threads, and with the page gone, the shell is as it was.
   void pluginPagesHaveTabs(QQuickWindow* window) {
     auto* content = window->contentItem();
-    auto* centre = findVisualItemOfType(content, "CentreHost");
+    auto* centre = findCentre(content);
     QVERIFY(centre);
     QTRY_VERIFY(centre->isVisible());
     const QString key = QStringLiteral("code-review/reviews@1");
@@ -992,7 +1009,8 @@ private slots:
     QTRY_VERIFY(rightOf("panelAdd") > 0);
     QTRY_VERIFY(rightOf("panelAdd") <= corner);
     QCOMPARE(left(), corner);
-    QVERIFY(buttons->y() + buttons->height() <= 36);
+    // Centred on the strip's line, which is the thread header's.
+    QCOMPARE(buttons->y() + buttons->height() / 2, theme->headerHeight() / 2.0);
     show(true, false, false);
     QTRY_VERIFY(rightOf("threadDetailsClose") < 0);
     QTRY_VERIFY(rightOf("panelAdd") <= corner);
@@ -1065,9 +1083,9 @@ private slots:
     bridge.publish("composer", threadComposer());
     QTRY_VERIFY(findVisualItem(root, "composerDrop")->isVisible());
     QVERIFY(!dropAttaches(window, QPointF(leftOf(side) + side->width() / 2, 500)));
-    // Its width is the sheet's, not one to drag or to fill the window from.
+    // Its width is the sheet's, not one to drag. ("Open in centre",
+    // panelMaximize, still moves the tab to the stage from here.)
     QVERIFY(!findVisualItem(side, "panelEdge")->isVisible());
-    QVERIFY(!findVisualItem(side, "panelMaximize")->isVisible());
     // The header's toggle is clear of it, a click beside it closes it, and so
     // does Escape.
     auto* toggle = findVisualItem(workspace, "panelToggle");
@@ -1090,10 +1108,12 @@ private slots:
     QTRY_COMPARE(side->width(), 0.0);
     QCOMPARE(workspace->width(), 960.0 - 256);
 
-    // The thread details go over the thread once it would have under 360.
+    // The thread details go over the thread once it would have under the
+    // layout's 480 (LayoutController's contentMinimumWidth).
     show(false, true);
+    window->resize(1040, 1000);
     QTRY_VERIFY(details->isVisible());
-    QTRY_COMPARE(workspace->width(), 960.0 - 256 - 280);
+    QTRY_COMPARE(workspace->width(), 1040.0 - 256 - 280);
     window->resize(880, 1000);
     QTRY_COMPARE(workspace->width(), 880.0 - 256);
     QTRY_COMPARE(leftOf(details) + details->width(), 880.0);
@@ -1124,14 +1144,21 @@ private slots:
     QVERIFY(findVisualItem(side, "panelMaximize")->isVisible());
     // With the details beside it the panel gives up width, not the thread.
     show(true, true);
-    QTRY_COMPARE(workspace->width(), 360.0);
-    QCOMPARE(side->width(), 1400.0 - 256 - 280 - 360);
-    QCOMPARE(leftOf(details), 256.0 + 360);
-    // And with no room left for its minimum beside them, it is a sheet.
+    QTRY_COMPARE(workspace->width(), 480.0);
+    QCOMPARE(side->width(), 1400.0 - 256 - 280 - 480);
+    QCOMPARE(leftOf(details), 256.0 + 480);
+    // And with no room left for its minimum beside them, it is a sheet over
+    // the thread, left of the details, which stay uncovered and take clicks.
     window->resize(1200, 800);
     QTRY_COMPARE(workspace->width(), 1200.0 - 256 - 280);
     QTRY_VERIFY(scrim->isVisible());
-    QCOMPARE(leftOf(side) + side->width(), 1200.0);
+    QCOMPARE(leftOf(details) + details->width(), 1200.0);
+    QCOMPARE(leftOf(side) + side->width(), leftOf(details));
+    QCOMPARE(leftOf(scrim) + scrim->width(), leftOf(side));
+    const int closes = toggles();
+    QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(leftOf(details) + details->width() / 2), 500));
+    QCoreApplication::processEvents();
+    QCOMPARE(toggles(), closes);
 
     bridge.publish("composer", QVariant());
     bridge.publish("panel", QVariant());
@@ -1228,6 +1255,38 @@ private slots:
     bridge.publish("toasts", QVariant());
     // And they work from here.
     QTest::mouseClick(window, Qt::LeftButton, {}, QPoint(int(buttons->x()) + 48, int(buttons->y()) + 14));
+    QTRY_COMPARE(window->visibility(), QWindow::Maximized);
+    window->showNormal();
+    bridge.publish("route", QVariant());
+    bridge.publish("workspace", initialState.value("workspace"));
+  }
+
+  // Scenario Outline: The window controls are on every page, a Space
+  // (features/navigation/windows.feature): a Space draws the header line a
+  // thread's header shares, so no band sits above it; the buttons centre on
+  // that line, and the line drags and maximizes the window.
+  void defaultShellPutsTheWindowButtonsOnASpacesHeaderLine() {
+#ifdef Q_OS_MACOS
+    QSKIP("macOS draws the window's buttons itself");
+#endif
+    bridge.publish("workspace", QVariant());
+    bridge.publish("route", QVariantMap{{"kind", "space"}});
+    auto* window = defaultShell(1400, 800);
+    QVERIFY(window);
+    auto* root = window->contentItem();
+    auto* buttons = findVisualItem(root, "windowButtons");
+    auto* band = findVisualItem(root, "chromeBand");
+    QVERIFY(buttons && band);
+    QQuickItem* line = nullptr;
+    QTRY_VERIFY((line = findVisualItem(root, "spaceHeaderLine")) && line->isVisible());
+    QTRY_VERIFY(!band->isVisible());
+    QTRY_VERIFY(buttons->isVisible());
+    QTRY_COMPARE(buttons->mapToScene(QPointF(buttons->width(), 0)).x(), 1396.0);
+    QTRY_COMPARE(line->mapToScene(QPointF(0, 0)).y(), 52.0);
+    QCOMPARE(buttons->mapToScene(QPointF(0, buttons->height() / 2)).y(), 26.0);
+    // A double click on the line, clear of its buttons, maximizes the window.
+    const QPoint onTheLine(800, 26);
+    QTest::mouseDClick(window, Qt::LeftButton, {}, onTheLine);
     QTRY_COMPARE(window->visibility(), QWindow::Maximized);
     window->showNormal();
     bridge.publish("route", QVariant());

@@ -51,6 +51,19 @@ Feature: Running a thread's actions from its menu
         | delete               | Delete                |
 
     @desktop
+    Scenario: The open thread's menu shows the keys that pin and settle it
+      Given the user is viewing "env-a:t1"
+      When the user opens the thread menu for "env-a:t1" at 40, 120
+      Then the menu shows the keys of thread.pin beside "pin"
+      And the menu shows the keys of thread.settle beside "settle"
+
+    @desktop
+    Scenario: Another thread's menu shows no keys, since they act on the open thread
+      Given the user is viewing "env-a:t2"
+      When the user opens the thread menu for "env-a:t1" at 40, 120
+      Then the menu shows no keys
+
+    @desktop
     Scenario: The header's title opens the open thread's menu without the project filter
       Given the user is viewing "env-a:t2"
       When the user opens the header's title menu at 10, 20

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Templates as T
 import HalC2.Shell
 import "js/settingsPages.js" as Pages
 
@@ -64,16 +65,27 @@ Window {
         return false;
     }
 
-    // The layout fits the thread list to the room the window leaves it.
+    // Whether the layout draws the thread list's slim rows and rail as the
+    // window narrows (LayoutController's sidebarMode). A root whose layouts
+    // were not drawn for them (the phone's tablet layout) turns it off and
+    // keeps the full list.
+    property bool sidebarModes: true
+
+    // The layout fits the thread list to the room the window leaves it, and
+    // widens its default for a monospace interface font.
     function reportWidth() {
-        Shell.dispatch("layout.window", { width: Math.round(root.width / root.zoom) });
+        Shell.dispatch("layout.window", { width: Math.round(root.width / root.zoom), monospace: Theme.monospace, modes: root.sidebarModes });
     }
+    readonly property bool monospaceInterface: Theme.monospace
+    onMonospaceInterfaceChanged: reportWidth()
+    onSidebarModesChanged: reportWidth()
 
     width: 1280
     height: 820
     onWidthChanged: reportWidth()
-    // A zoom changes the room as a resize does.
-    onZoomChanged: reportWidth()
+    // A zoom changes the room as a resize does. Later, as the layout's answer
+    // republishes the zoom while it is still changing.
+    onZoomChanged: Qt.callLater(reportWidth)
     // Again once the layout is there: the shell may start after the window.
     // Later, as the answer republishes sidebarWidth while it is still changing.
     onSidebarWidthChanged: Qt.callLater(reportWidth)
@@ -89,11 +101,19 @@ Window {
     Item {
         id: body
 
+        // The window's popups (popupHoldsKeys).
+        readonly property Item overlay: T.Overlay.overlay
+
         objectName: "shellBody"
         width: root.width / root.zoom
         height: root.height / root.zoom
         scale: root.zoom
         transformOrigin: Item.TopLeft
+    }
+
+    // Every attached ToolTip shares one instance; this dresses it.
+    ShellToolTip {
+        tip: root.contentItem.T.ToolTip.toolTip
     }
 
     PanelBodies {
@@ -151,8 +171,8 @@ Window {
             anchors.centerIn: parent
             text: parent.hint ? parent.hint.message : ""
             color: "white"
-            font.pixelSize: Math.round(24 * Theme.fontScale)
-            font.bold: true
+            font.pixelSize: Theme.type.display.size
+            font.weight: Font.DemiBold
         }
     }
 
@@ -178,8 +198,14 @@ Window {
     // with no command in the current focus stands down and stays with the
     // focused control. A focused terminal keeps every key except the shell's
     // own terminal-context commands (Ctrl+J and co), and a text field every
-    // key whose command stands down for it (mod+z).
-    Instantiator {
+    // key whose command stands down for it (mod+z). So does every key while a
+    // popup holds the keyboard (popupHoldsKeys).
+    //
+    // A property, not a child: a shortcut under an item is one Qt stands down
+    // while any popup that closes on Escape is open, wherever the keyboard is,
+    // and the keys then went into the field under it (a page's `/` menu, the
+    // release notes a hover opens).
+    property Instantiator keyShortcuts: Instantiator {
         model: Keybindings.shortcuts
 
         delegate: Shortcut {
@@ -188,7 +214,7 @@ Window {
             sequence: modelData.sequence
             context: Qt.WindowShortcut
             autoRepeat: modelData.autoRepeat
-            enabled: root.terminalFocused ? modelData.terminal : root.previewFocused ? modelData.preview : root.composerFocused ? modelData.composer : root.editableFocused ? modelData.editable : modelData.chrome
+            enabled: !root.popupHoldsKeys && (root.terminalFocused ? modelData.terminal : root.previewFocused ? modelData.preview : root.composerFocused ? modelData.composer : root.editableFocused ? modelData.editable : modelData.chrome)
             onActivated: Keybindings.press(modelData.sequence, {
                 terminal: root.terminalFocused,
                 composer: root.composerFocused,
@@ -196,6 +222,23 @@ Window {
                 preview: root.previewFocused
             })
         }
+    }
+
+    // A popup holds the window's keys while it has the keyboard (a menu, a
+    // picker, a dialog's field), the command palette aside, which takes its own
+    // toggle, or while it is modal and shows its scrim (ShellScrim). One that
+    // leaves the keyboard where it was holds none.
+    readonly property bool popupHoldsKeys: {
+        const overlay = body.overlay;
+        if (!overlay)
+            return false;
+        for (let node = root.activeFocusItem; node; node = node.parent) {
+            if (node.objectName === "commandPaletteContent")
+                return false;
+            if (node === overlay)
+                return true;
+        }
+        return overlay.children.some(child => child.visible && child.objectName === "shellScrim");
     }
 
     Connections {

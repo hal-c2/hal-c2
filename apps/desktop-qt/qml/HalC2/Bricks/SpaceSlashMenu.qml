@@ -48,11 +48,7 @@ Popup {
     focus: false
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
-    background: Rectangle {
-        radius: Math.min(Theme.radius, 8)
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-    }
+    background: ShellPopoverSurface {}
 
     contentItem: ColumnLayout {
         spacing: 0
@@ -62,7 +58,7 @@ Popup {
             visible: menu.shown.length === 0
             text: qsTr("No block kind matches")
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
         }
 
         Repeater {
@@ -84,7 +80,7 @@ Popup {
                 }
                 Layout.fillWidth: true
                 implicitHeight: 30
-                radius: Math.min(Theme.radius, 6)
+                radius: Theme.radiusSm
                 color: index === menu.current ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
 
                 RowLayout {
@@ -103,7 +99,7 @@ Popup {
                         Layout.fillWidth: true
                         text: entry.modelData.label
                         color: Theme.palette.color("text", "#e4e4e7")
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
                 }
 

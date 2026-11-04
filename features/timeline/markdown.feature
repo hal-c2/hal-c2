@@ -66,6 +66,18 @@ Feature: Formatted messages
     When the user right-clicks the reply's text
     Then the menu offers "Copy" and "Select All" only
 
+  # Inline code is one tinted run with no spaces added around it. Only a
+  # span too long for a phone's line may break, and then only after a slash
+  # or a hyphen.
+  @desktop @mobile @backlog-mobile
+  Scenario: Inline code stays whole and reads as written
+    Given the agent answers "The MC lives in `apps/server-ex`, so run (`mix test`)."
+    Then the reply's words read "The MC lives in apps/server-ex, so run (mix test)."
+    And "apps/server-ex" stays on one line however narrow the timeline is
+    When the user selects "apps/server-ex" in the reply
+    And the user chooses "Copy" from the reply's right-click menu
+    Then the clipboard holds "apps/server-ex"
+
   @desktop
   Scenario: Select All in a code block's right-click menu selects its code
     Given the agent's reply has a code block

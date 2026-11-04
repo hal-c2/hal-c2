@@ -38,7 +38,7 @@ Item {
         color: Theme.palette.color("errorForeground", "#ef4444")
         wrapMode: Text.Wrap
         horizontalAlignment: Text.AlignHCenter
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
     }
 
     Text {
@@ -46,6 +46,6 @@ Item {
         visible: host.problem.length === 0 && part.item === null
         text: qsTr("Loading…")
         color: host.muted
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
     }
 }

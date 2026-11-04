@@ -51,7 +51,7 @@ Rectangle {
         Text {
             text: Spaces.spaceName
             color: deck.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         RowLayout {
@@ -83,7 +83,7 @@ Rectangle {
                 selectByMouse: true
                 selectionColor: Theme.palette.color("accent", "#2563eb")
                 selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
-                font.pixelSize: Math.round(28 * Theme.fontScale)
+                font.pixelSize: Theme.type.display.size
                 font.weight: Font.Bold
                 clip: true
 
@@ -149,7 +149,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: deck.trashed
             implicitHeight: trashedRow.implicitHeight + 16
-            radius: Math.min(Theme.radius, 8)
+            radius: Theme.radiusMd
             color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.12)
             border.color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.4)
 
@@ -171,7 +171,7 @@ Rectangle {
                     text: qsTr("This deck is in the trash, so it cannot be changed.")
                     color: deck.foreground
                     wrapMode: Text.Wrap
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
 
                 ShellButton {
@@ -253,7 +253,7 @@ Rectangle {
                 objectName: "spaceSlide:" + index
                 width: ListView.view.width
                 height: cardRow.implicitHeight + 20
-                radius: Math.min(Theme.radius, 8)
+                radius: Theme.radiusMd
                 color: "transparent"
                 border.color: deck.lineColor
 
@@ -273,14 +273,14 @@ Rectangle {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    anchors.margins: 10
-                    spacing: 10
+                    anchors.margins: Theme.space.sm
+                    spacing: Theme.space.sm
 
                     Text {
                         Layout.alignment: Qt.AlignTop
                         text: String(card.index + 1)
                         color: deck.muted
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
 
                     ColumnLayout {
@@ -296,7 +296,7 @@ Rectangle {
                             color: deck.foreground
                             selectByMouse: true
                             clip: true
-                            font.pixelSize: Math.round(16 * Theme.fontScale)
+                            font.pixelSize: Theme.type.title.size
                             font.weight: Font.DemiBold
                             onAccepted: focus = false
                             onActiveFocusChanged: {
@@ -326,7 +326,7 @@ Rectangle {
                             textFormat: TextEdit.PlainText
                             wrapMode: TextEdit.Wrap
                             selectByMouse: true
-                            font.pixelSize: Math.round(14 * Theme.fontScale)
+                            font.pixelSize: Theme.type.prose.size
                             onActiveFocusChanged: {
                                 if (!activeFocus)
                                     card.writeBody();
@@ -420,7 +420,7 @@ Rectangle {
                 visible: Spaces.slides.count === 0 && deck.trashed
                 text: qsTr("This deck has no slides.")
                 color: deck.muted
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
         }
     }

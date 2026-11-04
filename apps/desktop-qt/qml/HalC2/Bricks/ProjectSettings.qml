@@ -15,7 +15,7 @@ SettingsPage {
     readonly property bool ready: settings?.status === "ready"
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
     readonly property bool projectScope: (Shell.state.settingsScope?.kind ?? "all") === "project"
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warningForeground", "#fbbf24")
 
     function send(name, payload) {
@@ -26,16 +26,12 @@ SettingsPage {
     title: qsTr("Project")
 
     // Inline components cannot see `page`; the ones that need it are handed it.
-    component Heading: Label {
-        color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
-        font.weight: Font.DemiBold
-    }
+    component Heading: SettingsHeading {}
 
     component Caption: Label {
         Layout.fillWidth: true
-        color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        color: Theme.palette.color("inkTertiary", "#a1a1aa")
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
@@ -50,21 +46,27 @@ SettingsPage {
         property string resetKey: ""
         property bool resettable: false
         default property alias control: controls.data
+        // What explains the row further, under its description.
+        property alias details: details.data
 
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
+            id: words
+
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             RowLayout {
-                spacing: 6
+                id: heading
+
+                spacing: Theme.space.sm
 
                 Label {
                     text: row.title
                     color: row.project.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -82,18 +84,33 @@ SettingsPage {
                 visible: row.mixed
                 text: qsTr("Mixed across selected machines")
                 color: row.project.warning
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Caption {
+                id: describing
+
+                objectName: "description"
                 visible: text.length > 0
                 text: row.description
             }
+
+            ColumnLayout {
+                id: details
+
+                Layout.fillWidth: true
+                visible: children.length > 0
+                spacing: Theme.space.xs
+            }
         }
 
+        // Centred on the title and description, not on the details under them.
         RowLayout {
             id: controls
-            spacing: 8
+
+            Layout.alignment: details.visible ? Qt.AlignTop : Qt.AlignVCenter
+            Layout.topMargin: details.visible ? Math.max(0, Math.round((heading.implicitHeight + (describing.visible ? words.spacing + describing.implicitHeight : 0) - implicitHeight) / 2)) : 0
+            spacing: Theme.space.sm
         }
     }
 
@@ -134,7 +151,7 @@ SettingsPage {
         objectName: "identity"
         visible: page.ready
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         Heading { text: qsTr("Project") }
 
@@ -210,7 +227,7 @@ SettingsPage {
             objectName: "checkouts"
             visible: (page.settings?.checkouts ?? []).length > 1
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             Heading { text: qsTr("Checkouts") }
 
@@ -223,12 +240,12 @@ SettingsPage {
                     required property var modelData
                     objectName: "checkout:" + modelData.key
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     Label {
                         text: checkout.modelData.environment
                         color: page.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.Medium
                     }
 
@@ -296,61 +313,70 @@ SettingsPage {
             Accessible.name: qsTr("Default model")
             onActivated: index => page.send("model", { key: index === 0 ? "" : models[index - 1].key })
         }
-    }
 
-    // Where the default model comes from: the layers it resolves through, and
-    // from an environment's view the projects that override it.
-    ColumnLayout {
-        id: sources
+        // Where the default model comes from: the layers it resolves through, and
+        // from an environment's view the projects that override it.
+        details: ColumnLayout {
+            id: sources
 
-        readonly property var inheritance: page.settings?.model?.inheritance ?? null
+            readonly property var inheritance: page.settings?.model?.inheritance ?? null
 
-        objectName: "modelSources"
-        Layout.fillWidth: true
-        spacing: 4
+            objectName: "modelSources"
+            Layout.fillWidth: true
+            spacing: Theme.space.xs
 
-        ShellButton {
-            objectName: "inspect"
-            subtle: true
-            text: sources.inheritance === null ? qsTr("Where this comes from") : qsTr("Hide where this comes from")
-            onClicked: page.send("inspect", { key: sources.inheritance === null ? "model" : "" })
-        }
-
-        Repeater {
-            model: sources.inheritance?.layers ?? []
-
-            delegate: Caption {
-                required property var modelData
-
-                objectName: "layer:" + modelData.key
-                color: modelData.effective ? page.foreground : page.muted
-                font.weight: modelData.effective ? Font.DemiBold : Font.Normal
-                text: modelData.effective ? qsTr("%1: %2 (in effect)").arg(modelData.label).arg(modelData.value) : qsTr("%1: %2").arg(modelData.label).arg(modelData.value)
+            // A link under the description of what it explains, flush with its words.
+            ShellButton {
+                objectName: "inspect"
+                subtle: true
+                implicitHeight: Theme.control.sm
+                leftPadding: 0
+                rightPadding: 0
+                hoverFill: "transparent"
+                font.pixelSize: Theme.type.meta.size
+                font.weight: Font.Normal
+                font.underline: hovered
+                tint: Theme.palette.color("inkSecondary", "#b8bdc7")
+                text: sources.inheritance === null ? qsTr("Where this comes from") : qsTr("Hide where this comes from")
+                onClicked: page.send("inspect", { key: sources.inheritance === null ? "model" : "" })
             }
-        }
 
-        Repeater {
-            model: sources.inheritance?.overridingProjects ?? []
+            Repeater {
+                model: sources.inheritance?.layers ?? []
 
-            delegate: RowLayout {
-                id: overriding
+                delegate: Caption {
+                    required property var modelData
 
-                required property var modelData
-
-                Layout.fillWidth: true
-                spacing: 8
-
-                Caption {
-                    text: qsTr("%1 overrides it with %2.").arg(overriding.modelData.title).arg(overriding.modelData.value)
+                    objectName: "layer:" + modelData.key
+                    color: modelData.effective ? page.foreground : page.muted
+                    font.weight: modelData.effective ? Font.DemiBold : Font.Normal
+                    text: modelData.effective ? qsTr("%1: %2 (in effect)").arg(modelData.label).arg(modelData.value) : qsTr("%1: %2").arg(modelData.label).arg(modelData.value)
                 }
+            }
 
-                ShellButton {
-                    objectName: "clear:" + overriding.modelData.projectId
-                    subtle: true
-                    enabled: page.editable
-                    text: qsTr("Reset")
-                    Accessible.name: qsTr("Reset the override of %1").arg(overriding.modelData.title)
-                    onClicked: page.send("clearOverride", { environmentId: overriding.modelData.environmentId, projectId: overriding.modelData.projectId })
+            Repeater {
+                model: sources.inheritance?.overridingProjects ?? []
+
+                delegate: RowLayout {
+                    id: overriding
+
+                    required property var modelData
+
+                    Layout.fillWidth: true
+                    spacing: Theme.space.sm
+
+                    Caption {
+                        text: qsTr("%1 overrides it with %2.").arg(overriding.modelData.title).arg(overriding.modelData.value)
+                    }
+
+                    ShellButton {
+                        objectName: "clear:" + overriding.modelData.projectId
+                        subtle: true
+                        enabled: page.editable
+                        text: qsTr("Reset")
+                        Accessible.name: qsTr("Reset the override of %1").arg(overriding.modelData.title)
+                        onClicked: page.send("clearOverride", { environmentId: overriding.modelData.environmentId, projectId: overriding.modelData.projectId })
+                    }
                 }
             }
         }

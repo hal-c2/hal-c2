@@ -53,7 +53,7 @@ Rectangle {
                     text: view.arrived ? qsTr("The page as it was on %1").arg(Qt.formatDateTime(new Date(view.version.at), Qt.locale().dateTimeFormat(Locale.ShortFormat))) : qsTr("Loading this version…")
                     elide: Text.ElideRight
                     color: view.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                 }
 
                 ShellButton {
@@ -87,7 +87,7 @@ Rectangle {
                 text: view.version.title ?? ""
                 elide: Text.ElideRight
                 color: view.foreground
-                font.pixelSize: Math.round(28 * Theme.fontScale)
+                font.pixelSize: Theme.type.display.size
                 font.weight: Font.Bold
             }
 

@@ -177,23 +177,25 @@ defmodule HalC2.Search do
       {_, role, text, at} = Enum.find(found, &(elem(&1, 1) == "user")) || hd(found)
       thread = active[thread_id]
 
-      {thread["updatedAt"] || "",
+      {thread["updatedAt"] || "", text,
        %{
          "threadId" => thread_id,
          "projectId" => thread["projectId"],
          "source" => role,
-         "snippet" => snippet(text, query),
          "messageCreatedAt" => at
        }}
     end)
     |> Enum.sort_by(&elem(&1, 0), :desc)
     |> Enum.take(limit)
-    |> Enum.map(&elem(&1, 1))
+    # Only the kept matches pay for a snippet.
+    |> Enum.map(fn {_, text, match} -> Map.put(match, "snippet", snippet(text, query)) end)
   end
 
-  # The text around the first match, cut to fit.
+  # The text around the first match, cut to fit, without the markup HAL-C2
+  # wraps around what it hands an agent (a delegated task's result, with its
+  # task and thread ids), so a reader sees words, never ids.
   defp snippet(text, query) do
-    text = text |> String.replace(~r/\s+/u, " ") |> String.trim()
+    text = text |> unwrap() |> String.replace(~r/\s+/u, " ") |> String.trim()
 
     if String.length(text) <= @snippet do
       text
@@ -212,5 +214,16 @@ defmodule HalC2.Search do
 
       "#{if start > 0, do: "…"}#{cut}#{if start + body < String.length(text), do: "…"}"
     end
+  end
+
+  # Drops the tags HAL-C2 wraps around what it hands an agent (a delegated
+  # task's result, a composer's context envelope), opening and closing, and
+  # leaves every other tag, such as `<a href="…">` or `Vec<String>`, as written.
+  defp unwrap(text) do
+    Regex.replace(
+      ~r{</?(?:delegated_task_result|hal_c2_context|context)(?:\s+[\w:-]+="[^"]*")*\s*/?>}u,
+      text,
+      " "
+    )
   end
 end

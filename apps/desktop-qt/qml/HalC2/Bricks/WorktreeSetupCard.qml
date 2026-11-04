@@ -37,7 +37,7 @@ Rectangle {
         anchors.margins: 8
         anchors.leftMargin: 16
         anchors.rightMargin: 16
-        spacing: 6
+        spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
@@ -53,7 +53,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: card.setup?.label ?? ""
                 color: card.accent
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 font.weight: Font.Medium
                 elide: Text.ElideRight
             }
@@ -89,7 +89,7 @@ Rectangle {
             text: [(card.setup?.baseRef ?? "").length > 0 && (card.setup?.branch ?? "").length > 0 ? qsTr("%1 → %2").arg(card.setup.baseRef).arg(card.setup.branch) : card.setup?.branch ?? "", card.setup?.worktreePath ?? ""].filter(part => part.length > 0).join(" · ")
             color: card.muted
             font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
             elide: Text.ElideMiddle
         }
 
@@ -99,7 +99,7 @@ Rectangle {
             visible: card.setup?.detailsOpen === true && text.length > 0
             text: card.setup?.error ?? ""
             color: Theme.palette.color("errorForeground", "#ef4444")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -122,13 +122,13 @@ Rectangle {
                         Layout.fillWidth: true
                         text: stage.modelData.label
                         color: stage.modelData.status === "pending" || stage.modelData.status === "skipped" ? card.muted : card.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideRight
                     }
                     Label {
                         text: stage.modelData.detail.length > 0 ? stage.modelData.detail : stage.modelData.status
                         color: stage.modelData.status === "failed" ? Theme.palette.color("errorForeground", "#ef4444") : card.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                 }
                 Label {
@@ -137,7 +137,7 @@ Rectangle {
                     text: stage.modelData.tail.join("\n")
                     color: card.muted
                     font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                     wrapMode: Text.WrapAnywhere
                 }
             }

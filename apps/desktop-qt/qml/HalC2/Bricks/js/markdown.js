@@ -409,11 +409,22 @@ function renderInline(src, ctx, inLink) {
     return nodesHtml(nodes, !!inLink);
 }
 
-// Inline code: a background span with a thin space of padding either side
-// (plain spaces, so a copied selection carries no odd characters).
+// Inline code: a span the theme tints, which is all that marks it, with no
+// padding of spaces (beside a bracket or a full stop they read as stray
+// spaces). It is one run: nowrap keeps its spaces, and as Qt also breaks
+// after punctuation, a word joiner follows each mark (`plain` drops them
+// from copies and citations). A span longer than SHORT_CODE, which may not
+// fit a phone's measure, may still break after a slash or a hyphen.
+var SHORT_CODE = 40;
 function codeSpan(code) {
-    var pad = "<span style=\"font-size:9px;white-space:pre\"> </span>";
-    return "<span class=\"c\" style=\"white-space:pre-wrap\">" + pad + escapeHtml(code) + pad + "</span>";
+    var held = code.length > SHORT_CODE ? /([!-,.:-@\[-`{-~])(?=.)/g : /([!-\/:-@\[-`{-~])(?=.)/g;
+    return "<span class=\"c\" style=\"white-space:nowrap\">" + escapeHtml(code.replace(held, "$1\u2060")) + "</span>";
+}
+
+// Drawn text as the reader means it: without the word joiners that hold
+// inline code together, with plain spaces and newlines.
+function plain(text) {
+    return text.replace(/\u2060/g, "").replace(/\u00a0/g, " ").replace(/[\u2028\u2029]/g, "\n");
 }
 
 // The visible text of inline markdown, for CSV copies.
@@ -978,11 +989,11 @@ function withCitations(text) {
 // the quote as selected, and its UTF-16 place and surroundings in the text
 // with each whitespace run read as one space (createAssistantTextSelector).
 function selector(text, rawStart, rawEnd) {
-    var quote = text.slice(rawStart, rawEnd);
+    var quote = plain(text.slice(rawStart, rawEnd));
     if (quote.trim().length === 0)
         return null;
     var normalize = function (value) {
-        return value.replace(/\s+/g, " ");
+        return value.replace(/\u2060/g, "").replace(/\s+/g, " ");
     };
     var splitsPair = function (value, offset) {
         var before = value.charCodeAt(offset - 1);
@@ -1379,8 +1390,8 @@ function segments(text, options, state) {
 // Rendering helpers for the brick
 
 // The look prose and table cells share, from the theme, by what it styles:
-// links, headings by their class (h6 muted), the inline code fill (`c`)
-// and the rule.
+// links, headings by their class (h6 muted), inline code (`c`, its fill and
+// size) and the rule.
 function styleRules(theme) {
     var heading = "font-weight:600;color:" + theme.heading + ";";
     return {
@@ -1391,7 +1402,7 @@ function styleRules(theme) {
         h4: heading + "font-size:14px;line-height:18.2px",
         h5: heading + "font-size:14px;line-height:18.2px",
         h6: "font-weight:600;color:" + theme.muted + ";font-size:14px;line-height:18.2px",
-        c: "background-color:" + theme.codeFill + ";color:" + theme.heading + ";font-size:12px;font-family:" + theme.mono,
+        c: "background-color:" + theme.codeFill + ";color:" + theme.heading + ";font-size:" + (theme.codeSize || 13) + "px;font-family:" + theme.mono,
         hr: "background-color:" + theme.rule
     };
 }

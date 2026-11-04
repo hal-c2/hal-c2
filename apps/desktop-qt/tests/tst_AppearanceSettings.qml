@@ -91,7 +91,8 @@ Item {
             const grove = findChild(page, "use:grove");
             compare(swatches(standard), ["#ffffff", "#2563eb", "#18181b"]);
             compare(swatches(grove), ["#f1f5ee", "#3f7d4e", "#1c2a1f"]);
-            // The name starts at the left, after the swatches, not in the middle of the row.
+            // The name starts at the left, after the check's room and the swatches,
+            // not in the middle of the row.
             let name = null;
             const walk = item => {
                 if (item.text === "Grove" && item.elide !== undefined && item !== grove) name = item;
@@ -99,7 +100,7 @@ Item {
             };
             walk(grove.contentItem);
             verify(name !== null);
-            verify(name.mapToItem(grove, 0, 0).x < 80, "the name starts at " + name.mapToItem(grove, 0, 0).x);
+            verify(name.mapToItem(grove, 0, 0).x < 100, "the name starts at " + name.mapToItem(grove, 0, 0).x);
             compare(name.horizontalAlignment, Text.AlignLeft);
         }
 
@@ -154,6 +155,43 @@ Item {
             compare(exporter.iconName, "download");
             compare(exporter.width, exporter.height);
             compare(exporter.Accessible.name, "Export Grove");
+        }
+
+        // System, Light and Dark are one width, whatever their labels' lengths.
+        function test_theColorSchemeSegmentsAreEqual() {
+            const page = createTemporaryObject(pageComponent, root);
+            const segments = ["system", "light", "dark"].map(mode => findChild(page, "mode:" + mode));
+            tryVerify(() => segments[0].width > 0);
+            compare(segments[1].width, segments[0].width);
+            compare(segments[2].width, segments[0].width);
+        }
+
+        // Every row's Duplicate is in one column, the standard theme's and a
+        // built-in's included, while a theme of one's own has Edit and Remove.
+        function test_theDuplicateButtonsShareAColumn() {
+            const page = createTemporaryObject(pageComponent, root);
+            const copies = ["hal-c2", "grove", "mine"].map(id => findChild(page, "duplicate:" + id));
+            tryVerify(() => copies[0].width > 0 && copies[2].width > 0);
+            const x = copies.map(copy => copy.mapToItem(page, 0, 0).x);
+            compare(x[1], x[0]);
+            compare(x[2], x[0]);
+            verify(findChild(page, "export:grove").mapToItem(page, 0, 0).x
+                   === findChild(page, "export:mine").mapToItem(page, 0, 0).x,
+                   "the Export buttons share a column too");
+        }
+
+        // Without a theme of one's own, no row keeps room for Edit and Remove.
+        function test_withoutACustomThemeTheRowsCloseUp() {
+            Themes.available = [Themes.available[0]];
+            const page = createTemporaryObject(pageComponent, root);
+            const standard = findChild(page, "duplicate:hal-c2");
+            const grove = findChild(page, "duplicate:grove");
+            tryVerify(() => standard.width > 0);
+            compare(grove.mapToItem(page, 0, 0).x, standard.mapToItem(page, 0, 0).x);
+            const row = findChild(page, "theme:grove");
+            const exporter = findChild(page, "export:grove");
+            verify(row.mapToItem(page, row.width, 0).x - exporter.mapToItem(page, exporter.width, 0).x
+                   < standard.width, "Export is the row's last button");
         }
     }
 }

@@ -19,11 +19,7 @@ Popup {
     focus: false
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
-    background: Rectangle {
-        radius: Math.min(Theme.radius, 8)
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-    }
+    background: ShellPopoverSurface {}
 
     contentItem: ColumnLayout {
         spacing: 0

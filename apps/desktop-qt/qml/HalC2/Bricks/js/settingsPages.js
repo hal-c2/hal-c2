@@ -195,3 +195,17 @@ function searchRows(query, state, bindings) {
         return (left.secondary - right.secondary) || (right.rank - left.rank) || closer || (left.index - right.index);
     }).map(function (entry) { return entry.row; });
 }
+
+// Where every settings page lays out: one centred column, at most `columnMaxWidth`
+// wide, with `margin` on either side when the pane is narrower.
+var columnMaxWidth = 720;
+
+// Not clamped at 0: a pane not laid out yet gives a negative width, which the
+// layouts skip, where 0 would wrap every label a letter a line for a frame.
+function columnWidth(available, margin) {
+    return Math.min(columnMaxWidth, available - 2 * margin);
+}
+
+function columnX(available, margin) {
+    return Math.max(margin, Math.round((available - columnWidth(available, margin)) / 2));
+}

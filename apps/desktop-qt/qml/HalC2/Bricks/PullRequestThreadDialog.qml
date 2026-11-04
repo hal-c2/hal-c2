@@ -35,19 +35,16 @@ Dialog {
     }
     onRejected: Shell.dispatch("pullRequestThread.cancel", {})
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     contentItem: ColumnLayout {
-        spacing: 10
+        spacing: Theme.space.sm
 
         Label {
             Layout.fillWidth: true
             text: qsTr("Checkout pull request")
             color: dialog.foreground
-            font.pixelSize: Math.round(17 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
             wrapMode: Text.Wrap
         }
@@ -55,14 +52,14 @@ Dialog {
             Layout.fillWidth: true
             text: qsTr("Resolve a pull request, then create the draft thread in the main repo or in a dedicated worktree.")
             color: dialog.muted
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
         Label {
             Layout.topMargin: 4
             text: qsTr("Pull request")
             color: dialog.foreground
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             font.weight: Font.Medium
         }
         ShellTextField {
@@ -87,7 +84,7 @@ Dialog {
             Layout.fillWidth: true
             visible: dialog.pullRequest !== null
             implicitHeight: resolved.implicitHeight + 24
-            radius: 10
+            radius: Theme.radiusLg
             color: Theme.palette.color("surfaceRaised", "#27272a")
             border.color: Theme.palette.color("border", "#3f3f46")
 
@@ -107,7 +104,7 @@ Dialog {
                         Layout.fillWidth: true
                         text: dialog.pullRequest?.title ?? ""
                         color: dialog.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.Medium
                         elide: Text.ElideRight
                     }
@@ -116,7 +113,7 @@ Dialog {
                         Layout.fillWidth: true
                         text: dialog.pullRequest ? qsTr("#%1 · %2 to %3").arg(dialog.pullRequest.number).arg(dialog.pullRequest.headBranch).arg(dialog.pullRequest.baseBranch) : ""
                         color: dialog.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         elide: Text.ElideRight
                     }
                 }
@@ -125,7 +122,7 @@ Dialog {
                     readonly property string state: dialog.pullRequest?.state ?? ""
                     text: state.length > 0 ? state.charAt(0).toUpperCase() + state.slice(1) : ""
                     color: state === "merged" ? Theme.palette.color("merged", "#c4b5fd") : state === "open" ? Theme.palette.color("success", "#6ee7b7") : dialog.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
         }
@@ -135,7 +132,7 @@ Dialog {
             visible: dialog.flow?.step === "resolving"
             text: qsTr("Resolving pull request...")
             color: dialog.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
         Label {
             objectName: "pullRequestThreadError"
@@ -143,12 +140,12 @@ Dialog {
             visible: text.length > 0
             text: dialog.flow?.error ?? ""
             color: Theme.palette.color("errorForeground", "#ef4444")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
         RowLayout {
             Layout.fillWidth: true
-            Layout.topMargin: 6
+            Layout.topMargin: Theme.space.sm
             spacing: 8
 
             Item {

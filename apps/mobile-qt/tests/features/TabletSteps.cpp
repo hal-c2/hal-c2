@@ -128,6 +128,14 @@ const Steps steps([] {
                   [&] { return S("the list and the thread %1 in a %2x%3 window; the screen says: %4").arg(c[0]).arg(world.window().width()).arg(world.window().height()).arg(screenTexts(world)); });
   });
 
+  step(S("the thread list shows its full rows"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* sidebar = nullptr;
+    world.waitFor([&] { return (sidebar = world.findWhere([](QQuickItem* candidate) { return candidate->isVisible() && candidate->property("rail").isValid() && candidate->property("density").isValid(); })) != nullptr; },
+                  [&] { return S("the thread list; the screen says: %1").arg(screenTexts(world)); });
+    expect(sidebar->property("density").toString() == QLatin1String("full"),
+           S("the thread list is drawn %1 in a %2x%3 window").arg(sidebar->property("density").toString()).arg(world.window().width()).arg(world.window().height()));
+  });
+
   step(S("the layout is split"), [](World& world, const Captures&, const Table&) {
     readThread(world, kTablet, S("Tax line"));
     world.waitFor([&] { return sideBySide(world, S("Tax line")); }, [&] { return S("the list beside the thread; the screen says: %1").arg(screenTexts(world)); });

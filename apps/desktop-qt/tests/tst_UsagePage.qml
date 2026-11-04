@@ -153,7 +153,7 @@ Item {
             const page = createTemporaryObject(usageComponent, root);
             const message = findChild(page, "usageMessage");
             verify(message.visible);
-            compare(message.text, "No provider on the selected environments reports subscription limits.");
+            compare(message.title, "No provider on the selected environments reports subscription limits.");
             verify(!findChild(page, "usageWindowLabel").visible);
         }
 
@@ -162,7 +162,8 @@ Item {
         function test_nothingReadYetShowsNoEmptyBreakdown() {
             Shell.state = { usage: root.usage({ scanning: true, summary: undefined, message: "Reading session history…" }) };
             const page = createTemporaryObject(usageComponent, root);
-            compare(findChild(page, "usageMessage").text, "Reading session history…");
+            compare(findChild(page, "usageMessage").title, "Reading session history…");
+            compare(findChild(page, "usageMessage").status, "loading");
             compare(findChild(page, "usageTotal").parent.visible, false, "no Totals, Models or Daily heading");
         }
 

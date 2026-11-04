@@ -5,9 +5,11 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 import "js/settingsRows.js" as Rows
+import "js/settingsPages.js" as Pages
 
 // A native settings page: its title, anything the page puts first (its
-// children), then `rows` (js/settingsRows.js) under their section headings.
+// children), then `rows` (js/settingsRows.js) under their section headings,
+// each row on a hairline, in one centred column (columnX in js/settingsPages.js).
 // A settings search result it holds (route.target, an objectName on the page)
 // is scrolled into view when opened.
 Rectangle {
@@ -61,7 +63,7 @@ Rectangle {
         const target = descendant(column, route.target);
         if (target === null) return;
         following = true;
-        const y = target.mapToItem(column, 0, 0).y + column.y - 12;
+        const y = target.mapToItem(column, 0, 0).y + column.y - Theme.space.md;
         flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
     }
 
@@ -77,10 +79,11 @@ Rectangle {
         const top = item.mapToItem(flick.contentItem, 0, 0).y;
         const bottom = top + item.height;
         let y = flick.contentY;
-        if (top < y + 12 || bottom - top > flick.height - 24)
-            y = top - 12;
-        else if (bottom > y + flick.height - 12)
-            y = bottom - flick.height + 12;
+        const edge = Theme.space.md;
+        if (top < y + edge || bottom - top > flick.height - 2 * edge)
+            y = top - edge;
+        else if (bottom > y + flick.height - edge)
+            y = bottom - flick.height + edge;
         else
             return;
         following = false;
@@ -97,7 +100,7 @@ Rectangle {
         objectName: "scroll"
 
         anchors.fill: parent
-        contentHeight: column.implicitHeight + 48
+        contentHeight: column.implicitHeight + 2 * Theme.space.xl
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar {
@@ -111,10 +114,10 @@ Rectangle {
 
             onImplicitHeightChanged: if (page.following) Qt.callLater(page.reveal)
 
-            x: 24
-            y: 24
-            width: Math.min(720, flick.width - 48)
-            spacing: 14
+            x: Pages.columnX(flick.width, Theme.space.xl)
+            y: Theme.space.xl
+            width: Pages.columnWidth(flick.width, Theme.space.xl)
+            spacing: Theme.space.md
 
             SettingsBreadcrumb {
                 Layout.fillWidth: true
@@ -125,24 +128,36 @@ Rectangle {
                 id: lead
 
                 Layout.fillWidth: true
-                spacing: 14
+                spacing: Theme.space.md
             }
 
             Repeater {
                 model: Rows.listed(page.rows, Qt.platform.os, page.openFolds)
 
+                // A row sits on a hairline, centred in the gap above it; a
+                // heading opens its section without one.
                 delegate: Loader {
                     id: entry
 
                     required property var modelData
+                    readonly property bool onHairline: modelData.section === undefined
 
                     Layout.fillWidth: true
+                    Layout.topMargin: onHairline ? Theme.space.md : 0
                     // A row every selected environment must support is listed once they do.
                     visible: {
                         Settings.document;
                         return !modelData.requires || Settings.supports(modelData.requires);
                     }
                     sourceComponent: modelData.section !== undefined ? heading : modelData.link !== undefined ? linkRow : modelData.component === "textGeneration" ? textGenerationRow : modelData.component === "backgroundActivity" ? backgroundActivityRow : settingRow
+
+                    Rectangle {
+                        visible: entry.onHairline
+                        y: -Math.round((Theme.space.md + column.spacing) / 2)
+                        width: entry.width
+                        height: 1
+                        color: page.line
+                    }
 
                     Component {
                         id: heading
@@ -154,16 +169,16 @@ Rectangle {
                             readonly property bool open: page.openFolds[entry.modelData.section] === true
 
                             objectName: "settingsSection:" + entry.modelData.section
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             RowLayout {
-                                Layout.topMargin: 12
-                                spacing: 6
+                                Layout.topMargin: Theme.space.lg
+                                spacing: Theme.space.sm
 
                                 Label {
                                     text: entry.modelData.section
                                     color: page.foreground
-                                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.title.size
                                     font.weight: Font.DemiBold
                                 }
 
@@ -176,12 +191,6 @@ Rectangle {
                                     onClicked: page.setFold(entry.modelData.section, !sectionHeading.open)
                                 }
                             }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                implicitHeight: 1
-                                color: page.line
-                            }
                         }
                     }
 
@@ -191,24 +200,24 @@ Rectangle {
 
                         RowLayout {
                             objectName: "settingsRow:" + entry.modelData.id
-                            spacing: 12
+                            spacing: Theme.space.md
 
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: 2
+                                spacing: Theme.space.xxs
 
                                 Label {
                                     text: entry.modelData.title
                                     color: page.foreground
-                                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.body.size
                                     font.weight: Font.Medium
                                 }
 
                                 Label {
                                     Layout.fillWidth: true
                                     text: entry.modelData.description ?? ""
-                                    color: Theme.palette.color("textMuted", "#a1a1aa")
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    color: Theme.palette.color("inkTertiary", "#a1a1aa")
+                                    font.pixelSize: Theme.type.meta.size
                                     wrapMode: Text.Wrap
                                 }
                             }

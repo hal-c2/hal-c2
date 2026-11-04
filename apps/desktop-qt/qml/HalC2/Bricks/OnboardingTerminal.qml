@@ -15,7 +15,7 @@ Rectangle {
 
     objectName: "onboardingTerminal"
     implicitHeight: 256
-    radius: 6
+    radius: Theme.radiusSm
     color: Theme.palette.color("canvas", "#09090b")
     border.color: Theme.palette.color("border", "#27272a")
     clip: true
@@ -26,7 +26,7 @@ Rectangle {
 
         anchors.fill: parent
         anchors.margins: 1
-        padding: 6
+        padding: Theme.space.sm
         focus: true
         // A whole font: the Terminal's default carries a point size, which a
         // pixel size set over it warns about.

@@ -6,11 +6,14 @@
 // folding, the keyboard) is in tst_Sidebar.qml and tst_SidebarThreadRow.qml.
 
 #include <QJsonArray>
+#include <QJSValue>
 #include <QJsonObject>
+#include <QQuickItem>
 #include <QSet>
 
 #include <algorithm>
 
+#include "Brick.h"
 #include "DevicePanelSteps.h"
 #include "Harness.h"
 #include "NavigationController.h"
@@ -130,7 +133,35 @@ QSet<QString> activeProjects(World& world) {
   return projects;
 }
 
+// The thread list as the window draws it (Sidebar.qml), kept on screen for
+// the scenario, and where in its view the row for `key` is: its top, or -1
+// when the list draws no row for it.
+Brick& threadList(World& world) {
+  if (!world.brick) {
+    world.brick = std::make_unique<Brick>(world, QByteArrayLiteral("import QtQuick\nimport HalC2.Bricks\nSidebar { height: 600 }\n"), QSize(256, 600));
+  }
+  return *world.brick;
+}
+
+QVariantList listRows(Brick& brick) {
+  QVariant rows = brick.root()->property("rows");
+  if (rows.canConvert<QJSValue>()) rows = rows.value<QJSValue>().toVariant();
+  return rows.toList();
+}
+
+qreal rowTop(World& world, const QString& key) {
+  world.sync();
+  Brick& brick = threadList(world);
+  brick.grab();
+  QQuickItem* list = brick.item(QStringLiteral("list"));
+  QQuickItem* row = list->isVisible() ? brick.find(QStringLiteral("threadRow:") + key) : nullptr;
+  if (!row || !row->isVisible()) return -1;
+  const qreal top = row->mapToItem(list, QPointF(0, 0)).y();
+  return top >= 0 && top + row->height() <= list->height() ? top : -1;
+}
+
 const Steps steps([] {
+  Brick::registerSingletons();
   const QString q = kQuoted;
 
   // Backgrounds and the list's contents.
@@ -177,6 +208,14 @@ const Steps steps([] {
       putThread(world, QStringLiteral("t-settled-%1").arg(index),
                 {{QStringLiteral("projectId"), world.mc.projects.firstKey()}, {QStringLiteral("title"), QStringLiteral("Settled %1").arg(index)},
                  {QStringLiteral("settledOverride"), QStringLiteral("settled")}, {QStringLiteral("settledAt"), at}});
+    }
+  });
+  step(QStringLiteral("there are (\\d+) active threads"), [](World& world, const Captures& c, const Table&) {
+    for (int index = 0; index < c[0].toInt(); ++index) {
+      const QString at = iso(world.now().addSecs(-60 * (index + 1)));
+      putThread(world, QStringLiteral("t-active-%1").arg(index),
+                {{QStringLiteral("projectId"), world.mc.projects.firstKey()}, {QStringLiteral("title"), QStringLiteral("Active %1").arg(index)},
+                 {QStringLiteral("createdAt"), at}});
     }
   });
   // Threads a plugin settles as it finishes them, as the code-review plugin does.
@@ -546,6 +585,48 @@ const Steps steps([] {
                                                                     {QStringLiteral("message"), QStringLiteral("You've hit your usage limit. It resets at 2:00 PM.")}}}});
          }
        });
+  // A window that crosses a width where the rows change height (one line under
+  // 1100, the rail under 860) keeps the open thread's row in the list's view.
+  step(QStringLiteral("the thread list is scrolled to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = threadKeyOf(world, c[0]);
+    world.sync();
+    Brick& brick = threadList(world);
+    brick.grab();
+    const QVariantList rows = listRows(brick);
+    const auto found = std::find_if(rows.begin(), rows.end(), [&](const QVariant& row) { return row.toMap().value(QStringLiteral("rowKey")) == key; });
+    expect(found != rows.end(), QStringLiteral("the list has no row for %1").arg(c[0]));
+    QQuickItem* list = brick.item(QStringLiteral("list"));
+    const int index = int(found - rows.begin());
+    expect(index >= 4, QStringLiteral("%1 has too few rows above it to scroll past").arg(c[0]));
+    // As the user scrolls down to it: the rows just above the view were drawn on
+    // the way and stay as the list's cache, which is what moves the view when
+    // they change height. Show them first (ListView.Beginning, 0), then scroll on.
+    const QString first = rows.at(index - 4).toMap().value(QStringLiteral("rowKey")).toString();
+    QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, index - 4), Q_ARG(int, 0));
+    world.waitFor([&] { return rowTop(world, first) == 0; }, QStringLiteral("the rows above %1 at the top of the list").arg(c[0]));
+    QQuickItem* row = brick.find(QStringLiteral("threadRow:") + key);
+    expect(row != nullptr, QStringLiteral("the list draws %1 below the rows above it").arg(c[0]));
+    list->setProperty("contentY", list->property("contentY").toReal() + row->mapToItem(list, QPointF(0, 0)).y());
+    world.waitFor([&] { return rowTop(world, key) == 0; }, [&] {
+      QQuickItem* drawn = brick.find(QStringLiteral("threadRow:") + key);
+      return QStringLiteral("%1 (row %2 of %3) at the top of the list; its row is at %4 in a list at %5")
+          .arg(c[0])
+          .arg(index)
+          .arg(rows.size())
+          .arg(drawn ? drawn->mapToItem(list, QPointF(0, 0)).y() : -1)
+          .arg(list->property("contentY").toReal());
+    });
+    expect(brick.find(QStringLiteral("threadRow:") + first) != nullptr, QStringLiteral("the list keeps the rows above %1 drawn").arg(c[0]));
+  });
+  step(QStringLiteral("the thread list shows %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString key = threadKeyOf(world, c[0]);
+    world.waitFor([&] { return rowTop(world, key) >= 0; }, [&] {
+      return QStringLiteral("%1 in the list's view; the list is at %2 in %3 mode")
+          .arg(c[0])
+          .arg(threadList(world).item(QStringLiteral("list"))->property("contentY").toReal())
+          .arg(at(world.state(QStringLiteral("layout")), QStringLiteral("sidebarMode")).toString());
+    });
+  });
   // A thread row's state word; a device row's "host · version · state" is
   // DeviceSteps' step of the same words, told apart by the middle dots.
   step(QStringLiteral("the row for %1 reads \"([^\"·]*)\"").arg(q), [](World& world, const Captures& c, const Table&) {

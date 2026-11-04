@@ -14,7 +14,7 @@ Rectangle {
     readonly property bool controlsOnLeft: Qt.platform.os === "osx"
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
 
-    implicitHeight: 38
+    implicitHeight: Theme.control.lg + Theme.space.xs
     color: Theme.palette.color("chrome", "#141416")
 
     DragHandler {
@@ -41,10 +41,11 @@ Rectangle {
 
         Label {
             Layout.fillWidth: true
-            Layout.leftMargin: 12
-            Layout.rightMargin: 12
+            Layout.leftMargin: Theme.space.md
+            Layout.rightMargin: Theme.space.md
             text: bar.window.title
             color: bar.foreground
+            font.pixelSize: Theme.type.meta.size
             elide: Text.ElideRight
             horizontalAlignment: Text.AlignHCenter
         }

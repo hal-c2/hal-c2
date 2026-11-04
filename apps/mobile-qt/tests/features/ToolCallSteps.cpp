@@ -613,7 +613,11 @@ const Steps steps([] {
   step(S("the latest tool call is shown"), [](World& world, const Captures&, const Table&) {
     const S command = lastCall(world).value(S("command")).toString();
     expect(command == QLatin1String("bun test cart-5"), S("the call shown is \"%1\"").arg(command));
-    expect(drawnAll(world, S("workCall")).size() == 1, S("the phone draws %1 calls").arg(drawnAll(world, S("workCall")).size()));
+    // A running turn's group folds the latest call into its live row (workGroupToggle).
+    const int calls = drawnAll(world, S("workCall")).size();
+    const QList<QQuickItem*> live = drawnAll(world, S("workGroupToggle"));
+    const bool folded = calls == 0 && live.size() == 1 && live.first()->property("label") == lastCall(world).value(S("label"));
+    expect(calls == 1 || folded, S("the phone draws %1 calls").arg(calls));
   });
   step(S("the other four are behind %1").arg(q), [](World& world, const Captures& c, const Table&) {
     TimelineModel& model = timeline(world);
@@ -1098,7 +1102,8 @@ const Steps steps([] {
     world.waitFor([&] { return callCount(world) < 30; }, S("the group to close"));
     world.waitFor([&] {
       const QList<QQuickItem*> views = drawnAll(world, S("workCalls"));
-      return views.size() == 1 && !views.first()->property("interactive").toBool();
+      // A running turn's closed group folds into its live row, which draws no calls of its own.
+      return views.isEmpty() || (views.size() == 1 && !views.first()->property("interactive").toBool());
     }, S("the group to stop scrolling"));
     openGroup(world, 30);
   });

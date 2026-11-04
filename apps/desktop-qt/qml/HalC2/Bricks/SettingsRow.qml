@@ -41,13 +41,13 @@ ColumnLayout {
         return spec.needs && !Settings.supports(spec.needs) ? spec.unsupported : "";
     }
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     // Project grouping remembers the mode it was on for turning it back on.
     property string lastGrouping: ""
 
     objectName: "settingsRow:" + spec.key
     Layout.fillWidth: true
-    spacing: 6
+    spacing: Theme.space.sm
 
     function set(next) {
         Settings.set(spec.key, next);
@@ -55,19 +55,19 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             RowLayout {
-                spacing: 4
+                spacing: Theme.space.xs
 
                 Label {
                     text: row.spec.title
                     color: row.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -76,7 +76,7 @@ ColumnLayout {
                     visible: row.mixed
                     text: qsTr("Mixed")
                     color: row.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellButton {
@@ -84,9 +84,9 @@ ColumnLayout {
                     visible: !row.atDefault
                     subtle: true
                     iconName: "undo-2"
-                    iconSize: 12
-                    implicitWidth: 20
-                    implicitHeight: 20
+                    iconSize: Theme.icon.sm
+                    implicitWidth: Theme.control.sm
+                    implicitHeight: Theme.control.sm
                     Accessible.name: qsTr("Reset %1 to default").arg(row.spec.title.toLowerCase())
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Reset to default")
@@ -99,7 +99,7 @@ ColumnLayout {
                 text: row.mixed && row.spec.mixedDescription ? row.spec.mixedDescription : Rows.describe(row.spec, row.value)
                 visible: text.length > 0
                 color: row.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
 
@@ -109,7 +109,7 @@ ColumnLayout {
                 text: row.blocked
                 visible: text.length > 0
                 color: Theme.palette.color("warningForeground", "#fbbf24")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
         }
@@ -140,25 +140,25 @@ ColumnLayout {
     // Inactive settling's days, shown while it is on.
     RowLayout {
         Layout.fillWidth: true
-        Layout.leftMargin: 12
+        Layout.leftMargin: Theme.space.md
         visible: row.spec.kind === "settleDays" && Rows.settleOn(row.value)
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             Label {
                 text: row.spec.daysTitle ?? ""
                 color: row.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             Label {
                 Layout.fillWidth: true
                 text: row.spec.daysDescription ?? ""
                 color: row.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 wrapMode: Text.Wrap
             }
         }

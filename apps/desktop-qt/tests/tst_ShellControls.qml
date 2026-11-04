@@ -78,7 +78,10 @@ TestCase {
 
     function test_checkBoxMarksFollowTheTheme() {
         const control = createTemporaryObject(checkComponent, testCase);
-        compare(control.indicator.color, Qt.color(dark.canvas));
+        Theme.colors = Object.assign({}, dark, {
+            inputSurface: "#112233"
+        });
+        compare(control.indicator.color, Qt.color("#112233"));
         compare(control.indicator.border.color, Qt.color(dark.input));
         control.checked = true;
         compare(control.indicator.color, Qt.color(dark.accent));
@@ -87,13 +90,13 @@ TestCase {
 
     function test_spinBoxIsThemedAndSteps() {
         const control = createTemporaryObject(spinComponent, testCase);
-        const fill = control.background.color;
-        compare(fill.a.toFixed(2), "0.32");
+        Theme.colors = Object.assign({}, dark, {
+            inputSurface: "#112233"
+        });
+        compare(control.background.color, Qt.color("#112233"));
         compare(control.contentItem.color, Qt.color(dark.text));
         control.increase();
         compare(control.value, 6);
-        Theme.appearance = "light";
-        compare(control.background.color, Qt.color(dark.canvas));
     }
 
     function test_spinBoxFadesAStepperAtItsLimit() {

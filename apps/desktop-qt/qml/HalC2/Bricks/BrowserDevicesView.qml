@@ -60,7 +60,7 @@ Item {
                 elide: Text.ElideRight
                 text: frameItem.modelData.label + " · " + frameItem.modelData.width + " × " + frameItem.modelData.height
                 color: root.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
 
             // The device's body around the page, one thickness for every
@@ -70,7 +70,7 @@ Item {
                 anchors.margins: -8
                 visible: !frameItem.body3d
                 color: root.edge
-                radius: frameItem.modelData.kind === "desktop" ? 6 : 16
+                radius: frameItem.modelData.kind === "desktop" ? Theme.radiusSm : Theme.radiusXl
             }
 
             // The page's own pixels: the app's zoom undone.

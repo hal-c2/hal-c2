@@ -70,6 +70,29 @@ Feature: Searching threads by what was said
     And it starts shortly before "needle" and is marked with ellipses on both cut ends
 
   @mc
+  Scenario: The snippet shows words, never the ids in HAL-C2's markup
+    Given thread "t1" has a user message:
+      """
+      <delegated_task_result taskId="task-1f2e" title="Review" childThreadId="b29805a8-5d1c-4c1e-9d3a-0f6c2b7e9a11">
+      The review found no Vec<String> leaks
+      </delegated_task_result>
+      """
+    When a client searches for "review found"
+    Then the snippet reads "The review found no Vec<String> leaks"
+
+  @mc
+  Scenario: Markup someone wrote stays in the snippet
+    Given thread "t1" has a user message:
+      """
+      Please use <a href="/docs">the docs</a> for this
+      """
+    When a client searches for "the docs"
+    Then the snippet reads:
+      """
+      Please use <a href="/docs">the docs</a> for this
+      """
+
+  @mc
   Scenario: Messages written before the index existed are found after startup
     Given threads written by an MC that had no search index
     When the MC starts

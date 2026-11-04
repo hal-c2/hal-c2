@@ -1,5 +1,6 @@
 import QtQuick
 import QtTest
+import QtQuick.Controls
 import "../qml/HalC2/Bricks"
 import HalC2.Shell
 
@@ -44,6 +45,99 @@ Item {
 
         function test_opensWithTheSearchFieldFocused() {
             opened();
+        }
+
+        // The palette is as tall as its rows, up to its cap; with none it
+        // still has room to say so.
+        function test_heightFollowsTheRows() {
+            const popup = opened();
+            const list = findChild(popup.contentItem, "commandPaletteList");
+            tryVerify(() => list.itemAtIndex(2) !== null);
+            // The fit is set once the rows settle, a frame after they appear.
+            tryVerify(() => list.height === list.contentHeight, 2000, "the list is as tall as its rows, not " + list.height);
+            const three = popup.height;
+            verify(three < 300, "three rows make a short palette, not " + three);
+            verify(!findChild(list, "scrollThumb").visible, "no bar when every row shows");
+            PaletteModel.clear();
+            tryVerify(() => popup.height < three, 2000, "no rows make it shorter still");
+            verify(list.height > 0, "with room for the empty text");
+            for (let n = 1; n <= 40; ++n)
+                PaletteModel.append({ title: "Entry " + n, description: "", group: "Actions", shortcut: "", kind: "action", runnable: true, current: false });
+            // It stops at the cap on a whole row, not a sliced one...
+            tryVerify(() => popup.height <= 480 && popup.height > 480 - 34, 2000, "near the cap, not " + popup.height);
+            let last = null;
+            for (let i = 0; i < list.count && list.itemAtIndex(i); ++i)
+                if (list.itemAtIndex(i).y + list.itemAtIndex(i).height === list.height)
+                    last = i;
+            verify(last !== null, "a row ends where the list does");
+            // ...and the rows past it are hinted at by a bar at the edge.
+            // A thin bar at the right edge says there is more: at the top, then at the end.
+            const thumb = findChild(list, "scrollThumb");
+            verify(thumb.visible);
+            verify(Math.abs(thumb.y - Theme.space.xxs) < 0.5, "the bar starts at the top, not " + thumb.y);
+            verify(thumb.height < list.height - 2 * Theme.space.xxs);
+            verify(thumb.x >= list.width - Theme.space.sm, "the bar keeps to the rows' right padding");
+            list.positionViewAtEnd();
+            tryVerify(() => Math.abs(thumb.y + thumb.height - (list.height - Theme.space.xxs)) < 0.5, 2000, "the bar ends at the bottom, not " + thumb.y);
+        }
+
+        // A long list's shortcuts keep a gutter clear of the bar beside them.
+        function test_shortcutsKeepClearOfTheBar() {
+            const popup = opened();
+            const list = findChild(popup.contentItem, "commandPaletteList");
+            for (let n = 4; n <= 40; ++n)
+                PaletteModel.append({ title: "Entry " + n, description: "", group: "Actions", shortcut: "Ctrl+Shift+F", kind: "action", runnable: true, current: false });
+            const thumb = findChild(list, "scrollThumb");
+            tryVerify(() => thumb.visible);
+            tryVerify(() => list.itemAtIndex(4) !== null);
+            const keys = findChild(list.itemAtIndex(4), "commandPaletteShortcut");
+            verify(keys.visible);
+            const end = keys.mapToItem(list, keys.width, 0).x;
+            tryVerify(() => thumb.x - keys.mapToItem(list, keys.width, 0).x >= Theme.space.md, 2000, "the shortcut ends at " + end + ", the bar starts at " + thumb.x);
+        }
+
+        // A submenu's long list, under its title and without group headers,
+        // also ends on a whole row at full ink, with the bar beside it.
+        function test_aLongSubmenuEndsOnAWholeRowAndHintsAtMore() {
+            const popup = opened();
+            const list = findChild(popup.contentItem, "commandPaletteList");
+            for (let n = 4; n <= 20; ++n)
+                PaletteModel.append({ title: "Entry " + n, description: "", group: n < 10 ? "Actions" : "Threads", shortcut: "", kind: "action", runnable: true, current: false });
+            tryVerify(() => findChild(list, "scrollThumb").visible);
+            // As the palette moves into a submenu: its rows go and come
+            // (no reset), and the title above the search shows after them.
+            PaletteModel.remove(0, PaletteModel.count);
+            for (let n = 1; n <= 13; ++n)
+                PaletteModel.append({ title: "project-" + n, description: "/home/me/dev/project-" + n, group: "", shortcut: "", kind: "project", runnable: true, current: false });
+            PaletteModel.submenu = "New thread in...";
+            tryVerify(() => list.contentHeight > 13 * 34 - 1);
+            verify(list.height < list.contentHeight, "the list scrolls, " + list.height + " of " + list.contentHeight);
+            tryVerify(() => {
+                for (let i = 0; i < list.count && list.itemAtIndex(i); ++i)
+                    if (list.itemAtIndex(i).y + list.itemAtIndex(i).height === list.height)
+                        return true;
+                return false;
+            }, 2000, "a row ends where the list does, at " + list.height);
+            const edge = findChild(list, "scrollThumb");
+            verify(edge.visible);
+            // Nothing paints over the last whole row's text: it holds the
+            // same ink with the bar as without it.
+            function lastRowInk() {
+                const img = grabImage(Overlay.overlay);
+                const o = list.mapToItem(Overlay.overlay, 0, list.height - Theme.control.md);
+                let sum = 0;
+                for (let y = 2; y < Theme.control.md - 2; ++y)
+                    for (let x = 0; x < Math.min(300, list.width - Theme.space.sm); x += 2) {
+                        const c = Qt.color(img.pixel(o.x + x, o.y + y));
+                        sum += c.r + c.g + c.b;
+                    }
+                return sum;
+            }
+            const shown = lastRowInk();
+            edge.visible = false;
+            waitForRendering(list);
+            const plain = lastRowInk();
+            compare(shown, plain, "the last row keeps its ink");
         }
 
         // Rows are list items named by their title, for assistive technology.

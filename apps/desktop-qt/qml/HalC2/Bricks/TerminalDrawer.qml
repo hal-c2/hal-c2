@@ -6,8 +6,8 @@ import HalC2.Shell
 
 // The thread's terminal drawer: the shown group's terminals side by side or
 // stacked (TerminalSplits), fed by the `Terminals` controller's sessions on the
-// MC. Its actions sit over the terminal's corner; with more than one terminal,
-// a list beside the terminals names each group under them. Open flag, height, groups and the active
+// MC. Its actions sit above the terminals; with more than one terminal, a
+// list beside the terminals names each group under them. Open flag, height, groups and the active
 // one are the controller's; dragging the top edge hands the height back with
 // terminal.resize. The right panel's terminal tabs are not the drawer's. Not
 // animated: every frame of it would relayout the thread above (see RightPanel).
@@ -36,7 +36,7 @@ Item {
     // Ink, not the `muted` surface: inactive tabs are muted text.
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     // The toolbar's icons are the text colour at 90%.
-    readonly property color toolbarInk: Qt.alpha(foreground, 0.9)
+    readonly property color toolbarInk: Theme.palette.color("inkSecondary", "#b8bdc7")
     readonly property color border: Theme.palette.color("border", "#27272a")
     // Keeps the square Terminal inside a carded drawer's rounded corners.
     readonly property real inset: Math.ceil(radius * 0.3)
@@ -126,7 +126,7 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.topMargin: 2
-        anchors.rightMargin: Math.max(6, drawer.inset)
+        anchors.rightMargin: Math.max(Theme.space.sm, drawer.inset)
         anchors.bottomMargin: drawer.inset
         width: 180
         clip: true
@@ -164,7 +164,7 @@ Item {
                         width: parent.width
                         implicitHeight: 20
                         text: qsTr("%1 (%2)").arg(entry.span <= 1 ? qsTr("Single") : entry.vertical ? qsTr("Stacked") : qsTr("Side by side")).arg(entry.span)
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         tint: drawer.muted
                         focusPolicy: Qt.NoFocus
                         onClicked: Shell.dispatch("terminal.select", { terminalId: entry.terminalId })
@@ -181,7 +181,7 @@ Item {
                         iconName: "terminal"
                         iconSize: 13
                         text: entry.span > 1 ? qsTr("%1 +%2").arg(entry.label).arg(entry.span - 1) : entry.label
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         tint: tab.checked ? drawer.foreground : drawer.muted
                         focusPolicy: Qt.NoFocus
                         Accessible.name: entry.busy ? qsTr("%1, running").arg(entry.label) : entry.label
@@ -195,27 +195,21 @@ Item {
     TerminalSplits {
         id: stack
 
-        anchors.top: edgeLine.bottom
+        objectName: "terminalDrawerSplits"
+        // Under the actions, so they never cover the first line; beside the
+        // list, the actions sit over the list instead.
+        anchors.top: drawer.listShown ? edgeLine.bottom : actions.bottom
+        anchors.topMargin: drawer.listShown ? 0 : 2
         anchors.left: parent.left
         anchors.right: drawer.listShown ? terminalList.left : parent.right
         anchors.bottom: parent.bottom
         anchors.leftMargin: drawer.inset
-        anchors.rightMargin: drawer.listShown ? 6 : drawer.inset
+        anchors.rightMargin: drawer.listShown ? Theme.space.sm : drawer.inset
         anchors.bottomMargin: drawer.inset
         panel: false
         group: Terminals.activeGroup
         background: drawer.background
         foreground: drawer.foreground
-        scrollbarTopInset: drawer.listShown ? 0 : actions.y + actions.height + 2 - y
-    }
-
-    // Over the single terminal's corner, or over the list. On its own
-    // background, so the terminal's text under it does not show through.
-    Rectangle {
-        anchors.fill: actions
-        anchors.margins: -2
-        radius: 4
-        color: drawer.background
     }
 
     RowLayout {
@@ -225,7 +219,7 @@ Item {
         anchors.top: edgeLine.bottom
         anchors.right: parent.right
         anchors.topMargin: 4
-        anchors.rightMargin: Math.max(6, drawer.inset)
+        anchors.rightMargin: Math.max(Theme.space.sm, drawer.inset)
         height: 26
         spacing: 2
 

@@ -282,6 +282,19 @@ Feature: Provider instances
       | failing its startup checks   | Unavailable               |
       | signed in                    | Authenticated             |
 
+  # Said once: "Disabled", and only what the environment's message adds to it.
+  @desktop @mobile @backlog-mobile @backlog-mc
+  Scenario Outline: A disabled provider says so once
+    Given a provider that is disabled, with the message "<message>"
+    When the user opens the provider list
+    Then the provider reads "Disabled", explained by "<detail>"
+
+    Examples:
+      | message                                                                 | detail                      |
+      | Codex Work is disabled in HAL-C2 settings.                              |                             |
+      |                                                                         |                             |
+      | Codex Work is disabled in HAL-C2 settings. A server URL is configured.  | A server URL is configured. |
+
   @backlog @desktop
   Scenario Outline: A provider that works but cannot be fully verified says so
     Given a provider that is <state>
@@ -308,7 +321,6 @@ Feature: Provider instances
     Examples:
       | state                      | detail                                                                 |
       | not checked yet            | Waiting for the server to report installation and authentication details. |
-      | disabled                   | This provider is installed but disabled for new sessions in HAL-C2.    |
       | not installed              | CLI not detected on PATH.                                              |
       | failing its startup checks | The provider failed its startup checks.                                |
 

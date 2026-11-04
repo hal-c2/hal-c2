@@ -26,8 +26,10 @@ class TimelineModel;
 // `model` as rows.
 //
 // `selection` is -1 for the latest turn (the default, following new turns),
-// 0 for all changes, or a turn number. Only a shown tab loads; a hidden one
-// notes that it is stale and loads when shown again.
+// 0 for all changes, or a turn number. While the user has not picked the
+// latest turn, a latest turn whose checkpoint lists no changed files opens
+// on all changes when an earlier turn changed some. Only a shown tab loads;
+// a hidden one notes that it is stale and loads when shown again.
 //
 // The checkout itself can be reviewed too (`review.getDiffPreview`):
 // WorkingTree is its uncommitted changes, Branch the whole branch against
@@ -119,7 +121,7 @@ public:
   int latestTurn() const { return m_turns.isEmpty() ? 0 : m_turns.lastKey(); }
   // The latest finished turn's checkpoint (its `id` and the `files` it changed); empty when none.
   QJsonObject latestCheckpoint() const { return m_turns.isEmpty() ? QJsonObject() : m_turns.last(); }
-  int selection() const { return m_selection; }
+  int selection() const { return m_selection == -1 && opensOnAllChanges() ? 0 : m_selection; }
   Q_INVOKABLE void select(int selection);
   // Selects the turn the run (a turn id) finished; unknown runs change nothing.
   Q_INVOKABLE void selectRun(const QString& runId);
@@ -222,8 +224,11 @@ private:
   void readCheckpoints();
   void takeCheckpoints();
   // The selection shown: the working tree stands in for the latest turn of a
-  // thread that has none.
+  // thread that has none, and all changes for one that changed nothing.
   int effectiveSelection() const;
+  // The default shows all changes: the latest turn changed no files, an
+  // earlier one did, and the user has not picked the latest turn.
+  bool opensOnAllChanges() const;
   void loadReview(int selection);
   void load();
   // Loads what is shown of the checkout again, keeping it on screen meanwhile.
@@ -250,10 +255,13 @@ private:
   // Turn number -> its ready checkpoint.
   QMap<int, QJsonObject> m_turns;
   int m_selection = -1;
+  // The user picked the latest turn, so it is shown even when it changed nothing.
+  bool m_latestPicked = false;
   // What each other thread shows ("environment:thread").
   struct Choice {
     int selection = -1;
     QString baseRef;
+    bool latestPicked = false;
   };
   QHash<QString, Choice> m_choices;
   QString m_cwd;

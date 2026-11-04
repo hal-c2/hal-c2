@@ -46,13 +46,10 @@ Dialog {
         Shell.dispatch("attachment.viewer.close");
     }
 
-    background: Rectangle {
-        color: dialog.surface
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     contentItem: ColumnLayout {
-        spacing: 10
+        spacing: Theme.space.sm
 
         RowLayout {
             Layout.fillWidth: true
@@ -63,14 +60,14 @@ Dialog {
                 Layout.fillWidth: true
                 text: dialog.attachment?.name ?? ""
                 color: dialog.foreground
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
                 elide: Text.ElideMiddle
             }
             Label {
                 text: dialog.attachment?.origin ?? ""
                 color: dialog.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
             ShellButton {
                 objectName: "attachmentViewerSource"
@@ -239,7 +236,7 @@ Dialog {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: dialog.kind === "failed"
-            spacing: 10
+            spacing: Theme.space.sm
 
             Item { Layout.fillHeight: true }
             Label {
@@ -267,7 +264,7 @@ Dialog {
             verticalAlignment: Text.AlignVCenter
             text: qsTr("This attachment cannot be shown here.")
             color: dialog.muted
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
     }

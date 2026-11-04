@@ -46,6 +46,12 @@ ShellIcon 1.0 ShellIcon.qml
 QrCode 1.0 QrCode.qml
 ShellSplitButton 1.0 ShellSplitButton.qml
 ShellChevron 1.0 ShellChevron.qml
+ShellPopover 1.0 ShellPopover.qml
+ShellPopoverSurface 1.0 ShellPopoverSurface.qml
+ShellScrim 1.0 ShellScrim.qml
+ShellScrollEdge 1.0 ShellScrollEdge.qml
+ShellToolTip 1.0 ShellToolTip.qml
+ShellEmptyState 1.0 ShellEmptyState.qml
 Sidebar 1.0 Sidebar.qml
 SidebarThreadRow 1.0 SidebarThreadRow.qml
 HalC2Wordmark 1.0 HalC2Wordmark.qml
@@ -59,6 +65,7 @@ KeybindingsSettings 1.0 KeybindingsSettings.qml
 SettingsHost 1.0 SettingsHost.qml
 SettingsPage 1.0 SettingsPage.qml
 SettingsRow 1.0 SettingsRow.qml
+SettingsHeading 1.0 SettingsHeading.qml
 BackgroundActivityRow 1.0 BackgroundActivityRow.qml
 TextGenerationRow 1.0 TextGenerationRow.qml
 ProjectActionsSettings 1.0 ProjectActionsSettings.qml

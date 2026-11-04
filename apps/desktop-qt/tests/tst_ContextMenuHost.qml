@@ -28,6 +28,12 @@ TestCase {
         };
     }
 
+    // Rows are added to the menu one by one: its height must not loop on
+    // them while they are laid out.
+    function init() {
+        failOnWarning(/Binding loop/);
+    }
+
     function cleanup() {
         Shell.state = {};
         Shell.reset();
@@ -83,7 +89,7 @@ TestCase {
 
     function test_a_short_menu_keeps_the_usual_width() {
         const host = open([{id: "a", label: "Pin"}]);
-        compare(host.menu.implicitWidth, 200);
+        compare(host.menu.implicitWidth, 220);
     }
 
     function test_the_menu_fits_a_long_label_up_to_a_limit() {
@@ -92,5 +98,81 @@ TestCase {
         verify(host.menu.implicitWidth <= 360);
         const huge = open([{id: "a", label: "x".repeat(200)}], "r2");
         compare(huge.menu.implicitWidth, 360);
+    }
+
+    function selections() {
+        return Shell.dispatchedActions.filter(action => action.action === "menu.select").map(action => action.payload);
+    }
+
+    // A choice in one menu opening the next (Move to another machine…): the
+    // second request arrives while the first menu is still on its way out.
+    function test_a_request_arriving_while_the_last_menu_closes_stays_open() {
+        const host = open([{id: "move", label: "Move to another machine…"}], "r1");
+        const first = host.menu;
+        tryVerify(() => first.opened);
+        first.itemAt(0).triggered();
+        compare(selections(), [{requestId: "r1", id: "move"}]);
+        Shell.state = {menu: null};
+        Shell.state = {menu: request([{id: "m1", label: "ai-beast"}], "r2")};
+        const second = host.menu;
+        verify(second !== first);
+        compare(rowTexts(second), ["ai-beast"]);
+        // The first menu finishes leaving without answering for the second.
+        tryVerify(() => !first || !first.visible);
+        tryVerify(() => second.opened);
+        verify(second.visible);
+        compare(selections(), [{requestId: "r1", id: "move"}]);
+        Shell.state = {menu: null};
+        compare(host.menu, null);
+        tryVerify(() => !second || !second.visible);
+    }
+
+    function test_back_to_back_requests_show_the_second() {
+        const host = open([{id: "a", label: "Pin"}], "r1");
+        const first = host.menu;
+        Shell.state = {menu: request([{id: "b", label: "Rename"}], "r2")};
+        compare(rowTexts(host.menu), ["Rename"]);
+        tryVerify(() => !first || !first.visible);
+        tryVerify(() => host.menu !== null && host.menu.opened);
+        compare(selections(), []);
+    }
+
+    function test_dismissing_a_menu_answers_for_its_request() {
+        const host = open([{id: "a", label: "Pin"}], "r1");
+        const menu = host.menu;
+        tryVerify(() => menu.opened);
+        menu.close();
+        tryVerify(() => selections().length === 1);
+        compare(selections(), [{requestId: "r1", id: null}]);
+        compare(host.menu, null);
+    }
+
+    function labelX(row) {
+        const label = findChild(row, "menuItemLabel");
+        return label.mapToItem(null, 0, 0).x;
+    }
+
+    // Rows without an icon (a submenu's, Snooze ›) line up with iconed ones.
+    function test_rows_without_icons_keep_the_icon_column() {
+        const host = open([
+            {id: "a", label: "Pin", icon: "pin"},
+            {id: "s", label: "Snooze", children: [{id: "s1", label: "In 1 hour"}]},
+            {id: "r", label: "Rename"}
+        ]);
+        const menu = host.menu;
+        tryVerify(() => menu.opened);
+        const iconed = () => labelX(menu.itemAt(0));
+        tryVerify(() => iconed() > menu.itemAt(0).mapToItem(null, 0, 0).x + menu.itemAt(0).leftPadding);
+        compare(labelX(menu.itemAt(1)), iconed());
+        compare(labelX(menu.itemAt(2)), iconed());
+    }
+
+    function test_a_menu_without_icons_has_no_icon_column() {
+        const host = open([{id: "a", label: "Pin"}, {id: "r", label: "Rename"}]);
+        const menu = host.menu;
+        tryVerify(() => menu.opened);
+        const row = menu.itemAt(0);
+        tryCompare(row.contentItem, "width", row.availableWidth);
+        compare(labelX(row) - row.mapToItem(null, 0, 0).x, row.leftPadding);
     }
 }

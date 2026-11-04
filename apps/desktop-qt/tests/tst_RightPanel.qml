@@ -190,6 +190,45 @@ Item {
         }
     }
 
+    // A thread's ThreadDiff with its rows loaded; its lines can be commented on.
+    Component {
+        id: reviewedDiff
+        QtObject {
+            property var choices: [{ value: -1, label: "Latest turn" }, { value: 0, label: "All changes" }]
+            property int selection: 0
+            property string status: "ready"
+            property bool wrap: false
+            property bool reviewing: false
+            property var model: null
+            signal revealRow(int row)
+        }
+    }
+
+    // A DiffModel with one hunk of a file: a kept, a removed and an added line.
+    Component {
+        id: fakeDiffRows
+        ListModel {
+            property bool split: false
+            property int fileCount: 1
+            property int additions: 1
+            property int deletions: 1
+            property int maxColumns: 40
+            property bool allExpanded: true
+            function path(file) { return "src/cart.ts"; }
+            function tree() { return []; }
+            function toggle(file) {}
+
+            Component.onCompleted: {
+                const row = { file: 0, path: "", previousPath: "", change: "modified", binary: false, additions: 0, deletions: 0, expanded: true, text: "", sign: "", oldLine: 0, newLine: 0, rightText: "", rightSign: "", state: "", note: "", partial: false };
+                append(Object.assign({}, row, { kind: "file", path: "src/cart.ts", additions: 1, deletions: 1 }));
+                append(Object.assign({}, row, { kind: "hunk", path: "@@ -1017,6 +1018,13 @@ defmodule HalC2.Codex.ThreadRuntime do a header far wider than the panel it is shown in" }));
+                append(Object.assign({}, row, { kind: "line", sign: " ", text: "kept", oldLine: 1017, newLine: 1018 }));
+                append(Object.assign({}, row, { kind: "line", sign: "-", text: "removed", oldLine: 1018 }));
+                append(Object.assign({}, row, { kind: "line", sign: "+", text: "added", newLine: 1019 }));
+            }
+        }
+    }
+
     Component {
         id: pullRequestsComponent
         PullRequestsPanel {
@@ -508,7 +547,7 @@ Item {
             }, 1000, "the active tab and its close button are in view");
             verify(findChild(panel, "panelScrollLeft").enabled);
             const title = findChild(panel, "panelTab-t4");
-            verify(title.width <= 112 + 13 + 20 + 12 + 16, "a long title is capped");
+            verify(title.width <= 112 + 13 + 20 + 2 * Theme.space.sm + 16, "a long title is capped");
         }
 
         function test_finishedSubagentsFoldUnderPreviousAgentsWithAFailedCount() {
@@ -532,6 +571,44 @@ Item {
             mouseClick(findChild(details, "threadDetailsShowMore"));
             compare(details.hiddenCount, 0);
             verify(!findChild(details, "threadDetailsShowMore").visible);
+        }
+
+        // An action whose name is longer than the column wraps onto a
+        // second line rather than being cut, and its row grows to hold it.
+        function test_detailsActionsWrapInsteadOfCutting() {
+            Shell.reset();
+            Shell.state = { projectActions: { projectKey: "p", file: "ok",
+                scripts: [{ id: "s1", name: "Run the whole release build for every target", setup: false, shortcut: "Ctrl+Shift+R" }],
+                imports: [{ name: "Setup Worktree" }] } };
+            const details = createTemporaryObject(detailsComponent, root, { details: { environment: "e", online: true, project: "p", folder: "", checkout: "Local", branch: "", relations: [] } });
+            const imported = findChild(details, "threadDetailsImport-Setup Worktree");
+            const script = findChild(details, "threadDetailsAction-s1");
+            verify(imported && script);
+            for (const row of [imported, script]) {
+                const label = findChild(row, "actionRowLabel");
+                tryVerify(() => label.width > 0 && label.contentWidth <= label.width, 2000, row.text + " fits its row");
+                verify(!label.truncated, "and is never cut");
+                tryVerify(() => label.height >= label.implicitHeight && row.height >= label.implicitHeight + row.topPadding + row.bottomPadding, 2000, "inside its row");
+                verify(row.mapToItem(details, row.width, 0).x <= details.width, "inside the column");
+            }
+            compare(imported.text, "Import Setup Worktree from hal-c2.json");
+            // Just too narrow for the file name, which moves down whole
+            // rather than breaking at its hyphen.
+            const importLabel = findChild(imported, "actionRowLabel");
+            const upToHyphen = Qt.createQmlObject("import QtQuick; TextMetrics {}", details);
+            upToHyphen.font = importLabel.font;
+            upToHyphen.text = "Import Setup Worktree from hal-";
+            details.width += upToHyphen.advanceWidth + 2 - importLabel.width;
+            tryVerify(() => Math.abs(importLabel.width - upToHyphen.advanceWidth - 2) < 1, 2000, "the label has room up to the hyphen");
+            tryVerify(() => importLabel.lineCount === 2, 2000, "and wraps");
+            // Its widest line is then short of "…from hal": no part of the
+            // name stayed on the first line.
+            upToHyphen.text = "Import Setup Worktree from hal";
+            verify(importLabel.contentWidth < upToHyphen.advanceWidth, "hal-c2.json moved down whole; the widest line is " + importLabel.contentWidth + "px");
+            const scriptLabel = findChild(script, "actionRowLabel");
+            verify(scriptLabel.lineCount >= 2, "the long name takes a second line");
+            tryVerify(() => script.height > Theme.control.md, 2000, "and its row grows to hold it");
+            Shell.reset();
         }
 
         function test_relationRowsCentreTheirLabels() {
@@ -1031,6 +1108,153 @@ Item {
             mouseClick(findChild(dialog.contentItem, "revertFiles"));
             compare(source.confirmed, [false, true]);
             tryVerify(() => !dialog.visible);
+        }
+
+        // A line has no number on the side it is not on, the comment button
+        // has its own column, and a long hunk header ends in view.
+        function test_diffLinesNumberOnlyTheirOwnSide() {
+            const source = createTemporaryObject(reviewedDiff, root, { model: createTemporaryObject(fakeDiffRows, root) });
+            const diff = createTemporaryObject(diffComponent, root, { source: source, width: 360 });
+            verify(diff.canComment);
+            const view = findChild(diff, "diffRows");
+            tryVerify(() => view.count === 5 && view.itemAtIndex(4) !== null);
+
+            function numbers(index) {
+                const line = view.itemAtIndex(index).item;
+                return [findChild(line, "diffOldLine").text, findChild(line, "diffNewLine").text];
+            }
+            compare(numbers(2), ["1017", "1018"]);
+            compare(numbers(3), ["1018", ""], "a removed line has no new number");
+            compare(numbers(4), ["", "1019"], "an added line has no old number");
+
+            const kept = view.itemAtIndex(2).item;
+            const button = findChild(kept, "diffLineComment");
+            const number = findChild(kept, "diffOldLine");
+            const numberLeft = number.mapToItem(kept, 0, 0).x + number.width - number.contentWidth;
+            verify(button.x + button.width <= numberLeft, "the comment button is left of the line number");
+
+            const header = findChild(view.itemAtIndex(1).item, "diffHunkHeader");
+            verify(header.truncated, "the header is elided");
+            verify(header.mapToItem(view, header.width, 0).x <= view.width, "the header ends inside the panel");
+        }
+
+        // Wrapped, a long line's rest hangs under its own indentation;
+        // unwrapped, the numbers and sign stay put while it scrolls sideways.
+        function test_longDiffLinesKeepTheirShape() {
+            const rows = createTemporaryObject(fakeDiffRows, root);
+            const long = "        log: snapshot.state.thread_id, adopt: dir, offset: snapshot.offset, channel: snapshot.channel";
+            rows.setProperty(2, "text", long);
+            rows.maxColumns = long.length;
+            const source = createTemporaryObject(reviewedDiff, root, { model: rows, wrap: true });
+            const diff = createTemporaryObject(diffComponent, root, { source: source, width: 560, height: 300 });
+            const view = findChild(diff, "diffRows");
+            tryVerify(() => view.count === 5 && view.itemAtIndex(4) !== null);
+            const line = view.itemAtIndex(2).item;
+            const findWith = (item, property) => {
+                if (item[property] !== undefined)
+                    return item;
+                for (let i = 0; i < item.children.length; ++i) {
+                    const found = findWith(item.children[i], property);
+                    if (found)
+                        return found;
+                }
+                return null;
+            };
+            const text = findWith(line, "hang");
+            verify(text.lineCount > 1, "the line wraps");
+            verify(text.hang > 0, "under its indentation");
+            compare(text.text, long.trim());
+            compare(text.leftPadding, text.hang, "every line of it starts there, the wrapped rest too");
+            compare(text.hang, 8 * (view.numbersWidth - Theme.space.sm) / 10, "eight spaces in");
+
+            source.wrap = false;
+            tryVerify(() => view.contentWidth > view.width, 2000, "unwrapped, the line is wider than the panel");
+            const number = findChild(line, "diffOldLine");
+            const before = number.mapToItem(view, 0, 0).x;
+            view.contentX = view.originX + 120;
+            compare(number.mapToItem(view, 0, 0).x, before, "the line numbers stay put");
+            verify(text.mapToItem(view, 0, 0).x < view.gutter - 100, "while the line scrolls under them");
+        }
+
+        // Too narrow for about forty characters of code, the lines scroll
+        // sideways whatever the setting says, and wrap again once wider.
+        function test_aNarrowDiffScrollsInsteadOfWrapping() {
+            const rows = createTemporaryObject(fakeDiffRows, root);
+            const long = "        log: snapshot.state.thread_id, adopt: dir, offset: snapshot.offset, channel: snapshot.channel";
+            rows.setProperty(2, "text", long);
+            rows.maxColumns = long.length;
+            const source = createTemporaryObject(reviewedDiff, root, { model: rows, wrap: true });
+            const diff = createTemporaryObject(diffComponent, root, { source: source, width: 380, height: 300 });
+            const view = findChild(diff, "diffRows");
+            tryVerify(() => view.count === 5 && view.itemAtIndex(4) !== null);
+            verify(diff.codeWidth < diff.wrapFloor, "a 380px sheet leaves too little room");
+            verify(source.wrap && !diff.wrap, "the setting stays on, the lines do not wrap");
+            verify(view.contentWidth > view.width, "the long line scrolls sideways");
+            const number = findChild(view.itemAtIndex(2).item, "diffOldLine");
+            const before = number.mapToItem(view, 0, 0).x;
+            view.contentX = view.originX + 120;
+            compare(number.mapToItem(view, 0, 0).x, before, "the line numbers stay put");
+            // A thin bar along the bottom says they scroll...
+            const bar = findChild(diff, "diffSidewaysBar");
+            verify(bar.visible, "a bar shows the lines scroll sideways");
+            verify(bar.height <= Theme.space.sm, "a thin one, not " + bar.height + "px");
+            verify(Math.abs(bar.y + bar.height - view.height) < 0.5, "along the bottom");
+            // ...and the code stops short of the edge: the last 8px of the
+            // long line, cut mid-text, hold no ink.
+            // Wherever it is scrolled to (a space can fill 8px by itself).
+            const line = view.itemAtIndex(2).item;
+            for (let step = 0; step < 4; ++step) {
+                view.contentX = view.originX + 120 + step * Theme.space.xs;
+                waitForRendering(diff);
+                const shot = grabImage(diff);
+                const origin = line.mapToItem(diff, 0, 0);
+                const top = Math.ceil(origin.y);
+                const right = Math.round(view.mapToItem(diff, view.width, 0).x);
+                const blank = shot.pixel(right - 1, top + Math.floor(line.height / 2));
+                let inked = 0;
+                for (let x = right - 4 * Theme.space.sm; x < right; ++x) {
+                    for (let y = top; y < top + Math.floor(line.height); ++y) {
+                        if (x >= right - Theme.space.sm)
+                            verify(Qt.colorEqual(shot.pixel(x, y), blank), "ink at " + x + "," + y + " of the end padding");
+                        else if (!Qt.colorEqual(shot.pixel(x, y), blank))
+                            ++inked;
+                    }
+                }
+                verify(inked > 0, "the code runs up to the padding");
+            }
+            diff.width = 640;
+            tryVerify(() => diff.wrap && view.contentWidth === view.width, 2000, "wide again, the lines wrap");
+            verify(!bar.visible, "wrapped, nothing scrolls sideways");
+            rows.split = true;
+            verify(!diff.wrap, "a split half of 640px is too narrow as well");
+        }
+
+        // A turn with nothing to show names the turn and offers every change.
+        function test_anEmptyTurnNamesItselfAndOffersAllChanges() {
+            const source = createTemporaryObject(fakeDiff, root);
+            const diff = createTemporaryObject(diffComponent, root, { source: source });
+            const message = findChild(diff, "diffMessage");
+            tryVerify(() => message.visible);
+            compare(message.title, "No changes in the latest turn");
+            compare(message.description, "No net changes in this selection.");
+            compare(message.actionText, "Show all changes");
+            message.actionTriggered();
+            compare(source.selection, 0, "all changes are shown");
+            compare(message.title, "No changes", "all of them have no turn to name");
+            compare(message.actionText, "", "nor anything wider to offer");
+            source.selection = 2;
+            compare(message.title, "No changes in turn 2");
+        }
+
+        // A thread whose latest turn changed nothing opens on all changes before its
+        // turns reach the picker; the picker names what is shown once they do.
+        function test_thePickerNamesASelectionMadeBeforeItsChoices() {
+            const source = createTemporaryObject(fakeDiff, root, { choices: [], selection: -1 });
+            const diff = createTemporaryObject(diffComponent, root, { source: source });
+            const picker = findChild(diff, "diffTurnPicker");
+            source.selection = 0;
+            source.choices = [{ value: -1, label: "Latest turn" }, { value: 0, label: "All changes" }];
+            compare(picker.currentText, "All changes");
         }
 
         function test_pullRequestsOpenInTheBrowserAndLinkFromTheField() {

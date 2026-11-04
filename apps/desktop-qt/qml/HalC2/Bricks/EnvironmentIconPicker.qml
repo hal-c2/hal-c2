@@ -41,7 +41,7 @@ RowLayout {
         visible: root.locked
         text: root.machine?.lock ?? ""
         color: Theme.palette.color("textMuted", "#8b8b93")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 }

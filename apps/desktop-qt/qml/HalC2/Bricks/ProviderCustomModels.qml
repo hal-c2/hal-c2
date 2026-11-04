@@ -22,12 +22,12 @@ ColumnLayout {
     }
 
     objectName: "customModels"
-    spacing: 6
+    spacing: Theme.space.sm
 
     component Hint: Label {
         Layout.fillWidth: true
         color: models.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
@@ -47,7 +47,7 @@ ColumnLayout {
 
         objectName: "modelEditor"
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         ShellTextField {
             objectName: "modelName"
@@ -65,7 +65,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 text: qsTr("Options shown in the composer")
                 color: models.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ShellComboBox {
@@ -100,7 +100,7 @@ ColumnLayout {
                 spacing: 4
 
                 RowLayout {
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     ShellTextField {
                         objectName: "optionId"
@@ -149,7 +149,7 @@ ColumnLayout {
                         required property int index
                         objectName: "choice_" + index
                         Layout.leftMargin: 16
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         function edit(key, value) {
                             editor.change(draft => {
@@ -261,7 +261,7 @@ ColumnLayout {
     Label {
         text: qsTr("Custom models")
         color: models.foreground
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         font.weight: Font.Medium
     }
 
@@ -280,13 +280,13 @@ ColumnLayout {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Label {
                     Layout.fillWidth: true
                     text: modelItem.modelData.name.length > 0 ? qsTr("%1 (%2)").arg(modelItem.modelData.name).arg(modelItem.modelData.slug) : modelItem.modelData.slug
                     color: models.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     elide: Text.ElideRight
                 }
 
@@ -294,7 +294,7 @@ ColumnLayout {
                     visible: modelItem.modelData.options.length > 0
                     text: modelItem.modelData.options.length === 1 ? qsTr("%n option", "", 1) : qsTr("%n options", "", modelItem.modelData.options.length)
                     color: models.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
 
                 ShellButton {
@@ -329,7 +329,7 @@ ColumnLayout {
 
     RowLayout {
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         ShellTextField {
             id: slugField

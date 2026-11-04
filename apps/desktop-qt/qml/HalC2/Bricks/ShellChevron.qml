@@ -1,35 +1,13 @@
 import QtQuick
-import QtQuick.Shapes
+import HalC2.Shell
 
-// A small down chevron drawn as a stroke, so it sits on the control's centre
-// line instead of on a glyph baseline.
-Shape {
-    id: chevron
+// The one chevron: menus, pickers, disclosures and pagers all draw this. It
+// points `direction` ("down", "up", "left" or "right"), and takes the icon
+// scale's stroke for its size like any other icon.
+ShellIcon {
+    property string direction: "down"
 
-    property color color: "#8b8b93"
-    property real strokeWidth: 1.5
-
-    width: 9
-    height: 6
-    preferredRendererType: Shape.CurveRenderer
-
-    ShapePath {
-        strokeColor: chevron.color
-        strokeWidth: chevron.strokeWidth
-        fillColor: "transparent"
-        capStyle: ShapePath.RoundCap
-        joinStyle: ShapePath.RoundJoin
-        startX: 0.5
-        startY: 0.5
-
-        PathLine {
-            x: chevron.width / 2
-            y: chevron.height - 0.5
-        }
-
-        PathLine {
-            x: chevron.width - 0.5
-            y: 0.5
-        }
-    }
+    name: "chevron-" + direction
+    size: Theme.icon.sm
+    color: Theme.palette.color("textMuted", "#8b919e")
 }

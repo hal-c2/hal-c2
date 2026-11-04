@@ -262,6 +262,11 @@ Feature: Command palette
       Then the user is told "Unable to run command"
 
     @desktop
+    Scenario: Copying the thread's ID names the thread, never shows the ID
+      Given the command palette is open
+      Then "Copy thread ID" is described by the title of the thread the user is looking at
+
+    @desktop
     Scenario Outline: Every palette action does its job
       Given the command palette is open
       When the user runs "<title>"

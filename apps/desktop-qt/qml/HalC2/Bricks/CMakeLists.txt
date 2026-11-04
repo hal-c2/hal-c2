@@ -44,6 +44,12 @@ set(hal_c2_bricks_qml_files
     ShellMenu.qml
     ShellMenuItem.qml
     ShellMenuSeparator.qml
+    ShellPopover.qml
+    ShellPopoverSurface.qml
+    ShellScrim.qml
+    ShellScrollEdge.qml
+    ShellToolTip.qml
+    ShellEmptyState.qml
     ShellTextField.qml
     ShellSwitch.qml
     ShellSpinBox.qml
@@ -64,6 +70,7 @@ set(hal_c2_bricks_qml_files
     SettingsHost.qml
     SettingsPage.qml
     SettingsRow.qml
+    SettingsHeading.qml
     BackgroundActivityRow.qml
     TextGenerationRow.qml
     ProjectActionsSettings.qml

@@ -492,6 +492,54 @@ Item {
             compare(clipboardText(), "Refunds");
         }
 
+        // A short inline code never splits across lines, at a slash, a
+        // hyphen or a space, and copies and cites as written.
+        function test_shortInlineCodeKeepsToOneLine() {
+            const md = make("The MC server is in `apps/server-ex mix-test` and more words follow here.", { citable: true });
+            const edit = prose(segmentsOf(md)[0]);
+            const start = plain(edit).indexOf("apps");
+            const end = plain(edit).indexOf(" and more");
+            let wrapped = 0;
+            for (let width = 200; width <= 560; width += 3) {
+                md.width = width;
+                if (edit.lineCount > 1)
+                    ++wrapped;
+                compare(edit.positionToRectangle(start).y, edit.positionToRectangle(end - 1).y, "split at " + width);
+            }
+            verify(wrapped > 0, "the line did wrap somewhere");
+            md.width = 560;
+            edit.forceActiveFocus();
+            edit.select(start, end);
+            keySequence(StandardKey.Copy);
+            compare(clipboardText(), "apps/server-ex mix-test");
+            citeSpy.target = md;
+            citeSpy.clear();
+            mouseClick(findChild(md, "citeSelection"));
+            compare(citeSpy.signalArguments[0][0].text, "apps/server-ex mix-test");
+        }
+
+        // A long one breaks only after a slash or a hyphen, never at its
+        // spaces, and stays inside the reply.
+        function test_longInlineCodeBreaksOnlyAfterASlashOrHyphen() {
+            const md = make("See `cd ~/.local/share/mise/installs/codex-cli/latest/bin && ./codex --version` for the wrapper.", { width: 240 });
+            const edit = prose(segmentsOf(md)[0]);
+            verify(edit.lineCount > 2, "it wraps: " + edit.lineCount);
+            verify(edit.contentWidth <= 240, "fits: " + edit.contentWidth);
+            const raw = plain(edit);
+            const start = raw.indexOf("cd ");
+            const end = raw.indexOf(" for the");
+            for (let i = start + 1; i < end; ++i) {
+                if (edit.positionToRectangle(i).y !== edit.positionToRectangle(i - 1).y)
+                    verify("/-".includes(raw[i - 1] === "\u2060" ? raw[i - 2] : raw[i - 1]), "broke after " + JSON.stringify(raw.slice(start, i)));
+            }
+        }
+
+        // Punctuation after a chip follows it with no space, as written.
+        function test_inlineCodeAddsNoSpacesAroundIt() {
+            const md = make("a bare `:closed`. Then (`ad49b68fcf`, here) `x`: y");
+            compare(Md.plain(plain(prose(segmentsOf(md)[0]))), "a bare :closed. Then (ad49b68fcf, here) x: y");
+        }
+
         function test_citeQuotesTheSelectionInItsReply() {
             const md = make("# Rates\n\nRefunds reuse the old rate.\n\n```\ncode\n```\n\nAfter the code.", { citable: true });
             citeSpy.target = md;

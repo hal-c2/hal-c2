@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/settingsPages.js" as Pages
 
 // Settings → Open source licenses:
 // the third-party notices LicensesController reads from the manifest shipped
@@ -17,8 +18,8 @@ Rectangle {
     readonly property string status: settings?.status ?? "loading"
     readonly property var entries: settings?.entries ?? []
     readonly property int total: settings?.total ?? 0
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color line: Theme.palette.color("border", "#27272a")
 
     objectName: "openSourceLicenses"
@@ -32,8 +33,8 @@ Rectangle {
         objectName: "licenseList"
 
         anchors.fill: parent
-        anchors.topMargin: 24
-        anchors.bottomMargin: 24
+        anchors.topMargin: Theme.space.xl
+        anchors.bottomMargin: Theme.space.xl
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar {
@@ -42,9 +43,9 @@ Rectangle {
         model: page.status === "ready" ? page.entries : []
 
         header: ColumnLayout {
-            x: 24
-            width: Math.min(720, list.width - 48)
-            spacing: 10
+            x: Pages.columnX(list.width, Theme.space.xl)
+            width: Pages.columnWidth(list.width, Theme.space.xl)
+            spacing: Theme.space.sm
 
             SettingsBreadcrumb {
                 Layout.fillWidth: true
@@ -53,16 +54,16 @@ Rectangle {
 
             GridLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 12
+                Layout.topMargin: Theme.space.md
                 columns: page.narrow ? 2 : 3
-                columnSpacing: 12
-                rowSpacing: 8
+                columnSpacing: Theme.space.md
+                rowSpacing: Theme.space.sm
 
                 Label {
                     Layout.fillWidth: true
                     text: qsTr("Third-party notices")
                     color: page.foreground
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                    font.pixelSize: Theme.type.title.size
                     font.weight: Font.DemiBold
                 }
 
@@ -72,7 +73,7 @@ Rectangle {
                     text: page.entries.length === page.total ? qsTr("%1 notices").arg(page.total)
                                                              : qsTr("%1 of %2").arg(page.entries.length).arg(page.total)
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellTextField {
@@ -100,29 +101,29 @@ Rectangle {
                 visible: page.status === "loading"
                 text: qsTr("Loading open-source notices…")
                 color: page.muted
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             Label {
                 objectName: "noLicenseMatch"
                 Layout.fillWidth: true
-                Layout.topMargin: 20
+                Layout.topMargin: Theme.space.xl
                 visible: page.status === "ready" && page.entries.length === 0
                 horizontalAlignment: Text.AlignHCenter
                 text: qsTr("No licenses match that search.")
                 color: page.muted
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
             }
 
             ColumnLayout {
                 objectName: "licensesError"
                 visible: page.status === "error"
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Label {
                     text: qsTr("Open-source notices are unavailable")
                     color: page.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -130,7 +131,7 @@ Rectangle {
                     Layout.maximumWidth: 560
                     text: page.settings?.message ?? ""
                     color: page.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     wrapMode: Text.Wrap
                 }
 
@@ -149,14 +150,14 @@ Rectangle {
             readonly property bool open: page.settings?.openKey === notice.modelData.key
 
             objectName: "license:" + notice.modelData.name
-            x: 24
-            width: Math.min(720, list.width - 48)
+            x: Pages.columnX(list.width, Theme.space.xl)
+            width: Pages.columnWidth(list.width, Theme.space.xl)
             spacing: 0
 
             GridLayout {
                 Layout.fillWidth: true
                 columns: page.narrow ? 2 : 3
-                columnSpacing: 8
+                columnSpacing: Theme.space.sm
                 rowSpacing: 0
 
                 ShellButton {
@@ -178,12 +179,12 @@ Rectangle {
                     Layout.columnSpan: page.narrow ? 2 : 1
                     Layout.fillWidth: page.narrow
                     Layout.leftMargin: page.narrow ? 28 : 0
-                    Layout.bottomMargin: page.narrow ? 6 : 0
+                    Layout.bottomMargin: page.narrow ? Theme.space.sm : 0
                     Layout.maximumWidth: page.narrow ? -1 : 300
                     text: notice.modelData.license + " · " + notice.modelData.where
                     elide: Text.ElideRight
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellButton {
@@ -206,7 +207,7 @@ Rectangle {
                 objectName: "noticeText"
                 Layout.fillWidth: true
                 Layout.leftMargin: 28
-                Layout.bottomMargin: 12
+                Layout.bottomMargin: Theme.space.md
                 visible: notice.open
                 readOnly: true
                 selectByMouse: true
@@ -214,7 +215,7 @@ Rectangle {
                 wrapMode: TextEdit.Wrap
                 color: page.foreground
                 font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
         }
     }

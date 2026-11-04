@@ -172,6 +172,13 @@ Feature: Reviewing working tree and branch changes
     When the user turns on line wrapping in the diff
     Then long lines wrap instead of scrolling sideways
 
+  @desktop
+  Scenario: A diff too narrow to wrap scrolls sideways instead
+    Given the user wraps long lines in the diff
+    When the diff has room for fewer than forty characters of code
+    Then long lines scroll sideways under their line numbers
+    And they wrap again once the diff is wider
+
   @desktop @mobile @tui
   Scenario: Commenting on lines adds review context to the composer
     When the user comments "Use the tax table" on lines 10 to 12 of "src/cart.ts"

@@ -20,7 +20,7 @@ Column {
     readonly property color borderColor: Theme.palette.color("border", "#27272a")
 
     objectName: "deviceBanners"
-    spacing: 6
+    spacing: Theme.space.sm
 
     Repeater {
         model: root.banners
@@ -33,7 +33,7 @@ Column {
             objectName: root.namePrefix + "-" + modelData.hostId
             width: root.width
             height: bannerColumn.implicitHeight + 16
-            radius: 6
+            radius: Theme.radiusSm
             color: "transparent"
             border.color: root.borderColor
 
@@ -48,7 +48,7 @@ Column {
                 Text {
                     text: banner.modelData.label
                     color: root.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     font.weight: Font.Medium
                 }
                 Text {
@@ -57,7 +57,7 @@ Column {
                     wrapMode: Text.Wrap
                     text: banner.modelData.message
                     color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
                 Text {
                     width: parent.width
@@ -65,7 +65,7 @@ Column {
                     wrapMode: Text.Wrap
                     text: banner.modelData.advice
                     color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
             }
             ShellButton {

@@ -233,6 +233,44 @@ Item {
             tryVerify(() => list.contentHeight > before && atEnd(list), 5000, "the view follows new output again");
         }
 
+        // "Scroll to end" sits on its own solid band at the bottom, so it
+        // never covers a line, and keeps off once the end is under the band.
+        function test_scrollToEndHasItsOwnBand() {
+            const timeline = longThread();
+            const list = view(timeline);
+            scrollUp(timeline, timeline.height);
+            const jump = findChild(timeline, "jumpToLatest");
+            const band = findChild(timeline, "jumpToLatestBand");
+            verify(jump.visible && band.visible, "the control shows on its band");
+            compare(band.color.a, 1, "the band hides the rows under it");
+            verify(band.height >= 40, "about 40px of its own");
+            const foot = list.mapToItem(timeline, 0, list.height).y;
+            const bandTop = band.mapToItem(timeline, 0, 0).y;
+            compare(band.mapToItem(timeline, 0, band.height).y, foot, "the band reaches the bottom");
+            verify(jump.mapToItem(timeline, 0, 0).y > bandTop && jump.mapToItem(timeline, 0, jump.height).y < foot, "the control is inside it");
+            list.contentY = list.originY + list.contentHeight - list.height - Theme.space.lg;
+            verify(!timeline.following, "a little way from the end");
+            verify(!jump.visible && !band.visible, "the end is under it, so it stays away");
+        }
+
+        // Rows scrolled under the top are cut cleanly at a hairline, never
+        // faded into a ghost line.
+        function test_rowsAreCutCleanlyAtTheTop() {
+            const timeline = longThread();
+            const list = view(timeline);
+            const edge = findChild(timeline, "timelineTopEdge");
+            verify(list.clip, "the rows are cut at the view's top");
+            verify(edge.visible, "a thread opened at its end marks the cut");
+            compare(edge.mapToItem(timeline, 0, 0).y, list.mapToItem(timeline, 0, 0).y);
+            compare(edge.height, 1, "a hairline, not a fade");
+            compare(edge.color.a, 1);
+            list.forceActiveFocus();
+            tryVerify(() => list.activeFocus, 2000);
+            keyClick(Qt.Key_Home);
+            compare(list.contentY, list.originY - list.topMargin, "Home goes to the start");
+            tryVerify(() => !edge.visible, 2000, "at the start nothing is cut");
+        }
+
         // Scenario: The keyboard pages through the conversation
         function test_pageKeysScrollTheConversation() {
             const timeline = longThread();
@@ -267,6 +305,36 @@ Item {
             mouseClick(list, list.width / 2, list.height / 2);
             tryVerify(() => list.activeFocus, 2000, "a click gives the conversation the keyboard");
             verify(!ring.visible, "a click draws no ring");
+        }
+
+        // Message text is selectable, so a click there puts the keyboard on
+        // the text, inside the conversation: that draws no ring either.
+        function test_clickOnMessageTextDrawsNoRing() {
+            const timeline = longThread();
+            const list = view(timeline);
+            const ring = findChild(timeline, "timelineFocus");
+            const text = shownText(list, list.contentItem);
+            verify(!!text, "a message's text is on screen");
+            mouseClick(text, 4, text.height / 2);
+            tryVerify(() => list.activeFocus, 2000, "the click put the keyboard in the conversation");
+            verify(!ring.visible, "a click on text draws no ring");
+        }
+
+        function shownText(list, item) {
+            for (let i = 0; i < item.children.length; ++i) {
+                const child = item.children[i];
+                if (!child.visible)
+                    continue;
+                if (child.selectByMouse === true && child.readOnly === true && child.length > 0) {
+                    const at = child.mapToItem(list, 0, 0);
+                    if (at.y > 0 && at.y + child.height < list.height)
+                        return child;
+                }
+                const found = shownText(list, child);
+                if (found)
+                    return found;
+            }
+            return null;
         }
 
         // The jump pill is a button: named, reached by Tab, pressed with Space.
@@ -353,7 +421,18 @@ Item {
             verify(!timeline.following, "the room made does not count as the user returning");
             verify(timeline.scrolledAway, "the room stays made");
             compare(timeline.height, root.roomyHeight);
-            verify(findChild(timeline, "jumpToLatest").visible);
+            offersTheEndOnceItGrows(timeline);
+        }
+
+        // "Scroll to end" stays off the end while the end is under it, and
+        // shows once the reply grows past the view.
+        function offersTheEndOnceItGrows(timeline) {
+            const jump = findChild(timeline, "jumpToLatest");
+            verify(!jump.visible, "the end shows, so it is not offered yet");
+            for (let i = 0; i < 4; ++i)
+                grow();
+            tryVerify(() => jump.visible, 5000, "the user is offered a way to scroll to the end");
+            verify(!timeline.following);
         }
 
         // Scenario: The user returns to the end of the thread
@@ -387,6 +466,27 @@ Item {
             tryVerify(() => !list.moving && list.contentY > away, 5000, "the view scrolls down");
             verify(!timeline.following, "a scroll the list takes does not jump to the end");
             verify(!atEnd(list));
+        }
+
+        // Scenario: Scrolling away stops the view from following
+        // A wheel's scroll up the list cuts short (rows measured above it
+        // mid-scroll) ends where it began; where the host's room for reading
+        // shows the end, that is not the user going back to it.
+        function test_aScrollUpTheListDidNotTakeLeavesTheUserAway() {
+            const timeline = longThread(roomyTimelineComponent);
+            const list = view(timeline);
+            // A short scroll up, which the room the host then makes undoes.
+            list.movementStarted();
+            list.contentY -= 50;
+            list.movementEnded();
+            tryVerify(() => timeline.scrolledAway && list.height === root.roomyHeight && atEnd(list), 5000, "the room shows the end");
+            verify(!timeline.following);
+            // A scroll up that moved nothing.
+            list.movementStarted();
+            list.movementEnded();
+            verify(!timeline.following, "the user is still away");
+            verify(timeline.scrolledAway);
+            offersTheEndOnceItGrows(timeline);
         }
 
         // Scenario: Scrolling away stops the view from following
@@ -566,9 +666,52 @@ Item {
             tryVerify(() => list.count === 1 && list.itemAtIndex(0) !== null);
             const previous = findText(list.itemAtIndex(0), "+4 previous tool calls");
             verify(previous !== null, "the other four are behind \"+4 previous tool calls\"");
+            const toggle = findChild(list.itemAtIndex(0), "workGroupToggle");
+            tryVerify(() => previous.mapToItem(toggle, previous.width, 0).x <= toggle.width, 2000, "the count is on the row");
             mouseClick(previous);
             compare(spy.count, 1);
             compare(spy.signalArguments[0][0], "work:1");
+        }
+
+        // Scenario: A running turn's tool calls read as one live row
+        function test_runningToolCallsReadAsOneLiveRow() {
+            const call = (n, label, statusLabel) => ({
+                    id: "command:" + n,
+                    label: label,
+                    command: "bun test cart-" + n,
+                    statusLabel: statusLabel ?? ""
+                });
+            const group = (hidden, latest, expanded) => root.row({
+                    rowId: "work:1",
+                    kind: "work",
+                    hiddenCount: hidden,
+                    expanded: expanded === true,
+                    entries: [latest]
+                });
+            rows.clear();
+            rows.append(group(4, call(5, "Ran command")));
+            const timeline = createTemporaryObject(timelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.count === 1 && list.itemAtIndex(0) !== null);
+            const item = list.itemAtIndex(0);
+            const shown = text => {
+                const found = findText(item, text);
+                return found !== null && found.visible;
+            };
+            tryVerify(() => shown("Ran command") && shown("+4 previous tool calls"), 2000, "one row: what it is doing now and how many came before");
+            verify(!findChild(item, "workCalls").visible, "the calls are folded into it");
+
+            // The next call takes the row's place; the one before joins the count.
+            rows.set(0, group(5, call(6, "Edited cart.ts", "Running")));
+            tryVerify(() => shown("Edited cart.ts") && shown("Running") && shown("+5 previous tool calls"), 2000, "the row follows the latest call");
+            verify(!shown("Ran command"));
+            rows.set(0, group(5, call(6, "Edited cart.ts")));
+            tryVerify(() => !shown("Running"), 2000, "and its status as it settles");
+
+            // Opened, it is every call again, with the way back.
+            rows.set(0, group(5, call(6, "Edited cart.ts"), true));
+            tryVerify(() => findChild(item, "workCalls").visible && shown("Show fewer tool calls"), 2000, "an open group lists its calls");
+            verify(!shown("+5 previous tool calls"));
         }
 
         // A tool call opens into its command and output, and closes again.
@@ -797,14 +940,15 @@ Item {
             tryVerify(() => list.itemAtIndex(1) !== null);
             const question = list.itemAtIndex(0);
             const copy = findNamed(question, "copyMessage");
+            const meta = findNamed(question, "userMessageMeta");
             mouseMove(list, list.width / 2, list.height - 2);
-            tryCompare(copy.parent, "opacity", 0, 2000, "Copy is hidden away from the pointer");
+            tryCompare(meta, "opacity", 0, 2000, "Copy is hidden away from the pointer");
             // The message's markdown is laid out.
             const markdown = findWith(question, "segmentCount");
             tryVerify(() => markdown.segmentCount > 0 && markdown.implicitHeight > 0 && question.height >= markdown.implicitHeight, 2000);
             const height = question.height;
             mouseMove(question, question.width / 2, 4);
-            tryCompare(copy.parent, "opacity", 1, 2000, "Copy shows with the pointer over the message");
+            tryCompare(meta, "opacity", 1, 2000, "Copy shows with the pointer over the message");
             compare(question.height, height, "showing the actions moves nothing");
             mouseClick(copy);
             compare(actionRows.copiedRows, ["question"]);
@@ -909,11 +1053,34 @@ Item {
             const label = findNamed(item, "markerTitle");
             verify(visibleIn(label), "the notification names what ended");
             compare(label.text, title);
-            verify(visibleIn(findIcon(item, "zap")), "with the notification's icon");
             verify(label.truncated, "a long title is cut short");
             verify(label.mapToItem(item, 0, 0).x >= 0 && label.mapToItem(item, label.width, 0).x <= item.width, "and stays inside the row");
             verify(item.height < 60, "on one line");
             verify(!findNamed(item, "messageAttribution") || !visibleIn(findNamed(item, "messageAttribution")), "and is nobody's message");
+        }
+
+        // A system divider keeps 24 above it and 16 below, and steered
+        // messages sit 16 apart, wherever the pointer is.
+        function test_dividersAndSteersKeepEvenSpace() {
+            rows.clear();
+            rows.append(root.row({ rowId: "u1", author: "user", text: "First steer", intent: "steer" }));
+            rows.append(root.row({ rowId: "u2", author: "user", text: "Second steer", intent: "steer" }));
+            rows.append(root.row({ rowId: "c1", kind: "marker", title: "Checkpoint" }));
+            rows.append(root.row({ rowId: "u3", author: "user", text: "A new turn" }));
+            const timeline = createTemporaryObject(timelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(3) !== null);
+            // The blank between one row's ink and the next row's.
+            function space(index) {
+                const above = list.itemAtIndex(index);
+                const below = list.itemAtIndex(index + 1);
+                const ink = findWith(above, "sourceComponent").item.implicitHeight;
+                return below.y + findWith(below, "sourceComponent").y - (above.y + ink);
+            }
+            compare(space(0), Theme.space.lg, "steers sit 16 apart");
+            compare(space(1), Theme.space.xl, "24 above a divider");
+            compare(space(2), Theme.space.lg, "16 below it");
+            verify(!visibleIn(findNamed(list.itemAtIndex(3), "turnDivider")), "with no rule under it");
         }
 
         function findWith(item, property) {

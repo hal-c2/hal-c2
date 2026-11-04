@@ -311,13 +311,15 @@ const Steps steps([] {
     openTerminals(world, 1);
     drawDrawer(world);
   });
-  step(QStringLiteral("the terminal offers split, new and close actions over its own corner"), [](World& world, const Captures&, const Table&) {
+  // Above the terminal's right half, never over its first line of output.
+  step(QStringLiteral("the terminal offers split, new and close actions above its own corner"), [](World& world, const Captures&, const Table&) {
     QQuickItem* terminal = visibleItems(world, QStringLiteral("HalC2Terminal")).first();
     const QRectF drawn = terminal->mapRectToScene(terminal->boundingRect());
     for (const char* name : {"terminalSplit", "terminalSplitVertical", "terminalNew", "terminalClose"}) {
       QQuickItem* action = world.brick->item(QString::fromLatin1(name));
       const QPointF centre = action->mapToScene(QPointF(action->width() / 2, action->height() / 2));
-      expect(action->isVisible() && drawn.contains(centre) && centre.x() > drawn.center().x() && centre.y() < drawn.center().y(),
+      const QRectF box = action->mapRectToScene(action->boundingRect());
+      expect(action->isVisible() && box.bottom() <= drawn.top() && centre.x() > drawn.center().x() && centre.x() < drawn.right(),
              QStringLiteral("%1 is at %2,%3 over a terminal of %4x%5").arg(QString::fromLatin1(name)).arg(centre.x()).arg(centre.y()).arg(drawn.width()).arg(drawn.height()));
     }
   });

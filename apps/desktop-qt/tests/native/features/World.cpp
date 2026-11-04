@@ -27,6 +27,7 @@
 #include "ServerUpdateController.h"
 #include "ThisMachine.h"
 #include "ThreadStore.h"
+#include "IdentityController.h"
 #include "ToastController.h"
 #include "UsageController.h"
 
@@ -168,8 +169,11 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<UsageController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<OnboardingController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ProviderUpdateNotice>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<IdentityController>()->setClock([now] { return now.toMSecsSinceEpoch(); });
   m_native->controller<ToastController>()->expire();
   m_native->controller<ProviderUpdateNotice>()->expire();
+  // The favicon renewal timer runs on the real clock; time jumps here.
+  m_native->controller<IdentityController>()->renewFavicons();
 }
 
 void World::connect(const QString& token) {

@@ -110,7 +110,7 @@ Pane {
         RowLayout {
             Layout.fillWidth: true
             ShellIcon { name: "folder-tree"; size: 20; color: Theme.palette.color("accent", "#3b82f6") }
-            Label { Layout.fillWidth: true; text: qsTr("Explorer"); color: explorer.palette.text; font.pixelSize: 19; font.weight: Font.DemiBold }
+            Label { Layout.fillWidth: true; text: qsTr("Explorer"); color: explorer.palette.text; font.pixelSize: Theme.type.title.size; font.weight: Font.DemiBold }
             ShellButton { text: qsTr("Browse…"); enabled: explorer.localAccess; onClicked: browse.open() }
         }
         Label {
@@ -135,7 +135,7 @@ Pane {
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: rootLabel.implicitHeight + 24
-            radius: 8
+            radius: Theme.radiusMd
             color: Theme.palette.color("surface", "#18181b")
             RowLayout {
                 anchors.fill: parent
@@ -145,7 +145,7 @@ Pane {
                     Layout.fillWidth: true
                     text: explorer.rootPath.length > 0 ? explorer.rootPath : qsTr("Choose a folder to get started")
                     color: Theme.palette.color("textMuted", "#a1a1aa")
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                     font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
                     wrapMode: Text.WrapAnywhere
                 }
@@ -161,7 +161,7 @@ Pane {
             Layout.fillWidth: true
             ShellButton { objectName: "newFolderButton"; text: qsTr("New folder"); iconName: "folder-plus"; enabled: explorer.directorySelected; onClicked: explorer.beginOperation("create") }
             Item { Layout.fillWidth: true }
-            Label { text: qsTr("LOCAL"); color: Theme.palette.color("textMuted", "#a1a1aa"); font.pixelSize: 10; font.letterSpacing: 1 }
+            Label { text: qsTr("Local"); color: Theme.palette.color("inkTertiary", "#a1a1aa"); font.pixelSize: Theme.type.meta.size }
         }
         TreeView {
             id: tree
@@ -196,10 +196,10 @@ Pane {
                 contentItem: RowLayout {
                     spacing: 8
                     ShellIcon { name: folderRow.isDirectory ? (folderRow.expanded ? "folder-open" : "folder") : "file-text"; size: 16; color: Theme.palette.color(folderRow.isDirectory ? "accent" : "textMuted", "#3b82f6") }
-                    Label { Layout.fillWidth: true; text: folderRow.fileName; color: explorer.palette.text; font.pixelSize: 13; elide: Text.ElideRight }
+                    Label { Layout.fillWidth: true; text: folderRow.fileName; color: explorer.palette.text; font.pixelSize: Theme.type.body.size; elide: Text.ElideRight }
                 }
                 background: Rectangle {
-                    radius: 6
+                    radius: Theme.radiusSm
                     color: folderRow.highlighted ? Theme.palette.color("sidebarRowSelected", "#25314d") : folderRow.hovered ? Theme.palette.color("surface", "#18181b") : "transparent"
                 }
                 onClicked: explorer.selectedPath = filePath
@@ -219,7 +219,7 @@ Pane {
             text: folders.error.length > 0 ? folders.error : explorer.statusText
             color: folders.error.length > 0 ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("textMuted", "#a1a1aa")
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
         Label {
             objectName: "folderExplorerHint"
@@ -227,7 +227,7 @@ Pane {
             text: explorer.holdsProject ? qsTr("This folder contains a registered project. Its location is protected because threads may still use that path.") : explorer.selectedProject !== null ? qsTr("This folder is a registered project. Its location is protected because threads may still use that path. Remove from HAL-C2 deletes its conversation history, not its files.") : !explorer.directorySelected && explorer.selectedPath.length > 0 ? qsTr("Files are shown read-only. Right-click a folder to manage it.") : qsTr("Right-click a folder to rename, move or trash it. Disk changes affect every app using these files.")
             color: Theme.palette.color("textMuted", "#a1a1aa")
             wrapMode: Text.Wrap
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
         }
     }
 }

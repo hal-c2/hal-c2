@@ -93,4 +93,31 @@ TestCase {
         for (const tab of tabs)
             verify(contrast(tab.tint, Qt.color(roles.canvas)) >= 3, tab.text + " label is invisible: " + tab.tint);
     }
+
+    // A single terminal starts under the actions instead of behind them.
+    function test_actionsDoNotCoverTheTerminal_data() {
+        return [
+            { tag: "one terminal", terminals: 1 },
+            { tag: "with the list", terminals: 2 }
+        ];
+    }
+
+    function test_actionsDoNotCoverTheTerminal(data) {
+        if (data.terminals === 1) {
+            Terminals.reset();
+            Terminals.available = true;
+            Terminals.open = true;
+            Terminals.addTab("a", "one");
+            Terminals.activeGroup = "a";
+            Terminals.activeTerminalId = "a";
+            Terminals.groupSizes = { a: 1 };
+        }
+        const drawer = createTemporaryObject(drawerComponent, testCase);
+        const actions = findChild(drawer, "terminalDrawerActions");
+        const splits = findChild(drawer, "terminalDrawerSplits");
+        const a = actions.mapToItem(drawer, 0, 0);
+        const s = splits.mapToItem(drawer, 0, 0);
+        const apart = s.y >= a.y + actions.height || s.x + splits.width <= a.x;
+        verify(apart, "terminal " + JSON.stringify(s) + " " + splits.width + " under actions " + JSON.stringify(a));
+    }
 }

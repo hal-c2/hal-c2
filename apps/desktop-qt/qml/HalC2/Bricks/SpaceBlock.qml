@@ -182,7 +182,7 @@ Item {
         anchors.fill: parent
         anchors.topMargin: 1
         anchors.bottomMargin: 1
-        radius: Math.min(Theme.radius, 8)
+        radius: Theme.radiusMd
         visible: block.kind === "callout"
         color: Qt.alpha(block.info, Theme.appearance === "dark" ? 0.14 : 0.08)
         border.color: Qt.alpha(block.info, 0.4)
@@ -192,7 +192,7 @@ Item {
         anchors.fill: parent
         anchors.topMargin: 1
         anchors.bottomMargin: 1
-        radius: Math.min(Theme.radius, 8)
+        radius: Theme.radiusMd
         visible: block.raw && !block.diagramShown
         color: Theme.palette.color("codeBackground", "#111111")
         border.color: Theme.palette.color("border", "#191919")
@@ -237,7 +237,7 @@ Item {
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         anchors.verticalCenterOffset: (picture.visible ? (picture.height + 6) / 2 : 0) - diagramNote.height / 2
-        anchors.leftMargin: block.kind === "callout" || block.raw ? 10 : 0
+        anchors.leftMargin: block.kind === "callout" || block.raw ? Theme.space.sm : 0
         spacing: 8
 
         ShellIcon {
@@ -262,7 +262,7 @@ Item {
             visible: block.kind === "subpage_link"
             text: block.linkedTitle
             color: Theme.palette.color("accent", "#3b82f6")
-            font.pixelSize: Math.round(15 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.underline: linkMouse.containsMouse
             elide: Text.ElideRight
 
@@ -328,7 +328,7 @@ Item {
                     font.family: block.mono
                     font.pixelSize: Theme.fontSizeCode
                     font.features: { "liga": 0, "calt": 0 }
-                    Layout.rightMargin: 6
+                    Layout.rightMargin: Theme.space.sm
                 }
 
                 ShellCheckBox {
@@ -395,7 +395,7 @@ Item {
                                 bulletDepth: block.listBullets
                                 numberDepth: block.listNumbers
                                 textColor: block.foreground
-                                fontSize: Math.round((block.kind === "heading" ? block.headingSize : 15) * Theme.fontScale)
+                                fontSize: block.kind === "heading" ? Math.round(block.headingSize * Theme.fontScale) : Theme.type.prose.size
                                 fontWeight: block.kind === "heading" ? Font.DemiBold : Font.Normal
                                 struck: block.kind === "checklist" && block.checked
                                 opacity: block.kind === "checklist" && block.checked ? 0.7 : 1
@@ -460,7 +460,7 @@ Item {
                             selectionColor: Theme.palette.color("accent", "#2563eb")
                             selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
                             font.family: block.sourceKind ? (Theme.fontMono.length > 0 ? Theme.fontMono : "monospace") : Qt.application.font.family
-                            font.pixelSize: block.sourceKind ? Theme.fontSizeCode : Math.round((block.kind === "heading" ? block.headingSize : 15) * Theme.fontScale)
+                            font.pixelSize: block.sourceKind ? Theme.fontSizeCode : block.kind === "heading" ? Math.round(block.headingSize * Theme.fontScale) : Theme.type.prose.size
                             font.weight: block.kind === "heading" ? Font.DemiBold : Font.Normal
                             font.strikeout: block.kind === "checklist" && block.checked
                             // Source shows each character as typed, so no ligatures turn "---" or "->" into one glyph.
@@ -561,7 +561,7 @@ Item {
                 Text {
                     text: qsTr("Written by this page's update")
                     color: block.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
             }
         }
@@ -570,7 +570,7 @@ Item {
             visible: block.byAgent
             text: qsTr("agent")
             color: block.muted
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
         }
 
         RowLayout {

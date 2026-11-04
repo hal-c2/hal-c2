@@ -46,7 +46,7 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.space.sm
 
             // On the left: the toasts stack in the window's top right corner.
             ShellButton {
@@ -61,7 +61,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("Comments")
                 color: column.foreground
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
             }
         }
@@ -69,14 +69,14 @@ Rectangle {
         ColumnLayout {
             Layout.fillWidth: true
             visible: column.blockId !== "" && column.blockText !== "" && !column.readOnly
-            spacing: 6
+            spacing: Theme.space.sm
 
             Text {
                 Layout.fillWidth: true
                 text: qsTr("On “%1”").arg(column.blockText)
                 elide: Text.ElideRight
                 color: column.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ShellTextField {
@@ -104,7 +104,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("No comments on this page yet. Choose a block's comment button to start one.")
             color: column.muted
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
         }
 
         ListView {
@@ -130,7 +130,7 @@ Rectangle {
                 objectName: "spaceCommentRow:" + body
                 width: ListView.view.width
                 implicitHeight: content.implicitHeight + 16
-                radius: Math.min(Theme.radius, 8)
+                radius: Theme.radiusMd
                 color: Theme.palette.color("surfaceRaised", "#18181b")
                 border.color: comment.blockId === column.blockId ? Theme.palette.color("focus", "#3b82f6") : column.lineColor
                 opacity: resolved ? 0.6 : 1
@@ -150,7 +150,7 @@ Rectangle {
                         text: comment.blockGone ? qsTr("On a block no longer on this page") : "“" + comment.blockText + "”"
                         elide: Text.ElideRight
                         color: column.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
 
                         MouseArea {
                             anchors.fill: parent
@@ -164,7 +164,7 @@ Rectangle {
                         text: comment.body
                         wrapMode: Text.Wrap
                         color: column.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                     }
 
                     RowLayout {
@@ -175,7 +175,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: (comment.byAgent ? qsTr("An agent") : qsTr("You")) + (comment.resolved ? qsTr(" · resolved") : "")
                             color: column.muted
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                         }
 
                         ShellButton {

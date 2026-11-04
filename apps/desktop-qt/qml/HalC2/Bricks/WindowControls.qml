@@ -59,17 +59,11 @@ Row {
             }
 
             background: Rectangle {
-                radius: controls.trafficLights ? height / 2 : 6
+                radius: controls.trafficLights ? height / 2 : Theme.radiusSm
                 readonly property color hoverColor: button.isClose ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("accentSurface", "#27272a")
                 color: controls.trafficLights ? button.light : Qt.alpha(hoverColor, button.hovered ? hoverColor.a : 0)
                 border.width: controls.trafficLights || button.visualFocus ? 1 : 0
                 border.color: button.visualFocus ? Theme.palette.color("focus", "#3b82f6") : Qt.darker(button.light, 1.25)
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 120
-                    }
-                }
             }
 
             contentItem: Item {
@@ -77,7 +71,6 @@ Row {
                     anchors.centerIn: parent
                     name: button.isClose ? "x" : button.modelData === "minimize" ? "minus" : controls.trafficLights ? "plus" : controls.window !== null && controls.window.visibility === Window.Maximized ? "copy" : "square"
                     size: controls.trafficLights ? 8 : button.isClose ? 14 : 12
-                    strokeWidth: controls.trafficLights ? 2.5 : 2
                     color: controls.trafficLights ? Qt.darker(button.light, 2.4) : button.isClose && button.hovered ? Theme.palette.color("errorForeground", "#ffffff") : controls.foreground
                     visible: !controls.trafficLights || hover.hovered
                 }

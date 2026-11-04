@@ -47,7 +47,7 @@ Item {
         z: 100
         width: chipRow.implicitWidth + 20
         height: 28
-        radius: 6
+        radius: Theme.radiusSm
         color: Theme.palette.color("surfaceRaised", "#1f1f24")
         border.color: Theme.palette.color("accent", "#2563eb")
         opacity: 0.95
@@ -60,7 +60,7 @@ Item {
             id: chipRow
 
             anchors.centerIn: parent
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellIcon {
                 visible: dragger.iconName.length > 0
@@ -73,7 +73,7 @@ Item {
             Text {
                 text: dragger.title
                 color: Theme.palette.color("text", "#e4e4e7")
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 anchors.verticalCenter: parent.verticalCenter
             }
         }

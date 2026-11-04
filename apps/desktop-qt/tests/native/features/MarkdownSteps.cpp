@@ -146,13 +146,33 @@ QString plain(QQuickItem* edit) {
   return text.replace(QChar(0x2028), QLatin1Char('\n'));
 }
 
+// Where `needle`, as the reader sees it, lies in `raw`, a reply's drawn
+// text, as {start, end}; {-1, -1} when it is not there. Inline code is drawn
+// with word joiners holding it together, and no-break spaces.
+std::pair<int, int> drawnRange(const QString& raw, const QString& needle) {
+  QList<int> at;
+  QString read;
+  for (int i = 0; i < raw.size(); ++i) {
+    if (raw[i] == QChar(0x2060)) continue;
+    at.append(i);
+    read.append(raw[i] == QChar(QChar::Nbsp) ? QChar(u' ') : raw[i]);
+  }
+  const int found = int(read.indexOf(needle));
+  if (found < 0 || needle.isEmpty()) return {-1, -1};
+  return {at[found], at[found + needle.size() - 1] + 1};
+}
+
+QString readable(QString text) {
+  return text.remove(QChar(0x2060)).replace(QChar(QChar::Nbsp), QChar(u' '));
+}
+
 // The link under the middle of `needle` in a rich text segment, and the point
 // the user would click in the window.
 QString linkAt(QQuickItem* edit, const QString& needle, QPoint* point = nullptr) {
-  const int at = plain(edit).indexOf(needle);
-  expect(at >= 0, QStringLiteral("\"%1\" is not shown in \"%2\"").arg(needle, plain(edit)));
+  const auto [start, end] = drawnRange(plain(edit), needle);
+  expect(start >= 0, QStringLiteral("\"%1\" is not shown in \"%2\"").arg(needle, readable(plain(edit))));
   QRectF rect;
-  QMetaObject::invokeMethod(edit, "positionToRectangle", Q_RETURN_ARG(QRectF, rect), Q_ARG(int, at + int(needle.size() / 2)));
+  QMetaObject::invokeMethod(edit, "positionToRectangle", Q_RETURN_ARG(QRectF, rect), Q_ARG(int, (start + end) / 2));
   const QPointF local(rect.x() + 1, rect.y() + rect.height() / 2);
   QString link;
   QMetaObject::invokeMethod(edit, "linkAt", Q_RETURN_ARG(QString, link), Q_ARG(qreal, local.x()), Q_ARG(qreal, local.y()));
@@ -664,9 +684,33 @@ const Steps steps([] {
   step(QStringLiteral("the agent answers %1").arg(q), [](World& world, const Captures& c, const Table&) { answer(world, c[0]); });
   step(QStringLiteral("the user selects %1 in the reply").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* prose = one(reply(world), QStringLiteral("markdownProse"));
-    const int start = int(plain(prose).indexOf(c[0]));
+    const auto [start, end] = drawnRange(plain(prose), c[0]);
     expect(start >= 0, QStringLiteral("\"%1\" is not shown in \"%2\"").arg(c[0], plain(prose)));
-    QMetaObject::invokeMethod(prose, "select", Q_ARG(int, start), Q_ARG(int, start + int(c[0].size())));
+    QMetaObject::invokeMethod(prose, "select", Q_ARG(int, start), Q_ARG(int, end));
+  });
+  step(QStringLiteral("the reply's words read %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString read = readable(plain(one(reply(world), QStringLiteral("markdownProse"))));
+    expect(read == c[0], QStringLiteral("the reply reads \"%1\"").arg(read));
+  });
+  step(QStringLiteral("%1 stays on one line however narrow the timeline is").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* timeline = timelineBrick(world).root();
+    const qreal wide = timeline->width();
+    int wrapped = 0;
+    for (qreal width = wide; width >= 320; width -= 7) {
+      timeline->setWidth(width);
+      world.sync();
+      QQuickItem* prose = one(reply(world), QStringLiteral("markdownProse"));
+      const auto [start, end] = drawnRange(plain(prose), c[0]);
+      expect(start >= 0, QStringLiteral("\"%1\" is not shown in \"%2\"").arg(c[0], plain(prose)));
+      QRectF first, last;
+      QMetaObject::invokeMethod(prose, "positionToRectangle", Q_RETURN_ARG(QRectF, first), Q_ARG(int, start));
+      QMetaObject::invokeMethod(prose, "positionToRectangle", Q_RETURN_ARG(QRectF, last), Q_ARG(int, end - 1));
+      expect(first.y() == last.y(), QStringLiteral("it splits across lines at %1 wide").arg(width));
+      if (prose->property("lineCount").toInt() > 1) ++wrapped;
+    }
+    timeline->setWidth(wide);
+    world.sync();
+    expect(wrapped > 0, QStringLiteral("the reply never wrapped"));
   });
   step(QStringLiteral("the user chooses %1 from the reply's right-click menu").arg(q), [](World& world, const Captures& c, const Table&) {
     QQuickItem* prose = one(reply(world), QStringLiteral("markdownProse"));

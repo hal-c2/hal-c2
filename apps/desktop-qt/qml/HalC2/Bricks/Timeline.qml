@@ -202,6 +202,10 @@ Item {
         }
         view.settlingIndex = -1;
         view.positioning = true;
+        // The start is where the list guessed until its first rows are made;
+        // once they are, it is where they are.
+        view.contentY = view.originY - view.topMargin;
+        view.forceLayout();
         view.contentY = view.originY - view.topMargin;
         view.positioning = false;
         view.following = view.nearEnd();
@@ -241,8 +245,11 @@ Item {
         return root.model && typeof root.model.timeTitle === "function" ? root.model.timeTitle(rowId, entryId) : "";
     }
 
-    readonly property color textColor: Theme.palette.color("text", "#f5f5f5")
-    readonly property color mutedColor: Theme.palette.color("textMuted", "#818181")
+    // Where a work line's label starts, past its icon; what opens under a
+    // line starts there too.
+    readonly property int workInset: 2 * Theme.space.sm + Theme.icon.md
+    readonly property color textColor: Theme.palette.color("ink", "#f2f3f5")
+    readonly property color mutedColor: Theme.palette.color("inkTertiary", "#8b919e")
     readonly property color borderColor: Theme.palette.color("border", "#191919")
     readonly property color surfaceColor: Theme.palette.color("surface", "#111111")
     readonly property color accentColor: Theme.palette.color("accent", "#346bf1")
@@ -255,12 +262,12 @@ Item {
     // success, info and the page.
     readonly property color messageColor: Theme.palette.color("messageSurface", "#141414")
     readonly property color messageTextColor: Theme.palette.color("messageForeground", "#f5f5f5")
-    readonly property color hoverColor: Theme.palette.color("accentSurface", "#141414")
+    readonly property color hoverColor: Theme.palette.color("surfaceRaised", "#1c1f24")
     readonly property color mutedSurfaceColor: Theme.palette.color("muted", "#111111")
     readonly property color secondaryColor: Theme.palette.color("secondary", "#111111")
     readonly property color secondaryTextColor: Theme.palette.color("secondaryForeground", "#f5f5f5")
-    readonly property color labelColor: Theme.palette.color("secondaryLabel", "#818181")
-    readonly property color iconColor: Theme.palette.color("iconMuted", "#818181")
+    readonly property color labelColor: Theme.palette.color("inkSecondary", "#b8bdc7")
+    readonly property color iconColor: Theme.palette.color("inkTertiary", "#8b919e")
     readonly property color toolErrorColor: Theme.palette.color("errorForeground", "#ff6467")
     readonly property color successColor: Theme.palette.color("success", "#00bc7d")
     readonly property color infoColor: Theme.palette.color("info", "#2b7fff")
@@ -269,7 +276,7 @@ Item {
     component RowText: Text {
         color: root.textColor
         font.family: root.uiFamily
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
         wrapMode: Text.Wrap
     }
 
@@ -282,7 +289,7 @@ Item {
         Accessible.onPressAction: action.clicked()
         color: actionHover.hovered ? root.textColor : root.mutedColor
         font.family: root.uiFamily
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         HoverHandler {
             id: actionHover
             cursorShape: Qt.PointingHandCursor
@@ -300,7 +307,7 @@ Item {
         visible: text.length > 0
         color: root.mutedColor
         font.family: root.uiFamily
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         font.features: {
             "tnum": 1
         }
@@ -321,9 +328,9 @@ Item {
         property color tint: button.hovered ? root.textColor : root.mutedColor
         readonly property bool hovered: buttonHover.hovered
         signal clicked
-        implicitWidth: 24
-        implicitHeight: 24
-        radius: 6
+        implicitWidth: Theme.control.sm
+        implicitHeight: Theme.control.sm
+        radius: Theme.radiusSm
         color: button.hovered ? root.hoverColor : "transparent"
         Accessible.role: Accessible.Button
         Accessible.name: button.tip
@@ -331,7 +338,7 @@ Item {
         ShellIcon {
             anchors.centerIn: parent
             name: button.icon
-            size: 12
+            size: Theme.icon.sm
             color: button.tint
         }
         HoverHandler {
@@ -380,23 +387,23 @@ Item {
             visible: copyButton.copied || copyButton.failure.length > 0
             z: 2
             x: Math.round((copyButton.width - width) / 2)
-            y: -height - 6
-            width: Math.min(noticeColumn.implicitWidth, 280) + 16
-            height: noticeColumn.implicitHeight + 10
-            radius: 6
-            color: Theme.palette.color("popover", "#18181b")
-            border.color: root.borderColor
+            y: -height - Theme.space.xs
+            width: Math.min(noticeColumn.implicitWidth, 280) + 2 * Theme.space.sm
+            height: noticeColumn.implicitHeight + 2 * Theme.space.xs
+            radius: Theme.radiusSm
+            color: Theme.palette.color("surfaceOverlay", "#1c1f24")
+            border.color: Theme.palette.color("borderStrong", "#2c3039")
             border.width: 1
             Column {
                 id: noticeColumn
-                x: 8
-                y: 5
-                width: parent.width - 16
+                x: Theme.space.sm
+                y: Theme.space.xs
+                width: parent.width - 2 * Theme.space.sm
                 RowText {
                     objectName: "copyNoticeTitle"
                     text: notice.title
                     color: root.textColor
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.NoWrap
                 }
                 RowText {
@@ -405,7 +412,7 @@ Item {
                     width: Math.min(implicitWidth, 280)
                     text: copyButton.failure
                     color: root.mutedColor
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
             }
@@ -425,7 +432,7 @@ Item {
             id: pillText
             anchors.centerIn: parent
             font.family: root.uiFamily
-            font.pixelSize: Math.round(10 * Theme.fontScale)
+            font.pixelSize: Theme.type.caption.size
         }
     }
 
@@ -456,25 +463,24 @@ Item {
         Accessible.name: line.preview.length > 0 ? line.label + ": " + line.preview : line.label
         Accessible.onPressAction: if (line.interactive)
             line.clicked(Qt.point(0, 0))
-        implicitHeight: 28
-        radius: 6
-        color: line.interactive && line.hovered ? Qt.alpha(root.hoverColor, 0.2) : "transparent"
+        implicitHeight: Theme.control.md
+        radius: Theme.radiusSm
+        color: line.interactive && line.hovered ? root.hoverColor : "transparent"
         ShellIcon {
             objectName: "workLineIcon"
-            x: 6
+            x: Theme.space.sm
             anchors.verticalCenter: parent.verticalCenter
             visible: line.iconName.length > 0 && ownIcon.status !== Image.Ready
             name: line.iconName
-            size: 16
-            strokeWidth: 1.8
+            size: Theme.icon.md
             color: line.iconTint
         }
         Image {
             id: ownIcon
             objectName: "workLineOwnIcon"
-            x: 6
-            width: 16
-            height: 16
+            x: Theme.space.sm
+            width: Theme.icon.md
+            height: Theme.icon.md
             anchors.verticalCenter: parent.verticalCenter
             visible: status === Image.Ready
             source: line.iconSource
@@ -485,15 +491,15 @@ Item {
         }
         Text {
             id: lineLabel
-            readonly property real room: Math.max(0, trailingRow.x - x - 6)
-            x: 32
+            readonly property real room: Math.max(0, trailingRow.x - x - Theme.space.sm)
+            x: root.workInset
             width: line.preview.length > 0 ? Math.min(implicitWidth, room) : room
             anchors.verticalCenter: parent.verticalCenter
             text: line.label
             textFormat: Text.PlainText
             color: line.labelColor
             font.family: root.uiFamily
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             font.weight: line.labelWeight
             elide: line.labelElide
             maximumLineCount: 1
@@ -501,30 +507,30 @@ Item {
         Text {
             objectName: "workCallPreview"
             visible: line.preview.length > 0
-            x: lineLabel.x + lineLabel.width + 6
-            width: Math.max(0, trailingRow.x - x - 6)
+            x: lineLabel.x + lineLabel.width + Theme.space.sm
+            width: Math.max(0, trailingRow.x - x - Theme.space.sm)
             anchors.verticalCenter: parent.verticalCenter
             text: line.preview
             textFormat: Text.PlainText
             color: root.textColor
             font.family: root.uiFamily
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             elide: Text.ElideRight
             maximumLineCount: 1
         }
         Row {
             id: trailingRow
             anchors.right: parent.right
-            anchors.rightMargin: 2
+            anchors.rightMargin: Theme.space.xxs
             height: parent.height
-            spacing: 6
+            spacing: Theme.space.sm
             RowText {
                 objectName: "workLineCopied"
                 visible: line.copied
                 anchors.verticalCenter: parent.verticalCenter
                 text: qsTr("Copied")
                 wrapMode: Text.NoWrap
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 color: root.accentColor
             }
         }
@@ -645,7 +651,10 @@ Item {
             contentY = item.y - settlingOffset;
             positioning = false;
         }
-        onMovementStarted: settlingIndex = -1
+        onMovementStarted: {
+            settlingIndex = -1;
+            movedFrom = contentY;
+        }
         Connections {
             target: root.model
             ignoreUnknownSignals: true
@@ -718,6 +727,9 @@ Item {
         boundsBehavior: Flickable.StopAtBounds
         model: root.model
         onModelChanged: restart()
+        // Sections by kind tell a row whether a system divider is next to it
+        // (ListView.nextSection, previousSection); no section is drawn.
+        section.property: "kind"
         ScrollBar.vertical: ScrollBar {
             id: scrollBar
             Accessible.name: qsTr("Scroll conversation")
@@ -726,16 +738,25 @@ Item {
 
         // Only the user's own scrolling (wheel, drag, keys, scroll bar)
         // decides whether the view follows; the list settling its layout or
-        // growing below the end does not.
+        // growing below the end does not. Leaving the end stops it following,
+        // and only going down to the end follows again: a scroll up the list
+        // did not take (rows measured above can cut a wheel's short), ending
+        // where a host's room for reading shows the end, leaves the user away.
+        property real movedFrom: 0
+        property real lastY: 0
+        function userScrolled(from) {
+            following = nearEnd() && (following || contentY > from);
+        }
         onContentYChanged: {
             if (!positioning && (moving || dragging || scrollBar.pressed)) {
-                following = nearEnd();
+                userScrolled(lastY);
                 if (atYBeginning)
                     root.loadEarlier();
             }
+            lastY = contentY;
         }
         onMovementEnded: {
-            following = nearEnd();
+            userScrolled(movedFrom);
             settleAway();
             if (atYBeginning)
                 root.loadEarlier();
@@ -790,20 +811,30 @@ Item {
             // Whether the row's time and actions show: only this row's
             // pointer changes it.
             readonly property bool showMeta: root.alwaysShowMeta || rowHover.hovered
-            // The space under the row, by kind.
+            // A system divider follows, or went before: it keeps 24 above
+            // it and 16 below, whatever the rows around it reserve.
+            readonly property bool beforeMarker: ListView.nextSection === "marker"
+            readonly property bool afterMarker: ListView.previousSection === "marker"
+            // The space under the row, by kind. Space a body keeps clear
+            // at its foot (`tail`, for its time and actions) counts toward
+            // a divider's.
             readonly property int gap: {
+                if (row.kind === "marker")
+                    return Theme.space.lg;
+                if (row.beforeMarker)
+                    return Math.max(0, Theme.space.xl - (body.item ? body.item.tail ?? 0 : 0));
                 switch (row.kind) {
                 case "message":
                     // Commentary sits closer to the work that follows it.
-                    return row.author !== "user" && row.meta !== true ? 8 : 16;
+                    return row.author !== "user" && row.meta !== true ? Theme.space.sm : Theme.space.lg;
                 case "plan":
-                    return 16;
+                    return Theme.space.lg;
                 case "fold":
-                    return 6;
+                    return Theme.space.sm;
                 case "subagent":
-                    return 4;
+                    return Theme.space.xs;
                 default:
-                    return 8;
+                    return Theme.space.sm;
                 }
             }
 
@@ -865,264 +896,297 @@ Item {
 
             Component {
                 id: userMessage
-                Column {
-                    spacing: 4
-                    // Who sent it, when not the user; a known thread opens.
-                    RowText {
-                        id: attribution
-                        readonly property string thread: row.model.thread ?? ""
-                        objectName: "messageAttribution"
-                        Accessible.role: attribution.thread.length > 0 ? Accessible.Link : Accessible.StaticText
-                        Accessible.name: attribution.text
-                        Accessible.onPressAction: if (attribution.thread.length > 0)
-                            root.threadActivated(attribution.thread)
-                        visible: text.length > 0
-                        anchors.right: parent.right
-                        anchors.rightMargin: 4
-                        text: row.attribution ?? ""
-                        color: attribution.thread.length > 0 && attributionHover.hovered ? root.textColor : root.mutedColor
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
-                        HoverHandler {
-                            id: attributionHover
-                            enabled: attribution.thread.length > 0
-                            cursorShape: Qt.PointingHandCursor
+                // A block on inset across the column, left-aligned like the
+                // reply under it; what was sent with it and its actions sit
+                // on the same left edge.
+                Item {
+                    id: userRoot
+                    // Its time and actions keep a line under the block only
+                    // where they always show, and are read there; on hover
+                    // they float on its edge. Nothing at its foot is blank.
+                    readonly property real tail: 0
+                    implicitHeight: userColumn.implicitHeight
+                    Column {
+                        id: userColumn
+                        width: parent.width
+                        spacing: Theme.space.xs
+                        // A hairline between turns: over each message that
+                        // starts one (not a steer into the running turn), unless
+                        // a system divider already sits over it.
+                        Item {
+                            objectName: "turnDivider"
+                            visible: row.index > 0 && !row.afterMarker && ((row.intent ?? "").length === 0 || row.intent === "turn_start" || row.intent === "queued_turn")
+                            width: parent.width
+                            height: Theme.space.lg
+                            Rectangle {
+                                width: parent.width
+                                height: 1
+                                color: root.borderColor
+                            }
                         }
-                        TapHandler {
-                            enabled: attribution.thread.length > 0
-                            onTapped: root.threadActivated(attribution.thread)
-                        }
-                    }
-                    // How it reached the agent (UserMessageIntentMarker).
-                    Row {
-                        visible: (row.intent ?? "").length > 0 && row.intent !== "turn_start"
-                        anchors.right: parent.right
-                        anchors.rightMargin: 4
-                        spacing: 4
-                        ShellIcon {
-                            visible: row.intent !== "queued_turn"
-                            anchors.verticalCenter: parent.verticalCenter
-                            name: "redo-2"
-                            size: 12
-                            color: root.mutedColor
-                        }
+                        // Who sent it, when not the user; a known thread opens.
                         RowText {
-                            text: row.intent === "queued_turn" ? qsTr("Queued") : qsTr("Steer")
-                            color: root.mutedColor
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
-                            wrapMode: Text.NoWrap
+                            id: attribution
+                            readonly property string thread: row.model.thread ?? ""
+                            objectName: "messageAttribution"
+                            Accessible.role: attribution.thread.length > 0 ? Accessible.Link : Accessible.StaticText
+                            Accessible.name: attribution.text
+                            Accessible.onPressAction: if (attribution.thread.length > 0)
+                                root.threadActivated(attribution.thread)
+                            visible: text.length > 0
+                            text: row.attribution ?? ""
+                            color: attribution.thread.length > 0 && attributionHover.hovered ? root.textColor : root.mutedColor
+                            font.pixelSize: Theme.type.caption.size
                             HoverHandler {
-                                id: intentHover
+                                id: attributionHover
+                                enabled: attribution.thread.length > 0
+                                cursorShape: Qt.PointingHandCursor
                             }
-                            ToolTip.visible: intentHover.hovered && (row.marker ?? "").length > 0
-                            ToolTip.delay: 500
-                            ToolTip.text: row.marker ?? ""
-                        }
-                    }
-                    // The images sent with it, loaded from the MC once
-                    // the model has their addresses.
-                    Flow {
-                        id: images
-                        visible: root.list(row.attachments).length > 0
-                        anchors.right: parent.right
-                        width: Math.round(parent.width * 0.8)
-                        layoutDirection: Qt.RightToLeft
-                        spacing: 8
-                        Repeater {
-                            model: root.list(row.attachments)
-                            delegate: Rectangle {
-                                id: attachment
-
-                                required property var modelData
-                                required property int index
-                                readonly property bool pictured: picture.status === Image.Ready
-
-                                function openLarge() {
-                                    forceActiveFocus();
-                                    largeImage.showImages(root.list(row.attachments), index, attachment);
-                                }
-
-                                objectName: "attachment-" + modelData.id
-                                Accessible.role: Accessible.Graphic
-                                Accessible.name: modelData.name ?? ""
-                                // As wide as the picture is at this height; a square until it loads.
-                                width: pictured ? Math.min(images.width, Math.round(height * picture.implicitWidth / picture.implicitHeight)) : height
-                                height: 200
-                                radius: 2
-                                color: root.messageColor
-                                border.color: activeFocus ? root.iconColor : root.borderColor
-                                activeFocusOnTab: true
-                                Keys.onReturnPressed: openLarge()
-                                Keys.onEnterPressed: openLarge()
-                                Keys.onSpacePressed: openLarge()
-
-                                MouseArea {
-                                    objectName: "attachmentOpenLarge-" + attachment.modelData.id
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: attachment.openLarge()
-                                }
-
-                                Component.onCompleted: if (root.model !== null && typeof root.model.loadAttachment === "function")
-                                    root.model.loadAttachment(modelData.id)
-
-                                Image {
-                                    id: picture
-                                    anchors.fill: parent
-                                    anchors.margins: 1
-                                    source: attachment.modelData.url ?? ""
-                                    // Decoded at twice the height shown, for dense screens.
-                                    sourceSize.height: 400
-                                    fillMode: Image.PreserveAspectFit
-                                }
-                                Column {
-                                    visible: !attachment.pictured
-                                    anchors.centerIn: parent
-                                    width: parent.width - 16
-                                    spacing: 6
-                                    ShellIcon {
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        name: "image"
-                                        size: 20
-                                        color: root.iconColor
-                                    }
-                                    RowText {
-                                        width: parent.width
-                                        horizontalAlignment: Text.AlignHCenter
-                                        text: attachment.modelData.name ?? ""
-                                        color: root.mutedColor
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
-                                        wrapMode: Text.NoWrap
-                                        elide: Text.ElideMiddle
-                                    }
-                                }
+                            TapHandler {
+                                enabled: attribution.thread.length > 0
+                                onTapped: root.threadActivated(attribution.thread)
                             }
                         }
-                    }
-                    // The other files sent with it, by name, kind and size.
-                    Flow {
-                        id: sentFiles
-                        readonly property var files: root.list(row.model.sentFiles)
-                        visible: files.length > 0
-                        anchors.right: parent.right
-                        width: Math.round(parent.width * 0.8)
-                        layoutDirection: Qt.RightToLeft
-                        spacing: 8
-                        Repeater {
-                            model: sentFiles.files
-                            delegate: Rectangle {
-                                id: sentFile
-
-                                required property var modelData
-
-                                objectName: "sentFile-" + modelData.id
-                                Accessible.role: Accessible.StaticText
-                                Accessible.name: (modelData.detail ?? "").length > 0 ? qsTr("%1, %2").arg(modelData.name).arg(modelData.detail) : (modelData.name ?? "")
-                                width: Math.min(sentFiles.width, fileRow.implicitWidth + 20)
-                                height: 32
-                                radius: 8
-                                color: root.messageColor
-                                border.color: activeFocus ? root.iconColor : root.borderColor
-                                activeFocusOnTab: true
-                                function openViewer() {
-                                    Shell.dispatch("attachment.sent.view", { id: modelData.id, name: modelData.name, mimeType: modelData.mimeType ?? "" });
+                        // How it reached the agent (UserMessageIntentMarker).
+                        Row {
+                            visible: (row.intent ?? "").length > 0 && row.intent !== "turn_start"
+                            spacing: Theme.space.xs
+                            ShellIcon {
+                                visible: row.intent !== "queued_turn"
+                                anchors.verticalCenter: parent.verticalCenter
+                                name: "redo-2"
+                                size: Theme.icon.sm
+                                color: root.mutedColor
+                            }
+                            RowText {
+                                text: row.intent === "queued_turn" ? qsTr("Queued") : qsTr("Steer")
+                                color: root.mutedColor
+                                font.pixelSize: Theme.type.meta.size
+                                wrapMode: Text.NoWrap
+                                HoverHandler {
+                                    id: intentHover
                                 }
-                                Keys.onReturnPressed: openViewer()
-                                Keys.onEnterPressed: openViewer()
-                                Keys.onSpacePressed: openViewer()
+                                ToolTip.visible: intentHover.hovered && (row.marker ?? "").length > 0
+                                ToolTip.delay: 500
+                                ToolTip.text: row.marker ?? ""
+                            }
+                        }
+                        // The images sent with it, loaded from the MC once
+                        // the model has their addresses.
+                        Flow {
+                            id: images
+                            visible: root.list(row.attachments).length > 0
+                            width: parent.width
+                            spacing: Theme.space.sm
+                            Repeater {
+                                model: root.list(row.attachments)
+                                delegate: Rectangle {
+                                    id: attachment
 
-                                MouseArea {
-                                    objectName: "sentFileOpen-" + sentFile.modelData.id
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: sentFile.openViewer()
-                                }
+                                    required property var modelData
+                                    required property int index
+                                    readonly property bool pictured: picture.status === Image.Ready
 
-                                Row {
-                                    id: fileRow
-                                    x: 10
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 6
-                                    ShellIcon {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        name: "file"
-                                        size: 14
-                                        color: root.iconColor
+                                    function openLarge() {
+                                        forceActiveFocus();
+                                        largeImage.showImages(root.list(row.attachments), index, attachment);
                                     }
-                                    RowText {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        // The name gives way so the kind and size stay whole.
-                                        width: Math.max(0, Math.min(implicitWidth, sentFiles.width - 40 - (fileDetail.visible ? fileDetail.implicitWidth + fileRow.spacing : 0)))
-                                        text: sentFile.modelData.name ?? ""
-                                        color: root.messageTextColor
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
-                                        wrapMode: Text.NoWrap
-                                        elide: Text.ElideMiddle
+
+                                    objectName: "attachment-" + modelData.id
+                                    Accessible.role: Accessible.Graphic
+                                    Accessible.name: modelData.name ?? ""
+                                    // As wide as the picture is at this height; a square until it loads.
+                                    width: pictured ? Math.min(images.width, Math.round(height * picture.implicitWidth / picture.implicitHeight)) : height
+                                    height: 200
+                                    radius: Theme.radiusXs
+                                    color: root.messageColor
+                                    border.color: activeFocus ? root.iconColor : root.borderColor
+                                    activeFocusOnTab: true
+                                    Keys.onReturnPressed: openLarge()
+                                    Keys.onEnterPressed: openLarge()
+                                    Keys.onSpacePressed: openLarge()
+
+                                    MouseArea {
+                                        objectName: "attachmentOpenLarge-" + attachment.modelData.id
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: attachment.openLarge()
                                     }
-                                    RowText {
-                                        id: fileDetail
-                                        visible: text.length > 0
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: sentFile.modelData.detail ?? ""
-                                        color: root.mutedColor
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
-                                        wrapMode: Text.NoWrap
+
+                                    Component.onCompleted: if (root.model !== null && typeof root.model.loadAttachment === "function")
+                                        root.model.loadAttachment(modelData.id)
+
+                                    Image {
+                                        id: picture
+                                        anchors.fill: parent
+                                        anchors.margins: 1
+                                        source: attachment.modelData.url ?? ""
+                                        // Decoded at twice the height shown, for dense screens.
+                                        sourceSize.height: 400
+                                        fillMode: Image.PreserveAspectFit
+                                    }
+                                    Column {
+                                        visible: !attachment.pictured
+                                        anchors.centerIn: parent
+                                        width: parent.width - 2 * Theme.space.sm
+                                        spacing: Theme.space.sm
+                                        ShellIcon {
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            name: "image"
+                                            size: Theme.icon.lg
+                                            color: root.iconColor
+                                        }
+                                        RowText {
+                                            width: parent.width
+                                            horizontalAlignment: Text.AlignHCenter
+                                            text: attachment.modelData.name ?? ""
+                                            color: root.mutedColor
+                                            font.pixelSize: Theme.type.meta.size
+                                            wrapMode: Text.NoWrap
+                                            elide: Text.ElideMiddle
+                                        }
                                     }
                                 }
                             }
+                        }
+                        // The other files sent with it, by name, kind and size.
+                        Flow {
+                            id: sentFiles
+                            readonly property var files: root.list(row.model.sentFiles)
+                            visible: files.length > 0
+                            width: parent.width
+                            spacing: Theme.space.sm
+                            Repeater {
+                                model: sentFiles.files
+                                delegate: Rectangle {
+                                    id: sentFile
+
+                                    required property var modelData
+
+                                    objectName: "sentFile-" + modelData.id
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: (modelData.detail ?? "").length > 0 ? qsTr("%1, %2").arg(modelData.name).arg(modelData.detail) : (modelData.name ?? "")
+                                    width: Math.min(sentFiles.width, fileRow.implicitWidth + 2 * Theme.space.md)
+                                    height: Theme.control.lg
+                                    radius: Theme.radiusMd
+                                    color: root.messageColor
+                                    border.color: activeFocus ? root.iconColor : root.borderColor
+                                    activeFocusOnTab: true
+                                    function openViewer() {
+                                        Shell.dispatch("attachment.sent.view", { id: modelData.id, name: modelData.name, mimeType: modelData.mimeType ?? "" });
+                                    }
+                                    Keys.onReturnPressed: openViewer()
+                                    Keys.onEnterPressed: openViewer()
+                                    Keys.onSpacePressed: openViewer()
+
+                                    MouseArea {
+                                        objectName: "sentFileOpen-" + sentFile.modelData.id
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: sentFile.openViewer()
+                                    }
+
+                                    Row {
+                                        id: fileRow
+                                        x: Theme.space.md
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: Theme.space.sm
+                                        ShellIcon {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            name: "file"
+                                            size: Theme.icon.sm
+                                            color: root.iconColor
+                                        }
+                                        RowText {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            // The name gives way so the kind and size stay whole.
+                                            width: Math.max(0, Math.min(implicitWidth, sentFiles.width - 2 * Theme.space.md - Theme.icon.sm - fileRow.spacing - (fileDetail.visible ? fileDetail.implicitWidth + fileRow.spacing : 0)))
+                                            text: sentFile.modelData.name ?? ""
+                                            color: root.messageTextColor
+                                            font.pixelSize: Theme.type.meta.size
+                                            wrapMode: Text.NoWrap
+                                            elide: Text.ElideMiddle
+                                        }
+                                        RowText {
+                                            id: fileDetail
+                                            visible: text.length > 0
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: sentFile.modelData.detail ?? ""
+                                            color: root.mutedColor
+                                            font.pixelSize: Theme.type.meta.size
+                                            wrapMode: Text.NoWrap
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle {
+                            id: bubble
+                            readonly property bool collapsible: root.collapsible(row.text ?? "")
+                            readonly property bool collapsed: collapsible && root.fullMessages[row.rowId] !== true
+                            objectName: "userMessageBody"
+                            // A message of images alone has no block.
+                            visible: (row.text ?? "").length > 0
+                            // The column's, which the Loader only gives the
+                            // Column after it is made: a block that wrapped at
+                            // another width first would move the rows under it.
+                            width: body.width
+                            // A collapsed message shows at most 176px.
+                            height: (collapsed ? Math.min(176, userText.implicitHeight) : userText.implicitHeight) + 2 * Theme.space.md
+                            radius: Theme.radiusLg
+                            color: root.messageColor
+                            border.width: 1
+                            border.color: root.borderColor
+                            clip: collapsed
+                            Markdown {
+                                id: userText
+                                x: Theme.space.lg
+                                y: Theme.space.md
+                                width: body.width - 2 * Theme.space.lg
+                                text: row.text ?? ""
+                                lineBreaks: true
+                                textColor: root.messageTextColor
+                                linkPreviews: root.linkPreviews
+                                onLinkActivated: (link, external) => root.linkActivated(link, external)
+                            }
+                        }
+                        ActionLink {
+                            objectName: "messageExpand"
+                            visible: bubble.collapsible
+                            text: bubble.collapsed ? qsTr("Show full message") : qsTr("Show less")
+                            Accessible.role: Accessible.Button
+                            Accessible.name: text
+                            onClicked: root.showFull(row.rowId, bubble.collapsed)
+                        }
+                        // A message that did not reach the agent says why.
+                        Pill {
+                            visible: text.length > 0 && text !== "completed" && text !== "pending" && text !== "waiting"
+                            text: row.status ?? ""
+                            textColor: root.errorColor
+                            color: Qt.alpha(root.errorColor, 0.08)
+                            border.color: Qt.alpha(root.errorColor, 0.25)
+                        }
+                        // Where the time and actions sit when they always show;
+                        // no height (nor spacing) where they float.
+                        Item {
+                            id: metaSlot
+                            width: parent.width
+                            height: root.alwaysShowMeta ? Theme.control.sm : 0
                         }
                     }
                     Rectangle {
-                        id: bubble
-                        readonly property bool collapsible: root.collapsible(row.text ?? "")
-                        readonly property bool collapsed: collapsible && root.fullMessages[row.rowId] !== true
-                        objectName: "userMessageBody"
-                        // A message of images alone has no bubble.
-                        visible: (row.text ?? "").length > 0
-                        anchors.right: parent.right
-                        width: Math.min(parent.width * 0.8, userText.implicitWidth + 24)
-                        // A collapsed message shows at most 176px.
-                        height: (collapsed ? Math.min(176, userText.implicitHeight) : userText.implicitHeight) + 24
-                        radius: 16
-                        color: root.messageColor
-                        clip: collapsed
-                        Markdown {
-                            id: userText
-                            x: 12
-                            y: 12
-                            width: Math.min(implicitWidth, body.width * 0.8 - 24)
-                            text: row.text ?? ""
-                            lineBreaks: true
-                            fitWidth: true
-                            textColor: root.messageTextColor
-                            linkPreviews: root.linkPreviews
-                            onLinkActivated: (link, external) => root.linkActivated(link, external)
-                        }
-                    }
-                    ActionLink {
-                        objectName: "messageExpand"
-                        visible: bubble.collapsible
-                        anchors.right: parent.right
-                        anchors.rightMargin: 4
-                        text: bubble.collapsed ? qsTr("Show full message") : qsTr("Show less")
-                        Accessible.role: Accessible.Button
-                        Accessible.name: text
-                        onClicked: root.showFull(row.rowId, bubble.collapsed)
-                    }
-                    // A message that did not reach the agent says why.
-                    Pill {
-                        visible: text.length > 0 && text !== "completed" && text !== "pending" && text !== "waiting"
-                        anchors.right: parent.right
-                        anchors.rightMargin: 4
-                        text: row.status ?? ""
-                        textColor: root.errorColor
-                        color: Qt.alpha(root.errorColor, 0.08)
-                        border.color: Qt.alpha(root.errorColor, 0.25)
-                    }
-                    Row {
-                        anchors.right: parent.right
-                        anchors.rightMargin: 4
-                        height: 24
-                        spacing: 8
+                        objectName: "userMessageMeta"
+                        readonly property bool floating: !root.alwaysShowMeta
+                        // Over the block's top edge, at its right, kept
+                        // inside the row so the pointer stays on it.
+                        x: floating ? parent.width - width - Theme.space.md : 0
+                        y: floating ? Math.max(0, bubble.y - height / 2) : metaSlot.y
+                        width: userMeta.width + (floating ? 2 * Theme.space.xxs : 0)
+                        height: Theme.control.sm + (floating ? 2 * Theme.space.xxs : 0)
+                        radius: Theme.radiusMd
+                        color: floating ? Theme.palette.color("surfaceOverlay", "#22262e") : "transparent"
+                        border.width: floating ? 1 : 0
+                        border.color: Theme.palette.color("borderStrong", "#343a44")
                         opacity: row.showMeta ? 1 : 0
                         Behavior on opacity {
                             NumberAnimation {
@@ -1130,24 +1194,31 @@ Item {
                                 easing.type: Easing.OutCubic
                             }
                         }
-                        Stamp {
-                            anchors.verticalCenter: parent.verticalCenter
-                            rowId: row.rowId
-                            text: row.time ?? ""
-                        }
-                        LinkPullRequestButton {
-                            url: row.model.pullRequestUrl ?? ""
-                        }
-                        IconButton {
-                            objectName: "editFromHere"
-                            icon: "pencil"
-                            tip: qsTr("Edit from here")
-                            // Asked when the pointer comes over the message.
-                            visible: row.showMeta && root.editable(row.rowId)
-                            onClicked: root.editRequested(row.rowId)
-                        }
-                        CopyButton {
-                            rowId: row.rowId
+                        Row {
+                            id: userMeta
+                            anchors.centerIn: parent
+                            height: Theme.control.sm
+                            leftPadding: parent.floating ? Theme.space.sm : 0
+                            spacing: Theme.space.sm
+                            Stamp {
+                                anchors.verticalCenter: parent.verticalCenter
+                                rowId: row.rowId
+                                text: row.time ?? ""
+                            }
+                            LinkPullRequestButton {
+                                url: row.model.pullRequestUrl ?? ""
+                            }
+                            IconButton {
+                                objectName: "editFromHere"
+                                icon: "pencil"
+                                tip: qsTr("Edit from here")
+                                // Asked when the pointer comes over the message.
+                                visible: row.showMeta && root.editable(row.rowId)
+                                onClicked: root.editRequested(row.rowId)
+                            }
+                            CopyButton {
+                                rowId: row.rowId
+                            }
                         }
                     }
                 }
@@ -1156,14 +1227,18 @@ Item {
             Component {
                 id: assistantMessage
                 Column {
-                    leftPadding: 4
-                    rightPadding: 4
-                    topPadding: 2
-                    bottomPadding: 2
+                    // What it keeps blank at its foot: its actions' line, while
+                    // they wait for the pointer.
+                    readonly property real tail: bottomPadding + (replyMeta.visible && !root.alwaysShowMeta ? replyMeta.height : 0)
+                    leftPadding: Theme.space.xs
+                    rightPadding: Theme.space.xs
+                    topPadding: Theme.space.xxs
+                    // Before a divider, its actions' line is the space over it.
+                    bottomPadding: row.beforeMarker && replyMeta.visible ? 0 : Theme.space.xxs
                     Markdown {
                         // Over the row's files and actions, for "Cite".
                         z: 1
-                        width: parent.width - 8
+                        width: parent.width - 2 * Theme.space.xs
                         // A finished reply with no text says so; one still being
                         // written is not empty yet (AssistantTimelineRow).
                         text: (row.text ?? "").length > 0 || row.streaming === true ? (row.text ?? "") : qsTr("(empty response)")
@@ -1184,49 +1259,57 @@ Item {
                         readonly property var open: root.foldersOf(row.rowId)
                         readonly property bool nested: ChangedFilesTree.hasFolders(changed)
                         visible: changed.length > 0
-                        width: parent.width - 8
+                        width: parent.width - 2 * Theme.space.xs
                         height: filesCard.y + filesCard.height
                         Rectangle {
                             id: filesCard
-                            y: 16
+                            y: Theme.space.lg
                             width: parent.width
                             height: filesColumn.implicitHeight
-                            radius: 8
-                            color: root.secondaryColor
+                            radius: Theme.radiusMd
+                            color: root.surfaceColor
+                            border.width: 1
+                            border.color: root.borderColor
                             Column {
                                 id: filesColumn
                                 width: parent.width
                                 Item {
                                     width: parent.width
-                                    height: 32
+                                    height: Theme.control.lg
                                     // How many files and lines; a count of none is left out (DiffStatLabel).
                                     Row {
                                         objectName: "changedFilesHeading"
-                                        x: 12
+                                        x: Theme.space.md
                                         anchors.verticalCenter: parent.verticalCenter
-                                        spacing: 12
+                                        spacing: Theme.space.md
                                         RowText {
                                             text: changedFiles.changed.length === 1 ? qsTr("1 changed file") : qsTr("%1 changed files").arg(changedFiles.changed.length)
-                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.meta.size
                                             font.weight: Font.Medium
                                             wrapMode: Text.NoWrap
                                         }
                                         Row {
                                             readonly property var totals: changedFiles.changed.reduce((sum, file) => [sum[0] + (file.additions ?? 0), sum[1] + (file.deletions ?? 0)], [0, 0])
-                                            spacing: 4
+                                            spacing: Theme.space.xs
                                             RowText {
                                                 visible: parent.totals[0] > 0
                                                 text: "+" + parent.totals[0]
                                                 color: root.successColor
                                                 font.family: root.monoFamily
-                                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                font.pixelSize: Theme.type.meta.size
+                                                font.features: {
+                                                    "tnum": 1
+                                                }
                                             }
                                             RowText {
                                                 visible: parent.totals[1] > 0
                                                 text: "-" + parent.totals[1]
                                                 color: root.errorColor
                                                 font.family: root.monoFamily
-                                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                font.pixelSize: Theme.type.meta.size
+                                                font.features: {
+                                                    "tnum": 1
+                                                }
                                             }
                                         }
                                     }
@@ -1234,7 +1317,7 @@ Item {
                                         objectName: "changedFoldersToggle"
                                         visible: changedFiles.nested
                                         anchors.right: openDiff.left
-                                        anchors.rightMargin: 4
+                                        anchors.rightMargin: Theme.space.xs
                                         anchors.verticalCenter: parent.verticalCenter
                                         icon: changedFiles.open.all ? "chevrons-down-up" : "chevrons-up-down"
                                         tip: changedFiles.open.all ? qsTr("Collapse all folders") : qsTr("Expand all folders")
@@ -1245,22 +1328,22 @@ Item {
                                         id: openDiff
                                         objectName: "openTurnDiff"
                                         anchors.right: parent.right
-                                        anchors.rightMargin: 8
+                                        anchors.rightMargin: Theme.space.sm
                                         anchors.verticalCenter: parent.verticalCenter
-                                        width: openDiffRow.implicitWidth + 14
-                                        height: 24
-                                        radius: 6
+                                        width: openDiffRow.implicitWidth + 2 * Theme.space.sm
+                                        height: Theme.control.sm
+                                        radius: Theme.radiusSm
                                         color: openDiffHover.hovered ? root.hoverColor : "transparent"
                                         Accessible.role: Accessible.Button
                                         Accessible.name: qsTr("Open diff")
                                         Row {
                                             id: openDiffRow
                                             anchors.centerIn: parent
-                                            spacing: 6
+                                            spacing: Theme.space.sm
                                             ShellIcon {
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 name: "file-diff"
-                                                size: 12
+                                                size: Theme.icon.sm
                                                 color: openDiffHover.hovered ? root.textColor : root.mutedColor
                                             }
                                             RowText {
@@ -1268,7 +1351,7 @@ Item {
                                                 visible: filesCard.width >= 384
                                                 text: qsTr("Open diff")
                                                 color: openDiffHover.hovered ? root.textColor : root.mutedColor
-                                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                font.pixelSize: Theme.type.meta.size
                                                 wrapMode: Text.NoWrap
                                             }
                                         }
@@ -1285,9 +1368,9 @@ Item {
                                     }
                                 }
                                 Column {
-                                    x: 8
-                                    width: parent.width - 16
-                                    bottomPadding: 8
+                                    x: Theme.space.sm
+                                    width: parent.width - 2 * Theme.space.sm
+                                    bottomPadding: Theme.space.sm
                                     Repeater {
                                         model: ChangedFilesTree.rows(changedFiles.changed, changedFiles.open.all, changedFiles.open.folders)
                                         delegate: Rectangle {
@@ -1296,9 +1379,9 @@ Item {
                                             readonly property bool folder: modelData.kind === "directory"
                                             objectName: folder ? "changedFolder" : "changedFile"
                                             width: parent.width
-                                            height: 28
-                                            radius: 6
-                                            color: changedFileHover.hovered ? Qt.alpha(root.hoverColor, 0.6) : "transparent"
+                                            height: Theme.control.md
+                                            radius: Theme.radiusSm
+                                            color: changedFileHover.hovered ? root.hoverColor : "transparent"
                                             Accessible.role: Accessible.Button
                                             Accessible.name: modelData.path
                                             Accessible.onPressAction: changedFile.activate()
@@ -1308,55 +1391,61 @@ Item {
                                                 else
                                                     root.fileActivated(changedFile.modelData.path, "diff", row.rowId);
                                             }
-                                            ShellIcon {
+                                            ShellChevron {
                                                 id: folderChevron
                                                 visible: changedFile.folder
-                                                x: 8 + changedFile.modelData.depth * 14
+                                                x: Theme.space.sm + changedFile.modelData.depth * Theme.space.md
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                name: "chevron-right"
-                                                size: 14
+                                                direction: "right"
+                                                size: Theme.icon.sm
                                                 rotation: changedFile.modelData.expanded ? 90 : 0
-                                                color: Qt.alpha(root.mutedColor, 0.7)
+                                                color: Theme.palette.color("inkTertiary", "#8b919e")
                                             }
                                             ShellIcon {
                                                 id: fileIcon
                                                 // A file sits under its folder's name, past the chevron.
-                                                x: folderChevron.x + (changedFiles.nested ? 22 : 0)
+                                                x: folderChevron.x + (changedFiles.nested ? Theme.icon.sm + Theme.space.sm : 0)
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 name: !changedFile.folder ? "file" : changedFile.modelData.expanded ? "folder" : "folder-closed"
-                                                size: 14
-                                                color: Qt.alpha(root.mutedColor, 0.7)
+                                                size: Theme.icon.md
+                                                color: Theme.palette.color("inkTertiary", "#8b919e")
                                             }
                                             RowText {
-                                                x: fileIcon.x + 22
-                                                width: Math.max(0, fileStat.x - x - 8)
+                                                x: fileIcon.x + Theme.icon.md + Theme.space.sm
+                                                width: Math.max(0, fileStat.x - x - Theme.space.sm)
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 text: changedFile.modelData.name
-                                                color: changedFile.folder ? (changedFileHover.hovered ? Qt.alpha(root.textColor, 0.9) : root.mutedColor) : changedFileHover.hovered ? root.textColor : Qt.alpha(root.textColor, 0.85)
+                                                color: changedFile.folder ? (changedFileHover.hovered ? Theme.palette.color("inkSecondary", "#b8bdc7") : root.mutedColor) : changedFileHover.hovered ? root.textColor : Theme.palette.color("inkSecondary", "#b8bdc7")
                                                 font.family: root.monoFamily
-                                                font.pixelSize: Math.round((changedFile.folder ? 11 : 12) * Theme.fontScale)
+                                                font.pixelSize: changedFile.folder ? Theme.type.caption.size : Theme.type.meta.size
                                                 wrapMode: Text.NoWrap
                                                 elide: Text.ElideMiddle
                                             }
                                             Row {
                                                 id: fileStat
                                                 anchors.right: parent.right
-                                                anchors.rightMargin: 8
+                                                anchors.rightMargin: Theme.space.sm
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                spacing: 4
+                                                spacing: Theme.space.xs
                                                 RowText {
                                                     visible: changedFile.modelData.additions > 0
                                                     text: "+" + changedFile.modelData.additions
                                                     color: root.successColor
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: Math.round(10 * Theme.fontScale)
+                                                    font.pixelSize: Theme.type.caption.size
+                                                    font.features: {
+                                                        "tnum": 1
+                                                    }
                                                 }
                                                 RowText {
                                                     visible: changedFile.modelData.deletions > 0
                                                     text: "-" + changedFile.modelData.deletions
                                                     color: root.errorColor
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: Math.round(10 * Theme.fontScale)
+                                                    font.pixelSize: Theme.type.caption.size
+                                                    font.features: {
+                                                        "tnum": 1
+                                                    }
                                                 }
                                             }
                                             HoverHandler {
@@ -1383,10 +1472,11 @@ Item {
                     }
                     // Its actions and time, on its settled turn's last reply.
                     Row {
+                        id: replyMeta
                         visible: row.meta === true && row.streaming !== true
-                        topPadding: 6
-                        height: 30
-                        spacing: 8
+                        topPadding: row.beforeMarker ? 0 : Theme.space.sm
+                        height: topPadding + Theme.control.sm
+                        spacing: Theme.space.sm
                         opacity: row.showMeta ? 1 : 0
                         Behavior on opacity {
                             NumberAnimation {
@@ -1520,27 +1610,60 @@ Item {
                         }
                     }
                     Component.onCompleted: syncCalls()
-                    // What a settled group did, or "+N previous tool calls"
-                    // while its turn runs (WorkGroupToggleTimelineRow).
+                    // A running turn's group folds into one live row: its
+                    // latest call (what the agent is doing now, changing as
+                    // calls land; no animation) and "+N previous tool calls",
+                    // which opens into every call.
+                    readonly property bool merged: (row.hiddenCount ?? 0) > 0 && row.expanded !== true && summary.length === 0 && calls.count > 0
+                    readonly property var latest: merged ? calls.get(calls.count - 1) : null
+                    // What a settled group did, the running group's live row,
+                    // or "Show fewer tool calls" once it is open
+                    // (WorkGroupToggleTimelineRow).
                     WorkLine {
+                        id: groupToggle
                         objectName: "workGroupToggle"
+                        readonly property bool failed: workGroup.latest !== null && (workGroup.latest.status === "failed" || workGroup.latest.statusLabel === qsTr("Failed"))
                         visible: (row.hiddenCount ?? 0) > 0
                         width: parent.width
-                        iconName: "hammer"
-                        iconTint: row.model.summaryFailed === true ? Qt.alpha(root.toolErrorColor, 0.4) : root.iconColor
-                        label: workGroup.summary.length > 0 ? workGroup.summary : row.expanded ? qsTr("Show fewer tool calls") : qsTr("+%1 previous tool calls").arg(row.hiddenCount)
+                        iconName: workGroup.latest !== null ? (workGroup.latest.icon || "hammer") : "hammer"
+                        iconSource: workGroup.latest === null ? "" : Theme.appearance === "light" ? workGroup.latest.iconUrl : workGroup.latest.iconUrlDark
+                        iconTint: row.model.summaryFailed === true || failed ? Qt.alpha(root.toolErrorColor, 0.4) : root.iconColor
+                        label: workGroup.latest !== null ? workGroup.latest.label : workGroup.summary.length > 0 ? workGroup.summary : row.expanded ? qsTr("Show fewer tool calls") : qsTr("+%1 previous tool calls").arg(row.hiddenCount)
+                        labelElide: workGroup.latest !== null && (workGroup.latest.path ?? "").length > 0 ? Text.ElideMiddle : Text.ElideRight
+                        preview: workGroup.latest?.preview ?? ""
                         interactive: true
+                        Accessible.name: workGroup.merged ? qsTr("%1, +%2 previous tool calls").arg(label).arg(row.hiddenCount) : label
                         onClicked: root.toggle(row.rowId)
-                        Item {
-                            visible: workGroup.summary.length > 0
+                        RowText {
+                            objectName: "workGroupStatus"
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 16
-                            height: 16
-                            ShellIcon {
+                            visible: workGroup.merged && text.length > 0
+                            text: workGroup.latest?.statusLabel ?? ""
+                            wrapMode: Text.NoWrap
+                            font.pixelSize: Theme.type.meta.size
+                            color: groupToggle.failed ? root.toolErrorColor : root.mutedColor
+                        }
+                        RowText {
+                            objectName: "workGroupCount"
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: workGroup.merged
+                            text: qsTr("+%1 previous tool calls").arg(row.hiddenCount)
+                            wrapMode: Text.NoWrap
+                            font.pixelSize: Theme.type.meta.size
+                            font.features: {
+                                "tnum": 1
+                            }
+                            color: groupToggle.hovered ? root.textColor : root.mutedColor
+                        }
+                        Item {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Theme.icon.md
+                            height: Theme.icon.md
+                            ShellChevron {
                                 anchors.centerIn: parent
-                                name: "chevron-right"
-                                size: 12
-                                color: Qt.alpha(root.iconColor, 0.7)
+                                direction: "right"
+                                size: Theme.icon.sm
+                                color: groupToggle.hovered ? root.textColor : root.mutedColor
                                 rotation: row.expanded ? 90 : 0
                             }
                         }
@@ -1553,11 +1676,13 @@ Item {
                         id: callsView
                         objectName: "workCalls"
                         readonly property bool windowed: row.expanded === true && contentHeight > height
+                        // Folded into the group's live row (`merged`).
+                        visible: !workGroup.merged
                         // Whether the end was in view before the last change.
                         property bool atEnd: true
                         property int seen: 0
                         width: parent.width
-                        height: row.expanded === true ? Math.min(contentHeight, root.openGroupHeight) : contentHeight
+                        height: workGroup.merged ? 0 : row.expanded === true ? Math.min(contentHeight, root.openGroupHeight) : contentHeight
                         contentWidth: width
                         contentHeight: callsColumn.height
                         interactive: windowed
@@ -1688,7 +1813,7 @@ Item {
                                             visible: text.length > 0
                                             text: call.modelData.statusLabel ?? ""
                                             wrapMode: Text.NoWrap
-                                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                                            font.pixelSize: Theme.type.meta.size
                                             color: call.failed ? root.toolErrorColor : root.mutedColor
                                         }
                                         Stamp {
@@ -1701,36 +1826,36 @@ Item {
                                         }
                                         Item {
                                             anchors.verticalCenter: parent.verticalCenter
-                                            width: 16
-                                            height: 16
-                                            ShellIcon {
+                                            width: Theme.icon.md
+                                            height: Theme.icon.md
+                                            ShellChevron {
                                                 anchors.centerIn: parent
                                                 visible: call.hasDetails
-                                                name: "chevron-right"
-                                                size: 12
-                                                color: Qt.alpha(root.iconColor, 0.7)
+                                                direction: "right"
+                                                size: Theme.icon.sm
+                                                color: Theme.palette.color("inkTertiary", "#8b919e")
                                                 rotation: call.open ? 90 : 0
                                             }
                                         }
                                     }
                                     Item {
                                         visible: call.open
-                                        x: 28
-                                        width: parent.width - 28
+                                        x: root.workInset
+                                        width: parent.width - root.workInset
                                         height: detailsBox.y + detailsBox.height
                                         Rectangle {
                                             id: detailsBox
-                                            y: call.panel ? 4 : 0
+                                            y: call.panel ? Theme.space.xs : 0
                                             width: parent.width
                                             height: details.implicitHeight + details.y * 2
-                                            radius: 6
+                                            radius: Theme.radiusSm
                                             color: call.panel ? Qt.alpha(root.mutedSurfaceColor, 0.4) : "transparent"
                                             Column {
                                                 id: details
-                                                x: call.panel ? 12 : 2
-                                                y: call.panel ? 8 : 4
+                                                x: call.panel ? Theme.space.md : Theme.space.xxs
+                                                y: call.panel ? Theme.space.sm : Theme.space.xs
                                                 width: parent.width - x * 2
-                                                spacing: call.panel ? 4 : 12
+                                                spacing: call.panel ? Theme.space.xs : Theme.space.md
                                                 RowText {
                                                     visible: text.length > 0
                                                     width: parent.width
@@ -1738,7 +1863,7 @@ Item {
                                                     textFormat: Text.PlainText
                                                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    font.pixelSize: Theme.type.caption.size
                                                 }
                                                 RowText {
                                                     visible: text.length > 0
@@ -1749,7 +1874,7 @@ Item {
                                                     textFormat: Text.PlainText
                                                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                                     font.family: call.panel ? root.monoFamily : root.uiFamily
-                                                    font.pixelSize: call.panel ? 11 : 14
+                                                    font.pixelSize: call.panel ? Theme.type.caption.size : Theme.type.body.size
                                                     lineHeight: 1.15
                                                     color: call.panel ? root.labelColor : root.textColor
                                                     maximumLineCount: 40
@@ -1758,26 +1883,26 @@ Item {
                                                 // A changed file: where, how much, its diff, and each change.
                                                 Row {
                                                     visible: call.modelData.type === "file_change"
-                                                    spacing: 6
+                                                    spacing: Theme.space.sm
                                                     RowText {
                                                         text: call.modelData.label ?? ""
                                                         wrapMode: Text.NoWrap
                                                         font.family: root.monoFamily
-                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.caption.size
                                                     }
                                                     RowText {
                                                         visible: call.extra.additions !== undefined
                                                         text: "+" + (call.extra.additions ?? 0)
                                                         color: root.successColor
                                                         font.family: root.monoFamily
-                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.caption.size
                                                     }
                                                     RowText {
                                                         visible: call.extra.deletions !== undefined
                                                         text: "-" + (call.extra.deletions ?? 0)
                                                         color: root.errorColor
                                                         font.family: root.monoFamily
-                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.caption.size
                                                     }
                                                     ActionLink {
                                                         objectName: "openCallDiff"
@@ -1795,7 +1920,7 @@ Item {
                                                         textFormat: Text.PlainText
                                                         wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                                         font.family: root.monoFamily
-                                                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.caption.size
                                                         color: root.mutedColor
                                                     }
                                                 }
@@ -1813,7 +1938,7 @@ Item {
                                                             elide: Text.ElideMiddle
                                                             wrapMode: Text.NoWrap
                                                             font.family: root.monoFamily
-                                                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                            font.pixelSize: Theme.type.caption.size
                                                         }
                                                         RowText {
                                                             visible: text.length > 0
@@ -1823,7 +1948,7 @@ Item {
                                                             elide: Text.ElideRight
                                                             wrapMode: Text.NoWrap
                                                             font.family: root.monoFamily
-                                                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                            font.pixelSize: Theme.type.caption.size
                                                             color: root.mutedColor
                                                         }
                                                     }
@@ -1841,7 +1966,7 @@ Item {
                                                         textFormat: Text.PlainText
                                                         elide: Text.ElideRight
                                                         font.family: root.uiFamily
-                                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                                        font.pixelSize: Theme.type.meta.size
                                                         font.underline: link.length > 0
                                                         color: link.length > 0 ? root.textColor : root.labelColor
                                                         Accessible.role: link.length > 0 ? Accessible.Link : Accessible.StaticText
@@ -1880,14 +2005,14 @@ Item {
                                                     textFormat: Text.PlainText
                                                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                                                     font.family: root.monoFamily
-                                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    font.pixelSize: Theme.type.caption.size
                                                     color: root.mutedColor
                                                 }
                                                 RowText {
                                                     objectName: "exitStatus"
                                                     visible: call.modelData.exited
                                                     text: qsTr("Process exited with code %1").arg(call.modelData.exitCode)
-                                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                                    font.pixelSize: Theme.type.caption.size
                                                     color: call.modelData.exitCode === 0 ? root.successColor : root.errorColor
                                                 }
                                             }
@@ -1902,30 +2027,36 @@ Item {
 
             Component {
                 id: fold
-                // "Worked for 32s", then its chevron (TurnFoldTimelineRow).
+                // "Worked for 32s ›": the turn's work in one disclosure row,
+                // in meta (TurnFoldTimelineRow). It opens in one step, no
+                // height animation, so the rows under it stay put.
                 Item {
-                    implicitHeight: 36
+                    implicitHeight: Theme.control.md
                     Row {
                         id: foldButton
+                        objectName: "turnFold"
                         Accessible.role: Accessible.Button
                         Accessible.name: row.title ?? ""
                         Accessible.onPressAction: root.toggle(row.rowId)
-                        y: 4
-                        height: 23
-                        leftPadding: 4
-                        rightPadding: 4
-                        spacing: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        height: Theme.control.sm
+                        leftPadding: Theme.space.xs
+                        rightPadding: Theme.space.xs
+                        spacing: Theme.space.xs
                         RowText {
                             anchors.verticalCenter: parent.verticalCenter
                             text: row.title ?? ""
                             color: foldHover.hovered ? root.textColor : root.mutedColor
-                            font.pixelSize: Math.round(14 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
+                            font.features: {
+                                "tnum": 1
+                            }
                             wrapMode: Text.NoWrap
                         }
-                        ShellIcon {
+                        ShellChevron {
                             anchors.verticalCenter: parent.verticalCenter
-                            name: row.expanded ? "chevron-down" : "chevron-right"
-                            size: 14
+                            direction: row.expanded ? "down" : "right"
+                            size: Theme.icon.sm
                             color: foldHover.hovered ? root.textColor : root.mutedColor
                         }
                         HoverHandler {
@@ -1938,17 +2069,11 @@ Item {
                     }
                     Stamp {
                         anchors.right: parent.right
-                        anchors.rightMargin: 6
+                        anchors.rightMargin: Theme.space.sm
                         anchors.verticalCenter: foldButton.verticalCenter
                         visible: text.length > 0 && row.showMeta
                         rowId: row.rowId
                         text: row.time ?? ""
-                    }
-                    Rectangle {
-                        anchors.bottom: parent.bottom
-                        width: parent.width
-                        height: 1
-                        color: Qt.alpha(root.borderColor, 0.6)
                     }
                 }
             }
@@ -1957,41 +2082,41 @@ Item {
                 id: plan
                 Rectangle {
                     // The card's padding (p-4, sm:p-5).
-                    readonly property int pad: root.width >= 640 ? 20 : 16
-                    implicitHeight: planBody.implicitHeight + pad * 2 + 4
+                    readonly property int pad: root.width >= 640 ? Theme.space.xl : Theme.space.lg
+                    implicitHeight: planBody.implicitHeight + pad * 2 + 2 * Theme.space.xxs
                     color: "transparent"
                     // ProposedPlanCard, inset by its px-1 py-0.5 wrapper.
                     Rectangle {
-                        x: 4
-                        y: 2
-                        width: parent.width - 8
-                        height: parent.height - 4
-                        radius: 24
+                        x: Theme.space.xs
+                        y: Theme.space.xxs
+                        width: parent.width - 2 * Theme.space.xs
+                        height: parent.height - 2 * Theme.space.xxs
+                        radius: Theme.radiusXl
                         color: Qt.alpha(root.surfaceColor, 0.7)
                         border.color: Qt.alpha(root.borderColor, 0.8)
                     }
                     Column {
                         id: planBody
-                        x: 4 + parent.pad
-                        y: 2 + parent.pad
+                        x: Theme.space.xs + parent.pad
+                        y: Theme.space.xxs + parent.pad
                         width: parent.width - x * 2
-                        spacing: 16
+                        spacing: Theme.space.lg
                         Row {
                             width: parent.width
-                            spacing: 8
+                            spacing: Theme.space.sm
                             Rectangle {
                                 id: planBadge
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: planBadgeText.implicitWidth + 12
-                                height: 22
-                                radius: 6
+                                width: planBadgeText.implicitWidth + 2 * Theme.space.sm
+                                height: Theme.control.sm
+                                radius: Theme.radiusSm
                                 color: root.secondaryColor
                                 RowText {
                                     id: planBadgeText
                                     anchors.centerIn: parent
                                     text: qsTr("Plan")
                                     color: root.secondaryTextColor
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                     font.weight: Font.Medium
                                     wrapMode: Text.NoWrap
                                 }
@@ -2000,7 +2125,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: parent.width - planBadge.width - 8
                                 text: row.title ?? ""
-                                font.pixelSize: Math.round(14 * Theme.fontScale)
+                                font.pixelSize: Theme.type.body.size
                                 font.weight: Font.Medium
                                 wrapMode: Text.NoWrap
                                 elide: Text.ElideRight
@@ -2058,26 +2183,26 @@ Item {
                     }
                     Rectangle {
                         id: avatar
-                        x: 8
+                        x: Theme.space.sm
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 24
-                        height: 24
-                        radius: 12
+                        width: Theme.control.sm
+                        height: Theme.control.sm
+                        radius: Theme.radiusPill
                         color: root.mutedSurfaceColor
                         border.color: Qt.alpha(root.borderColor, 0.7)
                         ShellIcon {
                             anchors.centerIn: parent
                             name: row.icon || "bot"
-                            size: 14
+                            size: Theme.icon.sm
                             color: root.mutedColor
                         }
                         // The status dot, ringed in the page's colour.
                         Rectangle {
-                            x: 15
-                            y: 15
-                            width: 12
-                            height: 12
-                            radius: 6
+                            x: parent.width - width + Theme.space.xs
+                            y: parent.height - height + Theme.space.xs
+                            width: Theme.icon.sm
+                            height: Theme.icon.sm
+                            radius: Theme.radiusPill
                             color: subagentRow.dot
                             border.width: 2
                             border.color: root.canvasColor
@@ -2085,8 +2210,8 @@ Item {
                     }
                     Column {
                         id: subagentText
-                        x: avatar.x + 34
-                        width: parent.width - x - 8
+                        x: avatar.x + avatar.width + Theme.space.md
+                        width: parent.width - x - Theme.space.sm
                         anchors.verticalCenter: parent.verticalCenter
                         Row {
                             width: parent.width
@@ -2095,7 +2220,7 @@ Item {
                                 id: subagentTitle
                                 width: Math.min(implicitWidth, parent.width - (subagentStatus.visible ? subagentStatus.width + 8 : 0))
                                 text: row.title ?? ""
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                                 font.weight: Font.Medium
                                 wrapMode: Text.NoWrap
                                 elide: Text.ElideRight
@@ -2106,7 +2231,7 @@ Item {
                                 visible: subagentRow.hasDetail && row.status !== "completed" && text.length > 0
                                 text: row.statusLabel ?? ""
                                 color: subagentRow.failed ? root.errorColor : root.mutedColor
-                                font.pixelSize: Math.round(10 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                                 wrapMode: Text.NoWrap
                             }
                         }
@@ -2115,7 +2240,7 @@ Item {
                             objectName: "subagentDetail"
                             text: (subagentRow.agentModel.length > 0 ? subagentRow.agentModel + " · " : "") + (subagentRow.hasDetail ? row.text : (row.statusLabel ?? ""))
                             color: subagentRow.failed ? root.errorColor : root.mutedColor
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
                         }
@@ -2158,14 +2283,14 @@ Item {
                     }
                     RowText {
                         visible: text.length > 0
-                        x: 28
-                        width: parent.width - 28
-                        topPadding: 4
-                        bottomPadding: 4
+                        x: root.workInset
+                        width: parent.width - root.workInset
+                        topPadding: Theme.space.xs
+                        bottomPadding: Theme.space.xs
                         text: row.text ?? ""
                         textFormat: Text.PlainText
-                        color: Qt.alpha(root.textColor, 0.8)
-                        font.pixelSize: Math.round(14 * Theme.fontScale)
+                        color: Theme.palette.color("inkSecondary", "#b8bdc7")
+                        font.pixelSize: Theme.type.prose.size
                     }
                 }
             }
@@ -2180,27 +2305,27 @@ Item {
                     readonly property bool failed: row.icon === "circle-alert"
                     property bool open: false
                     objectName: "workerResultCard"
-                    implicitHeight: workerColumn.height + 16
+                    implicitHeight: workerColumn.height + 2 * Theme.space.sm
                     Rectangle {
-                        width: 2
-                        height: parent.height - 16
-                        y: 8
-                        radius: 1
+                        width: Theme.space.xxs
+                        height: parent.height - 2 * Theme.space.sm
+                        y: Theme.space.sm
+                        radius: Theme.radiusPill
                         color: workerCard.failed ? root.errorColor : Qt.alpha(root.mutedColor, 0.6)
                     }
                     Column {
                         id: workerColumn
-                        x: 14
-                        y: 8
-                        width: parent.width - 14
-                        spacing: 4
+                        x: Theme.space.lg
+                        y: Theme.space.sm
+                        width: parent.width - Theme.space.lg
+                        spacing: Theme.space.xs
                         Row {
-                            spacing: 6
-                            height: 18
+                            spacing: Theme.space.sm
+                            height: Theme.icon.lg
                             ShellIcon {
                                 anchors.verticalCenter: parent.verticalCenter
                                 name: row.icon ?? "zap"
-                                size: 12
+                                size: Theme.icon.sm
                                 color: root.mutedColor
                             }
                             RowText {
@@ -2210,7 +2335,7 @@ Item {
                                 width: Math.min(implicitWidth, Math.max(0, root.columnWidth - 100))
                                 text: row.title ?? ""
                                 color: workerLink.hovered ? root.textColor : root.mutedColor
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                                 font.weight: Font.Medium
                                 font.underline: workerLink.hovered
                                 wrapMode: Text.NoWrap
@@ -2230,8 +2355,7 @@ Item {
                                 visible: (row.text ?? "").length > 0
                                 text: workerCard.open ? qsTr("Hide result") : qsTr("Show result")
                                 color: root.mutedColor
-                                opacity: 0.8
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.pixelSize: Theme.type.caption.size
                                 Accessible.role: Accessible.Button
                                 TapHandler {
                                     onTapped: workerCard.open = !workerCard.open
@@ -2244,8 +2368,8 @@ Item {
                             width: parent.width
                             text: row.text ?? ""
                             textFormat: Text.PlainText
-                            color: Qt.alpha(root.textColor, 0.8)
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            color: Theme.palette.color("inkSecondary", "#b8bdc7")
+                            font.pixelSize: Theme.type.body.size
                         }
                     }
                 }
@@ -2253,60 +2377,39 @@ Item {
 
             Component {
                 id: marker
-                // A line across the column with the marker in its middle
-                // (TimelineSystemDivider).
+                // One quiet line, centred in the column, with no rule
+                // (TimelineSystemDivider); the rows around it keep it 24
+                // above and 16 below.
                 Item {
-                    implicitHeight: markerContent.height + 24
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: Math.max(0, markerContent.x - 8)
-                        height: 1
-                        color: Qt.alpha(root.borderColor, 0.7)
-                    }
+                    implicitWidth: root.columnWidth
+                    implicitHeight: markerContent.height
+                    readonly property real tail: 0
                     Row {
                         id: markerContent
-                        anchors.centerIn: parent
-                        height: 16
-                        spacing: 6
-                        ShellIcon {
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: name.length > 0
-                            name: row.icon ?? ""
-                            size: 12
-                            color: root.mutedColor
-                        }
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: Theme.space.xs
                         RowText {
                             objectName: "markerTitle"
-                            anchors.verticalCenter: parent.verticalCenter
                             // A notification's title names a task, as long as its author made it.
-                            width: Math.min(implicitWidth, Math.max(0, root.columnWidth - 80))
+                            width: Math.min(implicitWidth, Math.max(0, root.columnWidth - (markerDetail.visible ? markerDetail.width + markerContent.spacing : 0)))
                             text: row.title ?? ""
                             color: root.mutedColor
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
-                            font.weight: Font.Medium
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
                         }
                         RowText {
-                            anchors.verticalCenter: parent.verticalCenter
+                            id: markerDetail
                             visible: (row.text ?? "").length > 0
-                            width: Math.min(implicitWidth, 320, Math.max(0, root.columnWidth - 160))
-                            text: "· " + (row.text ?? "")
+                            width: Math.min(implicitWidth, root.columnWidth / 2)
+                            text: "· " + (row.text ?? "")
                             color: root.mutedColor
-                            opacity: 0.7
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
-                            // One line on the rule: a detail of several would hang over the rows around it.
+                            // One line: a detail of several would hang over the rows around it.
                             maximumLineCount: 1
                         }
-                    }
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.right: parent.right
-                        width: Math.max(0, parent.width - markerContent.x - markerContent.width - 8)
-                        height: 1
-                        color: Qt.alpha(root.borderColor, 0.7)
                     }
                 }
             }
@@ -2329,12 +2432,13 @@ Item {
     }
 
     // The conversation has the keyboard (Tab to it): Page Up/Down page it.
+    // Not when a click put it on message text inside, which Tab never reaches.
     Rectangle {
         objectName: "timelineFocus"
         anchors.fill: view
-        visible: view.activeFocus && !view.tapped
+        visible: view.activeFocus && !view.tapped && view.Window.activeFocusItem?.selectByMouse === undefined
         color: "transparent"
-        radius: 6
+        radius: Theme.radiusSm
         border.width: 1
         border.color: Theme.palette.color("focus", "#3b82f6")
     }
@@ -2347,7 +2451,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: 42
+        height: Theme.control.md + Theme.space.sm
         visible: root.working || root.sending
         property int tick: 0
         Timer {
@@ -2359,15 +2463,17 @@ Item {
         Item {
             x: Math.round((indicator.width - root.columnWidth) / 2)
             width: root.columnWidth
-            height: 36
+            height: Theme.control.md
+            // The running turn's "Worked for": its time so far, in meta,
+            // a second at a time.
             RowText {
                 objectName: "workingLabel"
-                x: 4
-                y: 4
-                height: 24
+                x: Theme.space.xs
+                anchors.verticalCenter: parent.verticalCenter
+                height: Theme.control.sm
                 verticalAlignment: Text.AlignVCenter
                 color: root.mutedColor
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.features: {
                     "tnum": 1
                 }
@@ -2379,12 +2485,6 @@ Item {
                     return root.model && typeof root.model.workingLabel === "function" ? root.model.workingLabel() : qsTr("Working");
                 }
             }
-            Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: Qt.alpha(root.borderColor, 0.6)
-            }
         }
     }
 
@@ -2395,18 +2495,18 @@ Item {
         visible: root.loadingEarlier
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: view.top
-        anchors.topMargin: 12
-        width: earlierText.implicitWidth + 16
-        height: 24
-        radius: 12
+        anchors.topMargin: Theme.space.md
+        width: earlierText.implicitWidth + 2 * Theme.space.sm
+        height: Theme.control.sm
+        radius: Theme.radiusPill
         color: root.canvasColor
-        border.color: Qt.alpha(root.borderColor, 0.6)
+        border.color: root.borderColor
         RowText {
             id: earlierText
             anchors.centerIn: parent
             text: qsTr("Loading earlier turns…")
             color: root.mutedColor
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.NoWrap
         }
     }
@@ -2422,42 +2522,75 @@ Item {
         }
     }
 
-    // Back to the latest output once the user scrolled away (the glass
-    // "Scroll to end" button).
+    // Once the view has left the start, the rows are cut cleanly at the top
+    // (the view clips) and a hairline marks the cut, so a half line under
+    // the header reads as scrolled, never as dimmed text.
+    Rectangle {
+        objectName: "timelineTopEdge"
+        visible: !view.atYBeginning
+        anchors.left: view.left
+        anchors.top: view.top
+        width: view.width - scrollBar.width
+        height: 1
+        color: root.borderColor
+    }
+
+    // "Scroll to end"'s own band over the bottom of the view: solid canvas
+    // with a hairline on top, so the control never sits on a line of text,
+    // faded or not. The rows are cut at the hairline like at the top.
+    Rectangle {
+        objectName: "jumpToLatestBand"
+        visible: jump.visible
+        anchors.left: view.left
+        anchors.bottom: view.bottom
+        width: view.width - scrollBar.width
+        height: jump.height + 2 * Theme.space.sm
+        color: root.canvasColor
+        Rectangle {
+            width: parent.width
+            height: 1
+            color: root.borderColor
+        }
+    }
+
+    // Back to the latest output once the user scrolled away: bottom-centre
+    // on its band, and only while they are away from the end. Where the end
+    // is already under the band, the band would only hide the last lines,
+    // so neither shows.
     ShellButton {
         id: jump
         objectName: "jumpToLatest"
-        visible: !view.following && view.count > 0
+        visible: !view.following && view.count > 0 && view.originY + view.contentHeight - (view.contentY + view.height) > height + 2 * Theme.space.sm
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: view.bottom
-        anchors.bottomMargin: 12
-        height: 24
-        radius: 12
+        anchors.bottomMargin: Theme.space.sm
+        height: Theme.control.md
+        radius: Theme.radiusPill
         iconName: "chevron-down"
-        iconSize: 14
+        iconSize: Theme.icon.sm
         text: qsTr("Scroll to end")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         Accessible.role: Accessible.Button
         Accessible.name: text
         Accessible.onPressAction: clicked()
         // Reached by Tab, but a click does not take the composer's focus.
         focusPolicy: Qt.TabFocus
         onClicked: root.scrollToEnd()
-        // A raised pill: its own surface, a full border and a still shadow, so
-        // it reads as a control over the message beneath it.
+        // An overlay pill: the popover's surface, its strong border and a
+        // still shadow, so it reads as a control over the message beneath it.
         background: Item {
             Rectangle {
-                y: 1
+                y: Theme.space.xxs
                 width: parent.width
                 height: parent.height
                 radius: jump.radius
-                color: Qt.alpha("black", 0.25)
+                color: Qt.alpha("black", Theme.appearance === "light" ? 0.12 : 0.4)
             }
             Rectangle {
                 anchors.fill: parent
                 radius: jump.radius
-                color: jump.hovered || jump.down ? root.hoverColor : Theme.palette.color("surfaceRaised", "#1f1f24")
-                border.color: jump.visualFocus ? jump.focusRing : root.borderColor
+                color: jump.hovered || jump.down ? root.hoverColor : Theme.palette.color("surfaceOverlay", "#22262e")
+                border.color: jump.visualFocus ? jump.focusRing : Theme.palette.color("borderStrong", "#343a44")
                 border.width: 1
             }
         }

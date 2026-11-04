@@ -8,7 +8,7 @@ Rectangle {
 
     default property alias content: inner.data
 
-    radius: Theme.radius
+    radius: Theme.radiusLg
     color: Theme.palette.color("surface", "#141416")
     border.color: Theme.palette.color("border", "#27272a")
     border.width: 1

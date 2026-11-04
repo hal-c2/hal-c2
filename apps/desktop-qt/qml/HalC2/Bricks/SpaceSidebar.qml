@@ -65,11 +65,16 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 10
-        spacing: 6
+        anchors.margins: Theme.space.sm
+        spacing: Theme.space.sm
 
+        // On the header line a thread's header shares (Theme.headerHeight),
+        // from the window's top to the hairline under it.
         RowLayout {
+            objectName: "spaceHeader"
             Layout.fillWidth: true
+            Layout.topMargin: -Theme.space.sm
+            Layout.preferredHeight: Theme.headerHeight
             spacing: 4
 
             ShellButton {
@@ -171,7 +176,11 @@ Rectangle {
 
             objectName: "spacePageTree"
             Layout.fillWidth: true
+            // As tall as its pages, less when the sidebar is short: the
+            // project sections follow the last page, not the sidebar's foot.
             Layout.fillHeight: true
+            Layout.preferredHeight: contentHeight
+            Layout.maximumHeight: contentHeight
             clip: true
             spacing: 1
             model: Spaces.pages
@@ -191,7 +200,7 @@ Rectangle {
                 objectName: "spacePage:" + title
                 width: ListView.view.width
                 height: 30
-                radius: Math.min(Theme.radius, 6)
+                radius: Theme.radiusSm
                 color: selected ? sidebar.selectedFill : rowMouse.containsMouse ? sidebar.hoverFill : "transparent"
 
                 MouseArea {
@@ -212,9 +221,9 @@ Rectangle {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 8 + row.depth * 14
+                    anchors.leftMargin: Theme.space.sm + row.depth * Theme.space.md
                     anchors.rightMargin: 2
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: row.fromThread ? "message-square" : "file-text"
@@ -227,7 +236,7 @@ Rectangle {
                         text: row.title
                         elide: Text.ElideRight
                         color: sidebar.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: row.selected ? Font.Medium : Font.Normal
                     }
 
@@ -302,11 +311,20 @@ Rectangle {
             Layout.fillWidth: true
             // The sections take the room they need, up to half the sidebar's.
             Layout.preferredHeight: Math.min(contentHeight, sidebar.height / 2)
+            // More, up to all of it, when the pages leave the room.
+            Layout.fillHeight: true
+            Layout.maximumHeight: contentHeight
             visible: count > 0
             clip: true
             spacing: 1
             model: Spaces.projects
             boundsBehavior: Flickable.StopAtBounds
+
+            // An expanded project can take more than the room: a thin
+            // scrollbar says the sections go on.
+            ShellScrollEdge {
+                target: projectSections
+            }
 
             delegate: Rectangle {
                 id: entry
@@ -325,7 +343,7 @@ Rectangle {
                 objectName: section ? "spaceProject:" + projectId : "spaceProject" + (kind === "file" ? "File:" : "Folder:") + projectId + ":" + path
                 width: ListView.view.width
                 height: section ? 28 : 26
-                radius: Math.min(Theme.radius, 6)
+                radius: Theme.radiusSm
                 color: selected ? sidebar.selectedFill : entryMouse.containsMouse ? sidebar.hoverFill : "transparent"
                 border.width: activeFocus ? 1 : 0
                 border.color: Theme.palette.color("focus", "#3b82f6")
@@ -371,9 +389,9 @@ Rectangle {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 8 + entry.depth * 14
-                    anchors.rightMargin: 6
-                    spacing: 6
+                    anchors.leftMargin: Theme.space.sm + entry.depth * Theme.space.md
+                    anchors.rightMargin: Theme.space.sm
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: entry.section ? (entry.expanded ? "chevron-down" : "chevron-right") : entry.kind === "folder" ? (entry.expanded ? "folder-open" : "folder") : "file-text"
@@ -386,7 +404,7 @@ Rectangle {
                         text: entry.name
                         elide: entry.section ? Text.ElideRight : Text.ElideMiddle
                         color: entry.section || entry.kind === "folder" ? sidebar.muted : sidebar.foreground
-                        font.pixelSize: Math.round((entry.section ? 12 : 13) * Theme.fontScale)
+                        font.pixelSize: entry.section ? Theme.type.meta.size : Theme.type.body.size
                         font.weight: entry.selected || entry.section ? Font.Medium : Font.Normal
                     }
                 }
@@ -402,7 +420,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("Decks")
                 color: sidebar.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             ShellButton {
@@ -437,7 +455,7 @@ Rectangle {
                 objectName: "spaceDeckRow:" + title
                 width: ListView.view.width
                 height: 30
-                radius: Math.min(Theme.radius, 6)
+                radius: Theme.radiusSm
                 color: selected ? sidebar.selectedFill : deckMouse.containsMouse ? sidebar.hoverFill : "transparent"
 
                 MouseArea {
@@ -460,7 +478,7 @@ Rectangle {
                     anchors.fill: parent
                     anchors.leftMargin: 8
                     anchors.rightMargin: 2
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     ShellIcon {
                         name: "monitor"
@@ -473,7 +491,7 @@ Rectangle {
                         text: deckRow.title
                         elide: Text.ElideRight
                         color: sidebar.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: deckRow.selected ? Font.Medium : Font.Normal
                     }
 
@@ -512,9 +530,15 @@ Rectangle {
             }
         }
 
+        // What is left of the height, so Images and Trash keep to the foot.
+        Item {
+            Layout.fillHeight: true
+        }
+
+        // Images and Trash start where the rows' text does, not centred.
         ShellButton {
             objectName: "spaceImages"
-            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignLeft
             subtle: true
             iconName: "image"
             enabled: Spaces.spaceId !== ""
@@ -524,7 +548,7 @@ Rectangle {
 
         ShellButton {
             objectName: "spaceTrash"
-            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignLeft
             subtle: true
             chevron: true
             iconName: "trash"
@@ -538,7 +562,7 @@ Rectangle {
             visible: sidebar.trashShown && sidebar.trashCount === 0
             text: qsTr("The trash is empty.")
             color: sidebar.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         Repeater {
@@ -560,7 +584,7 @@ Rectangle {
                     text: trashed.title
                     elide: Text.ElideRight
                     color: sidebar.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
 
                     MouseArea {
                         anchors.fill: parent
@@ -619,7 +643,7 @@ Rectangle {
                     text: trashedDeck.title
                     elide: Text.ElideRight
                     color: sidebar.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
 
                     MouseArea {
                         anchors.fill: parent

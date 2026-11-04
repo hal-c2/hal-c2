@@ -14,7 +14,7 @@ SettingsPage {
     readonly property var notifications: Shell.state.notifications ?? null
     readonly property bool supported: notifications !== null && notifications.supported === true
     readonly property var quietHours: notifications !== null ? (notifications.quietHours ?? null) : null
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
 
     // "22:00" for 1320 minutes after midnight, and back; -1 when it is not a time.
     function clock(minutes) {
@@ -33,30 +33,30 @@ SettingsPage {
 
     ColumnLayout {
         Layout.fillWidth: true
-        spacing: 8
+        spacing: Theme.space.sm
 
         Label {
             objectName: "notificationsUnsupported"
             Layout.fillWidth: true
-            Layout.topMargin: 12
+            Layout.topMargin: Theme.space.md
             visible: !page.supported
             text: qsTr("This build of HAL-C2 cannot receive notifications. Install a newer build to get them.")
             color: page.muted
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.topMargin: 12
+            Layout.topMargin: Theme.space.md
             visible: page.supported
-            spacing: 8
+            spacing: Theme.space.sm
 
             Label {
                 Layout.fillWidth: true
                 text: qsTr("Alerts on this device")
                 color: page.foreground
-                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.pixelSize: Theme.type.title.size
                 font.weight: Font.DemiBold
                 wrapMode: Text.Wrap
             }
@@ -78,7 +78,7 @@ SettingsPage {
             visible: page.supported
             text: page.notifications?.enabled ? qsTr("Notifications are enabled.") : qsTr("Notifications are disabled.")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -93,7 +93,7 @@ SettingsPage {
                 return qsTr("System permission: Not asked yet");
             }
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -103,7 +103,7 @@ SettingsPage {
             visible: text.length > 0
             text: page.notifications?.message ?? ""
             color: Theme.palette.color("warning", "#fbbf24")
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
@@ -118,12 +118,12 @@ SettingsPage {
         // than one is installed.
         Label {
             Layout.fillWidth: true
-            Layout.topMargin: 12
+            Layout.topMargin: Theme.space.md
             visible: page.supported && (page.notifications?.distributors ?? []).length > 0
             text: page.notifications?.choosing ? qsTr("Pick the app that delivers notifications")
                                                : qsTr("Delivered by")
             color: page.foreground
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             font.weight: Font.DemiBold
         }
 
@@ -140,19 +140,19 @@ SettingsPage {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.topMargin: 12
+            Layout.topMargin: Theme.space.md
             visible: page.supported
-            spacing: 8
+            spacing: Theme.space.sm
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 2
+                spacing: Theme.space.xxs
 
                 Label {
                     Layout.fillWidth: true
                     text: qsTr("Ongoing agent activity")
                     color: page.foreground
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
+                    font.pixelSize: Theme.type.title.size
                     font.weight: Font.DemiBold
                     wrapMode: Text.Wrap
                 }
@@ -160,7 +160,7 @@ SettingsPage {
                     Layout.fillWidth: true
                     text: qsTr("A card that follows the agents' work, on the lock screen too.")
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     wrapMode: Text.Wrap
                 }
             }
@@ -186,11 +186,11 @@ SettingsPage {
         // Quiet hours, kept by the MC: alerts wait for them to end.
         Label {
             Layout.fillWidth: true
-            Layout.topMargin: 12
+            Layout.topMargin: Theme.space.md
             visible: page.supported
             text: qsTr("Quiet hours")
             color: page.foreground
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
         }
 
@@ -202,13 +202,13 @@ SettingsPage {
                   ? qsTr("Alerts wait from %1 to %2.").arg(page.clock(page.quietHours.start)).arg(page.clock(page.quietHours.end))
                   : qsTr("Off")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.Wrap
         }
 
         RowLayout {
             visible: page.supported
-            spacing: 8
+            spacing: Theme.space.sm
 
             ShellTextField {
                 id: quietStart
@@ -232,7 +232,7 @@ SettingsPage {
 
         RowLayout {
             visible: page.supported
-            spacing: 8
+            spacing: Theme.space.sm
 
             ShellSwitch {
                 id: allowApprovals
@@ -249,7 +249,7 @@ SettingsPage {
 
         RowLayout {
             visible: page.supported
-            spacing: 8
+            spacing: Theme.space.sm
 
             ShellButton {
                 objectName: "notificationsQuietSave"

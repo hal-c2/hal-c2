@@ -90,17 +90,17 @@ Item {
             Shell.state = { pullRequestList: list({ loading: true }) };
             const loading = createTemporaryObject(pageComponent, root);
             const search = findChild(loading, "pullRequestSearch");
-            const title = findChild(loading, "pullRequestMessageTitle");
+            const title = findChild(findChild(loading, "pullRequestMessage"), "emptyStateTitle");
             verify(title.visible);
             compare(title.text, "Loading pull requests…");
             compare(search.mapToItem(loading, 0, 0).y, headerY, "the search row does not move while loading");
-            verify(title.mapToItem(loading, 0, 0).y < 160, "the loading state takes the list's place under the filters");
+            verify(findChild(loading, "pullRequestMessage").mapToItem(loading, 0, 0).y < 160, "the loading state takes the list's place under the filters");
         }
 
         function test_anEmptyListSaysWhyAndOffersItsWayOut() {
             Shell.state = { pullRequestList: list({ filtered: true, empty: { title: "Nothing under these filters", body: "Widen the state, involvement or project filter to see more." } }) };
             const page = createTemporaryObject(pageComponent, root);
-            const title = findChild(page, "pullRequestMessageTitle");
+            const title = findChild(findChild(page, "pullRequestMessage"), "emptyStateTitle");
             verify(title.visible);
             compare(title.text, "Nothing under these filters");
         }
@@ -108,7 +108,7 @@ Item {
         function test_anErrorOffersARetry() {
             Shell.state = { pullRequestList: list({ error: { title: "Could not load pull requests", message: "gh auth login is required." } }) };
             const page = createTemporaryObject(pageComponent, root);
-            const action = findChild(page, "pullRequestMessageAction");
+            const action = findChild(findChild(page, "pullRequestMessage"), "emptyStateAction");
             verify(action.visible);
             compare(action.text, "Retry");
             mouseClick(action);

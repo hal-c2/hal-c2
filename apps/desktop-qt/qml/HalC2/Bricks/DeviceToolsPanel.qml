@@ -73,7 +73,7 @@ Rectangle {
         property string title: ""
 
         width: parent ? parent.width : 0
-        spacing: 6
+        spacing: Theme.space.sm
         topPadding: 8
         bottomPadding: 8
         leftPadding: 12
@@ -82,9 +82,8 @@ Rectangle {
         Text {
             text: section.title
             color: root.muted
-            font.pixelSize: Math.round(11 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             font.weight: Font.Medium
-            font.capitalization: Font.AllUppercase
         }
     }
 
@@ -104,7 +103,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             text: row.label
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             elide: Text.ElideRight
         }
         Item {
@@ -198,7 +197,7 @@ Rectangle {
         property bool canSubmit: true
 
         width: parent ? parent.width - 24 : 0
-        spacing: 6
+        spacing: Theme.space.sm
 
         ShellTextField {
             id: fieldItem
@@ -241,7 +240,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 text: qsTr("Tools")
                 color: root.foreground
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 font.weight: Font.Medium
             }
             BusyIndicator {
@@ -257,7 +256,7 @@ Rectangle {
             ShellButton {
                 objectName: "toolsClose"
                 anchors.right: parent.right
-                anchors.rightMargin: 6
+                anchors.rightMargin: Theme.space.sm
                 anchors.verticalCenter: parent.verticalCenter
                 subtle: true
                 iconName: "x"
@@ -280,7 +279,7 @@ Rectangle {
             wrapMode: Text.Wrap
             text: root.view ? root.view.error : ""
             color: root.errorColor
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
         Text {
             objectName: "toolsLoading"
@@ -289,7 +288,7 @@ Rectangle {
             visible: root.view !== null && !root.view.loaded && root.view.error.length === 0
             text: qsTr("Reading device settings…")
             color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
     }
 
@@ -320,7 +319,7 @@ Rectangle {
                         elide: Text.ElideLeft
                         text: root.view ? root.view.foreground : "—"
                         color: root.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
                 }
                 ToolRow {
@@ -330,7 +329,7 @@ Rectangle {
                     Row {
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ShellButton {
                             objectName: "toolsTerminate"
@@ -522,7 +521,7 @@ Rectangle {
                         objectName: "toolsLocationPreset"
                         anchors.left: parent.left
                         anchors.right: locationSet.left
-                        anchors.rightMargin: 6
+                        anchors.rightMargin: Theme.space.sm
                         anchors.verticalCenter: parent.verticalCenter
                         outline: true
                         model: root.presets
@@ -537,7 +536,7 @@ Rectangle {
 
                         objectName: "toolsLocationSet"
                         anchors.right: root.ios ? locationClear.left : parent.right
-                        anchors.rightMargin: root.ios ? 6 : 0
+                        anchors.rightMargin: root.ios ? Theme.space.sm : 0
                         anchors.verticalCenter: parent.verticalCenter
                         text: qsTr("Set")
                         enabled: !root.disabled && parent.locationValid
@@ -581,7 +580,7 @@ Rectangle {
                         objectName: "toolsPermission"
                         anchors.left: parent.left
                         anchors.right: permissionButtons.left
-                        anchors.rightMargin: 6
+                        anchors.rightMargin: Theme.space.sm
                         anchors.verticalCenter: parent.verticalCenter
                         outline: true
                         model: root.ios ? root.iosPermissions : root.androidPermissions
@@ -634,7 +633,7 @@ Rectangle {
                         objectName: "toolsPushField"
                         anchors.left: parent.left
                         anchors.right: pushSend.left
-                        anchors.rightMargin: 6
+                        anchors.rightMargin: Theme.space.sm
                         anchors.verticalCenter: parent.verticalCenter
                         placeholderText: qsTr("Alert text")
                         enabled: !root.disabled && root.view !== null && root.view.hasForeground
@@ -657,7 +656,7 @@ Rectangle {
                     visible: root.view !== null && !root.view.hasForeground
                     text: qsTr("Open an app first.")
                     color: root.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                 }
             }
 
@@ -680,7 +679,7 @@ Rectangle {
                         visible: root.view === null || root.view.events.length === 0
                         text: qsTr("No events yet.")
                         color: root.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                     }
                     Repeater {
                         model: root.view ? root.view.events : []
@@ -692,7 +691,7 @@ Rectangle {
                             elide: Text.ElideRight
                             text: modelData.time + "  " + modelData.summary
                             color: root.foreground
-                            font.pixelSize: Math.round(11 * Theme.fontScale)
+                            font.pixelSize: Theme.type.caption.size
                         }
                     }
                 }

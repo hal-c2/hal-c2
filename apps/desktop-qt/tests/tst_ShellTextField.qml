@@ -19,29 +19,30 @@ TestCase {
 
     function init() {
         Theme.colors = {
-            canvas: "#ffffff",
-            input: "#d4d4d8"
+            inputSurface: "#ffffff",
+            input: "#d4d4d8",
+            focus: "#ff8800"
         };
     }
 
     function cleanup() {
         Theme.colors = {};
-        Theme.appearance = "dark";
     }
 
-    function test_lightFieldIsCanvasNotTheInputColour() {
-        Theme.appearance = "light";
+    // The field fills with the input surface and borders with `input`, in
+    // either appearance.
+    function test_fieldIsTheInputSurfaceBorderedByInput() {
         const field = createTemporaryObject(fieldComponent, testCase);
         compare(field.background.color, Qt.color("#ffffff"));
         compare(field.background.border.color, Qt.color("#d4d4d8"));
     }
 
-    function test_darkFieldIsAFaintInputTint() {
-        Theme.appearance = "dark";
+    // A field rings whenever it holds the caret, a click included: it shows
+    // where typing goes.
+    function test_fieldRingsWhenItTakesTheCaret() {
         const field = createTemporaryObject(fieldComponent, testCase);
-        const fill = field.background.color;
-        compare(fill.a.toFixed(2), "0.32");
-        compare(Qt.rgba(fill.r, fill.g, fill.b, 1), Qt.color("#d4d4d8"));
+        field.forceActiveFocus(Qt.MouseFocusReason);
+        compare(field.background.border.color, Qt.color("#ff8800"));
     }
 
     function test_disabledFieldIsDimmed() {

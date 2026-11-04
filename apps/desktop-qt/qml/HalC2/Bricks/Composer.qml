@@ -54,8 +54,107 @@ Rectangle {
     // The model's other options, such as Claude's fast mode and context window.
     // By id: every read of model.options converts to fresh objects, so identity never matches.
     readonly property var otherOptions: ready ? model.options.filter(option => option.id !== effortOption?.id) : []
+    readonly property var selectOptions: otherOptions.filter(option => option.type === "select")
+    readonly property var toggleOptions: otherOptions.filter(option => option.type !== "select")
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
+
+    // The toolbar's chips: no fill at rest, the raised surface under the
+    // pointer and while on.
+    readonly property color chipFill: Theme.palette.color("surfaceRaised", "#1c1f24")
+    readonly property color chipLabel: Theme.palette.color("inkSecondary", "#b8bdc7")
+
+    // The toolbar never wraps. The chips that do not fit beside the model
+    // fold into the overflow chip's menu in this order: the model's other
+    // pickers (the context window), the effort, its toggles, plan, access.
+    readonly property var foldOrder: {
+        const selects = [];
+        for (let i = 0; i < selectChips.count; ++i) {
+            if (selectChips.itemAt(i)) selects.push(selectChips.itemAt(i));
+        }
+        const toggles = [];
+        for (let i = 0; i < toggleChips.count; ++i) {
+            if (toggleChips.itemAt(i)) toggles.push(toggleChips.itemAt(i));
+        }
+        return selects.concat(effortPicker.present ? [effortPicker] : [], toggles,
+            planToggle.present ? [planToggle] : [], runtimeModePicker.present ? [runtimeModePicker] : []);
+    }
+    // A chip's width is its own whether it shows or not, so folding one never
+    // changes what fits. Before the toolbar is laid out nothing folds, so the
+    // chips do not fold and unfold on the first frame.
+    readonly property int foldCount: chipArea.width <= 0 ? 0 : countFolds(foldOrder.map(chip => chip.implicitWidth), chipArea.width, overflowChip.implicitWidth, chipRow.spacing)
+    readonly property var folded: foldOrder.slice(0, foldCount)
+    // The overflow chip's menu while it is open.
+    property ShellMenu overflowMenu: null
+
+    // How many of these chips, from the first, must fold for the rest and the
+    // overflow chip to fit in `room`.
+    function countFolds(widths, room, overflow, spacing) {
+        for (let folds = 0; folds < widths.length; ++folds) {
+            const kept = widths.slice(folds);
+            const chips = kept.length + (folds > 0 ? 1 : 0);
+            const need = kept.reduce((sum, width) => sum + width, 0) + (folds > 0 ? overflow : 0) + spacing * (chips - 1);
+            if (need <= room) return folds;
+        }
+        return widths.length;
+    }
+
+    // Opens the overflow chip's menu: a row per folded chip in toolbar
+    // order, a picker as a submenu of its choices and a toggle as a row
+    // reading On or Off, with a check in the icon column while on. `chip`,
+    // when given, is the row the keyboard starts on.
+    function openOverflow(chip) {
+        if (overflowMenu !== null) {
+            overflowMenu.close();
+            return;
+        }
+        const menu = overflowMenuComponent.createObject(composer, {
+            parent: overflowChip
+        });
+        const shown = [effortPicker].concat(
+            Array.from({ length: selectChips.count }, (_, i) => selectChips.itemAt(i)),
+            Array.from({ length: toggleChips.count }, (_, i) => toggleChips.itemAt(i)),
+            [runtimeModePicker, planToggle]).filter(item => item && folded.includes(item));
+        let start = -1;
+        for (const item of shown) {
+            if (item === chip) start = menu.count;
+            if (item.choices !== undefined) {
+                const sub = overflowSubmenuComponent.createObject(null, {
+                    objectName: "composerOverflow:" + item.objectName,
+                    title: item.Accessible.name,
+                    detail: item.displayText
+                });
+                menu.built.push(sub);
+                item.choices.forEach((label, index) => {
+                    const row = overflowItemComponent.createObject(null, {
+                        text: label,
+                        current: index === item.currentIndex
+                    });
+                    row.triggered.connect(() => item.activated(index));
+                    menu.built.push(row);
+                    sub.addItem(row);
+                });
+                menu.addMenu(sub);
+            } else {
+                const row = overflowItemComponent.createObject(null, {
+                    objectName: "composerOverflow:" + item.objectName,
+                    text: item.menuTitle,
+                    detail: item.checked ? qsTr("On") : qsTr("Off"),
+                    iconName: item.checked ? "check" : ""
+                });
+                row.triggered.connect(() => item.flip());
+                menu.built.push(row);
+                menu.addItem(row);
+            }
+        }
+        overflowMenu = menu;
+        // Above the chip and flush with its right edge, once its rows have
+        // a size.
+        menu.x = Qt.binding(() => overflowChip.width - menu.width);
+        menu.y = Qt.binding(() => -menu.height - Theme.space.xs);
+        menu.open();
+        if (start >= 0) menu.currentIndex = start;
+    }
 
     // Vim keys (Settings → General): Escape leaves insert mode.
     readonly property bool vimKeys: {
@@ -172,7 +271,13 @@ Rectangle {
             "composer.host": hostPicker,
             "composer.workspace": envModePicker
         }[command];
-        if (!picker || !picker.visible || !picker.enabled) return;
+        if (!picker || !picker.enabled) return;
+        // A folded picker is reached through the overflow menu, on its row.
+        if (folded.includes(picker)) {
+            if (overflowMenu === null) openOverflow(picker);
+            return;
+        }
+        if (!picker.visible) return;
         picker.forceActiveFocus();
         picker.popup.open();
     }
@@ -421,24 +526,26 @@ Rectangle {
         spacing: 0
 
         // @file, $skill and /command suggestions, computed by the controller for the
-        // caret it was last told about; they sit on the card's top edge.
-        Rectangle {
+        // caret it was last told about: a popover 4px above the card, its edges
+        // flush with the prompt's, as tall as its whole rows.
+        Item {
+            objectName: "suggestionsPopover"
             Layout.fillWidth: true
-            Layout.leftMargin: 22
-            Layout.rightMargin: 22
+            Layout.leftMargin: Theme.space.md
+            Layout.rightMargin: Theme.space.md
+            Layout.bottomMargin: visible ? Theme.space.xs : 0
             visible: composer.suggesting
-            implicitHeight: !visible ? 0 : suggestionList.count > 0 ? Math.min(suggestionList.contentHeight, 240) + 8 : suggestionsEmpty.implicitHeight + 32
-            topLeftRadius: 16
-            topRightRadius: 16
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: composer.outline
-            border.width: 1
+            implicitHeight: !visible ? 0 : (suggestionList.count > 0 ? Math.min(suggestionList.contentHeight, Theme.control.md * 8) : Theme.control.md) + Theme.space.xs * 2
+
+            ShellPopoverSurface {
+                anchors.fill: parent
+            }
 
             ListView {
                 id: suggestionList
 
                 anchors.fill: parent
-                anchors.margins: 4
+                anchors.margins: Theme.space.xs
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 model: composer.suggestions
@@ -461,9 +568,9 @@ Rectangle {
                         composer.selectSuggestion(suggestion.index);
                     }
                     width: ListView.view.width
-                    height: 34
-                    radius: 10
-                    color: ListView.isCurrentItem ? Theme.palette.color("accentSurface", "#2a2a30") : suggestionHover.hovered ? Theme.palette.color("sidebarRowHover", "#1c1c21") : "transparent"
+                    height: Theme.control.md
+                    radius: Math.max(0, Theme.radiusLg - Theme.space.xs)
+                    color: ListView.isCurrentItem || suggestionHover.hovered ? composer.chipFill : "transparent"
 
                     HoverHandler {
                         id: suggestionHover
@@ -478,14 +585,14 @@ Rectangle {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 12
-                        spacing: 8
+                        anchors.leftMargin: Theme.space.md
+                        anchors.rightMargin: Theme.space.md
+                        spacing: Theme.space.sm
 
                         Text {
                             text: suggestion.modelData.label
                             color: composer.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             font.weight: Font.Medium
                             elide: Text.ElideMiddle
                             Layout.maximumWidth: parent.width * 0.5
@@ -495,49 +602,51 @@ Rectangle {
                             Layout.fillWidth: true
                             text: suggestion.modelData.description
                             color: composer.muted
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
-                            elide: Text.ElideMiddle
+                            font.pixelSize: Theme.type.meta.size
+                            elide: Text.ElideRight
                         }
                     }
                 }
 
             }
 
-            // Outside the list, which is as tall as its rows: none, here.
+            // Nothing to offer: one quiet row where the first suggestion's
+            // label would start, outside the list, which has no rows.
             Text {
                 id: suggestionsEmpty
                 objectName: "suggestionsEmpty"
 
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.margins: 12
+                anchors.fill: parent
+                anchors.topMargin: Theme.space.xs
+                anchors.bottomMargin: Theme.space.xs
+                anchors.leftMargin: Theme.space.xs + Theme.space.md
+                anchors.rightMargin: Theme.space.xs + Theme.space.md
                 visible: suggestionList.count === 0
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
                 text: composer.ready && composer.model.suggestionsEmptyText ? composer.model.suggestionsEmptyText : ""
-                color: composer.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                color: Theme.palette.color("inkTertiary", "#8b919e")
+                font.pixelSize: Theme.type.body.size
             }
         }
 
         ComposerUsageLimits {
             Layout.fillWidth: true
-            Layout.leftMargin: 22
-            Layout.rightMargin: 22
+            Layout.leftMargin: Theme.space.xl
+            Layout.rightMargin: Theme.space.xl
         }
 
-        // The stash (composer.stash), on the card's top edge like the
-        // suggestions: a row restores its prompt, its cross deletes it.
+        // The stash (composer.stash), on the card's top edge: a row
+        // restores its prompt, its cross deletes it.
         Rectangle {
             objectName: "stashList"
             Layout.fillWidth: true
-            Layout.leftMargin: 22
-            Layout.rightMargin: 22
+            Layout.leftMargin: Theme.space.xl
+            Layout.rightMargin: Theme.space.xl
             visible: composer.stashOpen && !composer.suggesting
-            implicitHeight: visible ? stashHeader.height + Math.min(Math.max(stashList.contentHeight, 34), 240) + 8 : 0
-            topLeftRadius: 16
-            topRightRadius: 16
+            implicitHeight: visible ? stashHeader.height + Math.min(Math.max(stashList.contentHeight, Theme.control.md), Theme.control.md * 8) + Theme.space.xs * 2 : 0
+            topLeftRadius: Theme.radiusXl
+            topRightRadius: Theme.radiusXl
             color: Theme.palette.color("surfaceOverlay", "#18181b")
             border.color: composer.outline
             border.width: 1
@@ -548,14 +657,14 @@ Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
-                anchors.margins: 4
-                height: 30
-                spacing: 8
+                anchors.margins: Theme.space.xs
+                height: Theme.control.md
+                spacing: Theme.space.sm
 
                 ShellIcon {
-                    Layout.leftMargin: 8
+                    Layout.leftMargin: Theme.space.sm
                     name: "bookmark"
-                    size: 14
+                    size: Theme.icon.md
                     color: composer.muted
                 }
 
@@ -563,21 +672,21 @@ Rectangle {
                     Layout.fillWidth: true
                     text: qsTr("Stash")
                     color: composer.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 Text {
                     text: composer.stashEntries.length
                     color: composer.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellButton {
                     objectName: "stashClose"
                     subtle: true
                     iconName: "x"
-                    iconSize: 14
-                    implicitHeight: 24
+                    iconSize: Theme.icon.sm
+                    implicitHeight: Theme.control.sm
                     Accessible.name: qsTr("Close stash")
                     onClicked: Shell.dispatch("composer.stash.menu", { open: false })
                 }
@@ -590,7 +699,7 @@ Rectangle {
                 anchors.right: parent.right
                 anchors.top: stashHeader.bottom
                 anchors.bottom: parent.bottom
-                anchors.margins: 4
+                anchors.margins: Theme.space.xs
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 model: composer.stashEntries
@@ -611,9 +720,9 @@ Rectangle {
                     Accessible.selected: ListView.isCurrentItem
                     Accessible.onPressAction: composer.restoreStash(stashRow.modelData.id)
                     width: ListView.view.width
-                    height: 34
-                    radius: 10
-                    color: ListView.isCurrentItem ? Theme.palette.color("accentSurface", "#2a2a30") : "transparent"
+                    height: Theme.control.md
+                    radius: Math.max(0, Theme.radiusLg - Theme.space.xs)
+                    color: ListView.isCurrentItem ? composer.chipFill : "transparent"
 
                     HoverHandler {
                         onHoveredChanged: if (hovered) stashList.currentIndex = stashRow.index
@@ -625,13 +734,13 @@ Rectangle {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 4
-                        spacing: 8
+                        anchors.leftMargin: Theme.space.md
+                        anchors.rightMargin: Theme.space.xs
+                        spacing: Theme.space.sm
 
                         ShellIcon {
                             name: "file-text"
-                            size: 14
+                            size: Theme.icon.md
                             color: composer.muted
                         }
 
@@ -639,7 +748,7 @@ Rectangle {
                             Layout.fillWidth: true
                             text: stashRow.modelData.snippet
                             color: composer.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             elide: Text.ElideRight
                             Accessible.name: qsTr("Restore stashed prompt: %1").arg(text)
                         }
@@ -648,8 +757,8 @@ Rectangle {
                             objectName: "stashDelete-" + stashRow.index
                             subtle: true
                             iconName: "x"
-                            iconSize: 14
-                            implicitHeight: 24
+                            iconSize: Theme.icon.sm
+                            implicitHeight: Theme.control.sm
                             Accessible.name: qsTr("Delete stashed prompt")
                             onClicked: Shell.dispatch("composer.stash.delete", { id: stashRow.modelData.id })
                         }
@@ -659,14 +768,14 @@ Rectangle {
                 Text {
                     anchors.centerIn: parent
                     visible: stashList.count === 0
-                    width: parent.width - 24
+                    width: parent.width - Theme.space.xl
                     wrapMode: Text.Wrap
                     horizontalAlignment: Text.AlignHCenter
                     text: (Shell.state.composerStash?.shortcut ?? "") !== ""
                         ? qsTr("Nothing stashed yet. Press %1 with a prompt in the composer to stash it.").arg(Shell.state.composerStash.shortcut)
                         : qsTr("Nothing stashed yet.")
                     color: composer.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
         }
@@ -674,14 +783,24 @@ Rectangle {
         // The glass card.
         Rectangle {
             id: card
+            objectName: "composerCard"
 
             Layout.fillWidth: true
             implicitHeight: cardColumn.implicitHeight
             z: 1
-            radius: 22
+            radius: Theme.radiusXl
             color: Theme.palette.color("surface", "#141416")
-            border.color: composer.outline
+            border.color: Theme.palette.color("border", "#262a31")
             border.width: 1
+
+            // A press anywhere in the card that no control takes, around
+            // or under a short prompt, goes to the prompt.
+            MouseArea {
+                anchors.fill: parent
+                enabled: input.enabled
+                cursorShape: Qt.IBeamCursor
+                onPressed: input.forceActiveFocus(Qt.MouseFocusReason)
+            }
 
             ConversationDrop {
                 objectName: "composerDrop"
@@ -699,1115 +818,1115 @@ Rectangle {
                 anchors.top: parent.top
                 spacing: 0
 
-                // A queued message open for editing: sending saves it.
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 10
-                    Layout.topMargin: 8
-                    visible: composer.ready && (composer.model.editingQueuedRunId ?? null) !== null
-                    spacing: 6
+                // The card's padding holds the prompt and its toolbar.
+                ColumnLayout {
+                    id: cardBody
 
-                    Text {
+                    Layout.fillWidth: true
+                    Layout.margins: Theme.space.md
+                    spacing: Theme.space.sm
+
+                    // A queued message open for editing: sending saves it.
+                    RowLayout {
                         Layout.fillWidth: true
-                        text: qsTr("Editing a queued message")
-                        color: composer.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
-                    }
+                        visible: composer.ready && (composer.model.editingQueuedRunId ?? null) !== null
+                        spacing: Theme.space.sm
 
-                    ShellButton {
-                        objectName: "queuedEditCancel"
-                        implicitHeight: 24
-                        subtle: true
-                        text: qsTr("Cancel")
-                        onClicked: Shell.dispatch("composer.queue.edit.cancel")
-                    }
-                }
+                        Text {
+                            Layout.fillWidth: true
+                            text: qsTr("Editing a queued message")
+                            color: composer.muted
+                            font.pixelSize: Theme.type.meta.size
+                        }
 
-                // Attached images, terminal selections and quoted replies living on the draft.
-                Flow {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.topMargin: 12
-                    visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || composer.citations.length > 0)
-                    spacing: 6
-
-                    Repeater {
-                        model: composer.attachments
-
-                        delegate: ComposerAttachment {
-                            required property var modelData
-
-                            attachment: modelData
-                            onRemoveRequested: Shell.dispatch("composer.attachment.remove", {
-                                id: modelData.id
-                            })
-                            onRetryRequested: Shell.dispatch("composer.attachment.retry", {
-                                id: modelData.id
-                            })
-                            // An edited queued message's own is the MC's; a draft's is here.
-                            onOpenRequested: modelData.sent === true ? Shell.dispatch("attachment.sent.view", {
-                                id: modelData.id,
-                                name: modelData.name,
-                                mimeType: modelData.mimeType ?? ""
-                            }) : Shell.dispatch("attachment.view", {
-                                id: modelData.id
-                            })
+                        ShellButton {
+                            objectName: "queuedEditCancel"
+                            implicitHeight: Theme.control.sm
+                            subtle: true
+                            text: qsTr("Cancel")
+                            onClicked: Shell.dispatch("composer.queue.edit.cancel")
                         }
                     }
 
-                    // Notes on a diff's lines; a click takes one off the prompt.
-                    Repeater {
-                        model: composer.ready ? composer.model.reviewComments ?? [] : []
+                    // Attached images, terminal selections and quoted replies living on the draft.
+                    Flow {
+                        Layout.fillWidth: true
+                        visible: composer.ready && (composer.attachments.length > 0 || composer.model.terminalContexts.length > 0 || (composer.model.reviewComments ?? []).length > 0 || composer.citations.length > 0)
+                        spacing: Theme.space.sm
 
-                        delegate: ShellButton {
-                            required property var modelData
+                        Repeater {
+                            model: composer.attachments
 
-                            objectName: "reviewComment-" + modelData.id
-                            implicitHeight: 24
-                            iconName: "message-square"
-                            text: modelData.label
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
-                            Accessible.name: qsTr("Remove the comment on %1").arg(text)
-                            ToolTip.visible: hovered
-                            ToolTip.text: modelData.text
-                            onClicked: Shell.dispatch("composer.reviewComment.remove", {
-                                id: modelData.id
-                            })
-                        }
-                    }
+                            delegate: ComposerAttachment {
+                                required property var modelData
 
-                    Repeater {
-                        model: composer.ready ? composer.model.terminalContexts : []
-
-                        delegate: ShellButton {
-                            required property var modelData
-
-                            objectName: "terminalContext-" + modelData.id
-                            implicitHeight: 24
-                            iconName: "terminal"
-                            text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
-                            Accessible.name: qsTr("Remove terminal selection %1").arg(text)
-                            onClicked: Shell.dispatch("composer.terminalContext.remove", {
-                                id: modelData.id
-                            })
-                        }
-                    }
-
-                    // A quoted reply shows the user's comment on it, or the
-                    // start of the quote; it opens to comment on or remove.
-                    Repeater {
-                        model: composer.citations
-
-                        delegate: ShellButton {
-                            id: citationChip
-
-                            required property var modelData
-                            readonly property string preview: (modelData.comment ?? modelData.text).replace(/\s+/g, " ").trim()
-
-                            function saveComment() {
-                                const comment = citationComment.text;
-                                citationEditor.close();
-                                Shell.dispatch("composer.citation.comment", {
+                                attachment: modelData
+                                onRemoveRequested: Shell.dispatch("composer.attachment.remove", {
+                                    id: modelData.id
+                                })
+                                onRetryRequested: Shell.dispatch("composer.attachment.retry", {
+                                    id: modelData.id
+                                })
+                                // An edited queued message's own is the MC's; a draft's is here.
+                                onOpenRequested: modelData.sent === true ? Shell.dispatch("attachment.sent.view", {
                                     id: modelData.id,
-                                    comment: comment
-                                });
+                                    name: modelData.name,
+                                    mimeType: modelData.mimeType ?? ""
+                                }) : Shell.dispatch("attachment.view", {
+                                    id: modelData.id
+                                })
                             }
+                        }
 
-                            objectName: "citation-" + modelData.id
-                            implicitHeight: 24
-                            iconName: modelData.comment === null ? "quote" : "pencil"
-                            text: preview.length > 40 ? preview.slice(0, 40) + "\u2026" : preview
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
-                            Accessible.name: qsTr("Assistant quote: %1").arg(preview)
-                            onClicked: citationEditor.open()
+                        // Notes on a diff's lines; a click takes one off the prompt.
+                        Repeater {
+                            model: composer.ready ? composer.model.reviewComments ?? [] : []
 
-                            Popup {
-                                id: citationEditor
-                                objectName: "citationEditor"
+                            delegate: ShellButton {
+                                required property var modelData
 
-                                scale: Shell.state.layout?.zoom ?? 1
-                                transformOrigin: Item.BottomLeft
-                                y: -height - 4
-                                width: 360
-                                padding: 10
-                                onOpened: {
-                                    citationComment.text = citationChip.modelData.comment ?? "";
-                                    citationComment.forceActiveFocus();
+                                objectName: "reviewComment-" + modelData.id
+                                implicitHeight: Theme.control.sm
+                                iconName: "message-square"
+                                text: modelData.label
+                                font.pixelSize: Theme.type.meta.size
+                                Accessible.name: qsTr("Remove the comment on %1").arg(text)
+                                ToolTip.visible: hovered
+                                ToolTip.text: modelData.text
+                                onClicked: Shell.dispatch("composer.reviewComment.remove", {
+                                    id: modelData.id
+                                })
+                            }
+                        }
+
+                        Repeater {
+                            model: composer.ready ? composer.model.terminalContexts : []
+
+                            delegate: ShellButton {
+                                required property var modelData
+
+                                objectName: "terminalContext-" + modelData.id
+                                implicitHeight: Theme.control.sm
+                                iconName: "terminal"
+                                text: modelData.lineStart === modelData.lineEnd ? qsTr("%1 line %2").arg(modelData.label).arg(modelData.lineStart) : qsTr("%1 lines %2-%3").arg(modelData.label).arg(modelData.lineStart).arg(modelData.lineEnd)
+                                font.pixelSize: Theme.type.meta.size
+                                Accessible.name: qsTr("Remove terminal selection %1").arg(text)
+                                onClicked: Shell.dispatch("composer.terminalContext.remove", {
+                                    id: modelData.id
+                                })
+                            }
+                        }
+
+                        // A quoted reply shows the user's comment on it, or the
+                        // start of the quote; it opens to comment on or remove.
+                        Repeater {
+                            model: composer.citations
+
+                            delegate: ShellButton {
+                                id: citationChip
+
+                                required property var modelData
+                                readonly property string preview: (modelData.comment ?? modelData.text).replace(/\s+/g, " ").trim()
+
+                                function saveComment() {
+                                    const comment = citationComment.text;
+                                    citationEditor.close();
+                                    Shell.dispatch("composer.citation.comment", {
+                                        id: modelData.id,
+                                        comment: comment
+                                    });
                                 }
 
-                                background: Rectangle {
-                                    color: Theme.palette.color("surfaceOverlay", "#18181b")
-                                    border.color: Qt.alpha(composer.foreground, 0.1)
-                                    radius: 10
-                                }
+                                objectName: "citation-" + modelData.id
+                                implicitHeight: Theme.control.sm
+                                iconName: modelData.comment === null ? "quote" : "pencil"
+                                text: preview.length > 40 ? preview.slice(0, 40) + "\u2026" : preview
+                                font.pixelSize: Theme.type.meta.size
+                                Accessible.name: qsTr("Assistant quote: %1").arg(preview)
+                                onClicked: citationEditor.open()
 
-                                contentItem: ColumnLayout {
-                                    spacing: 8
+                                Popup {
+                                    id: citationEditor
+                                    objectName: "citationEditor"
 
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: citationChip.modelData.text
-                                        textFormat: Text.PlainText
-                                        wrapMode: Text.Wrap
-                                        maximumLineCount: 6
-                                        elide: Text.ElideRight
-                                        color: composer.muted
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    scale: Shell.state.layout?.zoom ?? 1
+                                    transformOrigin: Item.BottomLeft
+                                    y: -height - Theme.space.xs
+                                    width: 360
+                                    padding: Theme.space.sm
+                                    onOpened: {
+                                        citationComment.text = citationChip.modelData.comment ?? "";
+                                        citationComment.forceActiveFocus();
                                     }
 
-                                    ShellTextField {
-                                        id: citationComment
-                                        objectName: "citationComment"
+                                    background: ShellPopoverSurface {}
 
-                                        Layout.fillWidth: true
-                                        maximumLength: 8000
-                                        placeholderText: qsTr("Add a comment")
-                                        Accessible.name: qsTr("Comment on the quote")
-                                        Keys.onReturnPressed: citationChip.saveComment()
-                                        Keys.onEnterPressed: citationChip.saveComment()
-                                    }
+                                    contentItem: ColumnLayout {
+                                        spacing: Theme.space.sm
 
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 6
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: citationChip.modelData.text
+                                            textFormat: Text.PlainText
+                                            wrapMode: Text.Wrap
+                                            maximumLineCount: 6
+                                            elide: Text.ElideRight
+                                            color: composer.muted
+                                            font.pixelSize: Theme.type.meta.size
+                                        }
 
-                                        ShellButton {
-                                            objectName: "citationRemove"
-                                            implicitHeight: 24
-                                            subtle: true
-                                            text: qsTr("Remove quote")
-                                            font.pixelSize: Math.round(12 * Theme.fontScale)
-                                            onClicked: {
-                                                const id = citationChip.modelData.id;
-                                                citationEditor.close();
-                                                Shell.dispatch("composer.citation.remove", {
-                                                    id: id
-                                                });
+                                        ShellTextField {
+                                            id: citationComment
+                                            objectName: "citationComment"
+
+                                            Layout.fillWidth: true
+                                            maximumLength: 8000
+                                            placeholderText: qsTr("Add a comment")
+                                            Accessible.name: qsTr("Comment on the quote")
+                                            Keys.onReturnPressed: citationChip.saveComment()
+                                            Keys.onEnterPressed: citationChip.saveComment()
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: Theme.space.sm
+
+                                            ShellButton {
+                                                objectName: "citationRemove"
+                                                implicitHeight: Theme.control.sm
+                                                subtle: true
+                                                text: qsTr("Remove quote")
+                                                font.pixelSize: Theme.type.meta.size
+                                                onClicked: {
+                                                    const id = citationChip.modelData.id;
+                                                    citationEditor.close();
+                                                    Shell.dispatch("composer.citation.remove", {
+                                                        id: id
+                                                    });
+                                                }
+                                            }
+
+                                            Item {
+                                                Layout.fillWidth: true
+                                            }
+
+                                            ShellButton {
+                                                objectName: "citationSave"
+                                                implicitHeight: Theme.control.sm
+                                                primary: true
+                                                text: qsTr("Save")
+                                                font.pixelSize: Theme.type.meta.size
+                                                onClicked: citationChip.saveComment()
                                             }
                                         }
-
-                                        Item {
-                                            Layout.fillWidth: true
-                                        }
-
-                                        ShellButton {
-                                            objectName: "citationSave"
-                                            implicitHeight: 24
-                                            primary: true
-                                            text: qsTr("Save")
-                                            font.pixelSize: Math.round(12 * Theme.fontScale)
-                                            onClicked: citationChip.saveComment()
-                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                ScrollView {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.topMargin: 16
-                    Layout.bottomMargin: 8
-                    Layout.preferredHeight: composer.resting ? Math.min(input.implicitHeight, 24) : Math.min(Math.max(input.implicitHeight, 54), 184)
-                    clip: true
+                    ScrollView {
+                        objectName: "promptScroll"
+                        Layout.fillWidth: true
+                        // Two lines at rest, one while scrolled away, and up to
+                        // 40% of the window with the card's other rows.
+                        Layout.preferredHeight: composer.resting ? Math.min(input.implicitHeight, promptLine.lineHeight) : Math.min(Math.max(input.implicitHeight, promptLine.lineHeight * 2), maximumHeight)
+                        readonly property real maximumHeight: Math.max(promptLine.lineHeight * 2, Math.round(composer.Window.height * 0.4) - toolbar.implicitHeight - Theme.space.md * 2 - Theme.space.sm - (contextStrip.visible ? contextStrip.implicitHeight : 0))
+                        clip: true
+                        // The prompt never scrolls sideways: a long placeholder
+                        // would otherwise make a horizontal bar that, unseen,
+                        // takes the clicks meant for the prompt.
+                        contentWidth: availableWidth
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                    TextArea {
-                        id: input
-                        objectName: "input"
+                        FontMetrics {
+                            id: promptLine
 
-                        // ShellWindow reads it for the keymap's composerFocus.
-                        readonly property bool composerInput: true
+                            readonly property real lineHeight: Math.ceil(lineSpacing)
 
-                        // A resting composer comes back when the user turns to it.
-                        onActiveFocusChanged: if (activeFocus) composer.scrollCollapsed = false
-                        onPressed: composer.scrollCollapsed = false
-
-                        padding: 0
-                        enabled: composer.ready && !composer.model.editorDisabled
-                        placeholderText: composer.ready ? composer.model.placeholder : qsTr("Open a thread to start")
-                        placeholderTextColor: composer.muted
-                        color: composer.foreground
-                        wrapMode: TextEdit.Wrap
-                        selectByMouse: true
-                        background: null
-                        // The prompt has its own font and size (Settings → Appearance).
-                        font.pixelSize: Theme.fontSizePrompt
-                        font.family: Theme.fontPrompt.length > 0 ? Theme.fontPrompt : Application.font.family
-                        Accessible.name: qsTr("Message")
-                        onTextChanged: {
-                            if (text !== composer.lastSentText) {
-                                textDebounce.restart();
-                            }
+                            font: input.font
                         }
-                        // Keybindings are window shortcuts too (ShellWindow);
-                        // an Enter chord that sends is the composer's, not theirs.
-                        Keys.onShortcutOverride: event => {
-                            event.accepted = (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
-                                && composer.enterIntent(event.modifiers) !== "";
-                        }
-                        Keys.onPressed: event => {
-                            composer.scrollCollapsed = false;
-                            event.accepted = false;
-                            composer.editorKeyPressed(event);
-                            if (event.accepted) return;
-                            // A prompt that fits has nothing to page through: the keys
-                            // page the conversation.
-                            if ((event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown) && event.modifiers === Qt.NoModifier && input.contentHeight <= input.height && !composer.suggesting) {
-                                event.accepted = Keybindings.commands.run(event.key === Qt.Key_PageUp ? "timeline.pageUp" : "timeline.pageDown");
-                                if (event.accepted) return;
+
+                        TextArea {
+                            id: input
+                            objectName: "input"
+
+                            // ShellWindow reads it for the keymap's composerFocus.
+                            readonly property bool composerInput: true
+
+                            // A resting composer comes back when the user turns to it.
+                            onActiveFocusChanged: if (activeFocus) composer.scrollCollapsed = false
+                            onPressed: composer.scrollCollapsed = false
+
+                            padding: 0
+                            enabled: composer.ready && !composer.model.editorDisabled
+                            placeholderText: composer.ready ? composer.model.placeholder : qsTr("Open a thread to start")
+                            placeholderTextColor: composer.muted
+                            color: composer.foreground
+                            // The placeholder is one line, elided: an empty prompt
+                            // does not wrap, so neither does it.
+                            wrapMode: length > 0 || preeditText.length > 0 ? TextEdit.Wrap : TextEdit.NoWrap
+                            selectByMouse: true
+                            background: null
+                            // The prompt has its own font and size (Settings → Appearance).
+                            font.pixelSize: Theme.fontSizePrompt
+                            font.family: Theme.fontPrompt.length > 0 ? Theme.fontPrompt : Application.font.family
+                            Accessible.name: qsTr("Message")
+                            onTextChanged: {
+                                if (text !== composer.lastSentText) {
+                                    textDebounce.restart();
+                                }
                             }
-                            if (event.key === Qt.Key_V && (event.modifiers & ~Qt.ShiftModifier) === Qt.ControlModifier) {
-                                event.accepted = composer.paste((event.modifiers & Qt.ShiftModifier) !== 0);
-                                if (event.accepted) return;
-                            } else if (event.matches(StandardKey.Paste)) {
-                                // Shift+Insert and the platform's other paste keys.
-                                event.accepted = composer.paste(false);
-                                if (event.accepted) return;
+                            // Keybindings are window shortcuts too (ShellWindow);
+                            // an Enter chord that sends is the composer's, not theirs.
+                            Keys.onShortcutOverride: event => {
+                                event.accepted = (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                    && composer.enterIntent(event.modifiers) !== "";
                             }
-                            if (editorMenu.keyPressed(event)) {
-                                event.accepted = true;
-                                return;
-                            }
-                            if (composer.suggesting && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))) {
-                                if (event.key === Qt.Key_Escape) {
+                            Keys.onPressed: event => {
+                                composer.scrollCollapsed = false;
+                                event.accepted = false;
+                                composer.editorKeyPressed(event);
+                                if (event.accepted) return;
+                                // A prompt that fits has nothing to page through: the keys
+                                // page the conversation.
+                                if ((event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown) && event.modifiers === Qt.NoModifier && input.contentHeight <= input.height && !composer.suggesting) {
+                                    event.accepted = Keybindings.commands.run(event.key === Qt.Key_PageUp ? "timeline.pageUp" : "timeline.pageDown");
+                                    if (event.accepted) return;
+                                }
+                                if (event.key === Qt.Key_V && (event.modifiers & ~Qt.ShiftModifier) === Qt.ControlModifier) {
+                                    event.accepted = composer.paste((event.modifiers & Qt.ShiftModifier) !== 0);
+                                    if (event.accepted) return;
+                                } else if (event.matches(StandardKey.Paste)) {
+                                    // Shift+Insert and the platform's other paste keys.
+                                    event.accepted = composer.paste(false);
+                                    if (event.accepted) return;
+                                }
+                                if (editorMenu.keyPressed(event)) {
                                     event.accepted = true;
-                                    Shell.dispatch("composer.suggest.dismiss");
                                     return;
                                 }
-                                if (composer.suggestions.length > 0 && !(event.modifiers & Qt.ShiftModifier)) {
-                                    if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+                                if (composer.suggesting && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))) {
+                                    if (event.key === Qt.Key_Escape) {
                                         event.accepted = true;
-                                        if (event.key === Qt.Key_Down) suggestionList.incrementCurrentIndex();
-                                        else suggestionList.decrementCurrentIndex();
+                                        Shell.dispatch("composer.suggest.dismiss");
                                         return;
                                     }
-                                    if (event.key === Qt.Key_Tab || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        event.accepted = true;
-                                        const index = suggestionList.currentIndex;
-                                        composer.flushText();
-                                        composer.selectSuggestion(index);
-                                        return;
+                                    if (composer.suggestions.length > 0 && !(event.modifiers & Qt.ShiftModifier)) {
+                                        if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+                                            event.accepted = true;
+                                            if (event.key === Qt.Key_Down) suggestionList.incrementCurrentIndex();
+                                            else suggestionList.decrementCurrentIndex();
+                                            return;
+                                        }
+                                        if (event.key === Qt.Key_Tab || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                            event.accepted = true;
+                                            const index = suggestionList.currentIndex;
+                                            composer.flushText();
+                                            composer.selectSuggestion(index);
+                                            return;
+                                        }
                                     }
                                 }
-                            }
-                            // The stash list, open above the card: arrows pick,
-                            // Enter restores, mod+Backspace deletes, Escape closes.
-                            if (composer.stashOpen && !composer.suggesting) {
-                                const entry = composer.stashEntries[stashList.currentIndex] ?? null;
-                                const mod = event.modifiers & (Qt.ControlModifier | Qt.MetaModifier);
-                                event.accepted = true;
-                                if (event.key === Qt.Key_Escape) Shell.dispatch("composer.stash.menu", { open: false });
-                                else if (event.key === Qt.Key_Down && !mod) stashList.incrementCurrentIndex();
-                                else if (event.key === Qt.Key_Up && !mod) stashList.decrementCurrentIndex();
-                                else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !mod && entry) composer.restoreStash(entry.id);
-                                else if (event.key === Qt.Key_Backspace && mod && entry) Shell.dispatch("composer.stash.delete", { id: entry.id });
-                                else event.accepted = false;
-                                if (event.accepted) return;
-                            }
-                            if (event.key === Qt.Key_Backtab) {
-                                event.accepted = composer.toggleInteractionMode();
-                                return;
-                            }
-                            if (event.key === Qt.Key_Tab && event.modifiers === Qt.NoModifier) {
-                                // Tab indents a list item, anywhere else it
-                                // leaves the editor for the composer's controls.
-                                event.accepted = true;
-                                const lineStart = input.text.lastIndexOf("\n", input.cursorPosition - 1) + 1;
-                                const lineEnd = input.text.indexOf("\n", input.cursorPosition);
-                                const line = input.text.slice(lineStart, lineEnd < 0 ? input.text.length : lineEnd);
-                                if (input.selectionStart === input.selectionEnd && /^\s*([-*+]|\d+[.)])\s/.test(line)) {
-                                    input.insert(lineStart, "  ");
-                                } else {
-                                    input.nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
+                                // The stash list, open above the card: arrows pick,
+                                // Enter restores, mod+Backspace deletes, Escape closes.
+                                if (composer.stashOpen && !composer.suggesting) {
+                                    const entry = composer.stashEntries[stashList.currentIndex] ?? null;
+                                    const mod = event.modifiers & (Qt.ControlModifier | Qt.MetaModifier);
+                                    event.accepted = true;
+                                    if (event.key === Qt.Key_Escape) Shell.dispatch("composer.stash.menu", { open: false });
+                                    else if (event.key === Qt.Key_Down && !mod) stashList.incrementCurrentIndex();
+                                    else if (event.key === Qt.Key_Up && !mod) stashList.decrementCurrentIndex();
+                                    else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !mod && entry) composer.restoreStash(entry.id);
+                                    else if (event.key === Qt.Key_Backspace && mod && entry) Shell.dispatch("composer.stash.delete", { id: entry.id });
+                                    else event.accepted = false;
+                                    if (event.accepted) return;
                                 }
-                                return;
+                                if (event.key === Qt.Key_Backtab) {
+                                    event.accepted = composer.toggleInteractionMode();
+                                    return;
+                                }
+                                if (event.key === Qt.Key_Tab && event.modifiers === Qt.NoModifier) {
+                                    // Tab indents a list item, anywhere else it
+                                    // leaves the editor for the composer's controls.
+                                    event.accepted = true;
+                                    const lineStart = input.text.lastIndexOf("\n", input.cursorPosition - 1) + 1;
+                                    const lineEnd = input.text.indexOf("\n", input.cursorPosition);
+                                    const line = input.text.slice(lineStart, lineEnd < 0 ? input.text.length : lineEnd);
+                                    if (input.selectionStart === input.selectionEnd && /^\s*([-*+]|\d+[.)])\s/.test(line)) {
+                                        input.insert(lineStart, "  ");
+                                    } else {
+                                        input.nextItemInFocusChain(true).forceActiveFocus(Qt.TabFocusReason);
+                                    }
+                                    return;
+                                }
+                                if ((event.key === Qt.Key_Up || event.key === Qt.Key_Down) && event.modifiers === Qt.NoModifier) {
+                                    composer.stepPromptHistory(event.key === Qt.Key_Up ? "backward" : "forward");
+                                    return;
+                                }
+                                if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter) {
+                                    return;
+                                }
+                                const intent = composer.enterIntent(event.modifiers);
+                                if (intent === "") {
+                                    return;
+                                }
+                                event.accepted = true;
+                                composer.submit(intent);
                             }
-                            if ((event.key === Qt.Key_Up || event.key === Qt.Key_Down) && event.modifiers === Qt.NoModifier) {
-                                composer.stepPromptHistory(event.key === Qt.Key_Up ? "backward" : "forward");
-                                return;
+
+                            // Its Paste is the composer's, which attaches copied
+                            // pictures and files. A MouseArea, as it takes the
+                            // press from Qt's own TextArea menu.
+                            MouseArea {
+                                anchors.fill: parent
+                                acceptedButtons: Qt.RightButton
+                                onClicked: mouse => editorMenu.openAt(mouse.x, mouse.y)
                             }
-                            if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter) {
-                                return;
+                            TextEditMenu {
+                                id: editorMenu
+                                objectName: "editorMenu"
+                                editor: input
+                                paste: () => composer.paste(false)
                             }
-                            const intent = composer.enterIntent(event.modifiers);
-                            if (intent === "") {
-                                return;
-                            }
-                            event.accepted = true;
-                            composer.submit(intent);
-                        }
-
-                        // Its Paste is the composer's, which attaches copied
-                        // pictures and files. A MouseArea, as it takes the
-                        // press from Qt's own TextArea menu.
-                        MouseArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.RightButton
-                            onClicked: mouse => editorMenu.openAt(mouse.x, mouse.y)
-                        }
-                        TextEditMenu {
-                            id: editorMenu
-                            objectName: "editorMenu"
-                            editor: input
-                            paste: () => composer.paste(false)
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.bottomMargin: 16
-                    spacing: 4
-
-                    ShellButton {
-                        subtle: true
-                        iconName: "paperclip"
-                        iconSize: 16
-                        iconTint: composer.iconMuted
-                        Layout.leftMargin: -10
-                        Layout.alignment: Qt.AlignBottom
-                        enabled: composer.ready && !composer.model.editorDisabled
-                        Accessible.name: qsTr("Attach files")
-                        onClicked: imagePicker.open()
-
-                        FileDialog {
-                            id: imagePicker
-
-                            title: qsTr("Attach files")
-                            fileMode: FileDialog.OpenFiles
-                            nameFilters: [qsTr("All files (*)"), qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp *.heic *.heif)")]
-                            onAccepted: composer.attach(selectedFiles)
                         }
                     }
 
-                    // The model and its options wrap onto another line where they
-                    // do not fit beside the attach and send buttons, as on a phone.
-                    Flow {
-                        id: toolbarControls
-                        objectName: "toolbarControls"
+                    // The toolbar is one line: the model, the chips that fit
+                    // beside it, the "•••" chip holding the rest, then send.
+                    RowLayout {
+                        id: toolbar
+                        objectName: "toolbar"
 
                         Layout.fillWidth: true
-                        Layout.alignment: Qt.AlignVCenter
-                        spacing: 4
+                        spacing: Theme.space.xs
 
+                        Chip {
+                            objectName: "attachButton"
+                            iconName: "paperclip"
+                            enabled: composer.ready && !composer.model.editorDisabled
+                            Accessible.name: qsTr("Attach files")
+                            onClicked: imagePicker.open()
+
+                            FileDialog {
+                                id: imagePicker
+
+                                title: qsTr("Attach files")
+                                fileMode: FileDialog.OpenFiles
+                                nameFilters: [qsTr("All files (*)"), qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp *.heic *.heif)")]
+                                onAccepted: composer.attach(selectedFiles)
+                            }
+                        }
+
+                        // Never folds: it gives up width, eliding, once
+                        // everything else has folded.
                         ModelPicker {
                             id: modelPicker
                             objectName: "modelPicker"
 
-                            width: Math.min(implicitWidth, 224, toolbarControls.width)
+                            Layout.preferredWidth: Math.min(implicitWidth, Theme.control.md * 8)
+                            Layout.minimumWidth: Math.min(implicitWidth, Theme.control.md * 2)
                             enabled: composer.ready && instances.length > 0
                             selectedInstanceId: composer.ready ? composer.model.selectedInstanceId : null
                             selectedModel: composer.ready ? composer.model.selectedModel : null
                         }
 
-                        RowLayout {
-                            visible: composer.effortOption !== null
-                            spacing: 4
+                        // The room left beside the model; the chips that fit it
+                        // show, in this order, and the overflow chip ends them.
+                        Item {
+                            id: chipArea
 
-                            Separator {}
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: overflowChip.implicitWidth
+                            Layout.minimumWidth: overflowChip.implicitWidth
+                            implicitHeight: Theme.control.md
 
-                            ShellComboBox {
-                                id: effortPicker
-                                objectName: "effortPicker"
+                            Row {
+                                id: chipRow
+                                objectName: "toolbarChips"
 
-                                model: composer.effortOption ? composer.effortOption.choices.map(choice => choice.label) : []
-                                currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
-                                displayText: currentIndex < 0 ? (composer.effortOption ? composer.effortOption.label : "") : currentText
-                                Accessible.name: composer.effortOption ? composer.effortOption.label : ""
-                                onActivated: index => Shell.dispatch("composer.option.set", {
-                                        id: composer.effortOption.id,
-                                        value: composer.effortOption.choices[index].id
-                                    })
-                            }
-                        }
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Theme.space.xs
 
-                        // By count, so a value picked here updates its control rather
-                        // than rebuilding them all (and dropping the focus).
-                        Repeater {
-                            model: composer.otherOptions.length
+                                ChipPicker {
+                                    id: effortPicker
+                                    objectName: "effortPicker"
 
-                            delegate: RowLayout {
-                                id: optionItem
-
-                                required property int index
-                                readonly property var modelData: composer.otherOptions[index] ?? ({})
-                                readonly property bool select: modelData.type === "select"
-
-                                spacing: 4
-
-                                Separator {}
-
-                                ShellComboBox {
-                                    objectName: "optionPicker:" + optionItem.modelData.id
-
-                                    visible: optionItem.select
-                                    model: optionItem.select ? optionItem.modelData.choices.map(choice => choice.label) : []
-                                    currentIndex: optionItem.select ? optionItem.modelData.choices.findIndex(choice => choice.id === optionItem.modelData.value) : -1
-                                    displayText: currentIndex < 0 ? optionItem.modelData.label : currentText
-                                    Accessible.name: optionItem.modelData.label
+                                    present: composer.effortOption !== null
+                                    visible: present && !composer.folded.includes(effortPicker)
+                                    model: composer.effortOption ? composer.effortOption.choices.map(choice => choice.label) : []
+                                    currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
+                                    displayText: currentIndex < 0 ? (composer.effortOption ? composer.effortOption.label : "") : currentText
+                                    Accessible.name: composer.effortOption ? composer.effortOption.label : ""
                                     onActivated: index => Shell.dispatch("composer.option.set", {
-                                            id: optionItem.modelData.id,
-                                            value: optionItem.modelData.choices[index].id
+                                            id: composer.effortOption.id,
+                                            value: composer.effortOption.choices[index].id
                                         })
                                 }
 
-                                ShellButton {
-                                    objectName: "optionToggle:" + optionItem.modelData.id
+                                // By count, so a value picked here updates its control rather
+                                // than rebuilding them all (and dropping the focus).
+                                Repeater {
+                                    id: selectChips
 
-                                    visible: !optionItem.select
-                                    subtle: true
-                                    checkable: true
-                                    checked: optionItem.modelData.value === true
-                                    tint: checked ? composer.foreground : composer.secondary
-                                    // On and off are said, not only tinted: a bolt for fast
-                                    // mode, the word for any other toggle.
-                                    readonly property bool fast: optionItem.modelData.id === "fastMode"
-                                    iconName: fast && checked ? "zap" : ""
-                                    iconSize: 14
-                                    // The bolt is filled, in Claude's orange on a Claude model.
-                                    iconFilled: fast && checked
-                                    iconTint: fast && checked && modelPicker.activeInstance?.driverKind === "claudeAgent" ? Qt.alpha(composer.claudeOrange, 0.8) : tint
-                                    text: fast ? optionItem.modelData.label : qsTr("%1 %2").arg(optionItem.modelData.label).arg(checked ? qsTr("On") : qsTr("Off"))
-                                    Accessible.name: qsTr("%1, %2").arg(optionItem.modelData.label).arg(checked ? qsTr("on") : qsTr("off"))
+                                    model: composer.selectOptions.length
+
+                                    delegate: ChipPicker {
+                                        id: selectChip
+
+                                        required property int index
+                                        readonly property var option: composer.selectOptions[index] ?? ({})
+
+                                        objectName: "optionPicker:" + option.id
+                                        visible: !composer.folded.includes(selectChip)
+                                        model: (option.choices ?? []).map(choice => choice.label)
+                                        currentIndex: (option.choices ?? []).findIndex(choice => choice.id === option.value)
+                                        displayText: currentIndex < 0 ? (option.label ?? "") : currentText
+                                        Accessible.name: option.label ?? ""
+                                        onActivated: index => Shell.dispatch("composer.option.set", {
+                                                id: selectChip.option.id,
+                                                value: selectChip.option.choices[index].id
+                                            })
+                                    }
+                                }
+
+                                Repeater {
+                                    id: toggleChips
+
+                                    model: composer.toggleOptions.length
+
+                                    delegate: Chip {
+                                        id: toggleChip
+
+                                        required property int index
+                                        readonly property var option: composer.toggleOptions[index] ?? ({})
+                                        readonly property bool fast: option.id === "fastMode"
+                                        readonly property string menuTitle: option.label ?? ""
+
+                                        // The click asks; the state's answer checks it.
+                                        function flip() {
+                                            Shell.dispatch("composer.option.set", {
+                                                id: toggleChip.option.id,
+                                                value: !toggleChip.checked
+                                            });
+                                        }
+
+                                        objectName: "optionToggle:" + option.id
+                                        visible: !composer.folded.includes(toggleChip)
+                                        checked: option.value === true
+                                        // On is the fill and a leading check; fast mode's
+                                        // is its bolt, filled, in Claude's orange on a
+                                        // Claude model.
+                                        iconName: !checked ? "" : fast ? "zap" : "check"
+                                        iconSize: checked && !fast ? Theme.icon.sm : Theme.icon.md
+                                        iconFilled: fast && checked
+                                        iconTint: fast && checked && modelPicker.activeInstance?.driverKind === "claudeAgent" ? Qt.alpha(composer.claudeOrange, 0.8) : tint
+                                        text: option.label ?? ""
+                                        Accessible.name: qsTr("%1, %2").arg(option.label ?? "").arg(checked ? qsTr("on") : qsTr("off"))
+                                        Accessible.checkable: true
+                                        Accessible.checked: checked
+                                        onClicked: flip()
+                                    }
+                                }
+
+                                ChipPicker {
+                                    id: runtimeModePicker
+                                    objectName: "runtimeModePicker"
+
+                                    present: composer.ready
+                                    visible: present && !composer.folded.includes(runtimeModePicker)
+                                    iconName: composer.ready ? composer.runtimeIcon(composer.model.runtimeMode) : "lock"
+                                    model: composer.ready ? composer.model.runtimeModes.map(mode => mode.label) : []
+                                    currentIndex: composer.ready ? composer.model.runtimeModes.findIndex(mode => mode.value === composer.model.runtimeMode) : -1
+                                    Accessible.name: qsTr("Permissions")
+                                    onActivated: index => Shell.dispatch("composer.runtimeMode.set", {
+                                            mode: composer.model.runtimeModes[index].value
+                                        })
+                                }
+
+                                Chip {
+                                    id: planToggle
+                                    objectName: "planToggle"
+
+                                    readonly property bool present: composer.ready && composer.model.showInteractionModeToggle
+                                    readonly property string menuTitle: qsTr("Plan")
+
+                                    function flip() {
+                                        Shell.dispatch("composer.interactionMode.set", {
+                                            mode: planToggle.checked ? "default" : "plan"
+                                        });
+                                    }
+
+                                    visible: present && !composer.folded.includes(planToggle)
+                                    checked: composer.ready && composer.model.interactionMode === "plan"
+                                    iconName: checked ? "pencil-ruler" : "bot"
+                                    text: checked ? qsTr("Plan") : qsTr("Build")
                                     Accessible.checkable: true
                                     Accessible.checked: checked
-                                    font.pixelSize: Math.round(14 * Theme.fontScale)
-                                    leftPadding: 10
-                                    rightPadding: 10
-                                    onClicked: Shell.dispatch("composer.option.set", {
-                                        id: optionItem.modelData.id,
-                                        value: checked
-                                    })
+                                    onClicked: flip()
+                                }
+
+                                // What did not fit, in a menu.
+                                Chip {
+                                    id: overflowChip
+                                    objectName: "composerOverflow"
+
+                                    visible: composer.foldCount > 0
+                                    iconName: "ellipsis"
+                                    checked: composer.overflowMenu !== null
+                                    Accessible.name: qsTr("More options")
+                                    onClicked: composer.openOverflow(null)
                                 }
                             }
                         }
 
-                        RowLayout {
-                            spacing: 4
-
-                            Separator {}
-
-                            ShellComboBox {
-                                id: runtimeModePicker
-                                objectName: "runtimeModePicker"
-
-                                iconName: composer.ready ? composer.runtimeIcon(composer.model.runtimeMode) : "lock"
-                                enabled: composer.ready
-                                model: composer.ready ? composer.model.runtimeModes.map(mode => mode.label) : []
-                                currentIndex: composer.ready ? composer.model.runtimeModes.findIndex(mode => mode.value === composer.model.runtimeMode) : -1
-                                Accessible.name: qsTr("Permissions")
-                                onActivated: index => Shell.dispatch("composer.runtimeMode.set", {
-                                        mode: composer.model.runtimeModes[index].value
-                                    })
-                            }
+                        Text {
+                            objectName: "vimMode"
+                            visible: composer.vimKeys
+                            text: vim.modeLabel
+                            color: composer.muted
+                            font.pixelSize: Theme.type.caption.size
+                            Accessible.name: qsTr("Vim mode: %1").arg(text)
                         }
 
-                        RowLayout {
-                            visible: composer.ready && composer.model.showInteractionModeToggle
-                            spacing: 4
-
-                            Separator {}
-
-                            ShellButton {
-                                id: planToggle
-                                objectName: "planToggle"
-
-                                subtle: true
-                                checkable: true
-                                checked: composer.ready && composer.model.interactionMode === "plan"
-                                iconName: checked ? "pencil-ruler" : "bot"
-                                iconSize: 16
-                                iconTint: checked ? composer.foreground : composer.secondary
-                                tint: checked ? composer.foreground : composer.secondary
-                                text: checked ? qsTr("Plan") : qsTr("Build")
-                                font.pixelSize: Math.round(14 * Theme.fontScale)
-                                leftPadding: 10
-                                rightPadding: 10
-                                onClicked: Shell.dispatch("composer.interactionMode.set", {
-                                    mode: checked ? "plan" : "default"
-                                })
-                            }
-                        }
-                    }
-
-                    Text {
-                        objectName: "vimMode"
-                        visible: composer.vimKeys
-                        text: vim.modeLabel
-                        color: composer.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
-                        Accessible.name: qsTr("Vim mode: %1").arg(text)
-                    }
-
-                    // The stash's count, which opens and closes its list.
-                    ShellButton {
-                        objectName: "stashBadge"
-                        visible: composer.ready && composer.stashEntries.length > 0
-                        subtle: true
-                        iconName: "bookmark"
-                        iconSize: 14
-                        iconTint: composer.iconMuted
-                        text: composer.stashEntries.length
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
-                        Accessible.name: qsTr("Stashed prompts: %1. Open stash.").arg(composer.stashEntries.length)
-                        onClicked: Shell.dispatch("composer.stash.menu")
-                    }
-
-                    // Approvals and the plan's Implement live in TurnRequests above.
-
-                    // Round send / stop.
-                    AbstractButton {
-                        id: primaryAction
-                        objectName: "primaryAction"
-
-                        readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0 && composer.attachments.length === 0
-                        // A send during a turn joins it or waits behind it, per the
-                        // follow-up setting; the button says which before the click.
-                        readonly property string followUp: composer.model?.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
-
-                        implicitWidth: 32
-                        implicitHeight: 32
-                        Layout.alignment: Qt.AlignBottom
-                        enabled: composer.ready && (stopMode || composer.model?.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
-                        hoverEnabled: true
-                        opacity: enabled ? 1 : 0.3
-                        scale: down ? 0.97 : hovered ? 1.05 : 1
-                        Accessible.role: Accessible.Button
-                        Accessible.name: stopMode ? qsTr("Stop") : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue") : qsTr("Send")
-                        ToolTip.visible: hovered && followUp.length > 0
-                        ToolTip.delay: 400
-                        ToolTip.text: followUp === "steer"
-                            ? qsTr("Steer the running turn (%1+Enter to queue)").arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl")
-                            : qsTr("Queue after the running turn (%1+Enter to steer)").arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl")
-                        onClicked: stopMode ? Shell.dispatch("composer.interrupt") : composer.submit("foreground")
-
-                        Behavior on scale {
-                            NumberAnimation {
-                                duration: 120
-                                easing.type: Easing.OutCubic
-                            }
+                        // The stash's count, which opens and closes its list.
+                        Chip {
+                            objectName: "stashBadge"
+                            visible: composer.ready && composer.stashEntries.length > 0
+                            iconName: "bookmark"
+                            text: composer.stashEntries.length
+                            Accessible.name: qsTr("Stashed prompts: %1. Open stash.").arg(composer.stashEntries.length)
+                            onClicked: Shell.dispatch("composer.stash.menu")
                         }
 
-                        background: Rectangle {
-                            radius: 16
-                            color: primaryAction.stopMode ? Qt.alpha(Theme.palette.color("error", "#ef4444"), 0.9) : Theme.palette.color("messageAction", "#2563eb")
+                        // Approvals and the plan's Implement live in TurnRequests above.
 
-                            // The keyboard's ring, just outside the round button.
-                            Rectangle {
-                                anchors.fill: parent
-                                anchors.margins: -3
-                                radius: parent.radius + 3
-                                visible: primaryAction.visualFocus
-                                color: "transparent"
-                                border.width: 2
-                                border.color: Theme.palette.color("focus", "#3b82f6")
-                            }
+                        // Send, or Stop while a turn runs and there is nothing to
+                        // send. The accent is for a prompt that can go.
+                        AbstractButton {
+                            id: primaryAction
+                            objectName: "primaryAction"
 
-                            Behavior on color {
-                                ColorAnimation {
+                            readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0 && composer.attachments.length === 0
+                            readonly property bool sendable: composer.ready && !stopMode && (composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0)
+                            // A send during a turn joins it or waits behind it, per the
+                            // follow-up setting; the button says which before the click.
+                            readonly property string followUp: composer.model?.isRunning && !stopMode ? (composer.model.followUpBehavior ?? "steer") : ""
+                            readonly property color accent: Theme.palette.color("accent", "#3b6fe0")
+
+                            implicitWidth: Theme.control.md
+                            implicitHeight: Theme.control.md
+                            enabled: stopMode || sendable
+                            hoverEnabled: true
+                            scale: down ? 0.97 : 1
+                            Accessible.role: Accessible.Button
+                            Accessible.name: stopMode ? qsTr("Stop") : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue") : qsTr("Send")
+                            ToolTip.visible: hovered && followUp.length > 0
+                            ToolTip.delay: 400
+                            ToolTip.text: followUp === "steer"
+                                ? qsTr("Steer the running turn (%1+Enter to queue)").arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl")
+                                : qsTr("Queue after the running turn (%1+Enter to steer)").arg(Qt.platform.os === "osx" ? "⌘" : "Ctrl")
+                            onClicked: stopMode ? Shell.dispatch("composer.interrupt") : composer.submit("foreground")
+
+                            Behavior on scale {
+                                NumberAnimation {
                                     duration: 120
+                                    easing.type: Easing.OutCubic
                                 }
                             }
-                        }
 
-                        contentItem: Item {
-                            ShellIcon {
-                                anchors.centerIn: parent
-                                visible: !primaryAction.stopMode
-                                name: primaryAction.followUp === "steer" ? "corner-down-right" : primaryAction.followUp === "queue" ? "list-plus" : "arrow-up"
-                                size: 16
-                                strokeWidth: 2.5
-                                color: Theme.palette.color("messageActionForeground", "#ffffff")
-                            }
+                            background: Rectangle {
+                                radius: Theme.radiusMd
+                                color: !primaryAction.sendable ? composer.chipFill
+                                    : primaryAction.down ? Qt.darker(primaryAction.accent, 1.15)
+                                    : primaryAction.hovered ? Qt.lighter(primaryAction.accent, 1.08) : primaryAction.accent
+                                // Stop answers the pointer with an edge; its fill is already raised.
+                                border.width: primaryAction.stopMode && primaryAction.hovered ? 1 : 0
+                                border.color: Theme.palette.color("borderStrong", "#343a44")
 
-                            Rectangle {
-                                anchors.centerIn: parent
-                                visible: primaryAction.stopMode
-                                width: 11
-                                height: 11
-                                radius: 2
-                                color: Theme.palette.color("errorForeground", "#ffffff")
-                            }
-                        }
-                    }
-                }
-
-                // Optional plugin controls wrap without squeezing the model
-                // picker or overlapping the send button.
-                Flow {
-                    id: editorActions
-                    objectName: "editorActions"
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.bottomMargin: visible ? 16 : 0
-                    // A layout's own controls, or a plugin's.
-                    visible: children.length > 1 || actionsSlot.shown.length > 0
-                    spacing: 6
-
-                    PluginSlot {
-                        id: actionsSlot
-
-                        objectName: "composerActionsSlot"
-                        name: "composer.actions"
-                        mode: "append"
-                        visible: shown.length > 0
-                    }
-                }
-            }
-        }
-
-        // Context strip: environment, checkout mode, PR, branch — welded under
-        // the card and tucked 16px beneath it.
-        Item {
-            id: contextStrip
-
-            readonly property var ws: composer.workspace
-            readonly property bool wsReady: ws !== null
-            readonly property string envModeIcon: !wsReady ? "folder" : ws.envMode === "worktree" ? "folder-git-2" : "folder-git"
-
-            Layout.fillWidth: true
-            Layout.leftMargin: 22
-            Layout.rightMargin: 22
-            Layout.topMargin: -16
-            implicitHeight: 16 + 4 + 24 + 4
-            visible: wsReady && (composer.model?.showContextStrip ?? true) && !composer.resting
-
-            Rectangle {
-                anchors.fill: parent
-                bottomLeftRadius: 16
-                bottomRightRadius: 16
-                color: "transparent"
-                border.color: composer.outline
-                border.width: 1
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 4
-                anchors.rightMargin: 8
-                anchors.topMargin: 20
-                anchors.bottomMargin: 4
-                spacing: 8
-
-                ShellComboBox {
-                    id: hostPicker
-                    objectName: "hostPicker"
-
-                    visible: contextStrip.wsReady && contextStrip.ws.environments.length > 1
-                    implicitHeight: 24
-                    leftPadding: 7 + iconSize + 6
-                    rightPadding: 7 + chevronSize + 4
-                    iconSize: 12
-                    chevronSize: 12
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                    iconName: "monitor"
-                    enabled: contextStrip.wsReady && contextStrip.ws.environmentChangeable
-                    model: contextStrip.wsReady ? contextStrip.ws.environments.map(env => env.label) : []
-                    currentIndex: contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.environmentId === contextStrip.ws.activeEnvironmentId) : -1
-                    Accessible.name: qsTr("Environment")
-                    onActivated: index => Shell.dispatch("workspace.environment.set", {
-                            environmentId: contextStrip.ws.environments[index].environmentId,
-                            key: contextStrip.ws.environments[index].key
-                        })
-                }
-
-                Separator {
-                    visible: contextStrip.wsReady && contextStrip.ws.environments.length > 1
-                    implicitHeight: 14
-                }
-
-                ShellComboBox {
-                    visible: contextStrip.wsReady && contextStrip.ws.envModeChangeable
-                    implicitHeight: 24
-                    leftPadding: 7 + iconSize + 6
-                    rightPadding: 7 + chevronSize + 4
-                    iconSize: 12
-                    chevronSize: 12
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                    iconName: contextStrip.envModeIcon
-                    id: envModePicker
-                    objectName: "envModePicker"
-                    // A draft can go back to the worktree the project worked in last.
-                    readonly property var previous: contextStrip.wsReady ? contextStrip.ws.previousWorktree ?? null : null
-                    readonly property string currentLabel: contextStrip.wsReady ? contextStrip.ws.currentWorkspaceLabel ?? "" : ""
-                    model: previous ? [currentLabel, qsTr("New worktree"), previous.label] : [currentLabel, qsTr("New worktree")]
-                    currentIndex: contextStrip.wsReady && contextStrip.ws.envMode === "worktree" ? 1 : 0
-                    Accessible.name: qsTr("Checkout mode")
-                    onActivated: index => {
-                        if (index === 2)
-                            Shell.dispatch("workspace.previousWorktree");
-                        else
-                            Shell.dispatch("workspace.envMode.set", {
-                                mode: index === 1 ? "worktree" : "local"
-                            });
-                    }
-                }
-
-                RowLayout {
-                    id: envModeLocked
-                    objectName: "envModeLocked"
-
-                    readonly property string hint: contextStrip.wsReady ? contextStrip.ws.envModeHint ?? "" : ""
-
-                    visible: contextStrip.wsReady && !contextStrip.ws.envModeChangeable
-                    spacing: 6
-                    Layout.leftMargin: 7
-                    Accessible.description: hint
-
-                    HoverHandler {
-                        id: envModeLockedHover
-                    }
-
-                    ToolTip.visible: envModeLockedHover.hovered && hint.length > 0
-                    ToolTip.text: hint
-
-                    ShellIcon {
-                        name: contextStrip.envModeIcon
-                        size: 12
-                        color: composer.iconMuted
-                        Layout.alignment: Qt.AlignVCenter
-                    }
-
-                    Text {
-                        objectName: "envModeLockedLabel"
-                        text: contextStrip.wsReady ? contextStrip.ws.envModeLabel : ""
-                        color: composer.secondary
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
-                        font.weight: Font.Medium
-                    }
-                }
-
-                Item {
-                    Layout.fillWidth: true
-                }
-
-                // PR badge.
-                AbstractButton {
-                    id: prBadge
-
-                    readonly property var pr: contextStrip.wsReady && contextStrip.ws.git ? contextStrip.ws.git.pullRequest : null
-                    readonly property color prColor: pr === null ? "transparent" : pr.state === "merged" ? Theme.palette.color("merged", "#a855f7") : pr.state === "closed" ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("success", "#34d399")
-
-                    visible: pr !== null && contextStrip.ws.canOpenPullRequest
-                    text: pr ? "#" + pr.number : ""
-                    Accessible.name: qsTr("%1 Open pull request").arg(text)
-                    focusPolicy: Qt.TabFocus
-                    implicitWidth: prLabel.implicitWidth + 8
-                    implicitHeight: 18
-                    padding: 0
-                    onClicked: Shell.dispatch("workspace.openPullRequest")
-
-                    HoverHandler {
-                        cursorShape: Qt.PointingHandCursor
-                    }
-
-                    background: Rectangle {
-                        radius: 4
-                        color: Qt.alpha(prBadge.prColor, 0.15)
-                        border.color: Theme.palette.color("focus", "#3b82f6")
-                        border.width: prBadge.visualFocus ? 1 : 0
-                    }
-
-                    contentItem: Text {
-                        id: prLabel
-
-                        text: prBadge.text
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        color: prBadge.prColor
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
-                        font.weight: Font.Medium
-                    }
-                }
-
-                ShellButton {
-                    id: branchButton
-                    objectName: "branchButton"
-
-                    visible: contextStrip.wsReady && (contextStrip.ws.branch !== null || contextStrip.ws.branchChangeable)
-                    enabled: contextStrip.wsReady && contextStrip.ws.branchChangeable && !contextStrip.ws.branchSwitchPending
-                    subtle: true
-                    implicitHeight: 24
-                    leftPadding: 7
-                    rightPadding: 7
-                    Layout.maximumWidth: 240
-                    iconName: "git-branch"
-                    iconSize: 12
-                    iconTint: Qt.alpha(composer.iconMuted, 0.7)
-                    tint: branchButton.hovered ? Qt.alpha(composer.foreground, 0.8) : composer.branchColor
-                    chevron: contextStrip.wsReady && contextStrip.ws.branchChangeable
-                    chevronSize: 12
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                    text: contextStrip.wsReady ? (contextStrip.ws.branch ?? qsTr("Pick branch")) : ""
-                    Accessible.name: qsTr("Switch branch")
-                    onClicked: branchPicker.open()
-
-                    // "Copy branch name", on the secondary button
-                    // (a finger has no buttons, and would count as it).
-                    TapHandler {
-                        acceptedButtons: Qt.RightButton
-                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                        onTapped: branchMenu.popup()
-                    }
-                    ShellMenu {
-                        id: branchMenu
-
-                        ShellMenuItem {
-                            objectName: "copyBranchName"
-                            text: qsTr("Copy branch name")
-                            iconName: "copy"
-                            enabled: contextStrip.wsReady && (contextStrip.ws.branch ?? "").length > 0
-                            onTriggered: Shell.dispatch("workspace.branch.copy")
-                        }
-                    }
-
-                    Popup {
-                        id: branchPicker
-                        objectName: "branchPicker"
-
-                        scale: Shell.state.layout?.zoom ?? 1
-                        transformOrigin: Item.TopLeft
-                        x: parent.width - width
-                        y: -height - 4
-                        width: 320
-                        // The rows' height up to 368; a repo with one branch
-                        // gets a short popup.
-                        height: Math.min(368, branchColumn.implicitHeight + padding * 2)
-                        padding: 4
-                        // Opening loads the refs afresh, unfiltered.
-                        onOpened: {
-                            branchSearch.text = "";
-                            branchSearch.forceActiveFocus();
-                            Shell.dispatch("workspace.branch.search", {
-                                query: ""
-                            });
-                        }
-
-                        enter: Transition {
-                            NumberAnimation {
-                                property: "opacity"
-                                from: 0
-                                to: 1
-                                duration: 120
-                                easing.type: Easing.OutCubic
-                            }
-                        }
-
-                        exit: Transition {
-                            NumberAnimation {
-                                property: "opacity"
-                                from: 1
-                                to: 0
-                                duration: 90
-                                easing.type: Easing.InCubic
-                            }
-                        }
-
-                        background: Rectangle {
-                            color: Theme.palette.color("surfaceOverlay", "#18181b")
-                            border.color: Qt.alpha(composer.foreground, 0.1)
-                            radius: 10
-                        }
-
-                        ColumnLayout {
-                            id: branchColumn
-
-                            // A Popup is no Item, so its name is on its content.
-                            Accessible.role: Accessible.Pane
-                            Accessible.name: qsTr("Branches")
-                            anchors.fill: parent
-                            spacing: 4
-
-                            ShellTextField {
-                                id: branchSearch
-
-                                Layout.fillWidth: true
-                                placeholderText: qsTr("Search or create a branch")
-                                Accessible.name: qsTr("Search or create a branch")
-                                onTextEdited: Shell.dispatch("workspace.branch.search", {
-                                    query: text
-                                })
-                                Keys.onReturnPressed: {
-                                    const name = text.trim();
-                                    if (name.length === 0) {
-                                        return;
-                                    }
-                                    const exact = contextStrip.ws.branches.find(ref => ref.name === name);
-                                    Shell.dispatch(exact ? "workspace.branch.select" : "workspace.branch.create", {
-                                        name: name
-                                    });
-                                    branchPicker.close();
-                                }
-
-                                background: Rectangle {
+                                // The keyboard's ring, just outside the button.
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.margins: -Theme.space.xxs
+                                    radius: parent.radius + Theme.space.xxs
+                                    visible: primaryAction.visualFocus
                                     color: "transparent"
-
-                                    Rectangle {
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.bottom: parent.bottom
-                                        height: 1
-                                        color: Qt.alpha(composer.foreground, 0.08)
-                                    }
+                                    border.width: 2
+                                    border.color: Theme.palette.color("focus", "#3b82f6")
                                 }
                             }
 
-                            ListView {
-                                id: branchList
-
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                Layout.preferredHeight: Math.max(contentHeight, 40)
-                                clip: true
-                                // Where the list was when it asked for more, so
-                                // the longer list opens at the same place.
-                                property real keptY: -1
-
-                                boundsBehavior: Flickable.StopAtBounds
-                                model: contextStrip.wsReady ? contextStrip.ws.branches : []
-                                // The end of a list with more to it loads the next page.
-                                onAtYEndChanged: {
-                                    if (atYEnd && count > 0 && contextStrip.wsReady && contextStrip.ws.branchesTotal > count) {
-                                        keptY = contentY;
-                                        Shell.dispatch("workspace.branch.more");
-                                    }
-                                }
-                                onCountChanged: {
-                                    if (keptY >= 0) {
-                                        contentY = keptY;
-                                        keptY = -1;
-                                    }
-                                }
-
-                                delegate: Rectangle {
-                                    id: branchRow
-
-                                    required property var modelData
-
-                                    readonly property string badge: modelData.current ? qsTr("current") : modelData.isDefault ? qsTr("default") : modelData.isRemote ? qsTr("remote") : ""
-
-                                    // Typing a ref's name and Enter picks it from the keyboard.
-                                    Accessible.role: Accessible.ListItem
-                                    Accessible.name: [branchRow.modelData.name, branchRow.badge].filter(part => part.length > 0).join(", ")
-                                    Accessible.onPressAction: {
-                                        Shell.dispatch("workspace.branch.select", {
-                                            name: branchRow.modelData.name
-                                        });
-                                        branchPicker.close();
-                                    }
-                                    width: ListView.view.width
-                                    height: 28
-                                    radius: 6
-                                    color: rowHover.hovered ? Theme.palette.color("accentSurface", "#1c1c21") : "transparent"
-
-                                    HoverHandler {
-                                        id: rowHover
-                                    }
-
-                                    TapHandler {
-                                        onTapped: {
-                                            Shell.dispatch("workspace.branch.select", {
-                                                name: branchRow.modelData.name
-                                            });
-                                            branchPicker.close();
-                                        }
-                                    }
-
-                                    RowLayout {
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 8
-                                        anchors.rightMargin: 8
-                                        spacing: 8
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: branchRow.modelData.name
-                                            color: branchRow.modelData.isRemote ? composer.muted : composer.foreground
-                                            font.pixelSize: Math.round(13 * Theme.fontScale)
-                                            elide: Text.ElideMiddle
-                                        }
-
-                                        Text {
-                                            visible: branchRow.badge.length > 0
-                                            text: branchRow.badge
-                                            color: composer.muted
-                                            font.pixelSize: Math.round(10 * Theme.fontScale)
-                                        }
-                                    }
-                                }
-
-                                Text {
+                            contentItem: Item {
+                                ShellIcon {
                                     anchors.centerIn: parent
-                                    visible: branchList.count === 0
-                                    text: contextStrip.wsReady && contextStrip.ws.branchesLoading ? qsTr("Loading refs…") : qsTr("No matching refs — Enter creates one")
-                                    color: composer.muted
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    visible: !primaryAction.stopMode
+                                    name: primaryAction.followUp === "steer" ? "corner-down-right" : primaryAction.followUp === "queue" ? "list-plus" : "arrow-up"
+                                    size: Theme.icon.md
+                                    color: primaryAction.sendable ? Theme.palette.color("accentForeground", "#ffffff") : Theme.palette.color("placeholder", "#6e7480")
                                 }
+
+                                Rectangle {
+                                    objectName: "stopGlyph"
+                                    anchors.centerIn: parent
+                                    visible: primaryAction.stopMode
+                                    width: Theme.icon.sm - Theme.space.xxs
+                                    height: width
+                                    radius: Theme.radiusXs
+                                    color: composer.foreground
+                                }
+                            }
+                        }
+                    }
+
+                    // Optional plugin controls wrap without squeezing the model
+                    // picker or overlapping the send button.
+                    Flow {
+                        id: editorActions
+                        objectName: "editorActions"
+                        Layout.fillWidth: true
+                        // A layout's own controls, or a plugin's.
+                        visible: children.length > 1 || actionsSlot.shown.length > 0
+                        spacing: Theme.space.sm
+
+                        PluginSlot {
+                            id: actionsSlot
+
+                            objectName: "composerActionsSlot"
+                            name: "composer.actions"
+                            mode: "append"
+                            visible: shown.length > 0
+                        }
+                    }
+                }
+
+                // Context strip: environment, checkout mode, PR, branch, at
+                // the foot of the card under a hairline.
+                Item {
+                    id: contextStrip
+
+                    readonly property var ws: composer.workspace
+                    readonly property bool wsReady: ws !== null
+                    readonly property string envModeIcon: !wsReady ? "folder" : ws.envMode === "worktree" ? "folder-git-2" : "folder-git"
+
+                    Layout.fillWidth: true
+                    implicitHeight: stripRow.implicitHeight + Theme.space.xs * 2
+                    visible: wsReady && (composer.model?.showContextStrip ?? true) && !composer.resting
+
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        height: 1
+                        color: Theme.palette.color("border", "#262a31")
+                    }
+
+                    // The chips' own padding lines their labels up with the prompt.
+                    RowLayout {
+                        id: stripRow
+
+                        anchors.fill: parent
+                        anchors.leftMargin: Theme.space.xs
+                        anchors.rightMargin: Theme.space.xs
+                        anchors.topMargin: Theme.space.xs
+                        anchors.bottomMargin: Theme.space.xs
+                        spacing: Theme.space.xs
+
+                        ShellComboBox {
+                            id: hostPicker
+                            objectName: "hostPicker"
+
+                            visible: contextStrip.wsReady && contextStrip.ws.environments.length > 1
+                            implicitHeight: Theme.control.sm
+                            iconSize: Theme.icon.sm
+                            chevronSize: Theme.icon.sm
+                            font.pixelSize: Theme.type.meta.size
+                            font.weight: Theme.type.meta.weight
+                            hoverFill: composer.chipFill
+                            iconName: "monitor"
+                            enabled: contextStrip.wsReady && contextStrip.ws.environmentChangeable
+                            model: contextStrip.wsReady ? contextStrip.ws.environments.map(env => env.label) : []
+                            currentIndex: contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.environmentId === contextStrip.ws.activeEnvironmentId) : -1
+                            Accessible.name: qsTr("Environment")
+                            onActivated: index => Shell.dispatch("workspace.environment.set", {
+                                    environmentId: contextStrip.ws.environments[index].environmentId,
+                                    key: contextStrip.ws.environments[index].key
+                                })
+                        }
+
+                        ShellComboBox {
+                            visible: contextStrip.wsReady && contextStrip.ws.envModeChangeable
+                            implicitHeight: Theme.control.sm
+                            iconSize: Theme.icon.sm
+                            chevronSize: Theme.icon.sm
+                            font.pixelSize: Theme.type.meta.size
+                            font.weight: Theme.type.meta.weight
+                            hoverFill: composer.chipFill
+                            iconName: contextStrip.envModeIcon
+                            id: envModePicker
+                            objectName: "envModePicker"
+                            // A draft can go back to the worktree the project worked in last.
+                            readonly property var previous: contextStrip.wsReady ? contextStrip.ws.previousWorktree ?? null : null
+                            readonly property string currentLabel: contextStrip.wsReady ? contextStrip.ws.currentWorkspaceLabel ?? "" : ""
+                            model: previous ? [currentLabel, qsTr("New worktree"), previous.label] : [currentLabel, qsTr("New worktree")]
+                            currentIndex: contextStrip.wsReady && contextStrip.ws.envMode === "worktree" ? 1 : 0
+                            Accessible.name: qsTr("Checkout mode")
+                            onActivated: index => {
+                                if (index === 2)
+                                    Shell.dispatch("workspace.previousWorktree");
+                                else
+                                    Shell.dispatch("workspace.envMode.set", {
+                                        mode: index === 1 ? "worktree" : "local"
+                                    });
+                            }
+                        }
+
+                        RowLayout {
+                            id: envModeLocked
+                            objectName: "envModeLocked"
+
+                            readonly property string hint: contextStrip.wsReady ? contextStrip.ws.envModeHint ?? "" : ""
+
+                            visible: contextStrip.wsReady && !contextStrip.ws.envModeChangeable
+                            spacing: Theme.space.sm
+                            Layout.leftMargin: Theme.space.sm
+                            Accessible.description: hint
+
+                            HoverHandler {
+                                id: envModeLockedHover
+                            }
+
+                            ToolTip.visible: envModeLockedHover.hovered && hint.length > 0
+                            ToolTip.text: hint
+
+                            ShellIcon {
+                                name: contextStrip.envModeIcon
+                                size: Theme.icon.sm
+                                color: composer.iconMuted
+                                Layout.alignment: Qt.AlignVCenter
                             }
 
                             Text {
-                                Layout.fillWidth: true
-                                Layout.leftMargin: 8
-                                Layout.bottomMargin: 4
-                                visible: contextStrip.wsReady && contextStrip.ws.branchesTotal > contextStrip.ws.branches.length
-                                text: contextStrip.wsReady ? qsTr("Showing %1 of %2 refs — type to narrow").arg(contextStrip.ws.branches.length).arg(contextStrip.ws.branchesTotal) : ""
-                                wrapMode: Text.Wrap
-                                color: composer.muted
-                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                objectName: "envModeLockedLabel"
+                                text: contextStrip.wsReady ? contextStrip.ws.envModeLabel : ""
+                                color: composer.secondary
+                                font.pixelSize: Theme.type.meta.size
+                                font.weight: Font.Medium
+                            }
+                        }
+
+                        Item {
+                            Layout.fillWidth: true
+                        }
+
+                        // PR badge.
+                        AbstractButton {
+                            id: prBadge
+
+                            readonly property var pr: contextStrip.wsReady && contextStrip.ws.git ? contextStrip.ws.git.pullRequest : null
+                            readonly property color prColor: pr === null ? "transparent" : pr.state === "merged" ? Theme.palette.color("merged", "#a855f7") : pr.state === "closed" ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("success", "#34d399")
+
+                            visible: pr !== null && contextStrip.ws.canOpenPullRequest
+                            text: pr ? "#" + pr.number : ""
+                            Accessible.name: qsTr("%1 Open pull request").arg(text)
+                            focusPolicy: Qt.TabFocus
+                            implicitWidth: prLabel.implicitWidth + Theme.space.sm
+                            implicitHeight: Theme.control.sm - Theme.space.xs
+                            padding: 0
+                            onClicked: Shell.dispatch("workspace.openPullRequest")
+
+                            HoverHandler {
+                                cursorShape: Qt.PointingHandCursor
                             }
 
-                            // Only when picking the base of a new thread's new
-                            // worktree; the setting stays as it is.
-                            ColumnLayout {
-                                objectName: "startFromOriginRow"
-                                visible: contextStrip.wsReady && contextStrip.ws.isDraft && contextStrip.ws.envMode === "worktree" && !contextStrip.ws.worktreePath
-                                Layout.fillWidth: true
-                                Layout.leftMargin: 8
-                                Layout.rightMargin: 4
-                                Layout.bottomMargin: 4
-                                spacing: 2
+                            background: Rectangle {
+                                radius: Theme.radiusXs
+                                color: Qt.alpha(prBadge.prColor, 0.15)
+                                border.color: Theme.palette.color("focus", "#3b82f6")
+                                border.width: prBadge.visualFocus ? 1 : 0
+                            }
 
-                                RowLayout {
-                                    Layout.fillWidth: true
+                            contentItem: Text {
+                                id: prLabel
 
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: qsTr("Start from origin")
-                                        color: composer.foreground
-                                        font.pixelSize: Math.round(12 * Theme.fontScale)
-                                    }
+                                text: prBadge.text
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                color: prBadge.prColor
+                                font.pixelSize: Theme.type.caption.size
+                                font.weight: Font.Medium
+                            }
+                        }
 
-                                    ShellSwitch {
-                                        id: startFromOrigin
-                                        objectName: "startFromOrigin"
-                                        Accessible.name: qsTr("Start from origin")
-                                        onToggled: Shell.dispatch("workspace.startFromOrigin.set", {
-                                            enabled: checked
-                                        })
+                        ShellButton {
+                            id: branchButton
+                            objectName: "branchButton"
 
-                                        Binding on checked {
-                                            value: contextStrip.wsReady && contextStrip.ws.startFromOrigin === true
-                                        }
+                            visible: contextStrip.wsReady && (contextStrip.ws.branch !== null || contextStrip.ws.branchChangeable)
+                            enabled: contextStrip.wsReady && contextStrip.ws.branchChangeable && !contextStrip.ws.branchSwitchPending
+                            subtle: true
+                            hoverFill: composer.chipFill
+                            implicitHeight: Theme.control.sm
+                            Layout.maximumWidth: Theme.control.md * 8
+                            iconName: "git-branch"
+                            iconSize: Theme.icon.sm
+                            iconTint: Theme.palette.color("inkTertiary", "#8b919e")
+                            tint: branchButton.hovered ? Theme.palette.color("inkSecondary", "#b8bdc7") : composer.branchColor
+                            chevron: contextStrip.wsReady && contextStrip.ws.branchChangeable
+                            chevronSize: Theme.icon.sm
+                            font.pixelSize: Theme.type.meta.size
+                            font.weight: Theme.type.meta.weight
+                            text: contextStrip.wsReady ? (contextStrip.ws.branch ?? qsTr("Pick branch")) : ""
+                            Accessible.name: qsTr("Switch branch")
+                            onClicked: branchPicker.open()
+
+                            // "Copy branch name", on the secondary button
+                            // (a finger has no buttons, and would count as it).
+                            TapHandler {
+                                acceptedButtons: Qt.RightButton
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                onTapped: branchMenu.popup()
+                            }
+                            ShellMenu {
+                                id: branchMenu
+
+                                ShellMenuItem {
+                                    objectName: "copyBranchName"
+                                    text: qsTr("Copy branch name")
+                                    iconName: "copy"
+                                    enabled: contextStrip.wsReady && (contextStrip.ws.branch ?? "").length > 0
+                                    onTriggered: Shell.dispatch("workspace.branch.copy")
+                                }
+                            }
+
+                            Popup {
+                                id: branchPicker
+                                objectName: "branchPicker"
+
+                                scale: Shell.state.layout?.zoom ?? 1
+                                transformOrigin: Item.TopLeft
+                                x: parent.width - width
+                                y: -height - Theme.space.xs
+                                width: 320
+                                // The rows' height up to 368; a repo with one branch
+                                // gets a short popup.
+                                height: Math.min(368, branchColumn.implicitHeight + padding * 2)
+                                padding: Theme.space.xs
+                                // Opening loads the refs afresh, unfiltered.
+                                onOpened: {
+                                    branchSearch.text = "";
+                                    branchSearch.forceActiveFocus();
+                                    Shell.dispatch("workspace.branch.search", {
+                                        query: ""
+                                    });
+                                }
+
+                                enter: Transition {
+                                    NumberAnimation {
+                                        property: "opacity"
+                                        from: 0
+                                        to: 1
+                                        duration: 120
+                                        easing.type: Easing.OutCubic
                                     }
                                 }
 
-                                Text {
-                                    objectName: "startFromOriginHelp"
-                                    Layout.fillWidth: true
-                                    Layout.rightMargin: 4
-                                    text: qsTr("Creates the worktree from the latest matching branch on origin instead of your local branch.")
-                                    color: composer.muted
-                                    wrapMode: Text.Wrap
-                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                // Closing is instant: a fade could swallow the next open.
+                                exit: null
+
+                                background: ShellPopoverSurface {}
+
+                                ColumnLayout {
+                                    id: branchColumn
+
+                                    // A Popup is no Item, so its name is on its content.
+                                    Accessible.role: Accessible.Pane
+                                    Accessible.name: qsTr("Branches")
+                                    anchors.fill: parent
+                                    spacing: Theme.space.xs
+
+                                    ShellTextField {
+                                        id: branchSearch
+
+                                        Layout.fillWidth: true
+                                        placeholderText: qsTr("Search or create a branch")
+                                        Accessible.name: qsTr("Search or create a branch")
+                                        onTextEdited: Shell.dispatch("workspace.branch.search", {
+                                            query: text
+                                        })
+                                        Keys.onReturnPressed: {
+                                            const name = text.trim();
+                                            if (name.length === 0) {
+                                                return;
+                                            }
+                                            const exact = contextStrip.ws.branches.find(ref => ref.name === name);
+                                            Shell.dispatch(exact ? "workspace.branch.select" : "workspace.branch.create", {
+                                                name: name
+                                            });
+                                            branchPicker.close();
+                                        }
+
+                                        background: Rectangle {
+                                            color: "transparent"
+
+                                            Rectangle {
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                anchors.bottom: parent.bottom
+                                                height: 1
+                                                color: Qt.alpha(composer.foreground, 0.08)
+                                            }
+                                        }
+                                    }
+
+                                    ListView {
+                                        id: branchList
+
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        Layout.preferredHeight: Math.max(contentHeight, 40)
+                                        clip: true
+                                        // Where the list was when it asked for more, so
+                                        // the longer list opens at the same place.
+                                        property real keptY: -1
+
+                                        boundsBehavior: Flickable.StopAtBounds
+                                        model: contextStrip.wsReady ? contextStrip.ws.branches : []
+                                        // The end of a list with more to it loads the next page.
+                                        onAtYEndChanged: {
+                                            if (atYEnd && count > 0 && contextStrip.wsReady && contextStrip.ws.branchesTotal > count) {
+                                                keptY = contentY;
+                                                Shell.dispatch("workspace.branch.more");
+                                            }
+                                        }
+                                        onCountChanged: {
+                                            if (keptY >= 0) {
+                                                contentY = keptY;
+                                                keptY = -1;
+                                            }
+                                        }
+
+                                        delegate: Rectangle {
+                                            id: branchRow
+
+                                            required property var modelData
+
+                                            readonly property string badge: modelData.current ? qsTr("current") : modelData.isDefault ? qsTr("default") : modelData.isRemote ? qsTr("remote") : ""
+
+                                            // Typing a ref's name and Enter picks it from the keyboard.
+                                            Accessible.role: Accessible.ListItem
+                                            Accessible.name: [branchRow.modelData.name, branchRow.badge].filter(part => part.length > 0).join(", ")
+                                            Accessible.onPressAction: {
+                                                Shell.dispatch("workspace.branch.select", {
+                                                    name: branchRow.modelData.name
+                                                });
+                                                branchPicker.close();
+                                            }
+                                            width: ListView.view.width
+                                            height: Theme.control.md
+                                            radius: Theme.radiusSm
+                                            color: rowHover.hovered ? composer.chipFill : "transparent"
+
+                                            HoverHandler {
+                                                id: rowHover
+                                            }
+
+                                            TapHandler {
+                                                onTapped: {
+                                                    Shell.dispatch("workspace.branch.select", {
+                                                        name: branchRow.modelData.name
+                                                    });
+                                                    branchPicker.close();
+                                                }
+                                            }
+
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.leftMargin: Theme.space.sm
+                                                anchors.rightMargin: Theme.space.sm
+                                                spacing: Theme.space.sm
+
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: branchRow.modelData.name
+                                                    color: branchRow.modelData.isRemote ? composer.muted : composer.foreground
+                                                    font.pixelSize: Theme.type.body.size
+                                                    elide: Text.ElideMiddle
+                                                }
+
+                                                Text {
+                                                    visible: branchRow.badge.length > 0
+                                                    text: branchRow.badge
+                                                    color: composer.muted
+                                                    font.pixelSize: Theme.type.caption.size
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: branchList.count === 0
+                                            text: contextStrip.wsReady && contextStrip.ws.branchesLoading ? qsTr("Loading refs…") : qsTr("No matching refs — Enter creates one")
+                                            color: composer.muted
+                                            font.pixelSize: Theme.type.meta.size
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        Layout.leftMargin: Theme.space.sm
+                                        Layout.bottomMargin: Theme.space.xs
+                                        visible: contextStrip.wsReady && contextStrip.ws.branchesTotal > contextStrip.ws.branches.length
+                                        text: contextStrip.wsReady ? qsTr("Showing %1 of %2 refs — type to narrow").arg(contextStrip.ws.branches.length).arg(contextStrip.ws.branchesTotal) : ""
+                                        wrapMode: Text.Wrap
+                                        color: composer.muted
+                                        font.pixelSize: Theme.type.caption.size
+                                    }
+
+                                    // Only when picking the base of a new thread's new
+                                    // worktree; the setting stays as it is.
+                                    ColumnLayout {
+                                        objectName: "startFromOriginRow"
+                                        visible: contextStrip.wsReady && contextStrip.ws.isDraft && contextStrip.ws.envMode === "worktree" && !contextStrip.ws.worktreePath
+                                        Layout.fillWidth: true
+                                        Layout.leftMargin: Theme.space.sm
+                                        Layout.rightMargin: Theme.space.xs
+                                        Layout.bottomMargin: Theme.space.xs
+                                        spacing: Theme.space.xxs
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: qsTr("Start from origin")
+                                                color: composer.foreground
+                                                font.pixelSize: Theme.type.meta.size
+                                            }
+
+                                            ShellSwitch {
+                                                id: startFromOrigin
+                                                objectName: "startFromOrigin"
+                                                Accessible.name: qsTr("Start from origin")
+                                                onToggled: Shell.dispatch("workspace.startFromOrigin.set", {
+                                                    enabled: checked
+                                                })
+
+                                                Binding on checked {
+                                                    value: contextStrip.wsReady && contextStrip.ws.startFromOrigin === true
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            objectName: "startFromOriginHelp"
+                                            Layout.fillWidth: true
+                                            Layout.rightMargin: Theme.space.xs
+                                            text: qsTr("Creates the worktree from the latest matching branch on origin instead of your local branch.")
+                                            color: composer.muted
+                                            wrapMode: Text.Wrap
+                                            font.pixelSize: Theme.type.caption.size
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1817,16 +1936,59 @@ Rectangle {
         }
     }
 
-    component Separator: Rectangle {
-        objectName: "toolbarSeparator"
-        implicitWidth: 1
-        implicitHeight: 16
-        Layout.alignment: Qt.AlignVCenter
-        Layout.leftMargin: 2
-        Layout.rightMargin: 2
-        // Keeps its width, so the wrap point holds, but a chunk that opens a
-        // line of the toolbar's Flow does not start it with a bar.
-        opacity: parent && parent.parent === toolbarControls && parent.x === 0 ? 0 : 1
-        color: Theme.palette.color("border", "#27272a")
+    // The toolbar's ghost chip, a button or (ChipPicker) a picker: one
+    // height, body type, the secondary ink at rest.
+    component Chip: ShellButton {
+        subtle: true
+        hoverFill: composer.chipFill
+        tint: checked || hovered || down ? composer.foreground : composer.chipLabel
+        iconSize: Theme.icon.md
+        font.weight: Theme.type.body.weight
+    }
+
+    component ChipPicker: ShellComboBox {
+        // Whether the model has this control at all; one it lacks never folds.
+        property bool present: true
+        // The labels the overflow menu offers.
+        readonly property var choices: model
+
+        hoverFill: composer.chipFill
+        labelColor: hovered || down || popup.visible ? composer.foreground : composer.chipLabel
+        font.weight: Theme.type.body.weight
+    }
+
+    Component {
+        id: overflowMenuComponent
+
+        ShellMenu {
+            id: overflowMenu
+            objectName: "composerOverflowMenu"
+
+            // Everything built for this menu, destroyed with it.
+            property var built: []
+
+            // A press on the chip is its own: it closes the menu, not reopens
+            // it. Not modal, so that press reaches the chip.
+            modal: false
+            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+            onClosed: {
+                if (composer.overflowMenu === overflowMenu) composer.overflowMenu = null;
+                for (const object of built) object.destroy();
+                built = [];
+                overflowMenu.destroy();
+            }
+        }
+    }
+
+    Component {
+        id: overflowSubmenuComponent
+
+        ShellMenu {}
+    }
+
+    Component {
+        id: overflowItemComponent
+
+        ShellMenuItem {}
     }
 }

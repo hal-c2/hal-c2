@@ -17,7 +17,7 @@ SettingsPage {
     readonly property var discovery: settings?.discovery ?? null
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
     readonly property bool projectScope: settings?.projectScope ?? false
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warningForeground", "#fbbf24")
     readonly property var mergeMethods: ["last", "merge", "squash", "rebase"]
     readonly property var writingModes: ["repo_conventions", "conventional_commits", "custom"]
@@ -41,16 +41,12 @@ SettingsPage {
     title: qsTr("Source Control")
 
     // Inline components cannot see `page`; the ones that need it are handed it.
-    component Heading: Label {
-        color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
-        font.weight: Font.DemiBold
-    }
+    component Heading: SettingsHeading {}
 
     component Caption: Label {
         Layout.fillWidth: true
-        color: Theme.palette.color("textMuted", "#a1a1aa")
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        color: Theme.palette.color("inkTertiary", "#a1a1aa")
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
@@ -69,19 +65,19 @@ SettingsPage {
         default property alias control: controls.data
 
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
 
             RowLayout {
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Label {
                     text: row.title
                     color: row.sourceControl.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.Medium
                 }
 
@@ -99,7 +95,7 @@ SettingsPage {
                 visible: row.mixed
                 text: qsTr("Mixed across selected machines")
                 color: row.sourceControl.warning
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
 
             Caption {
@@ -109,7 +105,7 @@ SettingsPage {
 
         RowLayout {
             id: controls
-            spacing: 8
+            spacing: Theme.space.sm
         }
     }
 
@@ -120,29 +116,34 @@ SettingsPage {
         required property var modelData
         objectName: "sourceControlTool:" + modelData.kind
         Layout.fillWidth: true
-        spacing: 6
+        spacing: Theme.space.sm
 
         // Git's fetch interval is behind a details toggle, opened by a search that targets it.
         property bool detailsOpen: false
         readonly property bool detailsShown: detailsOpen || tool.sourceControl.route?.target === "fetchInterval"
 
-        // The name and summary share a left column; the switch centres on both lines.
+        // The name and summary share a left column; the switch centres on
+        // the name's line, however many lines the summary takes.
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Theme.space.sm
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                Layout.alignment: Qt.AlignTop
+                spacing: Theme.space.sm
 
                 RowLayout {
+                    id: nameLine
+                    objectName: "nameLine"
+
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     Rectangle {
                         implicitWidth: 8
                         implicitHeight: 8
-                        radius: 4
+                        radius: Theme.radiusPill
                         color: tool.modelData.comingSoon ? tool.sourceControl.muted
                              : tool.modelData.enabled ? Theme.palette.color("success", "#22c55e") : tool.sourceControl.warning
                     }
@@ -150,7 +151,7 @@ SettingsPage {
                     Label {
                         text: tool.modelData.label
                         color: tool.sourceControl.foreground
-                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.pixelSize: Theme.type.body.size
                         font.weight: Font.Medium
                     }
 
@@ -159,7 +160,7 @@ SettingsPage {
                         visible: text.length > 0
                         text: tool.modelData.version
                         color: tool.sourceControl.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.family: "monospace"
                     }
 
@@ -168,7 +169,7 @@ SettingsPage {
                         visible: tool.modelData.comingSoon || tool.modelData.authWarning
                         text: tool.modelData.comingSoon ? qsTr("Coming Soon") : tool.modelData.authLabel
                         color: tool.sourceControl.warning
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         font.weight: Font.DemiBold
                     }
 
@@ -177,7 +178,7 @@ SettingsPage {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: Theme.space.xs
 
                     // Alone it takes the row and wraps; with an account it is one
                     // word ("Authenticated") and the account sits beside it.
@@ -215,7 +216,8 @@ SettingsPage {
 
             ShellButton {
                 objectName: "details"
-                Layout.alignment: Qt.AlignVCenter
+                Layout.alignment: Qt.AlignTop
+                Layout.topMargin: Math.round((nameLine.implicitHeight - implicitHeight) / 2)
                 visible: tool.modelData.git
                 subtle: true
                 iconName: tool.detailsShown ? "chevron-up" : "chevron-down"
@@ -227,7 +229,8 @@ SettingsPage {
 
             ShellSwitch {
                 objectName: "availability"
-                Layout.alignment: Qt.AlignVCenter
+                Layout.alignment: Qt.AlignTop
+                Layout.topMargin: Math.round((nameLine.implicitHeight - implicitHeight) / 2)
                 visible: !tool.modelData.comingSoon
                 enabled: false
                 checked: tool.modelData.enabled
@@ -324,13 +327,15 @@ SettingsPage {
     ColumnLayout {
         objectName: "sourceControlDiscovery"
         Layout.fillWidth: true
-        spacing: 12
+        spacing: Theme.space.md
 
         RowLayout {
             Layout.fillWidth: true
+            Layout.topMargin: Theme.space.lg
 
             Heading {
                 Layout.fillWidth: true
+                Layout.topMargin: 0
                 text: {
                     const status = page.discovery?.status;
                     const found = (page.discovery?.versionControl ?? []).length + (page.discovery?.providers ?? []).length;
@@ -382,7 +387,7 @@ SettingsPage {
         ColumnLayout {
             objectName: "discoveryNotice"
             Layout.fillWidth: true
-            spacing: 2
+            spacing: Theme.space.xxs
             visible: (page.discovery?.title ?? "").length > 0
 
             Label {
@@ -390,7 +395,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 text: page.discovery?.title ?? ""
                 color: page.foreground
-                font.pixelSize: Math.round(13 * Theme.fontScale)
+                font.pixelSize: Theme.type.body.size
                 wrapMode: Text.Wrap
             }
 
@@ -466,13 +471,13 @@ SettingsPage {
         text: forAll ? "" : (page.settings?.writingStyle?.instructions ?? "")
         wrapMode: TextEdit.Wrap
         color: page.foreground
-        font.pixelSize: Math.round(13 * Theme.fontScale)
+        font.pixelSize: Theme.type.body.size
         placeholderText: forAll ? qsTr("Write the instructions each selected environment should use.")
                                 : qsTr("Keep titles concise. Use short bullet points in descriptions.")
         placeholderTextColor: Theme.palette.color("placeholder", "#71717a")
         Accessible.name: qsTr("Custom source control writing instructions")
         background: Rectangle {
-            radius: Math.min(Theme.radius, 8)
+            radius: Theme.radiusMd
             color: Theme.palette.color("input", "#18181b")
             border.color: Theme.palette.color("border", "#27272a")
         }
@@ -533,7 +538,7 @@ SettingsPage {
             visible: (writer.model?.on ?? false) && !(writer.model?.canEnable ?? false)
             text: qsTr("No text generation providers available.")
             color: page.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
         }
 
         ShellComboBox {

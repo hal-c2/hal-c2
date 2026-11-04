@@ -2,8 +2,10 @@
 #   docs/user/thread-sidebar.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
 #   apps/desktop-qt/tests/tst_Sidebar.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (the two lines of a row)
 #   apps/desktop-qt/src/native/SidebarModel.cpp (the desktop's port of the grouping and order, offline rows)
-#   apps/desktop-qt/src/native/LayoutController.cpp (hiding the thread list)
+#   apps/desktop-qt/src/native/LayoutController.cpp (hiding the thread list, the rows' density)
+#   apps/desktop-qt/tests/native/features/ThreadListSteps.cpp
 #   apps/web/src/components/Sidebar.tsx
 #   apps/web/src/components/Sidebar.logic.ts
 #   apps/web/src/hooks/useSidebarProjectGroups.ts
@@ -108,6 +110,21 @@ Feature: The thread list
     When the user opens "Settled 65"
     Then "Settled 65" is among the settled threads
     And 51 settled threads are shown
+
+  # Rows are one line in a window under 1100 and the list is a rail under 860
+  # (navigation/layout.feature): crossing either keeps the open thread's row in view
+  # rather than the old scroll offset, which points at other rows once they change height.
+  @desktop
+  Scenario: The open thread stays in view when the rows change height
+    Given there are 80 active threads
+    And the window is 1280 wide
+    And the user opens "Active 50"
+    And the thread list is scrolled to "Active 50"
+    When the window is 1000 wide
+    Then the thread list shows "Active 50"
+    When the window is 800 wide
+    And the window is 1280 wide
+    Then the thread list shows "Active 50"
 
   # A plugin settles its own threads as it finishes them, such as each code review,
   # and those would bury the user's own. They stay out of the shelf, before it pages
@@ -624,12 +641,30 @@ Feature: The thread list
     When the user chooses "Delete anyway" and confirms
     Then "shop" and its 3 threads are removed
 
+  # The title leads; the project and its branch sit under it, the branch losing its middle when
+  # long. The TUI still leads with the project (apps/tui/src/host/sidebarState.ts).
+  @desktop @mobile @backlog-mobile @tui @backlog-tui
+  Scenario: A thread row reads its title first, then its project and branch
+    Given the thread "Fix the cart" in "shop" works on the branch "feature/cart"
+    When the user looks at its row in the thread list
+    Then the row's first line reads "Fix the cart"
+    And its second line reads "shop · feature/cart"
+
   @desktop @backlog-desktop @mobile @backlog-mobile
   Scenario: A thread row shows its project's icon
     Given the projects "shop" and "ops" have icons
     When the user looks at the thread list with every project in scope
     Then each slim and card row shows the icon of its project
     And a project without an icon shows its monogram
+
+  # Proved by tst_SidebarThreadRow.qml (test_restingRowGivesTheTitleTheSlot).
+  @desktop @backlog-desktop
+  Scenario: A resting row gives its title the status slot's room
+    Given a thread with a long title that was last active a minute ago
+    When the user looks at its row in the thread list
+    Then the title runs up to the row's age
+    When the user points at the row
+    Then the title shortens to make room for the row's actions
 
   @desktop @backlog-desktop
   Scenario: The thread list announces only the threads it shows
@@ -649,6 +684,15 @@ Feature: The thread list
     Given a thread of "qml-ghostty" stopped on a usage limit
     When the user opens the scope menu
     Then the entry for "qml-ghostty" says "a thread hit a usage limit"
+
+  # Proved by tst_Sidebar.qml (test_scopeMenuShowsEveryProjectsMark).
+  @desktop @backlog-desktop
+  Scenario: The scope menu shows each project's icon or initial
+    Given the project "shop" has an icon and "t3code-tracker-plugin" has none
+    When the user opens the scope menu
+    Then the entry for "shop" shows its icon
+    And the entry for "t3code-tracker-plugin" shows the initial "T"
+    And the hint "a thread failed" reads whole
 
   @desktop @backlog-desktop
   Scenario: A thread opened from search is brought into view in the sidebar

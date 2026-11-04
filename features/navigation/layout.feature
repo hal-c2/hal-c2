@@ -91,17 +91,55 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the window becomes narrower than the sidebar allows
       Then the sidebar shrinks to fit
 
-    # The web's off-canvas sidebar (AppSidebarLayout.tsx): showing it over the thread is not
-    # remembered, so a window with room again has the sidebar it had.
+    # The web's off-canvas sidebar (AppSidebarLayout.tsx), kept as a rail of icons beside the
+    # thread whose expand button is the way back to the full list: opening it over the thread is
+    # not remembered, so a window with room again has the sidebar it had.
     @desktop
     Scenario: A window too narrow for the sidebar and the thread shows the sidebar over the thread
       Given the sidebar is shown
+      When the window becomes too narrow for the sidebar beside the thread
+      Then the sidebar is a rail of icons beside the thread
+      When the user asks to show the sidebar
+      Then the sidebar opens over the thread at its minimum width
+      When the user hides the thread list
+      Then the sidebar is a rail of icons beside the thread
+      When the window becomes wide again
+      Then the sidebar is back beside the thread
+
+    @desktop
+    Scenario: A hidden sidebar stays hidden in a narrow window
+      Given the sidebar is hidden
       When the window becomes too narrow for the sidebar beside the thread
       Then the sidebar is hidden
       When the user asks to show the sidebar
       Then the sidebar opens over the thread at its minimum width
       When the window becomes wide again
-      Then the sidebar is back beside the thread
+      Then the sidebar is hidden
+
+    # Two-line rows need the room; a narrower window keeps one line a thread, and one too narrow
+    # for the list beside the thread keeps only the rail.
+    @desktop
+    Scenario Outline: The sidebar's rows follow the window's width
+      Given the sidebar is shown
+      When the window is <width> wide
+      Then the sidebar draws <rows>
+
+      Examples:
+        | width | rows            |
+        | 1280  | two-line rows   |
+        | 1100  | two-line rows   |
+        | 1000  | one-line rows   |
+        | 860   | one-line rows   |
+        | 800   | a rail of icons |
+
+    # A monospace face sets fewer characters in the same width: 296 lets a resting row show 24
+    # characters of its title before it elides.
+    @desktop
+    Scenario: A monospace interface font widens the sidebar
+      When the interface font is monospaced
+      Then the sidebar is 296 wide
+      When the interface font is proportional
+      Then the sidebar is 256 wide
 
     @desktop
     Scenario: Resetting the sidebar width
@@ -134,7 +172,7 @@ Feature: Layout: sidebar, header, right panel and drawer
         | sidebar's edge     |
         | right panel's edge |
 
-    @backlog @desktop
+    @desktop
     Scenario: Resizing the window does not hide or show the sidebar
       Given the sidebar is open
       When the user makes the window narrow and then wide again
@@ -180,20 +218,36 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the whole title is shown
       And a shortened project name shows whole on hover too
 
+    # The header gives up what the git action and the panel toggles need, in
+    # one order: the project segment of the breadcrumb, whole; then the
+    # labels; then the run and open pills, which fold into one menu (the
+    # thread details offer them too). None of them cuts the thread title
+    # short: a title that needs the room takes it first.
     @desktop
-    Scenario: A narrow header drops action labels
-      When the window is narrower than 720 pixels
+    Scenario: The header gives up its project, labels, then pills, only when they do not fit
+      Given the thread's project has the actions "Dev" and "Test"
+      And the environment has the editors "Zed" and "VS Code"
+      When the header is as wide as a 900 pixel window leaves it
+      Then the header actions show with their labels
+      Given a long thread title
+      When the header is as wide as a 900 pixel window leaves it
+      Then the header leaves the project's name out
+      And the header actions show without their labels
+      And the start of the title still shows
+      When the window is wide
+      Then the header shows the project's name
+      And the header actions show with their labels
+      When the header has no room for its actions' labels
       Then the header actions show without their labels
+      When the header has no room for its actions as icons
+      Then the header's "More actions" menu runs "Dev" and opens in "Zed"
 
-    # Run and Open are also in the thread details; the panel toggles and the
-    # breadcrumb are what the header cannot lose.
     # Proved by tst_Workspace.qml (test_tightHeaderNeverOverlaps), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop
-    Scenario: A tight header drops actions before anything overlaps
+    Scenario: A tight header never overlaps
       Given the thread's project has an action and an editor to open it in
-      When the header has under 520 pixels for its items
-      Then the run and open actions are not in the header
-      And the breadcrumb, the git action and the panel toggles do not overlap
+      When the header has no room for its actions as icons
+      Then the breadcrumb, the git action and the panel toggles do not overlap
       And nothing of the header is drawn over the panel beside it
       When the header has room again
       Then the run and open actions are back
@@ -332,7 +386,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user drags the right panel's edge far to the left or far to the right
       Then the right panel is never narrower than 360 pixels
       And it is never wider than 70 percent of the window
-      And the thread beside it keeps at least 360 pixels
+      And the thread beside it keeps at least 480 pixels
 
     @backlog @desktop
     Scenario: Each thread keeps its own right panel width
@@ -356,7 +410,7 @@ Feature: Layout: sidebar, header, right panel and drawer
     Scenario: A docked right panel leaves the thread its room
       Given the window is 1400 pixels wide
       And the right panel and the thread details are open
-      Then the thread is at least 360 pixels wide
+      Then the thread is at least 480 pixels wide
       And the right panel is narrower than the width it was given
 
     # The web's sheet (apps/web/src/rightPanelLayout.ts): at 980 pixels and
@@ -373,6 +427,20 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user presses Escape
       Then the right panel is closed
 
+    # The timeline's floor is the layout's (LayoutController's
+    # contentMinimumWidth), the room the thread list leaves it too.
+    # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
+    @desktop @backlog-desktop
+    Scenario: A right panel that would leave the thread under 480 pixels opens over it
+      Given the window is 1200 pixels wide
+      And the thread details are open beside the thread
+      When the user opens the right panel
+      Then it is shown as a sheet over the thread, under the header
+      And the thread keeps at least 480 pixels
+      And the thread details stay beside it, uncovered and usable
+      When the user clicks the thread beside the right panel
+      Then the right panel is closed
+
     # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop
     Scenario: A click beside the right panel's sheet closes it
@@ -384,7 +452,7 @@ Feature: Layout: sidebar, header, right panel and drawer
     # Proved by tst_ShellExamples.cpp (defaultShellGivesWayToTheThread), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop
     Scenario: In a narrow window the thread details open over the thread
-      Given the thread would be under 360 pixels wide beside the thread details
+      Given the thread would be under 480 pixels wide beside the thread details
       When the user opens the thread details
       Then they are shown over the thread, under the header
       And the thread keeps the full width

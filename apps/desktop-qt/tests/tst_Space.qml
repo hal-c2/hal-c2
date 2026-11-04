@@ -1341,8 +1341,9 @@ Item {
         function test_an_empty_space_says_so_and_offers_a_first_page() {
             const view = root.research({ pages: [], blocks: [], page: {} });
             verify(!findChild(view, "spacePage").visible);
-            compare(findChild(view, "spaceEmptyText").text, "Research has no pages yet.");
-            mouseClick(findChild(view, "spaceEmptyNewPage"));
+            const empty = findChild(view, "spaceEmpty");
+            compare(empty.title, "Research has no pages yet");
+            mouseClick(findChild(empty, "emptyStateAction"));
             const field = findChild(view, "spaceNameField");
             verify(field.visible);
             keyClick("R");
@@ -1368,8 +1369,10 @@ Item {
 
         function test_an_unreachable_mc_is_said_rather_than_an_empty_space() {
             const view = root.research({ status: "unreachable", pages: [], blocks: [], page: {} });
-            compare(findChild(view, "spaceEmptyText").text, "The MC cannot be reached, so its Spaces cannot be shown.");
-            verify(!findChild(view, "spaceEmptyNewPage").visible);
+            const empty = findChild(view, "spaceEmpty");
+            compare(empty.status, "error");
+            compare(empty.description, "The MC cannot be reached. Its Spaces show again once it answers.");
+            verify(!findChild(empty, "emptyStateAction").visible);
         }
 
         function test_renaming_the_page_writes_its_new_title() {
@@ -1721,6 +1724,40 @@ Item {
             const viewers = findChild(view, "spaceViewers");
             verify(viewers.visible);
             compare(viewers.text, "Also here: HAL-C2 on SM-F741B, the agent of “Work”");
+        }
+
+        // features/space/pages.feature: the Space picker is on the header line a
+        // thread's header shares, its hairline level with the thread's, and the
+        // view tells the layout it draws that line (no band above it).
+        function test_the_space_header_is_on_the_thread_headers_line() {
+            const view = root.research({});
+            verify(view.titleBar, "the view draws its own header line");
+            const header = findChild(view, "spaceHeader");
+            const line = findChild(view, "spaceHeaderLine");
+            tryVerify(() => header.height > 0);
+            compare(header.height, Theme.headerHeight);
+            compare(header.mapToItem(view, 0, 0).y, 0);
+            compare(line.mapToItem(view, 0, 0).y, Theme.headerHeight);
+            const picker = findChild(view, "spacePicker");
+            const pickerCentre = picker.mapToItem(view, 0, picker.height / 2).y;
+            verify(Math.abs(pickerCentre - Theme.headerHeight / 2) <= 1, "the picker centres on the line: " + pickerCentre);
+            verify(findChild(view, "spacePageTree").mapToItem(view, 0, 0).y > Theme.headerHeight,
+                   "the pages start under the line");
+        }
+
+        // features/space/pages.feature: a project list taller than its room
+        // shows the thin scrollbar, and a short one none.
+        function test_an_overflowing_project_list_shows_a_scrollbar() {
+            const rows = [{ id: "project:shop", kind: "project", projectId: "shop", path: "", name: "shop", depth: 0, expanded: true, pageId: "" }];
+            for (let n = 0; n < 60; ++n)
+                rows.push({ id: "file:shop:f" + n + ".md", kind: "file", projectId: "shop", path: "f" + n + ".md", name: "f" + n + ".md", depth: 1, expanded: false, pageId: "" });
+            const view = root.research({ projects: rows });
+            const list = findChild(view, "spaceProjects");
+            tryVerify(() => list.height > 0 && list.contentHeight > list.height);
+            tryVerify(() => findChild(list, "scrollThumb").visible);
+            Spaces.load(Object.assign({}, { projects: rows.slice(0, 1) }));
+            tryVerify(() => list.contentHeight > 0 && list.contentHeight <= list.height);
+            verify(!findChild(list, "scrollThumb").visible);
         }
     }
 }

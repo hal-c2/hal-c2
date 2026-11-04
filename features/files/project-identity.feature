@@ -185,6 +185,14 @@ Feature: Project and environment identity
       When the user resets the icon of "shop"
       Then "shop" shows its automatic icon
 
+    # The MC signs an icon's link for half an hour or more and refuses it once it runs out.
+    @desktop
+    Scenario: A project's image icon keeps showing past the life of its link
+      Given the user set the icon of "shop" to the image file "assets/logo.png"
+      And "shop" shows the image file "assets/logo.png" everywhere it is listed
+      When an hour passes
+      Then "shop" shows the image file "assets/logo.png" from a new address
+
     @desktop
     Scenario Outline: Monograms take one or two letters or numbers
       When the user types "<text>" as the monogram of "shop"

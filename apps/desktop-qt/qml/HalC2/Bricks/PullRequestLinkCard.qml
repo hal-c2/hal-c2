@@ -50,11 +50,7 @@ ToolTip {
     }
     width: Math.min(320, contentItem.implicitWidth + leftPadding + rightPadding)
     padding: 12
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: 8
-    }
+    background: ShellPopoverSurface {}
     contentItem: ColumnLayout {
         spacing: 4
 
@@ -64,37 +60,37 @@ ToolTip {
             text: card.address
             color: card.muted
             font.family: card.uiFamily
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             wrapMode: Text.WrapAnywhere
         }
         RowLayout {
             visible: card.status === "ready"
-            spacing: 6
+            spacing: Theme.space.sm
             Label {
                 Layout.maximumWidth: 180
                 text: card.preview.repository ?? ""
                 color: card.muted
                 elide: Text.ElideRight
                 font.family: card.uiFamily
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
             Label {
                 text: "#" + (card.preview.number ?? "")
                 color: card.muted
                 font.family: card.uiFamily
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
             Label {
                 text: "·"
                 color: card.muted
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 Accessible.ignored: true
             }
             Label {
                 text: card.preview.stateLabel ?? ""
                 color: card.stateColor(card.preview.state ?? "")
                 font.family: card.uiFamily
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
             }
         }
         Label {
@@ -104,12 +100,12 @@ ToolTip {
             color: card.foreground
             wrapMode: Text.Wrap
             font.family: card.uiFamily
-            font.pixelSize: Math.round(14 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             font.weight: Font.Medium
         }
         RowLayout {
             visible: card.status === "ready"
-            spacing: 6
+            spacing: Theme.space.sm
             Layout.topMargin: 4
             Label {
                 Layout.maximumWidth: 180
@@ -117,19 +113,19 @@ ToolTip {
                 color: card.muted
                 elide: Text.ElideRight
                 font.family: card.uiFamily
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
             Label {
                 text: "·"
                 color: card.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
                 Accessible.ignored: true
             }
             Label {
                 text: qsTr("opened %1").arg(card.preview.opened ?? "")
                 color: card.muted
                 font.family: card.uiFamily
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                font.pixelSize: Theme.type.meta.size
             }
         }
     }

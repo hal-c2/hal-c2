@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/settingsPages.js" as Pages
 
 // The Providers settings section (ProviderSettingsController publishes
 // `providerSettings`): one environment's providers, how each stands, turning
@@ -45,10 +46,11 @@ Rectangle {
         }
     }
     // The session may only view this environment: nothing on it can be changed.
-    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
-    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color foreground: Theme.palette.color("ink", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("inkTertiary", "#a1a1aa")
     readonly property color warning: Theme.palette.color("warningForeground", "#f59e0b")
     readonly property color danger: Theme.palette.color("errorForeground", "#f87171")
+    readonly property color line: Theme.palette.color("border", "#27272a")
 
     // A redacted placeholder: the same length and
     // separators, other characters drawn from a hash of the value, so an
@@ -116,7 +118,7 @@ Rectangle {
     component Note: Label {
         Layout.fillWidth: true
         color: page.muted
-        font.pixelSize: Math.round(12 * Theme.fontScale)
+        font.pixelSize: Theme.type.meta.size
         wrapMode: Text.Wrap
     }
 
@@ -130,12 +132,12 @@ Rectangle {
 
         objectName: "field_" + field.key
         Layout.fillWidth: true
-        spacing: 2
+        spacing: Theme.space.xxs
 
         Label {
             text: configField.field.label
             color: page.foreground
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+            font.pixelSize: Theme.type.meta.size
             font.weight: Font.Medium
         }
 
@@ -177,12 +179,12 @@ Rectangle {
         signal commit(string color)
 
         objectName: "accent"
-        spacing: 6
+        spacing: Theme.space.sm
 
         Rectangle {
             implicitWidth: 18
             implicitHeight: 18
-            radius: 9
+            radius: Theme.radiusPill
             color: accentField.color.length > 0 ? accentField.color : "transparent"
             border.color: Theme.palette.color("border", "#27272a")
         }
@@ -213,7 +215,7 @@ Rectangle {
 
         objectName: "wizard"
         Layout.fillWidth: true
-        implicitHeight: wizardColumn.implicitHeight + 24
+        implicitHeight: wizardColumn.implicitHeight + 2 * Theme.space.md
 
         function send(action, payload) {
             Shell.dispatch("providerSettings.wizard" + action, payload || {});
@@ -231,20 +233,20 @@ Rectangle {
         ColumnLayout {
             id: wizardColumn
 
-            x: 12
-            y: 12
-            width: parent.width - 24
-            spacing: 8
+            x: Theme.space.md
+            y: Theme.space.md
+            width: parent.width - 2 * Theme.space.md
+            spacing: Theme.space.sm
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Label {
                     Layout.fillWidth: true
                     text: qsTr("Add provider instance")
                     color: page.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.pixelSize: Theme.type.body.size
                     font.weight: Font.DemiBold
                 }
 
@@ -256,7 +258,7 @@ Rectangle {
                         required property int index
                         text: (index + 1) + ". " + modelData
                         color: index === wizardCard.wizard.step ? page.foreground : page.muted
-                        font.pixelSize: Math.round(11 * Theme.fontScale)
+                        font.pixelSize: Theme.type.caption.size
                         font.weight: index === wizardCard.wizard.step ? Font.DemiBold : Font.Normal
                     }
                 }
@@ -266,7 +268,7 @@ Rectangle {
                 objectName: "drivers"
                 Layout.fillWidth: true
                 visible: wizardCard.wizard.step === 0
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Repeater {
                     model: wizardCard.wizard.drivers
@@ -295,17 +297,17 @@ Rectangle {
                 objectName: "registry"
                 Layout.fillWidth: true
                 visible: wizardCard.wizard.step === 0
-                spacing: 6
+                spacing: Theme.space.sm
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     Label {
                         Layout.fillWidth: true
                         text: qsTr("Or choose from ACP Registry")
                         color: page.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         font.weight: Font.Medium
                     }
 
@@ -349,12 +351,12 @@ Rectangle {
                 ColumnLayout {
                     objectName: "registryEmpty"
                     visible: !registryPane.registry.manual && registryPane.registry.agents !== null && registryPane.registry.agents.length === 0
-                    spacing: 2
+                    spacing: Theme.space.xxs
 
                     Label {
                         text: qsTr("No compatible agents found")
                         color: page.foreground
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                     }
 
                     Note {
@@ -371,7 +373,7 @@ Rectangle {
                         required property var modelData
                         objectName: "registryAgent_" + modelData.id
                         Layout.fillWidth: true
-                        spacing: 8
+                        spacing: Theme.space.sm
 
                         Image {
                             Layout.preferredWidth: 20
@@ -393,7 +395,7 @@ Rectangle {
                                 Layout.fillWidth: true
                                 text: agentRow.modelData.name
                                 color: page.foreground
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                                 elide: Text.ElideRight
                             }
 
@@ -435,12 +437,12 @@ Rectangle {
             ColumnLayout {
                 Layout.fillWidth: true
                 visible: wizardCard.wizard.step === 1
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Label {
                     text: qsTr("Label")
                     color: page.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellTextField {
@@ -466,7 +468,7 @@ Rectangle {
                 Label {
                     text: qsTr("Instance ID")
                     color: page.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellTextField {
@@ -494,7 +496,7 @@ Rectangle {
             ColumnLayout {
                 Layout.fillWidth: true
                 visible: wizardCard.wizard.step === 2
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Note {
                     visible: wizardCard.wizard.fields.length === 0
@@ -514,7 +516,7 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ShellButton {
                     subtle: true
@@ -554,7 +556,8 @@ Rectangle {
         }
     }
 
-    component ProviderCard: ShellCard {
+    // One provider on the page's list: a row under a hairline.
+    component ProviderCard: Item {
         id: card
 
         required property var modelData
@@ -566,38 +569,45 @@ Rectangle {
 
         objectName: "provider_" + provider.instanceId
         Layout.fillWidth: true
-        implicitHeight: cardColumn.implicitHeight + 24
+        // The column's spacing finishes the gap under the row, so the space
+        // either side of a hairline matches.
+        implicitHeight: cardColumn.implicitHeight + Theme.space.md + Theme.space.xs
+
+        Rectangle {
+            width: parent.width
+            height: 1
+            color: page.line
+        }
 
         ColumnLayout {
             id: cardColumn
 
-            x: 12
-            y: 12
-            width: parent.width - 24
-            spacing: 6
+            y: Theme.space.md
+            width: parent.width
+            spacing: Theme.space.sm
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 ProviderIcon {
                     driverKind: card.provider.driver
-                    size: 18
+                    size: Theme.icon.lg
                 }
 
                 Rectangle {
                     visible: card.provider.accentColor.length > 0
                     implicitWidth: 8
                     implicitHeight: 8
-                    radius: 4
+                    radius: Theme.radiusPill
                     color: card.provider.accentColor.length > 0 ? card.provider.accentColor : "transparent"
                 }
 
                 Label {
                     text: card.provider.name
                     color: page.foreground
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
-                    font.weight: Font.DemiBold
+                    font.pixelSize: Theme.type.body.size
+                    font.weight: Font.Medium
                     elide: Text.ElideRight
                 }
 
@@ -605,7 +615,7 @@ Rectangle {
                     visible: card.provider.version.length > 0
                     text: card.provider.version
                     color: page.muted
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                     font.family: "monospace"
                 }
 
@@ -711,7 +721,7 @@ Rectangle {
                         // for a window that is not laid out yet.
                         readonly property real contentRoom: Math.max(24, (windowHeight - 16) / scale - topPadding - bottomPadding)
                         width: windowWidth > 0 ? Math.max(24, Math.min(320, (windowWidth - 16) / scale)) : 320
-                        padding: 12
+                        padding: Theme.space.md
                         // Focus is what lets Escape close it here instead of leaving
                         // Settings. Pressing the icon again closes it through the
                         // checkable button's onToggled, not a click handler.
@@ -739,11 +749,7 @@ Rectangle {
                         // has already moved the focus there.
                         onAboutToHide: if (activeFocus && !movedClose && advisoryButton.visible) advisoryButton.forceActiveFocus(Qt.PopupFocusReason)
 
-                        background: Rectangle {
-                            color: Theme.palette.color("surfaceOverlay", "#18181b")
-                            border.color: Qt.alpha(page.foreground, 0.1)
-                            radius: 10
-                        }
+                        background: ShellPopoverSurface {}
 
                         contentItem: Flickable {
                             id: advisoryScroll
@@ -772,13 +778,13 @@ Rectangle {
                                 id: advisoryColumn
 
                                 width: advisoryScroll.width
-                                spacing: 6
+                                spacing: Theme.space.sm
 
                                 Label {
                                     Layout.fillWidth: true
                                     text: card.advisory ? card.advisory.title : ""
                                     color: card.advisory && card.advisory.strong ? page.warning : page.foreground
-                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.pixelSize: Theme.type.meta.size
                                     font.weight: Font.DemiBold
                                     wrapMode: Text.Wrap
                                 }
@@ -789,7 +795,7 @@ Rectangle {
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    spacing: 8
+                                    spacing: Theme.space.sm
 
                                     ShellButton {
                                         id: updateButton
@@ -848,8 +854,8 @@ Rectangle {
                 objectName: "headline"
                 Layout.fillWidth: true
                 text: card.provider.headline
-                color: card.provider.status === "error" || card.provider.status === "warning" ? page.warning : page.foreground
-                font.pixelSize: Math.round(12 * Theme.fontScale)
+                color: card.provider.status === "error" || card.provider.status === "warning" ? page.warning : page.muted
+                font.pixelSize: Theme.type.meta.size
                 elide: Text.ElideRight
             }
 
@@ -869,7 +875,7 @@ Rectangle {
                 // Tall enough to hit, though the text is small.
                 implicitHeight: Math.max(24, implicitContentHeight)
                 text: card.revealed ? card.provider.email : page.redacted(card.provider.email)
-                font.pixelSize: Math.round(11 * Theme.fontScale)
+                font.pixelSize: Theme.type.caption.size
                 font.family: "monospace"
                 Accessible.name: qsTr("Toggle account email visibility")
                 ToolTip.visible: hovered
@@ -884,7 +890,7 @@ Rectangle {
                 }
                 background: Rectangle {
                     color: "transparent"
-                    radius: 4
+                    radius: Theme.radiusXs
                     border.width: email.visualFocus ? 1 : 0
                     border.color: Theme.palette.color("focus", "#3b82f6")
                 }
@@ -898,7 +904,7 @@ Rectangle {
                 readonly property bool busy: !!(runtime && runtime.busy)
                 Layout.fillWidth: true
                 visible: runtime !== null
-                spacing: 4
+                spacing: Theme.space.xs
 
                 Note {
                     objectName: "runtimeStatus"
@@ -910,13 +916,13 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 4
                     visible: !!(runtimeSection.runtime && runtimeSection.runtime.progress >= 0)
-                    radius: 2
+                    radius: Theme.radiusPill
                     color: Theme.palette.color("border", "#27272a")
 
                     Rectangle {
                         width: parent.width * (runtimeSection.runtime ? Math.max(0, runtimeSection.runtime.progress) : 0)
                         height: parent.height
-                        radius: 2
+                        radius: Theme.radiusPill
                         color: page.foreground
                     }
                 }
@@ -933,7 +939,7 @@ Rectangle {
                 }
 
                 RowLayout {
-                    spacing: 6
+                    spacing: Theme.space.sm
 
                     ShellButton {
                         objectName: "runtimeInstall"
@@ -966,7 +972,7 @@ Rectangle {
                 objectName: "urlAuth"
                 Layout.fillWidth: true
                 visible: !!card.provider.urlAuth
-                spacing: 4
+                spacing: Theme.space.xs
 
                 Note {
                     visible: text.length > 0
@@ -976,7 +982,7 @@ Rectangle {
                 Note {
                     text: card.provider.urlAuth ? card.provider.urlAuth.url : ""
                     font.family: "monospace"
-                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                    font.pixelSize: Theme.type.caption.size
                     wrapMode: Text.WrapAnywhere
                 }
 
@@ -992,7 +998,7 @@ Rectangle {
                 objectName: "account"
                 Layout.fillWidth: true
                 visible: card.account !== null
-                spacing: 4
+                spacing: Theme.space.xs
 
                 Note {
                     text: card.account ? card.account.description : ""
@@ -1011,7 +1017,7 @@ Rectangle {
                 }
 
                 RowLayout {
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     ShellComboBox {
                         id: method
@@ -1093,7 +1099,7 @@ Rectangle {
                     property var values: ({})
                     Layout.fillWidth: true
                     visible: fields.length > 0
-                    spacing: 4
+                    spacing: Theme.space.xs
 
                     Repeater {
                         model: credentials.fields
@@ -1103,12 +1109,12 @@ Rectangle {
 
                             required property var modelData
                             Layout.fillWidth: true
-                            spacing: 2
+                            spacing: Theme.space.xxs
 
                             Label {
                                 text: credentialField.modelData.label || credentialField.modelData.name
                                 color: page.foreground
-                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.pixelSize: Theme.type.meta.size
                             }
 
                             ShellTextField {
@@ -1140,7 +1146,7 @@ Rectangle {
                     objectName: "callback"
                     Layout.fillWidth: true
                     visible: !!(card.account && card.account.acceptsCallback)
-                    spacing: 4
+                    spacing: Theme.space.xs
 
                     Note {
                         text: qsTr("If the final localhost page does not load, paste its full URL here.")
@@ -1148,7 +1154,7 @@ Rectangle {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ShellTextField {
                             id: callbackUrl
@@ -1177,14 +1183,14 @@ Rectangle {
             ColumnLayout {
                 objectName: "editor"
                 Layout.fillWidth: true
-                Layout.topMargin: 6
+                Layout.topMargin: Theme.space.sm
                 visible: card.configuring && card.provider.editable
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Label {
                     text: qsTr("Name")
                     color: page.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     font.weight: Font.Medium
                 }
 
@@ -1222,18 +1228,18 @@ Rectangle {
                         required property var modelData
                         objectName: "secret_" + secretRow.modelData.name
                         Layout.fillWidth: true
-                        spacing: 2
+                        spacing: Theme.space.xxs
 
                         Label {
                             text: secretRow.modelData.label
                             color: page.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.pixelSize: Theme.type.meta.size
                             font.weight: Font.Medium
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 6
+                            spacing: Theme.space.sm
 
                             ShellTextField {
                                 Layout.fillWidth: true
@@ -1282,7 +1288,7 @@ Rectangle {
                 Label {
                     text: qsTr("Environment variables")
                     color: page.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                     font.weight: Font.Medium
                 }
 
@@ -1296,7 +1302,7 @@ Rectangle {
                         required property int index
                         objectName: "variable_" + index
                         Layout.fillWidth: true
-                        spacing: 6
+                        spacing: Theme.space.sm
 
                         ShellTextField {
                             objectName: "variableName"
@@ -1350,7 +1356,7 @@ Rectangle {
                 }
 
                 RowLayout {
-                    spacing: 8
+                    spacing: Theme.space.sm
 
                     ShellButton {
                         objectName: "delete"
@@ -1378,25 +1384,21 @@ Rectangle {
 
         objectName: "providersScroll"
         anchors.fill: parent
-        contentHeight: column.implicitHeight + 48
+        contentHeight: column.implicitHeight + 2 * Theme.space.xl
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
         ColumnLayout {
             id: column
 
-            x: 24
-            y: 24
-            width: Math.min(720, parent.width - 48)
-            spacing: 8
+            x: Pages.columnX(pageScroll.width, Theme.space.xl)
+            y: Theme.space.xl
+            width: Pages.columnWidth(pageScroll.width, Theme.space.xl)
+            spacing: Theme.space.sm
 
-            RowLayout {
+            SettingsBreadcrumb {
                 Layout.fillWidth: true
-
-                SettingsBreadcrumb {
-                    Layout.fillWidth: true
-                    section: qsTr("Providers")
-                }
+                section: qsTr("Providers")
 
                 ShellButton {
                     objectName: "addInstance"
@@ -1411,7 +1413,7 @@ Rectangle {
                     visible: text.length > 0
                     text: page.checkedLabel
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
 
                 ShellButton {
@@ -1427,7 +1429,7 @@ Rectangle {
                 objectName: "environments"
                 Layout.fillWidth: true
                 visible: page.environments.length > 1
-                spacing: 6
+                spacing: Theme.space.sm
 
                 Repeater {
                     model: page.environments
@@ -1444,26 +1446,16 @@ Rectangle {
                 }
             }
 
-            // Why nothing is listed.
-            ColumnLayout {
+            // Why nothing is listed: no device, offline, loading or empty.
+            ShellEmptyState {
                 objectName: "placeholder"
-                Layout.fillWidth: true
-                Layout.topMargin: 12
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: Theme.space.xxl
                 visible: page.model !== null && page.model.title.length > 0
-                spacing: 4
-
-                Label {
-                    Layout.fillWidth: true
-                    text: page.model ? page.model.title : ""
-                    color: page.foreground
-                    font.pixelSize: Math.round(14 * Theme.fontScale)
-                    wrapMode: Text.Wrap
-                    font.weight: Font.DemiBold
-                }
-
-                Note {
-                    text: page.model ? page.model.description : ""
-                }
+                status: !page.model ? "empty" : page.model.status === "loading" ? "loading" : page.model.status === "offline" ? "error" : "empty"
+                iconName: "bot"
+                title: page.model ? page.model.title : ""
+                description: page.model ? page.model.description : ""
             }
 
             Loader {
@@ -1476,6 +1468,8 @@ Rectangle {
                 }
             }
 
+            // Every provider on one list, each on its own hairline. Straight in the
+            // page's column, so a card that grows lays the page out in one pass.
             Repeater {
                 model: page.providers
 
@@ -1489,21 +1483,21 @@ Rectangle {
                 objectName: "healthInterval"
                 readonly property var health: page.model ? (page.model.health ?? null) : null
                 Layout.fillWidth: true
-                Layout.topMargin: 12
+                Layout.topMargin: Theme.space.md
                 visible: health !== null
-                spacing: 12
+                spacing: Theme.space.md
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 2
+                    spacing: Theme.space.xxs
 
                     RowLayout {
-                        spacing: 4
+                        spacing: Theme.space.xs
 
                         Label {
                             text: qsTr("Provider health check interval")
                             color: page.foreground
-                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                            font.pixelSize: Theme.type.body.size
                             font.weight: Font.Medium
                         }
 
@@ -1512,9 +1506,9 @@ Rectangle {
                             visible: healthRow.health !== null && healthRow.health.seconds !== healthRow.health.defaultSeconds
                             subtle: true
                             iconName: "undo-2"
-                            iconSize: 12
-                            implicitWidth: 20
-                            implicitHeight: 20
+                            iconSize: Theme.icon.sm
+                            implicitWidth: Theme.control.sm
+                            implicitHeight: Theme.control.sm
                             Accessible.name: qsTr("Reset provider health check interval to default")
                             onClicked: Shell.dispatch("providerSettings.resetHealthInterval")
                         }
@@ -1541,7 +1535,7 @@ Rectangle {
                 Label {
                     text: qsTr("seconds")
                     color: page.muted
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    font.pixelSize: Theme.type.meta.size
                 }
             }
 
@@ -1552,19 +1546,16 @@ Rectangle {
                 objectName: "hubs"
                 readonly property var hubs: page.model ? (page.model.hubs ?? null) : null
                 Layout.fillWidth: true
-                Layout.topMargin: 12
+                Layout.topMargin: Theme.space.md
                 visible: hubs !== null
-                spacing: 6
+                spacing: Theme.space.sm
 
                 RowLayout {
                     Layout.fillWidth: true
 
-                    Label {
-                        Layout.fillWidth: true
+                    SettingsHeading {
+                        Layout.topMargin: 0
                         text: qsTr("Usage providers")
-                        color: page.foreground
-                        font.pixelSize: Math.round(14 * Theme.fontScale)
-                        font.weight: Font.DemiBold
                     }
 
                     ShellButton {
@@ -1589,17 +1580,17 @@ Rectangle {
                         required property var modelData
                         objectName: "hub_" + hubRow.modelData.id
                         Layout.fillWidth: true
-                        spacing: 12
+                        spacing: Theme.space.md
 
                         ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 2
+                            spacing: Theme.space.xxs
 
                             Label {
                                 objectName: "label"
                                 text: hubRow.modelData.label
                                 color: page.foreground
-                                font.pixelSize: Math.round(13 * Theme.fontScale)
+                                font.pixelSize: Theme.type.body.size
                                 font.weight: Font.Medium
                             }
 
@@ -1634,18 +1625,15 @@ Rectangle {
         scale: Shell.state.layout?.zoom ?? 1
         transformOrigin: Item.TopLeft
         width: Math.min(460, (parent?.width ?? 492) / scale - 32)
-        padding: 20
+        padding: Theme.space.xl
 
-        background: Rectangle {
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            radius: Math.min(Theme.radius, 16)
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
         header: Label {
             text: hubDialog.title
-            padding: 20
-            bottomPadding: 4
-            font.pixelSize: Math.round(17 * Theme.fontScale)
+            padding: Theme.space.xl
+            bottomPadding: Theme.space.xs
+            font.pixelSize: Theme.type.title.size
             font.weight: Font.DemiBold
             color: page.foreground
             elide: Text.ElideRight
@@ -1672,13 +1660,13 @@ Rectangle {
         })
 
         contentItem: ColumnLayout {
-            spacing: 8
+            spacing: Theme.space.sm
 
             Note {
                 text: qsTr("Its accounts' limits appear in Usage next to this machine's. The management key is kept on the server and never shown again.")
             }
 
-            Label { text: qsTr("Hub URL"); color: page.foreground; font.pixelSize: 13 }
+            Label { text: qsTr("Hub URL"); color: page.foreground; font.pixelSize: Theme.type.body.size }
             TextField {
                 id: hubUrl
                 objectName: "url"
@@ -1687,7 +1675,7 @@ Rectangle {
                 Accessible.name: qsTr("Hub URL")
             }
 
-            Label { text: qsTr("Management key"); color: page.foreground; font.pixelSize: 13 }
+            Label { text: qsTr("Management key"); color: page.foreground; font.pixelSize: Theme.type.body.size }
             TextField {
                 id: hubKey
                 objectName: "key"
@@ -1696,7 +1684,7 @@ Rectangle {
                 Accessible.name: qsTr("Management key")
             }
 
-            Label { text: qsTr("Label (optional)"); color: page.foreground; font.pixelSize: 13 }
+            Label { text: qsTr("Label (optional)"); color: page.foreground; font.pixelSize: Theme.type.body.size }
             TextField {
                 id: hubLabel
                 objectName: "label"
@@ -1707,8 +1695,8 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 4
-                spacing: 8
+                Layout.topMargin: Theme.space.xs
+                spacing: Theme.space.sm
 
                 Item { Layout.fillWidth: true }
 
@@ -1741,7 +1729,7 @@ Rectangle {
         onAccepted: Shell.dispatch("providerSettings.removeHub", { id: hubId })
 
         contentItem: ColumnLayout {
-            spacing: 12
+            spacing: Theme.space.md
 
             Note {
                 text: qsTr("The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched. Add it again with the URL and key to bring them back.")
@@ -1749,7 +1737,7 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: Theme.space.sm
 
                 Item { Layout.fillWidth: true }
 
