@@ -231,3 +231,23 @@ Feature: A page's prompt is the timeline's prompt
         | the default shell          |
         | the minimal example shell  |
         | the terminal example shell |
+
+    # The window's shortcuts win over a page's text, and over a popup that leaves the
+    # keyboard in it: the palette's key once went into a page, and the search typed
+    # after it was written to the page's file.
+    Scenario Outline: The palette's key opens the palette over a page, whatever has the keyboard
+      Given the window is drawn by the default shell
+      When the user opens "Roadmap" in the window
+      And the user presses Ctrl+K in the window with the keyboard in <where>
+      Then the command palette is open, with the keyboard in its search
+      When the user types "Investigate" in the window
+      Then the command palette's search reads "Investigate"
+      And the blocks of "Roadmap" read "Draft"
+      And the prompt of "Roadmap" reads "<prompt>"
+
+      Examples:
+        | where                              | prompt |
+        | the page's prompt                  |        |
+        | the page's prompt under its / menu | /      |
+        | the page's title                   |        |
+        | the block "Draft"                  |        |

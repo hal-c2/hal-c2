@@ -21,12 +21,14 @@
 #include <QTest>
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <utility>
 
 #include "Brick.h"
 #include "CodeFence.h"
+#include "CommandPaletteController.h"
 #include "CommandRegistry.h"
 #include "FakeConfig.h"
 #include "FakeFiles.h"
@@ -4494,6 +4496,75 @@ const Steps promptSteps([] {
           .arg(focused ? QString::fromLatin1(focused->metaObject()->className()) : QStringLiteral("nothing"),
                focused && focused->property("composerInput").toBool() ? (onPage(focused) ? QStringLiteral("the page's prompt") : QStringLiteral("the shell's prompt")) : QString());
     });
+  });
+  // The palette's key, with the keyboard in a part of the page the window shows.
+  step(QStringLiteral("the user presses Ctrl\\+K in the window with the keyboard in (the page's prompt(?: under its / menu)?|the page's title|the block %1)").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickWindow* window = shellWindow(world);
+    window->requestActivate();
+    expect(QTest::qWaitForWindowActive(window), QStringLiteral("the window did not come up"));
+    QQuickItem* target = nullptr;
+    world.waitFor([&] {
+      target = nullptr;
+      if (c[0].startsWith(QLatin1String("the page's prompt"))) {
+        const QList<QQuickItem*> shown = promptsShown(window->contentItem());
+        if (shown.size() == 1) target = shown.first();
+      } else if (c[0] == QLatin1String("the page's title")) {
+        target = shownItem(window->contentItem(), QStringLiteral("spacePageTitle"));
+      } else if (QQuickItem* block = shownItem(window->contentItem(), QStringLiteral("spaceBlock:") + c[1])) {
+        if (!block->property("editor").value<QQuickItem*>())
+          QMetaObject::invokeMethod(block, "edit", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant()));
+        target = block->property("editor").value<QQuickItem*>();
+      }
+      if (target && !target->hasActiveFocus()) target->forceActiveFocus();
+      return target && target->hasActiveFocus();
+    }, [&] { return QStringLiteral("the keyboard to be in %1").arg(c[0]); });
+    // The menu `/` opens leaves the keyboard in the prompt.
+    if (c[0].endsWith(QLatin1String("/ menu"))) {
+      QTest::keyClick(window, Qt::Key_Slash);
+      // A popup is the QObject child of the item that declares it, which a
+      // loaded view is only the visual child of.
+      std::function<QObject*(QQuickItem*)> menuUnder = [&](QQuickItem* item) -> QObject* {
+        if (QObject* found = item->findChild<QObject*>(QStringLiteral("spaceSlashMenu"), Qt::FindDirectChildrenOnly)) return found;
+        for (QQuickItem* child : item->childItems()) {
+          if (QObject* found = menuUnder(child)) return found;
+        }
+        return nullptr;
+      };
+      QObject* slash = nullptr;
+      world.waitFor([&] {
+        if (!slash) slash = menuUnder(window->contentItem()); return slash && slash->property("visible").toBool() && target->hasActiveFocus(); }, [&] {
+        return QStringLiteral("the / menu to open with the keyboard left in the prompt; the menu is %1, the prompt reads \"%2\" and %3 the keyboard")
+            .arg(!slash ? QStringLiteral("missing") : slash->property("visible").toBool() ? QStringLiteral("open") : QStringLiteral("shut"),
+                 target->property("text").toString(), target->hasActiveFocus() ? QStringLiteral("has") : QStringLiteral("lacks"));
+      });
+    }
+    QTest::keyClick(window, Qt::Key_K, Qt::ControlModifier);
+    world.sync();
+  });
+  step(QStringLiteral("the command palette is open, with the keyboard in its search"), [](World& world, const Captures&, const Table&) {
+    QQuickWindow* window = shellWindow(world);
+    auto* palette = world.native().controller<CommandPaletteController>();
+    world.waitFor([&] {
+      QQuickItem* focused = window->activeFocusItem();
+      return palette->isOpen() && focused && focused->objectName() == QLatin1String("commandPaletteSearch");
+    }, [&] {
+      QQuickItem* focused = window->activeFocusItem();
+      return QStringLiteral("the palette to be open (it is %1) with the keyboard in its search; it is in %2 \"%3\"%4")
+          .arg(palette->isOpen() ? QStringLiteral("open") : QStringLiteral("shut"),
+               focused ? QString::fromLatin1(focused->metaObject()->className()) : QStringLiteral("nothing"),
+               focused ? focused->objectName() : QString(),
+               focused && focused->property("composerInput").toBool() ? (onPage(focused) ? QStringLiteral(", the page's prompt") : QStringLiteral(", the shell's prompt")) : QString());
+    });
+  });
+  step(QStringLiteral("the user types %1 in the window").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickWindow* window = shellWindow(world);
+    for (const QChar ch : c[0]) QTest::keyClick(window, ch.toLatin1());
+    world.sync();
+  });
+  step(QStringLiteral("the command palette's search reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    auto* palette = world.native().controller<CommandPaletteController>();
+    world.waitFor([&] { return palette->isOpen() && palette->query() == c[0]; },
+                  [&] { return QStringLiteral("the palette's search to read %1; it reads \"%2\"").arg(c[0], palette->query()); });
   });
   // One editor on screen, the page's own on a page and the shell's on a thread.
   step(QStringLiteral("the window shows one prompt, aimed at (the page|the thread) %1").arg(q), [](World& world, const Captures& c, const Table&) {
