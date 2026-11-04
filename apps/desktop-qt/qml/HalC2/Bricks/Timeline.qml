@@ -2522,6 +2522,27 @@ Item {
         }
     }
 
+    // The rows fade out under the header above, rather than meeting it
+    // with a cut line, once the view has left the start.
+    Rectangle {
+        objectName: "timelineTopEdge"
+        visible: !view.atYBeginning
+        anchors.horizontalCenter: view.horizontalCenter
+        anchors.top: view.top
+        width: root.columnWidth
+        height: Theme.space.lg
+        gradient: Gradient {
+            GradientStop {
+                position: 0
+                color: root.canvasColor
+            }
+            GradientStop {
+                position: 1
+                color: Qt.alpha(root.canvasColor, 0)
+            }
+        }
+    }
+
     // Under "Scroll to end": the rows fade into the canvas there, so the
     // control never reads as part of the text it floats over.
     Rectangle {

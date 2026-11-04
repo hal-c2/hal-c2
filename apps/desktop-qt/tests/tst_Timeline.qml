@@ -252,6 +252,22 @@ Item {
             verify(!jump.visible && !band.visible, "the end is under it, so it stays away");
         }
 
+        // Rows scrolled under the top fade out there instead of meeting
+        // whatever sits over the conversation with a cut line.
+        function test_rowsFadeOutAtTheTop() {
+            const timeline = longThread();
+            const list = view(timeline);
+            const edge = findChild(timeline, "timelineTopEdge");
+            verify(edge.visible, "a thread opened at its end fades at the top");
+            compare(edge.mapToItem(timeline, 0, 0).y, list.mapToItem(timeline, 0, 0).y);
+            compare(edge.height, Theme.space.lg);
+            list.forceActiveFocus();
+            tryVerify(() => list.activeFocus, 2000);
+            keyClick(Qt.Key_Home);
+            compare(list.contentY, list.originY - list.topMargin, "Home goes to the start");
+            tryVerify(() => !edge.visible, 2000, "at the start nothing is under it");
+        }
+
         // Scenario: The keyboard pages through the conversation
         function test_pageKeysScrollTheConversation() {
             const timeline = longThread();
