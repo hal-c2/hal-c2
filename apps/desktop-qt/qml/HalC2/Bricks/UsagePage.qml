@@ -342,8 +342,8 @@ Rectangle {
                                                     radius: Theme.radiusPill
                                                     color: Theme.palette.color("surfaceRaised", "#1f1f24")
 
-                                                    // Quiet until little is left: a warning at a
-                                                    // quarter, an error at a tenth.
+                                                    // The accent, then a warning at a quarter left
+                                                    // and an error at a tenth.
                                                     Rectangle {
                                                         readonly property real remaining: Math.max(0, 100 - account.modelData.usedPercent)
 
@@ -351,7 +351,7 @@ Rectangle {
                                                         width: parent.width * remaining / 100
                                                         height: parent.height
                                                         radius: Theme.radiusPill
-                                                        color: remaining <= 10 ? Theme.palette.color("error", "#ef4444") : remaining <= 25 ? Theme.palette.color("warning", "#f59e0b") : Theme.palette.color("inkTertiary", "#a1a1aa")
+                                                        color: remaining <= 10 ? Theme.palette.color("error", "#ef4444") : remaining <= 25 ? Theme.palette.color("warning", "#f59e0b") : Theme.palette.color("accent", "#3b82f6")
                                                     }
                                                 }
 
@@ -608,10 +608,11 @@ Rectangle {
                                 implicitHeight: 8
 
                                 Rectangle {
+                                    objectName: "periodBar"
                                     height: parent.height
                                     radius: 2
                                     width: periods.peak > 0 ? parent.width * (page.metric === "tokens" ? periodRow.modelData.totalTokens : periodRow.modelData.costUsd) / periods.peak : 0
-                                    color: Theme.palette.color("inkTertiary", "#a1a1aa")
+                                    color: Theme.palette.color("accent", "#3b82f6")
                                 }
                             }
 
