@@ -269,6 +269,36 @@ Item {
             verify(!ring.visible, "a click draws no ring");
         }
 
+        // Message text is selectable, so a click there puts the keyboard on
+        // the text, inside the conversation: that draws no ring either.
+        function test_clickOnMessageTextDrawsNoRing() {
+            const timeline = longThread();
+            const list = view(timeline);
+            const ring = findChild(timeline, "timelineFocus");
+            const text = shownText(list, list.contentItem);
+            verify(!!text, "a message's text is on screen");
+            mouseClick(text, 4, text.height / 2);
+            tryVerify(() => list.activeFocus, 2000, "the click put the keyboard in the conversation");
+            verify(!ring.visible, "a click on text draws no ring");
+        }
+
+        function shownText(list, item) {
+            for (let i = 0; i < item.children.length; ++i) {
+                const child = item.children[i];
+                if (!child.visible)
+                    continue;
+                if (child.selectByMouse === true && child.readOnly === true && child.length > 0) {
+                    const at = child.mapToItem(list, 0, 0);
+                    if (at.y > 0 && at.y + child.height < list.height)
+                        return child;
+                }
+                const found = shownText(list, child);
+                if (found)
+                    return found;
+            }
+            return null;
+        }
+
         // The jump pill is a button: named, reached by Tab, pressed with Space.
         function test_jumpToTheEndIsAKeyboardButton() {
             const timeline = longThread();

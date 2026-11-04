@@ -80,6 +80,14 @@ Feature: What each turn changed
     And the user can switch to any earlier turn or to all changes
 
   @desktop @mobile @backlog-mobile
+  Scenario: The diff opens on all changes when the latest turn changed nothing
+    Given turn 4 only answered a question after turns that changed files
+    When the user opens the diff of the latest turn
+    Then the diff shows all changes
+    When the user picks the latest turn
+    Then the user is told there are no changes
+
+  @desktop @mobile @backlog-mobile
   Scenario: A turn's diff that cannot be loaded can be asked for again
     Given the MC cannot read the checkpoints of "Tax work"
     When the user opens the diff of the latest turn

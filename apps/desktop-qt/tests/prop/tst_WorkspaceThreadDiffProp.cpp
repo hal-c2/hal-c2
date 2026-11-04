@@ -7,7 +7,9 @@
 // (its timeline sometimes not there yet), shows and hides the tab, picks a
 // turn, all changes, the working tree or the branch, changes the base and
 // whitespace options, focuses one file and reloads. Each thread keeps its
-// own selection and base. While the checkout is shown, a change the agent
+// own selection and base. A latest turn that changed no files opens on all
+// changes when an earlier one changed some, until the user picks the latest
+// turn. While the checkout is shown, a change the agent
 // makes (here, a checkpoint's status) asks for it again without blanking it,
 // and the same answer leaves it as it was. A review the MC cut short lists
 // its files, and the user opens them (or retries one that failed) to load
@@ -28,6 +30,7 @@
 
 #include <memory>
 #include <optional>
+#include <tuple>
 
 #include "FakeMc.h"
 #include "McClient.h"
@@ -177,12 +180,14 @@ struct Model {
   bool timeline = false;
   bool active = false;
   int selection = -1;
+  // The user picked the latest turn, so it is shown even when it changed nothing.
+  bool latestPicked = false;
   QString cwd;
   QString base;
   bool whitespace = true;
 
-  // What each other thread had selected, and its base.
-  QMap<QString, std::pair<int, QString>> choices_;
+  // What each other thread had selected, its base, and whether the latest turn was picked.
+  QMap<QString, std::tuple<int, QString, bool>> choices_;
   // A load following the checkout keeps a shown diff until it is answered.
   bool quiet = false;
   // The review answer shown (its kind and files), and the focus shown of it:
@@ -222,11 +227,29 @@ struct Model {
     }
     return std::nullopt;
   }
-  int effective() const { return selection == -1 && turns().isEmpty() && !cwd.isEmpty() ? int(ThreadDiff::WorkingTree) : selection; }
+  // How many files the summary of turn `turn`'s checkpoint lists.
+  int filesOf(int turn) const {
+    const QString id = turns().value(turn);
+    for (const Checkpoint& checkpoint : mc.value(thread)) {
+      if (checkpoint.id == id) return checkpoint.files;
+    }
+    return 0;
+  }
+  // The default shows all changes when the latest turn changed no files and an earlier one did.
+  bool opensOnAllChanges() const {
+    if (latestPicked || turns().size() < 2 || filesOf(latestTurn()) > 0) return false;
+    for (int turn = 1; turn < latestTurn(); ++turn) {
+      if (filesOf(turn) > 0) return true;
+    }
+    return false;
+  }
+  // What the picker shows.
+  int picked() const { return selection == -1 && opensOnAllChanges() ? 0 : selection; }
+  int effective() const { return selection == -1 && turns().isEmpty() && !cwd.isEmpty() ? int(ThreadDiff::WorkingTree) : picked(); }
   bool reviewing() const { return effective() <= ThreadDiff::WorkingTree; }
   int shownTurn() const {
-    if (selection == 0 || reviewing()) return 0;
-    return selection > 0 ? selection : latestTurn();
+    if (effective() == 0 || reviewing()) return 0;
+    return effective() > 0 ? effective() : latestTurn();
   }
   QList<int> choices() const {
     QList<int> values;
@@ -248,7 +271,7 @@ struct Model {
       request.cwd = cwd;
       request.selection = effective();
       if (request.selection == ThreadDiff::Branch) request.base = base;
-    } else if (selection == 0) {
+    } else if (effective() == 0) {
       request.method = QStringLiteral("orchestration.getFullThreadDiff");
       request.to = latestTurn();
     } else {
@@ -414,7 +437,7 @@ struct Facts {
 };
 
 Facts factsOf(const Model& model) {
-  return {model.choices(), model.latestTurn(), model.latestCheckpoint(), model.selection, model.shownTurn(), model.reviewing(), model.status, model.message,
+  return {model.choices(), model.latestTurn(), model.latestCheckpoint(), model.picked(), model.shownTurn(), model.reviewing(), model.status, model.message,
           model.focus,     model.fileTotal,    model.base,      model.comparedBase, model.comparedHead, model.truncated};
 }
 
@@ -573,7 +596,7 @@ void check(const Facts& before, const Model& expected, Sut& sut) {
   for (const QVariant& choice : diff.choices()) choices.append(choice.toMap().value(QStringLiteral("value")).toInt());
   RC_ASSERT(choices == expected.choices());
   RC_ASSERT(diff.latestTurn() == expected.latestTurn());
-  RC_ASSERT(diff.selection() == expected.selection);
+  RC_ASSERT(diff.selection() == expected.picked());
   // The picker shows the selection: it is one of the choices, or the first.
   RC_ASSERT(diff.selection() == -1 || choices.contains(diff.selection()));
   RC_ASSERT(diff.shownTurn() == expected.shownTurn());
@@ -773,8 +796,8 @@ struct SetThread : Step<SetThread> {
       return;
     }
     if (thread != model.thread) {
-      if (!model.thread.isEmpty()) model.choices_.insert(model.thread, {model.selection, model.base});
-      const auto [selection, base] = model.choices_.value(thread, {-1, QString()});
+      if (!model.thread.isEmpty()) model.choices_.insert(model.thread, {model.selection, model.base, model.latestPicked});
+      const auto [selection, base, latestPicked] = model.choices_.value(thread, {-1, QString(), false});
       model.choices_.remove(thread);
       model.thread = thread;
       ++model.request;
@@ -787,6 +810,7 @@ struct SetThread : Step<SetThread> {
       model.dropReview();
       model.selection = selection;
       model.base = base;
+      model.latestPicked = latestPicked;
       model.setStatus(QStringLiteral("idle"));
     }
     model.timeline = timeline;
@@ -830,8 +854,13 @@ struct Select : Step<Select> {
     if (next < ThreadDiff::Branch || (next <= ThreadDiff::WorkingTree && model.cwd.isEmpty())) next = -1;
     // All changes needs a turn.
     if (next == 0 && model.turns().isEmpty()) next = -1;
-    if (next == model.selection) return;
+    // Picking the latest turn shows it from then on, even when it changed nothing.
+    if (next == model.selection && !(next == -1 && model.opensOnAllChanges())) {
+      if (next == -1) model.latestPicked = true;
+      return;
+    }
     model.selection = next;
+    model.latestPicked = next == -1;
     model.focus.clear();
     model.load();
   }

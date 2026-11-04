@@ -46,6 +46,23 @@ Item {
             opened();
         }
 
+        // The palette is as tall as its rows, up to its cap; with none it
+        // still has room to say so.
+        function test_heightFollowsTheRows() {
+            const popup = opened();
+            const list = findChild(popup.contentItem, "commandPaletteList");
+            tryVerify(() => list.itemAtIndex(2) !== null);
+            const three = popup.height;
+            verify(three < 300, "three rows make a short palette, not " + three);
+            compare(list.height, list.contentHeight, "the list is as tall as its rows");
+            PaletteModel.clear();
+            tryVerify(() => popup.height < three, 2000, "no rows make it shorter still");
+            verify(list.height > 0, "with room for the empty text");
+            for (let n = 1; n <= 40; ++n)
+                PaletteModel.append({ title: "Entry " + n, description: "", group: "Actions", shortcut: "", kind: "action", runnable: true, current: false });
+            tryCompare(popup, "height", 480);
+        }
+
         // Rows are list items named by their title, for assistive technology.
         function test_rowsAreNamedListItems() {
             const popup = opened();
