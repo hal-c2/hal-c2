@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/12787
+#   https://github.com/pingdotgg/t3code/pull/12813 (iPhone Duo postures, hinge and touch handoff; foldable Android)
 #   docs/user/devices.md (Device panel, agent access, remote streaming)
 #   docs/internals/devices.md
 #   packages/contracts/src/device.ts (DeviceServiceState, device.open, device.close)
@@ -396,6 +397,42 @@ Feature: Device panel
       When the user shows the device in 3D and drags across it
       Then the body turns with the drag
       And when the drag ends the body settles on the nearest view that faces its screen
+
+    @desktop @backlog
+    Scenario: An iPhone Duo shows both of its screens on a body that folds
+      Given the thread has the iOS Simulator "iPhone Duo" open
+      And the user is watching the "iPhone Duo" tab
+      When the user shows the device in 3D
+      Then both of its screens are shown on a body with a hinge between them
+      And the device's screen is live on the screen facing the user
+
+    @desktop @backlog
+    Scenario: The user picks a posture for an iPhone Duo
+      Given the user is viewing the iOS Simulator "iPhone Duo" in 3D
+      When the user picks the "Laptop" posture
+      Then the body folds into that posture
+      And both screens stay live
+
+    @desktop @backlog
+    Scenario: Touches reach a Duo screen only once it faces the user
+      Given the user is viewing the iOS Simulator "iPhone Duo" in 3D
+      And the posture turns one screen away from the user
+      When the device turns the other screen to the user
+      Then touches go to that screen only after the device confirms the change and shows a fresh picture on it
+
+    @desktop @backlog
+    Scenario: A device host that cannot report a Duo's posture shows it flat
+      Given the thread has the iOS Simulator "iPhone Duo" open
+      And the device host cannot report the Duo's posture
+      When the user shows the device in 3D
+      Then the device is shown in the flat view with its live screen
+
+    @desktop @backlog
+    Scenario: A foldable Android emulator changes its picture when it is folded or opened
+      Given the thread has the Android Emulator "Pixel 9 Pro Fold" open
+      And the user is watching the "Pixel 9 Pro Fold" tab
+      When the emulator is folded or opened
+      Then the picture changes to the new size without the tab being reopened
 
     @desktop
     Scenario Outline: A device shown in 3D keeps a plain body when its own model is missing

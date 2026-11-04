@@ -1,6 +1,8 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13118 (Claude banked resets)
 #   https://github.com/pingdotgg/t3code/pull/13363 (a refused Codex reset credit is not reported as unconfirmed)
+#   https://github.com/pingdotgg/t3code/pull/12799 (a Grok account with no metered usage yet stays in Limits)
+#   https://github.com/pingdotgg/t3code/pull/12588 (Grok reports the account's email so one account merges)
 #   docs/user/usage.md (Track subscription limits, Connect a CLIProxyAPI hub, Subscription usage widget)
 #   apps/server-ex/lib/hal_c2/provider_usage_limits.ex, apps/server-ex/lib/hal_c2/provider_usage_limits/codex.ex,
 #   apps/server-ex/lib/hal_c2/provider_usage_limits/claude.ex (probes, probeFailed, unsupported, provider.consumeResetCredit)
@@ -282,6 +284,21 @@ Feature: Subscription limits
     Given Grok is connected with an explicit API key
     When the MC checks limits
     Then Grok's limits are reported as not supported for this account
+
+  # xAI omits the usage percentage until an account has metered use, so the account is
+  # kept with no windows rather than dropped as one that can never report.
+  @mc @shared @backlog
+  Scenario: A Grok account with no metered usage yet stays in Limits
+    Given Grok is signed in with a subscription and has not used any metered credit yet
+    When the user opens Limits
+    Then Grok's account is listed with the notice "No limits reported."
+    And it is not reported as not supported
+
+  @mc @backlog
+  Scenario: Grok names its limits by the signed-in account's email
+    Given Grok is signed in with a subscription as "dev@example.com"
+    When the MC checks limits
+    Then Grok's limits name the account "dev@example.com"
 
   @mc
   Scenario: An external OpenCode server reports no limits

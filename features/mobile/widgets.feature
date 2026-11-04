@@ -4,6 +4,7 @@
 #   apps/mobile/app.config.ts (expo-widgets families, frequent updates, push updates)
 #   apps/mobile/src/features/usage/ (subscription usage coordinator)
 #   apps/mobile/src/widgets/ (subscriptionUsageSnapshot.ts, SubscriptionUsage.tsx, AgentActivity.tsx, SubscriptionUsageCoordinator.tsx, useSubscriptionUsage.ts)
+#   https://github.com/pingdotgg/t3code/pull/13474 (Android usage widget scrolls, counts its limits, leaves out unconfigured providers)
 # Provider usage limits are specified in features/providers/. This file covers the
 # home screen and lock screen widgets that show them on a phone.
 
@@ -99,28 +100,36 @@ Feature: Home screen and lock screen widgets
     Then the app opens on the usage limits
 
   @backlog @mobile
-  Scenario: Resizing the usage widget on an Android home screen changes how many limits it shows
+  Scenario: Resizing the usage widget on an Android home screen changes how many rows it shows at once
     Given the user is on an Android phone
     And several providers report two limits each
     When the user makes the usage widget taller
-    Then the widget shows more limits
+    Then the widget shows more rows at once
     When the user makes the usage widget shorter
-    Then the widget shows fewer limits
+    Then the widget shows fewer rows at once
 
   @backlog @mobile
-  Scenario: A widget that is too short shows every provider before any second limit
+  Scenario: A widget that is too short lists each provider's first limit before any second limit
     Given the user is on an Android phone
     And "Codex" and "Claude" each report a session and a weekly limit
-    And the usage widget has room for two limits
-    Then the widget shows the session limit of "Codex" and of "Claude"
-    And no weekly limit is shown
+    And the usage widget has room for two rows
+    Then the first rows show the session limit of "Codex" and of "Claude"
+    And the weekly limits are reached by scrolling
 
   @backlog @mobile
-  Scenario: A widget that cannot fit every limit counts the rest
+  Scenario: A widget that cannot fit every limit scrolls to the rest
     Given the user is on an Android phone
     And the providers report six limits in total
     And the usage widget has room for four
-    Then the widget says 2 more
+    Then the widget header counts 6 limits
+    And the user can scroll to each of them
+
+  @backlog @mobile
+  Scenario: The usage widget leaves out providers the user has not configured
+    Given Codex and OpenCode are configured and Claude is not
+    When the user looks at the usage widget
+    Then the widget shows Codex and OpenCode
+    And Claude is not shown
 
   @backlog @mobile
   Scenario Outline: The usage widget says when it last checked
@@ -130,7 +139,7 @@ Feature: Home screen and lock screen widgets
 
     Examples:
       | state                         | footer                         |
-      | was last checked at 14:05      | As of the time of that check   |
+      | was last checked at 14:05      | Last checked 14:05             |
       | has no time of its last check | Last checked unavailable       |
 
   @backlog @mobile
