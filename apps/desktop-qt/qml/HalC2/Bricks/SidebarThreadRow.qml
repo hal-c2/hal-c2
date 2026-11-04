@@ -258,8 +258,9 @@ Item {
     }
 
     // Resting the pointer on a row previews the thread; the status icon's
-    // word leads it.
-    ToolTip.visible: hover.hovered && !slotHover.hovered && !row.draft && !!row.item.preview
+    // word leads it. A hidden list (the phone's, under the thread a tap
+    // opened) keeps its hover, so the row must be on screen too.
+    ToolTip.visible: row.visible && hover.hovered && !slotHover.hovered && !row.draft && !!row.item.preview
     ToolTip.delay: 700
     ToolTip.text: {
         const preview = row.item.preview;
