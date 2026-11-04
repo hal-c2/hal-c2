@@ -49,6 +49,33 @@ Item {
             compare(input.text, qsTr("Plan & review (v2)"));
         }
 
+        // A click anywhere in the input area, the band under a short prompt
+        // included, puts the caret in the prompt, whatever had focus.
+        function test_aClickInTheInputAreaFocusesThePrompt_data() {
+            return [
+                { tag: "on the text", at: input => input.mapToItem(root, 4, input.height / 2) },
+                { tag: "the scroll view's bottom edge", at: input => input.parent.parent.mapToItem(root, input.parent.parent.width / 2, input.parent.parent.height - 3) },
+                { tag: "under the text", at: input => input.parent.parent.mapToItem(root, input.parent.parent.width - 20, input.parent.parent.height + 6) }
+            ];
+        }
+
+        function test_aClickInTheInputAreaFocusesThePrompt(data) {
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, {
+                    placeholder: "Ask anything, @tag files/folders, $use skills, or / for commands ".repeat(4)
+                })
+            });
+            const composer = createTemporaryObject(composerComponent, root);
+            const input = findChild(composer, "input");
+            const other = findChild(composer, "modelPicker");
+            waitForRendering(composer);
+            other.forceActiveFocus();
+            verify(!input.activeFocus);
+            const point = data.at(input);
+            mouseClick(root, point.x, point.y);
+            tryVerify(() => input.activeFocus);
+        }
+
         function test_eachModelOptionShowsOnce() {
             // The real composer state is a QVariantMap: each read of options
             // hands out fresh objects, so the options are built per read here too.

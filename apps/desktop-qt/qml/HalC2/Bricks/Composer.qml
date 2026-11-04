@@ -683,6 +683,15 @@ Rectangle {
             border.color: composer.outline
             border.width: 1
 
+            // A press anywhere in the card that no control takes, around
+            // or under a short prompt, goes to the prompt.
+            MouseArea {
+                anchors.fill: parent
+                enabled: input.enabled
+                cursorShape: Qt.IBeamCursor
+                onPressed: input.forceActiveFocus(Qt.MouseFocusReason)
+            }
+
             ConversationDrop {
                 objectName: "composerDrop"
                 anchors.fill: parent
@@ -916,6 +925,11 @@ Rectangle {
                     Layout.bottomMargin: 8
                     Layout.preferredHeight: composer.resting ? Math.min(input.implicitHeight, 24) : Math.min(Math.max(input.implicitHeight, 54), 184)
                     clip: true
+                    // The prompt wraps, so it never scrolls sideways: a
+                    // long placeholder would otherwise make a horizontal bar
+                    // that, unseen, takes the clicks meant for the prompt.
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                     TextArea {
                         id: input
