@@ -65,10 +65,13 @@ Window {
         return false;
     }
 
-    // The layout fits the thread list to the room the window leaves it.
+    // The layout fits the thread list to the room the window leaves it, and
+    // widens its default for a monospace interface font.
     function reportWidth() {
-        Shell.dispatch("layout.window", { width: Math.round(root.width / root.zoom) });
+        Shell.dispatch("layout.window", { width: Math.round(root.width / root.zoom), monospace: Theme.monospace });
     }
+    readonly property bool monospaceInterface: Theme.monospace
+    onMonospaceInterfaceChanged: reportWidth()
 
     width: 1280
     height: 820

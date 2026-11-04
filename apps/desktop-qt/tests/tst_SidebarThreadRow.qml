@@ -12,7 +12,6 @@ Item {
 
         SidebarThreadRow {
             width: 360
-            height: 78
             active: false
             item: ({
                 title: "Review",
@@ -118,9 +117,12 @@ Item {
             row.item = Object.assign({}, row.item, {
                 pinned: true
             });
+            verify(!findChild(row, "unpinAction"), "the pin waits for the pointer");
+            row.focused = true;
             let unpin = findChild(row, "unpinAction");
             verify(!!unpin, "a pinned row has the pin button");
             compare(unpin.Accessible.name, "Unpin thread");
+            waitForRendering(row);
             let spy = createTemporaryObject(spyComponent, root, {
                 target: row,
                 signalName: "unpinRequested"
@@ -132,8 +134,8 @@ Item {
         // Scenario: A thread row shows its project's icon (features/threads/sidebar-list.feature)
         function test_rowDrawsTheProjectIcon_data() {
             return [
-                { tag: "slim", slim: true, mark: "projectMark" },
-                { tag: "card", slim: false, mark: "cardProjectMark" }
+                { tag: "slim", slim: true },
+                { tag: "card", slim: false }
             ];
         }
 
@@ -142,15 +144,22 @@ Item {
                 slim: data.slim,
                 projectName: "Hal"
             });
-            let mark = findChild(row, data.mark);
+            let mark = findChild(row, "projectMark");
             verify(!!mark);
-            verify(!findChild(mark, "projectIconMonogram"), "a folder without an icon");
-            row.projectIcon = { kind: "monogram", text: "HC" };
             const monogram = findChild(mark, "projectIconMonogram");
-            verify(!!monogram, "the monogram replaces the folder");
-            compare(monogram.visible, true);
+            verify(monogram.visible, "a project without an icon shows its initial");
+            compare(findChild(monogram, "projectIconMonogramText").text, "H");
+            row.projectIcon = { kind: "emoji", text: "🚀" };
+            verify(!monogram.visible, "the icon replaces the initial");
+            verify(findChild(mark, "projectIconEmoji").visible);
+            row.projectIcon = { kind: "monogram", text: "HC" };
+            compare(findChild(monogram, "projectIconMonogramText").text, "HC");
             row.projectIcon = null;
-            tryVerify(() => !findChild(mark, "projectIconMonogram"));
+            compare(findChild(monogram, "projectIconMonogramText").text, "H");
+            row.projectIcon = { kind: "image", url: "file:///nonexistent/hal-c2-project-icon.png" };
+            tryCompare(findChild(mark, "projectIconImage"), "status", Image.Error);
+            verify(monogram.visible, "an image that cannot load leaves the initial");
+            compare(findChild(monogram, "projectIconMonogramText").text, "H");
         }
 
         function shown(item, name) {
@@ -174,7 +183,7 @@ Item {
             return Qt.rect(p.x, p.y, item.width, item.height);
         }
 
-        // The jump key takes the age's place instead of covering the title.
+        // The jump key takes the status slot's place instead of covering the title.
         function test_jumpHintTakesTheStatusSlot_data() {
             return [
                 { tag: "slim", slim: true },
@@ -197,7 +206,7 @@ Item {
             if (!data.slim) {
                 const title = findChild(row, "cardTitle");
                 const titleRect = sceneRect(title);
-                verify(hintRect.y >= titleRect.y + titleRect.height || hintRect.y + hintRect.height <= titleRect.y, "the hint is not on the title line");
+                verify(hintRect.x >= titleRect.x + titleRect.width, "the hint does not cover the title");
             }
             verify(hintRect.x + hintRect.width <= sceneRect(row).x + row.width, "the hint stays in the row");
         }

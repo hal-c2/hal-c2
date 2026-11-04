@@ -2,6 +2,7 @@
 #   docs/user/thread-sidebar.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml
 #   apps/desktop-qt/tests/tst_Sidebar.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (the two lines of a row)
 #   apps/desktop-qt/src/native/SidebarModel.cpp (the desktop's port of the grouping and order, offline rows)
 #   apps/desktop-qt/src/native/LayoutController.cpp (hiding the thread list)
 #   apps/web/src/components/Sidebar.tsx
@@ -623,6 +624,15 @@ Feature: The thread list
     And the user is offered "Delete anyway"
     When the user chooses "Delete anyway" and confirms
     Then "shop" and its 3 threads are removed
+
+  # The title leads; the project and its branch sit under it, the branch losing its middle when
+  # long. The TUI still leads with the project (apps/tui/src/host/sidebarState.ts).
+  @desktop @mobile @backlog-mobile @tui @backlog-tui
+  Scenario: A thread row reads its title first, then its project and branch
+    Given the thread "Fix the cart" in "shop" works on the branch "feature/cart"
+    When the user looks at its row in the thread list
+    Then the row's first line reads "Fix the cart"
+    And its second line reads "shop · feature/cart"
 
   @desktop @backlog-desktop @mobile @backlog-mobile
   Scenario: A thread row shows its project's icon
