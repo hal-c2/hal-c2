@@ -28,6 +28,12 @@ TestCase {
         };
     }
 
+    // Rows are added to the menu one by one: its height must not loop on
+    // them while they are laid out.
+    function init() {
+        failOnWarning(/Binding loop/);
+    }
+
     function cleanup() {
         Shell.state = {};
         Shell.reset();

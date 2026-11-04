@@ -11,8 +11,10 @@ Menu {
     // Wide enough for its longest row, between 220 and 360.
     implicitWidth: Math.max(220, Math.min(360, widest() + leftPadding + rightPadding))
     // As tall as its rows, up to the window: a longer menu stops on a whole
-    // row and scrolls, with the edge hint saying there is more.
-    height: Math.min(implicitHeight, fitted(rows.room))
+    // row and scrolls, with the edge hint saying there is more. A menu that
+    // fits never measures its rows, which are still being laid out while a
+    // host adds them one by one.
+    height: implicitHeight <= rows.room ? implicitHeight : fitted(rows.room)
 
     // Whether any row has an icon: then rows without one keep its column
     // empty, so every label starts at the same place.
