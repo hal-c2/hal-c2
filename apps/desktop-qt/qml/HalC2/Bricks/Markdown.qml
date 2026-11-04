@@ -57,7 +57,7 @@ Item {
     // The user ran a code block's command (trimmed) from its Run.
     signal runCommand(string command)
 
-    readonly property color headingColor: Theme.palette.color("text", "#f5f5f5")
+    readonly property color headingColor: Theme.palette.color("ink", "#f2f3f5")
     readonly property color mutedColor: Theme.palette.color("textMuted", "#818181")
     readonly property color borderColor: Theme.palette.color("border", "#191919")
     readonly property color selectionColor: Qt.alpha(Theme.palette.color("accent", "#346bf1"), 0.4)
@@ -71,9 +71,11 @@ Item {
         link: css(Theme.link),
         heading: css(headingColor),
         muted: css(mutedColor),
-        // Inline code is a muted pill with a border; rich text
-        // has neither border nor radius, so the fill carries the border.
-        codeFill: css(Qt.tint(Theme.palette.color("muted", "#111111"), Qt.alpha(borderColor, 0.7))),
+        // Inline code is inset tinted with a tenth of the ink: rich text
+        // has no border or radius, so the tint is all that marks it, and it
+        // still does in a monospace shell, where code and prose share a font.
+        codeFill: css(Qt.tint(Theme.palette.color("inset", "#0a0b0d"), Qt.alpha(headingColor, 0.1))),
+        codeSize: Math.min(codeSize, fontSize),
         mono: monoFamily,
         rule: css(borderColor)
     })
