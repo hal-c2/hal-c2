@@ -312,6 +312,16 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
 
   defp pass(context, ms), do: :atomics.add(context.clock, 1, ms)
 
+  # Discovery has handled every message it was sent and has no run of its own queued.
+  defp discovery_idle do
+    pid = Process.whereis(HalC2.PullRequests.Discovery)
+    state = :sys.get_state(pid)
+
+    unless state.pending == %{} and
+             Process.info(pid, :message_queue_len) == {:message_queue_len, 0},
+           do: discovery_idle()
+  end
+
   defp asked(context, branch), do: length(World.cli_calls(context, "--head #{branch}"))
 
   # The watcher's automatic fetch runs now; the pull request it holds afterwards.
@@ -440,7 +450,7 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
     # read the row from before the sweep's write and ask GitHub to confirm it: it ends
     # before the count, with the sweep's row in the shell, rather than during the status.
     HalC2.Streams.flush_shell(World.thread_id(context, thread))
-    for _ <- 1..2, do: :sys.get_state(HalC2.PullRequests.Discovery)
+    discovery_idle()
     assert %{"number" => 42} = World.thread(context, thread)["branchPullRequest"]
     Map.put(context, :asked_before, asked(context, branch))
   end
