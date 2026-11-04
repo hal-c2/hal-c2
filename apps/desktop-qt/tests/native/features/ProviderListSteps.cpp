@@ -235,6 +235,19 @@ const Steps steps([] {
     }
     publishProviders(world.mc, {provider(instanceId, QStringLiteral("Codex Work"), fields)});
   });
+  step(QStringLiteral("a provider that is disabled, with the message %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString instanceId = QStringLiteral("codex_work");
+    world.mc.part<ProviderList>().instanceId = instanceId;
+    QJsonObject instances = fakeConfig(world.mc).settings.value(QLatin1String("providerInstances")).toObject();
+    instances.insert(instanceId, QJsonObject{{QStringLiteral("driver"), QStringLiteral("codex")},
+                                             {QStringLiteral("displayName"), QStringLiteral("Codex Work")},
+                                             {QStringLiteral("enabled"), false}});
+    saveElsewhere(world.mc, QStringLiteral("providerInstances"), instances);
+    publishProviders(world.mc, {provider(instanceId, QStringLiteral("Codex Work"),
+                                         {{QStringLiteral("enabled"), false},
+                                          {QStringLiteral("status"), QStringLiteral("disabled")},
+                                          {QStringLiteral("message"), c[0]}})});
+  });
   step(QStringLiteral("the user opens the provider list"), [](World& world, const Captures&, const Table&) {
     openPanel(world);
     world.waitFor([&] { return panel(world).value(QStringLiteral("status")) == QLatin1String("ready"); },
@@ -250,6 +263,20 @@ const Steps steps([] {
       return headline == c[0];
     };
     world.waitFor(reads, [&] { return QStringLiteral("%1 to read \"%2\"; it reads \"%3\" in %4").arg(instanceId, c[0], headline, show(panel(world))); });
+  });
+  step(QStringLiteral("the provider reads %1, explained by %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString instanceId = world.mc.part<ProviderList>().instanceId;
+    QVariantMap shown;
+    const auto reads = [&] {
+      for (const QVariant& row : panel(world).value(QStringLiteral("providers")).toList()) {
+        if (row.toMap().value(QStringLiteral("instanceId")) == instanceId) shown = row.toMap();
+      }
+      return shown.value(QStringLiteral("headline")).toString() == c[0] && shown.value(QStringLiteral("detail")).toString() == c[1];
+    };
+    world.waitFor(reads, [&] {
+      return QStringLiteral("%1 to read \"%2\", explained by \"%3\"; it reads \"%4\", explained by \"%5\"")
+          .arg(instanceId, c[0], c[1], shown.value(QStringLiteral("headline")).toString(), shown.value(QStringLiteral("detail")).toString());
+    });
   });
 });
 
