@@ -27,6 +27,19 @@ Feature: Shared controls follow the theme
     When I press the control under the tooltip
     Then the tooltip hides at once, without fading
 
+  Scenario: A press hides any control's tooltip
+    Given a control that is not a shared button shows its tooltip
+    When I press it
+    Then the tooltip hides at once
+    And it does not come back until the pointer moves
+
+  Scenario: A control that moves under a resting pointer shows no tooltip
+    Given the pointer rests on the "Open panel" button
+    When I click it and the "Add panel" button takes its place under the pointer
+    Then no tooltip opens for "Add panel"
+    When I move the pointer over "Add panel"
+    Then its tooltip opens
+
   Scenario: A text field is translucent in dark themes and keeps a focus ring
     Given the dark base theme is applied
     Then a text field's fill is the input colour at low opacity

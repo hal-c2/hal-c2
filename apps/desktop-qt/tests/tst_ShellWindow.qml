@@ -75,6 +75,52 @@ Item {
         }
     }
 
+    // A control that is not a ShellButton, with its own tooltip.
+    Component {
+        id: plainTipWindowComponent
+        ShellWindow {
+            Button {
+                objectName: "plainTip"
+                x: 40
+                y: 50
+                text: "Collapse"
+                hoverEnabled: true
+                ToolTip.visible: hovered
+                ToolTip.text: "Collapse all folders"
+            }
+        }
+    }
+
+    // Pressing "Open panel" puts "Add panel" where the pointer rests.
+    Component {
+        id: movingTipWindowComponent
+        ShellWindow {
+            ShellButton {
+                objectName: "opener"
+                x: 40
+                y: 50
+                width: 120
+                text: "Open panel"
+                onClicked: {
+                    visible = false;
+                    adder.x = 40;
+                }
+            }
+            Button {
+                id: adder
+                objectName: "adder"
+                x: 400
+                y: 50
+                width: 120
+                text: "Add panel"
+                hoverEnabled: true
+                ToolTip.visible: hovered
+                ToolTip.text: "Add panel"
+                ToolTip.delay: 0
+            }
+        }
+    }
+
     TestCase {
         name: "ShellWindowTests"
         when: windowShown
@@ -117,6 +163,41 @@ Item {
             mousePress(button, button.width / 2, button.height / 2);
             tryVerify(() => !tip.visible);
             mouseRelease(button, button.width / 2, button.height / 2);
+        }
+
+        // Scenario: A press hides any control's tooltip (features/desktop/themed-controls.feature)
+        function test_aPressHidesAnyControlsToolTip() {
+            const window = createTemporaryObject(plainTipWindowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            const button = findChild(window, "plainTip");
+            const tip = window.contentItem.ToolTip.toolTip;
+            mouseMove(button, button.width / 2, button.height / 2);
+            tryVerify(() => tip.visible);
+            compare(tip.text, "Collapse all folders");
+            mousePress(button, button.width / 2, button.height / 2);
+            verify(!tip.visible);
+            mouseRelease(button, button.width / 2, button.height / 2);
+            verify(waitForRendering(window.contentItem));
+            verify(!tip.visible);
+        }
+
+        // Scenario: A control that moves under a resting pointer shows no tooltip
+        // (features/desktop/themed-controls.feature)
+        function test_aControlMovingUnderARestingPointerShowsNoTip() {
+            const window = createTemporaryObject(movingTipWindowComponent, null);
+            verify(waitForRendering(window.contentItem));
+            const opener = findChild(window, "opener");
+            const adder = findChild(window, "adder");
+            const tip = window.contentItem.ToolTip.toolTip;
+            mouseMove(opener, 20, 10);
+            mouseClick(opener, 20, 10);
+            compare(adder.x, 40);
+            tryVerify(() => adder.hovered);
+            verify(!tip.visible);
+            // Once the pointer moves over it, it is the control's to show.
+            mouseMove(adder, 30, 12);
+            tryVerify(() => tip.visible);
+            compare(tip.text, "Add panel");
         }
 
         // Scenario: A window has a sensible title and size (features/navigation/windows.feature)
