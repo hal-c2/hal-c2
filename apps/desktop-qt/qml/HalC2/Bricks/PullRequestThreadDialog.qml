@@ -35,11 +35,8 @@ Dialog {
     }
     onRejected: Shell.dispatch("pullRequestThread.cancel", {})
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     contentItem: ColumnLayout {
         spacing: 10
 

@@ -130,11 +130,7 @@ Row {
             width: 320
             padding: 10
 
-            background: Rectangle {
-                color: Theme.palette.color("surfaceOverlay", "#18181b")
-                border.color: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.1)
-                radius: 10
-            }
+            background: ShellPopoverSurface {}
 
             contentItem: Text {
                 objectName: "attachmentAccessibilityText"

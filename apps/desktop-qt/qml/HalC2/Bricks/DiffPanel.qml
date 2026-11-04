@@ -271,12 +271,7 @@ Rectangle {
                         baseSearch.text = "";
                         baseSearch.forceActiveFocus();
                     }
-                    background: Rectangle {
-                        radius: Theme.radius
-                        color: Theme.palette.color("surfaceOverlay", "#18181b")
-                        border.color: root.borderColor
-                        border.width: 1
-                    }
+                    background: ShellPopoverSurface {}
 
                     contentItem: ColumnLayout {
                         spacing: 4
@@ -952,12 +947,8 @@ Rectangle {
         modal: true
         padding: 14
 
-        background: Rectangle {
-            radius: Theme.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: root.borderColor
-            border.width: 1
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
             spacing: 8

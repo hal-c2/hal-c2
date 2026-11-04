@@ -64,8 +64,27 @@ Item {
             tryCompare(button.background, "color", "#fff7f4");
             verify(darkest >= 0.98);
             mouseMove(root, 380, 150);
-            tryCompare(button.background, "color", Qt.alpha("#fff7f4", 0));
+            tryVerify(() => button.background.color.a === 0);
             verify(darkest >= 0.98);
+        }
+
+        // A destructive button is a solid error fill, its label readable on
+        // a light red (dark themes) and on a deep one (light themes).
+        function test_destructiveIsASolidErrorFill() {
+            Theme.colors = {
+                destructive: "#f87171"
+            };
+            const button = createTemporaryObject(themedButtonComponent, root, {
+                subtle: false,
+                destructive: true
+            });
+            compare(button.background.color, Qt.color("#f87171"));
+            compare(button.tint, Qt.color("#111214"));
+            Theme.colors = {
+                error: "#c81e1e"
+            };
+            compare(button.background.color, Qt.color("#c81e1e"));
+            compare(button.tint, Qt.color("#ffffff"));
         }
 
         function test_narrowContentsStayInsidePadding() {

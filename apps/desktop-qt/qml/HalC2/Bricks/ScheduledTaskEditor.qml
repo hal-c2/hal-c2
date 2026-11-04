@@ -58,11 +58,8 @@ Dialog {
     }
     onRejected: Shell.dispatch("scheduledTasks.close")
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     header: Label {
         text: dialog.title
         padding: 20
@@ -290,11 +287,7 @@ Dialog {
                         height: Math.min(implicitHeight, 240)
                         padding: 4
                         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
-                        background: Rectangle {
-                            radius: Math.min(Theme.radius, 8)
-                            color: Theme.palette.color("surfaceOverlay", "#18181b")
-                            border.color: Theme.palette.color("border", "#27272a")
-                        }
+                        background: ShellPopoverSurface {}
                         contentItem: ListView {
                             implicitHeight: Math.max(contentHeight, 28)
                             clip: true

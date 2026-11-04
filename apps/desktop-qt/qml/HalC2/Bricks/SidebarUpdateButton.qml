@@ -41,11 +41,7 @@ ShellButton {
         padding: 12
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-        background: Rectangle {
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Qt.alpha(button.foreground, 0.1)
-            radius: 10
-        }
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
             spacing: 8

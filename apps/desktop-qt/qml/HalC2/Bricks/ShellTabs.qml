@@ -23,7 +23,7 @@ Rectangle {
     property bool windowControls: true
     property real trailingInset: 0
 
-    implicitHeight: 36
+    implicitHeight: Theme.control.xl
     color: Theme.palette.color("canvas", "#0f0f12")
 
     DragHandler {
@@ -42,9 +42,9 @@ Rectangle {
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 8
+        anchors.leftMargin: Theme.space.sm
         anchors.rightMargin: strip.trailingInset
-        spacing: 2
+        spacing: Theme.space.xxs
 
         Repeater {
             model: strip.tabs
@@ -56,8 +56,8 @@ Rectangle {
                 readonly property bool active: strip.selected === modelData.key
 
                 objectName: "tab:" + modelData.key
-                Layout.preferredWidth: row.implicitWidth + 20
-                Layout.preferredHeight: 28
+                Layout.preferredWidth: row.implicitWidth + 2 * Theme.space.sm
+                Layout.preferredHeight: Theme.control.md
                 Layout.alignment: Qt.AlignVCenter
                 hoverEnabled: true
                 Accessible.role: Accessible.PageTab
@@ -67,19 +67,19 @@ Rectangle {
                 onClicked: Shell.dispatch("tabs.select", { key: tab.modelData.key })
                 background: Rectangle {
                     color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered || tab.visualFocus ? Theme.palette.color("surface", "#141416") : "transparent"
-                    radius: 6
+                    radius: Theme.radiusSm
                 }
 
                 Row {
                     id: row
 
                     anchors.centerIn: parent
-                    spacing: 6
+                    spacing: Theme.space.xs
 
                     ShellIcon {
                         visible: (tab.modelData.icon ?? "").length > 0
                         name: tab.modelData.icon ?? ""
-                        size: 13
+                        size: Theme.icon.sm
                         color: tab.active ? strip.foreground : strip.muted
                         anchors.verticalCenter: parent.verticalCenter
                     }
@@ -87,7 +87,7 @@ Rectangle {
                     Text {
                         text: tab.modelData.title
                         color: tab.active ? strip.foreground : strip.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        font.pixelSize: Theme.type.meta.size
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }
@@ -100,8 +100,8 @@ Rectangle {
 
         WindowControls {
             window: strip.window
-            buttonWidth: 32
-            buttonHeight: 28
+            buttonWidth: Theme.control.lg
+            buttonHeight: Theme.control.md
             visible: strip.framelessChrome && strip.windowControls && strip.selected !== "threads" && Qt.platform.os !== "osx"
             Layout.alignment: Qt.AlignVCenter
         }

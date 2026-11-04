@@ -183,12 +183,8 @@ RowLayout {
         modal: true
         padding: 16
 
-        background: Rectangle {
-            radius: Theme.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            border.width: 1
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
             spacing: 10
@@ -362,12 +358,8 @@ RowLayout {
         visible: pending !== null
         closePolicy: Popup.NoAutoClose
 
-        background: Rectangle {
-            radius: Theme.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            border.width: 1
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
             spacing: 10
@@ -466,12 +458,8 @@ RowLayout {
             step = 0;
         }
 
-        background: Rectangle {
-            radius: Theme.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            border.width: 1
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
             spacing: 10

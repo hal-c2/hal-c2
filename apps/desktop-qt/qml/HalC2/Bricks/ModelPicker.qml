@@ -223,12 +223,6 @@ AbstractButton {
         border.color: control.visualFocus ? Theme.palette.color("focus", "#3b82f6") : "transparent"
         border.width: control.visualFocus ? 1 : 0
 
-        Behavior on color {
-            ColorAnimation {
-                duration: 120
-            }
-        }
-
         ShellChevron {
             x: parent.width - width - 10
             y: (parent.height - height) / 2
@@ -317,22 +311,10 @@ AbstractButton {
             }
         }
 
-        exit: Transition {
-            NumberAnimation {
-                property: "opacity"
-                from: 1
-                to: 0
-                duration: 90
-                easing.type: Easing.InCubic
-            }
-        }
+        // Closing is instant: a fade could swallow the next open.
+        exit: null
 
-        background: Rectangle {
-            radius: Math.min(Theme.radius, 10)
-            color: control.overlay
-            border.color: control.fade(control.foreground, 0.1)
-            border.width: 1
-        }
+        background: ShellPopoverSurface {}
 
         contentItem: Item {
             clip: true

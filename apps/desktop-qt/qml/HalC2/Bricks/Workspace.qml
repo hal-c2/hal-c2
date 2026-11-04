@@ -136,12 +136,6 @@ Rectangle {
                 ToolTip.delay: 500
                 ToolTip.text: text
 
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 120
-                    }
-                }
-
                 HoverHandler {
                     id: projectHover
 

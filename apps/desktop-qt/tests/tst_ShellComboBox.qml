@@ -53,8 +53,8 @@ TestCase {
         compare(combo.background.border.color, "#ff8800");
     }
 
-    // A bordered picker (Settings) rings on any focus, mouse included.
-    function test_outlinePickerRingsOnAnyFocus() {
+    // A bordered picker (Settings) keeps its border; only the keyboard rings it.
+    function test_outlinePickerRingsOnlyForTheKeyboard() {
         Theme.colors = {
             focus: "#ff8800",
             input: "#333333"
@@ -65,7 +65,9 @@ TestCase {
         compare(combo.background.border.width, 1);
         compare(combo.background.border.color, "#333333");
         combo.forceActiveFocus(Qt.MouseFocusReason);
-        compare(combo.background.border.width, 1);
+        compare(combo.background.border.color, "#333333");
+        combo.focus = false;
+        combo.forceActiveFocus(Qt.TabFocusReason);
         compare(combo.background.border.color, "#ff8800");
     }
 
@@ -79,7 +81,7 @@ TestCase {
         });
         openCombo(combo);
         // The keyboard starts on the current value; moving off it leaves the
-        // chosen row with its own quiet fill.
+        // chosen row with only its check.
         compare(combo.highlightedIndex, 1);
         combo.forceActiveFocus();
         keyClick(Qt.Key_Down);
@@ -87,8 +89,7 @@ TestCase {
         compare(items.length, 3);
         compare(items.map(row => row.Accessible.checked), [false, true, false]);
         compare(items.map(row => row.contentItem.children[1].visible), [false, true, false]);
-        const fill = items[1].background.color;
-        compare(fill.a.toFixed(2), "0.08");
+        compare(items[1].background.color.a, 0);
         compare(items[0].background.color.a, 0);
     }
 

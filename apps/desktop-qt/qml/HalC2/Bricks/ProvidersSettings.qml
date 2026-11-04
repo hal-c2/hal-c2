@@ -739,11 +739,7 @@ Rectangle {
                         // has already moved the focus there.
                         onAboutToHide: if (activeFocus && !movedClose && advisoryButton.visible) advisoryButton.forceActiveFocus(Qt.PopupFocusReason)
 
-                        background: Rectangle {
-                            color: Theme.palette.color("surfaceOverlay", "#18181b")
-                            border.color: Qt.alpha(page.foreground, 0.1)
-                            radius: 10
-                        }
+                        background: ShellPopoverSurface {}
 
                         contentItem: Flickable {
                             id: advisoryScroll
@@ -1636,11 +1632,8 @@ Rectangle {
         width: Math.min(460, (parent?.width ?? 492) / scale - 32)
         padding: 20
 
-        background: Rectangle {
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            radius: Math.min(Theme.radius, 16)
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
         header: Label {
             text: hubDialog.title
             padding: 20

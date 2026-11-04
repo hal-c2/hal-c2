@@ -847,11 +847,7 @@ Rectangle {
                                     citationComment.forceActiveFocus();
                                 }
 
-                                background: Rectangle {
-                                    color: Theme.palette.color("surfaceOverlay", "#18181b")
-                                    border.color: Qt.alpha(composer.foreground, 0.1)
-                                    radius: 10
-                                }
+                                background: ShellPopoverSurface {}
 
                                 contentItem: ColumnLayout {
                                     spacing: 8
@@ -1324,12 +1320,6 @@ Rectangle {
                                 border.width: 2
                                 border.color: Theme.palette.color("focus", "#3b82f6")
                             }
-
-                            Behavior on color {
-                                ColorAnimation {
-                                    duration: 120
-                                }
-                            }
                         }
 
                         contentItem: Item {
@@ -1615,21 +1605,10 @@ Rectangle {
                             }
                         }
 
-                        exit: Transition {
-                            NumberAnimation {
-                                property: "opacity"
-                                from: 1
-                                to: 0
-                                duration: 90
-                                easing.type: Easing.InCubic
-                            }
-                        }
+                        // Closing is instant: a fade could swallow the next open.
+                        exit: null
 
-                        background: Rectangle {
-                            color: Theme.palette.color("surfaceOverlay", "#18181b")
-                            border.color: Qt.alpha(composer.foreground, 0.1)
-                            radius: 10
-                        }
+                        background: ShellPopoverSurface {}
 
                         ColumnLayout {
                             id: branchColumn

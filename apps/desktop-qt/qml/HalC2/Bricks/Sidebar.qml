@@ -332,12 +332,6 @@ Rectangle {
                         color: parent.hovered || parent.down ? Theme.palette.color("sidebarRowHover", "#1c1c21") : Theme.palette.color("sidebarControlSurface", "#141416")
                         border.width: parent.visualFocus ? 1 : 0
                         border.color: Theme.palette.color("focus", "#3b82f6")
-
-                        Behavior on color {
-                            ColorAnimation {
-                                duration: 120
-                            }
-                        }
                     }
                 }
 

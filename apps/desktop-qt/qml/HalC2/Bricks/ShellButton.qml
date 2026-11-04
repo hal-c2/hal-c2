@@ -4,7 +4,8 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // A button. Outline by default (the header pills),
-// `subtle` for the ghost buttons, `primary` for the accent one; `iconName` is a
+// `subtle` for the ghost buttons, `primary` for the accent one, `destructive`
+// for a solid error fill (a destructive confirm); `iconName` is a
 // lucide id drawn before the text, `chevron` appends the menu chevron. A
 // button with only an icon or only the chevron names itself on hover from its
 // accessible name; `toolTip` says something else, or names a button that has text.
@@ -12,17 +13,21 @@ Button {
     id: control
 
     property bool primary: false
+    property bool destructive: false
     property bool subtle: false
     property bool chevron: false
     property string iconName: ""
     property string toolTip: ""
-    property real iconSize: 14
+    property real iconSize: Theme.icon.md
     // Fills the icon's outline too, for the filled variants (the fast-mode bolt).
     property bool iconFilled: false
     property real chevronSize: Theme.icon.sm
-    property color tint: primary ? Theme.palette.color("accentForeground", "#ffffff") : Theme.palette.color("text", "#e4e4e7")
+    readonly property bool filled: primary || destructive
+    readonly property color fill: destructive ? Theme.palette.color("destructive", "#ef4444") : Theme.palette.color("accent", "#2563eb")
+    // Text on the error fill: dark on a light red (the dark themes'), white on a deep one.
+    property color tint: destructive ? (fill.hslLightness > 0.6 ? "#111214" : "#ffffff") : primary ? Theme.palette.color("accentForeground", "#ffffff") : Theme.palette.color("text", "#e4e4e7")
     property color iconTint: tint
-    property real radius: Math.min(Theme.radius, 8)
+    property real radius: Theme.radiusMd
     readonly property bool iconOnly: text.length === 0 && iconName.length > 0 && !chevron
     readonly property bool chevronOnly: text.length === 0 && iconName.length === 0 && chevron
     readonly property color accentSurface: Theme.palette.color("accentSurface", "#27272a")
@@ -34,12 +39,12 @@ Button {
     // of the height, so a 24px chevron half stays square and centred.
     readonly property real glyphPadding: iconOnly ? (height - iconSize) / 2 : (height - chevronSize) / 2
 
-    implicitHeight: 28
+    implicitHeight: Theme.control.md
     topPadding: 0
     bottomPadding: 0
-    leftPadding: iconOnly || chevronOnly ? glyphPadding : 8
-    rightPadding: iconOnly || chevronOnly ? glyphPadding : 8
-    font.pixelSize: Math.round(13 * Theme.fontScale)
+    leftPadding: iconOnly || chevronOnly ? glyphPadding : Theme.space.sm
+    rightPadding: iconOnly || chevronOnly ? glyphPadding : Theme.space.sm
+    font.pixelSize: Theme.type.body.size
     font.weight: Font.Medium
     hoverEnabled: true
     scale: down ? 0.97 : 1
@@ -59,16 +64,10 @@ Button {
 
     background: Rectangle {
         radius: control.radius
-        color: control.primary ? (control.down ? Qt.darker(Theme.palette.color("accent", "#2563eb"), 1.15) : control.hovered ? Qt.lighter(Theme.palette.color("accent", "#2563eb"), 1.08) : Theme.palette.color("accent", "#2563eb")) : control.hovered || control.down || control.checked ? control.hoverFill : control.subtle ? Qt.alpha(control.hoverFill, 0) : Qt.alpha(Theme.palette.color("input", "#27272a"), 0.32)
+        color: control.filled ? (control.down ? Qt.darker(control.fill, 1.15) : control.hovered ? Qt.lighter(control.fill, 1.08) : control.fill) : control.hovered || control.down || control.checked ? control.hoverFill : control.subtle ? "transparent" : Theme.palette.color("inputSurface", "#121317")
         // Keyboard focus draws a ring; pointer focus stays quiet.
-        border.color: control.visualFocus ? control.focusRing : control.primary || control.subtle ? "transparent" : Theme.palette.color("input", "#27272a")
-        border.width: control.visualFocus || !(control.primary || control.subtle) ? 1 : 0
-
-        Behavior on color {
-            ColorAnimation {
-                duration: 120
-            }
-        }
+        border.color: control.visualFocus ? control.focusRing : control.filled || control.subtle ? "transparent" : Theme.palette.color("input", "#27272a")
+        border.width: control.visualFocus || !(control.filled || control.subtle) ? 1 : 0
     }
 
     contentItem: Item {
@@ -81,7 +80,7 @@ Button {
 
             anchors.centerIn: parent
             width: Math.min(parent.width, implicitWidth)
-            spacing: 6
+            spacing: Theme.space.sm
 
             ShellIcon {
                 objectName: "buttonIcon"

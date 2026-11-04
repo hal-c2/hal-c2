@@ -64,12 +64,6 @@ Row {
                 color: controls.trafficLights ? button.light : Qt.alpha(hoverColor, button.hovered ? hoverColor.a : 0)
                 border.width: controls.trafficLights || button.visualFocus ? 1 : 0
                 border.color: button.visualFocus ? Theme.palette.color("focus", "#3b82f6") : Qt.darker(button.light, 1.25)
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 120
-                    }
-                }
             }
 
             contentItem: Item {

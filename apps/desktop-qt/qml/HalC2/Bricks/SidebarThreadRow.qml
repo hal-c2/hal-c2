@@ -216,13 +216,6 @@ Item {
         color: row.active || row.selected ? Theme.palette.color("sidebarRowActive", "#2a2a30") : Qt.alpha(hoverColor, hover.hovered ? hoverColor.a : 0)
         border.width: row.focused ? 1 : 0
         border.color: row.focusColor
-
-        Behavior on color {
-            ColorAnimation {
-                duration: 100
-                easing.type: Easing.OutCubic
-            }
-        }
     }
 
     Rectangle {

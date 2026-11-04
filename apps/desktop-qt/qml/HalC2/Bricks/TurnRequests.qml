@@ -845,12 +845,8 @@ Item {
             planSavePath.forceActiveFocus();
         }
 
-        background: Rectangle {
-            radius: Theme.radius
-            color: Theme.palette.color("surfaceOverlay", "#18181b")
-            border.color: Theme.palette.color("border", "#27272a")
-            border.width: 1
-        }
+        Overlay.modal: ShellScrim {}
+        background: ShellPopoverSurface {}
 
         contentItem: ColumnLayout {
             spacing: 10

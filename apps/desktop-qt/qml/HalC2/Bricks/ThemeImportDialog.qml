@@ -38,11 +38,8 @@ Popup {
     // already made settled it, so closing after it cancels nothing.
     onClosed: if (conflicted || Themes.importError.length > 0) Themes.resolveImport("cancel")
 
-    background: Rectangle {
-        radius: Theme.radius
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
 
     contentItem: ColumnLayout {
         spacing: 10

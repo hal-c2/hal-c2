@@ -28,40 +28,37 @@ Dialog {
     scale: Shell.state.layout?.zoom ?? 1
     transformOrigin: Item.TopLeft
     width: Math.min(440, (parent?.width ?? 472) / scale - 32)
-    padding: 20
+    padding: Theme.space.lg
     closePolicy: Popup.CloseOnEscape
     title: question?.title ?? ""
     onQuestionChanged: question !== null ? open() : close()
     onRejected: answer(false)
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     header: Label {
         text: dialog.title
-        padding: 20
-        bottomPadding: 4
-        font.pixelSize: Math.round(17 * Theme.fontScale)
-        font.weight: Font.DemiBold
+        padding: Theme.space.lg
+        bottomPadding: Theme.space.xs
+        font.pixelSize: Theme.type.title.size
+        font.weight: Theme.type.title.weight
         color: Theme.palette.color("text", "#e4e4e7")
         wrapMode: Text.Wrap
     }
     contentItem: ColumnLayout {
-        spacing: 12
+        spacing: Theme.space.md
         Label {
             Layout.fillWidth: true
             visible: text.length > 0
             text: dialog.question?.description ?? ""
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.pixelSize: Math.round(13 * Theme.fontScale)
+            font.pixelSize: Theme.type.body.size
             wrapMode: Text.Wrap
         }
         RowLayout {
             Layout.fillWidth: true
-            Layout.topMargin: 8
-            spacing: 8
+            Layout.topMargin: Theme.space.sm
+            spacing: Theme.space.sm
             Item { Layout.fillWidth: true }
             ShellButton {
                 objectName: "confirmCancel"
@@ -71,8 +68,9 @@ Dialog {
             ShellButton {
                 objectName: "confirmAccept"
                 text: dialog.question?.confirmLabel ?? qsTr("Confirm")
+                // A destructive answer is the solid error fill, not a red label.
                 primary: dialog.question?.destructive !== true
-                tint: dialog.question?.destructive === true ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("accentForeground", "#ffffff")
+                destructive: dialog.question?.destructive === true
                 onClicked: dialog.answer(true)
             }
         }

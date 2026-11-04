@@ -50,11 +50,7 @@ ToolTip {
     }
     width: Math.min(320, contentItem.implicitWidth + leftPadding + rightPadding)
     padding: 12
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: 8
-    }
+    background: ShellPopoverSurface {}
     contentItem: ColumnLayout {
         spacing: 4
 

@@ -59,11 +59,8 @@ Dialog {
     closePolicy: Popup.CloseOnEscape
     title: editing ? qsTr("Change this page's update") : qsTr("Have this page update itself")
 
-    background: Rectangle {
-        color: Theme.palette.color("surfaceOverlay", "#18181b")
-        border.color: Theme.palette.color("border", "#27272a")
-        radius: Math.min(Theme.radius, 16)
-    }
+    Overlay.modal: ShellScrim {}
+    background: ShellPopoverSurface {}
     header: Label {
         text: dialog.title
         padding: 20
