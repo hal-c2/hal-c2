@@ -395,6 +395,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/sidebar-list.feature:A settled thread's age*"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
     QStringLiteral("threads/sidebar-list.feature:The open thread stays listed past*"),
+    QStringLiteral("threads/sidebar-list.feature:The open thread stays in view when*"),
     QStringLiteral("threads/sidebar-list.feature:*plugin*"),
     QStringLiteral("threads/sidebar-list.feature:Opening a *from the list"),
     QStringLiteral("threads/sidebar-list.feature:Scoping the list*"),

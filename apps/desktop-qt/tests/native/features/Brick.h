@@ -31,6 +31,8 @@ public:
   QQuickItem* root() const { return m_root.get(); }
   // The item named `objectName` (fails the step when there is none).
   QQuickItem* item(const QString& objectName) const;
+  // The same, or nullptr: a list's row that is not drawn has none.
+  QQuickItem* find(const QString& objectName) const;
   // `item`'s point at (fx, fy) of its size, in window coordinates.
   QPoint at(const QQuickItem* item, double fx = 0.5, double fy = 0.5);
   void click(const QString& objectName);

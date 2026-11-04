@@ -16,8 +16,10 @@ MenuItem {
     // image does not load).
     property string badgeName: ""
     // A muted second part after the text (what tells two same-named entries
-    // apart); it is elided before the text is.
+    // apart); it is elided before the text is, at its end unless
+    // `detailElide` says otherwise (a path keeps both ends in the middle).
     property string detail: ""
+    property int detailElide: Text.ElideRight
     // Why the item is disabled, drawn as a muted second line under the label.
     // A disabled row gets no hover, so a tooltip could never show it.
     property string reason: ""
@@ -97,7 +99,7 @@ MenuItem {
                 color: Theme.palette.color("textMuted", "#8b919e")
                 opacity: control.enabled ? 1 : 0.5
                 verticalAlignment: Text.AlignVCenter
-                elide: Text.ElideRight
+                elide: control.detailElide
                 Layout.fillWidth: true
             }
 
