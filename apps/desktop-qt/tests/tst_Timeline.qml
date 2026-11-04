@@ -233,6 +233,25 @@ Item {
             tryVerify(() => list.contentHeight > before && atEnd(list), 5000, "the view follows new output again");
         }
 
+        // "Scroll to end" floats on its own band, 12px over the bottom, and
+        // keeps off the end once the end is already under it.
+        function test_scrollToEndHasItsOwnSurface() {
+            const timeline = longThread();
+            const list = view(timeline);
+            scrollUp(timeline, timeline.height);
+            const jump = findChild(timeline, "jumpToLatest");
+            const band = findChild(timeline, "jumpToLatestBand");
+            verify(jump.visible && band.visible, "the control shows on its band");
+            compare(jump.height, Theme.control.md);
+            const foot = list.mapToItem(timeline, 0, list.height).y;
+            compare(jump.mapToItem(timeline, 0, jump.height).y, foot - Theme.space.md, "12px over the bottom");
+            compare(band.mapToItem(timeline, 0, band.height).y, foot, "the band reaches the bottom");
+            verify(band.height >= jump.height + 2 * Theme.space.md, "with room around the control");
+            list.contentY = list.originY + list.contentHeight - list.height - Theme.space.lg;
+            verify(!timeline.following, "a little way from the end");
+            verify(!jump.visible && !band.visible, "the end is under it, so it stays away");
+        }
+
         // Scenario: The keyboard pages through the conversation
         function test_pageKeysScrollTheConversation() {
             const timeline = longThread();
@@ -383,7 +402,18 @@ Item {
             verify(!timeline.following, "the room made does not count as the user returning");
             verify(timeline.scrolledAway, "the room stays made");
             compare(timeline.height, root.roomyHeight);
-            verify(findChild(timeline, "jumpToLatest").visible);
+            offersTheEndOnceItGrows(timeline);
+        }
+
+        // "Scroll to end" stays off the end while the end is under it, and
+        // shows once the reply grows past the view.
+        function offersTheEndOnceItGrows(timeline) {
+            const jump = findChild(timeline, "jumpToLatest");
+            verify(!jump.visible, "the end shows, so it is not offered yet");
+            for (let i = 0; i < 4; ++i)
+                grow();
+            tryVerify(() => jump.visible, 5000, "the user is offered a way to scroll to the end");
+            verify(!timeline.following);
         }
 
         // Scenario: The user returns to the end of the thread
@@ -437,7 +467,7 @@ Item {
             list.movementEnded();
             verify(!timeline.following, "the user is still away");
             verify(timeline.scrolledAway);
-            verify(findChild(timeline, "jumpToLatest").visible);
+            offersTheEndOnceItGrows(timeline);
         }
 
         // Scenario: Scrolling away stops the view from following

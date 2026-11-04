@@ -2522,16 +2522,40 @@ Item {
         }
     }
 
+    // Under "Scroll to end": the rows fade into the canvas there, so the
+    // control never reads as part of the text it floats over.
+    Rectangle {
+        objectName: "jumpToLatestBand"
+        visible: jump.visible
+        // The reading column's width, clear of the scroll bar at the edge.
+        anchors.horizontalCenter: view.horizontalCenter
+        width: root.columnWidth
+        anchors.bottom: view.bottom
+        height: jump.height + 2 * Theme.space.md
+        gradient: Gradient {
+            GradientStop {
+                position: 0
+                color: Qt.alpha(root.canvasColor, 0)
+            }
+            GradientStop {
+                position: 0.5
+                color: root.canvasColor
+            }
+        }
+    }
+
     // Back to the latest output once the user scrolled away: floats
-    // bottom-centre over the rows, and only while they are away from the end.
+    // bottom-centre, 12px over the composer, and only while they are away
+    // from the end. Where the end is already under it, it would only cover
+    // the last lines, so it stays away.
     ShellButton {
         id: jump
         objectName: "jumpToLatest"
-        visible: !view.following && view.count > 0
+        visible: !view.following && view.count > 0 && view.originY + view.contentHeight - (view.contentY + view.height) > height + 2 * Theme.space.md
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: view.bottom
         anchors.bottomMargin: Theme.space.md
-        height: Theme.control.sm
+        height: Theme.control.md
         radius: Theme.radiusPill
         iconName: "chevron-down"
         iconSize: Theme.icon.sm
