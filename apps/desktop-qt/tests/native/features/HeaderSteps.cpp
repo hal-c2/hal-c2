@@ -52,6 +52,7 @@ struct Actions {
   QString run;
   QString open;
   bool pills = false;
+  bool project = false;
   QStringList overflow;
 };
 
@@ -71,6 +72,7 @@ Actions layOutActions(World& world) {
   QQuickItem* run = header.item(QStringLiteral("runActionButton"));
   QQuickItem* open = header.item(QStringLiteral("openEditorButton"));
   actions.pills = run->isVisible() && open->isVisible();
+  actions.project = header.item(QStringLiteral("projectLabel"))->isVisible();
   actions.run = run->findChild<QQuickItem*>(QStringLiteral("splitAction"))->property("text").toString();
   actions.open = open->findChild<QQuickItem*>(QStringLiteral("splitAction"))->property("text").toString();
   if (header.item(QStringLiteral("headerOverflow"))->isVisible()) {
@@ -89,9 +91,10 @@ Actions layOutActions(World& world) {
 }
 
 QString describe(const Actions& actions) {
-  return QStringLiteral("the header shows run \"%1\" and open \"%2\" (pills shown: %3), its overflow menu [%4]")
+  return QStringLiteral("the header shows run \"%1\" and open \"%2\" (pills shown: %3, project shown: %4), its overflow menu [%5]")
       .arg(actions.run, actions.open)
       .arg(actions.pills)
+      .arg(actions.project)
       .arg(actions.overflow.join(u", "));
 }
 
@@ -124,6 +127,14 @@ const Steps steps([] {
   step(QStringLiteral("the header actions show without their labels"), [](World& world, const Captures&, const Table&) {
     const Actions actions = layOutActions(world);
     expect(actions.pills && actions.run.isEmpty() && actions.open.isEmpty() && actions.overflow.isEmpty(), describe(actions));
+  });
+  step(QStringLiteral("the header shows the project's name"), [](World& world, const Captures&, const Table&) {
+    const Actions actions = layOutActions(world);
+    expect(actions.project, describe(actions));
+  });
+  step(QStringLiteral("the header leaves the project's name out"), [](World& world, const Captures&, const Table&) {
+    const Actions actions = layOutActions(world);
+    expect(!actions.project, describe(actions));
   });
   step(QStringLiteral("the header's %1 menu runs %1 and opens in %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     const Actions actions = layOutActions(world);

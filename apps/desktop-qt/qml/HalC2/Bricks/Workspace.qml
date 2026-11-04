@@ -42,27 +42,35 @@ Rectangle {
     property bool windowControls: true
     property real trailingInset: 0
     // How the strip fits its items, decided by what they need rather than a
-    // width: the pills keep their labels while they fit beside the whole
-    // breadcrumb, then show icons only (`compact`) so the title is not cut
-    // for a label, then the run and open pills fold into one overflow menu
-    // once even the start of the title does not fit (`tight`; the thread
-    // details offer them too). The breadcrumb, the git pill and the toggles
-    // always stay.
+    // width, giving way in one order so the thread title is the last thing
+    // cut: first the project segment of the breadcrumb goes whole
+    // (`showProject`), then the pills show icons only (`compact`), then the
+    // run and open pills fold into one overflow menu (`tight`; the thread
+    // details offer them too), and only then does the title shorten. The
+    // title, the git pill and the toggles always stay.
     readonly property real room: width - (sidebarToggle === true ? 52 : 20) - Math.max(20, trailingInset)
     readonly property bool hasScripts: ready && model.scripts.length > 0
     readonly property bool hasEditors: ready && model.editors.length > 0
     readonly property bool hasSshNote: ready && (model.noSshRoute ?? "") !== ""
-    // Room the breadcrumb keeps before any pill keeps its label: all of it,
+    readonly property bool hasProject: ready && model.projectTitle !== null
+    // The project segment: folder, name (at most 160) and the slash, each
+    // with the gap before the next.
+    readonly property real projectNeed: hasProject ? folderIcon.implicitWidth + Math.min(Math.ceil(projectLabel.implicitWidth), 160) + crumbSlash.implicitWidth + crumb.spacing * 3 : 0
+    // Room the title keeps before anything else keeps its place: all of it,
     // up to about forty characters, so a long title still leaves a wide
-    // window its labels.
-    readonly property real crumbReserve: Math.min(crumb.implicitWidth, Theme.type.body.size * 24)
-    // Room it keeps before the pills fold away: the start of the title.
-    readonly property real crumbMinimum: Math.min(crumb.implicitWidth, 120)
+    // window everything.
+    readonly property real titleReserve: Math.min(titleSlot.implicitWidth, Theme.type.body.size * 24)
+    // Room it keeps before the pills fold away: its start.
+    readonly property real titleMinimum: Math.min(titleSlot.implicitWidth, 120)
     // The toggles and window buttons, whatever the level (each with the gap before it).
     readonly property real fixedNeed: [terminalToggle, detailsButton, panelButton, windowButtons].reduce((sum, item) => sum + (item.visible ? item.implicitWidth + item.Layout.leftMargin + rowSpacing : 0), 0)
     readonly property real rowSpacing: Theme.space.md
-    readonly property real labelledNeed: crumbReserve + fixedNeed + (hasScripts ? scriptsPill.fullWidth + rowSpacing : 0) + (hasSshNote ? sshNote.implicitWidth + rowSpacing : 0) + (hasEditors ? editorPill.fullWidth + rowSpacing : 0) + (gitPill.visible ? gitPill.fullWidth + rowSpacing : 0)
-    readonly property real iconNeed: crumbMinimum + fixedNeed + (hasScripts ? scriptsPill.compactWidth + rowSpacing : 0) + (hasSshNote ? sshNote.implicitWidth + rowSpacing : 0) + (hasEditors ? editorPill.compactWidth + rowSpacing : 0) + (gitPill.visible ? gitPill.compactWidth + rowSpacing : 0)
+    readonly property real labelledPills: (hasScripts ? scriptsPill.fullWidth + rowSpacing : 0) + (hasSshNote ? sshNote.implicitWidth + rowSpacing : 0) + (hasEditors ? editorPill.fullWidth + rowSpacing : 0) + (gitPill.visible ? gitPill.fullWidth + rowSpacing : 0)
+    readonly property real iconPills: (hasScripts ? scriptsPill.compactWidth + rowSpacing : 0) + (hasSshNote ? sshNote.implicitWidth + rowSpacing : 0) + (hasEditors ? editorPill.compactWidth + rowSpacing : 0) + (gitPill.visible ? gitPill.compactWidth + rowSpacing : 0)
+    readonly property real fullNeed: projectNeed + labelledNeed
+    readonly property real labelledNeed: titleReserve + fixedNeed + labelledPills
+    readonly property real iconNeed: titleMinimum + fixedNeed + iconPills
+    readonly property bool showProject: hasProject && fullNeed <= room
     readonly property bool compact: labelledNeed > room
     readonly property bool tight: iconNeed > room
 
@@ -121,7 +129,9 @@ Rectangle {
             spacing: Theme.space.sm
 
             ShellIcon {
-                visible: strip.ready && strip.model.projectTitle !== null
+                id: folderIcon
+
+                visible: strip.showProject
                 name: "folder"
                 size: 14
                 color: strip.iconMuted
@@ -135,7 +145,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 24
                 Layout.maximumWidth: Math.min(Math.ceil(implicitWidth), 160)
-                visible: strip.ready && strip.model.projectTitle !== null
+                visible: strip.showProject
                 text: strip.ready ? (strip.model.projectTitle ?? "") : ""
                 color: projectHover.hovered ? strip.foreground : strip.projectColor
                 font.pixelSize: Theme.type.body.size
@@ -179,7 +189,9 @@ Rectangle {
             }
 
             Text {
-                visible: strip.ready && strip.model.projectTitle !== null
+                id: crumbSlash
+
+                visible: strip.showProject
                 text: "/"
                 color: strip.iconMuted
                 font.pixelSize: Theme.type.body.size
