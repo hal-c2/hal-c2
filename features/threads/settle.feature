@@ -1,5 +1,6 @@
 # Sources:
 #   docs/user/thread-sidebar.md (Settling, Auto-settle rules)
+#   https://github.com/pingdotgg/t3code/pull/11846 (per-thread Auto-settle behavior: Enabled, Disabled)
 #   apps/web/src/components/threadActionMenu.logic.ts (Settle thread, Un-settle thread)
 #   apps/web/src/components/ChatView.tsx (settled notice in the open thread)
 #   apps/web/src/components/settings/SettingsPanels.tsx (General: auto-settle rules)
@@ -93,6 +94,19 @@ Feature: Settling threads
     Given "Ship checkout" is linked to a pull request
     When the pull request is merged on GitHub
     Then "Ship checkout" is shown as settled on the phone
+
+  @shared @backlog
+  Scenario: A thread's auto-settle can be turned off and back on
+    When the user turns auto-settle off for "Ship checkout"
+    Then "Ship checkout" stays out of automatic settling
+    When the user turns auto-settle on for "Ship checkout"
+    Then "Ship checkout" settles automatically again after a quiet spell
+
+  @shared @backlog
+  Scenario: Settling a thread with auto-settle off still works
+    Given "Ship checkout" has auto-settle turned off
+    When the user settles "Ship checkout"
+    Then "Ship checkout" moves to the settled section
 
   @mc
   Scenario: A thread settles after a quiet spell

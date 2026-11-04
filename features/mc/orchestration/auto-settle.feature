@@ -1,5 +1,6 @@
 # Sources:
-#   packages/contracts/src/orchestrationV2.ts (thread.auto-settle, thread.settled)
+#   packages/contracts/src/orchestrationV2.ts (thread.auto-settle, thread.settled, thread.auto-settle.set)
+#   https://github.com/pingdotgg/t3code/pull/11846 (per-thread auto-settle switch)
 #   packages/contracts/src/settings.ts (sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays)
 #   apps/server-ex/lib/hal_c2/orchestration/settlement.ex
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread.auto-settle)
@@ -96,6 +97,20 @@ Feature: Threads settle on their own
     And its linked pull request merged after that
     When the MC sweeps for threads to settle
     Then thread "t1" is settled
+
+  @mc @backlog
+  Scenario: A thread with auto-settle disabled is never settled on its own
+    Given thread "t1" has auto-settle disabled
+    And thread "t1" finished its last turn 2 days ago
+    And thread "t1" links a pull request that merged an hour ago
+    When the MC sweeps for threads to settle
+    Then thread "t1" is not settled
+
+  @mc @backlog
+  Scenario: Disabled auto-settle survives a manual settle and un-settle
+    Given thread "t1" has auto-settle disabled
+    When the user settles "t1" and then un-settles it
+    Then "t1" still has auto-settle disabled
 
   @mc
   Scenario: A project override replaces the global auto-settle settings

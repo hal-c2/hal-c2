@@ -1,6 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13388 (Stop ends a command left running after its turn)
 #   https://github.com/pingdotgg/t3code/pull/13328
+#   https://github.com/pingdotgg/t3code/pull/13389 (the runtime's temp root beside the instance profile)
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/9514 (the sign-in link on stderr)
 #   docs/user/providers-antigravity.md
@@ -113,6 +114,15 @@ Feature: Antigravity
     When the user sets the binary path to that executable
     Then Antigravity uses that installation
     And the managed installer leaves it alone
+
+  # The runtime unpacks deep paths. Windows fails them unless long paths are enabled, so its
+  # temporary folder must not sit inside the instance's profile.
+  @mc @backlog @plugin-antigravity
+  Scenario: Antigravity starts on Windows with long paths disabled
+    Given Windows has long paths disabled
+    When the user signs in to an Antigravity instance with a Google account
+    Then the instance starts and shows its models
+    And the Google sign-in page opens in the browser
 
   Scenario: A manual installation missing its helper is explained
     Given the binary path points to an Antigravity executable without its helper
