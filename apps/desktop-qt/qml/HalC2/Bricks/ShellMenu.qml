@@ -31,8 +31,14 @@ Menu {
         return widest;
     }
 
+    // A submenu's current value, beside its title on the row that opens it
+    // ("Reasoning   High ›").
+    property string detail: ""
+
     // The row a submenu is reached through.
-    delegate: ShellMenuItem {}
+    delegate: ShellMenuItem {
+        detail: subMenu?.detail ?? ""
+    }
 
     enter: Transition {
         NumberAnimation {
