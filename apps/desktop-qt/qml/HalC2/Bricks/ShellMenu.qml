@@ -16,7 +16,7 @@ Menu {
     readonly property bool hasIcons: {
         for (let i = 0; i < count; ++i) {
             const item = itemAt(i);
-            if (item && ((item.iconName ?? "").length > 0 || (item.badge ?? null) !== null)) {
+            if (item && (item.hasIcon ?? false)) {
                 return true;
             }
         }

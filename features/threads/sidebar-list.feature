@@ -669,6 +669,15 @@ Feature: The thread list
     When the user opens the scope menu
     Then the entry for "qml-ghostty" says "a thread hit a usage limit"
 
+  # Proved by tst_Sidebar.qml (test_scopeMenuShowsEveryProjectsMark).
+  @desktop @backlog-desktop
+  Scenario: The scope menu shows each project's icon or initial
+    Given the project "shop" has an icon and "t3code-tracker-plugin" has none
+    When the user opens the scope menu
+    Then the entry for "shop" shows its icon
+    And the entry for "t3code-tracker-plugin" shows the initial "T"
+    And the hint "a thread failed" reads whole
+
   @desktop @backlog-desktop
   Scenario: A thread opened from search is brought into view in the sidebar
     Given more settled threads than the sidebar lists

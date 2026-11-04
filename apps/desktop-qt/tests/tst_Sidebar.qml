@@ -459,6 +459,32 @@ Item {
             compare(found.detail, "a thread hit a usage limit");
         }
 
+        // Scenario: The scope menu shows each project's icon or initial (features/threads/sidebar-list.feature)
+        function test_scopeMenuShowsEveryProjectsMark() {
+            const next = JSON.parse(JSON.stringify(Shell.state.sidebar));
+            next.projects = [
+                { key: "a", displayName: "t3code-tracker-plugin", status: "failed", workspaceRoot: "/a/t3code-tracker-plugin", environmentId: "env", projectId: "a" },
+                { key: "b", displayName: "shop", status: "", workspaceRoot: "/b/shop", environmentId: "env", projectId: "b" }
+            ];
+            Shell.state = { sidebar: next, projectIcons: { "env:b": { kind: "emoji", emoji: "🛒" } } };
+            let sidebar = createTemporaryObject(scopedSidebarComponent, root);
+            let menu = findChild(sidebar, "scopeMenu");
+            verify(!!menu, "Object exists");
+            tryCompare(menu, "count", 3);
+            menu.open();
+            tryCompare(menu, "opened", true);
+            const plain = findChild(menu.itemAt(1), "menuItemBadge");
+            verify(plain.visible, "a project without an icon shows a mark");
+            compare(findChild(plain, "projectIconMonogramText").text, "T");
+            verify(findChild(menu.itemAt(2), "menuItemBadge").visible);
+            // The menu takes the width its hints need, within 220–360.
+            verify(menu.width >= 220 && menu.width <= 360, "the menu is " + menu.width + " wide");
+            const hint = findChild(menu.itemAt(1), "menuItemDetail");
+            compare(hint.text, "a thread failed");
+            verify(!hint.truncated, "the hint reads whole in a " + menu.width + " menu");
+            menu.close();
+        }
+
         // Scenario: Opening a thread from search shows its row in the list (features/threads/sidebar-list.feature)
         function test_openedThreadIsBroughtIntoView() {
             const next = JSON.parse(JSON.stringify(Shell.state.sidebar));

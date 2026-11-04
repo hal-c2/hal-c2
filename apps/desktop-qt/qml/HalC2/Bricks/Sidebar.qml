@@ -439,7 +439,8 @@ Rectangle {
                         objectName: "scopeMenu"
 
                         y: parent.height + Theme.space.xs
-                        width: Math.max(parent.width, 200)
+                        // As wide as its rows need (220–360), never narrower than the button.
+                        width: Math.max(parent.width, implicitWidth)
 
                         ShellMenuItem {
                             text: qsTr("All projects")
@@ -468,8 +469,8 @@ Rectangle {
 
                                 text: modelData.displayName
                                 detail: [sidebar.projectDetails[modelData.key] ?? "", statusWord].filter(part => part.length > 0).join(" · ")
-                                iconName: "folder"
                                 badge: Shell.state.projectIcons?.[modelData.environmentId + ":" + modelData.projectId] ?? null
+                                badgeName: modelData.displayName
                                 current: sidebar.model !== null && sidebar.model.scopeProjectKey === modelData.key
                                 onTriggered: Shell.dispatch("sidebar.scope", {
                                     projectKey: modelData.key
