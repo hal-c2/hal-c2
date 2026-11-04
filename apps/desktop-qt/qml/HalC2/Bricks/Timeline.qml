@@ -727,6 +727,9 @@ Item {
         boundsBehavior: Flickable.StopAtBounds
         model: root.model
         onModelChanged: restart()
+        // Sections by kind tell a row whether a system divider is next to it
+        // (ListView.nextSection, previousSection); no section is drawn.
+        section.property: "kind"
         ScrollBar.vertical: ScrollBar {
             id: scrollBar
             Accessible.name: qsTr("Scroll conversation")
@@ -808,8 +811,18 @@ Item {
             // Whether the row's time and actions show: only this row's
             // pointer changes it.
             readonly property bool showMeta: root.alwaysShowMeta || rowHover.hovered
-            // The space under the row, by kind.
+            // A system divider follows, or went before: it keeps 24 above
+            // it and 16 below, whatever the rows around it reserve.
+            readonly property bool beforeMarker: ListView.nextSection === "marker"
+            readonly property bool afterMarker: ListView.previousSection === "marker"
+            // The space under the row, by kind. Space a body keeps clear
+            // at its foot (`tail`, for its time and actions) counts toward
+            // a divider's.
             readonly property int gap: {
+                if (row.kind === "marker")
+                    return Theme.space.lg;
+                if (row.beforeMarker)
+                    return Math.max(0, Theme.space.xl - (body.item ? body.item.tail ?? 0 : 0));
                 switch (row.kind) {
                 case "message":
                     // Commentary sits closer to the work that follows it.
@@ -886,266 +899,294 @@ Item {
                 // A block on inset across the column, left-aligned like the
                 // reply under it; what was sent with it and its actions sit
                 // on the same left edge.
-                Column {
-                    spacing: Theme.space.xs
-                    // A hairline between turns: over each message that
-                    // starts one (not a steer into the running turn).
-                    Item {
-                        objectName: "turnDivider"
-                        visible: row.index > 0 && ((row.intent ?? "").length === 0 || row.intent === "turn_start" || row.intent === "queued_turn")
+                Item {
+                    id: userRoot
+                    // Its time and actions keep a line under the block only
+                    // where they always show, and are read there; on hover
+                    // they float on its edge. Nothing at its foot is blank.
+                    readonly property real tail: 0
+                    implicitHeight: userColumn.implicitHeight
+                    Column {
+                        id: userColumn
                         width: parent.width
-                        height: Theme.space.lg
-                        Rectangle {
-                            width: parent.width
-                            height: 1
-                            color: root.borderColor
-                        }
-                    }
-                    // Who sent it, when not the user; a known thread opens.
-                    RowText {
-                        id: attribution
-                        readonly property string thread: row.model.thread ?? ""
-                        objectName: "messageAttribution"
-                        Accessible.role: attribution.thread.length > 0 ? Accessible.Link : Accessible.StaticText
-                        Accessible.name: attribution.text
-                        Accessible.onPressAction: if (attribution.thread.length > 0)
-                            root.threadActivated(attribution.thread)
-                        visible: text.length > 0
-                        text: row.attribution ?? ""
-                        color: attribution.thread.length > 0 && attributionHover.hovered ? root.textColor : root.mutedColor
-                        font.pixelSize: Theme.type.caption.size
-                        HoverHandler {
-                            id: attributionHover
-                            enabled: attribution.thread.length > 0
-                            cursorShape: Qt.PointingHandCursor
-                        }
-                        TapHandler {
-                            enabled: attribution.thread.length > 0
-                            onTapped: root.threadActivated(attribution.thread)
-                        }
-                    }
-                    // How it reached the agent (UserMessageIntentMarker).
-                    Row {
-                        visible: (row.intent ?? "").length > 0 && row.intent !== "turn_start"
                         spacing: Theme.space.xs
-                        ShellIcon {
-                            visible: row.intent !== "queued_turn"
-                            anchors.verticalCenter: parent.verticalCenter
-                            name: "redo-2"
-                            size: Theme.icon.sm
-                            color: root.mutedColor
+                        // A hairline between turns: over each message that
+                        // starts one (not a steer into the running turn), unless
+                        // a system divider already sits over it.
+                        Item {
+                            objectName: "turnDivider"
+                            visible: row.index > 0 && !row.afterMarker && ((row.intent ?? "").length === 0 || row.intent === "turn_start" || row.intent === "queued_turn")
+                            width: parent.width
+                            height: Theme.space.lg
+                            Rectangle {
+                                width: parent.width
+                                height: 1
+                                color: root.borderColor
+                            }
                         }
+                        // Who sent it, when not the user; a known thread opens.
                         RowText {
-                            text: row.intent === "queued_turn" ? qsTr("Queued") : qsTr("Steer")
-                            color: root.mutedColor
-                            font.pixelSize: Theme.type.meta.size
-                            wrapMode: Text.NoWrap
+                            id: attribution
+                            readonly property string thread: row.model.thread ?? ""
+                            objectName: "messageAttribution"
+                            Accessible.role: attribution.thread.length > 0 ? Accessible.Link : Accessible.StaticText
+                            Accessible.name: attribution.text
+                            Accessible.onPressAction: if (attribution.thread.length > 0)
+                                root.threadActivated(attribution.thread)
+                            visible: text.length > 0
+                            text: row.attribution ?? ""
+                            color: attribution.thread.length > 0 && attributionHover.hovered ? root.textColor : root.mutedColor
+                            font.pixelSize: Theme.type.caption.size
                             HoverHandler {
-                                id: intentHover
+                                id: attributionHover
+                                enabled: attribution.thread.length > 0
+                                cursorShape: Qt.PointingHandCursor
                             }
-                            ToolTip.visible: intentHover.hovered && (row.marker ?? "").length > 0
-                            ToolTip.delay: 500
-                            ToolTip.text: row.marker ?? ""
-                        }
-                    }
-                    // The images sent with it, loaded from the MC once
-                    // the model has their addresses.
-                    Flow {
-                        id: images
-                        visible: root.list(row.attachments).length > 0
-                        width: parent.width
-                        spacing: Theme.space.sm
-                        Repeater {
-                            model: root.list(row.attachments)
-                            delegate: Rectangle {
-                                id: attachment
-
-                                required property var modelData
-                                required property int index
-                                readonly property bool pictured: picture.status === Image.Ready
-
-                                function openLarge() {
-                                    forceActiveFocus();
-                                    largeImage.showImages(root.list(row.attachments), index, attachment);
-                                }
-
-                                objectName: "attachment-" + modelData.id
-                                Accessible.role: Accessible.Graphic
-                                Accessible.name: modelData.name ?? ""
-                                // As wide as the picture is at this height; a square until it loads.
-                                width: pictured ? Math.min(images.width, Math.round(height * picture.implicitWidth / picture.implicitHeight)) : height
-                                height: 200
-                                radius: Theme.radiusXs
-                                color: root.messageColor
-                                border.color: activeFocus ? root.iconColor : root.borderColor
-                                activeFocusOnTab: true
-                                Keys.onReturnPressed: openLarge()
-                                Keys.onEnterPressed: openLarge()
-                                Keys.onSpacePressed: openLarge()
-
-                                MouseArea {
-                                    objectName: "attachmentOpenLarge-" + attachment.modelData.id
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: attachment.openLarge()
-                                }
-
-                                Component.onCompleted: if (root.model !== null && typeof root.model.loadAttachment === "function")
-                                    root.model.loadAttachment(modelData.id)
-
-                                Image {
-                                    id: picture
-                                    anchors.fill: parent
-                                    anchors.margins: 1
-                                    source: attachment.modelData.url ?? ""
-                                    // Decoded at twice the height shown, for dense screens.
-                                    sourceSize.height: 400
-                                    fillMode: Image.PreserveAspectFit
-                                }
-                                Column {
-                                    visible: !attachment.pictured
-                                    anchors.centerIn: parent
-                                    width: parent.width - 2 * Theme.space.sm
-                                    spacing: Theme.space.sm
-                                    ShellIcon {
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        name: "image"
-                                        size: Theme.icon.lg
-                                        color: root.iconColor
-                                    }
-                                    RowText {
-                                        width: parent.width
-                                        horizontalAlignment: Text.AlignHCenter
-                                        text: attachment.modelData.name ?? ""
-                                        color: root.mutedColor
-                                        font.pixelSize: Theme.type.meta.size
-                                        wrapMode: Text.NoWrap
-                                        elide: Text.ElideMiddle
-                                    }
-                                }
+                            TapHandler {
+                                enabled: attribution.thread.length > 0
+                                onTapped: root.threadActivated(attribution.thread)
                             }
                         }
-                    }
-                    // The other files sent with it, by name, kind and size.
-                    Flow {
-                        id: sentFiles
-                        readonly property var files: root.list(row.model.sentFiles)
-                        visible: files.length > 0
-                        width: parent.width
-                        spacing: Theme.space.sm
-                        Repeater {
-                            model: sentFiles.files
-                            delegate: Rectangle {
-                                id: sentFile
-
-                                required property var modelData
-
-                                objectName: "sentFile-" + modelData.id
-                                Accessible.role: Accessible.StaticText
-                                Accessible.name: (modelData.detail ?? "").length > 0 ? qsTr("%1, %2").arg(modelData.name).arg(modelData.detail) : (modelData.name ?? "")
-                                width: Math.min(sentFiles.width, fileRow.implicitWidth + 2 * Theme.space.md)
-                                height: Theme.control.lg
-                                radius: Theme.radiusMd
-                                color: root.messageColor
-                                border.color: activeFocus ? root.iconColor : root.borderColor
-                                activeFocusOnTab: true
-                                function openViewer() {
-                                    Shell.dispatch("attachment.sent.view", { id: modelData.id, name: modelData.name, mimeType: modelData.mimeType ?? "" });
+                        // How it reached the agent (UserMessageIntentMarker).
+                        Row {
+                            visible: (row.intent ?? "").length > 0 && row.intent !== "turn_start"
+                            spacing: Theme.space.xs
+                            ShellIcon {
+                                visible: row.intent !== "queued_turn"
+                                anchors.verticalCenter: parent.verticalCenter
+                                name: "redo-2"
+                                size: Theme.icon.sm
+                                color: root.mutedColor
+                            }
+                            RowText {
+                                text: row.intent === "queued_turn" ? qsTr("Queued") : qsTr("Steer")
+                                color: root.mutedColor
+                                font.pixelSize: Theme.type.meta.size
+                                wrapMode: Text.NoWrap
+                                HoverHandler {
+                                    id: intentHover
                                 }
-                                Keys.onReturnPressed: openViewer()
-                                Keys.onEnterPressed: openViewer()
-                                Keys.onSpacePressed: openViewer()
+                                ToolTip.visible: intentHover.hovered && (row.marker ?? "").length > 0
+                                ToolTip.delay: 500
+                                ToolTip.text: row.marker ?? ""
+                            }
+                        }
+                        // The images sent with it, loaded from the MC once
+                        // the model has their addresses.
+                        Flow {
+                            id: images
+                            visible: root.list(row.attachments).length > 0
+                            width: parent.width
+                            spacing: Theme.space.sm
+                            Repeater {
+                                model: root.list(row.attachments)
+                                delegate: Rectangle {
+                                    id: attachment
 
-                                MouseArea {
-                                    objectName: "sentFileOpen-" + sentFile.modelData.id
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: sentFile.openViewer()
-                                }
+                                    required property var modelData
+                                    required property int index
+                                    readonly property bool pictured: picture.status === Image.Ready
 
-                                Row {
-                                    id: fileRow
-                                    x: Theme.space.md
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: Theme.space.sm
-                                    ShellIcon {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        name: "file"
-                                        size: Theme.icon.sm
-                                        color: root.iconColor
+                                    function openLarge() {
+                                        forceActiveFocus();
+                                        largeImage.showImages(root.list(row.attachments), index, attachment);
                                     }
-                                    RowText {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        // The name gives way so the kind and size stay whole.
-                                        width: Math.max(0, Math.min(implicitWidth, sentFiles.width - 2 * Theme.space.md - Theme.icon.sm - fileRow.spacing - (fileDetail.visible ? fileDetail.implicitWidth + fileRow.spacing : 0)))
-                                        text: sentFile.modelData.name ?? ""
-                                        color: root.messageTextColor
-                                        font.pixelSize: Theme.type.meta.size
-                                        wrapMode: Text.NoWrap
-                                        elide: Text.ElideMiddle
+
+                                    objectName: "attachment-" + modelData.id
+                                    Accessible.role: Accessible.Graphic
+                                    Accessible.name: modelData.name ?? ""
+                                    // As wide as the picture is at this height; a square until it loads.
+                                    width: pictured ? Math.min(images.width, Math.round(height * picture.implicitWidth / picture.implicitHeight)) : height
+                                    height: 200
+                                    radius: Theme.radiusXs
+                                    color: root.messageColor
+                                    border.color: activeFocus ? root.iconColor : root.borderColor
+                                    activeFocusOnTab: true
+                                    Keys.onReturnPressed: openLarge()
+                                    Keys.onEnterPressed: openLarge()
+                                    Keys.onSpacePressed: openLarge()
+
+                                    MouseArea {
+                                        objectName: "attachmentOpenLarge-" + attachment.modelData.id
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: attachment.openLarge()
                                     }
-                                    RowText {
-                                        id: fileDetail
-                                        visible: text.length > 0
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: sentFile.modelData.detail ?? ""
-                                        color: root.mutedColor
-                                        font.pixelSize: Theme.type.meta.size
-                                        wrapMode: Text.NoWrap
+
+                                    Component.onCompleted: if (root.model !== null && typeof root.model.loadAttachment === "function")
+                                        root.model.loadAttachment(modelData.id)
+
+                                    Image {
+                                        id: picture
+                                        anchors.fill: parent
+                                        anchors.margins: 1
+                                        source: attachment.modelData.url ?? ""
+                                        // Decoded at twice the height shown, for dense screens.
+                                        sourceSize.height: 400
+                                        fillMode: Image.PreserveAspectFit
+                                    }
+                                    Column {
+                                        visible: !attachment.pictured
+                                        anchors.centerIn: parent
+                                        width: parent.width - 2 * Theme.space.sm
+                                        spacing: Theme.space.sm
+                                        ShellIcon {
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            name: "image"
+                                            size: Theme.icon.lg
+                                            color: root.iconColor
+                                        }
+                                        RowText {
+                                            width: parent.width
+                                            horizontalAlignment: Text.AlignHCenter
+                                            text: attachment.modelData.name ?? ""
+                                            color: root.mutedColor
+                                            font.pixelSize: Theme.type.meta.size
+                                            wrapMode: Text.NoWrap
+                                            elide: Text.ElideMiddle
+                                        }
                                     }
                                 }
                             }
+                        }
+                        // The other files sent with it, by name, kind and size.
+                        Flow {
+                            id: sentFiles
+                            readonly property var files: root.list(row.model.sentFiles)
+                            visible: files.length > 0
+                            width: parent.width
+                            spacing: Theme.space.sm
+                            Repeater {
+                                model: sentFiles.files
+                                delegate: Rectangle {
+                                    id: sentFile
+
+                                    required property var modelData
+
+                                    objectName: "sentFile-" + modelData.id
+                                    Accessible.role: Accessible.StaticText
+                                    Accessible.name: (modelData.detail ?? "").length > 0 ? qsTr("%1, %2").arg(modelData.name).arg(modelData.detail) : (modelData.name ?? "")
+                                    width: Math.min(sentFiles.width, fileRow.implicitWidth + 2 * Theme.space.md)
+                                    height: Theme.control.lg
+                                    radius: Theme.radiusMd
+                                    color: root.messageColor
+                                    border.color: activeFocus ? root.iconColor : root.borderColor
+                                    activeFocusOnTab: true
+                                    function openViewer() {
+                                        Shell.dispatch("attachment.sent.view", { id: modelData.id, name: modelData.name, mimeType: modelData.mimeType ?? "" });
+                                    }
+                                    Keys.onReturnPressed: openViewer()
+                                    Keys.onEnterPressed: openViewer()
+                                    Keys.onSpacePressed: openViewer()
+
+                                    MouseArea {
+                                        objectName: "sentFileOpen-" + sentFile.modelData.id
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: sentFile.openViewer()
+                                    }
+
+                                    Row {
+                                        id: fileRow
+                                        x: Theme.space.md
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: Theme.space.sm
+                                        ShellIcon {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            name: "file"
+                                            size: Theme.icon.sm
+                                            color: root.iconColor
+                                        }
+                                        RowText {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            // The name gives way so the kind and size stay whole.
+                                            width: Math.max(0, Math.min(implicitWidth, sentFiles.width - 2 * Theme.space.md - Theme.icon.sm - fileRow.spacing - (fileDetail.visible ? fileDetail.implicitWidth + fileRow.spacing : 0)))
+                                            text: sentFile.modelData.name ?? ""
+                                            color: root.messageTextColor
+                                            font.pixelSize: Theme.type.meta.size
+                                            wrapMode: Text.NoWrap
+                                            elide: Text.ElideMiddle
+                                        }
+                                        RowText {
+                                            id: fileDetail
+                                            visible: text.length > 0
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: sentFile.modelData.detail ?? ""
+                                            color: root.mutedColor
+                                            font.pixelSize: Theme.type.meta.size
+                                            wrapMode: Text.NoWrap
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle {
+                            id: bubble
+                            readonly property bool collapsible: root.collapsible(row.text ?? "")
+                            readonly property bool collapsed: collapsible && root.fullMessages[row.rowId] !== true
+                            objectName: "userMessageBody"
+                            // A message of images alone has no block.
+                            visible: (row.text ?? "").length > 0
+                            // The column's, which the Loader only gives the
+                            // Column after it is made: a block that wrapped at
+                            // another width first would move the rows under it.
+                            width: body.width
+                            // A collapsed message shows at most 176px.
+                            height: (collapsed ? Math.min(176, userText.implicitHeight) : userText.implicitHeight) + 2 * Theme.space.md
+                            radius: Theme.radiusLg
+                            color: root.messageColor
+                            border.width: 1
+                            border.color: root.borderColor
+                            clip: collapsed
+                            Markdown {
+                                id: userText
+                                x: Theme.space.lg
+                                y: Theme.space.md
+                                width: body.width - 2 * Theme.space.lg
+                                text: row.text ?? ""
+                                lineBreaks: true
+                                textColor: root.messageTextColor
+                                linkPreviews: root.linkPreviews
+                                onLinkActivated: (link, external) => root.linkActivated(link, external)
+                            }
+                        }
+                        ActionLink {
+                            objectName: "messageExpand"
+                            visible: bubble.collapsible
+                            text: bubble.collapsed ? qsTr("Show full message") : qsTr("Show less")
+                            Accessible.role: Accessible.Button
+                            Accessible.name: text
+                            onClicked: root.showFull(row.rowId, bubble.collapsed)
+                        }
+                        // A message that did not reach the agent says why.
+                        Pill {
+                            visible: text.length > 0 && text !== "completed" && text !== "pending" && text !== "waiting"
+                            text: row.status ?? ""
+                            textColor: root.errorColor
+                            color: Qt.alpha(root.errorColor, 0.08)
+                            border.color: Qt.alpha(root.errorColor, 0.25)
+                        }
+                        // Where the time and actions sit when they always show;
+                        // no height (nor spacing) where they float.
+                        Item {
+                            id: metaSlot
+                            width: parent.width
+                            height: root.alwaysShowMeta ? Theme.control.sm : 0
                         }
                     }
                     Rectangle {
-                        id: bubble
-                        readonly property bool collapsible: root.collapsible(row.text ?? "")
-                        readonly property bool collapsed: collapsible && root.fullMessages[row.rowId] !== true
-                        objectName: "userMessageBody"
-                        // A message of images alone has no block.
-                        visible: (row.text ?? "").length > 0
-                        // The column's, which the Loader only gives the
-                        // Column after it is made: a block that wrapped at
-                        // another width first would move the rows under it.
-                        width: body.width
-                        // A collapsed message shows at most 176px.
-                        height: (collapsed ? Math.min(176, userText.implicitHeight) : userText.implicitHeight) + 2 * Theme.space.md
-                        radius: Theme.radiusLg
-                        color: root.messageColor
-                        border.width: 1
-                        border.color: root.borderColor
-                        clip: collapsed
-                        Markdown {
-                            id: userText
-                            x: Theme.space.lg
-                            y: Theme.space.md
-                            width: body.width - 2 * Theme.space.lg
-                            text: row.text ?? ""
-                            lineBreaks: true
-                            textColor: root.messageTextColor
-                            linkPreviews: root.linkPreviews
-                            onLinkActivated: (link, external) => root.linkActivated(link, external)
-                        }
-                    }
-                    ActionLink {
-                        objectName: "messageExpand"
-                        visible: bubble.collapsible
-                        text: bubble.collapsed ? qsTr("Show full message") : qsTr("Show less")
-                        Accessible.role: Accessible.Button
-                        Accessible.name: text
-                        onClicked: root.showFull(row.rowId, bubble.collapsed)
-                    }
-                    // A message that did not reach the agent says why.
-                    Pill {
-                        visible: text.length > 0 && text !== "completed" && text !== "pending" && text !== "waiting"
-                        text: row.status ?? ""
-                        textColor: root.errorColor
-                        color: Qt.alpha(root.errorColor, 0.08)
-                        border.color: Qt.alpha(root.errorColor, 0.25)
-                    }
-                    Row {
-                        height: Theme.control.sm
-                        spacing: Theme.space.sm
+                        objectName: "userMessageMeta"
+                        readonly property bool floating: !root.alwaysShowMeta
+                        // Over the block's top edge, at its right, kept
+                        // inside the row so the pointer stays on it.
+                        x: floating ? parent.width - width - Theme.space.md : 0
+                        y: floating ? Math.max(0, bubble.y - height / 2) : metaSlot.y
+                        width: userMeta.width + (floating ? 2 * Theme.space.xxs : 0)
+                        height: Theme.control.sm + (floating ? 2 * Theme.space.xxs : 0)
+                        radius: Theme.radiusMd
+                        color: floating ? Theme.palette.color("surfaceOverlay", "#22262e") : "transparent"
+                        border.width: floating ? 1 : 0
+                        border.color: Theme.palette.color("borderStrong", "#343a44")
                         opacity: row.showMeta ? 1 : 0
                         Behavior on opacity {
                             NumberAnimation {
@@ -1153,24 +1194,31 @@ Item {
                                 easing.type: Easing.OutCubic
                             }
                         }
-                        Stamp {
-                            anchors.verticalCenter: parent.verticalCenter
-                            rowId: row.rowId
-                            text: row.time ?? ""
-                        }
-                        LinkPullRequestButton {
-                            url: row.model.pullRequestUrl ?? ""
-                        }
-                        IconButton {
-                            objectName: "editFromHere"
-                            icon: "pencil"
-                            tip: qsTr("Edit from here")
-                            // Asked when the pointer comes over the message.
-                            visible: row.showMeta && root.editable(row.rowId)
-                            onClicked: root.editRequested(row.rowId)
-                        }
-                        CopyButton {
-                            rowId: row.rowId
+                        Row {
+                            id: userMeta
+                            anchors.centerIn: parent
+                            height: Theme.control.sm
+                            leftPadding: parent.floating ? Theme.space.sm : 0
+                            spacing: Theme.space.sm
+                            Stamp {
+                                anchors.verticalCenter: parent.verticalCenter
+                                rowId: row.rowId
+                                text: row.time ?? ""
+                            }
+                            LinkPullRequestButton {
+                                url: row.model.pullRequestUrl ?? ""
+                            }
+                            IconButton {
+                                objectName: "editFromHere"
+                                icon: "pencil"
+                                tip: qsTr("Edit from here")
+                                // Asked when the pointer comes over the message.
+                                visible: row.showMeta && root.editable(row.rowId)
+                                onClicked: root.editRequested(row.rowId)
+                            }
+                            CopyButton {
+                                rowId: row.rowId
+                            }
                         }
                     }
                 }
@@ -1179,10 +1227,14 @@ Item {
             Component {
                 id: assistantMessage
                 Column {
+                    // What it keeps blank at its foot: its actions' line, while
+                    // they wait for the pointer.
+                    readonly property real tail: bottomPadding + (replyMeta.visible && !root.alwaysShowMeta ? replyMeta.height : 0)
                     leftPadding: Theme.space.xs
                     rightPadding: Theme.space.xs
                     topPadding: Theme.space.xxs
-                    bottomPadding: Theme.space.xxs
+                    // Before a divider, its actions' line is the space over it.
+                    bottomPadding: row.beforeMarker && replyMeta.visible ? 0 : Theme.space.xxs
                     Markdown {
                         // Over the row's files and actions, for "Cite".
                         z: 1
@@ -1420,8 +1472,9 @@ Item {
                     }
                     // Its actions and time, on its settled turn's last reply.
                     Row {
+                        id: replyMeta
                         visible: row.meta === true && row.streaming !== true
-                        topPadding: Theme.space.sm
+                        topPadding: row.beforeMarker ? 0 : Theme.space.sm
                         height: topPadding + Theme.control.sm
                         spacing: Theme.space.sm
                         opacity: row.showMeta ? 1 : 0
@@ -2324,59 +2377,39 @@ Item {
 
             Component {
                 id: marker
-                // A line across the column with the marker in its middle
-                // (TimelineSystemDivider).
+                // One quiet line, centred in the column, with no rule
+                // (TimelineSystemDivider); the rows around it keep it 24
+                // above and 16 below.
                 Item {
-                    implicitHeight: markerContent.height + 2 * Theme.space.md
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: Math.max(0, markerContent.x - Theme.space.sm)
-                        height: 1
-                        color: Qt.alpha(root.borderColor, 0.7)
-                    }
+                    implicitWidth: root.columnWidth
+                    implicitHeight: markerContent.height
+                    readonly property real tail: 0
                     Row {
                         id: markerContent
-                        anchors.centerIn: parent
-                        height: Theme.icon.md
-                        spacing: Theme.space.sm
-                        ShellIcon {
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: name.length > 0
-                            name: row.icon ?? ""
-                            size: Theme.icon.sm
-                            color: root.mutedColor
-                        }
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: Theme.space.xs
                         RowText {
                             objectName: "markerTitle"
-                            anchors.verticalCenter: parent.verticalCenter
                             // A notification's title names a task, as long as its author made it.
-                            width: Math.min(implicitWidth, Math.max(0, root.columnWidth - 80))
+                            width: Math.min(implicitWidth, Math.max(0, root.columnWidth - (markerDetail.visible ? markerDetail.width + markerContent.spacing : 0)))
                             text: row.title ?? ""
                             color: root.mutedColor
-                            font.pixelSize: Theme.type.caption.size
-                            font.weight: Font.Medium
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
                         }
                         RowText {
-                            anchors.verticalCenter: parent.verticalCenter
+                            id: markerDetail
                             visible: (row.text ?? "").length > 0
-                            width: Math.min(implicitWidth, 320, Math.max(0, root.columnWidth - 160))
-                            text: "· " + (row.text ?? "")
+                            width: Math.min(implicitWidth, root.columnWidth / 2)
+                            text: "· " + (row.text ?? "")
                             color: root.mutedColor
-                            font.pixelSize: Theme.type.caption.size
+                            font.pixelSize: Theme.type.meta.size
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
-                            // One line on the rule: a detail of several would hang over the rows around it.
+                            // One line: a detail of several would hang over the rows around it.
                             maximumLineCount: 1
                         }
-                    }
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.right: parent.right
-                        width: Math.max(0, parent.width - markerContent.x - markerContent.width - Theme.space.sm)
-                        height: 1
-                        color: Qt.alpha(root.borderColor, 0.7)
                     }
                 }
             }

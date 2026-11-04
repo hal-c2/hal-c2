@@ -891,14 +891,15 @@ Item {
             tryVerify(() => list.itemAtIndex(1) !== null);
             const question = list.itemAtIndex(0);
             const copy = findNamed(question, "copyMessage");
+            const meta = findNamed(question, "userMessageMeta");
             mouseMove(list, list.width / 2, list.height - 2);
-            tryCompare(copy.parent, "opacity", 0, 2000, "Copy is hidden away from the pointer");
+            tryCompare(meta, "opacity", 0, 2000, "Copy is hidden away from the pointer");
             // The message's markdown is laid out.
             const markdown = findWith(question, "segmentCount");
             tryVerify(() => markdown.segmentCount > 0 && markdown.implicitHeight > 0 && question.height >= markdown.implicitHeight, 2000);
             const height = question.height;
             mouseMove(question, question.width / 2, 4);
-            tryCompare(copy.parent, "opacity", 1, 2000, "Copy shows with the pointer over the message");
+            tryCompare(meta, "opacity", 1, 2000, "Copy shows with the pointer over the message");
             compare(question.height, height, "showing the actions moves nothing");
             mouseClick(copy);
             compare(actionRows.copiedRows, ["question"]);
@@ -1003,11 +1004,34 @@ Item {
             const label = findNamed(item, "markerTitle");
             verify(visibleIn(label), "the notification names what ended");
             compare(label.text, title);
-            verify(visibleIn(findIcon(item, "zap")), "with the notification's icon");
             verify(label.truncated, "a long title is cut short");
             verify(label.mapToItem(item, 0, 0).x >= 0 && label.mapToItem(item, label.width, 0).x <= item.width, "and stays inside the row");
             verify(item.height < 60, "on one line");
             verify(!findNamed(item, "messageAttribution") || !visibleIn(findNamed(item, "messageAttribution")), "and is nobody's message");
+        }
+
+        // A system divider keeps 24 above it and 16 below, and steered
+        // messages sit 16 apart, wherever the pointer is.
+        function test_dividersAndSteersKeepEvenSpace() {
+            rows.clear();
+            rows.append(root.row({ rowId: "u1", author: "user", text: "First steer", intent: "steer" }));
+            rows.append(root.row({ rowId: "u2", author: "user", text: "Second steer", intent: "steer" }));
+            rows.append(root.row({ rowId: "c1", kind: "marker", title: "Checkpoint" }));
+            rows.append(root.row({ rowId: "u3", author: "user", text: "A new turn" }));
+            const timeline = createTemporaryObject(timelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(3) !== null);
+            // The blank between one row's ink and the next row's.
+            function space(index) {
+                const above = list.itemAtIndex(index);
+                const below = list.itemAtIndex(index + 1);
+                const ink = findWith(above, "sourceComponent").item.implicitHeight;
+                return below.y + findWith(below, "sourceComponent").y - (above.y + ink);
+            }
+            compare(space(0), Theme.space.lg, "steers sit 16 apart");
+            compare(space(1), Theme.space.xl, "24 above a divider");
+            compare(space(2), Theme.space.lg, "16 below it");
+            verify(!visibleIn(findNamed(list.itemAtIndex(3), "turnDivider")), "with no rule under it");
         }
 
         function findWith(item, property) {
