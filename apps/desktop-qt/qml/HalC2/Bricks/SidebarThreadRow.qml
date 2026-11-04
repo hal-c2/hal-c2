@@ -257,17 +257,42 @@ Item {
         id: hover
     }
 
-    // Resting the pointer on a row previews the thread; the status icon's
-    // word leads it. A hidden list (the phone's, under the thread a tap
-    // opened) keeps its hover, so the row must be on screen too.
-    ToolTip.visible: row.visible && hover.hovered && !slotHover.hovered && !row.draft && !!row.item.preview
-    ToolTip.delay: 700
-    ToolTip.text: {
-        const preview = row.item.preview;
-        if (!preview) {
-            return "";
+    // Resting the pointer on a row previews the thread in a standard
+    // tooltip: the status icon's word, the whole title, project, branch and
+    // the latest activity. A hidden list (the phone's, under the thread a tap
+    // opened) keeps its hover, so the row must be on screen too. The card
+    // sits beside the row, never over the rows above and below it, and is
+    // built only while the pointer rests here.
+    readonly property ToolTip previewCard: previewLoader.item?.card ?? null
+
+    Loader {
+        id: previewLoader
+
+        active: row.visible && hover.hovered && !slotHover.hovered && !row.draft && !!row.item.preview
+        sourceComponent: Item {
+            readonly property alias card: card
+
+            ToolTip {
+                id: card
+
+                objectName: "rowPreview"
+                parent: row
+                x: row.width + Theme.space.xs
+                y: Math.round((row.height - height) / 2)
+                visible: true
+                delay: 600
+                text: {
+                    const preview = row.item.preview;
+                    if (!preview) {
+                        return "";
+                    }
+                    return [row.statusWord, row.oneLineTitle, preview.project, preview.branch, preview.activity].filter(line => !!line).join("\n");
+                }
+            }
+            ShellToolTip {
+                tip: card
+            }
         }
-        return [row.statusWord, row.oneLineTitle, preview.project, preview.branch, preview.activity].filter(line => !!line).join("\n");
     }
 
     DropArea {
@@ -355,12 +380,13 @@ Item {
         anchors.rightMargin: Theme.space.xs
         spacing: Theme.space.sm
 
-        // The project's mark, level with the title; the project's colour is
-        // here and nowhere else on the row.
+        // The project's mark; the project's colour is here and nowhere else
+        // on the row.
         ProjectIcon {
             objectName: "projectMark"
-            Layout.alignment: row.slim || !row.hasDetail ? Qt.AlignVCenter : Qt.AlignTop
-            Layout.topMargin: row.slim || !row.hasDetail ? 0 : Math.round((Theme.type.body.lineHeight - size) / 2)
+            // Centred on the title's line, one or two lines alike.
+            Layout.alignment: Qt.AlignTop
+            Layout.topMargin: Math.round((row.height - lines.implicitHeight) / 2 + (Theme.type.body.lineHeight - size) / 2)
             Layout.preferredWidth: size
             Layout.preferredHeight: size
             // DIRECTION's 14px mark.
@@ -370,6 +396,7 @@ Item {
         }
 
         ColumnLayout {
+            id: lines
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignVCenter
             spacing: Theme.space.xxs
@@ -435,11 +462,13 @@ Item {
 
         PluginMark {}
 
-        // The status slot: one thing at a time, in a width that never moves
-        // the title.
+        // The status slot: one thing at a time. It holds DIRECTION's 44px
+        // only while something occupies it (the actions, the jump key, a
+        // status); a row at rest with just its age keeps the age's width
+        // and gives the title the rest.
         Item {
             objectName: "statusSlot"
-            Layout.preferredWidth: row.slotWidth
+            Layout.preferredWidth: row.slot === "age" ? Math.min(Math.ceil(ageText.implicitWidth), row.slotWidth) : row.slotWidth
             Layout.fillHeight: true
 
             // Over the actions their own tooltips speak, not the preview.
@@ -554,6 +583,7 @@ Item {
             }
 
             Text {
+                id: ageText
                 objectName: "rowAge"
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter

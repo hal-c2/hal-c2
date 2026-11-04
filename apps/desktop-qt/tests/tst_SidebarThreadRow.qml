@@ -149,6 +149,13 @@ Item {
             const monogram = findChild(mark, "projectIconMonogram");
             verify(monogram.visible, "a project without an icon shows its initial");
             compare(findChild(monogram, "projectIconMonogramText").text, "H");
+            // Centred on the title's line, slim or two lines.
+            waitForRendering(row);
+            const middle = mark.mapToItem(row, 0, mark.height / 2).y;
+            const title = findChild(row, "cardTitle");
+            const line = title.mapToItem(row, 0, title.height / 2).y;
+            verify(Math.abs(middle - line) <= 1, "the mark's middle is at " + middle + ", the title's line at " + line);
+            compare(mark.width, 14);
             row.projectIcon = { kind: "emoji", text: "🚀" };
             verify(!monogram.visible, "the icon replaces the initial");
             verify(findChild(mark, "projectIconEmoji").visible);
@@ -160,6 +167,11 @@ Item {
             tryCompare(findChild(mark, "projectIconImage"), "status", Image.Error);
             verify(monogram.visible, "an image that cannot load leaves the initial");
             compare(findChild(monogram, "projectIconMonogramText").text, "H");
+            // A favicon brings the project's monogram and colour for meanwhile.
+            row.projectIcon = { kind: "image", url: "file:///nonexistent/hal-c2-favicon.png", text: "HC", tint: "#22c55e" };
+            tryCompare(findChild(mark, "projectIconImage"), "status", Image.Error);
+            compare(findChild(monogram, "projectIconMonogramText").text, "HC");
+            verify(Qt.colorEqual(findChild(monogram, "projectIconMonogramText").color, "#22c55e"), "the letters keep the project's colour");
         }
 
         function shown(item, name) {
@@ -181,6 +193,29 @@ Item {
         function sceneRect(item) {
             const p = item.mapToItem(null, 0, 0);
             return Qt.rect(p.x, p.y, item.width, item.height);
+        }
+
+        // Scenario: A resting row gives its title the status slot's room (features/threads/sidebar-list.feature)
+        function test_restingRowGivesTheTitleTheSlot() {
+            let row = createTemporaryObject(rowComponent, root);
+            row.item = Object.assign({}, row.item, {
+                title: "A long title that fills the whole row and then some more"
+            });
+            const slot = findChild(row, "statusSlot");
+            const title = findChild(row, "cardTitle");
+            const age = findChild(row, "rowAge");
+            waitForRendering(row);
+            compare(row.slot, "age");
+            verify(slot.width < row.slotWidth, "a slot with just the age is " + slot.width + " wide");
+            compare(slot.width, Math.min(Math.ceil(age.implicitWidth), row.slotWidth));
+            const resting = title.width;
+            // The actions claim the whole slot back.
+            row.focused = true;
+            compare(row.slot, "actions");
+            tryCompare(slot, "width", row.slotWidth);
+            verify(title.width < resting, "the title gives the actions their room");
+            row.focused = false;
+            tryCompare(title, "width", resting);
         }
 
         // The jump key takes the status slot's place instead of covering the title.

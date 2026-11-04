@@ -3,7 +3,8 @@
 // Time passes in jumps; the renewal timer runs at each deadline the model
 // says it has. Whatever the order, a favicon URL the shell shows has not run
 // out while the MC signs, and the MC is asked once per renewal, no more:
-// the MC answers a URL that ran out with Forbidden.
+// the MC answers a URL that ran out with Forbidden. Each favicon carries the
+// project's monogram and colour for while it is not drawn.
 
 #include "Prop.h"
 
@@ -15,6 +16,7 @@
 #include "IdentityController.h"
 #include "McClient.h"
 #include "NativeShell.h"
+#include "ProjectIdentity.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 
@@ -126,9 +128,11 @@ struct Sut {
     RC_ASSERT(prop::until([&done] { return done; }));
   }
 
-  QString shown(const QString& project) const {
-    return bridge->state()->value(QStringLiteral("projectIcons")).toMap().value(mc.environmentId + QLatin1Char(':') + project).toMap().value(QStringLiteral("url")).toString();
+  QVariantMap icon(const QString& project) const {
+    return bridge->state()->value(QStringLiteral("projectIcons")).toMap().value(mc.environmentId + QLatin1Char(':') + project).toMap();
   }
+
+  QString shown(const QString& project) const { return icon(project).value(QStringLiteral("url")).toString(); }
 
   bool shownAll() const {
     for (const QString& project : kProjects) {
@@ -156,6 +160,11 @@ void check(const Model& model, Sut& sut) {
     // A refused renewal keeps the last URL showing until the MC signs again.
     RC_ASSERT(url == sut.latest.value(project));
     if (favicon.served) RC_ASSERT(sut.expiries.value(url) > sut.now);
+    // Until the image loads, or if it cannot, the project's own monogram
+    // shows in its colour, never a grey letter.
+    const projectidentity::Identity automatic = projectidentity::derive(project);
+    RC_ASSERT(sut.icon(project).value(QStringLiteral("text")).toString() == automatic.monogram);
+    RC_ASSERT(sut.icon(project).value(QStringLiteral("tint")).toString() == projectidentity::tint(automatic.color));
   }
 }
 

@@ -641,6 +641,15 @@ Feature: The thread list
     Then each slim and card row shows the icon of its project
     And a project without an icon shows its monogram
 
+  # Proved by tst_SidebarThreadRow.qml (test_restingRowGivesTheTitleTheSlot).
+  @desktop @backlog-desktop
+  Scenario: A resting row gives its title the status slot's room
+    Given a thread with a long title that was last active a minute ago
+    When the user looks at its row in the thread list
+    Then the title runs up to the row's age
+    When the user points at the row
+    Then the title shortens to make room for the row's actions
+
   @desktop @backlog-desktop
   Scenario: The thread list announces only the threads it shows
     Given the thread list is scoped to the project "shop"
