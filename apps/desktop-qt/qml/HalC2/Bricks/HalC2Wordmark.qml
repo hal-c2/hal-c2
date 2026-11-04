@@ -1,18 +1,21 @@
 import QtQuick
 import QtQuick.Shapes
+import HalC2.Shell
 
 // The HAL-C2 logotype (assets/brand/hal-c2-logotype.svg): "HAL-" and "C2" set
 // in the HAL C2 font and outlined, filled as a Shape so it scales crisply.
 // `size` is its height; the width follows the mark. `dev` adds "DEV" in the
-// same font, the mark of a development shell (StageController).
+// same font, the mark of a development shell (StageController). It is one
+// ink, the theme's text colour, unless a shell gives a part its own `…Color`.
 Item {
     id: mark
 
     property real size: 10
     property bool dev: false
-    property color halColor: "#fba919"
-    property color c2Color: "#768efb"
-    property color devColor: "#f76eb8"
+    property color color: Theme.palette.color("ink", "#e4e4e7")
+    property color halColor: color
+    property color c2Color: color
+    property color devColor: color
     // The outlines are in font units: 4482 wide (7244 with DEV), cap height 700.
     readonly property real unit: size / 700
 
