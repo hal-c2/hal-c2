@@ -75,6 +75,9 @@ Rectangle {
     readonly property color borderColor: Theme.palette.color("border", "#27272a")
     readonly property color added: Theme.palette.color("diffAdded", "#22c55e")
     readonly property color removed: Theme.palette.color("diffRemoved", "#ef4444")
+    // Line backgrounds: opaque, so a selection or hover over them reads the same in every theme.
+    readonly property color addedSurface: Theme.palette.color("diffAddedSurface", Qt.alpha(added, 0.12))
+    readonly property color removedSurface: Theme.palette.color("diffRemovedSurface", Qt.alpha(removed, 0.12))
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
 
     objectName: "diffPanel"
@@ -745,7 +748,7 @@ Rectangle {
     }
 
     function tint(sign) {
-        return sign === "+" ? Qt.alpha(root.added, 0.12) : sign === "-" ? Qt.alpha(root.removed, 0.12) : "transparent";
+        return sign === "+" ? root.addedSurface : sign === "-" ? root.removedSurface : "transparent";
     }
 
     Component {

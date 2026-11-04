@@ -133,7 +133,7 @@ struct BuiltIns {
   QJsonObject standard;
   QJsonObject defaults;
   QJsonObject fixed;
-  double radius = 10;
+  double radius = 8;
   QString fontUi;
   QString fontMono;
   QStringList reserved;
@@ -154,7 +154,7 @@ const BuiltIns& builtIns() {
     result.standard = perAppearance(root.value(QLatin1String("standard")).toObject());
     result.defaults = perAppearance(root.value(QLatin1String("defaults")).toObject());
     result.fixed = perAppearance(root.value(QLatin1String("fixed")).toObject());
-    result.radius = root.value(QLatin1String("radius")).toDouble(10);
+    result.radius = root.value(QLatin1String("radius")).toDouble(8);
     result.fontUi = root.value(QLatin1String("fonts")).toObject().value(QLatin1String("ui")).toString();
     result.fontMono = root.value(QLatin1String("fonts")).toObject().value(QLatin1String("mono")).toString();
     for (const QJsonValue& id : root.value(QLatin1String("reserved")).toArray()) result.reserved.append(id.toString());
@@ -673,9 +673,18 @@ void ThemeController::resolve() {
   // The interface rows of Settings → Appearance that are colours: what diffs
   // draw additions and deletions in, and how solid menus, dialogs and the
   // composer are.
+  // A theme's own diff colours stand unless blue and orange are asked for;
+  // their line backgrounds then derive from the new pair (ThemeStore::color).
   const bool blueOrange = m_settings->setting(QStringLiteral("diffColorScheme")).toString() == QLatin1String("blue-orange");
-  colors.insert(QStringLiteral("diffAdded"), blueOrange ? QStringLiteral("#3b82f6") : QStringLiteral("#22c55e"));
-  colors.insert(QStringLiteral("diffRemoved"), blueOrange ? QStringLiteral("#f97316") : QStringLiteral("#ef4444"));
+  if (blueOrange) {
+    colors.insert(QStringLiteral("diffAdded"), QStringLiteral("#3b82f6"));
+    colors.insert(QStringLiteral("diffRemoved"), QStringLiteral("#f97316"));
+    colors.remove(QStringLiteral("diffAddedSurface"));
+    colors.remove(QStringLiteral("diffRemovedSurface"));
+  } else {
+    if (!colors.contains(QStringLiteral("diffAdded"))) colors.insert(QStringLiteral("diffAdded"), QStringLiteral("#22c55e"));
+    if (!colors.contains(QStringLiteral("diffRemoved"))) colors.insert(QStringLiteral("diffRemoved"), QStringLiteral("#ef4444"));
+  }
   const int glass = qBound(40, m_settings->setting(QStringLiteral("glassOpacity")).toInt(), 100);
   if (glass < 100) {
     QColor overlay(colors.value(QLatin1String("surfaceOverlay")).toString());

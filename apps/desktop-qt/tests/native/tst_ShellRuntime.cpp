@@ -162,6 +162,67 @@ private slots:
     QCOMPARE(item->property("color").value<QColor>(), QColor(12, 34, 56, 204));
   }
 
+  // Roles themes written before a rename still set, and roles derived from
+  // what a theme sets, follow the theme file over the base theme.
+  void renamedAndDerivedRolesFollowTheThemeFile() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    ThemeStore theme(directory.path());
+    theme.applyBaseTheme(QVariantMap{{"appearance", "dark"},
+                                     {"colors", QVariantMap{{"ink", "#f0f0f0"}, {"inkSecondary", "#b0b0b0"}, {"inkTertiary", "#808080"},
+                                                            {"canvas", "#000000"}, {"diffAdded", "#00ff00"}, {"error", "#ff0000"}}}});
+    // The base names the new roles: the old names read them.
+    QCOMPARE(theme.color("text", Qt::black), QColor("#f0f0f0"));
+    QCOMPARE(theme.color("textMuted", Qt::black), QColor("#808080"));
+    QCOMPARE(theme.color("destructive", Qt::black), QColor("#ff0000"));
+    QCOMPARE(theme.color("inkSecondary", Qt::black), QColor("#b0b0b0"));
+    // A derived role the base leaves out comes from the base's roles.
+    const QColor addedSurface = theme.color("diffAddedSurface", Qt::black);
+    const auto near = [](int value, double wanted) { return qAbs(value - wanted) <= 1; };
+    QVERIFY(near(addedSurface.green(), 255 * 0.14));
+    QCOMPARE(addedSurface.red(), 0);
+    // A scrim no palette names still dims.
+    QVERIFY(theme.color("scrim", Qt::transparent).alpha() > 0);
+    // A theme file with the old names: its text is the ink, and the secondary
+    // ink sits between its text and muted text, not the base's.
+    QFile file(directory.filePath("theme.json"));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("{\"colors\":{\"text\":\"#ffffff\",\"textMuted\":\"#000000\",\"canvas\":\"#101010\"}}");
+    file.close();
+    theme.reload();
+    QCOMPARE(theme.color("ink", Qt::black), QColor("#ffffff"));
+    QCOMPARE(theme.color("inkTertiary", Qt::white), QColor("#000000"));
+    QVERIFY(near(theme.color("inkSecondary", Qt::black).red(), 127.5));
+    // Its canvas with the base's added colour.
+    QVERIFY(near(theme.color("diffAddedSurface", Qt::black).red(), 16 * 0.86));
+    QVERIFY(near(theme.color("diffAddedSurface", Qt::black).green(), 16 * 0.86 + 255 * 0.14));
+  }
+
+  // The radius scale derives from the base radius, the type ramp scales with
+  // the interface size, and icons thin their stroke as they grow.
+  void tokensFollowRadiusAndInterfaceSize() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    ThemeStore theme(directory.path());
+    theme.applyBaseTheme(QVariantMap{{"appearance", "dark"}, {"radius", 8}});
+    QCOMPARE(theme.radiusXs(), 4.0);
+    QCOMPARE(theme.radiusSm(), 6.0);
+    QCOMPARE(theme.radius(), 8.0);
+    QCOMPARE(theme.radiusLg(), 12.0);
+    QCOMPARE(theme.radiusXl(), 16.0);
+    QCOMPARE(theme.type()->body()->size(), 13);
+    QCOMPARE(theme.type()->body()->lineHeight(), 18);
+    QCOMPARE(theme.type()->title()->weight(), 600);
+    theme.applyBaseTheme(QVariantMap{{"appearance", "dark"}, {"radius", 4}, {"fontSizes", QVariantMap{{"interface", 20}}}});
+    QCOMPARE(theme.radiusLg(), 6.0);
+    QCOMPARE(theme.type()->body()->size(), qRound(13 * 1.25));
+    QCOMPARE(theme.type()->prose()->lineHeight(), qRound(22 * 1.25));
+    QCOMPARE(theme.icon()->stroke(12), 2.0);
+    QCOMPARE(theme.icon()->stroke(16), 1.75);
+    QCOMPARE(theme.icon()->stroke(20), 1.5);
+    QCOMPARE(theme.icon()->stroke(24), 1.5);
+  }
+
   // The attached ToolTip is the stock Basic one, which reads the application
   // palette: a dark theme must not leave it a white box.
   void toolTipsFollowTheTheme() {
