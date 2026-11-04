@@ -11,7 +11,8 @@ Item {
 
     required property Flickable target
     property color color: Theme.palette.color("surfaceOverlay", "#22262e")
-    property real size: Theme.space.lg
+    // One row tall, so the last whole row reads as fading out, not as the end.
+    property real size: Theme.control.md
     readonly property bool moreAbove: target.contentHeight > target.height && !target.atYBeginning
     readonly property bool moreBelow: target.contentHeight > target.height && !target.atYEnd
 
