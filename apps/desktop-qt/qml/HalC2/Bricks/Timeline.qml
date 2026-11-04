@@ -651,7 +651,10 @@ Item {
             contentY = item.y - settlingOffset;
             positioning = false;
         }
-        onMovementStarted: settlingIndex = -1
+        onMovementStarted: {
+            settlingIndex = -1;
+            movedFrom = contentY;
+        }
         Connections {
             target: root.model
             ignoreUnknownSignals: true
@@ -732,16 +735,25 @@ Item {
 
         // Only the user's own scrolling (wheel, drag, keys, scroll bar)
         // decides whether the view follows; the list settling its layout or
-        // growing below the end does not.
+        // growing below the end does not. Leaving the end stops it following,
+        // and only going down to the end follows again: a scroll up the list
+        // did not take (rows measured above can cut a wheel's short), ending
+        // where a host's room for reading shows the end, leaves the user away.
+        property real movedFrom: 0
+        property real lastY: 0
+        function userScrolled(from) {
+            following = nearEnd() && (following || contentY > from);
+        }
         onContentYChanged: {
             if (!positioning && (moving || dragging || scrollBar.pressed)) {
-                following = nearEnd();
+                userScrolled(lastY);
                 if (atYBeginning)
                     root.loadEarlier();
             }
+            lastY = contentY;
         }
         onMovementEnded: {
-            following = nearEnd();
+            userScrolled(movedFrom);
             settleAway();
             if (atYBeginning)
                 root.loadEarlier();
