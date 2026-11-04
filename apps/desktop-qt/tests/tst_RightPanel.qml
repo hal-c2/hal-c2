@@ -187,6 +187,45 @@ Item {
         }
     }
 
+    // A thread's ThreadDiff with its rows loaded; its lines can be commented on.
+    Component {
+        id: reviewedDiff
+        QtObject {
+            property var choices: [{ value: -1, label: "Latest turn" }, { value: 0, label: "All changes" }]
+            property int selection: 0
+            property string status: "ready"
+            property bool wrap: false
+            property bool reviewing: false
+            property var model: null
+            signal revealRow(int row)
+        }
+    }
+
+    // A DiffModel with one hunk of a file: a kept, a removed and an added line.
+    Component {
+        id: fakeDiffRows
+        ListModel {
+            property bool split: false
+            property int fileCount: 1
+            property int additions: 1
+            property int deletions: 1
+            property int maxColumns: 40
+            property bool allExpanded: true
+            function path(file) { return "src/cart.ts"; }
+            function tree() { return []; }
+            function toggle(file) {}
+
+            Component.onCompleted: {
+                const row = { file: 0, path: "", previousPath: "", change: "modified", binary: false, additions: 0, deletions: 0, expanded: true, text: "", sign: "", oldLine: 0, newLine: 0, rightText: "", rightSign: "", state: "", note: "", partial: false };
+                append(Object.assign({}, row, { kind: "file", path: "src/cart.ts", additions: 1, deletions: 1 }));
+                append(Object.assign({}, row, { kind: "hunk", path: "@@ -1017,6 +1018,13 @@ defmodule HalC2.Codex.ThreadRuntime do a header far wider than the panel it is shown in" }));
+                append(Object.assign({}, row, { kind: "line", sign: " ", text: "kept", oldLine: 1017, newLine: 1018 }));
+                append(Object.assign({}, row, { kind: "line", sign: "-", text: "removed", oldLine: 1018 }));
+                append(Object.assign({}, row, { kind: "line", sign: "+", text: "added", newLine: 1019 }));
+            }
+        }
+    }
+
     Component {
         id: pullRequestsComponent
         PullRequestsPanel {
@@ -1028,6 +1067,34 @@ Item {
             mouseClick(findChild(dialog.contentItem, "revertFiles"));
             compare(source.confirmed, [false, true]);
             tryVerify(() => !dialog.visible);
+        }
+
+        // A line has no number on the side it is not on, the comment button
+        // has its own column, and a long hunk header ends in view.
+        function test_diffLinesNumberOnlyTheirOwnSide() {
+            const source = createTemporaryObject(reviewedDiff, root, { model: createTemporaryObject(fakeDiffRows, root) });
+            const diff = createTemporaryObject(diffComponent, root, { source: source, width: 360 });
+            verify(diff.canComment);
+            const view = findChild(diff, "diffRows");
+            tryVerify(() => view.count === 5 && view.itemAtIndex(4) !== null);
+
+            function numbers(index) {
+                const line = view.itemAtIndex(index).item;
+                return [findChild(line, "diffOldLine").text, findChild(line, "diffNewLine").text];
+            }
+            compare(numbers(2), ["1017", "1018"]);
+            compare(numbers(3), ["1018", ""], "a removed line has no new number");
+            compare(numbers(4), ["", "1019"], "an added line has no old number");
+
+            const kept = view.itemAtIndex(2).item;
+            const button = findChild(kept, "diffLineComment");
+            const number = findChild(kept, "diffOldLine");
+            const numberLeft = number.mapToItem(kept, 0, 0).x + number.width - number.contentWidth;
+            verify(button.x + button.width <= numberLeft, "the comment button is left of the line number");
+
+            const header = findChild(view.itemAtIndex(1).item, "diffHunkHeader");
+            verify(header.truncated, "the header is elided");
+            verify(header.mapToItem(view, header.width, 0).x <= view.width, "the header ends inside the panel");
         }
 
         function test_pullRequestsOpenInTheBrowserAndLinkFromTheField() {

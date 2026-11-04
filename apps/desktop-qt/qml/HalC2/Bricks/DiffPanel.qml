@@ -469,7 +469,10 @@ Rectangle {
                     flickableDirection: root.wrap ? Flickable.VerticalFlick : Flickable.HorizontalAndVerticalFlick
                     // Unwrapped rows are as wide as the longest line, and scroll sideways together.
                     contentWidth: root.wrap ? width : Math.max(width, rowWidth)
-                    readonly property real gutter: glyph.advanceWidth * 10 + 24
+                    // A stacked line: the comment button, both line numbers, the sign, the text.
+                    readonly property real commentInset: root.canComment ? 20 : 0
+                    readonly property real numbersWidth: glyph.advanceWidth * 10 + 6
+                    readonly property real gutter: commentInset + numbersWidth + 6 + glyph.advanceWidth * 2
                     readonly property real rowWidth: gutter + glyph.advanceWidth * Math.min(root.model?.maxColumns ?? 0, root.maxLineColumns) * (root.split ? 2 : 1) + 24
                     ScrollBar.vertical: ScrollBar {
                         Accessible.name: qsTr("Scroll diff")
@@ -701,9 +704,13 @@ Rectangle {
             height: 22
             color: Qt.alpha(Theme.palette.color("accent", "#3b82f6"), 0.08)
 
+            // Kept in view while the lines scroll sideways, like the file header.
             Text {
-                x: view.gutter
+                objectName: "diffHunkHeader"
+                x: view.gutter + Math.max(0, view.contentX - view.originX)
+                width: Math.max(0, view.width - view.gutter - 8)
                 anchors.verticalCenter: parent.verticalCenter
+                elide: Text.ElideRight
                 text: parent.row.path
                 color: root.muted
                 font.family: root.mono
@@ -727,9 +734,14 @@ Rectangle {
         font.family: root.mono
         font.pixelSize: Theme.fontSizeCode
         textFormat: Text.PlainText
-        wrapMode: root.wrap ? Text.WrapAnywhere : Text.NoWrap
+        wrapMode: root.wrap ? Text.WrapAtWordBoundaryOrAnywhere : Text.NoWrap
         topPadding: 1
         bottomPadding: 1
+    }
+
+    // A side a line is not on has no number (DiffModel gives it 0).
+    function lineNumber(line) {
+        return line > 0 ? String(line) : "";
     }
 
     function tint(sign) {
@@ -749,16 +761,19 @@ Rectangle {
 
             Row {
                 id: numbers
+                x: view.commentInset
                 spacing: 6
                 LineNumber {
-                    text: stackedRow.row.oldLine ?? ""
+                    objectName: "diffOldLine"
+                    text: root.lineNumber(stackedRow.row.oldLine)
                 }
                 LineNumber {
-                    text: stackedRow.row.newLine ?? ""
+                    objectName: "diffNewLine"
+                    text: root.lineNumber(stackedRow.row.newLine)
                 }
             }
             Text {
-                x: view.gutter - glyph.advanceWidth * 2
+                x: view.commentInset + view.numbersWidth + 6
                 text: parent.row.sign === "\\" ? "" : parent.row.sign
                 color: parent.row.sign === "+" ? root.added : root.removed
                 font.family: root.mono
@@ -813,7 +828,7 @@ Rectangle {
                 height: pair.height
                 color: pair.row.sign.length > 0 ? root.tint(pair.row.sign) : Qt.alpha(root.muted, 0.06)
                 LineNumber {
-                    text: pair.row.sign.length > 0 ? pair.row.oldLine ?? "" : ""
+                    text: pair.row.sign.length > 0 ? root.lineNumber(pair.row.oldLine) : ""
                 }
                 LineText {
                     id: left
@@ -830,7 +845,7 @@ Rectangle {
                 height: pair.height
                 color: pair.row.rightSign.length > 0 ? root.tint(pair.row.rightSign) : Qt.alpha(root.muted, 0.06)
                 LineNumber {
-                    text: pair.row.rightSign.length > 0 ? pair.row.newLine ?? "" : ""
+                    text: pair.row.rightSign.length > 0 ? root.lineNumber(pair.row.newLine) : ""
                 }
                 LineText {
                     id: right
