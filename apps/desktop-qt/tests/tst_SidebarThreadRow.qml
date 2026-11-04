@@ -206,8 +206,8 @@ Item {
             const age = findChild(row, "rowAge");
             waitForRendering(row);
             compare(row.slot, "age");
-            verify(slot.width < row.slotWidth, "a slot with just the age is " + slot.width + " wide");
-            compare(slot.width, Math.min(Math.ceil(age.implicitWidth), row.slotWidth));
+            verify(slot.width <= 28, "a slot with just the age is " + slot.width + " wide");
+            compare(slot.width, Math.min(Math.ceil(age.implicitWidth), row.restingSlotWidth));
             const resting = title.width;
             // The actions claim the whole slot back.
             row.focused = true;
@@ -216,6 +216,23 @@ Item {
             verify(title.width < resting, "the title gives the actions their room");
             row.focused = false;
             tryCompare(title, "width", resting);
+        }
+
+        // An age wider than the resting slot keeps every letter.
+        function test_longAgeIsNeverCut() {
+            let row = createTemporaryObject(rowComponent, root);
+            row.item = Object.assign({}, row.item, {
+                title: "A long title that fills the whole row and then some more",
+                updatedAt: new Date(Date.now() - 330 * 86400000).toISOString()
+            });
+            const slot = findChild(row, "statusSlot");
+            const age = findChild(row, "rowAge");
+            waitForRendering(row);
+            compare(age.text, "11mo");
+            verify(!age.truncated);
+            compare(slot.width, Math.min(Math.ceil(age.implicitWidth), row.restingSlotWidth));
+            const title = findChild(row, "cardTitle");
+            verify(age.mapToItem(row, 0, 0).x >= title.mapToItem(row, 0, 0).x + title.width, "the age does not run into the title");
         }
 
         // The jump key takes the status slot's place instead of covering the title.

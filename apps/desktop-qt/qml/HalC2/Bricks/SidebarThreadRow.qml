@@ -180,6 +180,9 @@ Item {
     readonly property bool hasDetail: detailProject.length > 0 || branchName.length > 0
     // DIRECTION's 44px slot: two 20px actions and the gap between them.
     readonly property int slotWidth: Theme.icon.lg * 2 + Theme.space.xs
+    // The slot at rest, holding only the age: 28px, or the age's own width
+    // when that is less, so the title gets the rest.
+    readonly property int restingSlotWidth: Theme.icon.lg + Theme.space.sm
 
     function relativeAge(iso, now) {
         if (!iso) {
@@ -468,11 +471,11 @@ Item {
 
         // The status slot: one thing at a time. It holds DIRECTION's 44px
         // only while something occupies it (the actions, the jump key, a
-        // status); a row at rest with just its age keeps the age's width
-        // and gives the title the rest.
+        // status); a row at rest with just its age keeps 28px or the age's
+        // width, whichever is less, and gives the title the rest.
         Item {
             objectName: "statusSlot"
-            Layout.preferredWidth: row.slot === "age" ? Math.min(Math.ceil(ageText.implicitWidth), row.slotWidth) : row.slotWidth
+            Layout.preferredWidth: row.slot === "age" ? Math.min(Math.ceil(ageText.implicitWidth), row.restingSlotWidth) : row.slotWidth
             Layout.fillHeight: true
 
             // Over the actions their own tooltips speak, not the preview.
@@ -586,18 +589,17 @@ Item {
                 color: row.statusColor
             }
 
+            // Never elided: an age wider than the resting slot ("11mo")
+            // reaches into the gap before the title instead.
             Text {
                 id: ageText
                 objectName: "rowAge"
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                width: parent.width
-                horizontalAlignment: Text.AlignRight
                 visible: row.slot === "age"
                 text: row.ageLabel
                 color: row.tertiaryColor
                 font.pixelSize: Theme.type.meta.size
-                elide: Text.ElideLeft
             }
         }
     }
