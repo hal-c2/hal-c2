@@ -32,6 +32,9 @@ MenuItem {
     font.pixelSize: Theme.type.body.size
     font.weight: Theme.type.body.weight
     hoverEnabled: true
+    // The submenu chevron is drawn in the content row; the style's arrow
+    // would lie on top of it in the window palette's ink.
+    arrow: null
     Accessible.description: [detail, reason].filter(part => part.length > 0).join(". ")
 
     contentItem: ColumnLayout {

@@ -47,6 +47,7 @@ set(hal_c2_bricks_qml_files
     ShellPopover.qml
     ShellPopoverSurface.qml
     ShellScrim.qml
+    ShellToolTip.qml
     ShellEmptyState.qml
     ShellTextField.qml
     ShellSwitch.qml

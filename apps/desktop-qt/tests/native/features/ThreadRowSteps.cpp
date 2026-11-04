@@ -3,11 +3,15 @@
 // held, and files dropped on it (features/threads/unread-and-status.feature,
 // threads/sidebar-list.feature, threads/pinning-and-order.feature).
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QUrl>
 
+#include "Brick.h"
 #include "ComposerController.h"
 #include "Harness.h"
 #include "KeybindingController.h"
@@ -18,7 +22,20 @@ namespace {
 
 struct RowScene {
   QString subject;
+  QString title;
+  QString project;
+  QString branch;
 };
+
+// A value as a JavaScript literal, to write into a QML document.
+QByteArray jsLiteral(const QJsonValue& value) {
+  return QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact).chopped(1).mid(1);
+}
+
+QString textOf(Brick& brick, const QString& objectName) {
+  QQuickItem* text = brick.item(objectName);
+  return text->isVisible() ? text->property("text").toString() : QString();
+}
 
 QString idOf(const QString& key) {
   return key.mid(key.indexOf(QLatin1Char(':')) + 1);
@@ -105,6 +122,40 @@ const Steps steps([] {
     expect(row.value(QStringLiteral("pinned")).toBool() &&
                row.value(QStringLiteral("timeAt")) == world.mc.threads.value(idOf(key)).value(QLatin1String("latestUserMessageAt")).toString(),
            QStringLiteral("the row is %1").arg(show(row)));
+  });
+
+  // The row's two lines, title first (SidebarThreadRow.qml as the list draws
+  // it with every project in scope).
+  step(QStringLiteral("the thread %1 in %1 works on the branch %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    RowScene& scene = world.mc.part<RowScene>();
+    scene.title = c[0];
+    scene.project = c[1];
+    scene.branch = c[2];
+  });
+  step(QStringLiteral("the user looks at its row in the thread list"), [](World& world, const Captures&, const Table&) {
+    const RowScene& scene = world.mc.part<RowScene>();
+    // The row's data as the list hands it over, written into the document
+    // since the row requires it.
+    const QJsonObject item{{QStringLiteral("title"), scene.title},
+                           {QStringLiteral("branch"), scene.branch},
+                           {QStringLiteral("status"), QStringLiteral("ready")},
+                           {QStringLiteral("updatedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}};
+    world.brick = std::make_unique<Brick>(world,
+                                          "import QtQuick\nimport HalC2.Bricks\nSidebarThreadRow { width: 256; active: false; projectInDetail: true; projectName: " + jsLiteral(scene.project) +
+                                              "; item: (" + jsLiteral(item) + ") }\n",
+                                          QSize(256, 80));
+  });
+  step(QStringLiteral("the row's first line reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(textOf(*world.brick, QStringLiteral("cardTitle")) == c[0],
+           QStringLiteral("the first line reads %1").arg(textOf(*world.brick, QStringLiteral("cardTitle"))));
+  });
+  step(QStringLiteral("its second line reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    Brick& brick = *world.brick;
+    const QString line = QStringList{textOf(brick, QStringLiteral("rowDetailProject")), textOf(brick, QStringLiteral("rowDetailBranch"))}.join(QStringLiteral(" · "));
+    const int title = brick.at(brick.item(QStringLiteral("cardTitle")), 0.5, 1).y();
+    const int detail = brick.at(brick.item(QStringLiteral("rowDetail")), 0.5, 0).y();
+    expect(brick.item(QStringLiteral("rowDetail"))->isVisible() && line == c[0] && detail >= title,
+           QStringLiteral("the second line reads %1, %2 px under the title").arg(line).arg(detail - title));
   });
 
   // The preview.

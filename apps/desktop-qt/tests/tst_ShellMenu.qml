@@ -109,6 +109,9 @@ TestCase {
         const submenuRow = menu.itemAt(3);
         verify(submenuRow.subMenu !== null);
         verify(findNamed(submenuRow, "menuItemChevron").visible);
+        // ...and only that one: the style's own arrow, tinted with the
+        // window palette, would cover it.
+        compare(submenuRow.arrow, null);
     }
 
     function test_closing_is_instant() {
