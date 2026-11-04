@@ -26,14 +26,16 @@ sdk="$(xcrun --sdk macosx --show-sdk-path)"
 stub_targets() { awk '/^targets:/ { on = 1 } on { print } on && /]/ { exit }' "$1"; }
 stub_targets "${sdk}/usr/lib/libSystem.B.tbd" | grep -q 'arm64-macos' && exec "$@"
 
-base=""
-for candidate in \
-  "$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs"/MacOSX26*.sdk \
-  /Library/Developer/CommandLineTools/SDKs/MacOSX26*.sdk; do
-  # MacOSX26.sdk is a symlink to the versioned one.
-  [[ -d "${candidate}" && ! -L "${candidate}" ]] || continue
-  [[ -z "${base}" || "$(basename "${candidate}")" > "$(basename "${base}")" ]] && base="${candidate}"
-done
+# The newest macOS 26 SDK, by version (26.10 is newer than 26.4).
+base="$(
+  for candidate in \
+    "$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs"/MacOSX26*.sdk \
+    /Library/Developer/CommandLineTools/SDKs/MacOSX26*.sdk; do
+    # MacOSX26.sdk is a symlink to the versioned one.
+    [[ -d "${candidate}" && ! -L "${candidate}" ]] || continue
+    printf '%s %s\n' "$(basename "${candidate}" .sdk)" "${candidate}"
+  done | sort -V -k1,1 | tail -n 1 | cut -d' ' -f2-
+)"
 if [[ -z "${base}" ]]; then
   printf '[zig-macos-sdk] error: Zig 0.15 cannot link with %s and no macOS 26 SDK is installed to stand in;\n' "${sdk}" >&2
   printf '[zig-macos-sdk] install the macOS 26 Command Line Tools, or set HAL_C2_GHOSTTY_VT_LIBRARY to a prebuilt libghostty-vt.a\n' >&2
@@ -71,6 +73,10 @@ done
 mkdir -p "${work}/bin"
 cat > "${work}/bin/xcrun" <<EOF
 #!/bin/sh
+# Only the macOS SDK is the overlay; any other platform's goes to the real xcrun.
+case " \$* " in
+  *" --sdk "*) case " \$* " in *" --sdk macosx "*) ;; *) exec /usr/bin/xcrun "\$@" ;; esac ;;
+esac
 case " \$* " in *" --show-sdk-path "*) echo "${overlay}"; exit 0 ;; esac
 exec /usr/bin/xcrun "\$@"
 EOF
