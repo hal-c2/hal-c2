@@ -126,6 +126,10 @@ Rectangle {
     // brought into view once its row is in the list.
     readonly property string activeKey: model ? (model.activeThreadKey ?? "") : ""
     onActiveKeyChanged: Qt.callLater(() => list.revealActive())
+    // Rows change height when the window crosses a density breakpoint, which
+    // leaves the old pixel offset pointing at other rows: keep the open
+    // thread in view instead (the keyboard cursor stays where it was).
+    onDensityChanged: Qt.callLater(() => list.anchorActive())
 
     onRowsChanged: {
         syncRows();
@@ -575,10 +579,23 @@ Rectangle {
                 }
             }
 
+            function activeIndex() {
+                return sidebar.rows.findIndex(r => r.rowKey !== undefined && r.kind !== "draft" && r.rowKey === sidebar.activeKey);
+            }
+
             function revealActive() {
-                const i = sidebar.rows.findIndex(r => r.rowKey !== undefined && r.kind !== "draft" && r.rowKey === sidebar.activeKey);
+                const i = activeIndex();
                 if (i >= 0) {
                     cursorKey = sidebar.rows[i].rowKey;
+                    positionViewAtIndex(i, ListView.Contain);
+                }
+            }
+
+            function anchorActive() {
+                const i = activeIndex();
+                if (i >= 0) {
+                    // Lay the resized rows out first, or the index maps to old heights.
+                    forceLayout();
                     positionViewAtIndex(i, ListView.Contain);
                 }
             }

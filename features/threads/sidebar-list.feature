@@ -4,7 +4,8 @@
 #   apps/desktop-qt/tests/tst_Sidebar.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/SidebarThreadRow.qml (the two lines of a row)
 #   apps/desktop-qt/src/native/SidebarModel.cpp (the desktop's port of the grouping and order, offline rows)
-#   apps/desktop-qt/src/native/LayoutController.cpp (hiding the thread list)
+#   apps/desktop-qt/src/native/LayoutController.cpp (hiding the thread list, the rows' density)
+#   apps/desktop-qt/tests/native/features/ThreadListSteps.cpp
 #   apps/web/src/components/Sidebar.tsx
 #   apps/web/src/components/Sidebar.logic.ts
 #   apps/web/src/hooks/useSidebarProjectGroups.ts
@@ -109,6 +110,21 @@ Feature: The thread list
     When the user opens "Settled 65"
     Then "Settled 65" is among the settled threads
     And 51 settled threads are shown
+
+  # Rows are one line in a window under 1100 and the list is a rail under 860
+  # (navigation/layout.feature): crossing either keeps the open thread's row in view
+  # rather than the old scroll offset, which points at other rows once they change height.
+  @desktop
+  Scenario: The open thread stays in view when the rows change height
+    Given there are 80 active threads
+    And the window is 1280 wide
+    And the user opens "Active 50"
+    And the thread list is scrolled to "Active 50"
+    When the window is 1000 wide
+    Then the thread list shows "Active 50"
+    When the window is 800 wide
+    And the window is 1280 wide
+    Then the thread list shows "Active 50"
 
   # A plugin settles its own threads as it finishes them, such as each code review,
   # and those would bury the user's own. They stay out of the shelf, before it pages
