@@ -22,6 +22,23 @@ RowLayout {
 
     // Icon-only pill, for narrow header strips.
     property bool compact: false
+    // Its width with labels and without, whichever it shows (ShellSplitButton).
+    readonly property real fullWidth: !visible ? 0 : pill.visible ? pill.fullWidth : unavailableReason !== "" ? unavailableWide.advanceWidth : implicitWidth
+    readonly property real compactWidth: !visible ? 0 : pill.visible ? pill.compactWidth : unavailableReason !== "" ? unavailableNarrow.advanceWidth : implicitWidth
+
+    TextMetrics {
+        id: unavailableWide
+
+        font.pixelSize: Theme.type.meta.size
+        text: qsTr("Git unavailable")
+    }
+
+    TextMetrics {
+        id: unavailableNarrow
+
+        font.pixelSize: Theme.type.meta.size
+        text: qsTr("No git")
+    }
 
     spacing: 0
     visible: ready || unavailableReason !== ""
@@ -68,6 +85,8 @@ RowLayout {
     }
 
     ShellSplitButton {
+        id: pill
+
         visible: git.ready && git.model.isRepo
         enabled: git.ready && !git.model.busy
         actionEnabled: git.ready && git.model.quickAction.disabledReason === null

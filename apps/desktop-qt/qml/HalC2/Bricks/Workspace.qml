@@ -41,12 +41,26 @@ Rectangle {
     // `trailingInset` how much of the strip's right end they cover.
     property bool windowControls: true
     property real trailingInset: 0
-    // What the strip has for its own items. Narrow strips (a wide right
-    // panel) drop the pill labels, and tight ones the run and open pills,
-    // which the thread details also offer, before anything overlaps.
-    readonly property real room: width - Math.max(0, trailingInset - 20)
-    readonly property bool compact: room < 720
-    readonly property bool tight: room < 520
+    // How the strip fits its items, decided by what they need rather than a
+    // width: the pills keep their labels while they fit beside a readable
+    // breadcrumb, then show icons only (`compact`), then the run and open
+    // pills fold into one overflow menu (`tight`; the thread details offer
+    // them too). The breadcrumb, the git pill and the toggles always stay.
+    readonly property real room: width - (sidebarToggle === true ? 52 : 20) - Math.max(20, trailingInset)
+    readonly property bool hasScripts: ready && model.scripts.length > 0
+    readonly property bool hasEditors: ready && model.editors.length > 0
+    readonly property bool hasSshNote: ready && (model.noSshRoute ?? "") !== ""
+    // Room the breadcrumb keeps before any pill keeps its label: enough for
+    // the start of the title, so a 900 px window beside the sidebar keeps
+    // the labels of its open and git pills.
+    readonly property real crumbReserve: Math.min(crumb.implicitWidth, 120)
+    // The toggles and window buttons, whatever the level (each with the gap before it).
+    readonly property real fixedNeed: [terminalToggle, detailsButton, panelButton, windowButtons].reduce((sum, item) => sum + (item.visible ? item.implicitWidth + item.Layout.leftMargin + rowSpacing : 0), 0)
+    readonly property real rowSpacing: Theme.space.md
+    readonly property real labelledNeed: crumbReserve + fixedNeed + (hasScripts ? scriptsPill.fullWidth + rowSpacing : 0) + (hasSshNote ? sshNote.implicitWidth + rowSpacing : 0) + (hasEditors ? editorPill.fullWidth + rowSpacing : 0) + (gitPill.visible ? gitPill.fullWidth + rowSpacing : 0)
+    readonly property real iconNeed: crumbReserve + fixedNeed + (hasScripts ? scriptsPill.compactWidth + rowSpacing : 0) + (hasSshNote ? sshNote.implicitWidth + rowSpacing : 0) + (hasEditors ? editorPill.compactWidth + rowSpacing : 0) + (gitPill.visible ? gitPill.compactWidth + rowSpacing : 0)
+    readonly property bool compact: labelledNeed > room
+    readonly property bool tight: iconNeed > room
 
     function beginRename() {
         if (strip.ready && !strip.model.isDraft) {
@@ -77,13 +91,13 @@ Rectangle {
     }
 
     ShellButton {
-        x: 12
-        y: 12
+        x: Theme.space.md
+        y: Theme.space.md
         subtle: true
-        implicitHeight: 28
+        implicitHeight: Theme.control.md
         visible: strip.sidebarToggle === true
         iconName: "panel-left"
-        iconSize: 16
+        iconSize: Theme.icon.md
         iconTint: strip.iconMuted
         Accessible.name: qsTr("Show sidebar")
         onClicked: Shell.dispatch("sidebar.toggle")
@@ -93,10 +107,12 @@ Rectangle {
         anchors.fill: parent
         anchors.leftMargin: strip.sidebarToggle === true ? 52 : 20
         anchors.rightMargin: Math.max(20, strip.trailingInset)
-        spacing: 12
+        spacing: strip.rowSpacing
 
         // Breadcrumb: project / title.
         RowLayout {
+            id: crumb
+
             Layout.fillWidth: true
             spacing: Theme.space.sm
 
@@ -197,7 +213,7 @@ Rectangle {
                 Layout.fillWidth: true
                 // Room for a few letters of the title beside the chevron (40 px).
                 Layout.minimumWidth: Math.min(Math.ceil(titleRow.implicitWidth), 40 + titleRow.spacing + 14)
-                implicitHeight: 28
+                implicitHeight: Theme.control.md
                 implicitWidth: titleRow.implicitWidth
                 activeFocusOnTab: !editing && strip.ready && !strip.model.isDraft
                 Accessible.role: Accessible.Button
@@ -334,7 +350,7 @@ Rectangle {
             id: scriptsPill
             objectName: "runActionButton"
 
-            visible: strip.ready && strip.model.scripts.length > 0 && !strip.tight
+            visible: strip.hasScripts && !strip.tight
             compact: strip.compact
             iconName: "play"
             text: strip.preferredScript ? qsTr("Run %1").arg(strip.preferredScript.name) : ""
@@ -376,8 +392,9 @@ Rectangle {
         }
 
         ShellButton {
+            id: sshNote
             objectName: "noSshRoute"
-            visible: strip.ready && (strip.model.noSshRoute ?? "") !== "" && !strip.tight
+            visible: strip.hasSshNote && !strip.tight
             subtle: true
             iconName: "external-link"
             text: strip.ready ? strip.model.noSshRoute ?? "" : ""
@@ -385,8 +402,9 @@ Rectangle {
         }
 
         ShellSplitButton {
+            id: editorPill
             objectName: "openEditorButton"
-            visible: strip.ready && strip.model.editors.length > 0 && !strip.tight
+            visible: strip.hasEditors && !strip.tight
             compact: strip.compact
             iconName: "external-link"
             text: qsTr("Open")
@@ -427,58 +445,128 @@ Rectangle {
             }
         }
 
+        // Run and open, once the strip has no room for their pills.
+        ShellButton {
+            objectName: "headerOverflow"
+            visible: strip.tight && (strip.hasScripts || strip.hasEditors || strip.hasSshNote)
+            subtle: true
+            // The pills' height, in their place.
+            implicitHeight: Theme.control.sm
+            iconName: "ellipsis"
+            iconSize: Theme.icon.md
+            iconTint: strip.iconMuted
+            Accessible.name: qsTr("More actions")
+            onClicked: overflowMenu.open()
+
+            ShellMenu {
+                id: overflowMenu
+                objectName: "headerOverflowMenu"
+
+                y: parent.height + Theme.space.xs
+                x: parent.width - width
+
+                Instantiator {
+                    model: strip.hasScripts ? strip.model.scripts : []
+
+                    delegate: ShellMenuItem {
+                        required property var modelData
+
+                        text: qsTr("Run %1").arg(modelData.name)
+                        iconName: "play"
+                        onTriggered: Shell.dispatch("workspace.runScript", {
+                            scriptId: modelData.id
+                        })
+                    }
+
+                    onObjectAdded: (index, object) => overflowMenu.insertItem(index, object)
+                    onObjectRemoved: (index, object) => overflowMenu.removeItem(object)
+                }
+
+                Instantiator {
+                    model: strip.hasEditors ? strip.model.editors : []
+
+                    delegate: ShellMenuItem {
+                        required property var modelData
+
+                        text: qsTr("Open in %1").arg(modelData.label)
+                        iconName: "external-link"
+                        onTriggered: Shell.dispatch("workspace.openInEditor", {
+                            editorId: modelData.id
+                        })
+                    }
+
+                    // After the scripts, whatever order the two fill in.
+                    onObjectAdded: (index, object) => overflowMenu.addItem(object)
+                    onObjectRemoved: (index, object) => overflowMenu.removeItem(object)
+                }
+
+                ShellMenuItem {
+                    visible: strip.hasSshNote
+                    height: visible ? implicitHeight : 0
+                    iconName: "external-link"
+                    text: strip.hasSshNote ? strip.model.noSshRoute : ""
+                    onTriggered: Shell.dispatch("workspace.openInEditor", {})
+                }
+            }
+        }
+
         GitActions {
+            id: gitPill
             objectName: "gitActions"
             compact: strip.compact
         }
 
         // The terminal drawer's toggle is the strip's, next to the panel's.
         ShellButton {
+            id: terminalToggle
             visible: Terminals.available
             subtle: true
-            implicitHeight: 28
+            implicitHeight: Theme.control.md
             iconName: "panel-bottom"
-            iconSize: 16
+            iconSize: Theme.icon.md
             iconTint: Terminals.open ? strip.foreground : strip.iconMuted
-            Layout.leftMargin: 4
+            Layout.leftMargin: Theme.space.xs
             objectName: "terminalToggle"
             Accessible.name: Terminals.open ? qsTr("Hide terminal") : qsTr("Show terminal")
             onClicked: Shell.dispatch("terminal.toggle")
         }
 
         ShellButton {
+            id: detailsButton
             objectName: "threadDetailsToggle"
             visible: strip.detailsToggle !== null
             subtle: true
-            implicitHeight: 28
+            implicitHeight: Theme.control.md
             iconName: "info"
-            iconSize: 16
+            iconSize: Theme.icon.md
             iconTint: strip.detailsToggle === true ? strip.foreground : strip.iconMuted
-            Layout.leftMargin: 4
+            Layout.leftMargin: Theme.space.xs
             Accessible.name: strip.detailsToggle === true ? qsTr("Hide thread details") : qsTr("Show thread details")
             onClicked: Shell.dispatch("threadPanel.toggle")
         }
 
         ShellButton {
+            id: panelButton
             objectName: "panelToggle"
             visible: strip.panelToggle !== null
             subtle: true
-            implicitHeight: 28
+            implicitHeight: Theme.control.md
             iconName: strip.panelToggle === true ? "panel-right-close" : "panel-right"
-            iconSize: 16
+            iconSize: Theme.icon.md
             iconTint: strip.iconMuted
-            Layout.leftMargin: 4
+            Layout.leftMargin: Theme.space.xs
             Accessible.name: strip.panelToggle === true ? qsTr("Close panel") : qsTr("Open panel")
             onClicked: Shell.dispatch("rightPanel.toggle")
         }
 
         WindowControls {
+            id: windowButtons
             objectName: "windowControls"
             visible: strip.framelessChrome && strip.windowControls && Qt.platform.os !== "osx"
             window: strip.window
             buttonWidth: 32
             buttonHeight: 28
-            Layout.leftMargin: 8
+            Layout.leftMargin: Theme.space.sm
         }
     }
 }

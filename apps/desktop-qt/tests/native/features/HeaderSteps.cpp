@@ -5,6 +5,10 @@
 
 #include <QCoreApplication>
 #include <QJsonObject>
+#include <QQuickItem>
+#include <cmath>
+
+#include "LayoutController.h"
 
 #include "Brick.h"
 #include "Harness.h"
@@ -38,6 +42,55 @@ Title layOutTitle(World& world) {
   return {label->property("text").toString(), label->property("truncated").toBool(), label->width()};
 }
 
+// How much room the header has for its actions, set by the "When" steps:
+// a width, or just too little for their labels or their icons.
+enum class Fit { Width, NoLabels, NoIcons };
+Fit headerFit = Fit::Width;
+
+// The header's run and open actions laid out at `headerFit`.
+struct Actions {
+  QString run;
+  QString open;
+  bool pills = false;
+  QStringList overflow;
+};
+
+Actions layOutActions(World& world) {
+  Brick header(world, "import QtQuick\nimport HalC2.Bricks\nWorkspace { height: 52 }\n", QSize(1600, 52));
+  QQuickItem* strip = header.root();
+  world.waitFor([&] { return strip->property("hasScripts").toBool() && strip->property("hasEditors").toBool(); },
+                [&] { return QStringLiteral("the header to have actions and editors: %1").arg(show(world.state(QStringLiteral("workspace")))); });
+  // `room` is the strip less its margins; one pixel short of a level's need.
+  const qreal margins = strip->width() - strip->property("room").toReal();
+  if (headerFit == Fit::Width) strip->setWidth(headerWidth);
+  if (headerFit == Fit::NoLabels) strip->setWidth(std::ceil(strip->property("labelledNeed").toReal() + margins) - 1);
+  if (headerFit == Fit::NoIcons) strip->setWidth(std::ceil(strip->property("iconNeed").toReal() + margins) - 1);
+  header.window().contentItem()->polish();
+  QCoreApplication::processEvents();
+  Actions actions;
+  QQuickItem* run = header.item(QStringLiteral("runActionButton"));
+  QQuickItem* open = header.item(QStringLiteral("openEditorButton"));
+  actions.pills = run->isVisible() && open->isVisible();
+  actions.run = run->findChild<QQuickItem*>(QStringLiteral("splitAction"))->property("text").toString();
+  actions.open = open->findChild<QQuickItem*>(QStringLiteral("splitAction"))->property("text").toString();
+  if (header.item(QStringLiteral("headerOverflow"))->isVisible()) {
+    QObject* menu = strip->findChild<QObject*>(QStringLiteral("headerOverflowMenu"));
+    for (int i = 0; menu && i < menu->property("count").toInt(); ++i) {
+      QQuickItem* entry = nullptr;
+      QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, entry), Q_ARG(int, i));
+      if (entry && entry->isVisible()) actions.overflow << entry->property("text").toString();
+    }
+  }
+  return actions;
+}
+
+QString describe(const Actions& actions) {
+  return QStringLiteral("the header shows run \"%1\" and open \"%2\" (pills shown: %3), its overflow menu [%4]")
+      .arg(actions.run, actions.open)
+      .arg(actions.pills)
+      .arg(actions.overflow.join(u", "));
+}
+
 const Steps steps([] {
   Brick::registerSingletons();
   step(QStringLiteral("a long thread title"), [](World& world, const Captures&, const Table&) {
@@ -50,7 +103,30 @@ const Steps steps([] {
                   [&] { return QStringLiteral("the header to show the long title; it shows %1").arg(show(world.state(QStringLiteral("workspace")))); });
   });
   step(QStringLiteral("the window is wide"), [](World&, const Captures&, const Table&) { headerWidth = 1600; });
-  step(QStringLiteral("the header is narrow"), [](World&, const Captures&, const Table&) { headerWidth = 480; });
+  step(QStringLiteral("the header is as wide as a 900 pixel window leaves it"), [](World&, const Captures&, const Table&) {
+    // Beside the sidebar at its default width and the border between them.
+    headerFit = Fit::Width;
+    headerWidth = 900 - LayoutController::kSidebarWidth - 1;
+  });
+  step(QStringLiteral("the header has no room for its actions' labels"), [](World&, const Captures&, const Table&) { headerFit = Fit::NoLabels; });
+  step(QStringLiteral("the header has no room for its actions as icons"), [](World&, const Captures&, const Table&) { headerFit = Fit::NoIcons; });
+  step(QStringLiteral("the header actions show with their labels"), [](World& world, const Captures&, const Table&) {
+    const Actions actions = layOutActions(world);
+    expect(actions.pills && actions.run.startsWith(QStringLiteral("Run ")) && actions.open == QStringLiteral("Open") && actions.overflow.isEmpty(), describe(actions));
+  });
+  step(QStringLiteral("the header actions show without their labels"), [](World& world, const Captures&, const Table&) {
+    const Actions actions = layOutActions(world);
+    expect(actions.pills && actions.run.isEmpty() && actions.open.isEmpty() && actions.overflow.isEmpty(), describe(actions));
+  });
+  step(QStringLiteral("the header's %1 menu runs %1 and opens in %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const Actions actions = layOutActions(world);
+    expect(!actions.pills && actions.overflow.contains(QStringLiteral("Run %1").arg(c[1])) && actions.overflow.contains(QStringLiteral("Open in %1").arg(c[2])),
+           describe(actions));
+  });
+  step(QStringLiteral("the header is narrow"), [](World&, const Captures&, const Table&) {
+    headerFit = Fit::Width;
+    headerWidth = 480;
+  });
   step(QStringLiteral("the whole title is shown"), [](World& world, const Captures&, const Table&) {
     const Title title = layOutTitle(world);
     expect(title.text == kLongTitle && !title.truncated, QStringLiteral("the header shows \"%1\" (shortened: %2)").arg(title.text).arg(title.truncated));

@@ -18,6 +18,11 @@ Item {
     property real maximumTextWidth: 200
     // Icon only, for narrow header strips.
     property bool compact: false
+    // Its width with its label and without, whichever it shows, so a strip
+    // can choose before it sets `compact`. The chevron half and the seam are
+    // the same in both.
+    readonly property real fullWidth: Math.min(labelled.implicitWidth, maximumTextWidth) + 1 + Theme.control.sm
+    readonly property real compactWidth: Math.min(bare.implicitWidth, maximumTextWidth) + 1 + Theme.control.sm
 
     signal clicked
     signal menuRequested
@@ -81,5 +86,30 @@ Item {
             Accessible.name: split.menuName
             onClicked: split.menuRequested()
         }
+    }
+
+    // Never drawn: the action half as it would be with and without its label.
+    ShellButton {
+        id: labelled
+
+        visible: false
+        height: Theme.control.sm
+        subtle: true
+        leftPadding: Theme.space.sm
+        rightPadding: Theme.space.sm
+        font.pixelSize: Theme.type.meta.size
+        iconName: split.iconName
+        text: split.text
+    }
+
+    ShellButton {
+        id: bare
+
+        visible: false
+        height: Theme.control.sm
+        subtle: true
+        leftPadding: Theme.space.sm
+        rightPadding: Theme.space.sm
+        iconName: split.iconName
     }
 }

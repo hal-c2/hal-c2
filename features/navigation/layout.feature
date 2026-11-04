@@ -180,20 +180,26 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the whole title is shown
       And a shortened project name shows whole on hover too
 
+    # The header gives up what the breadcrumb, the git action and the panel
+    # toggles need, in one order: labels, then the run and open pills, which
+    # fold into one menu (the thread details offer them too).
     @desktop
-    Scenario: A narrow header drops action labels
-      When the window is narrower than 720 pixels
+    Scenario: The header gives up labels, then pills, only when they do not fit
+      Given the thread's project has the actions "Dev" and "Test"
+      And the environment has the editors "Zed" and "VS Code"
+      When the header is as wide as a 900 pixel window leaves it
+      Then the header actions show with their labels
+      When the header has no room for its actions' labels
       Then the header actions show without their labels
+      When the header has no room for its actions as icons
+      Then the header's "More actions" menu runs "Dev" and opens in "Zed"
 
-    # Run and Open are also in the thread details; the panel toggles and the
-    # breadcrumb are what the header cannot lose.
     # Proved by tst_Workspace.qml (test_tightHeaderNeverOverlaps), not yet by a step (hal-c2/hal-c2#213).
     @desktop @backlog-desktop
-    Scenario: A tight header drops actions before anything overlaps
+    Scenario: A tight header never overlaps
       Given the thread's project has an action and an editor to open it in
-      When the header has under 520 pixels for its items
-      Then the run and open actions are not in the header
-      And the breadcrumb, the git action and the panel toggles do not overlap
+      When the header has no room for its actions as icons
+      Then the breadcrumb, the git action and the panel toggles do not overlap
       And nothing of the header is drawn over the panel beside it
       When the header has room again
       Then the run and open actions are back
