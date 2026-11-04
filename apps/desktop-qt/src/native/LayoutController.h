@@ -70,9 +70,11 @@ public:
   double zoom() const;
   void setZoomLevel(double level);
   // The thread list's width: the default (wider in a monospace interface)
-  // and minimum, the rail's, and the room the thread keeps beside it.
+  // and minimum, the rail's, and the room the thread keeps beside it. The
+  // monospace default lets a resting row show 24 characters of its title
+  // before it elides, at the 17px interface size too.
   static constexpr int kSidebarWidth = 256;
-  static constexpr int kSidebarMonospaceWidth = 272;
+  static constexpr int kSidebarMonospaceWidth = 296;
   static constexpr int kSidebarMinWidth = 208;
   static constexpr int kRailWidth = 48;
   static constexpr int kContentMinWidth = 480;

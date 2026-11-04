@@ -133,10 +133,10 @@ Rectangle {
     }
     Component.onCompleted: syncRows()
 
-    // LayoutController's default, 256 or 272 in a monospace interface, and
+    // LayoutController's default, 256 or 296 in a monospace interface, and
     // the rail's 48, for a shell that sizes the list by its implicit width.
     // Settings keep the full width: a shell sizes its sections by it.
-    implicitWidth: rail && Shell.state.route?.kind !== "settings" ? Theme.control.lg + Theme.space.lg : Theme.monospace ? 272 : 256
+    implicitWidth: rail && Shell.state.route?.kind !== "settings" ? Theme.control.lg + Theme.space.lg : Theme.monospace ? 296 : 256
     // The narrowest a layout shows it (LayoutController's kSidebarMinWidth).
     readonly property int minimumWidth: 208
     color: Theme.palette.color("sidebar", "#0a0a0a")

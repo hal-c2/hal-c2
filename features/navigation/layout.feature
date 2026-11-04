@@ -132,11 +132,12 @@ Feature: Layout: sidebar, header, right panel and drawer
         | 860   | one-line rows   |
         | 800   | a rail of icons |
 
-    # A monospace face sets fewer characters in the same width.
+    # A monospace face sets fewer characters in the same width: 296 lets a resting row show 24
+    # characters of its title before it elides.
     @desktop
     Scenario: A monospace interface font widens the sidebar
       When the interface font is monospaced
-      Then the sidebar is 272 wide
+      Then the sidebar is 296 wide
       When the interface font is proportional
       Then the sidebar is 256 wide
 
