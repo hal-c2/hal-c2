@@ -803,19 +803,21 @@ Feature: Codex
     When the MC checks Codex
     Then Codex's status is reported from the manifest the MC already has
 
-  # Statuses are the MC's: broken, unsupported, graceful (shown as limited) or unknown.
-  # Ranges follow T3 Code's Codex floor (its #13481): see the next scenario.
+  # Statuses are the MC's: broken, unsupported, graceful (shown as limited), supported or unknown.
+  # Prereleases and versions no range names stay unknown.
   Scenario Outline: The version Codex runs decides whether this HAL-C2 release supports it
     Given Codex version "<version>" is installed
     When the MC checks Codex
     Then Codex is reported as "<status>" for this HAL-C2 release
 
     Examples:
-      | version | status |
-      | 0.128.0 | broken |
+      | version         | status  |
+      | 0.128.0         | broken  |
+      | 0.129.0-alpha.1 | unknown |
 
-  # Codex 0.156 is the floor. Below 0.149 the protocol cannot start a session, so the version is
-  # broken; 0.149 to 0.155 still run except that they cannot roll back legacy-history threads.
+  # The floor follows T3 Code's Codex policy (its #13481). Below 0.149 Codex does not send
+  # Thread.projectId, so no session can start and the version is broken. 0.149 to 0.155 are
+  # outside the supported range.
   @mc @backlog @plugin-codex
   Scenario Outline: The Codex version sets its support level for this HAL-C2 release
     Given Codex version "<version>" is installed
@@ -823,10 +825,9 @@ Feature: Codex
     Then Codex is reported as "<status>" for this HAL-C2 release
 
     Examples:
-      | version         | status      |
-      | 0.129.0         | broken      |
-      | 0.129.0-alpha.1 | broken      |
-      | 0.148.0         | broken      |
-      | 0.149.0         | unsupported |
-      | 0.155.0         | unsupported |
-      | 0.156.0         | unknown     |
+      | version | status      |
+      | 0.129.0 | broken      |
+      | 0.148.0 | broken      |
+      | 0.149.0 | unsupported |
+      | 0.155.0 | unsupported |
+      | 0.156.0 | supported   |

@@ -1,5 +1,5 @@
 # Sources:
-#   packages/contracts/src/orchestrationV2.ts (thread.auto-settle, thread.settled, thread.auto-settle.set)
+#   packages/contracts/src/orchestrationV2.ts (thread.auto-settle, thread.settled)
 #   https://github.com/pingdotgg/t3code/pull/11846 (per-thread auto-settle switch)
 #   packages/contracts/src/settings.ts (sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays)
 #   apps/server-ex/lib/hal_c2/orchestration/settlement.ex

@@ -2,7 +2,7 @@
 #   apps/desktop-qt/src/native/NavigationController.cpp (the route, back stack and restore)
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (title, settings and cluster from `route`)
 #   apps/desktop-qt/tests/native/tst_Features.cpp (runs these scenarios against a fake MC)
-#   https://github.com/pingdotgg/t3code/pull/13516 (sidebar Back and Escape return to the last main page)
+#   https://github.com/pingdotgg/t3code/pull/13516 (launch-at-settings Back dropped; see the scenario below)
 #   Shared domain: settings/search-and-navigation.feature owns leaving settings and moving
 #   between sections, navigation/windows.feature the window title, and
 #   composer/sending-turns.feature that the composer acts on the thread the window shows.
@@ -80,26 +80,10 @@ Feature: The desktop shell decides where the window is
       When the user goes back from settings
       Then the window shows "env-a:t1"
 
-    @desktop @backlog
-    Scenario: Back from a settings page goes to the last main page, not the previous settings page
-      Given the user opens "env-a:t1" from the sidebar
-      And the user opens settings
-      And the user opens pull requests
-      When the user goes back
-      Then the window shows "env-a:t1"
-
-    @desktop @backlog
-    Scenario: Escape in settings goes to the last main page
-      Given the user opens "env-a:t1" from the sidebar
-      And the user opens settings
-      When the user presses Escape
-      Then the window shows "env-a:t1"
-
-    @desktop @backlog
+    # T3 Code's #13516 sends Back from settings opened at launch to the thread list. HAL-C2 keeps the
+    # new draft that "Back with nowhere to return to" records in settings/search-and-navigation.feature.
+    @dropped @desktop
     Scenario: Back from settings opened at launch goes to the thread list
-      Given the app was opened straight into settings
-      When the user goes back from settings
-      Then the window shows the thread list
 
   # The embedded page is gone, and with it its own links, back button and reloads.
   @dropped
