@@ -100,21 +100,21 @@ Feature: Home screen and lock screen widgets
     Then the app opens on the usage limits
 
   @backlog @mobile
-  Scenario: Resizing the usage widget on an Android home screen changes how many limits it shows
+  Scenario: Resizing the usage widget on an Android home screen changes how many rows it shows at once
     Given the user is on an Android phone
     And several providers report two limits each
     When the user makes the usage widget taller
-    Then the widget shows more limits
+    Then the widget shows more rows at once
     When the user makes the usage widget shorter
-    Then the widget shows fewer limits
+    Then the widget shows fewer rows at once
 
   @backlog @mobile
-  Scenario: A widget that is too short shows every provider before any second limit
+  Scenario: A widget that is too short lists each provider's first limit before any second limit
     Given the user is on an Android phone
     And "Codex" and "Claude" each report a session and a weekly limit
-    And the usage widget has room for two limits
-    Then the widget shows the session limit of "Codex" and of "Claude"
-    And no weekly limit is shown
+    And the usage widget has room for two rows
+    Then the first rows show the session limit of "Codex" and of "Claude"
+    And the weekly limits are reached by scrolling
 
   @backlog @mobile
   Scenario: A widget that cannot fit every limit scrolls to the rest
