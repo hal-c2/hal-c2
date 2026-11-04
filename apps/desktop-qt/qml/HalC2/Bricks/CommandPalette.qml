@@ -23,10 +23,34 @@ Popup {
     x: Math.round(((parent?.width ?? width) - width * scale) / 2)
     y: Math.round((parent?.height ?? 0) * 0.12)
     width: Math.min(640, (parent?.width ?? 672) / scale - 32)
-    // As tall as its rows, up to the room below it.
-    height: Math.min(implicitHeight, 480, ((parent?.height ?? 512) - y) / scale - 16)
+    // As tall as its rows, up to the room below it, ending on a whole row.
+    readonly property real room: Math.min(480, ((parent?.height ?? 512) - y) / scale - 16)
+    property real fit: room
+    height: Math.min(implicitHeight, room, fit)
+    onRoomChanged: Qt.callLater(refit)
     padding: 8
     closePolicy: Popup.CloseOnPressOutside
+
+    // fit: the tallest height within room whose list, at rest, ends on the
+    // bottom of a row; a group's header goes with the row under it. The list
+    // is the last thing in the column, so only the padding sits below it.
+    // Set from the list's signals rather than bound, since the rows it reads
+    // are laid out again whenever the height changes. Run once a change
+    // settles, after the list has placed its rows: moving into a submenu swaps
+    // the rows and then shows the title above the search.
+    function refit() {
+        list.forceLayout();
+        const top = topPadding + list.y;
+        let end = 0;
+        for (let i = 0; i < list.count; ++i) {
+            const row = list.itemAtIndex(i);
+            const bottom = row ? row.y + row.height - list.originY : Infinity;
+            if (top + bottom + bottomPadding > room)
+                break;
+            end = bottom;
+        }
+        fit = end > 0 ? top + end + bottomPadding : room;
+    }
 
     Component.onCompleted: PaletteModel.setSettingsSections(Pages.paletteEntries(Qt.platform.os))
 
@@ -194,6 +218,15 @@ Popup {
             property var pointer: null
 
             boundsBehavior: Flickable.StopAtBounds
+            onContentHeightChanged: Qt.callLater(popup.refit)
+            onCountChanged: Qt.callLater(popup.refit)
+            onYChanged: Qt.callLater(popup.refit)
+            onOriginYChanged: Qt.callLater(popup.refit)
+
+            // The palette ends on a whole row; the edge says there is more.
+            ShellScrollEdge {
+                target: list
+            }
 
             // Only a pointer that moves takes the highlight: rows that load or
             // scroll under a resting one leave Enter on what was typed. It is

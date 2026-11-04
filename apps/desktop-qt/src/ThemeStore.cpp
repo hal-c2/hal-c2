@@ -1,5 +1,6 @@
 #include "ThemeStore.h"
 
+#include <cmath>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -352,6 +353,24 @@ QColor resolveIn(const QVariantMap& palette, const QString& role) {
   return recipe == derivations().constEnd() ? QColor() : derive(*recipe, [&](const QString& r) { return named(palette, r); });
 }
 
+// `color` deepened until white text on it reads at 4.5:1 (WCAG AA): what a
+// destructive button is filled with when no palette names destructiveFill.
+QColor deepenedUnderWhite(const QColor& color) {
+  const auto channel = [](qreal c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); };
+  const auto luminance = [&](const QColor& c) {
+    return 0.2126 * channel(c.redF()) + 0.7152 * channel(c.greenF()) + 0.0722 * channel(c.blueF());
+  };
+  const QColor hsl = color.toHsl();
+  const qreal hue = qMax<qreal>(0, hsl.hslHueF()), saturation = hsl.hslSaturationF();
+  QColor fill = color.toRgb();
+  fill.setAlphaF(1);
+  for (qreal lightness = hsl.lightnessF(); lightness > 0 && 1.05 / (luminance(fill) + 0.05) < 4.5;) {
+    lightness = qMax<qreal>(0, lightness - 0.01);
+    fill = QColor::fromHslF(hue, saturation, lightness).toRgb();
+  }
+  return fill;
+}
+
 }  // namespace
 
 QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
@@ -360,6 +379,10 @@ QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
   // of: its own text, say, gives its own secondary ink.
   const QColor shell = named(m_colors, role);
   if (shell.isValid()) return shell;
+  const bool destructiveFill = role == QLatin1String("destructiveFill");
+  if (destructiveFill && named(m_colors, QStringLiteral("error")).isValid()) {
+    return deepenedUnderWhite(named(m_colors, QStringLiteral("error")));
+  }
   const auto recipe = derivations().constFind(role);
   if (recipe != derivations().constEnd() &&
       (named(m_colors, QLatin1String(recipe->a)).isValid() || (recipe->b && named(m_colors, QLatin1String(recipe->b)).isValid()))) {
@@ -368,6 +391,10 @@ QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
   }
   const QColor base = resolveIn(m_baseColors, role);
   if (base.isValid()) return base;
+  if (destructiveFill) {
+    const QColor error = resolveIn(m_baseColors, QStringLiteral("error"));
+    if (error.isValid()) return deepenedUnderWhite(error);
+  }
   // What dims the window behind a dialog, when no palette says.
   if (role == QLatin1String("scrim")) {
     return appearance() == QStringLiteral("light") ? QColor(0x14, 0x16, 0x1a, 82) : QColor(0, 0, 0, 143);

@@ -4,7 +4,8 @@ import HalC2.Shell
 
 // What popovers, menus, palettes and dialogs are drawn on: the overlay
 // surface with a strong hairline and one static shadow. Use it as a popup's
-// background; ShellPopover and ShellMenu already do.
+// background; ShellPopover and ShellMenu already do. It is solid whatever the
+// glass opacity, which thins only the composer: a menu is read over anything.
 Item {
     id: surface
 
@@ -25,7 +26,7 @@ Item {
 
         anchors.fill: parent
         radius: surface.radius
-        color: surface.color
+        color: Qt.rgba(surface.color.r, surface.color.g, surface.color.b, 1)
         border.color: Theme.palette.color("borderStrong", "#343a44")
         border.width: 1
     }

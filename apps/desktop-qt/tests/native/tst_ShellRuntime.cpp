@@ -1,3 +1,4 @@
+#include <cmath>
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
@@ -183,6 +184,24 @@ private slots:
     QCOMPARE(addedSurface.red(), 0);
     // A scrim no palette names still dims.
     QVERIFY(theme.color("scrim", Qt::transparent).alpha() > 0);
+    // A destructive fill no palette names is the error deepened until white
+    // text on it reads at 4.5:1 or better.
+    const auto whiteContrast = [](const QColor& c) {
+      const auto channel = [](qreal v) { return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
+      return 1.05 / (0.2126 * channel(c.redF()) + 0.7152 * channel(c.greenF()) + 0.0722 * channel(c.blueF()) + 0.05);
+    };
+    theme.applyBaseTheme(QVariantMap{{"appearance", "dark"}, {"colors", QVariantMap{{"error", "#f87171"}}}});
+    const QColor deepened = theme.color("destructiveFill", Qt::black);
+    QVERIFY(whiteContrast(QColor("#f87171")) < 4.5);
+    QVERIFY(whiteContrast(deepened) >= 4.5);
+    QVERIFY(whiteContrast(deepened) < 5);  // no deeper than it needs
+    QCOMPARE(deepened.hslHue(), 0);
+    // One the palette names is taken as it is.
+    theme.applyBaseTheme(QVariantMap{{"appearance", "dark"}, {"colors", QVariantMap{{"error", "#f87171"}, {"destructiveFill", "#b91c1c"}}}});
+    QCOMPARE(theme.color("destructiveFill", Qt::black), QColor("#b91c1c"));
+    theme.applyBaseTheme(QVariantMap{{"appearance", "dark"},
+                                     {"colors", QVariantMap{{"ink", "#f0f0f0"}, {"inkSecondary", "#b0b0b0"}, {"inkTertiary", "#808080"},
+                                                            {"canvas", "#000000"}, {"diffAdded", "#00ff00"}, {"error", "#ff0000"}}}});
     // A theme file with the old names: its text is the ink, and the secondary
     // ink sits between its text and muted text, not the base's.
     QFile file(directory.filePath("theme.json"));
@@ -196,6 +215,14 @@ private slots:
     // Its canvas with the base's added colour.
     QVERIFY(near(theme.color("diffAddedSurface", Qt::black).red(), 16 * 0.86));
     QVERIFY(near(theme.color("diffAddedSurface", Qt::black).green(), 16 * 0.86 + 255 * 0.14));
+    // A file that names its own error fills destructive buttons from it, not
+    // with the base's fill (this blue already carries white text).
+    theme.applyBaseTheme(QVariantMap{{"appearance", "dark"}, {"colors", QVariantMap{{"error", "#f87171"}, {"destructiveFill", "#b91c1c"}}}});
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write("{\"colors\":{\"error\":\"#1d4ed8\"}}");
+    file.close();
+    theme.reload();
+    QCOMPARE(theme.color("destructiveFill", Qt::black), QColor("#1d4ed8"));
   }
 
   // The radius scale derives from the base radius, the type ramp scales with

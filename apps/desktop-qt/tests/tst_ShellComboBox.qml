@@ -164,4 +164,41 @@ TestCase {
             fuzzyCompare(centre, row.background.height / 2, 1, "label centre " + centre);
         }
     }
+
+    // A list longer than the popup's 320 ends on a whole row, not a sliced
+    // one, with a fade at the bottom edge saying there is more (the diff's
+    // turn picker stopped mid-"Turn 11").
+    function test_aLongListEndsOnAWholeRowAndHintsAtMore() {
+        const turns = [];
+        for (let turn = 1; turn <= 30; ++turn)
+            turns.push("Turn " + turn);
+        const combo = createTemporaryObject(comboComponent, testCase, {
+            y: 20,
+            model: turns,
+            currentIndex: 0
+        });
+        openCombo(combo);
+        const popup = combo.popup;
+        const list = popup.contentItem;
+        verify(popup.height <= 320);
+        compare((list.height) % Theme.control.md, 0);
+        compare(popup.height, list.height + popup.topPadding + popup.bottomPadding);
+        verify(findChild(list, "scrollEdgeBottom").visible);
+        verify(!findChild(list, "scrollEdgeTop").visible);
+        list.positionViewAtEnd();
+        tryVerify(() => !findChild(list, "scrollEdgeBottom").visible);
+        verify(findChild(list, "scrollEdgeTop").visible);
+    }
+
+    // A short list shows every row and no edge.
+    function test_aShortListShowsNoEdge() {
+        const combo = createTemporaryObject(comboComponent, testCase, {
+            y: 20
+        });
+        openCombo(combo);
+        const list = combo.popup.contentItem;
+        compare(list.height, 3 * Theme.control.md);
+        verify(!findChild(list, "scrollEdgeBottom").visible);
+        verify(!findChild(list, "scrollEdgeTop").visible);
+    }
 }

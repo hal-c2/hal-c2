@@ -278,7 +278,9 @@ AbstractButton {
         y: below ? control.height + 4 : -height - 4
         // ljos-allow(layout-fixed-size): the rail and the list scroll inside it, and a size that followed the search's results would move the rows under the pointer as one types
         width: 360
-        height: 346
+        // The search row, then six whole rows (46 tall, 2 apart) between the
+        // list's margins: the list never stops on a sliced row.
+        height: 40 + 2 * Theme.space.sm + 6 * 46 + 5 * 2
         padding: 0
         margins: 8
         focus: true
@@ -543,8 +545,9 @@ AbstractButton {
                         Layout.fillHeight: true
                         leftMargin: 8
                         rightMargin: 4
-                        topMargin: Theme.space.sm
-                        bottomMargin: Theme.space.sm
+                        // Outside the list, so its edges fall between rows.
+                        Layout.topMargin: Theme.space.sm
+                        Layout.bottomMargin: Theme.space.sm
                         spacing: 2
                         clip: true
                         boundsBehavior: Flickable.StopAtBounds
@@ -553,6 +556,10 @@ AbstractButton {
                         delegate: RowSlot {
                             width: ListView.view.width - ListView.view.leftMargin - ListView.view.rightMargin
                             sourceComponent: modelData.kind === "legacy" ? legacyRow : modelRow
+                        }
+
+                        ShellScrollEdge {
+                            target: list
                         }
 
                         Text {

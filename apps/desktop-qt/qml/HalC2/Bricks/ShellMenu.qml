@@ -10,6 +10,9 @@ Menu {
     padding: Theme.space.xs
     // Wide enough for its longest row, between 220 and 360.
     implicitWidth: Math.max(220, Math.min(360, widest() + leftPadding + rightPadding))
+    // As tall as its rows, up to the window: a longer menu stops on a whole
+    // row and scrolls, with the edge hint saying there is more.
+    height: Math.min(implicitHeight, fitted(rows.room))
 
     // Whether any row has an icon: then rows without one keep its column
     // empty, so every label starts at the same place.
@@ -21,6 +24,19 @@ Menu {
             }
         }
         return false;
+    }
+
+    // The height of the rows that fit whole in `room`, with the padding.
+    function fitted(room) {
+        let height = topPadding + bottomPadding;
+        for (let i = 0; i < count; ++i) {
+            const row = itemAt(i);
+            const step = row ? row.height : 0;
+            if (height + step > room)
+                break;
+            height += step;
+        }
+        return height;
     }
 
     function widest() {
@@ -51,6 +67,26 @@ Menu {
     }
 
     exit: null
+
+    // The style's list, with the edge hint for a menu longer than the window.
+    contentItem: ListView {
+        id: rows
+
+        // The window's height, once the menu is in one.
+        readonly property real room: Window.window ? Window.height : Number.MAX_VALUE
+
+        objectName: "menuRows"
+        implicitHeight: contentHeight
+        model: control.contentModel
+        interactive: Window.window ? contentHeight + control.topPadding + control.bottomPadding > control.height : false
+        clip: true
+        currentIndex: control.currentIndex
+        boundsBehavior: Flickable.StopAtBounds
+
+        ShellScrollEdge {
+            target: rows
+        }
+    }
 
     background: ShellPopoverSurface {}
 }

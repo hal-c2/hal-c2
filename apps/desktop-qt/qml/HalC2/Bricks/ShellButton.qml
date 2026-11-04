@@ -23,8 +23,10 @@ Button {
     property bool iconFilled: false
     property real chevronSize: Theme.icon.sm
     readonly property bool filled: primary || destructive
-    readonly property color fill: destructive ? Theme.palette.color("destructive", "#ef4444") : Theme.palette.color("accent", "#2563eb")
-    // Text on the error fill: dark on a light red (the dark themes'), white on a deep one.
+    // The destructive fill is a deep error that carries white text at 4.5:1
+    // (the theme's destructiveFill, or its error deepened by ThemeStore).
+    readonly property color fill: destructive ? Theme.palette.color("destructiveFill", "#b91c1c") : Theme.palette.color("accent", "#2563eb")
+    // White on the destructive fill; dark only on a light fill a theme insists on.
     property color tint: destructive ? (fill.hslLightness > 0.6 ? "#111214" : "#ffffff") : primary ? Theme.palette.color("accentForeground", "#ffffff") : Theme.palette.color("text", "#e4e4e7")
     property color iconTint: tint
     property real radius: Theme.radiusMd

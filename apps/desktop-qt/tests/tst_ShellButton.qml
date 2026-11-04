@@ -68,23 +68,27 @@ Item {
             verify(darkest >= 0.98);
         }
 
-        // A destructive button is a solid error fill, its label readable on
-        // a light red (dark themes) and on a deep one (light themes).
-        function test_destructiveIsASolidErrorFill() {
+        // A destructive button is a solid, deep error fill under white text:
+        // the theme's destructiveFill, never the light error red the dark
+        // theme uses for text (ThemeStore deepens that when a theme has no
+        // fill of its own; tst_ShellRuntime covers it).
+        function test_destructiveIsASolidErrorFillUnderWhite() {
             Theme.colors = {
-                destructive: "#f87171"
+                error: "#f87171",
+                destructiveFill: "#b91c1c"
             };
             const button = createTemporaryObject(themedButtonComponent, root, {
                 subtle: false,
                 destructive: true
             });
-            compare(button.background.color, Qt.color("#f87171"));
-            compare(button.tint, Qt.color("#111214"));
-            Theme.colors = {
-                error: "#c81e1e"
-            };
-            compare(button.background.color, Qt.color("#c81e1e"));
+            compare(button.background.color, Qt.color("#b91c1c"));
             compare(button.tint, Qt.color("#ffffff"));
+            Theme.colors = {
+                error: "#f87171"
+            };
+            verify(button.background.color !== Qt.color("#f87171"));
+            compare(button.tint, Qt.color("#ffffff"));
+            Theme.colors = {};
         }
 
         function test_narrowContentsStayInsidePadding() {
