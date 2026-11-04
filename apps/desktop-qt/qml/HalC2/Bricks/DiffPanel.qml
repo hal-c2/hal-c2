@@ -87,6 +87,15 @@ Rectangle {
         return text.length > maxLineColumns ? text.slice(0, maxLineColumns) + "…" : text;
     }
 
+    // Where a wrapped line's rest hangs: under its own indentation, at most
+    // half the line's room, so a wrap never reads as a new statement at the
+    // margin. Text keeps QTextOption's tab stop (80px).
+    function indent(text) {
+        const lead = /^[ \t]*/.exec(text)[0];
+        const tabs = lead.split("\t").length - 1;
+        return tabs * 80 + (lead.length - tabs) * glyph.advanceWidth;
+    }
+
     TextMetrics {
         id: glyph
 
@@ -438,10 +447,15 @@ Rectangle {
                     width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xl)
                     visible: root.status !== "ready" && root.status !== "idle"
                     iconName: root.status === "error" ? "circle-alert" : root.status === "loading" ? "circle-dashed" : "file-diff"
-                    title: root.status === "error" ? qsTr("Couldn't load the diff") : root.status === "loading" ? qsTr("Loading changes") : qsTr("No changes")
+                    // A turn with nothing to show names the turn, and offers the
+                    // whole thread's changes.
+                    readonly property int selection: root.source?.selection ?? 0
+                    readonly property string scope: selection === -1 ? qsTr("the latest turn") : selection > 0 ? qsTr("turn %1").arg(selection) : ""
+                    readonly property bool offersAll: root.status === "empty" && (selection === -1 || selection > 0)
+                    title: root.status === "error" ? qsTr("Couldn't load the diff") : root.status === "loading" ? qsTr("Loading changes") : scope.length > 0 ? qsTr("No changes in %1").arg(scope) : qsTr("No changes")
                     description: root.status === "loading" ? "" : root.source?.message ?? ""
-                    actionText: root.status === "error" ? qsTr("Try again") : ""
-                    onActionTriggered: root.source.reload()
+                    actionText: root.status === "error" ? qsTr("Try again") : offersAll ? qsTr("Show all changes") : ""
+                    onActionTriggered: root.status === "error" ? root.source.reload() : root.source.select(0)
                 }
 
                 ListView {
@@ -693,12 +707,20 @@ Rectangle {
             color: Theme.palette.color("inset", "#0a0b0d")
 
             // Kept in view while the lines scroll sideways, like the file header.
+            // Cut in the middle, so the ranges and the enclosing name both
+            // show; the whole header is on hover.
             Text {
                 objectName: "diffHunkHeader"
                 x: view.gutter + Math.max(0, view.contentX - view.originX)
                 width: Math.max(0, view.width - view.gutter - Theme.space.sm)
                 anchors.verticalCenter: parent.verticalCenter
-                elide: Text.ElideRight
+                elide: Text.ElideMiddle
+                HoverHandler {
+                    id: hunkHover
+                }
+                ToolTip.visible: hunkHover.hovered && truncated
+                ToolTip.delay: 500
+                ToolTip.text: text
                 text: parent.row.path
                 color: root.muted
                 font.family: root.mono
@@ -720,11 +742,19 @@ Rectangle {
 
     component LineText: Text {
         property string sign: " "
+        // The line as the diff has it.
+        property string line: ""
+        // Wrapped, the line breaks between words (inside one only where a
+        // single word is wider than the room) and the rest hangs under its
+        // indentation.
+        readonly property real hang: root.wrap ? Math.min(root.indent(line), width / 2) : 0
         color: sign === "\\" ? root.muted : root.foreground
         font.family: root.mono
         font.pixelSize: Theme.fontSizeCode
         textFormat: Text.PlainText
         wrapMode: root.wrap ? Text.WrapAtWordBoundaryOrAnywhere : Text.NoWrap
+        leftPadding: hang
+        text: root.lineText(hang > 0 ? line.replace(/^[ \t]*/, "") : line)
         topPadding: 1
         bottomPadding: 1
     }
@@ -749,33 +779,12 @@ Rectangle {
             height: implicitHeight
             color: root.tint(row.sign)
 
-            Row {
-                id: numbers
-                x: view.commentInset
-                spacing: Theme.space.sm
-                LineNumber {
-                    objectName: "diffOldLine"
-                    text: root.lineNumber(stackedRow.row.oldLine)
-                }
-                LineNumber {
-                    objectName: "diffNewLine"
-                    text: root.lineNumber(stackedRow.row.newLine)
-                }
-            }
-            Text {
-                x: view.commentInset + view.numbersWidth + Theme.space.sm
-                text: parent.row.sign === "\\" ? "" : parent.row.sign
-                color: parent.row.sign === "+" ? root.added : root.removed
-                font.family: root.mono
-                font.pixelSize: Theme.fontSizeCode
-                topPadding: 1
-            }
             LineText {
                 id: lineText
                 x: view.gutter
                 width: root.wrap ? parent.width - x - Theme.space.sm : implicitWidth
                 sign: parent.row.sign
-                text: root.lineText(parent.row.text)
+                line: parent.row.text
             }
             // A note on this line (and the ones after it) for the prompt.
             HoverHandler {
@@ -785,19 +794,53 @@ Rectangle {
                 enabled: root.touchLines && root.canComment && stackedRow.row.sign !== "\\"
                 onTapped: commentPopup.ask(root.model.path(stackedRow.row.file), stackedRow.row.sign === "-" ? "old" : "new", stackedRow.row.sign === "-" ? stackedRow.row.oldLine : stackedRow.row.newLine)
             }
-            ShellButton {
-                readonly property var row: parent.row
-                objectName: "diffLineComment"
-                x: Theme.space.xxs
-                width: Theme.icon.md
-                height: Math.min(parent.height, Theme.icon.md + Theme.space.xxs)
-                visible: root.canComment && row.sign !== "\\" && (lineHover.hovered || hovered)
-                subtle: true
-                iconName: "message-square-plus"
-                iconSize: Theme.icon.sm
-                iconTint: root.muted
-                Accessible.name: qsTr("Comment on this line")
-                onClicked: commentPopup.ask(root.model.path(row.file), row.sign === "-" ? "old" : "new", row.sign === "-" ? row.oldLine : row.newLine)
+            // The numbers and the sign stay put while the line scrolls
+            // sideways under them.
+            Rectangle {
+                x: Math.max(0, view.contentX - view.originX)
+                width: view.gutter
+                height: parent.height
+                color: x > 0 ? root.color : "transparent"
+                Rectangle {
+                    anchors.fill: parent
+                    visible: parent.x > 0
+                    color: root.tint(stackedRow.row.sign)
+                }
+                Row {
+                    id: numbers
+                    x: view.commentInset
+                    spacing: Theme.space.sm
+                    LineNumber {
+                        objectName: "diffOldLine"
+                        text: root.lineNumber(stackedRow.row.oldLine)
+                    }
+                    LineNumber {
+                        objectName: "diffNewLine"
+                        text: root.lineNumber(stackedRow.row.newLine)
+                    }
+                }
+                Text {
+                    x: view.commentInset + view.numbersWidth + Theme.space.sm
+                    text: stackedRow.row.sign === "\\" ? "" : stackedRow.row.sign
+                    color: stackedRow.row.sign === "+" ? root.added : root.removed
+                    font.family: root.mono
+                    font.pixelSize: Theme.fontSizeCode
+                    topPadding: 1
+                }
+                ShellButton {
+                    readonly property var row: stackedRow.row
+                    objectName: "diffLineComment"
+                    x: Theme.space.xxs
+                    width: Theme.icon.md
+                    height: Math.min(parent.height, Theme.icon.md + Theme.space.xxs)
+                    visible: root.canComment && row.sign !== "\\" && (lineHover.hovered || hovered)
+                    subtle: true
+                    iconName: "message-square-plus"
+                    iconSize: Theme.icon.sm
+                    iconTint: root.muted
+                    Accessible.name: qsTr("Comment on this line")
+                    onClicked: commentPopup.ask(root.model.path(row.file), row.sign === "-" ? "old" : "new", row.sign === "-" ? row.oldLine : row.newLine)
+                }
             }
         }
     }
@@ -826,7 +869,7 @@ Rectangle {
                     width: pair.half - Theme.space.sm
                     clip: !root.wrap
                     sign: pair.row.sign
-                    text: root.lineText(pair.row.text)
+                    line: pair.row.text
                 }
             }
             Rectangle {
@@ -843,7 +886,7 @@ Rectangle {
                     width: pair.half - Theme.space.sm
                     clip: !root.wrap
                     sign: pair.row.rightSign
-                    text: root.lineText(pair.row.rightText)
+                    line: pair.row.rightText
                 }
             }
         }

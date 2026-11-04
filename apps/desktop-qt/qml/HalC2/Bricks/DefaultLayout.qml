@@ -52,6 +52,10 @@ Item {
     readonly property bool panelSheet: panelNarrow
     // The sheet: 42% of the window up to 448, 88% up to 384 under 760.
     readonly property real panelSheetWidth: width < 760 ? Math.min(0.88 * width, 384) : Math.max(320, Math.min(0.42 * width, 448))
+    // The sheet never covers the thread details: it lies over the thread,
+    // left of them, unless the room beside the list is too short for both.
+    readonly property real detailsShown: detailsView.visible ? detailsView.implicitWidth : 0
+    readonly property real panelSheetShift: Math.max(0, Math.min(detailsShown, besideList - panelView.implicitWidth))
     // A sheet starts under the header, whose toggle puts it away again.
     readonly property real headerHeight: workspaceView.visible ? workspaceView.height : chromeBand.visible ? chromeBand.height : 0
     // Where the window is, less what changes while it stays there (the title).
@@ -335,7 +339,8 @@ Item {
 
                 Layout.fillHeight: true
                 // A sheet takes no room from the thread either.
-                Layout.leftMargin: layout.panelSheet ? -implicitWidth : 0
+                Layout.leftMargin: layout.panelSheet ? -implicitWidth - layout.panelSheetShift : 0
+                Layout.rightMargin: layout.panelSheet ? layout.panelSheetShift : 0
                 Layout.topMargin: layout.panelSheet ? layout.headerHeight : 0
                 z: layout.panelSheet ? 2 : 0
                 ownToggle: false
@@ -344,7 +349,7 @@ Item {
                 trailingInset: layout.corner === "panel" ? layout.windowButtonsInset : 0
                 Layout.preferredWidth: implicitWidth
                 // The thread keeps room of its own.
-                maximumWidth: layout.panelSheet ? layout.panelSheetWidth : layout.besidePanel
+                maximumWidth: layout.panelSheet ? Math.min(layout.panelSheetWidth, layout.besideList - layout.detailsShown) : layout.besidePanel
                 visible: available && !layout.pluginTab
             }
         }
@@ -409,7 +414,7 @@ Item {
         visible: layout.panelSheet && panelView.visible && panelView.open
         x: sidebarScrim.visible ? sidebarScrim.x : 0
         y: panelView.parent.y + layout.headerHeight
-        width: parent.width - panelView.width - x
+        width: parent.width - panelView.width - layout.panelSheetShift - x
         height: panelView.height
         color: Theme.palette.color("scrim", "#52000000")
         Accessible.role: Accessible.Button

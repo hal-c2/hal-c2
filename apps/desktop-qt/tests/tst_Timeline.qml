@@ -233,6 +233,41 @@ Item {
             tryVerify(() => list.contentHeight > before && atEnd(list), 5000, "the view follows new output again");
         }
 
+        // "Scroll to end" floats on its own band, 12px over the bottom, and
+        // keeps off the end once the end is already under it.
+        function test_scrollToEndHasItsOwnSurface() {
+            const timeline = longThread();
+            const list = view(timeline);
+            scrollUp(timeline, timeline.height);
+            const jump = findChild(timeline, "jumpToLatest");
+            const band = findChild(timeline, "jumpToLatestBand");
+            verify(jump.visible && band.visible, "the control shows on its band");
+            compare(jump.height, Theme.control.md);
+            const foot = list.mapToItem(timeline, 0, list.height).y;
+            compare(jump.mapToItem(timeline, 0, jump.height).y, foot - Theme.space.md, "12px over the bottom");
+            compare(band.mapToItem(timeline, 0, band.height).y, foot, "the band reaches the bottom");
+            verify(band.height >= jump.height + 2 * Theme.space.md, "with room around the control");
+            list.contentY = list.originY + list.contentHeight - list.height - Theme.space.lg;
+            verify(!timeline.following, "a little way from the end");
+            verify(!jump.visible && !band.visible, "the end is under it, so it stays away");
+        }
+
+        // Rows scrolled under the top fade out there instead of meeting
+        // whatever sits over the conversation with a cut line.
+        function test_rowsFadeOutAtTheTop() {
+            const timeline = longThread();
+            const list = view(timeline);
+            const edge = findChild(timeline, "timelineTopEdge");
+            verify(edge.visible, "a thread opened at its end fades at the top");
+            compare(edge.mapToItem(timeline, 0, 0).y, list.mapToItem(timeline, 0, 0).y);
+            compare(edge.height, Theme.space.lg);
+            list.forceActiveFocus();
+            tryVerify(() => list.activeFocus, 2000);
+            keyClick(Qt.Key_Home);
+            compare(list.contentY, list.originY - list.topMargin, "Home goes to the start");
+            tryVerify(() => !edge.visible, 2000, "at the start nothing is under it");
+        }
+
         // Scenario: The keyboard pages through the conversation
         function test_pageKeysScrollTheConversation() {
             const timeline = longThread();
@@ -383,7 +418,18 @@ Item {
             verify(!timeline.following, "the room made does not count as the user returning");
             verify(timeline.scrolledAway, "the room stays made");
             compare(timeline.height, root.roomyHeight);
-            verify(findChild(timeline, "jumpToLatest").visible);
+            offersTheEndOnceItGrows(timeline);
+        }
+
+        // "Scroll to end" stays off the end while the end is under it, and
+        // shows once the reply grows past the view.
+        function offersTheEndOnceItGrows(timeline) {
+            const jump = findChild(timeline, "jumpToLatest");
+            verify(!jump.visible, "the end shows, so it is not offered yet");
+            for (let i = 0; i < 4; ++i)
+                grow();
+            tryVerify(() => jump.visible, 5000, "the user is offered a way to scroll to the end");
+            verify(!timeline.following);
         }
 
         // Scenario: The user returns to the end of the thread
@@ -437,7 +483,7 @@ Item {
             list.movementEnded();
             verify(!timeline.following, "the user is still away");
             verify(timeline.scrolledAway);
-            verify(findChild(timeline, "jumpToLatest").visible);
+            offersTheEndOnceItGrows(timeline);
         }
 
         // Scenario: Scrolling away stops the view from following
@@ -891,14 +937,15 @@ Item {
             tryVerify(() => list.itemAtIndex(1) !== null);
             const question = list.itemAtIndex(0);
             const copy = findNamed(question, "copyMessage");
+            const meta = findNamed(question, "userMessageMeta");
             mouseMove(list, list.width / 2, list.height - 2);
-            tryCompare(copy.parent, "opacity", 0, 2000, "Copy is hidden away from the pointer");
+            tryCompare(meta, "opacity", 0, 2000, "Copy is hidden away from the pointer");
             // The message's markdown is laid out.
             const markdown = findWith(question, "segmentCount");
             tryVerify(() => markdown.segmentCount > 0 && markdown.implicitHeight > 0 && question.height >= markdown.implicitHeight, 2000);
             const height = question.height;
             mouseMove(question, question.width / 2, 4);
-            tryCompare(copy.parent, "opacity", 1, 2000, "Copy shows with the pointer over the message");
+            tryCompare(meta, "opacity", 1, 2000, "Copy shows with the pointer over the message");
             compare(question.height, height, "showing the actions moves nothing");
             mouseClick(copy);
             compare(actionRows.copiedRows, ["question"]);
@@ -1003,11 +1050,34 @@ Item {
             const label = findNamed(item, "markerTitle");
             verify(visibleIn(label), "the notification names what ended");
             compare(label.text, title);
-            verify(visibleIn(findIcon(item, "zap")), "with the notification's icon");
             verify(label.truncated, "a long title is cut short");
             verify(label.mapToItem(item, 0, 0).x >= 0 && label.mapToItem(item, label.width, 0).x <= item.width, "and stays inside the row");
             verify(item.height < 60, "on one line");
             verify(!findNamed(item, "messageAttribution") || !visibleIn(findNamed(item, "messageAttribution")), "and is nobody's message");
+        }
+
+        // A system divider keeps 24 above it and 16 below, and steered
+        // messages sit 16 apart, wherever the pointer is.
+        function test_dividersAndSteersKeepEvenSpace() {
+            rows.clear();
+            rows.append(root.row({ rowId: "u1", author: "user", text: "First steer", intent: "steer" }));
+            rows.append(root.row({ rowId: "u2", author: "user", text: "Second steer", intent: "steer" }));
+            rows.append(root.row({ rowId: "c1", kind: "marker", title: "Checkpoint" }));
+            rows.append(root.row({ rowId: "u3", author: "user", text: "A new turn" }));
+            const timeline = createTemporaryObject(timelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(3) !== null);
+            // The blank between one row's ink and the next row's.
+            function space(index) {
+                const above = list.itemAtIndex(index);
+                const below = list.itemAtIndex(index + 1);
+                const ink = findWith(above, "sourceComponent").item.implicitHeight;
+                return below.y + findWith(below, "sourceComponent").y - (above.y + ink);
+            }
+            compare(space(0), Theme.space.lg, "steers sit 16 apart");
+            compare(space(1), Theme.space.xl, "24 above a divider");
+            compare(space(2), Theme.space.lg, "16 below it");
+            verify(!visibleIn(findNamed(list.itemAtIndex(3), "turnDivider")), "with no rule under it");
         }
 
         function findWith(item, property) {
