@@ -57,7 +57,7 @@ Item {
             tryVerify(() => list.height === list.contentHeight, 2000, "the list is as tall as its rows, not " + list.height);
             const three = popup.height;
             verify(three < 300, "three rows make a short palette, not " + three);
-            verify(!findChild(list, "scrollEdgeBottom").visible, "no edge when every row shows");
+            verify(!findChild(list, "scrollThumb").visible, "no bar when every row shows");
             PaletteModel.clear();
             tryVerify(() => popup.height < three, 2000, "no rows make it shorter still");
             verify(list.height > 0, "with room for the empty text");
@@ -70,22 +70,25 @@ Item {
                 if (list.itemAtIndex(i).y + list.itemAtIndex(i).height === list.height)
                     last = i;
             verify(last !== null, "a row ends where the list does");
-            // ...and the rows past it are hinted at by a fade at the edge.
-            verify(findChild(list, "scrollEdgeBottom").visible);
-            verify(!findChild(list, "scrollEdgeTop").visible);
+            // ...and the rows past it are hinted at by a bar at the edge.
+            // A thin bar at the right edge says there is more: at the top, then at the end.
+            const thumb = findChild(list, "scrollThumb");
+            verify(thumb.visible);
+            verify(Math.abs(thumb.y - Theme.space.xxs) < 0.5, "the bar starts at the top, not " + thumb.y);
+            verify(thumb.height < list.height - 2 * Theme.space.xxs);
+            verify(thumb.x >= list.width - Theme.space.sm, "the bar keeps to the rows' right padding");
             list.positionViewAtEnd();
-            tryVerify(() => !findChild(list, "scrollEdgeBottom").visible);
-            verify(findChild(list, "scrollEdgeTop").visible);
+            tryVerify(() => Math.abs(thumb.y + thumb.height - (list.height - Theme.space.xxs)) < 0.5, 2000, "the bar ends at the bottom, not " + thumb.y);
         }
 
         // A submenu's long list, under its title and without group headers,
-        // also ends on a whole row with a fade below it.
+        // also ends on a whole row at full ink, with the bar beside it.
         function test_aLongSubmenuEndsOnAWholeRowAndHintsAtMore() {
             const popup = opened();
             const list = findChild(popup.contentItem, "commandPaletteList");
             for (let n = 4; n <= 20; ++n)
                 PaletteModel.append({ title: "Entry " + n, description: "", group: n < 10 ? "Actions" : "Threads", shortcut: "", kind: "action", runnable: true, current: false });
-            tryVerify(() => findChild(list, "scrollEdgeBottom").visible);
+            tryVerify(() => findChild(list, "scrollThumb").visible);
             // As the palette moves into a submenu: its rows go and come
             // (no reset), and the title above the search shows after them.
             PaletteModel.remove(0, PaletteModel.count);
@@ -100,25 +103,26 @@ Item {
                         return true;
                 return false;
             }, 2000, "a row ends where the list does, at " + list.height);
-            const edge = findChild(list, "scrollEdgeBottom");
+            const edge = findChild(list, "scrollThumb");
             verify(edge.visible);
-            // The fade paints over the last whole row: it holds less ink with it.
+            // Nothing paints over the last whole row's text: it holds the
+            // same ink with the bar as without it.
             function lastRowInk() {
                 const img = grabImage(Overlay.overlay);
                 const o = list.mapToItem(Overlay.overlay, 0, list.height - Theme.control.md);
                 let sum = 0;
                 for (let y = 2; y < Theme.control.md - 2; ++y)
-                    for (let x = 0; x < Math.min(300, list.width); x += 2) {
+                    for (let x = 0; x < Math.min(300, list.width - Theme.space.sm); x += 2) {
                         const c = Qt.color(img.pixel(o.x + x, o.y + y));
                         sum += c.r + c.g + c.b;
                     }
                 return sum;
             }
-            const faded = lastRowInk();
+            const shown = lastRowInk();
             edge.visible = false;
             waitForRendering(list);
             const plain = lastRowInk();
-            verify(faded < plain, "the fade dims the last row, " + faded + " vs " + plain);
+            compare(shown, plain, "the last row keeps its ink");
         }
 
         // Rows are list items named by their title, for assistive technology.

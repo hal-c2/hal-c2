@@ -166,7 +166,7 @@ TestCase {
     }
 
     // A list longer than the popup's 320 ends on a whole row, not a sliced
-    // one, with a fade at the bottom edge saying there is more (the diff's
+    // one, with a bar at the right edge saying there is more (the diff's
     // turn picker stopped mid-"Turn 11").
     function test_aLongListEndsOnAWholeRowAndHintsAtMore() {
         const turns = [];
@@ -183,11 +183,14 @@ TestCase {
         verify(popup.height <= 320);
         compare((list.height) % Theme.control.md, 0);
         compare(popup.height, list.height + popup.topPadding + popup.bottomPadding);
-        verify(findChild(list, "scrollEdgeBottom").visible);
-        verify(!findChild(list, "scrollEdgeTop").visible);
+        // A thin bar at the right edge says there is more: at the top, then at the end.
+        const thumb = findChild(list, "scrollThumb");
+        verify(thumb.visible);
+        verify(Math.abs(thumb.y - Theme.space.xxs) < 0.5, "the bar starts at the top, not " + thumb.y);
+        verify(thumb.height < list.height - 2 * Theme.space.xxs);
+        verify(thumb.x >= list.width - Theme.space.sm, "the bar keeps to the rows' right padding");
         list.positionViewAtEnd();
-        tryVerify(() => !findChild(list, "scrollEdgeBottom").visible);
-        verify(findChild(list, "scrollEdgeTop").visible);
+        tryVerify(() => Math.abs(thumb.y + thumb.height - (list.height - Theme.space.xxs)) < 0.5, 2000, "the bar ends at the bottom, not " + thumb.y);
     }
 
     // A short list shows every row and no edge.
@@ -198,7 +201,6 @@ TestCase {
         openCombo(combo);
         const list = combo.popup.contentItem;
         compare(list.height, 3 * Theme.control.md);
-        verify(!findChild(list, "scrollEdgeBottom").visible);
-        verify(!findChild(list, "scrollEdgeTop").visible);
+        verify(!findChild(list, "scrollThumb").visible);
     }
 }

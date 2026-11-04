@@ -324,7 +324,7 @@ Item {
         // The web row's parts: the short name, the provider line with its
         // sub-provider, the legacy fold and the empty search.
         // A provider with more models than fit stops on a whole row, with a
-        // fade at the bottom edge saying there is more.
+        // bar at the right edge saying there is more.
         function test_a_long_model_list_stops_on_a_whole_row() {
             const many = [];
             for (let index = 1; index <= 12; ++index)
@@ -336,11 +336,14 @@ Item {
             const first = list.itemAtIndex(0);
             const pitch = first.height + list.spacing;
             compare((list.height + list.spacing) % pitch, 0);
-            verify(findChild(list, "scrollEdgeBottom").visible);
-            verify(!findChild(list, "scrollEdgeTop").visible);
+            // A thin bar at the right edge says there is more: at the top, then at the end.
+            const thumb = findChild(list, "scrollThumb");
+            verify(thumb.visible);
+            verify(Math.abs(thumb.y - Theme.space.xxs) < 0.5, "the bar starts at the top, not " + thumb.y);
+            verify(thumb.height < list.height - 2 * Theme.space.xxs);
+            verify(thumb.x >= list.width - Theme.space.sm, "the bar keeps to the rows' right padding");
             list.positionViewAtEnd();
-            tryVerify(() => !findChild(list, "scrollEdgeBottom").visible);
-            verify(findChild(list, "scrollEdgeTop").visible);
+            tryVerify(() => Math.abs(thumb.y + thumb.height - (list.height - Theme.space.xxs)) < 0.5, 2000, "the bar ends at the bottom, not " + thumb.y);
         }
 
         function test_rows_follow_the_web_list() {

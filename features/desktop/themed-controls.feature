@@ -84,10 +84,10 @@ Feature: Shared controls follow the theme
   Scenario: A list too long for its menu, picker or palette shows that it goes on
     Given the diff's turn picker lists 30 turns
     When the user opens it
-    Then it stops on a whole row, never a sliced one
-    And a fade at its bottom edge says there is more
+    Then it stops on a whole row, never a sliced one, and every row keeps its full ink
+    And a thin bar at its right edge, at the top, says there is more
     When the user scrolls to the end
-    Then the fade moves to the top edge
+    Then the bar moves to the bottom
     And a menu longer than the window, the model picker and the command palette do the same
 
   Scenario: A select popup opens upward when there is no room below

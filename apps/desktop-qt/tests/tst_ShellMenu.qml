@@ -155,7 +155,7 @@ TestCase {
     }
 
     // A menu longer than the window stops on a whole row and scrolls, with a
-    // fade at the edge that has more past it.
+    // bar at the right edge saying there is more.
     function test_a_menu_longer_than_the_window_stops_on_a_whole_row() {
         const menu = createTemporaryObject(tallMenu, testCase);
         menu.popup(20, 0);
@@ -166,18 +166,20 @@ TestCase {
         verify(menu.height + Theme.control.md > room);
         compare((menu.height - menu.topPadding - menu.bottomPadding) % Theme.control.md, 0);
         verify(rows.interactive);
-        verify(findNamed(rows, "scrollEdgeBottom").visible);
-        verify(!findNamed(rows, "scrollEdgeTop").visible);
+        // A thin bar at the right edge says there is more: at the top, then at the end.
+        const thumb = findNamed(rows, "scrollThumb");
+        verify(thumb.visible);
+        verify(Math.abs(thumb.y - Theme.space.xxs) < 0.5, "the bar starts at the top, not " + thumb.y);
+        verify(thumb.height < rows.height - 2 * Theme.space.xxs);
+        verify(thumb.x >= rows.width - Theme.space.sm, "the bar keeps to the rows' right padding");
         rows.positionViewAtEnd();
-        tryVerify(() => !findNamed(rows, "scrollEdgeBottom").visible);
-        verify(findNamed(rows, "scrollEdgeTop").visible);
+        tryVerify(() => Math.abs(thumb.y + thumb.height - (rows.height - Theme.space.xxs)) < 0.5, 2000, "the bar ends at the bottom, not " + thumb.y);
     }
 
     // A menu that fits shows all its rows and no edge.
     function test_a_menu_that_fits_shows_no_edge() {
         const menu = openMenu(richMenu);
         compare(menu.height, menu.implicitHeight);
-        verify(!findNamed(menu.contentItem, "scrollEdgeBottom").visible);
-        verify(!findNamed(menu.contentItem, "scrollEdgeTop").visible);
+        verify(!findNamed(menu.contentItem, "scrollThumb").visible);
     }
 }
