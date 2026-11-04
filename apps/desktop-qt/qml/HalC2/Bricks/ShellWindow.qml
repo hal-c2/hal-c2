@@ -65,13 +65,20 @@ Window {
         return false;
     }
 
+    // Whether the layout draws the thread list's slim rows and rail as the
+    // window narrows (LayoutController's sidebarMode). A root whose layouts
+    // were not drawn for them (the phone's tablet layout) turns it off and
+    // keeps the full list.
+    property bool sidebarModes: true
+
     // The layout fits the thread list to the room the window leaves it, and
     // widens its default for a monospace interface font.
     function reportWidth() {
-        Shell.dispatch("layout.window", { width: Math.round(root.width / root.zoom), monospace: Theme.monospace });
+        Shell.dispatch("layout.window", { width: Math.round(root.width / root.zoom), monospace: Theme.monospace, modes: root.sidebarModes });
     }
     readonly property bool monospaceInterface: Theme.monospace
     onMonospaceInterfaceChanged: reportWidth()
+    onSidebarModesChanged: reportWidth()
 
     width: 1280
     height: 820

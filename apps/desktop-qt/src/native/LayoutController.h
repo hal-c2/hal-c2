@@ -23,12 +23,16 @@ class ShellBridge;
 // A narrow window keeps the list beside the thread as the rail, or nothing if
 // the user hid it; `sidebar.toggle` there opens the full list over the thread
 // and puts it away again, without that being remembered: the device keeps
-// what a window with room last chose. Action and keybinding command:
+// what a window with room last chose. A window whose layout has no slim rows
+// or rail (the phone's tablet layout, `modes: false`) keeps the full list,
+// and is narrow only with no room for the list's minimum beside the thread,
+// where it shows nothing until toggled open over it. Action and keybinding command:
 // `sidebar.toggle` (the sidebar's hide button, the header's show button, the
 // rail's expand button, mod+b). `sidebar.resize {width}` sets the width
 // chosen (no width: back to the default), and `layout.window {width,
-// monospace}` says how wide the window is and whether its interface font is
-// monospaced, which widens the default. Commands `view.zoomIn`,
+// monospace, modes}` says how wide the window is, whether its interface font
+// is monospaced, which widens the default, and whether its layout draws the
+// slim rows and the rail (kept when left out; on until a window says). Commands `view.zoomIn`,
 // `view.zoomOut` and `view.resetZoom` (the application menu's mod+= and
 // mod++, mod+-, mod+0).
 class LayoutController : public QObject, public NativeController {
@@ -41,14 +45,22 @@ public:
   bool handle(const QString& action, const QVariant& payload) override;
 
   // Whether nothing of the list is drawn: hidden by the user, and in a
-  // narrow window not opened over the thread.
-  bool sidebarCollapsed() const { return m_sidebarCollapsed && !sidebarOverlay(); }
+  // narrow window not opened over the thread; without the rail, a narrow
+  // window shows nothing until it is.
+  bool sidebarCollapsed() const {
+    if (!m_modes && narrow()) return !m_overlayOpen;
+    return m_sidebarCollapsed && !sidebarOverlay();
+  }
   // Hides or shows the list; in a narrow window, closes or opens it over the thread.
   void setSidebarCollapsed(bool collapsed);
   void toggleSidebar();
   // The window is too narrow for the full list beside the thread: it keeps
-  // a rail there instead.
-  bool narrow() const { return m_windowWidth > 0 && m_windowWidth < kRailBelow; }
+  // a rail there instead. Without the rail, too narrow for its minimum.
+  bool narrow() const {
+    return m_windowWidth > 0 && m_windowWidth < (m_modes ? kRailBelow : kSidebarMinWidth + kContentMinWidth);
+  }
+  // The rail is drawn beside the thread.
+  bool rail() const { return m_modes && narrow() && !m_overlayOpen; }
   // The full list is drawn over the thread.
   bool sidebarOverlay() const { return narrow() && m_overlayOpen; }
   // How the list draws: "full", "slim" or "rail".
@@ -80,6 +92,8 @@ public:
   // monospaced.
   void setWindowWidth(int width);
   void setMonospace(bool monospace);
+  // Whether the window's layout draws the slim rows and the rail.
+  void setModes(bool modes);
   // How long a panel takes to open or close, in ms: the Panel animations
   // setting, or none when motion is reduced (the Reduce motion setting, or
   // the system's preference where the platform reports it).
@@ -91,6 +105,10 @@ public:
 private:
   void load();
   void publish();
+  // What publish() says.
+  QVariantMap state() const;
+  // Changes the window and publishes what that changed.
+  template <typename Change> void changeWindow(Change change);
 
   ShellBridge* m_bridge;
   bool m_loaded = false;
@@ -104,6 +122,7 @@ private:
   int m_sidebarWidth = 0;
   int m_windowWidth = 0;
   bool m_monospace = false;
+  bool m_modes = true;
   // The widest the window leaves room for, or none while it has not said.
   int sidebarRoom() const;
   // Remembers the width chosen, 0 for the default.

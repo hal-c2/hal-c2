@@ -90,6 +90,7 @@ bool LayoutController::handle(const QString& action, const QVariant& payload) {
     else resetSidebarWidth();
   } else if (action == QLatin1String("layout.window")) {
     if (map.contains(QStringLiteral("monospace"))) setMonospace(map.value(QStringLiteral("monospace")).toBool());
+    if (map.contains(QStringLiteral("modes"))) setModes(map.value(QStringLiteral("modes")).toBool());
     setWindowWidth(map.value(QStringLiteral("width")).toInt());
   } else {
     return false;
@@ -102,13 +103,13 @@ int LayoutController::sidebarRoom() const {
 }
 
 QString LayoutController::sidebarMode() const {
-  if (narrow() && !m_overlayOpen) return QStringLiteral("rail");
-  if (!narrow() && m_windowWidth > 0 && m_windowWidth < kSlimBelow) return QStringLiteral("slim");
+  if (rail()) return QStringLiteral("rail");
+  if (m_modes && !narrow() && m_windowWidth > 0 && m_windowWidth < kSlimBelow) return QStringLiteral("slim");
   return QStringLiteral("full");
 }
 
 int LayoutController::sidebarWidth() const {
-  if (narrow() && !m_overlayOpen) return kRailWidth;
+  if (rail()) return kRailWidth;
   const int chosen = m_sidebarWidth > 0 ? m_sidebarWidth : defaultSidebarWidth();
   return std::max(std::min(chosen, sidebarRoom()), kSidebarMinWidth);
 }
@@ -143,20 +144,24 @@ void LayoutController::setMonospace(bool monospace) {
   if (sidebarWidth() != before) publish();
 }
 
+template <typename Change> void LayoutController::changeWindow(Change change) {
+  const QVariantMap before = state();
+  const bool wasNarrow = narrow();
+  change();
+  if (narrow() != wasNarrow) m_overlayOpen = false;
+  if (state() != before) publish();
+}
+
 void LayoutController::setWindowWidth(int width) {
   load();
   if (width == m_windowWidth) return;
-  const int before = sidebarWidth();
-  const QString mode = sidebarMode();
-  const bool overlay = sidebarOverlay();
-  const bool collapsed = sidebarCollapsed();
-  const bool wasNarrow = narrow();
-  m_windowWidth = width;
-  if (narrow() != wasNarrow) m_overlayOpen = false;
-  if (sidebarWidth() != before || sidebarMode() != mode || sidebarOverlay() != overlay ||
-      sidebarCollapsed() != collapsed) {
-    publish();
-  }
+  changeWindow([&] { m_windowWidth = width; });
+}
+
+void LayoutController::setModes(bool modes) {
+  load();
+  if (modes == m_modes) return;
+  changeWindow([&] { m_modes = modes; });
 }
 
 void LayoutController::toggleSidebar() {
@@ -202,12 +207,15 @@ void LayoutController::setZoomLevel(double level) {
   publish();
 }
 
+QVariantMap LayoutController::state() const {
+  return QVariantMap{{kSidebarCollapsed, sidebarCollapsed()},
+                     {kSidebarWidthKey, sidebarWidth()},
+                     {QStringLiteral("sidebarMode"), sidebarMode()},
+                     {QStringLiteral("sidebarOverlay"), sidebarOverlay()},
+                     {QStringLiteral("contentMinimumWidth"), kContentMinWidth},
+                     {QStringLiteral("zoom"), zoom()}};
+}
+
 void LayoutController::publish() {
-  m_bridge->publish(QStringLiteral("layout"),
-                    QVariantMap{{kSidebarCollapsed, sidebarCollapsed()},
-                                {kSidebarWidthKey, sidebarWidth()},
-                                {QStringLiteral("sidebarMode"), sidebarMode()},
-                                {QStringLiteral("sidebarOverlay"), sidebarOverlay()},
-                                {QStringLiteral("contentMinimumWidth"), kContentMinWidth},
-                                {QStringLiteral("zoom"), zoom()}});
+  m_bridge->publish(QStringLiteral("layout"), state());
 }

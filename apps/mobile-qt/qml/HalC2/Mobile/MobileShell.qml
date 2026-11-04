@@ -57,6 +57,10 @@ ShellWindow {
         value: root.width / root.zoom >= 736 && root.fullHeight / root.zoom >= 480
         delayed: true
     }
+    // The tablet layout is only ever as narrow as `roomy` lets it be, and
+    // keeps the full thread list there: the desktop's slim rows and rail are
+    // for windows narrower than a tablet's.
+    sidebarModes: false
     // What the window shows: `pairing`, or the layout it has room for.
     readonly property string layout: !paired || adding ? "pairing" : roomy ? "desktop" : "phone"
 

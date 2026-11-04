@@ -8,6 +8,7 @@
 #   apps/mobile/plugins/withAndroidTabletOrientation
 #   apps/mobile/modules/hal-c2-composer-editor/ios/HalC2ComposerEditorView.swift (send keys named in the Cmd-hold list)
 #   apps/mobile-qt/qml/HalC2/Mobile/MobileShell.qml (the desktop's layout from 736 by 480, the phone's below)
+#   apps/desktop-qt/src/native/LayoutController.cpp (sidebarMode: the slim rows and rail a window without modes never gets)
 #   docs/internals/mobile-qt.md (one root, two layouts)
 #   apps/mobile/src/lib/adaptive-navigation.ts, layout.ts (thread and file selection beside the list, sidebar and inspector widths, reading width)
 # Keybinding ids and the desktop command palette are specified in features/navigation/.
@@ -31,6 +32,18 @@ Feature: Tablet layout and hardware keyboards
       | 720   | 600    | one at a time   |
       | 844   | 390    | one at a time   |
       | 390   | 844    | one at a time   |
+
+  # The desktop's slim rows and its rail are for windows narrower than a tablet's: wherever the
+  # tablet splits, its thread list keeps its full rows.
+  @mobile
+  Scenario Outline: A split tablet keeps the full thread list
+    Given the app window is <width> wide and <height> tall
+    Then the thread list shows its full rows
+
+    Examples:
+      | width | height |
+      | 736   | 480    |
+      | 1024  | 768    |
 
   # The desktop's layout has no empty detail pane: with no thread it lands on a new thread's draft.
   @backlog @mobile

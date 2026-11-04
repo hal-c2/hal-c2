@@ -5,7 +5,9 @@
 // narrower than its minimum, leaves the thread its room while it is beside
 // it, goes slim in a window under 1100, and in a window with no room for both
 // keeps a rail beside the thread whose toggle shows the full list over it,
-// without that being remembered.
+// without that being remembered. A window whose layout has no slim rows or
+// rail (the phone's tablet layout) keeps the full list, and with no room for
+// its minimum shows nothing until toggled open over the thread.
 
 #include "Prop.h"
 
@@ -35,13 +37,15 @@ struct Model {
   int window = 0;
   bool monospace = false;
   bool overlayOpen = false;
+  // Whether the window's layout draws the slim rows and the rail.
+  bool modes = true;
 
-  bool narrow() const { return window > 0 && window < LayoutController::kRailBelow; }
+  bool narrow() const { return window > 0 && window < (modes ? LayoutController::kRailBelow : kMin + kContent); }
   bool overlay() const { return narrow() && overlayOpen; }
-  bool rail() const { return narrow() && !overlayOpen; }
+  bool rail() const { return modes && narrow() && !overlayOpen; }
   std::string mode() const {
     if (rail()) return "rail";
-    return !narrow() && window > 0 && window < LayoutController::kSlimBelow ? "slim" : "full";
+    return modes && !narrow() && window > 0 && window < LayoutController::kSlimBelow ? "slim" : "full";
   }
   int fallback() const { return monospace ? LayoutController::kSidebarMonospaceWidth : LayoutController::kSidebarWidth; }
   int room() const { return window > 0 ? std::max(0, window - kContent) : std::numeric_limits<int>::max(); }
@@ -49,7 +53,7 @@ struct Model {
     if (rail()) return LayoutController::kRailWidth;
     return std::max(std::min(chosen > 0 ? chosen : fallback(), room()), kMin);
   }
-  bool hidden() const { return collapsed && !overlay(); }
+  bool hidden() const { return !modes && narrow() ? !overlayOpen : collapsed && !overlay(); }
 };
 
 struct Shell {
@@ -90,7 +94,10 @@ void check(const Model& model, Shell& shell) {
   // Never under its minimum but as the rail, and beside the thread only
   // with room for both.
   if (!model.rail()) RC_ASSERT(width >= kMin);
-  if (model.window > 0 && !model.overlay()) RC_ASSERT(width <= model.window - kContent);
+  if (model.window > 0 && !model.narrow()) RC_ASSERT(width <= model.window - kContent);
+  if (model.rail()) RC_ASSERT(width <= model.window - kContent);
+  // Without the modes, the full list or nothing.
+  if (!model.modes) RC_ASSERT(layout.value(QStringLiteral("sidebarMode")).toString() == QLatin1String("full"));
   // Only a window with room changes what the device remembers, and the
   // default is never written down.
   auto* settings = shell.run->native.controller<SettingsController>();
@@ -142,8 +149,9 @@ struct ResetWidth : Command {
 };
 
 struct Window : Command {
-  // Around the edges: the rail's, the slim rows', and the default's room.
-  int width = *rc::gen::oneOf(rc::gen::inRange(800, 920), rc::gen::inRange(1040, 1160), rc::gen::inRange(640, 1600));
+  // Around the edges: the rail's, the slim rows', the minimum's room, and the default's.
+  int width = *rc::gen::oneOf(rc::gen::inRange(800, 920), rc::gen::inRange(1040, 1160), rc::gen::inRange(640, 740),
+                              rc::gen::inRange(640, 1600));
 
   void apply(Model& model) const override {
     const bool narrow = model.narrow();
@@ -173,12 +181,32 @@ struct Font : Command {
   void show(std::ostream& os) const override { os << "Font(" << (monospace ? "monospace" : "sans") << ")"; }
 };
 
+// The window's layout draws the slim rows and the rail, or not (the phone
+// switching between its layouts says so with its width).
+struct Modes : Command {
+  bool modes = *rc::gen::arbitrary<bool>();
+
+  void apply(Model& model) const override {
+    const bool narrow = model.narrow();
+    model.modes = modes;
+    if (model.narrow() != narrow) model.overlayOpen = false;
+  }
+  void run(const Model& model, Shell& shell) const override {
+    Model expected = model;
+    apply(expected);
+    shell.act("layout.window", {{QStringLiteral("width"), model.window}, {QStringLiteral("modes"), modes}});
+    check(expected, shell);
+  }
+  void show(std::ostream& os) const override { os << "Modes(" << (modes ? "on" : "off") << ")"; }
+};
+
 // The app quits and starts again: the window has yet to say how wide it is.
 struct Restart : Command {
   void apply(Model& model) const override {
     model.window = 0;
     model.monospace = false;
     model.overlayOpen = false;
+    model.modes = true;
   }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;
@@ -201,7 +229,7 @@ private slots:
     QVERIFY(rc::check("the thread list keeps its minimum and the thread its room, or keeps a rail and goes over the thread", [] {
       Shell shell;
       rc::state::check(Model{}, shell,
-                       rc::state::gen::execOneOfWithArgs<Toggle, Toggle, Resize, ResetWidth, Window, Window, Font, Restart>());
+                       rc::state::gen::execOneOfWithArgs<Toggle, Toggle, Resize, ResetWidth, Window, Window, Font, Modes, Restart>());
     }));
   }
 };
