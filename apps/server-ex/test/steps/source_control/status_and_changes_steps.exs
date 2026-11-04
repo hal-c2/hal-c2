@@ -313,13 +313,23 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
   defp pass(context, ms), do: :atomics.add(context.clock, 1, ms)
 
   # Discovery has handled every message it was sent and has no run of its own queued.
-  defp discovery_idle do
+  # Each round trip lets it handle one more message; a run it keeps queueing for itself
+  # fails here, with what it still has, rather than as a timeout.
+  defp discovery_idle(rounds \\ 100) do
     pid = Process.whereis(HalC2.PullRequests.Discovery)
     state = :sys.get_state(pid)
+    {:message_queue_len, queued} = Process.info(pid, :message_queue_len)
 
-    unless state.pending == %{} and
-             Process.info(pid, :message_queue_len) == {:message_queue_len, 0},
-           do: discovery_idle()
+    cond do
+      state.pending == %{} and queued == 0 ->
+        :ok
+
+      rounds > 0 ->
+        discovery_idle(rounds - 1)
+
+      true ->
+        flunk("Discovery never went idle: #{queued} queued, pending #{inspect(state.pending)}")
+    end
   end
 
   defp asked(context, branch), do: length(World.cli_calls(context, "--head #{branch}"))
