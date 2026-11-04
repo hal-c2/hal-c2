@@ -1097,6 +1097,44 @@ Item {
             verify(header.mapToItem(view, header.width, 0).x <= view.width, "the header ends inside the panel");
         }
 
+        // Wrapped, a long line's rest hangs under its own indentation;
+        // unwrapped, the numbers and sign stay put while it scrolls sideways.
+        function test_longDiffLinesKeepTheirShape() {
+            const rows = createTemporaryObject(fakeDiffRows, root);
+            const long = "        log: snapshot.state.thread_id, adopt: dir, offset: snapshot.offset, channel: snapshot.channel";
+            rows.setProperty(2, "text", long);
+            rows.maxColumns = long.length;
+            const source = createTemporaryObject(reviewedDiff, root, { model: rows, wrap: true });
+            const diff = createTemporaryObject(diffComponent, root, { source: source, width: 420, height: 300 });
+            const view = findChild(diff, "diffRows");
+            tryVerify(() => view.count === 5 && view.itemAtIndex(4) !== null);
+            const line = view.itemAtIndex(2).item;
+            const findWith = (item, property) => {
+                if (item[property] !== undefined)
+                    return item;
+                for (let i = 0; i < item.children.length; ++i) {
+                    const found = findWith(item.children[i], property);
+                    if (found)
+                        return found;
+                }
+                return null;
+            };
+            const text = findWith(line, "hang");
+            verify(text.lineCount > 1, "the line wraps");
+            verify(text.hang > 0, "under its indentation");
+            compare(text.text, long.trim());
+            compare(text.leftPadding, text.hang, "every line of it starts there, the wrapped rest too");
+            compare(text.hang, 8 * (view.numbersWidth - Theme.space.sm) / 10, "eight spaces in");
+
+            source.wrap = false;
+            tryVerify(() => view.contentWidth > view.width, 2000, "unwrapped, the line is wider than the panel");
+            const number = findChild(line, "diffOldLine");
+            const before = number.mapToItem(view, 0, 0).x;
+            view.contentX = view.originX + 120;
+            compare(number.mapToItem(view, 0, 0).x, before, "the line numbers stay put");
+            verify(text.mapToItem(view, 0, 0).x < view.gutter - 100, "while the line scrolls under them");
+        }
+
         function test_pullRequestsOpenInTheBrowserAndLinkFromTheField() {
             const source = createTemporaryObject(fakePullRequests, root);
             const panel = createTemporaryObject(pullRequestsComponent, root, { source: source });
