@@ -506,7 +506,7 @@ Item {
         buttonHeight: 28
         anchors.right: parent.right
         anchors.rightMargin: 4
-        y: layout.corner === "centre" && (workspaceView.visible || layout.centreTitleBar) ? 12 : layout.corner === "details" ? 8 : 4
+        y: layout.corner === "centre" && (workspaceView.visible || layout.centreTitleBar) || layout.corner === "panel" ? (Theme.headerHeight - buttonHeight) / 2 : layout.corner === "details" ? 8 : 4
     }
 
     ProjectFolderDrop {

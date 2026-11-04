@@ -80,7 +80,7 @@ Rectangle {
         }
     }
 
-    implicitHeight: 52
+    implicitHeight: Theme.headerHeight
     color: Theme.palette.color("canvas", "#0f0f12")
     // Never over the panel beside it.
     clip: true

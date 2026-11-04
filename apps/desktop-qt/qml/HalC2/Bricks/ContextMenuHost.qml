@@ -103,6 +103,9 @@ Item {
             current: entry.checked === true
             iconName: entry.icon ?? ""
             shortcut: entry.shortcut ?? ""
+            // Context rows end in names ("New thread on <branch>"): the verb
+            // and the name's tail both stay.
+            elide: Text.ElideMiddle
             required property var owner
 
             onTriggered: {

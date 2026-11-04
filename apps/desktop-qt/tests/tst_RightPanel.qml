@@ -589,6 +589,19 @@ Item {
                 verify(row.mapToItem(details, row.width, 0).x <= details.width, "inside the column");
             }
             compare(imported.text, "Import Setup Worktree from hal-c2.json");
+            // Just too narrow for the file name, which moves down whole
+            // rather than breaking at its hyphen.
+            const importLabel = findChild(imported, "actionRowLabel");
+            const upToHyphen = Qt.createQmlObject("import QtQuick; TextMetrics {}", details);
+            upToHyphen.font = importLabel.font;
+            upToHyphen.text = "Import Setup Worktree from hal-";
+            details.width += upToHyphen.advanceWidth + 2 - importLabel.width;
+            tryVerify(() => Math.abs(importLabel.width - upToHyphen.advanceWidth - 2) < 1, 2000, "the label has room up to the hyphen");
+            tryVerify(() => importLabel.lineCount === 2, 2000, "and wraps");
+            // Its widest line is then short of "…from hal": no part of the
+            // name stayed on the first line.
+            upToHyphen.text = "Import Setup Worktree from hal";
+            verify(importLabel.contentWidth < upToHyphen.advanceWidth, "hal-c2.json moved down whole; the widest line is " + importLabel.contentWidth + "px");
             const scriptLabel = findChild(script, "actionRowLabel");
             verify(scriptLabel.lineCount >= 2, "the long name takes a second line");
             tryVerify(() => script.height > Theme.control.md, 2000, "and its row grows to hold it");
@@ -1178,8 +1191,37 @@ Item {
             const before = number.mapToItem(view, 0, 0).x;
             view.contentX = view.originX + 120;
             compare(number.mapToItem(view, 0, 0).x, before, "the line numbers stay put");
+            // A thin bar along the bottom says they scroll...
+            const bar = findChild(diff, "diffSidewaysBar");
+            verify(bar.visible, "a bar shows the lines scroll sideways");
+            verify(bar.height <= Theme.space.sm, "a thin one, not " + bar.height + "px");
+            verify(Math.abs(bar.y + bar.height - view.height) < 0.5, "along the bottom");
+            // ...and the code stops short of the edge: the last 8px of the
+            // long line, cut mid-text, hold no ink.
+            // Wherever it is scrolled to (a space can fill 8px by itself).
+            const line = view.itemAtIndex(2).item;
+            for (let step = 0; step < 4; ++step) {
+                view.contentX = view.originX + 120 + step * Theme.space.xs;
+                waitForRendering(diff);
+                const shot = grabImage(diff);
+                const origin = line.mapToItem(diff, 0, 0);
+                const top = Math.ceil(origin.y);
+                const right = Math.round(view.mapToItem(diff, view.width, 0).x);
+                const blank = shot.pixel(right - 1, top + Math.floor(line.height / 2));
+                let inked = 0;
+                for (let x = right - 4 * Theme.space.sm; x < right; ++x) {
+                    for (let y = top; y < top + Math.floor(line.height); ++y) {
+                        if (x >= right - Theme.space.sm)
+                            verify(Qt.colorEqual(shot.pixel(x, y), blank), "ink at " + x + "," + y + " of the end padding");
+                        else if (!Qt.colorEqual(shot.pixel(x, y), blank))
+                            ++inked;
+                    }
+                }
+                verify(inked > 0, "the code runs up to the padding");
+            }
             diff.width = 640;
             tryVerify(() => diff.wrap && view.contentWidth === view.width, 2000, "wide again, the lines wrap");
+            verify(!bar.visible, "wrapped, nothing scrolls sideways");
             rows.split = true;
             verify(!diff.wrap, "a split half of 640px is too narrow as well");
         }

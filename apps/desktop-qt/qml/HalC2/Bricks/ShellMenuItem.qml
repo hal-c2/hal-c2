@@ -24,6 +24,10 @@ MenuItem {
     // The keys that run it, as the user reads them ("Ctrl+N"), in the right
     // column where a submenu's chevron would be.
     property string shortcut: ""
+    // Where a label too long for the menu is cut. A label that ends in a
+    // name (a branch, a project) is cut in the middle, so its tail still
+    // tells two apart.
+    property int elide: Text.ElideRight
 
     readonly property bool hasBadge: badge !== null || badgeName.trim().length > 0
     readonly property bool hasIcon: hasBadge || iconName.length > 0
@@ -80,7 +84,7 @@ MenuItem {
                 color: control.destructive ? Theme.palette.color("destructive", "#f87171") : Theme.palette.color("text", "#f2f3f5")
                 opacity: control.enabled ? 1 : 0.5
                 verticalAlignment: Text.AlignVCenter
-                elide: Text.ElideRight
+                elide: control.elide
                 Layout.fillWidth: control.detail.length === 0
                 Layout.minimumWidth: control.detail.length === 0 ? 0 : Math.min(implicitWidth, 80)
             }

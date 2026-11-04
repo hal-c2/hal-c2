@@ -13,6 +13,9 @@ Item {
     readonly property bool scrolls: target.contentHeight > target.height
     readonly property bool moreAbove: scrolls && !target.atYBeginning
     readonly property bool moreBelow: scrolls && !target.atYEnd
+    // How much of the list's right edge the bar takes while it shows, for a
+    // row that keeps a right-hand column (a shortcut) clear of it.
+    readonly property real reserve: scrolls ? Theme.space.xs + Theme.space.xxs : 0
 
     // On the list itself, not its content, so it stays put as the list scrolls.
     parent: target
@@ -30,7 +33,7 @@ Item {
         readonly property real progress: edges.target.atYEnd ? 1 : shown >= 1 ? 0 : Math.max(0, Math.min(1, edges.target.visibleArea.yPosition / (1 - shown)))
 
         visible: edges.scrolls
-        x: edges.width - width - Theme.space.xxs
+        x: edges.width - edges.reserve
         y: Theme.space.xxs + (track - height) * progress
         width: Theme.space.xs
         // Never shorter than a small control, so a long list's still shows.

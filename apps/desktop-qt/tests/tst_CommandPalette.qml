@@ -81,6 +81,21 @@ Item {
             tryVerify(() => Math.abs(thumb.y + thumb.height - (list.height - Theme.space.xxs)) < 0.5, 2000, "the bar ends at the bottom, not " + thumb.y);
         }
 
+        // A long list's shortcuts keep a gutter clear of the bar beside them.
+        function test_shortcutsKeepClearOfTheBar() {
+            const popup = opened();
+            const list = findChild(popup.contentItem, "commandPaletteList");
+            for (let n = 4; n <= 40; ++n)
+                PaletteModel.append({ title: "Entry " + n, description: "", group: "Actions", shortcut: "Ctrl+Shift+F", kind: "action", runnable: true, current: false });
+            const thumb = findChild(list, "scrollThumb");
+            tryVerify(() => thumb.visible);
+            tryVerify(() => list.itemAtIndex(4) !== null);
+            const keys = findChild(list.itemAtIndex(4), "commandPaletteShortcut");
+            verify(keys.visible);
+            const end = keys.mapToItem(list, keys.width, 0).x;
+            tryVerify(() => thumb.x - keys.mapToItem(list, keys.width, 0).x >= Theme.space.md, 2000, "the shortcut ends at " + end + ", the bar starts at " + thumb.x);
+        }
+
         // A submenu's long list, under its title and without group headers,
         // also ends on a whole row at full ink, with the bar beside it.
         function test_aLongSubmenuEndsOnAWholeRowAndHintsAtMore() {
