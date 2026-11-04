@@ -53,9 +53,10 @@ Item {
             const popup = opened();
             const list = findChild(popup.contentItem, "commandPaletteList");
             tryVerify(() => list.itemAtIndex(2) !== null);
+            // The fit is set once the rows settle, a frame after they appear.
+            tryVerify(() => list.height === list.contentHeight, 2000, "the list is as tall as its rows, not " + list.height);
             const three = popup.height;
             verify(three < 300, "three rows make a short palette, not " + three);
-            compare(list.height, list.contentHeight, "the list is as tall as its rows");
             verify(!findChild(list, "scrollEdgeBottom").visible, "no edge when every row shows");
             PaletteModel.clear();
             tryVerify(() => popup.height < three, 2000, "no rows make it shorter still");
