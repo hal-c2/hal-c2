@@ -171,7 +171,11 @@ Rectangle {
 
             objectName: "spacePageTree"
             Layout.fillWidth: true
+            // As tall as its pages, less when the sidebar is short: the
+            // project sections follow the last page, not the sidebar's foot.
             Layout.fillHeight: true
+            Layout.preferredHeight: contentHeight
+            Layout.maximumHeight: contentHeight
             clip: true
             spacing: 1
             model: Spaces.pages
@@ -302,6 +306,9 @@ Rectangle {
             Layout.fillWidth: true
             // The sections take the room they need, up to half the sidebar's.
             Layout.preferredHeight: Math.min(contentHeight, sidebar.height / 2)
+            // More, up to all of it, when the pages leave the room.
+            Layout.fillHeight: true
+            Layout.maximumHeight: contentHeight
             visible: count > 0
             clip: true
             spacing: 1
@@ -512,9 +519,15 @@ Rectangle {
             }
         }
 
+        // What is left of the height, so Images and Trash keep to the foot.
+        Item {
+            Layout.fillHeight: true
+        }
+
+        // Images and Trash start where the rows' text does, not centred.
         ShellButton {
             objectName: "spaceImages"
-            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignLeft
             subtle: true
             iconName: "image"
             enabled: Spaces.spaceId !== ""
@@ -524,7 +537,7 @@ Rectangle {
 
         ShellButton {
             objectName: "spaceTrash"
-            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignLeft
             subtle: true
             chevron: true
             iconName: "trash"
