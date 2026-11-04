@@ -228,9 +228,9 @@ Item {
                     files: [], menu: [], hints: [], canPublish: false, pendingDefaultBranch: null
                 }
             };
-            // The header of a 900 px window beside the sidebar is about 640.
+            // Room for the whole breadcrumb and every label.
             let workspace = createTemporaryObject(workspaceComponent, root, {
-                width: 640,
+                width: 760,
                 panelToggle: false,
                 detailsToggle: false,
                 windowControls: false
@@ -277,6 +277,44 @@ Item {
             tryCompare(run, "text", "Run Test");
             compare(open.text, "Open");
             verify(!overflow.visible);
+        }
+
+        // A label never cuts the title short: at the same 900 px window a
+        // title that needs the room takes it, and the pills show icons only.
+        function test_labelsGiveWayToTheTitle() {
+            Shell.state = {
+                workspace: {
+                    projectTitle: qsTr("hal-c2"),
+                    threadTitle: qsTr("Investigate release build failure"),
+                    isDraft: false,
+                    renameRequestId: 0,
+                    scripts: [{ id: "test", name: "Test", icon: "play" }],
+                    preferredScriptId: null,
+                    editors: [{ id: "zed", label: "Zed" }],
+                    preferredEditorId: "zed"
+                },
+                git: {
+                    available: true, isRepo: true, busy: false, isDefaultRef: false,
+                    quickAction: { kind: "run_action", label: "Commit, push & PR", disabledReason: null },
+                    files: [], menu: [], hints: [], canPublish: false, pendingDefaultBranch: null
+                }
+            };
+            let workspace = createTemporaryObject(workspaceComponent, root, {
+                width: 640,
+                panelToggle: false,
+                detailsToggle: false,
+                windowControls: false
+            });
+            verify(!!workspace, "Component exists");
+            let open = findChild(findChild(workspace, "openEditorButton"), "splitAction");
+            verify(waitForRendering(workspace));
+            tryCompare(open, "text", "");
+            verify(findChild(workspace, "openEditorButton").visible);
+            verify(!findChild(workspace, "headerOverflow").visible);
+            // Wide enough for the title and the labels: both whole.
+            workspace.width = 1180;
+            tryCompare(open, "text", "Open");
+            tryCompare(findChild(workspace, "threadLabel"), "truncated", false);
         }
     }
 }

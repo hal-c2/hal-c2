@@ -219,12 +219,19 @@ Feature: Layout: sidebar, header, right panel and drawer
 
     # The header gives up what the breadcrumb, the git action and the panel
     # toggles need, in one order: labels, then the run and open pills, which
-    # fold into one menu (the thread details offer them too).
+    # fold into one menu (the thread details offer them too). A label never
+    # cuts the thread title short: a title that needs the room takes it first.
     @desktop
     Scenario: The header gives up labels, then pills, only when they do not fit
       Given the thread's project has the actions "Dev" and "Test"
       And the environment has the editors "Zed" and "VS Code"
       When the header is as wide as a 900 pixel window leaves it
+      Then the header actions show with their labels
+      Given a long thread title
+      When the header is as wide as a 900 pixel window leaves it
+      Then the header actions show without their labels
+      And the start of the title still shows
+      When the window is wide
       Then the header actions show with their labels
       When the header has no room for its actions' labels
       Then the header actions show without their labels
