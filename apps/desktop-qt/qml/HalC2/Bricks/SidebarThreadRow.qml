@@ -260,9 +260,10 @@ Item {
     // Resting the pointer on a row previews the thread in a standard
     // tooltip: the status icon's word, the whole title, project, branch and
     // the latest activity. A hidden list (the phone's, under the thread a tap
-    // opened) keeps its hover, so the row must be on screen too. The card
-    // sits beside the row, never over the rows above and below it, and is
-    // built only while the pointer rests here.
+    // opened) keeps its hover, so the row must be on screen too. The tip
+    // stays in the row's column, under the row (over it when the window ends
+    // first), so it covers the rows below for a moment and never the thread
+    // beside the list. It is built only while the pointer rests here.
     readonly property ToolTip previewCard: previewLoader.item?.card ?? null
 
     Loader {
@@ -277,8 +278,11 @@ Item {
 
                 objectName: "rowPreview"
                 parent: row
-                x: row.width + Theme.space.xs
-                y: Math.round((row.height - height) / 2)
+                x: 0
+                y: row.height + Theme.space.xxs
+                // Wraps rather than reach past the column; the window's edge
+                // flips it over the row.
+                width: Math.min(implicitWidth, row.width)
                 visible: true
                 delay: 600
                 text: {

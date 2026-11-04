@@ -173,6 +173,15 @@ Feature: Unread and status in the thread list
     When the user rests the pointer on "Build search"
     Then a preview shows the thread's project, branch and latest activity
 
+  # Proved by tst_SidebarThreadRowHover.qml (test_previewStaysInTheRowColumn).
+  @desktop @backlog-desktop
+  Scenario: The preview stays in the thread list
+    When the user rests the pointer on "Build search"
+    Then the preview shows under the row, as wide as the thread list at most
+    And it never covers the thread beside the list
+    When the row is the last one above the window's bottom edge
+    Then the preview shows over the row instead
+
   @backlog @desktop
   Scenario: The preview warns when the checkout is on another branch
     Given "Build search" works on the branch "feature/search"

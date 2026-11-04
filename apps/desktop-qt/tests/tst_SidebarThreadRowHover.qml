@@ -79,25 +79,44 @@ Item {
         }
 
         // Scenario: Pointing at a thread previews it (features/threads/unread-and-status.feature):
-        // the card sits beside the row, never over the rows above and below.
-        function test_previewSitsBesideTheRow() {
+        // the tip stays in the row's column, under the row, and never reaches
+        // the thread beside the list; at the window's bottom it sits over the row.
+        function test_previewStaysInTheRowColumn_data() {
+            return [
+                { tag: "top", rowY: 0, below: true },
+                { tag: "bottom", rowY: 150, below: false }
+            ];
+        }
+
+        function test_previewStaysInTheRowColumn(data) {
+            // Inset like the sidebar's list.
             let row = createTemporaryObject(rowComponent, root, {
+                x: 8,
+                y: data.rowY,
                 width: 200,
+                height: 48,
                 item: {
-                    title: qsTr("Review"),
+                    title: qsTr("Review the sidebar's preview so that it never covers the reply"),
                     status: "ready",
                     branch: "main",
                     updatedAt: "2026-09-07T12:00:00Z",
-                    preview: { project: "shop", branch: "main", activity: "Active 7d ago" }
+                    preview: { project: "shop", branch: "feature/a-branch-with-a-long-name", activity: "Active 7d ago" }
                 }
             });
             verify(!!row, "Component exists");
             mouseMove(row, 60, row.height / 2);
             tryVerify(() => row.previewCard !== null && row.previewCard.opened, 2000);
-            const card = row.previewCard.contentItem.mapToItem(root, 0, 0);
-            const rowLeft = row.mapToItem(root, 0, 0).x;
-            verify(card.x >= rowLeft + row.width, "the card starts at " + card.x + ", over the row column that ends at " + (rowLeft + row.width));
-            mouseMove(root, 390, 190);
+            const card = row.previewCard;
+            const at = card.background.mapToItem(root, 0, 0);
+            const rowAt = row.mapToItem(root, 0, 0);
+            verify(at.x >= rowAt.x && at.x + card.width <= rowAt.x + row.width,
+                   "the tip spans " + at.x + "–" + (at.x + card.width) + ", outside the row's column " + rowAt.x + "–" + (rowAt.x + row.width));
+            if (data.below) {
+                verify(at.y >= rowAt.y + row.height, "the tip starts at " + at.y + ", over the row that ends at " + (rowAt.y + row.height));
+            } else {
+                verify(at.y + card.height <= rowAt.y, "the tip ends at " + (at.y + card.height) + ", under the row that starts at " + rowAt.y);
+            }
+            mouseMove(root, 390, data.below ? 190 : 10);
             tryCompare(row, "previewCard", null);
         }
 
