@@ -74,12 +74,16 @@ Actions layOutActions(World& world) {
   actions.run = run->findChild<QQuickItem*>(QStringLiteral("splitAction"))->property("text").toString();
   actions.open = open->findChild<QQuickItem*>(QStringLiteral("splitAction"))->property("text").toString();
   if (header.item(QStringLiteral("headerOverflow"))->isVisible()) {
+    // A closed menu's entries are not visible: open it, as a click on the button does.
     QObject* menu = strip->findChild<QObject*>(QStringLiteral("headerOverflowMenu"));
+    if (menu) QMetaObject::invokeMethod(menu, "open");
+    QCoreApplication::processEvents();
     for (int i = 0; menu && i < menu->property("count").toInt(); ++i) {
       QQuickItem* entry = nullptr;
       QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, entry), Q_ARG(int, i));
       if (entry && entry->isVisible()) actions.overflow << entry->property("text").toString();
     }
+    if (menu) QMetaObject::invokeMethod(menu, "close");
   }
   return actions;
 }
@@ -102,7 +106,10 @@ const Steps steps([] {
     world.waitFor([&] { return at(world.state(QStringLiteral("workspace")), QStringLiteral("threadTitle")) == kLongTitle; },
                   [&] { return QStringLiteral("the header to show the long title; it shows %1").arg(show(world.state(QStringLiteral("workspace")))); });
   });
-  step(QStringLiteral("the window is wide"), [](World&, const Captures&, const Table&) { headerWidth = 1600; });
+  step(QStringLiteral("the window is wide"), [](World&, const Captures&, const Table&) {
+    headerFit = Fit::Width;
+    headerWidth = 1600;
+  });
   step(QStringLiteral("the header is as wide as a 900 pixel window leaves it"), [](World&, const Captures&, const Table&) {
     // Beside the sidebar at its default width and the border between them.
     headerFit = Fit::Width;
