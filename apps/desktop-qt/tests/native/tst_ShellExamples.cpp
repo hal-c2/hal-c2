@@ -1065,9 +1065,9 @@ private slots:
     bridge.publish("composer", threadComposer());
     QTRY_VERIFY(findVisualItem(root, "composerDrop")->isVisible());
     QVERIFY(!dropAttaches(window, QPointF(leftOf(side) + side->width() / 2, 500)));
-    // Its width is the sheet's, not one to drag or to fill the window from.
+    // Its width is the sheet's, not one to drag. ("Open in centre",
+    // panelMaximize, still moves the tab to the stage from here.)
     QVERIFY(!findVisualItem(side, "panelEdge")->isVisible());
-    QVERIFY(!findVisualItem(side, "panelMaximize")->isVisible());
     // The header's toggle is clear of it, a click beside it closes it, and so
     // does Escape.
     auto* toggle = findVisualItem(workspace, "panelToggle");
@@ -1090,10 +1090,12 @@ private slots:
     QTRY_COMPARE(side->width(), 0.0);
     QCOMPARE(workspace->width(), 960.0 - 256);
 
-    // The thread details go over the thread once it would have under 360.
+    // The thread details go over the thread once it would have under the
+    // layout's 480 (LayoutController's contentMinimumWidth).
     show(false, true);
+    window->resize(1040, 1000);
     QTRY_VERIFY(details->isVisible());
-    QTRY_COMPARE(workspace->width(), 960.0 - 256 - 280);
+    QTRY_COMPARE(workspace->width(), 1040.0 - 256 - 280);
     window->resize(880, 1000);
     QTRY_COMPARE(workspace->width(), 880.0 - 256);
     QTRY_COMPARE(leftOf(details) + details->width(), 880.0);
@@ -1124,9 +1126,9 @@ private slots:
     QVERIFY(findVisualItem(side, "panelMaximize")->isVisible());
     // With the details beside it the panel gives up width, not the thread.
     show(true, true);
-    QTRY_COMPARE(workspace->width(), 360.0);
-    QCOMPARE(side->width(), 1400.0 - 256 - 280 - 360);
-    QCOMPARE(leftOf(details), 256.0 + 360);
+    QTRY_COMPARE(workspace->width(), 480.0);
+    QCOMPARE(side->width(), 1400.0 - 256 - 280 - 480);
+    QCOMPARE(leftOf(details), 256.0 + 480);
     // And with no room left for its minimum beside them, it is a sheet.
     window->resize(1200, 800);
     QTRY_COMPARE(workspace->width(), 1200.0 - 256 - 280);

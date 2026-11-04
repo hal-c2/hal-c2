@@ -44,7 +44,7 @@ Item {
     // goes over the thread as a sheet (at 980, or sooner when what else is
     // open leaves it no room), then the thread details do, then the thread
     // list (above).
-    readonly property int threadMinimumWidth: 360
+    readonly property int threadMinimumWidth: Shell.state.layout?.contentMinimumWidth ?? 480
     readonly property real besideList: width - (navigation.visible && !sidebarOverlay ? navigation.width : 0) - (folderExplorer.visible ? folderExplorer.width : 0)
     readonly property bool detailsSheet: besideList - detailsView.implicitWidth < threadMinimumWidth
     readonly property real besidePanel: besideList - (detailsView.visible && !detailsSheet ? detailsView.implicitWidth : 0) - threadMinimumWidth

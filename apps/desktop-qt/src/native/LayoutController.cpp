@@ -165,5 +165,6 @@ void LayoutController::publish() {
                     QVariantMap{{kSidebarCollapsed, sidebarCollapsed()},
                                 {kSidebarWidthKey, sidebarWidth()},
                                 {QStringLiteral("sidebarOverlay"), sidebarOverlay()},
+                                {QStringLiteral("contentMinimumWidth"), kContentMinWidth},
                                 {QStringLiteral("zoom"), zoom()}});
 }

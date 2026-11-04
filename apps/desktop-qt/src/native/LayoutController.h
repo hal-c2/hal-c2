@@ -15,7 +15,9 @@ class ShellBridge;
 // Publishes `layout` for ShellWindow: {sidebarCollapsed, sidebarWidth (what
 // it draws: the width chosen, less when the window leaves it no room, never
 // under the minimum), sidebarOverlay (the window is too narrow for the list
-// beside the thread, so a layout draws it over the thread), zoom (a factor)}.
+// beside the thread, so a layout draws it over the thread), contentMinimumWidth
+// (the room the thread keeps: a side panel that would leave it less goes over
+// it instead), zoom (a factor)}.
 // While `sidebarOverlay`, the list starts hidden and showing it is not
 // remembered: the device keeps what a window with room last chose. Action and
 // keybinding command: `sidebar.toggle` (the sidebar's hide button, the
